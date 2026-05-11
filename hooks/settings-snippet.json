@@ -1,0 +1,44 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/check_worktree.sh" },
+          { "type": "command", "command": "~/.claude/hooks/check_non_ascii.sh" },
+          { "type": "command", "command": "~/.claude/hooks/check_read_before_edit.sh" },
+          { "type": "command", "command": "~/.claude/hooks/check_review_tracker.sh" }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/check_worktree.sh" },
+          { "type": "command", "command": "~/.claude/hooks/check_non_ascii.sh" },
+          { "type": "command", "command": "~/.claude/hooks/check_read_before_edit.sh" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/check_git_commit_review.sh" },
+          { "type": "command", "command": "~/.claude/hooks/check_git_push_review.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/check_review_tracker.sh" }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "~/.claude/hooks/check_read_before_edit.sh" }
+        ]
+      }
+    ]
+  }
+}
