@@ -122,6 +122,7 @@ key pipeline mechanisms:
 - `design-iterations.md` -- how the pipeline evolved
 - `ground-truth-verification.md` -- why smoke tests must inject known bugs
 - `shell-assertion-footguns.md` -- 5 bash-specific traps that evade static analysis
+- `v9-model-coverage-matrix.md` -- real-world 4-model coverage data from kernel patch review
 
 ## License
 

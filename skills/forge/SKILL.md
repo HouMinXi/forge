@@ -45,7 +45,10 @@ Code Change
      v
 [Steps 1-3] Three-cycle static review (cycle_counter state machine)
      |        Each cycle = Pass 1 + Pass 2 + Pass 3
-     |        Any finding -> fix -> counter = 0 -> restart
+     |        P0/P1 -> fix -> counter = 0 -> restart all
+     |        P2 -> fix -> restart current cycle
+     |        P3 -> accumulate (density check -> P2 escalation)
+     |        Clean -> auto-continue (no user prompt)
      |        3 consecutive clean cycles -> proceed
      v
 [Step 3.5] False-positive verification (if findings were fixed)
@@ -104,6 +107,64 @@ Any hit = fix before proceeding. This check applies to ALL output: code, comment
 - **Exit**: 0a + 0b + 0c all pass with zero new warnings
 - **On failure**: fix the issue, re-run Step 0
 
+## Step 0 Context Fusion (FUSE-01)
+
+After Step 0 completes, serialize ALL Step 0 findings into a context block.
+This block is prepended to the prompt for EVERY LLM pass (Steps 1-3).
+
+**Why:** Prevents LLM passes from re-flagging issues that Step 0 already caught.
+Semgrep Multimodal achieved 8x more true positives and 50% less noise with this
+deterministic+LLM fusion pattern.
+
+**Step 1 -- Collect Step 0 findings:**
+After Step 0 checks (0a syntax, 0b lint, 0c non-ASCII) complete, gather any
+issues that were found and fixed. Record each finding with: file, line, tool, issue.
+
+**Step 2 -- Serialize as markdown table (capped at 20 rows):**
+Format the findings as a structured context block:
+
+```markdown
+## Step 0 Findings (deterministic, already addressed)
+
+The following issues were detected by Step 0 deterministic checks.
+They have been fixed by the author. Do NOT re-flag these specific issues.
+If you find NEW instances of the same pattern elsewhere, report them.
+
+| # | File | Line | Tool | Issue |
+|---|------|------|------|-------|
+| 1 | path/to/file.py | 42 | pylint W0707 | raise-missing-from |
+| 2 | path/to/file.sh | 15 | shellcheck SC2086 | unquoted variable |
+```
+
+**Size cap:** If Step 0 found more than 20 issues, show only the first 20 rows
+and add this note after the table:
+
+```
+[forge] Step 0 found N issues total. Showing first 20. Full list in .forge/step0_findings.txt.
+```
+
+Write the complete list to `.forge/step0_findings.txt` for reference.
+
+If Step 0 found zero issues, use this shorter block:
+
+```markdown
+## Step 0 Findings (deterministic)
+
+Step 0 checks (syntax, lint, non-ASCII) found zero issues. No prior context.
+```
+
+**Step 3 -- Inject into each LLM pass:**
+Before invoking each pass (/qodo-review, /code-review-expert, /adversarial-qe),
+prepend the Step 0 context block to the review prompt. The context block goes
+BEFORE the diff content, so the LLM sees it first.
+
+**Rules for LLM passes when receiving Step 0 context:**
+1. Do NOT re-flag the exact same issue at the exact same file:line that Step 0 caught
+2. DO flag NEW instances of the same pattern in OTHER locations
+3. DO flag related-but-different issues at the same location (e.g., Step 0 caught
+   a missing import, but Pass 2 notices the function using that import has a logic error)
+4. When in doubt, report the finding but note "Step 0 caught a related issue at this location"
+
 ---
 
 # Steps 1-3: Three-Cycle Static Review
@@ -112,20 +173,81 @@ Any hit = fix before proceeding. This check applies to ALL output: code, comment
 
 ```
 State: cycle_counter = 0  (target = 3)
+       p3_by_rule = {}     # {rule_type: [file_paths]}
+       changed_lines = N   # from git diff --stat
 
 loop:
   run Cycle (Pass 1 -> Pass 2 -> Pass 3)
-  if ANY pass reports findings:
-    fix ALL findings immediately
-    cycle_counter = 0
-    goto loop
-  else:
+  
+  After EACH pass:
+    normalize findings to P0/P1/P2/P3 (see Severity Normalization)
+    validate finding data before storing (see Finding Persistence)
+    persist ALL findings to .forge/findings.json (see Finding Persistence)
+    
+    if zero findings:
+      [AUTO-CONTINUE] immediately proceed to next pass (TRUST-06)
+      report: "[forge] Cycle N/3, Pass P/3: skill-name -- CLEAN"
+      do NOT wait for user input
+    
+    else if any P0 or P1 finding:
+      [FULL RESET] fix all findings, cycle_counter = 0 (TRUST-07)
+      report: "[forge] P0/P1 found -- full reset. cycle_counter = 0"
+      goto loop
+    
+    else if any P2 finding (no P0/P1):
+      [CYCLE RESTART] fix P2 findings, restart current cycle (TRUST-07)
+      report: "[forge] P2 found -- restarting current cycle"
+      do NOT reset cycle_counter to 0
+      restart current cycle from Pass 1
+    
+    else if only P3 findings:
+      [ACCUMULATE with density-based escalation] (TRUST-07 + P3-THRESHOLD-RESEARCH)
+      
+      Step A -- Deduplicate: group new P3s by rule type
+        for each P3: p3_by_rule[rule_type].append(file_path)
+      
+      Step B -- Compute metrics:
+        distinct_per_file = max(len(set(rules_in_file)) for each file)
+        distinct_per_diff = len(p3_by_rule.keys())
+        density = total_p3_count / changed_lines
+      
+      Step C -- Check thresholds (any one triggers escalation):
+        if distinct_per_file > 5:
+          report: "[forge] P3 density: >5 distinct violations in {file} -- P2 escalation"
+          restart current cycle (P2-equivalent)
+        else if distinct_per_diff > 10:
+          report: "[forge] P3 density: >10 distinct violations across diff -- P2 escalation"
+          restart current cycle (P2-equivalent)
+        else if density > 0.15:
+          report: "[forge] P3 density: {density:.2f}/line (>0.15) -- P2 escalation"
+          restart current cycle (P2-equivalent)
+        else:
+          report: "[forge] P3: {N} findings ({distinct_per_diff} distinct rules), density {density:.2f}/line -- below threshold, continuing"
+          proceed to next pass without fixing
+  
+  After all 3 passes in a cycle complete:
     cycle_counter += 1
     if cycle_counter == 3:
       proceed to Step 3.5 or Step 4
     else:
       goto loop
 ```
+
+**Critical change from current behavior:** The current state machine resets cycle_counter on ANY finding. The new state machine only resets on P0/P1. P2 restarts the current cycle without resetting the counter. P3 uses density-based escalation with deduplication: per-file >5, per-diff >10, or density >0.15/line triggers P2-equivalent restart. Based on P3-THRESHOLD-RESEARCH.md (Google Tricorder, BitsAI-CR, Broken Windows theory, ESLint --max-warnings).
+
+## Auto-Continue Protocol (TRUST-06)
+
+After each pass completes:
+- If **zero findings**: immediately invoke the next pass. Do not output
+  "waiting for input" or "how would you like to proceed?" prompts.
+  Report the clean result in one line and move on:
+  `[forge] Cycle 2/3, Pass 1/3: qodo-review -- CLEAN`
+- If **findings exist**: pause and present findings for user decision
+  (accept/reject/fix). Only proceed after user responds.
+
+This eliminates the current UX pain of typing "continue" after every clean pass.
+The pipeline should flow silently through clean passes and only stop when
+human judgment is needed.
 
 ## Each Cycle = 3 Sequential Passes
 
@@ -155,7 +277,7 @@ Invoke the `/code-review-expert` skill.
 Invoke the `/adversarial-qe` skill.
 
 - Red-team QE: assumes bugs exist until proven otherwise
-- 12 attack dimensions:
+- 14 attack dimensions:
   1. Correctness and logic
   2. Edge cases and boundaries (including "successful command, empty output" pattern)
   3. Error handling and resilience
@@ -164,12 +286,308 @@ Invoke the `/adversarial-qe` skill.
   6. API and contract (breaking changes, validation)
   7. Bidirectional correctness (round-trip encode/decode)
   8. Graceful degradation (missing optional dependencies)
-  9. Convention adherence (grep FULL FILE, not just diff)
+  9. Convention adherence (grep FULL FILE, not just diff) -- expanded with naming quality and readability
   10. Performance and scalability
   11. Test quality
   12. AI-generated code smells
+  13. Documentation completeness [SHADOW] -- public API docstrings, changelog entries, README updates for user-facing changes
+  14. Change scope [SHADOW] -- single-concern diffs, flag unfocused changes mixing unrelated concerns
 - 3-step finding verification gate: (1) Re-read code, (2) Ground truth verification, (3) Debate yourself
 - Output: Severity-ordered table with Location / Finding / Evidence / Suggestion
+
+## Severity Normalization
+
+Every finding from any pass MUST be normalized to P0/P1/P2/P3 before recording. Use this mapping:
+
+| qodo-review | code-review-expert | adversarial-qe | Normalized |
+|-------------|-------------------|----------------|------------|
+| Red (must fix) | P0 Critical | Critical | P0 |
+| Red (must fix) | P1 High | High | P1 |
+| Yellow (problematic) | P2 Medium | Medium | P2 |
+| Green (minor) | P3 Low | Low/Nit | P3 |
+
+When a pass reports findings without explicit severity, classify based on impact:
+- P0: Data loss, security breach, crash in normal path
+- P1: Logic error, wrong output, security weakness
+- P2: Missing validation, incomplete error handling, non-trivial code smell
+- P3: Style preference, naming nit, minor readability issue
+
+## Finding Persistence (TRUST-01)
+
+After each pass completes and findings are normalized, persist EVERY finding to `.forge/findings.json`. This includes zero-finding passes (record the pass metadata in runs).
+
+**Recording a finding:** Use a Bash tool call with Python heredoc to append to findings.json:
+
+```bash
+python3 << 'PYEOF'
+import json, uuid, datetime, os, tempfile, subprocess, sys
+
+findings_file = '.forge/findings.json'
+os.makedirs('.forge', exist_ok=True)
+
+try:
+    with open(findings_file, 'r') as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {'version': 1, 'findings': [], 'runs': []}
+
+# Get commit SHA via subprocess (NOT shell substitution -- quoted heredoc does not expand $())
+try:
+    commit_sha = subprocess.check_output(
+        ['git', 'rev-parse', '--short', 'HEAD'],
+        stderr=subprocess.DEVNULL, text=True
+    ).strip()
+except Exception:
+    commit_sha = 'unknown'
+
+# VALIDATION: check extracted values before storing
+VALID_SEVERITIES = {'P0', 'P1', 'P2', 'P3'}
+VALID_DIMENSIONS = {
+    'correctness', 'security', 'performance',
+    'concurrency', 'api_contract', 'bidirectional', 'graceful_degradation',
+    'convention', 'test_quality', 'ai_code_smell',
+    'error_handling', 'edge_cases',
+    'doc_completeness', 'change_scope',
+    'unknown',
+}
+
+severity = 'REPLACE_WITH_SEVERITY'
+dimension = 'REPLACE_WITH_DIMENSION'
+file_path = 'REPLACE_WITH_ACTUAL_FILE'
+
+if severity not in VALID_SEVERITIES:
+    print(f"[forge-warn] Invalid severity '{severity}', defaulting to P2", file=sys.stderr)
+    severity = 'P2'
+if dimension not in VALID_DIMENSIONS:
+    print(f"[forge-warn] Invalid dimension '{dimension}', defaulting to unknown", file=sys.stderr)
+    dimension = 'unknown'
+if file_path != 'unknown' and not os.path.isfile(file_path):
+    print(f"[forge-warn] File not found: '{file_path}', storing as-is", file=sys.stderr)
+
+evidence_count = 1  # REPLACE_WITH_EVIDENCE_COUNT
+llm_self_report = 0.8  # REPLACE_WITH_LLM_CONFIDENCE
+
+if not isinstance(evidence_count, int) or evidence_count < 0:
+    print("[forge-warn] Invalid evidence_count, defaulting to 1", file=sys.stderr)
+    evidence_count = 1
+if not isinstance(llm_self_report, (int, float)) or not (0.0 <= llm_self_report <= 1.0):
+    print("[forge-warn] Invalid llm_self_report, defaulting to 0.8", file=sys.stderr)
+    llm_self_report = 0.8
+
+data['findings'].append({
+    'id': str(uuid.uuid4()),
+    'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    'file': file_path,
+    'line': -1,
+    'dimension': dimension,
+    'pass': 1,
+    'cycle': 1,
+    'severity': severity,
+    'description': 'REPLACE_WITH_FINDING_TEXT',
+    'outcome': 'pending',
+    'reject_reason': None,
+    'commit_sha': commit_sha,
+    'cost_tokens': {'input': 0, 'output': 0},
+    'confidence': 0.0,
+    'confidence_signals': {
+        'dimension_fp_rate': 0.0,
+        'pass_agreement': 1.0,
+        'evidence_count': evidence_count,
+        'llm_self_report': llm_self_report,
+    },
+    'shadow': False,  # True for shadow-mode dimensions (doc_completeness, change_scope)
+})
+
+# Atomic write
+dir_name = os.path.dirname(findings_file) or '.'
+fd, tmp = tempfile.mkstemp(dir=dir_name, suffix='.json')
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, findings_file)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PYEOF
+```
+
+Replace the placeholder values with actual finding data from the pass output. For each finding reported by a pass, execute one append call.
+
+**Finding schema fields (D1):**
+- `id`: UUID v4 (unique per finding)
+- `timestamp`: ISO-8601 UTC
+- `file`: relative path to the file with the finding
+- `line`: line number (-1 if unknown)
+- `dimension`: which review dimension (must be one of the 14 known dimensions in VALID_DIMENSIONS or "unknown")
+- `pass`: which pass number (1, 2, or 3)
+- `cycle`: which cycle number
+- `severity`: normalized P0/P1/P2/P3 (validated before storage)
+- `description`: finding text from the review pass
+- `outcome`: "pending" (initial), "accepted", or "rejected"
+- `reject_reason`: null (initial) or one of: HALLUCINATION, CONTEXT_MISSING, INTENTIONAL, NOT_APPLICABLE, STYLE_PREFERENCE, ACCEPTABLE_RISK
+- `commit_sha`: short git SHA at time of finding (obtained via subprocess, NOT shell substitution)
+- `cost_tokens`: {"input": N, "output": M} -- token counts for the pass that produced this finding (set to 0 during interactive mode; CLI wrapper populates actual values)
+- `confidence`: float 0.0-1.0, computed by CLI post-run via backfill_confidence(). Set to 0.0 at recording time (SKILL.md heredoc cannot compute it -- needs historical FP data).
+- `confidence_signals`: dict with raw signals for the confidence formula:
+  - `dimension_fp_rate`: 0.0 (placeholder, computed by CLI from findings.json history)
+  - `pass_agreement`: 1.0 (1.0 = finding from single pass; fraction of agreeing passes when multi-pass data available)
+  - `evidence_count`: number of distinct code locations examined to support this finding
+  - `llm_self_report`: LLM's stated confidence that this finding is a true positive (0.0-1.0)
+
+## Confidence Signal Instructions
+
+When recording a finding, you MUST set these fields to actual values, not defaults:
+
+- `evidence_count`: Set to the number of distinct code locations (lines, functions, or
+  files) you examined to support this finding. Count only locations you actually read
+  and cite in the finding description. Minimum 1, typical range 1-10.
+
+- `llm_self_report`: Set to your genuine confidence that this finding is a true positive,
+  as a float from 0.0 to 1.0. Consider:
+  - 0.9-1.0: You are certain this is a real issue (clear bug, obvious vulnerability)
+  - 0.7-0.8: High confidence but some ambiguity (pattern match, context-dependent)
+  - 0.4-0.6: Uncertain (could be intentional, might be a style choice)
+  - 0.1-0.3: Low confidence (speculative, may be a false positive)
+  Do NOT default to 0.8 -- assess each finding individually.
+
+## Shadow Mode Dimensions (DIM-01, DIM-04)
+
+Dimensions 13 (doc_completeness) and 14 (change_scope) operate in **shadow mode**:
+- Findings ARE persisted to .forge/findings.json with `'shadow': True`
+- Findings are NOT displayed to the user in review output
+- Findings are NOT counted toward cycle reset decisions
+- After 20+ shadow findings accumulate, FP rate is computed via `forge --eval --shadow`
+- If FP < 10%: dimension is promoted to active. Use `forge --promote <dim>` to set all findings for that dimension to shadow=False.
+- If FP >= 10%: SKILL.md prompt for that dimension needs improvement before retry
+
+When recording a finding for dim 13 or 14, check config for promotion status before setting shadow flag:
+```python
+# Shadow dimension finding -- logged but NOT shown to user
+# N4 fix: check promoted_dimensions in config before hardcoding shadow
+SHADOW_DIMENSIONS = {'doc_completeness', 'change_scope'}
+promoted = set(config.get('promoted_dimensions', []))
+if dimension in SHADOW_DIMENSIONS and dimension not in promoted:
+    finding['shadow'] = True
+```
+
+**DIM-01 Documentation Completeness (dim 13):**
+Check whether public-facing code changes include adequate documentation updates:
+- New public functions/methods/classes: do they have docstrings?
+- Changed function signatures: is the docstring updated to match?
+- User-facing feature changes: is there a changelog entry or README update?
+- API endpoint changes: is API documentation updated?
+Do NOT flag: internal/private functions, test files, configuration changes, refactoring that preserves behavior.
+
+**DIM-04 Change Scope (dim 14):**
+Check whether the diff contains a single coherent concern:
+- Does the diff mix unrelated changes (e.g., feature + refactor + bugfix)?
+- Are there files modified that have no logical connection to the primary change?
+- Does the commit message describe one thing but the diff does several?
+Do NOT flag: necessary supporting changes (e.g., updating imports when moving a function), test additions for the primary change, formatting changes required by the primary change.
+
+NOTE (R15): Shadow mode display filtering is implemented in Plan 04 (Wave 3). Until Plan 04 executes, shadow findings will appear in --stats/--eval output. This is acceptable during Phase 2 execution -- data collection starts immediately, filtering is wired later.
+
+## Session State (Hook Integration)
+
+The `check_review_tracker.sh` hook writes severity data to `.forge/current_session.json`
+after each review pass. This file contains:
+
+```json
+{
+  "last_max_severity": "P2",
+  "last_review_pass": "qodo-review",
+  "qodo_runs": 3,
+  "rounds_with_findings": 1
+}
+```
+
+When available, read this file to cross-check severity classification. If the hook
+detected a higher severity than the SKILL.md state machine assigned, use the higher
+severity (conservative approach). This provides a second layer of severity enforcement
+beyond the SKILL.md instructions alone.
+
+## Feedback Collection (LEARN-07-LITE)
+
+All findings are initially recorded with `outcome: "pending"`.
+
+**When to collect feedback:**
+Feedback collection happens ONCE, at the END of the pipeline -- specifically at
+the commit gate, AFTER Step 4 (smoke test) completes. This is the single point
+where the user reviews all accumulated findings before committing.
+
+Do NOT collect feedback during individual passes (this conflicts with auto-continue).
+Do NOT pause between passes to ask about findings.
+
+**At pipeline completion (commit gate):**
+Present a summary table of ALL findings from this session:
+
+```
+[forge] Pipeline complete. Findings summary:
+
+  # | Severity | Dimension     | File                  | Status
+  1 | P2       | security      | hooks/check_*.sh      | fixed (accepted)
+  2 | P3       | style         | cli/forge_cli.py      | accumulated (pending)
+  3 | P1       | correctness   | skills/forge/SKILL.md | fixed (accepted)
+
+Classify pending findings? [y/n/defer]
+```
+
+If user chooses to classify:
+  - For each pending finding, ask:
+    - **Accept**: The finding was valid (outcome = "accepted")
+    - **Reject**: The finding was a false positive (outcome = "rejected")
+      If rejected, ask which category:
+      1. HALLUCINATION -- the problem does not exist
+      2. CONTEXT_MISSING -- reviewer lacked necessary context
+      3. INTENTIONAL -- this was an intentional design choice
+      4. NOT_APPLICABLE -- the rule does not apply here
+      5. STYLE_PREFERENCE -- subjective, not a defect
+      6. ACCEPTABLE_RISK -- real issue, but risk accepted
+
+If user defers: findings remain "pending" for later classification via `forge --classify`.
+
+**Findings that were fixed:**
+When a finding triggers a code fix (P0/P1/P2 that caused reset), automatically
+set its outcome to "accepted" -- the act of fixing it confirms it was valid.
+Only accumulated P3 findings and unfixed findings remain "pending".
+
+**Updating a finding outcome:** Use a Bash tool call with Python heredoc:
+
+```bash
+python3 << 'PYEOF'
+import json, os, tempfile
+
+findings_file = '.forge/findings.json'
+finding_id = 'REPLACE_WITH_FINDING_UUID'
+new_outcome = 'rejected'  # or 'accepted'
+new_reason = 'HALLUCINATION'  # or None for accepted
+
+with open(findings_file, 'r') as f:
+    data = json.load(f)
+
+for finding in data['findings']:
+    if finding['id'] == finding_id:
+        finding['outcome'] = new_outcome
+        finding['reject_reason'] = new_reason if new_outcome == 'rejected' else None
+        break
+
+dir_name = os.path.dirname(findings_file) or '.'
+fd, tmp = tempfile.mkstemp(dir=dir_name, suffix='.json')
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, findings_file)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PYEOF
+```
 
 ## Why Each Pass Is Mandatory
 
@@ -185,16 +603,22 @@ Diff-only review cannot catch cross-function inconsistencies. Pass 3 must grep t
 
 ## Handling Findings
 
-When ANY pass reports findings:
+Finding handling depends on severity (see Severity-Gated Cycle Reset above):
 
-1. Fix ALL findings immediately -- no cherry-picking, no deferring
-2. After fixing, verify no out-of-scope files were modified:
-   ```bash
-   git diff --name-only
-   ```
-   Revert any out-of-scope changes with `git checkout -- <file>`
-3. Reset cycle_counter = 0
-4. Restart from Cycle 1, Pass 1
+- **P0/P1 findings**: Fix ALL findings immediately. cycle_counter = 0. Restart from Cycle 1, Pass 1.
+- **P2 findings**: Fix P2 findings. Restart current cycle from Pass 1. Do NOT reset cycle_counter.
+- **P3 findings**: Record but do not fix immediately. Accumulate and continue to next pass.
+  - Deduplicate by rule type, then check density thresholds:
+  - Per-file >5 distinct rule violations: P2-equivalent restart
+  - Per-diff >10 distinct rule violations: P2-equivalent restart
+  - Density >0.15 P3 findings per changed line: P2-equivalent restart
+  - Below all thresholds: accumulate silently, continue
+
+After fixing any finding, verify no out-of-scope files were modified:
+```bash
+git diff --name-only
+```
+Revert any out-of-scope changes with `git checkout -- <file>`.
 
 ## Hard Stop
 
@@ -204,7 +628,9 @@ The `check_review_tracker.sh` hook tracks state. After 3 rounds where findings p
 
 - **Entry**: Step 0 passed
 - **Exit**: 3 consecutive cycles where ALL 3 passes report zero findings (minimum 9 passes total)
-- **On finding**: fix -> counter = 0 -> restart from Cycle 1
+- **On P0/P1**: fix -> counter = 0 -> restart from Cycle 1
+- **On P2**: fix -> restart current cycle
+- **On P3 only**: accumulate (density check -> P2 escalation if thresholds exceeded)
 
 ---
 
@@ -341,7 +767,7 @@ These commit types bypass the full pipeline but still require worktree and AI-at
 
 These are built into the pipeline and must be followed:
 
-1. **Cycle Counter Reset**: any finding in any pass resets counter to 0, restart from Cycle 1 Pass 1. Prevents "fix forward" quality degradation.
+1. **Severity-Gated Cycle Reset (TRUST-07)**: P0/P1 findings reset counter to 0 and restart from Cycle 1 Pass 1. P2 findings restart the current cycle without resetting the counter. P3 findings accumulate with density-based escalation: deduplicate by rule type, then check per-file >5, per-diff >10, density >0.15/line -- any trigger causes P2-equivalent restart. Below threshold: accumulate silently, report count, continue. This replaces the previous unconditional reset behavior, reducing wasted passes by an estimated 60%+ while maintaining quality for critical issues.
 
 2. **Hard Stop After 3 Rounds With Findings**: hook blocks all Edit/Write. Forces human intervention. Prevents infinite fix-break loops.
 
@@ -360,6 +786,14 @@ These are built into the pipeline and must be followed:
 9. **Graceful Degradation**: missing optional dependencies must degrade gracefully, not crash. Review checks for this explicitly. Origin: Sashiko review gap.
 
 10. **Scope Verification After Automated Tools**: after any review pass, check `git status` / `git diff --name-only` to confirm no out-of-scope files were modified. Revert any out-of-scope changes immediately.
+
+11. **Auto-Continue on Clean Pass (TRUST-06)**: when a pass reports zero findings, forge immediately proceeds to the next pass/cycle without waiting for user input. Only pauses when findings exist and user decision is needed. Eliminates the "type continue after every LGTM pass" UX friction.
+
+12. **Finding Persistence (TRUST-01)**: every finding is recorded to .forge/findings.json with structured metadata (severity, dimension, outcome, reject_reason). Extracted data is validated before storage (severity must be P0-P3, dimension must be in known set, file path existence checked). This enables Phase 1b calibration via 30+ days of accumulated data.
+
+13. **Feedback Collection (LEARN-07-LITE)**: binary accept/reject feedback collected ONCE at pipeline completion (commit gate). Findings fixed during the pipeline are auto-accepted. Pending findings can be classified at commit gate or deferred to `forge --classify`. Feedback is NOT collected during individual passes to avoid conflicting with auto-continue.
+
+14. **Step 0 Context Fusion (FUSE-01)**: deterministic Step 0 findings are serialized as a markdown table (capped at 20 rows) and injected into every LLM pass prompt. This prevents redundant flagging and lets LLM passes focus on issues that static tools cannot catch.
 
 ---
 
@@ -388,12 +822,13 @@ When `/forge` is invoked:
    Forge: starting 5-step review pipeline
    Diff: <N> files, <M> lines changed
    ```
-3. **Run Step 0**: syntax + lint + non-ASCII. Stop on any failure.
+3. **Run Step 0**: syntax + lint + non-ASCII. Stop on any failure. After all Step 0 checks pass, serialize findings into FUSE-01 context block for LLM passes (cap at 20 rows).
 4. **Initialize cycle_counter = 0**
-5. **Run cycles**: invoke /qodo-review, /code-review-expert, /adversarial-qe sequentially. Apply state machine rules.
+5. **Run cycles**: invoke /qodo-review, /code-review-expert, /adversarial-qe sequentially. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
 6. **After 3 clean cycles**: run Step 3.5 if findings were ever fixed during the process.
 7. **Run Step 4**: invoke /smoke-test. Full pipeline restart on any FAIL.
 8. **Report**: summary of passes completed, findings fixed, smoke test results.
+8.5. **Feedback collection**: present finding summary table. Collect accept/reject for pending findings (LEARN-07-LITE). Users can defer to `forge --classify`.
 9. **The commit itself is NOT performed by forge** -- it reports readiness and the user commits with the `# post-review-c3` marker.
 
 ## Progress Tracking
