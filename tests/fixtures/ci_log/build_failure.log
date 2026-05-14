@@ -1,0 +1,5 @@
+[2026-05-10 18:00:00] Running test suite...
+[2026-05-10 18:00:15] FAIL: test_user_auth - AssertionError: Expected 200 but got 401
+[2026-05-10 18:00:15] Traceback: src/auth.py:42 in verify_token
+[2026-05-10 18:00:16] FAIL: test_data_export - UnicodeDecodeError: 'utf-8' codec can't decode
+[2026-05-10 18:00:20] 2 tests failed, 45 passed

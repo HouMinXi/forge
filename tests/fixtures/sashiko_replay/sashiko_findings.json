@@ -1,0 +1,32 @@
+{
+  "description": "Sashiko incident replay -- 3 findings that should match existing dimensions",
+  "findings": [
+    {
+      "source": "github_pr",
+      "source_tool": "human",
+      "dimension_raw": "round-trip data integrity",
+      "text": "The serialization/deserialization round-trip loses timezone information",
+      "suggested_keywords": ["round-trip", "serialize", "timezone"],
+      "expected_outcome": "outcome_1",
+      "expected_dimension": "bidirectional"
+    },
+    {
+      "source": "github_pr",
+      "source_tool": "human",
+      "dimension_raw": "missing fallback for optional dependency",
+      "text": "Code crashes with ImportError due to missing dependency pyyaml -- should skip gracefully when optional tool is absent",
+      "suggested_keywords": ["missing dependency", "ImportError", "fallback"],
+      "expected_outcome": "outcome_1",
+      "expected_dimension": "graceful_degradation"
+    },
+    {
+      "source": "github_pr",
+      "source_tool": "human",
+      "dimension_raw": "naming inconsistency across modules",
+      "text": "Function uses get_user_data in one module but fetch_user_info in another for the same operation -- naming style drift",
+      "suggested_keywords": ["naming", "consistency", "style drift"],
+      "expected_outcome": "outcome_1",
+      "expected_dimension": "convention"
+    }
+  ]
+}

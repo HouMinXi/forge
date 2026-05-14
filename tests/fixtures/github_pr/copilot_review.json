@@ -1,0 +1,8 @@
+{
+  "id": 100004,
+  "body": "Potential SQL injection: The query parameter is concatenated directly into the SQL string without parameterization.",
+  "created_at": "2026-05-10T13:00:00Z",
+  "user": {"login": "copilot-review[bot]", "type": "Bot"},
+  "diff_hunk": "@@ -20,3 +20,3 @@\n-    cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))\n+    cursor.execute(f'SELECT * FROM users WHERE id = {user_id}')",
+  "path": "db/queries.py"
+}
