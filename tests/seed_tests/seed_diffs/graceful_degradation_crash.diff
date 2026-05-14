@@ -1,0 +1,35 @@
+---BEGIN BEFORE---
+src/report_generator.py
+import subprocess
+
+
+class ReportGenerator:
+    def generate(self, data, output_path):
+        """Generate report from data."""
+        with open(output_path, 'w') as f:
+            f.write(self._format_header(data))
+            f.write(self._format_body(data))
+
+    def _format_header(self, data):
+        return f"Report: {data.get('title', 'Untitled')}\n"
+
+    def _format_body(self, data):
+        return str(data.get('content', ''))
+---END BEFORE---
+--- a/src/report_generator.py
++++ b/src/report_generator.py
+@@ -5,6 +5,14 @@ class ReportGenerator:
+     def generate(self, data, output_path):
+         """Generate report from data."""
++        # Add chart generation
++        import matplotlib.pyplot as plt
++        fig, ax = plt.subplots()
++        ax.bar(data['labels'], data['values'])
++        chart_path = output_path.replace('.pdf', '_chart.png')
++        fig.savefig(chart_path)
++        plt.close(fig)
++
+         with open(output_path, 'w') as f:
+             f.write(self._format_header(data))
+             f.write(self._format_body(data))
++            f.write(f'\n![Chart]({chart_path})\n')

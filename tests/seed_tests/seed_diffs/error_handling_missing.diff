@@ -1,0 +1,42 @@
+---BEGIN BEFORE---
+src/file_converter.py
+import json
+import os
+
+
+class FileConverter:
+    def __init__(self, logger=None):
+        self.logger = logger
+
+    def convert_single(self, input_path, output_path):
+        """Convert a single CSV file to JSON."""
+        try:
+            with open(input_path, 'r') as f:
+                data = f.read()
+            parsed = json.loads(data)
+            with open(output_path, 'w') as f:
+                json.dump(parsed, f)
+            return True
+        except (IOError, json.JSONDecodeError) as exc:
+            if self.logger:
+                self.logger.error(f"Conversion failed: {exc}")
+            return False
+---END BEFORE---
+--- a/src/file_converter.py
++++ b/src/file_converter.py
+@@ -22,3 +22,15 @@ class FileConverter:
+             return False
++
++    def convert_batch(self, input_dir, output_dir):
++        """Convert all files in input directory."""
++        files = os.listdir(input_dir)
++        for filename in files:
++            input_path = os.path.join(input_dir, filename)
++            output_path = os.path.join(
++                output_dir, filename.replace('.csv', '.json'),
++            )
++            data = open(input_path, 'r').read()
++            parsed = json.loads(data)
++            with open(output_path, 'w') as f:
++                json.dump(parsed, f)
++        return len(files)

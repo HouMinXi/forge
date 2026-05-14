@@ -1,0 +1,42 @@
+---BEGIN BEFORE---
+src/utils/helpers.py
+import datetime
+
+
+def format_date(dt):
+    """Format datetime for display."""
+    if not isinstance(dt, datetime.datetime):
+        return str(dt)
+    return dt.strftime('%Y-%m-%d %H:%M')
+---END BEFORE---
+--- a/src/utils/helpers.py
++++ b/src/utils/helpers.py
+@@ -8,3 +8,32 @@ def format_date(dt):
+     return dt.strftime('%Y-%m-%d %H:%M')
++
++
++def validate_email(email):
++    """Validate email address format."""
++    import re
++    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
++    if re.match(pattern, email):
++        return True
++    return False
++
++
++def validate_phone(phone):
++    """Validate phone number format."""
++    import re
++    pattern = r'^\+?1?\d{9,15}$'
++    if re.match(pattern, phone):
++        return True
++    return False
++
++
++def validate_url(url):
++    """Validate URL format."""
++    import re
++    pattern = r'^https?://[^\s/$.?#].[^\s]*$'
++    if re.match(pattern, url):
++        return True
++    return False

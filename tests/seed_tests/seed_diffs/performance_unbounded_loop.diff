@@ -1,0 +1,40 @@
+---BEGIN BEFORE---
+src/data_processor.py
+class DataProcessor:
+    def __init__(self, db):
+        self.db = db
+
+    def _transform(self, record, related=None):
+        return {'data': record, 'related': related}
+
+    def process_records(self, source_id):
+        """Process all records from a data source."""
+        records = self.db.query(
+            "SELECT * FROM records WHERE source_id = %s LIMIT 1000",
+            (source_id,),
+        )
+        return [self._transform(r) for r in records]
+---END BEFORE---
+--- a/src/data_processor.py
++++ b/src/data_processor.py
+@@ -10,7 +10,14 @@ class DataProcessor:
+     def process_records(self, source_id):
+         """Process all records from a data source."""
+-        records = self.db.query(
+-            "SELECT * FROM records WHERE source_id = %s LIMIT 1000",
+-            (source_id,),
+-        )
+-        return [self._transform(r) for r in records]
++        # Load all records into memory for processing
++        records = self.db.query(
++            "SELECT * FROM records WHERE source_id = %s",
++            (source_id,),
++        )
++        results = []
++        for record in records:
++            related = self.db.query(
++                "SELECT * FROM related WHERE record_id = %s",
++                (record['id'],),
++            )
++            results.append(self._transform(record, related))
++        return results

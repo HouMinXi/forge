@@ -1,0 +1,49 @@
+---BEGIN BEFORE---
+src/cache_manager.py
+import time
+
+
+class CacheManager:
+    def __init__(self):
+        self._cache = {}
+
+    def get(self, key):
+        """Retrieve cached value."""
+        return self._cache.get(key)
+
+    def set(self, key, value, ttl=300):
+        """Set cached value with TTL."""
+        self._cache[key] = {
+            'value': value,
+            'expires': time.time() + ttl,
+        }
+---END BEFORE---
+--- a/src/cache_manager.py
++++ b/src/cache_manager.py
+@@ -4,6 +4,7 @@ class CacheManager:
+     def __init__(self):
+         self._cache = {}
++        self._stats = {'hits': 0, 'misses': 0}
+
+     def get(self, key):
+         """Retrieve cached value."""
+-        return self._cache.get(key)
++        if key in self._cache:
++            self._stats['hits'] += 1
++            return self._cache[key]
++        self._stats['misses'] += 1
++        return None
+
+     def set(self, key, value, ttl=300):
+         """Set cached value with TTL."""
+@@ -14,3 +18,9 @@ class CacheManager:
+             'value': value,
+             'expires': time.time() + ttl,
+         }
++
++    def evict_expired(self):
++        """Remove expired entries. Called from background thread."""
++        now = time.time()
++        for key in list(self._cache.keys()):
++            if self._cache[key]['expires'] < now:
++                del self._cache[key]
