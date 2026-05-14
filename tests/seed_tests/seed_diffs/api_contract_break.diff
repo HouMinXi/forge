@@ -1,0 +1,30 @@
+---BEGIN BEFORE---
+src/api/users.py
+from flask import jsonify
+
+
+def get_user(user_id):
+    """Get user by ID. Returns user dict with profile data."""
+    user = db.users.find_one({'_id': user_id})
+    if not user:
+        return {'error': 'not found'}, 404
+    return {
+        'id': str(user['_id']),
+        'name': user['name'],
+        'email': user['email'],
+        'created_at': user['created_at'].isoformat(),
+    }, 200
+---END BEFORE---
+--- a/src/api/users.py
++++ b/src/api/users.py
+@@ -8,10 +8,10 @@ def get_user(user_id):
+     return {
+-        'id': str(user['_id']),
+-        'name': user['name'],
+-        'email': user['email'],
+-        'created_at': user['created_at'].isoformat(),
++        'user_id': str(user['_id']),
++        'full_name': user['name'],
++        'email_address': user['email'],
++        'registration_date': user['created_at'].isoformat(),
+     }, 200

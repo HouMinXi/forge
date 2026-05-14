@@ -1,0 +1,38 @@
+---BEGIN BEFORE---
+tests/test_payment.py
+import unittest
+from unittest.mock import MagicMock
+
+from payment import PaymentProcessor
+
+
+class TestPaymentProcessor(unittest.TestCase):
+    def test_init(self):
+        processor = PaymentProcessor(gateway=MagicMock())
+        self.assertIsNotNone(processor)
+---END BEFORE---
+--- a/tests/test_payment.py
++++ b/tests/test_payment.py
+@@ -10,3 +10,19 @@ class TestPaymentProcessor(unittest.TestCase):
+         self.assertIsNotNone(processor)
++
++    def test_process_payment(self):
++        """Test payment processing."""
++        mock_gateway = MagicMock()
++        mock_gateway.charge.return_value = {
++            'status': 'success',
++            'transaction_id': 'txn_123',
++        }
++        processor = PaymentProcessor(gateway=mock_gateway)
++        result = processor.process(amount=100, currency='USD')
++        mock_gateway.charge.assert_called_once()
++        self.assertEqual(result['status'], 'success')
++
++    def test_refund(self):
++        """Test refund processing."""
++        mock_gateway = MagicMock()
++        mock_gateway.refund.return_value = {'status': 'refunded'}
++        processor = PaymentProcessor(gateway=mock_gateway)
++        result = processor.refund(transaction_id='txn_123')
++        mock_gateway.refund.assert_called_once()
++        self.assertEqual(result['status'], 'refunded')
