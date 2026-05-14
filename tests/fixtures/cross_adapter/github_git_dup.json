@@ -1,0 +1,19 @@
+{
+  "github_finding": {
+    "source": "github_pr",
+    "source_id": "200001",
+    "file": "src/worker.py",
+    "line": 42,
+    "text": "Race condition in shared dictionary access",
+    "timestamp": "2026-05-10T10:00:00Z"
+  },
+  "git_finding": {
+    "source": "git_log",
+    "source_id": "abc123",
+    "file": "src/worker.py",
+    "line": 42,
+    "text": "Race condition in shared dictionary access",
+    "timestamp": "2026-05-10T12:00:00Z"
+  },
+  "expected": "git_finding should have dedup_of set to github_finding id (same file/line/text_hash within 7 days)"
+}

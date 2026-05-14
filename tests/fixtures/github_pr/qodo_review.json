@@ -1,0 +1,8 @@
+{
+  "id": 100002,
+  "body": "Suggestion: The file operation on line 55 lacks error handling. If the file doesn't exist or permissions are wrong, this will crash without cleanup.",
+  "created_at": "2026-05-10T11:00:00Z",
+  "user": {"login": "qodo-merge-pro[bot]", "type": "Bot"},
+  "diff_hunk": "@@ -53,4 +53,6 @@\n+    f = open(path)\n+    data = f.read()",
+  "path": "src/loader.py"
+}
