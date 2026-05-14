@@ -2,3 +2,10 @@
 *.swo
 *~
 .DS_Store
+__pycache__/
+
+# Forge per-project data (findings, review state)
+.forge/
+
+# Git worktrees
+.worktrees/

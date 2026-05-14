@@ -92,7 +92,27 @@ You are a **quality engineer** whose job is to **find problems**, not to confirm
 - Framework idioms: does the code use the project's established helpers/utilities instead of ad-hoc reimplementations?
 - Style drift: is the new code detectably different in structure from its neighbors (different error handling pattern, different logging style, different assertion approach)?
 - **Cross-function pattern grep**: when new code introduces error messages, log strings, or naming conventions, grep the FULL FILE (not just the diff) for the same pattern in other functions. Verify consistency of prefixes (e.g., `func():` vs `func:`), punctuation, and message structure. Diff-only review cannot catch cross-function inconsistency.
-- _Scope note: this dimension focuses on file-local and module-local consistency. For project-wide pattern and style assessment, see "AI-generated code smells" - pattern drift._
+- **Naming quality**: do variable, function, and class names communicate intent
+  clearly? Flag: single-letter names outside tight loops, generic names (data,
+  result, tmp, val, info) in non-trivial scopes, misleading names that suggest
+  wrong type or purpose (e.g., `is_valid` returning a string, `count` holding
+  a list), abbreviations that are not universally understood in the domain.
+- **Naming consistency**: are similar concepts named consistently across the
+  diff? E.g., mixing `user_id` and `userId` in the same module, or `get_foo`
+  vs `fetch_bar` for the same operation pattern.
+- **Nesting depth** (semantic only -- skip if Step 0b already flagged this
+  function for complexity): flag functions with more than 3 levels of nesting
+  (if/for/try). Deep nesting is a readability barrier -- suggest early returns,
+  guard clauses, or extraction to helper functions.
+- **Function length** (semantic only -- skip if Step 0b already flagged this
+  function for complexity): flag functions exceeding 50 lines of logic
+  (excluding blank lines and comments). Long functions signal multiple
+  responsibilities.
+- **Control flow clarity**: flag complex boolean expressions (3+ terms with
+  mixed AND/OR without parenthetical grouping), convoluted conditional chains
+  that could be simplified (e.g., nested ternaries, if-else ladders that
+  should be match/case or dict dispatch).
+- _Scope note: this dimension covers file-local and module-local consistency, naming quality, and code readability. For project-wide patterns, see "AI-generated code smells" - pattern drift. For numeric complexity metrics (CC, line count), see Step 0b deterministic checks -- do not re-flag what Step 0b already caught._
 
 ### Performance and scalability
 
@@ -113,6 +133,34 @@ You are a **quality engineer** whose job is to **find problems**, not to confirm
 - **Over-engineering** or pattern drift vs. established project style. _(For file-local consistency and helper usage, see also "Convention adherence" above.)_
 - **Plausible-but-wrong** logic that reads well but misses edge cases.
 - Abandoned `TODO`/`FIXME`, commented-out code, or "temporary" shortcuts left in.
+- **Punctuation and formatting fingerprints**: excessive `--` (double dash) in
+  comments where a comma or period suffices, `-` list items in code comments
+  mimicking markdown, smart quotes or em dashes in string literals, verbose
+  "explain-the-obvious" comments (e.g., `# Add chart generation` before
+  `import matplotlib`). These are stylometric signals of LLM authorship
+  (arXiv:2506.17323, arXiv:2605.04157).
+- **Structural repetition**: multiple functions with identical control flow
+  differing only in variable names or regex patterns (e.g., validate_email /
+  validate_phone / validate_url with the same if-match-return-True skeleton).
+  Flag when 3+ functions share the same template (arXiv:2505.10402 ACL 2025).
+- **Error handling theater**: try/catch that only logs and re-raises with zero
+  added value, `except Exception: pass`, or wrapping the entire function body
+  in a single try block. Distinct from dim 3 (which flags *missing* error
+  handling) -- this flags *performative* error handling that mimics robustness
+  without adding resilience (arXiv:2605.05267).
+- **Synthetic uniformity**: a batch of 5+ new functions with unnaturally
+  identical shape -- all within +/-15% of the same line count, same comment
+  density, same nesting depth. Human code has natural variance; AI batch-
+  generation produces suspiciously flat distributions. Distinct from structural
+  repetition (which checks identical control flow) -- this checks identical
+  *statistical shape* across functions with different logic (Futuramo 2026,
+  arXiv:2605.04157).
+- **Speculative parameters**: function signatures with 4+ parameters where 2+
+  have defaults that no caller in the repo overrides. Config keys written but
+  never read. Parameters named with future-tense intent (`enable_feature_x`,
+  `placeholder`). Grep callers to verify -- if no caller passes a non-default
+  value, the parameter is speculative generality (arXiv:2510.03029,
+  arXiv:2605.05267).
 
 ### Commit message accuracy
 
