@@ -188,3 +188,27 @@ class TestRunGitDiff:
             text=True,
             check=False,
         )
+
+    @patch("forge.git.subprocess.run")
+    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    def test_unexpected_exit_code_raises(self, mock_which, mock_run):
+        """Exit codes other than 0 or 1 raise RuntimeError."""
+        mock_run.return_value = MagicMock(
+            returncode=2,
+            stdout="partial output",
+            stderr="error details",
+        )
+        with pytest.raises(RuntimeError, match="error details"):
+            run_git_diff("HEAD")
+
+    @patch("forge.git.subprocess.run")
+    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    def test_negative_exit_code_raises(self, mock_which, mock_run):
+        """Negative exit codes (signal kill) raise RuntimeError."""
+        mock_run.return_value = MagicMock(
+            returncode=-9,
+            stdout="",
+            stderr="",
+        )
+        with pytest.raises(RuntimeError, match="git diff failed"):
+            run_git_diff("HEAD")

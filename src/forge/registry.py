@@ -68,6 +68,11 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
     if not tools:
         return {}
 
+    if not isinstance(tools, dict):
+        raise ValueError(
+            f"{yaml_path}: 'tools' must be a mapping, got {type(tools).__name__}"
+        )
+
     registry = {}
     for name, entry in tools.items():
         if not isinstance(entry, dict):
