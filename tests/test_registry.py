@@ -57,6 +57,13 @@ class TestLoadRegistry:
         with pytest.raises(FileNotFoundError):
             load_registry(str(tmp_path / "nonexistent.yaml"))
 
+    def test_malformed_yaml_syntax_raises(self, tmp_path):
+        """Invalid YAML syntax raises ValueError."""
+        yaml_file = tmp_path / "tools.yaml"
+        yaml_file.write_text("tools:\n  broken: [\n")
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_registry(str(yaml_file))
+
     def test_malformed_yaml_missing_command(self, tmp_path):
         """Missing required 'command' key raises ValueError."""
         yaml_file = tmp_path / "tools.yaml"

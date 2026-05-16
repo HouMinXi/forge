@@ -56,7 +56,10 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
         ValueError: if a tool entry is missing required fields
     """
     with open(yaml_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {yaml_path}: {e}") from e
 
     if data is None or "tools" not in data:
         return {}
