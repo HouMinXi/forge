@@ -1,0 +1,61 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "ruff",
+          "informationUri": "https://docs.astral.sh/ruff",
+          "rules": []
+        }
+      },
+      "results": [
+        {
+          "ruleId": "F401",
+          "level": "error",
+          "message": {
+            "text": "`os` imported but unused"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///src/app.py"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 8,
+                  "endLine": 1,
+                  "endColumn": 10
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "E501",
+          "level": "warning",
+          "message": {
+            "text": "Line too long (120 > 88)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/utils.py"
+                },
+                "region": {
+                  "startLine": 42,
+                  "startColumn": 1,
+                  "endLine": 42,
+                  "endColumn": 120
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

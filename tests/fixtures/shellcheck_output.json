@@ -1,0 +1,24 @@
+[
+  {
+    "file": "deploy.sh",
+    "line": 4,
+    "endLine": 4,
+    "column": 7,
+    "endColumn": 9,
+    "level": "warning",
+    "code": 2154,
+    "message": "y is referenced but not assigned.",
+    "fix": null
+  },
+  {
+    "file": "deploy.sh",
+    "line": 10,
+    "endLine": 10,
+    "column": 12,
+    "endColumn": 20,
+    "level": "error",
+    "code": 2086,
+    "message": "Double quote to prevent globbing and word splitting.",
+    "fix": null
+  }
+]
