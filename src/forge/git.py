@@ -103,11 +103,9 @@ def run_git_diff(
         check=False,
     )
 
-    # Exit 128+: fatal git error
-    if result.returncode >= 128:
+    if result.returncode not in (0, 1):
         raise RuntimeError(
-            result.stderr or "git diff fatal error"
+            result.stderr or f"git diff failed (exit {result.returncode})"
         )
 
-    # Exit 0 (no diff) or 1 (has diff) -- both normal
     return result.stdout
