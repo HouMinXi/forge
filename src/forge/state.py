@@ -49,7 +49,7 @@ def write_state(state_path: str, data: dict) -> None:
         )
         tmp_path = fd.name
         with fd:
-            json.dump(data, fd, indent=2, default=str)
+            json.dump(data, fd, indent=2)
         os.replace(tmp_path, os.path.abspath(state_path))
     except Exception:
         if tmp_path is not None and os.path.exists(tmp_path):

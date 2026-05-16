@@ -48,12 +48,13 @@ def _parse_sarif(
                     elif uri.startswith("file://"):
                         uri = uri[len("file://"):]
                     start_line = region.get("startLine", 0)
+                    end_line_raw = region.get("endLine")
                     findings.append(Finding(
                         file=uri,
                         line=start_line,
-                        # Round 3 H-1: or pattern for null endLine
                         end_line=(
-                            region.get("endLine") or start_line
+                            end_line_raw if end_line_raw is not None
+                            else start_line
                         ),
                         column=(region.get("startColumn") or 0),
                         rule_id=result.get("ruleId", "unknown"),

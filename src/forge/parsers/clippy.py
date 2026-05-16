@@ -61,10 +61,11 @@ def parse_clippy(
         else:
             rule_id = "unknown"
 
+        line_start = span.get("line_start", 0)
         findings.append(Finding(
             file=span.get("file_name", ""),
-            line=span.get("line_start", 0),
-            end_line=span.get("line_end", span.get("line_start", 0)),
+            line=line_start,
+            end_line=(span.get("line_end") or line_start),
             column=(span.get("column_start") or 0),
             rule_id=rule_id,
             level=level,
