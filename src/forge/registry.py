@@ -90,6 +90,11 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
 
         for list_field in ("args", "file_patterns", "exclude_patterns"):
             val = entry.get(list_field)
+            if val is None and list_field in _REQUIRED_FIELDS:
+                raise ValueError(
+                    "Tool '%s': required field '%s' cannot be null"
+                    % (name, list_field)
+                )
             if val is not None and not isinstance(val, list):
                 raise ValueError(
                     "Tool '%s': '%s' must be a list, got %s"
