@@ -88,7 +88,14 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
                     "Tool '%s': missing required field '%s'" % (name, req)
                 )
 
-        # Warn on unknown output_format
+        for list_field in ("args", "file_patterns", "exclude_patterns"):
+            val = entry.get(list_field)
+            if val is not None and not isinstance(val, list):
+                raise ValueError(
+                    "Tool '%s': '%s' must be a list, got %s"
+                    % (name, list_field, type(val).__name__)
+                )
+
         fmt = entry["output_format"]
         if fmt not in _KNOWN_FORMATS:
             logger.warning(
