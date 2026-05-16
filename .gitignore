@@ -3,6 +3,7 @@
 *~
 .DS_Store
 __pycache__/
+*.egg-info/
 
 # Forge per-project data (findings, review state)
 .forge/
