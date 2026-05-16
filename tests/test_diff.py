@@ -148,8 +148,7 @@ class TestExtractChangedLines:
     def test_binary_file_no_crash(self):
         """Binary file markers handled gracefully (no crash)."""
         result = extract_changed_lines(BINARY_DIFF)
-        # Binary files have no line-level changes
-        assert isinstance(result, dict)
+        assert result == {}
 
 
 class TestGetChangedFiles:
