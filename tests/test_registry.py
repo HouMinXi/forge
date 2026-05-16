@@ -71,6 +71,20 @@ class TestLoadRegistry:
         with pytest.raises(ValueError, match="must be a mapping"):
             load_registry(str(yaml_file))
 
+    def test_file_patterns_null_raises(self, tmp_path):
+        """file_patterns: null raises ValueError (required field)."""
+        yaml_file = tmp_path / "tools.yaml"
+        yaml_file.write_text(
+            "tools:\n"
+            "  bad:\n"
+            "    command: x\n"
+            "    args: []\n"
+            "    output_format: x\n"
+            "    file_patterns: null\n"
+        )
+        with pytest.raises(ValueError, match="cannot be null"):
+            load_registry(str(yaml_file))
+
     def test_file_patterns_as_string_raises(self, tmp_path):
         """file_patterns as string instead of list raises ValueError."""
         yaml_file = tmp_path / "tools.yaml"
