@@ -245,13 +245,8 @@ class TestIntegrationState:
         with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
 
-        assert "tool_versions" in state
-        assert isinstance(state["tool_versions"], dict)
-        # shellcheck should have a version
-        assert "shellcheck" in state["tool_versions"]
-        assert state["tool_versions"]["shellcheck"] != "not_installed"
-        assert state["tool_versions"]["shellcheck"] != ""
-
+        # Phase 2 typed state.json schema
+        assert "schema_version" in state
+        assert state["schema_version"] == 1
         assert "verdict" in state
-        assert "diff_spec" in state
-        assert "tools_run" in state
+        assert "disposition_protocol_version" in state
