@@ -1,0 +1,29 @@
+{
+  "scenario": "re_confirm_promoted",
+  "description": "Human re-CONFIRMs a finding that was promoted to UNCERTAIN after MAX_FIX_ATTEMPTS. Next state machine round must exit ESCALATED-frozen.",
+  "initial_state": {
+    "findings": [
+      {
+        "id": "abc123",
+        "fingerprint": "abc123",
+        "source": "L0",
+        "disposition": "UNCERTAIN",
+        "file": "src/foo.py",
+        "line_range": [10, 10],
+        "description": "shellcheck SC2034 unused variable",
+        "error": null,
+        "anchor": null,
+        "evidence_files": []
+      }
+    ],
+    "fix_attempts": {"abc123": 3},
+    "promoted_fingerprints": ["abc123"],
+    "hold_reason": "1 UNCERTAIN finding(s) awaiting human disposition"
+  },
+  "human_input": ["c"],
+  "expected_post_ui_state": {
+    "dispositions": {"abc123": "CONFIRMED"},
+    "hold_reason": null
+  },
+  "expected_next_run_verdict": "ESCALATED"
+}

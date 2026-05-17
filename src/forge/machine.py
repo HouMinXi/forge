@@ -5,15 +5,13 @@
 Owned by 02-02. Mode-agnostic core; mode (LOCAL / CI) is a constructor
 parameter (D3). Mode resolution (TTY / env / flag) is 02-04 + 02-05.
 
-Per-round flow:
-  1. Run L0 (Phase 1 runner) -> auto-CONFIRMED StateFindings (GATE-04a)
-  2. Collect L1 candidate findings (Phase 5; 02-02 default = [])
-  3. For each L1 candidate: falsifier.falsify() -> Disposition
+Per-round flow (STATE-08 ordering):
+  1. _run_l0_phase: L0 detect -> auto-CONFIRMED StateFindings (GATE-04a)
+  2. LOCAL only: _apply_autofix_loop_to(l0_findings) (STATE-03)
+  3. _run_l1_phase: L1 candidates -> falsify -> Disposition
   4. Merge by fingerprint (FP-04: L0 wins; DISPO-05 UNCERTAIN sticks)
-  5. LOCAL mode: for each unfixed CONFIRMED, invoke autofixer
-  6. CI mode: skip auto-fix; CONFIRMED > 0 -> FAIL immediately
-  7. Update state.round_history; save_state
-  8. Convergence check / HOLD check
+  5. Update state.round_history; save_state
+  6. Convergence check / HOLD check
 """
 
 from __future__ import annotations
@@ -23,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+import logging
+
 from .autofix import AutoFixer, FixOutcome
 from .baseline import ResolvedReview
 from .diagnose import diagnose_non_convergence
@@ -31,12 +31,14 @@ from .disposition import (
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
 )
 from .falsify import Falsifier
+from .hold import check_escalated_frozen
 from .parsers.base import Finding, ToolError
 from .state import (
     Mode,
     State,
     StateFinding,
     Verdict,
+    load_state,
     save_state,
 )
 
@@ -131,6 +133,7 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        self._maybe_load_prior_state()
         self._state.mode = self.mode
         self._state.source_hash = self.source_hash
         self._state.baseline_spec_repr = self.baseline_spec_repr
@@ -139,6 +142,25 @@ class StateMachine:
         if self.mode == Mode.CI:
             return self._run_ci()
         raise ValueError("unknown mode: %s" % self.mode)
+
+    def _maybe_load_prior_state(self) -> None:
+        """Load .forge/state.json if LOCAL mode; skip if CI (STATE-09).
+
+        CI mode starts fresh every run to avoid inheriting human-
+        DISMISSED findings into shared CI runs. LOCAL mode loads if
+        file present (CorruptedStateError propagates per 02-01 contract).
+        """
+        state_path = self.cwd / ".forge" / "state.json"
+        if self.mode == Mode.CI:
+            if state_path.exists():
+                logging.getLogger("forge").warning(
+                    "ignoring prior state.json in CI mode (STATE-09)"
+                )
+            return
+        if state_path.exists():
+            loaded = load_state(state_path)
+            if loaded is not None:
+                self._state = loaded
 
     def _run_ci(self) -> Verdict:
         """CI: linear single round; FAIL on any CONFIRMED, else PASS.
@@ -158,14 +180,47 @@ class StateMachine:
         """LOCAL: loop until fixpoint / HOLD / MAX_TOTAL_ROUNDS.
 
         STATE-01 / STATE-02 / STATE-04 / STATE-05 / GATE-01b.
+        ESCALATED-frozen check at top of each iteration (after HOLD
+        resume): if check_escalated_frozen() -> Verdict.ESCALATED.
         """
         for round_index in range(self.max_total_rounds):
+            if check_escalated_frozen(self._state):
+                self._append_round_snapshot(
+                    round_index,
+                    l0_findings=[],
+                    l1_findings=[],
+                )
+                self._state.verdict = Verdict.ESCALATED
+                self._state.converged = False
+                frozen_fps = [
+                    f.fingerprint for f in self._state.findings
+                    if (
+                        f.disposition == Disposition.CONFIRMED
+                        and f.fingerprint
+                        in self._state.promoted_fingerprints
+                    )
+                ]
+                preview = ",".join(frozen_fps[:3])
+                more = "..." if len(frozen_fps) > 3 else ""
+                self._state.infra_errors.append(
+                    "ESCALATED frozen (DISPO-05) fingerprints=[%s%s]"
+                    % (preview, more)
+                )
+                self._persist_state()
+                return Verdict.ESCALATED
             self._execute_round(round_index)
-            self._apply_autofix_loop()
             if self._fixpoint_reached():
                 self._finalize_local_terminal()
                 return self._state.verdict
             if self._should_enter_hold():
+                uncertain_count = sum(
+                    1 for f in self._state.findings
+                    if f.disposition == Disposition.UNCERTAIN
+                )
+                self._state.hold_reason = (
+                    "%d UNCERTAIN finding(s) awaiting human disposition"
+                    % uncertain_count
+                )
                 self._state.verdict = Verdict.PENDING
                 self._persist_state()
                 return Verdict.PENDING
@@ -182,31 +237,34 @@ class StateMachine:
         self._persist_state()
         return Verdict.ESCALATED
 
-    def _execute_round(self, round_index: int) -> None:
-        """One round: L0 + L1 falsify + merge + state update."""
-        self._state.round = round_index
+    def _run_l0_phase(self) -> list[StateFinding]:
+        """STATE-08 L0 detect phase. Returns L0 StateFindings (CONFIRMED).
 
-        # 1. L0 runner -> auto-CONFIRMED per GATE-04a + FP-04
+        No file mutations here -- L0 detect only; autofix is separate.
+        """
         try:
             l0_findings, l0_infra = self.l0_runner(
                 self.registry, self._source_files()
             )
             self._state.infra_errors.extend(l0_infra)
+            return l0_findings
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
                 "L0 runner failed: %s" % exc
             )
-            l0_findings = []
+            return []
 
-        # 2. L1 candidates
+    def _run_l1_phase(self) -> list[StateFinding]:
+        """STATE-08 L1 detect phase. Runs AFTER L0 autofix in LOCAL mode.
+
+        Both modes invoke L1 per LAYER0-07 (SARIF includes L1 candidates).
+        LOCAL L1 sees post-fix code; CI L1 sees raw L0 output (no autofix).
+        """
         l1_candidates = self.l1_provider()
-
-        # 3. Falsify each L1 candidate
         l1_findings: list[StateFinding] = []
         for f in l1_candidates:
             try:
-                disposition = self.falsifier.falsify(f)
-                f.disposition = disposition
+                f.disposition = self.falsifier.falsify(f)
             except RuntimeError as exc:
                 f.disposition = Disposition.UNCERTAIN
                 f.error = "falsify() raised: %s" % exc
@@ -214,33 +272,45 @@ class StateMachine:
                     "falsify exception on %s: %s" % (f.fingerprint, exc)
                 )
             l1_findings.append(f)
+        return l1_findings
 
-        # 4. Merge by fingerprint -- FP-04 (L0 wins; promoted sticks)
+    def _execute_round(self, round_index: int) -> None:
+        """STATE-08: both modes run L0 + L1 per LAYER0-07.
+
+        Difference is autofix scope:
+          LOCAL: L0 detect -> L0 autofix loop -> L1 detect (post-fix code)
+          CI:    L0 detect -> L1 detect (no autofix loop per STATE-03)
+        """
+        self._state.round = round_index
+        l0_findings = self._run_l0_phase()
+        if self.mode == Mode.LOCAL:
+            self._apply_autofix_loop_to(l0_findings)
+        l1_findings = self._run_l1_phase()
         merged = self._merge_findings(l0_findings, l1_findings)
-
-        # 5. Apply DISPO-05 promotion stickiness against prior round
         merged = self._apply_promotion_stickiness(merged)
-
         self._state.findings = merged
         self._append_round_snapshot(round_index, l0_findings, l1_findings)
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
 
-    def _apply_autofix_loop(self) -> None:
-        """LOCAL only: attempt auto-fix on each unfixed CONFIRMED finding.
+    def _apply_autofix_loop_to(
+        self, findings: list[StateFinding]
+    ) -> None:
+        """LOCAL only: attempt auto-fix on the given finding list.
 
-        For each CONFIRMED finding:
+        STATE-08 parameterized: operates on the provided list (L0 only)
+        rather than the merged full list. For each CONFIRMED finding:
           - If fix_attempts >= max_fix_attempts: promote to UNCERTAIN
             (DISPO-05, exactly once per fingerprint)
           - Else: invoke autofixer.fix()
             - SUCCESS -> FIXED
             - PARSE_FAIL -> revert_fn(finding) + fix_attempts++
-            - NO_CHANGE -> fix_attempts++ (no revert needed, R1 H1)
-            - EXCEPTION -> fix_attempts++ + infra_errors append (R1 H1)
+            - NO_CHANGE -> fix_attempts++ (no revert needed)
+            - EXCEPTION -> fix_attempts++ + infra_errors append
         """
         mode_hint = self.resolved_review.mode_hint
-        for finding in self._state.findings:
+        for finding in findings:
             if finding.disposition != Disposition.CONFIRMED:
                 continue
             fp = finding.fingerprint
@@ -249,6 +319,7 @@ class StateMachine:
             # DISPO-05: promote CONFIRMED -> UNCERTAIN once
             if attempts >= self.max_fix_attempts:
                 finding.disposition = Disposition.UNCERTAIN
+                self._state.promoted_fingerprints.add(fp)
                 continue
 
             try:
