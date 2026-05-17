@@ -1,0 +1,11 @@
+{
+  "description": "STATE-05 Category D: infrastructure failure (any infra_errors -> D)",
+  "rounds": [
+    {"round": 0, "l0_fingerprints": ["fp-1"], "fixed_fingerprints": [], "dispositions": {"fp-1": "CONFIRMED"}},
+    {"round": 1, "l0_fingerprints": [], "fixed_fingerprints": ["fp-1"], "dispositions": {"fp-1": "FIXED"}},
+    {"round": 2, "l0_fingerprints": ["fp-1"], "fixed_fingerprints": [], "dispositions": {"fp-1": "CONFIRMED"}}
+  ],
+  "infra_errors": ["L0 ToolError tool=ruff msg=binary not found"],
+  "expected_diagnosis": "D",
+  "note": "D dominates A even though A-toggle pattern is present"
+}

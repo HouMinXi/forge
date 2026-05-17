@@ -1,0 +1,7 @@
+{
+  "description": "PASS round 0: L0 finds nothing, trivial fixpoint",
+  "l0_findings": [],
+  "l0_infra_errors": [],
+  "expected_verdict": "PASS",
+  "expected_converged": true
+}

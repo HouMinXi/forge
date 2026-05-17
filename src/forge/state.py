@@ -57,7 +57,15 @@ class StateFinding:
 
 @dataclass
 class State:
-    """state.json schema. v1."""
+    """state.json schema. v1.
+
+    02-02 additions (additive only, no schema_version bump per D2):
+      - baseline_spec_repr: from 02-03 serialize_baseline_spec; recorded so
+        HOLD resume can verify which baseline was used (OQ1 fix from 02-03)
+      - round_history: per-round snapshots for STATE-05 diagnosis
+      - infra_errors: error messages collected during L0/L1/falsify failures
+        (drives STATE-05 Category D classification)
+    """
     schema_version: int = SCHEMA_VERSION
     disposition_protocol_version: int = DISPOSITION_PROTOCOL_VERSION
     round: int = 0
@@ -70,6 +78,10 @@ class State:
     fix_attempts: dict[str, int] = field(default_factory=dict)
     verdict: Verdict = Verdict.PENDING
     converged: bool = False
+    # 02-02 additions:
+    baseline_spec_repr: Optional[str] = None
+    round_history: list[dict] = field(default_factory=list)
+    infra_errors: list[str] = field(default_factory=list)
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -132,7 +144,7 @@ def load_state(path: Path) -> Optional[State]:
         )
 
     try:
-        return State(
+        state = State(
             schema_version=data["schema_version"],
             disposition_protocol_version=data[
                 "disposition_protocol_version"
@@ -150,6 +162,15 @@ def load_state(path: Path) -> Optional[State]:
         raise CorruptedStateError(
             "missing or invalid field in %s: %s" % (path, e)
         ) from e
+
+    # 02-02 additions: backward-compat defaults for pre-02-02 state.json
+    # (R1 B1 silent-loss guard). Pre-02-02 files lack these keys; the
+    # loader returns a State with defaults rather than KeyError.
+    state.baseline_spec_repr = data.get("baseline_spec_repr")
+    state.round_history = data.get("round_history", [])
+    state.infra_errors = data.get("infra_errors", [])
+
+    return state
 
 
 def save_state(state: State, path: Path) -> None:

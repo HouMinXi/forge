@@ -1,0 +1,10 @@
+{
+  "description": "STATE-05 Category C: UNCERTAIN count grows monotonically over 3 rounds",
+  "rounds": [
+    {"round": 0, "l0_fingerprints": [], "fixed_fingerprints": [], "dispositions": {"fp-u1": "UNCERTAIN"}},
+    {"round": 1, "l0_fingerprints": [], "fixed_fingerprints": [], "dispositions": {"fp-u1": "UNCERTAIN", "fp-u2": "UNCERTAIN"}},
+    {"round": 2, "l0_fingerprints": [], "fixed_fingerprints": [], "dispositions": {"fp-u1": "UNCERTAIN", "fp-u2": "UNCERTAIN", "fp-u3": "UNCERTAIN"}}
+  ],
+  "infra_errors": [],
+  "expected_diagnosis": "C"
+}

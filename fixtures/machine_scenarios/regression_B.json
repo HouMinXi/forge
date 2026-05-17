@@ -1,0 +1,10 @@
+{
+  "description": "STATE-05 Category B: net CONFIRMED count not decreasing over last 3 rounds",
+  "rounds": [
+    {"round": 0, "l0_fingerprints": ["fp-1"], "fixed_fingerprints": [], "dispositions": {"fp-1": "CONFIRMED"}},
+    {"round": 1, "l0_fingerprints": ["fp-1", "fp-2"], "fixed_fingerprints": [], "dispositions": {"fp-1": "CONFIRMED", "fp-2": "CONFIRMED"}},
+    {"round": 2, "l0_fingerprints": ["fp-1", "fp-2", "fp-3"], "fixed_fingerprints": [], "dispositions": {"fp-1": "CONFIRMED", "fp-2": "CONFIRMED", "fp-3": "CONFIRMED"}}
+  ],
+  "infra_errors": [],
+  "expected_diagnosis": "B"
+}

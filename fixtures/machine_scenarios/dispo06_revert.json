@@ -1,0 +1,26 @@
+{
+  "description": "DISPO-06: auto-fix parse-fail revert scenarios",
+  "stub_autofixer": {
+    "default": "PARSE_FAIL",
+    "outcomes": {"fp-ok": "SUCCESS", "fp-bad": "PARSE_FAIL", "fp-noop": "NO_CHANGE"}
+  },
+  "test_cases": {
+    "parse_fail_git": {
+      "mode_hint": "git",
+      "expected_revert_fn_called": true,
+      "expected_fix_attempts_incremented": true,
+      "expected_disposition": "CONFIRMED"
+    },
+    "parse_fail_non_git": {
+      "mode_hint": "non-git",
+      "expected_revert_fn_called": true,
+      "expected_fix_attempts_incremented": true,
+      "expected_disposition": "CONFIRMED"
+    },
+    "no_change": {
+      "expected_revert_fn_called": false,
+      "expected_fix_attempts_incremented": true,
+      "expected_disposition": "CONFIRMED"
+    }
+  }
+}

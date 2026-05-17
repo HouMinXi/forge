@@ -1,0 +1,11 @@
+{
+  "description": "STATE-05 Category A: FIXED <-> CONFIRMED toggle",
+  "rounds": [
+    {"round": 0, "l0_fingerprints": ["fp-1"], "fixed_fingerprints": [], "dispositions": {"fp-1": "CONFIRMED"}},
+    {"round": 1, "l0_fingerprints": [], "fixed_fingerprints": ["fp-1"], "dispositions": {"fp-1": "FIXED"}},
+    {"round": 2, "l0_fingerprints": ["fp-1"], "fixed_fingerprints": [], "dispositions": {"fp-1": "CONFIRMED"}},
+    {"round": 3, "l0_fingerprints": [], "fixed_fingerprints": ["fp-1"], "dispositions": {"fp-1": "FIXED"}}
+  ],
+  "infra_errors": [],
+  "expected_diagnosis": "A"
+}
