@@ -1,0 +1,10 @@
+{
+  "default": "CONFIRMED",
+  "dispositions": {
+    "fp-ok-001": "DISMISSED"
+  },
+  "errors": {
+    "fp-timeout-001": "stub-simulated timeout",
+    "fp-crash-002": "stub-simulated stack overflow"
+  }
+}

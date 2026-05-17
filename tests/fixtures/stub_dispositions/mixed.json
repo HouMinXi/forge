@@ -1,0 +1,8 @@
+{
+  "default": "CONFIRMED",
+  "dispositions": {
+    "fp-leak-001": "CONFIRMED",
+    "fp-style-002": "DISMISSED",
+    "fp-vague-003": "UNCERTAIN"
+  }
+}

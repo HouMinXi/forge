@@ -21,7 +21,7 @@ Addresses:
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+from pathlib import Path
 
 from forge import EXIT_PASS, EXIT_FAIL, __version__
 from forge.delta import filter_delta
@@ -32,7 +32,7 @@ from forge.parsers.base import ToolError
 from forge.registry import load_registry
 from forge.reporter import format_report
 from forge.runner import run_tools
-from forge.state import write_state
+from forge.state import State, Verdict, save_state
 from forge.verdict import determine_verdict
 
 
@@ -111,26 +111,12 @@ def main() -> None:
     changed_lines = extract_changed_lines(diff_text)
     changed_files = get_changed_files(diff_text)
 
-    state_path = os.path.join(args.state_dir, "state.json")
+    state_path = Path(os.path.join(args.state_dir, "state.json"))
 
     # d. No changes -> PASS
     if not changed_files:
         print("forge: PASS -- no changes detected")
-        write_state(state_path, {
-            "version": __version__,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "diff_spec": diff_spec,
-            "verdict": "PASS",
-            "exit_code": EXIT_PASS,
-            "tools_run": [],
-            "tools_skipped": [],
-            "tools_failed": [],
-            "tool_versions": {},
-            "delta_findings": [],
-            "all_findings_count": 0,
-            "delta_findings_count": 0,
-            "summary": "PASS: no changes detected",
-        })
+        save_state(State(verdict=Verdict.PASS, converged=True), state_path)
         sys.exit(EXIT_PASS)
 
     # e. Run tools
@@ -210,29 +196,11 @@ def main() -> None:
     print(report)
 
     # k. Write state
-    tools_run = sorted(tool_results.keys())
-    write_state(state_path, {
-        "version": __version__,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "diff_spec": diff_spec,
-        "verdict": verdict_str,
-        "exit_code": exit_code,
-        "tools_run": tools_run,
-        "tools_skipped": tools_skipped,
-        "tools_failed": tools_failed,
-        "tool_versions": tool_versions,
-        "delta_findings": [item.to_dict() for item in delta_findings],
-        "all_findings_count": len(all_findings_preserved),
-        "delta_findings_count": len(delta_findings),
-        "summary": "%s: %d new / %d pre-existing / %d tools / %d failed"
-        % (
-            verdict_str,
-            len(delta_findings),
-            len(all_findings_preserved) - len(delta_findings),
-            len(tools_run),
-            len(tools_failed),
-        ),
-    })
+    verdict_enum = Verdict(verdict_str)
+    save_state(
+        State(verdict=verdict_enum, converged=(verdict_enum == Verdict.PASS)),
+        state_path,
+    )
 
     # l. Exit
     sys.exit(exit_code)
