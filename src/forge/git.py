@@ -5,11 +5,22 @@
 This module is THE single owner of git diff subprocess calls in the
 codebase. All other modules call these functions -- they do not call
 git directly. Addresses Consensus #1 (git diff execution unowned).
+
+02-03 additions: repo detection, ref validation, pseudo-ref resolution.
+Existing Phase 1 API unchanged. New surface (B1 + H2 fixes):
+  - is_git_repo(cwd)             -> bool                   (B1)
+  - resolve_git_ref(ref, cwd)    -> str (resolved sha)     (B1)
+  - is_pseudo_ref(name)          -> bool
+  - working_tree_diff(...)       -> str                    (H2)
+  - cached_diff(...)             -> str
+  - git_diff(baseline, head, ...) -> str
 """
 
 import re
 import shutil
 import subprocess
+import warnings
+from pathlib import Path
 
 # Safe known flags that are allowed despite starting with --
 _SAFE_FLAGS = frozenset({"--staged", "--cached"})
@@ -109,3 +120,232 @@ def run_git_diff(
         )
 
     return result.stdout
+
+
+# --- 02-03 additions: pseudo-refs, repo detection, ref validation ---
+
+WORKING = "WORKING"
+INDEX = "INDEX"
+PSEUDO_REFS = {WORKING, INDEX}
+
+
+def is_pseudo_ref(name: str) -> bool:
+    """Check whether name is a forge pseudo-ref (WORKING or INDEX)."""
+    return name in PSEUDO_REFS
+
+
+def is_git_repo(cwd: Path) -> bool:
+    """B1 fix: check whether cwd is inside a git repo.
+
+    Uses `git rev-parse --git-dir` (non-zero outside a repo).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def resolve_git_ref(ref: str, cwd: Path) -> str:
+    """B1 fix: validate that a git ref exists; return its resolved sha.
+
+    Raises:
+        BaselineResolutionError: ref does not exist.
+    """
+    from .errors import BaselineResolutionError
+
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", ref + "^{commit}"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise BaselineResolutionError(
+            "git ref %r does not resolve in %s: %s"
+            % (ref, cwd, result.stderr.strip())
+        )
+    return result.stdout.strip()
+
+
+def _is_likely_binary(path: Path) -> bool:
+    """H2 fix: heuristic binary detection via null-byte in first 8KB.
+
+    Matches git's own diff-detection behavior (loosely). Used to skip
+    binary untracked files in working_tree_diff.
+    """
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(8192)
+        return b"\0" in chunk
+    except OSError:
+        return False
+
+
+def git_diff(
+    baseline_ref: str,
+    head_ref: str,
+    paths: list[Path],
+    repo_root: Path,
+) -> str:
+    """Standard `git diff <baseline_ref> <head_ref> -- <paths>`.
+
+    Exit code semantics (R3-1 fix; matches Phase 1 run_git_diff per
+    Mimo F-03 in src/forge/git.py:80-86):
+      0 = no differences (return empty stdout)
+      1 = differences found (NORMAL -- return stdout with diff)
+      2+ = real git error (raise BaselineResolutionError)
+    """
+    from .errors import BaselineResolutionError
+
+    cmd = (
+        ["git", "diff", baseline_ref, head_ref, "--"]
+        + [str(p) for p in paths]
+    )
+    result = subprocess.run(
+        cmd, cwd=repo_root, capture_output=True, text=True, check=False
+    )
+    if result.returncode not in (0, 1):
+        raise BaselineResolutionError(
+            "git diff %s..%s failed (exit %d): %s"
+            % (
+                baseline_ref,
+                head_ref,
+                result.returncode,
+                result.stderr.strip(),
+            )
+        )
+    return result.stdout
+
+
+def cached_diff(
+    baseline_ref: str,
+    paths: list[Path],
+    repo_root: Path,
+) -> str:
+    """`git diff --cached <baseline_ref> -- <paths>` (staged vs baseline).
+
+    Exit code semantics (R3-1 fix): accept 0/1, raise on 2+.
+    """
+    from .errors import BaselineResolutionError
+
+    cmd = (
+        ["git", "diff", "--cached", baseline_ref, "--"]
+        + [str(p) for p in paths]
+    )
+    result = subprocess.run(
+        cmd, cwd=repo_root, capture_output=True, text=True, check=False
+    )
+    if result.returncode not in (0, 1):
+        raise BaselineResolutionError(
+            "git diff --cached %s failed (exit %d): %s"
+            % (baseline_ref, result.returncode, result.stderr.strip())
+        )
+    return result.stdout
+
+
+def working_tree_diff(
+    baseline_ref: str,
+    paths: list[Path],
+    repo_root: Path,
+) -> str:
+    """Diff baseline..working_tree, including non-binary untracked files.
+
+    Tracked diff: `git diff <baseline_ref> -- <paths>`.
+    Untracked: enumerate via `git ls-files --others --exclude-standard`,
+    synthesize as full-add via `git diff --no-index /dev/null <file>`.
+    H2 fix: binary untracked files are SKIPPED with warnings.warn.
+
+    Exit code handling (R2-1 + R3-1): all git diff calls accept exit 0/1,
+    raise BaselineResolutionError on exit 2+. Follows Phase 1 run_git_diff
+    convention (Mimo F-03).
+    """
+    from .errors import BaselineResolutionError
+
+    # Tracked diff (R3-1: must NOT use check=True)
+    tracked_cmd = (
+        ["git", "diff", baseline_ref, "--"]
+        + [str(p) for p in paths]
+    )
+    tracked_result = subprocess.run(
+        tracked_cmd,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tracked_result.returncode not in (0, 1):
+        raise BaselineResolutionError(
+            "git diff %s (tracked, working_tree_diff) failed (exit %d): %s"
+            % (
+                baseline_ref,
+                tracked_result.returncode,
+                tracked_result.stderr.strip(),
+            )
+        )
+    tracked = tracked_result.stdout
+
+    # Untracked files (ls-files has no exit-1-normal semantics)
+    ls_cmd = (
+        ["git", "ls-files", "--others", "--exclude-standard", "--"]
+        + [str(p) for p in paths]
+    )
+    untracked_paths = [
+        line
+        for line in subprocess.run(
+            ls_cmd,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        if line.strip()
+    ]
+
+    untracked_diffs: list[str] = []
+    skipped_binary: list[str] = []
+    for rel_path in sorted(untracked_paths):
+        full = repo_root / rel_path
+        if _is_likely_binary(full):
+            skipped_binary.append(rel_path)
+            continue
+        # R2-1: git diff --no-index exit codes:
+        #   0 = files identical (impossible vs /dev/null with content)
+        #   1 = files differ (THE expected case)
+        #   2+ = real error
+        cmd = ["git", "diff", "--no-index", "/dev/null", str(full)]
+        result = subprocess.run(
+            cmd,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode not in (0, 1):
+            raise BaselineResolutionError(
+                "git diff --no-index failed for untracked file %s "
+                "(exit %d): %s"
+                % (rel_path, result.returncode, result.stderr.strip())
+            )
+        untracked_diffs.append(result.stdout)
+
+    if skipped_binary:
+        warnings.warn(
+            "forge: skipped %d binary untracked file(s) from "
+            "working-tree diff: %s%s"
+            % (
+                len(skipped_binary),
+                skipped_binary[:3],
+                "..." if len(skipped_binary) > 3 else "",
+            ),
+            stacklevel=2,
+        )
+
+    return tracked + "\n".join(untracked_diffs)

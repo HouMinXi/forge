@@ -9,3 +9,15 @@ class SchemaVersionMismatchError(Exception):
 
 class CorruptedStateError(Exception):
     """Raised when state.json is corrupt or internally inconsistent."""
+
+
+class BaselineResolutionError(Exception):
+    """Raised when baseline resolution fails (invalid ref, bad combination)."""
+
+
+class SnapshotSchemaMismatchError(Exception):
+    """Raised when snapshot schema_version does not match expected."""
+
+
+class CorruptedSnapshotError(Exception):
+    """Raised when snapshot file is corrupt or unparseable."""
