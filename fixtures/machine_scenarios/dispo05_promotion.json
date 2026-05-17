@@ -1,0 +1,11 @@
+{
+  "description": "DISPO-05: exhaust MAX_FIX_ATTEMPTS to promote CONFIRMED -> UNCERTAIN",
+  "stub_falsifier": {"default": "CONFIRMED"},
+  "stub_autofixer": {"default": "PARSE_FAIL"},
+  "expected_state_after_budget_exhausted": {
+    "fix_attempts": {"fp-stuck-1": 3},
+    "dispositions": {"fp-stuck-1": "UNCERTAIN"},
+    "expected_verdict": "PENDING",
+    "timing_note": "MAX_FIX_ATTEMPTS=3 reached at end of round 2 (3rd PARSE_FAIL). Promotion CONFIRMED->UNCERTAIN occurs in autofix loop. HOLD triggers because UNCERTAIN>0 AND zero unfixed CONFIRMED."
+  }
+}

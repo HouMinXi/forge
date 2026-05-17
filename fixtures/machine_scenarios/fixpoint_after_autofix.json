@@ -1,0 +1,10 @@
+{
+  "description": "1 CONFIRMED -> autofix SUCCESS -> FIXED -> next round clean -> PASS",
+  "round_0_l0_findings": [
+    {"fingerprint": "fp-fix-1", "file": "test.py", "line": 10, "end_line": 10, "rule_id": "E001", "message": "unused import"}
+  ],
+  "stub_autofixer": {"default": "SUCCESS"},
+  "round_1_l0_findings": [],
+  "expected_verdict": "PASS",
+  "expected_converged": true
+}

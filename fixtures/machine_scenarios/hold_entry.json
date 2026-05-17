@@ -1,0 +1,8 @@
+{
+  "description": "GATE-01b: UNCERTAIN + zero unfixed CONFIRMED triggers HOLD",
+  "l0_findings_round0": [
+    {"fingerprint": "fp-unc-1", "disposition_override": "UNCERTAIN"}
+  ],
+  "expected_verdict": "PENDING",
+  "note": "HOLD returns Verdict.PENDING, not a separate HOLD verdict"
+}
