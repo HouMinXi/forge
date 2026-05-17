@@ -1,0 +1,40 @@
+{
+  "scenario": "mixed_dispositions",
+  "description": "Two UNCERTAIN findings: human confirms first, dismisses second.",
+  "initial_state": {
+    "findings": [
+      {
+        "id": "fp-a",
+        "fingerprint": "fp-a",
+        "source": "L0",
+        "disposition": "UNCERTAIN",
+        "file": "src/a.py",
+        "line_range": [5, 5],
+        "description": "finding A",
+        "error": null,
+        "anchor": null,
+        "evidence_files": []
+      },
+      {
+        "id": "fp-b",
+        "fingerprint": "fp-b",
+        "source": "L0",
+        "disposition": "UNCERTAIN",
+        "file": "src/b.py",
+        "line_range": [20, 25],
+        "description": "finding B",
+        "error": null,
+        "anchor": null,
+        "evidence_files": []
+      }
+    ],
+    "fix_attempts": {},
+    "promoted_fingerprints": [],
+    "hold_reason": "2 UNCERTAIN finding(s) awaiting human disposition"
+  },
+  "human_input": ["c", "d"],
+  "expected_post_ui_state": {
+    "dispositions": {"fp-a": "CONFIRMED", "fp-b": "DISMISSED"},
+    "hold_reason": null
+  }
+}

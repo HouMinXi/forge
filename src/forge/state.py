@@ -9,7 +9,7 @@ no remove). Bump SCHEMA_VERSION on breaking change.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Literal, Optional
@@ -65,6 +65,13 @@ class State:
       - round_history: per-round snapshots for STATE-05 diagnosis
       - infra_errors: error messages collected during L0/L1/falsify failures
         (drives STATE-05 Category D classification)
+
+    02-04 additions (additive per D2):
+      - hold_reason: Optional[str] -- set on HOLD entry; cleared on resume.
+        Disambiguates "interrupted mid-run" from "HOLD pending human input".
+      - promoted_fingerprints: set[str] -- fingerprints promoted CONFIRMED ->
+        UNCERTAIN via DISPO-05. Used by ESCALATED-frozen predicate.
+        Serialized as sorted list (JSON has no native set type).
     """
     schema_version: int = SCHEMA_VERSION
     disposition_protocol_version: int = DISPOSITION_PROTOCOL_VERSION
@@ -82,6 +89,9 @@ class State:
     baseline_spec_repr: Optional[str] = None
     round_history: list[dict] = field(default_factory=list)
     infra_errors: list[str] = field(default_factory=list)
+    # 02-04 additions:
+    hold_reason: Optional[str] = None
+    promoted_fingerprints: set[str] = field(default_factory=set)
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -170,13 +180,59 @@ def load_state(path: Path) -> Optional[State]:
     state.round_history = data.get("round_history", [])
     state.infra_errors = data.get("infra_errors", [])
 
+    # 02-04 additions: backward-compat defaults for pre-02-04 state.json.
+    state.hold_reason = data.get("hold_reason")
+    state.promoted_fingerprints = set(
+        data.get("promoted_fingerprints", [])
+    )
+
     return state
 
 
+def _finding_to_dict(f: StateFinding) -> dict:
+    """Serialize StateFinding to JSON-safe dict."""
+    d = {
+        "id": f.id,
+        "fingerprint": f.fingerprint,
+        "source": f.source,
+        "disposition": f.disposition.value,
+        "file": f.file,
+        "line_range": list(f.line_range),
+        "description": f.description,
+        "error": f.error,
+        "anchor": f.anchor,
+        "evidence_files": f.evidence_files,
+    }
+    return d
+
+
 def save_state(state: State, path: Path) -> None:
-    """Atomic write of state.json. Rebuilds dispositions cache first."""
+    """Atomic write of state.json. Rebuilds dispositions cache first.
+
+    02-04 rewrite: no asdict on State. asdict cannot handle the set-typed
+    promoted_fingerprints field. All fields serialized explicitly.
+    """
     state.dispositions = {f.id: f.disposition for f in state.findings}
+    data = {
+        "schema_version": state.schema_version,
+        "disposition_protocol_version": state.disposition_protocol_version,
+        "round": state.round,
+        "mode": state.mode.value,
+        "source_hash": state.source_hash,
+        "findings": [_finding_to_dict(f) for f in state.findings],
+        "dispositions": {
+            k: v.value for k, v in state.dispositions.items()
+        },
+        "fix_attempts": dict(state.fix_attempts),
+        "verdict": state.verdict.value,
+        "converged": state.converged,
+        "baseline_spec_repr": state.baseline_spec_repr,
+        "round_history": list(state.round_history),
+        "infra_errors": list(state.infra_errors),
+        "hold_reason": state.hold_reason,
+        "promoted_fingerprints": sorted(state.promoted_fingerprints),
+    }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(asdict(state), default=str, indent=2))
+    tmp.write_text(json.dumps(data, indent=2))
     tmp.replace(path)
