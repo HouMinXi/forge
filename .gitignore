@@ -15,3 +15,24 @@ __pycache__/
 
 # Git worktrees
 .worktrees/
+
+# Planning and design docs (internal, not for distribution)
+.planning/
+
+# AI assistant config and memory (NEVER commit)
+.claude/
+CLAUDE.md
+*.jsonl
+
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+*secret*
+*token*
+*credential*
+
+# API config that may contain keys
+aicc.conf
+.aicc/
