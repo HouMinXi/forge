@@ -22,11 +22,18 @@ Pipeline (single invocation):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Optional
 
 from . import __version__
+from .runner import capture_tool_version
+from .sarif import build_sarif_log, format_summary
+
+if TYPE_CHECKING:
+    from .registry import ToolConfig
 from .baseline import (
     BaselineSpec,
     EmptyBaseline,
@@ -56,10 +63,42 @@ from .machine import StateMachine
 from .mode_resolver import resolve_mode
 from .registry import load_registry
 from .source import compute_source_hash
-from .state import Mode, Verdict
+from .state import Mode, Verdict, load_state as _load_state
 
 
 MAX_HOLD_CYCLES = 10
+
+
+def _emit_ci_output(
+    state_path: Path,
+    registry: dict[str, "ToolConfig"],
+    post_emit_hook: Optional[Callable[[], None]] = None,
+) -> None:
+    """LAYER0-07: SARIF stdout + summary stderr in CI mode.
+
+    Re-loads state from disk for canonical view (catches any save_state
+    divergence). Re-captures tool_versions per Integration 2 (avoids
+    02-02 StateMachine constructor surface change).
+
+    If load_state returns None -> silent return (no log warning).
+    Rationale: SARIF is best-effort output, NOT canonical artifact;
+    state.json is canonical. Silent return matches "skip SARIF when
+    state absent" semantics.
+    """
+    final_state = _load_state(state_path)
+    if final_state is None:
+        return
+    tool_versions = {
+        name: capture_tool_version(tc.command)
+        for name, tc in registry.items()
+    }
+    log_dict = build_sarif_log(
+        final_state, tool_versions, forge_version=__version__
+    )
+    print(json.dumps(log_dict), file=sys.stdout)
+    print(format_summary(final_state), file=sys.stderr)
+    if post_emit_hook is not None:
+        post_emit_hook()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -285,7 +324,7 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     # Step 7: lock + run
     with ForgeLock(lock_path):
-        return _run_hold_loop(
+        verdict = _run_hold_loop(
             mode=mode,
             falsifier=falsifier,
             autofixer=autofixer,
@@ -299,6 +338,10 @@ def _run(args, env, cwd: Path) -> Verdict:
             max_fix_attempts=max_fix,
             state_path=state_path,
         )
+        # 02-06: SARIF emission in CI mode, INSIDE lock scope.
+        if mode == Mode.CI:
+            _emit_ci_output(state_path, registry)
+    return verdict
 
 
 def _run_hold_loop(
