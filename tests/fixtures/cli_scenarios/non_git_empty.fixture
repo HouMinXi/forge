@@ -1,0 +1,10 @@
+{
+  "scenario": "non-git, baseline=empty, files=[a.py] -> PASS",
+  "args": ["--mode", "ci", "a.py"],
+  "env": {},
+  "registry_path": "fixtures/registries/empty.yaml",
+  "expected_exit": 0,
+  "expected_state_keys": {
+    "verdict": "PASS"
+  }
+}

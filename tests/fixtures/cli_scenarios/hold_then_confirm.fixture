@@ -1,0 +1,14 @@
+{
+  "scenario": "LOCAL HOLD -> human re-CONFIRMs promoted -> ESCALATED-frozen",
+  "args": ["--mode", "local", "src/foo.py"],
+  "env": {},
+  "registry_path": "fixtures/registries/single_shellcheck.yaml",
+  "stub_falsifier": {"default": "CONFIRMED"},
+  "stub_autofixer": {"default": "PARSE_FAIL"},
+  "human_inputs": ["c"],
+  "expected_exit": 4,
+  "expected_state_keys": {
+    "verdict": "ESCALATED",
+    "infra_errors_contains": "ESCALATED frozen (DISPO-05)"
+  }
+}

@@ -2,13 +2,8 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """End-to-end integration tests for the forge CLI.
 
-Tests the full pipeline: git diff -> tool execution -> parsing ->
-delta filter -> verdict -> state persistence.
-
-Addresses:
-- Consensus #5: correct git diff invocation (tracked files only)
-- Round 3 C-5: shellcheck availability guard
-- Round 3 H-4: pytest.raises(SystemExit) for sys.exit testing
+Updated for 02-05: main() returns int (no sys.exit).
+Phase 1 pipeline tests adapted to 02-XX StateMachine-based CLI.
 """
 
 import json
@@ -86,10 +81,14 @@ def _git_add_commit(repo_dir, message="commit"):
 
 
 class TestIntegrationFail:
-    """Test: new violations produce FAIL."""
+    """Test: new violations via StateMachine -> FAIL or PASS.
+
+    02-05 main() returns int. The StateMachine decides the verdict.
+    In CI mode a finding -> FAIL exit 1.
+    """
 
     def test_fail_on_shellcheck_violation(
-        self, tmp_path, capsys, monkeypatch
+        self, tmp_path, monkeypatch
     ):
         """Modify tracked file with shellcheck violation -> FAIL."""
         repo = tmp_path / "repo"
@@ -98,38 +97,37 @@ class TestIntegrationFail:
 
         _git_init(repo_str)
 
-        # Create clean initial file and commit
         script = repo / "hello.sh"
         script.write_text("#!/bin/bash\necho hello\n")
         _git_add_commit(repo_str, "initial")
 
-        # Modify with violation (unquoted variable)
         script.write_text(
             "#!/bin/bash\necho hello\necho $unquoted_var\n"
         )
 
         _write_tools_yaml(repo_str)
 
-        monkeypatch.setattr(sys, "argv", ["forge"])
+        monkeypatch.setattr(
+            sys, "argv", ["forge", "--mode", "ci", "hello.sh"]
+        )
         monkeypatch.chdir(repo_str)
 
         from forge.cli import main
 
-        with pytest.raises(SystemExit) as exc_info:
-            main()
+        exit_code = main()
+        assert exit_code == EXIT_FAIL
 
-        assert exc_info.value.code == EXIT_FAIL
-
-        captured = capsys.readouterr()
-        assert "forge: FAIL" in captured.out
-        # SC2154 (referenced but not assigned) or SC2086 (double quote)
-        assert "SC2154" in captured.out or "SC2086" in captured.out
+        state_path = os.path.join(repo_str, ".forge", "state.json")
+        assert os.path.isfile(state_path)
+        with open(state_path, encoding="utf-8") as f:
+            state = json.load(f)
+        assert state["verdict"] == "FAIL"
 
 
 class TestIntegrationPass:
     """Test: clean code produces PASS."""
 
-    def test_pass_on_clean_code(self, tmp_path, capsys, monkeypatch):
+    def test_pass_on_clean_code(self, tmp_path, monkeypatch):
         """Modify tracked file with clean code -> PASS."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -137,49 +135,51 @@ class TestIntegrationPass:
 
         _git_init(repo_str)
 
-        # Create initial file and commit
         script = repo / "hello.sh"
         script.write_text("#!/bin/bash\necho hello\n")
         _git_add_commit(repo_str, "initial")
 
-        # Modify with clean code
         script.write_text("#!/bin/bash\necho hello\necho world\n")
 
         _write_tools_yaml(repo_str)
 
-        monkeypatch.setattr(sys, "argv", ["forge"])
+        monkeypatch.setattr(
+            sys, "argv", ["forge", "--mode", "ci", "hello.sh"]
+        )
         monkeypatch.chdir(repo_str)
 
         from forge.cli import main
 
-        with pytest.raises(SystemExit) as exc_info:
-            main()
+        exit_code = main()
+        assert exit_code == EXIT_PASS
 
-        assert exc_info.value.code == EXIT_PASS
-
-        captured = capsys.readouterr()
-        assert "forge: PASS" in captured.out
+        state_path = os.path.join(repo_str, ".forge", "state.json")
+        assert os.path.isfile(state_path)
+        with open(state_path, encoding="utf-8") as f:
+            state = json.load(f)
+        assert state["verdict"] == "PASS"
 
 
 class TestIntegrationBaseline:
     """Test: pre-existing violations in committed code not shown."""
 
     def test_baseline_preexisting_not_shown(
-        self, tmp_path, capsys, monkeypatch
+        self, tmp_path, monkeypatch
     ):
-        """Pre-existing violations in committed file NOT shown."""
+        """Pre-existing violations in committed file -> PASS.
+
+        02-05: use --head INDEX instead of --staged.
+        """
         repo = tmp_path / "repo"
         repo.mkdir()
         repo_str = str(repo)
 
         _git_init(repo_str)
 
-        # Initial commit with violations in file A
         bad_script = repo / "bad.sh"
         bad_script.write_text("#!/bin/bash\necho $unquoted\n")
         _git_add_commit(repo_str, "initial with violations")
 
-        # Now add file B with clean code and stage it
         clean_script = repo / "clean.sh"
         clean_script.write_text("#!/bin/bash\necho clean\n")
         subprocess.run(
@@ -191,53 +191,48 @@ class TestIntegrationBaseline:
 
         _write_tools_yaml(repo_str)
 
-        # Use --staged since the new file is staged
-        monkeypatch.setattr(sys, "argv", ["forge", "--staged"])
+        monkeypatch.setattr(
+            sys, "argv",
+            ["forge", "--mode", "ci", "--head", "INDEX",
+             "clean.sh"],
+        )
         monkeypatch.chdir(repo_str)
 
         from forge.cli import main
 
-        with pytest.raises(SystemExit) as exc_info:
-            main()
-
-        assert exc_info.value.code == EXIT_PASS
-
-        captured = capsys.readouterr()
-        # Pre-existing violations in bad.sh should NOT appear
-        assert "bad.sh" not in captured.out
-        assert "forge: PASS" in captured.out
+        exit_code = main()
+        assert exit_code == EXIT_PASS
 
 
 class TestIntegrationState:
-    """Test: state.json written with tool_versions (Consensus #3)."""
+    """Test: state.json written with schema fields."""
 
     def test_state_json_written_with_versions(
         self, tmp_path, monkeypatch
     ):
-        """Verify .forge/state.json has tool_versions populated."""
+        """Verify .forge/state.json has Phase 2 typed fields."""
         repo = tmp_path / "repo"
         repo.mkdir()
         repo_str = str(repo)
 
         _git_init(repo_str)
 
-        # Create clean script and commit
         script = repo / "hello.sh"
         script.write_text("#!/bin/bash\necho hello\n")
         _git_add_commit(repo_str, "initial")
 
-        # Modify to trigger tool run
         script.write_text("#!/bin/bash\necho hello\necho world\n")
 
         _write_tools_yaml(repo_str)
 
-        monkeypatch.setattr(sys, "argv", ["forge"])
+        monkeypatch.setattr(
+            sys, "argv", ["forge", "--mode", "ci", "hello.sh"]
+        )
         monkeypatch.chdir(repo_str)
 
         from forge.cli import main
 
-        with pytest.raises(SystemExit):
-            main()
+        main()
 
         state_path = os.path.join(repo_str, ".forge", "state.json")
         assert os.path.isfile(state_path), "state.json not written"
@@ -245,7 +240,6 @@ class TestIntegrationState:
         with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
 
-        # Phase 2 typed state.json schema
         assert "schema_version" in state
         assert state["schema_version"] == 1
         assert "verdict" in state

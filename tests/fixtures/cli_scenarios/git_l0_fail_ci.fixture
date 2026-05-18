@@ -1,0 +1,10 @@
+{
+  "scenario": "CI mode, L0 finding -> FAIL exit 1",
+  "args": ["--mode", "ci", "src/foo.py"],
+  "env": {},
+  "registry_path": "fixtures/registries/single_shellcheck.yaml",
+  "expected_exit": 1,
+  "expected_state_keys": {
+    "verdict": "FAIL"
+  }
+}

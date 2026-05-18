@@ -21,3 +21,10 @@ class SnapshotSchemaMismatchError(Exception):
 
 class CorruptedSnapshotError(Exception):
     """Raised when snapshot file is corrupt or unparseable."""
+
+
+class CliError(Exception):
+    """Raised on invalid CLI args or env values.
+
+    main() catches and maps to EXIT_CLI_ERROR (exit 2).
+    """

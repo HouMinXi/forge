@@ -1,0 +1,9 @@
+{
+  "scenario": "mock existing lock with live PID -> exit 3",
+  "args": ["--mode", "ci", "src/foo.py"],
+  "env": {},
+  "registry_path": "fixtures/registries/single_shellcheck.yaml",
+  "mock_lock_busy": true,
+  "mock_lock_pid": 99999,
+  "expected_exit": 3
+}

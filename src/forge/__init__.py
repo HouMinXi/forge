@@ -4,7 +4,11 @@
 
 __version__ = "2.0.0a1"
 
-# Exit code constants (Consensus #6 -- formally defined)
-EXIT_PASS = 0   # No new violations
-EXIT_FAIL = 1   # New violations found
-# EXIT_ESCALATED = 2  # Phase 2+ (state machine non-convergence)
+# Exit code constants re-exported from exit_codes module (H5 + R3-L3).
+from .exit_codes import (
+    EXIT_BUSY,
+    EXIT_CLI_ERROR,
+    EXIT_ESCALATED,
+    EXIT_FAIL,
+    EXIT_PASS,
+)
