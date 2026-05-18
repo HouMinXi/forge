@@ -1,0 +1,50 @@
+{
+  "scenario": "mixed dispositions one of each",
+  "input_state": {
+    "verdict": "FAIL",
+    "findings": [
+      {
+        "id": "f1",
+        "fingerprint": "fp-confirmed",
+        "source": "L0",
+        "disposition": "CONFIRMED",
+        "file": "src/a.py",
+        "line_range": [10, 10],
+        "description": "shellcheck SC2034"
+      },
+      {
+        "id": "f2",
+        "fingerprint": "fp-uncertain",
+        "source": "L1",
+        "disposition": "UNCERTAIN",
+        "file": "src/b.py",
+        "line_range": [20, 22],
+        "description": "possible race condition"
+      },
+      {
+        "id": "f3",
+        "fingerprint": "fp-dismissed",
+        "source": "L1",
+        "disposition": "DISMISSED",
+        "file": "src/c.py",
+        "line_range": [30, 30],
+        "description": "false positive (dismissed)"
+      },
+      {
+        "id": "f4",
+        "fingerprint": "fp-fixed",
+        "source": "L0",
+        "disposition": "FIXED",
+        "file": "src/d.py",
+        "line_range": [40, 40],
+        "description": "auto-fixed lint"
+      }
+    ]
+  },
+  "tool_versions": {"shellcheck": "0.10.0", "ruff": "0.4.2"},
+  "forge_version": "2.0.0a1",
+  "expected_summary": "forge: FAIL findings=4 confirmed=1 uncertain=1 dismissed=1 fixed=1",
+  "expected_sarif_levels": ["error", "warning", "note", "note"],
+  "expected_suppressions_kinds": [null, null, "external", "inSource"],
+  "_note": "null in expected_suppressions_kinds means suppressions key ABSENT from result dict"
+}

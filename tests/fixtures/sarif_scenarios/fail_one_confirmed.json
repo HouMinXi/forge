@@ -1,0 +1,22 @@
+{
+  "scenario": "fail with one confirmed finding",
+  "input_state": {
+    "verdict": "FAIL",
+    "findings": [
+      {
+        "id": "f1",
+        "fingerprint": "fp-confirmed-abc123",
+        "source": "L0",
+        "disposition": "CONFIRMED",
+        "file": "src/main.py",
+        "line_range": [42, 42],
+        "description": "SC2034: unused variable"
+      }
+    ]
+  },
+  "tool_versions": {"shellcheck": "0.10.0"},
+  "forge_version": "2.0.0a1",
+  "expected_summary": "forge: FAIL findings=1 confirmed=1 uncertain=0 dismissed=0 fixed=0",
+  "expected_sarif_levels": ["error"],
+  "expected_suppressions_kinds": [null]
+}

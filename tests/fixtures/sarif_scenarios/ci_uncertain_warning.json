@@ -1,0 +1,22 @@
+{
+  "scenario": "CI mode uncertain finding (non-blocking)",
+  "input_state": {
+    "verdict": "PASS",
+    "findings": [
+      {
+        "id": "f1",
+        "fingerprint": "fp-uncertain-xyz789",
+        "source": "L1",
+        "disposition": "UNCERTAIN",
+        "file": "src/util.py",
+        "line_range": [100, 105],
+        "description": "possible race condition detected"
+      }
+    ]
+  },
+  "tool_versions": {"ruff": "0.4.2"},
+  "forge_version": "2.0.0a1",
+  "expected_summary": "forge: PASS findings=1 confirmed=0 uncertain=1 dismissed=0 fixed=0",
+  "expected_sarif_levels": ["warning"],
+  "expected_suppressions_kinds": [null]
+}
