@@ -1,206 +1,420 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""CLI entry point -- wires all forge modules into a pipeline.
+"""Forge CLI entry point.
 
-Usage:
-    forge [diff_spec]           # default: HEAD
-    forge --staged              # compare index to HEAD
-    forge --registry PATH       # custom tools.yaml
-    forge --state-dir PATH      # custom state directory
-    forge --quiet               # suppress skipped/version info
-    forge --version             # print version
+02-05 owns this file. Replaces Phase 1 L0-only pipeline with the
+full 02-XX integration.
 
-Addresses:
-- Consensus #1: uses run_git_diff from forge.git (single owner)
-- Consensus #6: uses EXIT_PASS/EXIT_FAIL from forge.__init__
-- Round 3 B-1: no list mutation while iterating
-- Round 3 C-1: format_report with tools_failed parameter
-- Round 5 R5-M3: stderr propagation to ToolError
+Pipeline (single invocation):
+  1. parse args (argparse) -- CLI-01
+  2. resolve env overrides -- CLI-03
+  3. validate paths + registry -- exit 2 on failure
+  4. acquire lock (02-04 ForgeLock) -- exit 3 on busy
+  5. resolve mode (02-04 resolve_mode)
+  6. construct BaselineSpec (02-03)
+  7. resolve_baseline -> ResolvedReview (02-03)
+  8. compute_source_hash + serialize_baseline_spec (02-03)
+  9. build factories (Falsifier/AutoFixer/revert_fn) -- STATE-10
+ 10. construct StateMachine (02-02)
+ 11. HOLD-resume loop: run -> on PENDING run_hold_ui -> re-run
+ 12. map terminal Verdict to exit code (CLI-02)
 """
+from __future__ import annotations
 
 import argparse
 import os
 import sys
 from pathlib import Path
 
-from forge import EXIT_PASS, EXIT_FAIL, __version__
-from forge.delta import filter_delta
-from forge.diff import extract_changed_lines, get_changed_files
-from forge.git import run_git_diff
-from forge.parsers import parse_output
-from forge.parsers.base import ToolError
-from forge.registry import load_registry
-from forge.reporter import format_report
-from forge.runner import run_tools
-from forge.state import State, Verdict, save_state
-from forge.verdict import determine_verdict
+from . import __version__
+from .baseline import (
+    BaselineSpec,
+    EmptyBaseline,
+    GitRefBaseline,
+    SnapshotBaseline,
+    resolve_baseline,
+    serialize_baseline_spec,
+)
+from .env_resolver import (
+    resolve_falsification_engine,
+    resolve_max_fix_attempts,
+    resolve_max_total_rounds,
+)
+from .errors import BaselineResolutionError, CliError
+from .exit_codes import (
+    EXIT_BUSY,
+    EXIT_CLI_ERROR,
+    EXIT_FAIL,
+    EXIT_PASS,
+    verdict_to_exit,
+)
+from .factories import build_autofixer, build_falsifier, build_revert_fn
+from .git import is_git_repo
+from .hold import HoldAborted, run_hold_ui
+from .lock import ForgeLock, ForgeLockBusy
+from .machine import StateMachine
+from .mode_resolver import resolve_mode
+from .registry import load_registry
+from .source import compute_source_hash
+from .state import Mode, Verdict
+
+
+MAX_HOLD_CYCLES = 10
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser."""
+    """CLI-01 argparse surface.
+
+    Defaults documented in REQUIREMENTS line 75; --help includes
+    Exit Codes section per CLI-02.
+    """
     parser = argparse.ArgumentParser(
         prog="forge",
         description="3-state quality gate for code review",
+        epilog=(
+            "Exit codes:\n"
+            "  0  PASS\n"
+            "  1  FAIL\n"
+            "  2  CLI_ERROR (invalid args, missing config, "
+            "parse error)\n"
+            "  3  BUSY (another forge process holds the lock)\n"
+            "  4  ESCALATED (non-convergence or human-frozen)\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "diff_spec",
-        nargs="?",
-        default="HEAD",
-        help="git diff spec (default: HEAD)",
+        "--mode", choices=["local", "ci"], default=None,
+        help="execution mode (default: local if TTY, ci otherwise)",
     )
     parser.add_argument(
-        "--staged",
-        action="store_true",
-        help="check staged changes (shortcut for diff_spec=--staged)",
+        "--falsification-engine", choices=["auto", "stub", "real"],
+        default=None,
+        help="STATE-10 engine select (default: auto)",
     )
     parser.add_argument(
-        "--registry",
-        default=".forge/tools.yaml",
+        "--sandbox", action="store_true",
+        help="enable sandbox for autofixer "
+             "(Phase 4 hook; v2.0 no-op + warning)",
+    )
+    parser.add_argument(
+        "--baseline", default=None,
+        help="baseline ref "
+             "(git: HEAD/INDEX/<sha>; non-git: empty|<snapshot-path>)",
+    )
+    parser.add_argument(
+        "--head", default=None,
+        help="head ref (git only: WORKING/INDEX/<sha>; "
+             "ignored non-git)",
+    )
+    parser.add_argument(
+        "--registry", default=".forge/tools.yaml",
         help="path to tools.yaml (default: .forge/tools.yaml)",
     )
     parser.add_argument(
-        "--state-dir",
-        default=".forge",
-        help="directory for state.json (default: .forge)",
+        "--state-dir", default=None,
+        help="DEPRECATED v2.1: state directory is hardcoded to "
+             "cwd/.forge per 02-02 StateMachine. Accepted for Phase 1 "
+             "compat; value is ignored.",
     )
     parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="suppress tool-skipped and version messages",
+        "--max-total-rounds", type=int, default=None,
+        help="LOCAL mode round bound "
+             "(default 20 or FORGE_MAX_TOTAL_ROUNDS)",
     )
     parser.add_argument(
-        "--version",
-        action="version",
+        "--max-fix-attempts", type=int, default=None,
+        help="per-fingerprint fix budget "
+             "(default 3 or "
+             "FORGE_MAX_FIX_ATTEMPTS_PER_FINGERPRINT)",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="suppress tool-skipped, version, and deprecation "
+             "messages",
+    )
+    parser.add_argument(
+        "--version", action="version",
         version="forge %s" % __version__,
+    )
+    # H1: Phase 1 flags preserved with deprecation.
+    parser.add_argument(
+        "--staged", action="store_true",
+        help="DEPRECATED v2.1: use --head INDEX "
+             "(mapped internally with warning)",
+    )
+    parser.add_argument(
+        "paths", nargs="*",
+        help="files/dirs to review; git mode filters diff, "
+             "non-git lists files",
     )
     return parser
 
 
-def main() -> None:
-    """Entry point for the forge CLI."""
+def main() -> int:
+    """Entry point. Returns exit code (int).
+
+    setuptools entry-point shim calls sys.exit(main()).
+    """
     parser = _build_parser()
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except SystemExit as e:
+        return int(e.code) if e.code is not None else EXIT_CLI_ERROR
 
-    # Resolve diff_spec
-    diff_spec = "--staged" if args.staged else args.diff_spec
+    try:
+        verdict = _run(args, env=os.environ, cwd=Path.cwd())
+    except CliError as exc:
+        print("forge: error: %s" % exc, file=sys.stderr)
+        return EXIT_CLI_ERROR
+    except ForgeLockBusy as exc:
+        print("forge: %s" % exc, file=sys.stderr)
+        return EXIT_BUSY
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        print(
+            "forge: unexpected error: %s" % exc, file=sys.stderr
+        )
+        traceback.print_exc(file=sys.stderr)
+        return EXIT_FAIL
 
-    # a. Load registry
+    # B2: PENDING guard before verdict_to_exit.
+    if verdict == Verdict.PENDING:
+        return EXIT_PASS
+    return verdict_to_exit(verdict)
+
+
+def _run(args, env, cwd: Path) -> Verdict:
+    """Main pipeline body. Returns Verdict."""
+    warn = (lambda msg: None) if args.quiet else (
+        lambda msg: print("forge: %s" % msg, file=sys.stderr)
+    )
+    # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.
+    if (args.state_dir is not None
+            and args.state_dir != ".forge"):
+        warn(
+            "warning: --state-dir is deprecated v2.1; v2.0 always "
+            "uses cwd/.forge (your value %r is ignored)"
+            % args.state_dir
+        )
+    state_dir = cwd / ".forge"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / "state.json"
+    lock_path = state_dir / "forge.lock"
+
+    # Step 1: mode
+    mode = resolve_mode(args.mode, env, sys.stdout.isatty())
+
+    # Step 2: registry
     try:
         registry = load_registry(args.registry)
-    except FileNotFoundError:
-        print(
-            "forge: error: registry not found: %s" % args.registry,
-            file=sys.stderr,
-        )
-        sys.exit(EXIT_FAIL)
-    except ValueError as exc:
-        print("forge: error: %s" % exc, file=sys.stderr)
-        sys.exit(EXIT_FAIL)
+    except (FileNotFoundError, ValueError) as exc:
+        raise CliError("registry load failed: %s" % exc)
 
-    # b. Get diff text via run_git_diff (Consensus #1)
+    # Step 3: env overrides
+    max_rounds = resolve_max_total_rounds(
+        args.max_total_rounds, env
+    )
+    max_fix = resolve_max_fix_attempts(
+        args.max_fix_attempts, env
+    )
+    engine_choice = resolve_falsification_engine(
+        args.falsification_engine, env
+    )
+
+    # Step 4: baseline / head (H4: two-phase paths resolution)
+    baseline_spec, head_spec = _build_baseline_specs(
+        args, cwd, warn=warn
+    )
+    initial_paths = _paths(args, cwd, resolved=None)
     try:
-        diff_text = run_git_diff(diff_spec)
-    except RuntimeError as exc:
-        print("forge: error: %s" % exc, file=sys.stderr)
-        sys.exit(EXIT_FAIL)
-    except ValueError as exc:
-        print("forge: error: %s" % exc, file=sys.stderr)
-        sys.exit(EXIT_FAIL)
-
-    # c. Parse diff
-    changed_lines = extract_changed_lines(diff_text)
-    changed_files = get_changed_files(diff_text)
-
-    state_path = Path(os.path.join(args.state_dir, "state.json"))
-
-    # d. No changes -> PASS
-    if not changed_files:
-        print("forge: PASS -- no changes detected")
-        save_state(State(verdict=Verdict.PASS, converged=True), state_path)
-        sys.exit(EXIT_PASS)
-
-    # e. Run tools
-    tool_results, tool_versions, tools_skipped = run_tools(
-        registry, changed_files
-    )
-
-    # f. Parse tool outputs
-    all_findings = []
-    for tool_name, (stdout, returncode, stderr) in tool_results.items():
-        output_format = registry[tool_name].output_format
-        try:
-            parsed = parse_output(
-                stdout, output_format, tool_name, exit_code=returncode
+        resolved = resolve_baseline(
+            baseline_spec, head_spec, initial_paths, cwd
+        )
+    except BaselineResolutionError as exc:
+        raise CliError("baseline resolution failed: %s" % exc)
+    # Late-phase paths: extract from diff if user passed none.
+    if not initial_paths:
+        effective_paths = _paths(args, cwd, resolved=resolved)
+        if effective_paths:
+            resolved = resolve_baseline(
+                baseline_spec, head_spec, effective_paths, cwd
             )
-        except KeyError:
-            parsed = [
-                ToolError(
-                    tool_name=tool_name,
-                    exit_code=returncode,
-                    stderr=stderr,
-                    message=(
-                        "Unknown output_format '%s' for tool '%s'."
-                        " Check tools.yaml." % (output_format, tool_name)
-                    ),
+
+    # Step 5: source identity (B3: keyword args on mode_hint)
+    if resolved.mode_hint == "git":
+        source_hash = compute_source_hash(
+            git_diff=resolved.git_diff or ""
+        )
+    else:
+        source_hash = compute_source_hash(
+            files=resolved.source_files
+        )
+    baseline_repr = serialize_baseline_spec(baseline_spec)
+
+    # M6: non-git snapshot auto-detection.
+    if (resolved.mode_hint == "non-git"
+            and args.baseline is None
+            and isinstance(baseline_spec, EmptyBaseline)):
+        from .snapshot import find_existing_snapshot
+        snap_path = find_existing_snapshot(source_hash, cwd)
+        if snap_path is not None:
+            baseline_spec = SnapshotBaseline(path=snap_path)
+            try:
+                resolved = resolve_baseline(
+                    baseline_spec, head_spec,
+                    resolved.source_files, cwd,
                 )
-            ]
-
-        # R5-M3: propagate actual stderr to ToolError objects
-        for i, item in enumerate(parsed):
-            if isinstance(item, ToolError) and stderr:
-                parsed[i] = ToolError(
-                    tool_name=item.tool_name,
-                    exit_code=item.exit_code,
-                    stderr=stderr,
-                    message=item.message,
+            except BaselineResolutionError as exc:
+                raise CliError(
+                    "snapshot baseline resolution failed: %s"
+                    % exc
                 )
+            baseline_repr = serialize_baseline_spec(
+                baseline_spec
+            )
 
-        all_findings.extend(parsed)
+    # Step 6: factories
+    if args.sandbox:
+        warn(
+            "warning: --sandbox is a Phase 4 hook; "
+            "ignored in v2.0"
+        )
+    falsifier = build_falsifier(engine_choice)
+    autofixer = build_autofixer(resolved)
+    revert_fn = build_revert_fn(resolved, cwd)
 
-    # g. Distinguish required vs optional tool crashes (Round 3 B-1)
-    # Build two new lists in a SINGLE pass -- no list mutation
-    filtered_findings = []
-    tools_failed_set: set[str] = set()
-    for item in all_findings:
-        if isinstance(item, ToolError):
-            tool_cfg = registry.get(item.tool_name)
-            if tool_cfg is not None and tool_cfg.required:
-                # Required tool crash: keep ToolError, will cause FAIL
-                filtered_findings.append(item)
-            else:
-                # Optional tool crash: track for visibility
-                tools_failed_set.add(item.tool_name)
+    # Step 7: lock + run
+    with ForgeLock(lock_path):
+        return _run_hold_loop(
+            mode=mode,
+            falsifier=falsifier,
+            autofixer=autofixer,
+            revert_fn=revert_fn,
+            resolved=resolved,
+            source_hash=source_hash,
+            baseline_repr=baseline_repr,
+            cwd=cwd,
+            registry=registry,
+            max_rounds=max_rounds,
+            max_fix_attempts=max_fix,
+            state_path=state_path,
+        )
+
+
+def _run_hold_loop(
+    *, mode, falsifier, autofixer, revert_fn, resolved,
+    source_hash, baseline_repr, cwd, registry,
+    max_rounds, max_fix_attempts, state_path,
+    input_fn=input, output_fn=print,
+) -> Verdict:
+    """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
+    for cycle in range(MAX_HOLD_CYCLES):
+        sm = StateMachine(
+            mode=mode,
+            falsifier=falsifier,
+            autofixer=autofixer,
+            revert_fn=revert_fn,
+            resolved_review=resolved,
+            source_hash=source_hash,
+            baseline_spec_repr=baseline_repr,
+            cwd=cwd,
+            registry=registry,
+            max_total_rounds=max_rounds,
+            max_fix_attempts=max_fix_attempts,
+        )
+        verdict = sm.run()
+        if verdict != Verdict.PENDING:
+            return verdict
+        # M3: load state from disk (public API, not sm._state).
+        from .state import load_state
+        loaded = load_state(state_path)
+        if loaded is None:
+            return Verdict.ESCALATED
+        try:
+            run_hold_ui(
+                loaded, state_path,
+                input_fn=input_fn, output_fn=output_fn,
+            )
+        except HoldAborted as exc:
+            print(
+                "forge: %s; state preserved at %s"
+                % (exc, state_path),
+                file=sys.stderr,
+            )
+            return Verdict.PENDING
+
+    # MAX_HOLD_CYCLES exhausted.
+    from .state import State, load_state, save_state
+    final = load_state(state_path)
+    if final is None:
+        # R4-L3: fallback if state.json deleted mid-run.
+        final = State(
+            mode=mode,
+            source_hash=source_hash,
+            baseline_spec_repr=baseline_repr,
+        )
+    final.infra_errors.append(
+        "MAX_HOLD_CYCLES=%d exhausted; human re-entered HOLD "
+        "too many times" % MAX_HOLD_CYCLES
+    )
+    final.verdict = Verdict.ESCALATED
+    final.converged = False
+    save_state(final, state_path)
+    return Verdict.ESCALATED
+
+
+def _build_baseline_specs(
+    args, cwd: Path, warn=None,
+) -> tuple:
+    """Parse --baseline + --head into BaselineSpec union members."""
+    in_git = is_git_repo(cwd)
+    if args.baseline is None:
+        baseline = (
+            GitRefBaseline("HEAD") if in_git else EmptyBaseline()
+        )
+    elif args.baseline == "empty":
+        baseline = EmptyBaseline()
+    elif (args.baseline.startswith(".forge/snapshots/")
+          or (args.baseline.endswith(".json")
+              and "snapshots" in args.baseline)):
+        baseline = SnapshotBaseline(path=Path(args.baseline))
+    else:
+        baseline = GitRefBaseline(args.baseline)
+
+    # R2-M4: warn ANY time --staged is set.
+    if args.staged:
+        msg = (
+            "warning: --staged is deprecated; use --head INDEX "
+            "(will be removed in v2.1)"
+        )
+        if warn is not None:
+            warn(msg)
         else:
-            filtered_findings.append(item)
-    tools_failed = sorted(tools_failed_set)
-    all_findings = filtered_findings
+            print("forge: %s" % msg, file=sys.stderr)
 
-    # h. Delta filter
-    delta_findings, all_findings_preserved = filter_delta(
-        all_findings, changed_lines
-    )
+    if args.staged and args.head is None:
+        head = GitRefBaseline("INDEX")
+    elif args.head is None:
+        head = GitRefBaseline("WORKING") if in_git else None
+    else:
+        head = GitRefBaseline(args.head)
+    return baseline, head
 
-    # i. Verdict
-    verdict_str, exit_code = determine_verdict(delta_findings)
 
-    # j. Format and print report
-    report_versions = {} if args.quiet else tool_versions
-    report_skipped = [] if args.quiet else tools_skipped
-    report = format_report(
-        delta_findings,
-        all_findings_preserved,
-        report_versions,
-        report_skipped,
-        tools_failed,  # always passed, never suppressed by --quiet
-    )
-    print(report)
-
-    # k. Write state
-    verdict_enum = Verdict(verdict_str)
-    save_state(
-        State(verdict=verdict_enum, converged=(verdict_enum == Verdict.PASS)),
-        state_path,
-    )
-
-    # l. Exit
-    sys.exit(exit_code)
+def _paths(args, cwd: Path, resolved=None) -> list:
+    """H4: derive paths from explicit args OR git_diff extraction."""
+    if args.paths:
+        return [Path(p) for p in args.paths]
+    if resolved is None:
+        return []
+    if resolved.mode_hint == "git" and resolved.git_diff:
+        from .diff import get_changed_files
+        return [Path(p) for p in get_changed_files(
+            resolved.git_diff
+        )]
+    if resolved.mode_hint == "non-git":
+        raise CliError(
+            "non-git mode requires explicit paths argument(s); "
+            "no files would be reviewed otherwise"
+        )
+    return []

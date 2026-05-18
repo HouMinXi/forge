@@ -1,0 +1,10 @@
+{
+  "scenario": "git repo, no diff, baseline=HEAD head=WORKING -> PASS",
+  "args": ["--mode", "ci"],
+  "env": {},
+  "registry_path": "fixtures/registries/empty.yaml",
+  "expected_exit": 0,
+  "expected_state_keys": {
+    "verdict": "PASS"
+  }
+}

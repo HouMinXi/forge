@@ -1,0 +1,13 @@
+{
+  "scenario": "LOCAL, L1 UNCERTAIN, mock input d -> PASS",
+  "args": ["--mode", "local", "src/foo.py"],
+  "env": {},
+  "registry_path": "fixtures/registries/single_shellcheck.yaml",
+  "stub_falsifier": {"default": "UNCERTAIN"},
+  "human_inputs": ["d"],
+  "expected_exit": 0,
+  "expected_state_keys": {
+    "verdict": "PASS",
+    "note": "DISMISSED finding not sticky across L0 re-detect per D2"
+  }
+}

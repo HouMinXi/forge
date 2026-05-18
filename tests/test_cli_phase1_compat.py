@@ -1,0 +1,180 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
+"""Phase 1 CLI surface compatibility tests.
+
+Verifies preserved, deprecated, and removed flags.
+"""
+
+import subprocess
+import sys
+from unittest.mock import patch
+
+import pytest
+
+from forge import EXIT_PASS
+from forge.cli import _build_parser, main
+
+
+class TestPreservedFlags:
+    """SC-19: --registry, --quiet, --version still work."""
+
+    def test_registry_flag_accepted(self):
+        parser = _build_parser()
+        args = parser.parse_args(["--registry", "custom.yaml"])
+        assert args.registry == "custom.yaml"
+
+    def test_quiet_flag_accepted(self):
+        parser = _build_parser()
+        args = parser.parse_args(["--quiet"])
+        assert args.quiet is True
+
+    def test_version_exits_zero(self, capsys):
+        parser = _build_parser()
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["--version"])
+        assert exc_info.value.code == 0
+
+
+class TestStateDirDeprecation:
+    """SC-48 R4-M2: --state-dir accepted but ignored."""
+
+    def test_state_dir_emits_warning(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """--state-dir with non-default value emits warning."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "init"], cwd=str(repo),
+            capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "test"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        forge_dir = repo / ".forge"
+        forge_dir.mkdir(parents=True, exist_ok=True)
+        (forge_dir / "tools.yaml").write_text("tools: {}\n")
+        (repo / "a.py").write_text("# initial\n")
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# modified\n")
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["forge", "--mode", "ci",
+             "--state-dir", "/tmp/custom", "a.py"],
+        )
+        monkeypatch.chdir(str(repo))
+        exit_code = main()
+        captured = capsys.readouterr()
+        assert "deprecated" in captured.err.lower()
+        # State.json written to cwd/.forge regardless.
+        assert (repo / ".forge" / "state.json").exists()
+
+
+class TestStagedDeprecation:
+    """SC-38 R2-M4: --staged emits warning."""
+
+    def test_staged_warns(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """--staged emits deprecation warning."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "init"], cwd=str(repo),
+            capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "test"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        forge_dir = repo / ".forge"
+        forge_dir.mkdir(parents=True, exist_ok=True)
+        (forge_dir / "tools.yaml").write_text("tools: {}\n")
+        (repo / "a.py").write_text("# initial\n")
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# modified\n")
+        subprocess.run(
+            ["git", "add", "a.py"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["forge", "--mode", "ci", "--staged", "a.py"],
+        )
+        monkeypatch.chdir(str(repo))
+        exit_code = main()
+        captured = capsys.readouterr()
+        assert "deprecated" in captured.err.lower()
+        assert "--head INDEX" in captured.err
+
+    def test_staged_quiet_suppresses_warning(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """SC-47 R4-M1: --staged + --quiet -> warning suppressed."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "init"], cwd=str(repo),
+            capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "test"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        forge_dir = repo / ".forge"
+        forge_dir.mkdir(parents=True, exist_ok=True)
+        (forge_dir / "tools.yaml").write_text("tools: {}\n")
+        (repo / "a.py").write_text("# initial\n")
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# modified\n")
+        subprocess.run(
+            ["git", "add", "a.py"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["forge", "--mode", "ci", "--staged",
+             "--quiet", "a.py"],
+        )
+        monkeypatch.chdir(str(repo))
+        exit_code = main()
+        captured = capsys.readouterr()
+        # Warning should be suppressed by --quiet.
+        assert "--staged" not in captured.err

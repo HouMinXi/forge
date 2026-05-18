@@ -1,0 +1,11 @@
+{
+  "scenario": "LOCAL, L0 finding, autofix SUCCESS -> PASS exit 0",
+  "args": ["--mode", "local", "src/foo.py"],
+  "env": {},
+  "registry_path": "fixtures/registries/single_shellcheck.yaml",
+  "stub_autofixer": {"default": "SUCCESS"},
+  "expected_exit": 0,
+  "expected_state_keys": {
+    "verdict": "PASS"
+  }
+}
