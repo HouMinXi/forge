@@ -1,0 +1,12 @@
+{
+  "scenario": "pass with zero findings",
+  "input_state": {
+    "verdict": "PASS",
+    "findings": []
+  },
+  "tool_versions": {"shellcheck": "0.10.0", "ruff": "0.4.2"},
+  "forge_version": "2.0.0a1",
+  "expected_summary": "forge: PASS findings=0 confirmed=0 uncertain=0 dismissed=0 fixed=0",
+  "expected_sarif_levels": [],
+  "expected_suppressions_kinds": []
+}
