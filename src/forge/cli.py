@@ -35,7 +35,6 @@ from .sarif import build_sarif_log, format_summary
 if TYPE_CHECKING:
     from .registry import ToolConfig
 from .baseline import (
-    BaselineSpec,
     EmptyBaseline,
     GitRefBaseline,
     SnapshotBaseline,
