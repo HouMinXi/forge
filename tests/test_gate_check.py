@@ -1,10 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Tests for gate-check subcommand (EC-2, EC-4, EC-5).
-
-Comprehensive unit tests covering exit-code translation, FAIL-OPEN guard,
-CI detection, baseline delta, and source pattern matching.
-"""
+"""Tests for the gate-check subcommand."""
 import json
 import tempfile
 from pathlib import Path
@@ -25,7 +21,7 @@ from forge.gate_check import (
 )
 
 
-# EC-2: Parse + Translate + FAIL-OPEN
+# --- Parse + Translate + FAIL-OPEN ---
 
 class TestLoadGateConfig:
     def test_valid_config(self):
@@ -196,7 +192,7 @@ class TestFailOpenGuard:
             assert result in (0, 1)  # Only PASS or FAIL
 
 
-# EC-4: CI Detection
+# --- CI Detection ---
 
 class TestCIDetection:
     def test_forge_mode_ci(self):
@@ -239,7 +235,7 @@ class TestCIDetection:
         assert is_ci_mode({"CI": "1", "FORGE_SKIP_TESTS": "1"}) is True
 
 
-# EC-5: Baseline Delta
+# --- Baseline Delta ---
 
 class TestBaselineDelta:
     def test_no_baseline_allows(self):
@@ -292,7 +288,7 @@ class TestBaselineDelta:
         assert "tests/test_foo.py::test_bar" in failures
 
 
-# EC-6: Source Pattern Matching
+# --- Source Pattern Matching ---
 
 class TestSourcePatterns:
     def test_py_file_matches(self):
@@ -419,3 +415,79 @@ class TestGateCheckIntegration:
             )
             assert result == EXIT_FAIL
             assert "NEW test failures" in stderr.getvalue()
+
+
+# --- Bug-inject tests ---
+
+class TestBugInjectExitTranslation:
+    """Break exit-code translation, verify tests catch it."""
+
+    def test_all_block_codes_actually_block(self):
+        """Every exit code that should BLOCK returns 1."""
+        from forge.gate_check import translate_exit_code
+
+        for code in [1, 4, 5, 99]:
+            assert translate_exit_code(code) == 1, (
+                "exit %d should BLOCK (1)" % code
+            )
+
+
+class TestBugInjectFailOpen:
+    """Break FAIL-OPEN guard, verify tests catch it."""
+
+    def test_config_error_must_block(self):
+        """If config error returns 0, the gate fails open."""
+        from io import StringIO
+
+        with tempfile.TemporaryDirectory() as cwd:
+            cwd = Path(cwd)
+            (cwd / ".forge").mkdir()
+            (cwd / ".forge" / "gate.yaml").write_text("{{invalid yaml")
+
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=stderr
+            )
+            assert result == EXIT_FAIL, (
+                "config parse error must BLOCK (1), got %d" % result
+            )
+
+    def test_missing_config_must_block(self):
+        """If gate.yaml is missing, the gate must block."""
+        from io import StringIO
+
+        with tempfile.TemporaryDirectory() as cwd:
+            cwd = Path(cwd)
+
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=stderr
+            )
+            assert result == EXIT_FAIL, (
+                "missing gate.yaml must BLOCK (1), got %d" % result
+            )
+
+    def test_unsafe_command_must_block(self):
+        """If test.command has shell metacharacters, gate blocks."""
+        from io import StringIO
+
+        with tempfile.TemporaryDirectory() as cwd:
+            cwd = Path(cwd)
+            (cwd / ".forge").mkdir()
+            (cwd / ".forge" / "gate.yaml").write_text(
+                "---\ntest:\n"
+                "  command: ['sh', '-c', 'rm -rf /']\n"
+                "  timeout_seconds: 10\n"
+                "  cwd: '.'\n"
+            )
+
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=stderr
+            )
+            assert result == EXIT_FAIL, (
+                "unsafe command must BLOCK (1), got %d" % result
+            )

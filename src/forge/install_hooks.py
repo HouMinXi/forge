@@ -2,9 +2,9 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """install-hooks subcommand: write .git/hooks/pre-commit hook.
 
-Phase 1 Plan 03: implements install-hooks logic - resolve hooks dir,
-backup + chain existing hook, embed absolute forge path, abort on
-core.hooksPath, idempotent re-install.
+Resolves the hooks directory (worktree-safe), backs up and chains any
+existing hook, embeds an absolute forge path, and aborts when
+core.hooksPath is set. Idempotent on re-install.
 """
 from __future__ import annotations
 

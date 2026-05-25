@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Tests for install-hooks subcommand (Plan 03, EC-3)."""
+"""Tests for the install-hooks subcommand."""
 
 import os
 import subprocess
