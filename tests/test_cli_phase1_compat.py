@@ -16,16 +16,20 @@ from forge.cli import _build_parser, main
 
 
 class TestPreservedFlags:
-    """SC-19: --registry, --quiet, --version still work."""
+    """SC-19: --registry, --quiet, --version still work.
+
+    Post-subparser: --registry and --quiet are on review subcommand.
+    --version remains on root parser.
+    """
 
     def test_registry_flag_accepted(self):
         parser = _build_parser()
-        args = parser.parse_args(["--registry", "custom.yaml"])
+        args = parser.parse_args(["review", "--registry", "custom.yaml"])
         assert args.registry == "custom.yaml"
 
     def test_quiet_flag_accepted(self):
         parser = _build_parser()
-        args = parser.parse_args(["--quiet"])
+        args = parser.parse_args(["review", "--quiet"])
         assert args.quiet is True
 
     def test_version_exits_zero(self, capsys):
