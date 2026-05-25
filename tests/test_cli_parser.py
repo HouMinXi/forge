@@ -11,7 +11,7 @@ class TestParserDefaults:
     """Bare invocation defaults."""
 
     def test_bare_invocation_defaults(self):
-        """SC-2: bare forge (no subcommand) has subcommand=None."""
+        """Bare forge (no subcommand) has subcommand=None."""
         parser = _build_parser()
         args = parser.parse_args([])
         # Subparser structure: no subcommand specified
@@ -54,7 +54,7 @@ class TestParserAllFlags:
     """All flags set -> values propagate."""
 
     def test_all_flags_set(self):
-        """SC-1(b): all review flags populated."""
+        """All review flags populated."""
         parser = _build_parser()
         args = parser.parse_args([
             "review",  # explicit subcommand
@@ -100,14 +100,14 @@ class TestParserInvalidChoices:
     """Invalid choices -> argparse exit 2."""
 
     def test_invalid_mode_exits_2(self):
-        """SC-1(c): --mode invalid -> exit 2 (on review subcommand)."""
+        """--mode invalid -> exit 2."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
             parser.parse_args(["review", "--mode", "invalid"])
         assert exc_info.value.code == 2
 
     def test_invalid_engine_exits_2(self):
-        """SC-1(d): --falsification-engine invalid -> exit 2."""
+        """--falsification-engine invalid -> exit 2."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
             parser.parse_args([
@@ -120,7 +120,7 @@ class TestParserHelp:
     """--help includes Exit codes section."""
 
     def test_help_includes_exit_codes(self, capsys):
-        """SC-1(e): --help epilog lists 0/1/2/3/4."""
+        """--help epilog lists exit codes 0/1/2/3/4."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
             parser.parse_args(["--help"])
@@ -138,7 +138,7 @@ class TestParserVersion:
     """--version prints forge <version> + exits 0."""
 
     def test_version_exits_zero(self, capsys):
-        """SC-1(f): --version exits 0."""
+        """--version exits 0."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
             parser.parse_args(["--version"])

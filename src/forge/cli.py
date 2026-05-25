@@ -101,12 +101,12 @@ def _emit_ci_output(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """CLI-01 argparse surface with subcommands.
+    """Build the argparse parser with subcommands.
 
     Subcommands:
       - review: existing pipeline (all flags preserved)
-      - gate-check: test-based commit gate (Phase 1 R1)
-      - install-hooks: hook installer (Phase 1 R1)
+      - gate-check: test-based commit gate
+      - install-hooks: hook installer
 
     Backward compat: bare `forge` (no subcommand) defaults to `review`
     in main() for existing workflows.
