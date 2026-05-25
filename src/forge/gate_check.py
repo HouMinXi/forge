@@ -2,11 +2,10 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """gate-check subcommand: test-based commit gate.
 
-Phase 1 Plan 02: implements R1 commit gate logic - parse gate.yaml,
-run tests, translate exit codes, FAIL-OPEN guard, CI detection,
-baseline delta, source file filtering.
+Parses .forge/gate.yaml, runs the configured test command, translates
+exit codes, and blocks on new failures vs a baseline.
 
-CRITICAL: run_gate_check returns ONLY 0 or 1, NEVER 2 (EXIT_CLI_ERROR).
+run_gate_check returns ONLY 0 or 1, NEVER 2 (EXIT_CLI_ERROR).
 If it returned 2, the pre-commit hook's exit-code translation would
 treat 2 as "allow+warn", causing FAIL-OPEN on config errors.
 """
@@ -272,7 +271,7 @@ def translate_exit_code(test_returncode: int) -> int:
     Returns:
         0 (allow) or 1 (BLOCK) for the pre-commit hook
 
-    Mapping (from SPEC v3.2):
+    Mapping:
         0 -> 0 (allow)
         1 -> 1 (BLOCK - real test failure)
         2, 3 -> 0 (allow - pytest interrupt/internal error)
@@ -302,7 +301,7 @@ def run_gate_check(
     """Main gate-check entry point.
 
     Args:
-        args: parsed argparse Namespace (unused in Plan 02, for future flags)
+        args: parsed argparse Namespace (reserved for future flags)
         env: environment variables (os.environ if None)
         cwd: working directory (Path.cwd() if None)
         stdout: output stream (sys.stdout if None)
