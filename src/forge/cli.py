@@ -252,7 +252,7 @@ def main() -> int:
     Subcommand routing:
       - review: existing pipeline (_run)
       - gate-check: gate_check.run_gate_check()
-      - install-hooks: stub (not yet implemented, Plan 03)
+      - install-hooks: install_hooks.run_install_hooks()
       - None (bare forge): default to review for backward compat
 
     Backward compat for `forge a.py b.py`:
@@ -308,7 +308,7 @@ def main() -> int:
     elif args.subcommand == 'gate-check':
         from .gate_check import run_gate_check
         return run_gate_check(
-            args=None, env=os.environ, cwd=Path.cwd(),
+            args=args, env=os.environ, cwd=Path.cwd(),
             stdout=sys.stdout, stderr=sys.stderr
         )
 
