@@ -313,11 +313,11 @@ def main() -> int:
         )
 
     elif args.subcommand == 'install-hooks':
-        print(
-            "forge: install-hooks not yet implemented (Plan 03)",
-            file=sys.stderr
+        from .install_hooks import run_install_hooks
+        return run_install_hooks(
+            args=args, env=os.environ, cwd=Path.cwd(),
+            stdout=sys.stdout, stderr=sys.stderr
         )
-        return EXIT_CLI_ERROR
 
     else:
         print(
