@@ -6,9 +6,10 @@ __pycache__/
 *.egg-info/
 
 # Forge per-project runtime data (findings, review state)
-# Ignore everything inside .forge/ except tools.yaml (config)
+# Ignore everything inside .forge/ except committed config (tools.yaml, gate.yaml)
 .forge/*
 !.forge/tools.yaml
+!.forge/gate.yaml
 
 # Virtual environments
 .venv/

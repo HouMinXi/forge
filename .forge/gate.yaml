@@ -1,0 +1,15 @@
+---
+# .forge/gate.yaml -- v2.1 R1 test command config
+# test.command (list), test.env (dict),
+# test.timeout_seconds (int), test.cwd (str)
+#
+# gate-check parses this. command is a list (not shell
+# string) to prevent metachar injection. env is merged
+# into subprocess env, not a shell prefix.
+
+test:
+  command: ["python3", "-m", "pytest", "tests/", "-q"]
+  env:
+    PYTHONPATH: "src"
+  timeout_seconds: 120
+  cwd: "."
