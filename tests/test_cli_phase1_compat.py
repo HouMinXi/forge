@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Phase 1 CLI surface compatibility tests.
-
-Verifies preserved, deprecated, and removed flags.
-"""
+"""CLI backward compatibility tests for deprecated and preserved flags."""
 
 import subprocess
 import sys
@@ -14,7 +11,7 @@ from forge.cli import _build_parser, main
 
 
 class TestPreservedFlags:
-    """SC-19: --registry, --quiet, --version still work.
+    """--registry, --quiet, --version still work.
 
     Post-subparser: --registry and --quiet are on review subcommand.
     --version remains on root parser.
@@ -38,7 +35,7 @@ class TestPreservedFlags:
 
 
 class TestStateDirDeprecation:
-    """SC-48 R4-M2: --state-dir accepted but ignored."""
+    """--state-dir accepted but ignored (deprecated)."""
 
     def test_state_dir_emits_warning(
         self, tmp_path, monkeypatch, capsys
@@ -86,7 +83,7 @@ class TestStateDirDeprecation:
 
 
 class TestStagedDeprecation:
-    """SC-38 R2-M4: --staged emits warning."""
+    """--staged emits deprecation warning."""
 
     def test_staged_warns(
         self, tmp_path, monkeypatch, capsys
@@ -137,7 +134,7 @@ class TestStagedDeprecation:
     def test_staged_quiet_suppresses_warning(
         self, tmp_path, monkeypatch, capsys
     ):
-        """SC-47 R4-M1: --staged + --quiet -> warning suppressed."""
+        """--staged + --quiet -> warning suppressed."""
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(
