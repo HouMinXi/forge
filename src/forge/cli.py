@@ -2,22 +2,8 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Forge CLI entry point.
 
-02-05 owns this file. Replaces Phase 1 L0-only pipeline with the
-full 02-XX integration.
-
-Pipeline (single invocation):
-  1. parse args (argparse) -- CLI-01
-  2. resolve env overrides -- CLI-03
-  3. validate paths + registry -- exit 2 on failure
-  4. acquire lock (02-04 ForgeLock) -- exit 3 on busy
-  5. resolve mode (02-04 resolve_mode)
-  6. construct BaselineSpec (02-03)
-  7. resolve_baseline -> ResolvedReview (02-03)
-  8. compute_source_hash + serialize_baseline_spec (02-03)
-  9. build factories (Falsifier/AutoFixer/revert_fn) -- STATE-10
- 10. construct StateMachine (02-02)
- 11. HOLD-resume loop: run -> on PENDING run_hold_ui -> re-run
- 12. map terminal Verdict to exit code (CLI-02)
+Subcommands: review (default), gate-check, install-hooks.
+Bare invocation (no subcommand) routes to review for backward compatibility.
 """
 from __future__ import annotations
 
@@ -73,16 +59,15 @@ def _emit_ci_output(
     registry: dict[str, "ToolConfig"],
     post_emit_hook: Optional[Callable[[], None]] = None,
 ) -> None:
-    """LAYER0-07: SARIF stdout + summary stderr in CI mode.
+    """Emit SARIF to stdout and summary to stderr in CI mode.
 
     Re-loads state from disk for canonical view (catches any save_state
-    divergence). Re-captures tool_versions per Integration 2 (avoids
-    02-02 StateMachine constructor surface change).
+    divergence). Re-captures tool_versions to avoid constructor-time
+    snapshot staleness.
 
     If load_state returns None -> silent return (no log warning).
-    Rationale: SARIF is best-effort output, NOT canonical artifact;
-    state.json is canonical. Silent return matches "skip SARIF when
-    state absent" semantics.
+    SARIF is best-effort output, NOT canonical artifact; state.json is
+    canonical. Silent return matches "skip SARIF when state absent" semantics.
     """
     final_state = _load_state(state_path)
     if final_state is None:
@@ -111,8 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
     Backward compat: bare `forge` (no subcommand) defaults to `review`
     in main() for existing workflows.
 
-    Defaults documented in REQUIREMENTS line 75; --help includes
-    Exit Codes section per CLI-02.
+    --help includes an Exit Codes section in the epilog.
     """
     parser = argparse.ArgumentParser(
         prog="forge",
@@ -164,7 +148,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--falsification-engine", choices=["auto", "stub", "real"],
         default=None,
-        help="STATE-10 engine select (default: auto)",
+        help="falsification engine (default: auto)",
     )
     review_parser.add_argument(
         "--sandbox", action="store_true",
@@ -187,9 +171,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     review_parser.add_argument(
         "--state-dir", default=None,
-        help="DEPRECATED v2.1: state directory is hardcoded to "
-             "cwd/.forge per 02-02 StateMachine. Accepted for Phase 1 "
-             "compat; value is ignored.",
+        help="DEPRECATED: state directory is hardcoded to "
+             "cwd/.forge; value is ignored.",
     )
     review_parser.add_argument(
         "--max-total-rounds", type=int, default=None,
@@ -207,7 +190,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suppress tool-skipped, version, and deprecation "
              "messages",
     )
-    # H1: Phase 1 flags preserved with deprecation.
     review_parser.add_argument(
         "--staged", action="store_true",
         help="DEPRECATED v2.1: use --head INDEX "
@@ -443,7 +425,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             max_fix_attempts=max_fix,
             state_path=state_path,
         )
-        # 02-06: SARIF emission in CI mode, INSIDE lock scope.
+        # SARIF emission in CI mode, inside lock scope.
         if mode == Mode.CI:
             _emit_ci_output(state_path, registry)
     return verdict
