@@ -7,11 +7,9 @@ Verifies preserved, deprecated, and removed flags.
 
 import subprocess
 import sys
-from unittest.mock import patch
 
 import pytest
 
-from forge import EXIT_PASS
 from forge.cli import _build_parser, main
 
 
@@ -80,7 +78,7 @@ class TestStateDirDeprecation:
              "--state-dir", "/tmp/custom", "a.py"],
         )
         monkeypatch.chdir(str(repo))
-        exit_code = main()
+        main()
         captured = capsys.readouterr()
         assert "deprecated" in captured.err.lower()
         # State.json written to cwd/.forge regardless.
@@ -131,7 +129,7 @@ class TestStagedDeprecation:
             ["forge", "--mode", "ci", "--staged", "a.py"],
         )
         monkeypatch.chdir(str(repo))
-        exit_code = main()
+        main()
         captured = capsys.readouterr()
         assert "deprecated" in captured.err.lower()
         assert "--head INDEX" in captured.err
@@ -178,7 +176,7 @@ class TestStagedDeprecation:
              "--quiet", "a.py"],
         )
         monkeypatch.chdir(str(repo))
-        exit_code = main()
+        main()
         captured = capsys.readouterr()
         # Warning should be suppressed by --quiet.
         assert "--staged" not in captured.err
