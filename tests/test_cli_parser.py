@@ -1,12 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""CLI-01 argparse surface tests.
-
-Updated for subparser structure (Plan 01-01):
-  - review subcommand has all existing flags
-  - gate-check and install-hooks are minimal
-  - bare invocation (no subcommand) has subcommand=None
-"""
+"""Argparse surface tests for forge CLI subcommands."""
 
 import pytest
 
@@ -154,7 +148,7 @@ class TestParserVersion:
 
 
 class TestSubcommands:
-    """Subcommand routing tests (Plan 01-01)."""
+    """Subcommand routing tests."""
 
     def test_gate_check_subcommand(self):
         """gate-check subcommand parses correctly."""
