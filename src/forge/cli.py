@@ -251,7 +251,7 @@ def main() -> int:
 
     Subcommand routing:
       - review: existing pipeline (_run)
-      - gate-check: stub (not yet implemented, Plan 02)
+      - gate-check: gate_check.run_gate_check()
       - install-hooks: stub (not yet implemented, Plan 03)
       - None (bare forge): default to review for backward compat
 
@@ -306,11 +306,11 @@ def main() -> int:
         return verdict_to_exit(verdict)
 
     elif args.subcommand == 'gate-check':
-        print(
-            "forge: gate-check not yet implemented (Plan 02)",
-            file=sys.stderr
+        from .gate_check import run_gate_check
+        return run_gate_check(
+            args=None, env=os.environ, cwd=Path.cwd(),
+            stdout=sys.stdout, stderr=sys.stderr
         )
-        return EXIT_CLI_ERROR
 
     elif args.subcommand == 'install-hooks':
         print(

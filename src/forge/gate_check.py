@@ -167,13 +167,13 @@ def match_source_patterns(
         False if no matches (skip tests).
 
     Special cases:
-        - Empty patterns list -> True (always run tests)
         - Empty staged_files -> False (no source changes, skip tests)
+        - Empty patterns list + non-empty files -> True (always run tests)
     """
-    if not patterns:
-        return True  # No filter, always run
     if not staged_files:
         return False  # No files staged, skip tests
+    if not patterns:
+        return True  # No filter, always run
 
     for file_path in staged_files:
         for pattern in patterns:
