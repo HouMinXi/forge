@@ -9,6 +9,7 @@ core.hooksPath is set. Idempotent on re-install.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -121,11 +122,11 @@ def resolve_forge_path() -> str:
     # Try shutil.which('forge') first
     forge_exe = shutil.which("forge")
     if forge_exe is not None and os.access(forge_exe, os.X_OK):
-        return "%s gate-check" % forge_exe
+        return "%s gate-check" % shlex.quote(forge_exe)
 
     # Fallback to sys.executable + ' -m forge'
     if sys.executable and os.access(sys.executable, os.X_OK):
-        return "%s -m forge gate-check" % sys.executable
+        return "%s -m forge gate-check" % shlex.quote(sys.executable)
 
     raise RuntimeError(
         "Cannot resolve forge path: 'forge' not on PATH and "
@@ -170,7 +171,7 @@ def run_install_hooks(
     """Main install-hooks entry point.
 
     Args:
-        args: parsed argparse Namespace (unused for now, for future flags)
+        args: parsed argparse Namespace; reads args.quiet if present
         env: environment variables (os.environ if None)
         cwd: working directory (Path.cwd() if None)
         stdout: output stream (sys.stdout if None)
@@ -187,6 +188,12 @@ def run_install_hooks(
         stdout = sys.stdout
     if stderr is None:
         stderr = sys.stderr
+
+    quiet = getattr(args, "quiet", False)
+
+    def info(msg):
+        if not quiet:
+            print(msg, file=stderr)
 
     try:
         # Step a: check core.hooksPath override
@@ -207,10 +214,9 @@ def run_install_hooks(
         # Step c: check for .pre-commit-config.yaml
         pre_commit_config = cwd / ".pre-commit-config.yaml"
         if pre_commit_config.exists():
-            print(
+            info(
                 "forge: warning: pre-commit framework detected. "
-                "forge hook will chain after existing hooks.",
-                file=stderr,
+                "forge hook will chain after existing hooks."
             )
 
         # Step d: resolve forge absolute path
@@ -233,27 +239,31 @@ def run_install_hooks(
 
             if is_forge_hook:
                 # Idempotent re-install: skip backup, overwrite
-                print(
-                    "forge: re-installing hook (existing is forge-generated)",
-                    file=stderr,
+                info(
+                    "forge: re-installing hook (existing is forge-generated)"
                 )
             else:
                 # Backup existing non-forge hook
                 if backup_path.exists():
-                    # Preserve original backup, don't overwrite
+                    # Backup already exists from a prior install.
+                    # Current hook_path has unknown content that would be
+                    # overwritten without a backup. Block and ask the user
+                    # to resolve manually.
                     print(
-                        "forge: warning: backup already exists at %s; "
-                        "preserving original backup"
-                        % backup_path,
+                        "forge: error: pre-commit.forge-backup already "
+                        "exists at %s and a non-forge hook is at %s. "
+                        "Remove one of them manually, then re-run "
+                        "forge install-hooks."
+                        % (backup_path, hook_path),
                         file=stderr,
                     )
+                    return EXIT_FAIL
                 else:
                     # Move existing hook to backup
                     shutil.move(str(hook_path), str(backup_path))
-                    print(
+                    info(
                         "forge: existing hook backed up to %s"
-                        % backup_path,
-                        file=stderr,
+                        % backup_path
                     )
                 chain_path = backup_path
 
@@ -269,9 +279,8 @@ def run_install_hooks(
         os.chmod(hook_path, 0o755)
 
         # Step i: success message
-        print(
-            "forge: pre-commit hook installed at %s" % hook_path,
-            file=stderr,
+        info(
+            "forge: pre-commit hook installed at %s" % hook_path
         )
 
         return EXIT_PASS
