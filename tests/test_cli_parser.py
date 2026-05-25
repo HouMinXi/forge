@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""CLI-01 argparse surface tests."""
+"""CLI-01 argparse surface tests.
 
-import sys
+Updated for subparser structure (Plan 01-01):
+  - review subcommand has all existing flags
+  - gate-check and install-hooks are minimal
+  - bare invocation (no subcommand) has subcommand=None
+"""
 
 import pytest
 
@@ -13,9 +17,31 @@ class TestParserDefaults:
     """Bare invocation defaults."""
 
     def test_bare_invocation_defaults(self):
-        """SC-2: all defaults match spec."""
+        """SC-2: bare forge (no subcommand) has subcommand=None."""
         parser = _build_parser()
         args = parser.parse_args([])
+        # Subparser structure: no subcommand specified
+        assert args.subcommand is None
+
+    def test_no_subcommand_defaults_review(self):
+        """Backward compat: bare forge maps to review in main()."""
+        # This is tested in main() logic, not parser.
+        # Parser returns subcommand=None; main() maps None -> 'review'.
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.subcommand is None
+        # main() will set: if args.subcommand is None: args.subcommand = 'review'
+
+    def test_review_subcommand_explicit(self):
+        """Explicit 'forge review' sets subcommand='review'."""
+        parser = _build_parser()
+        args = parser.parse_args(['review'])
+        assert args.subcommand == 'review'
+
+    def test_review_subcommand_defaults(self):
+        """Review subcommand defaults match old forge defaults."""
+        parser = _build_parser()
+        args = parser.parse_args(['review'])
         assert args.mode is None
         assert args.falsification_engine is None
         assert args.sandbox is False
@@ -34,9 +60,10 @@ class TestParserAllFlags:
     """All flags set -> values propagate."""
 
     def test_all_flags_set(self):
-        """SC-1(b): all flags populated."""
+        """SC-1(b): all review flags populated."""
         parser = _build_parser()
         args = parser.parse_args([
+            "review",  # explicit subcommand
             "--mode", "ci",
             "--falsification-engine", "stub",
             "--sandbox",
@@ -50,6 +77,7 @@ class TestParserAllFlags:
             "--staged",
             "a.py", "b.py",
         ])
+        assert args.subcommand == "review"
         assert args.mode == "ci"
         assert args.falsification_engine == "stub"
         assert args.sandbox is True
@@ -63,24 +91,34 @@ class TestParserAllFlags:
         assert args.staged is True
         assert args.paths == ["a.py", "b.py"]
 
+    def test_review_flags_preserved(self):
+        """Review subcommand preserves all existing flags."""
+        parser = _build_parser()
+        args = parser.parse_args([
+            'review', '--mode', 'local', '--baseline', 'HEAD'
+        ])
+        assert args.subcommand == 'review'
+        assert args.mode == 'local'
+        assert args.baseline == 'HEAD'
+
 
 class TestParserInvalidChoices:
     """Invalid choices -> argparse exit 2."""
 
     def test_invalid_mode_exits_2(self):
-        """SC-1(c): --mode invalid -> exit 2."""
+        """SC-1(c): --mode invalid -> exit 2 (on review subcommand)."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
-            parser.parse_args(["--mode", "invalid"])
+            parser.parse_args(["review", "--mode", "invalid"])
         assert exc_info.value.code == 2
 
     def test_invalid_engine_exits_2(self):
         """SC-1(d): --falsification-engine invalid -> exit 2."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
-            parser.parse_args(
-                ["--falsification-engine", "invalid"]
-            )
+            parser.parse_args([
+                "review", "--falsification-engine", "invalid"
+            ])
         assert exc_info.value.code == 2
 
 
@@ -113,3 +151,35 @@ class TestParserVersion:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert captured.out.startswith("forge ")
+
+
+class TestSubcommands:
+    """Subcommand routing tests (Plan 01-01)."""
+
+    def test_gate_check_subcommand(self):
+        """gate-check subcommand parses correctly."""
+        parser = _build_parser()
+        args = parser.parse_args(['gate-check'])
+        assert args.subcommand == 'gate-check'
+        assert args.quiet is False
+
+    def test_gate_check_quiet(self):
+        """gate-check --quiet flag."""
+        parser = _build_parser()
+        args = parser.parse_args(['gate-check', '--quiet'])
+        assert args.subcommand == 'gate-check'
+        assert args.quiet is True
+
+    def test_install_hooks_subcommand(self):
+        """install-hooks subcommand parses correctly."""
+        parser = _build_parser()
+        args = parser.parse_args(['install-hooks'])
+        assert args.subcommand == 'install-hooks'
+        assert args.quiet is False
+
+    def test_install_hooks_quiet(self):
+        """install-hooks --quiet flag."""
+        parser = _build_parser()
+        args = parser.parse_args(['install-hooks', '--quiet'])
+        assert args.subcommand == 'install-hooks'
+        assert args.quiet is True
