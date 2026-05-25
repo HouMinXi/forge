@@ -101,7 +101,15 @@ def _emit_ci_output(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """CLI-01 argparse surface.
+    """CLI-01 argparse surface with subcommands.
+
+    Subcommands:
+      - review: existing pipeline (all flags preserved)
+      - gate-check: test-based commit gate (Phase 1 R1)
+      - install-hooks: hook installer (Phase 1 R1)
+
+    Backward compat: bare `forge` (no subcommand) defaults to `review`
+    in main() for existing workflows.
 
     Defaults documented in REQUIREMENTS line 75; --help includes
     Exit Codes section per CLI-02.
@@ -120,71 +128,119 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    # --version on root parser so `forge --version` works
     parser.add_argument(
+        "--version", action="version",
+        version="forge %s" % __version__,
+    )
+
+    # Subparsers: dest='subcommand' to capture which was invoked
+    # required=False (Python 3.7+ default) for backward compat
+    subparsers = parser.add_subparsers(
+        dest='subcommand',
+        help='subcommand to execute',
+    )
+
+    # --- REVIEW subcommand: existing pipeline ---
+    review_parser = subparsers.add_parser(
+        'review',
+        help='run the full review pipeline (default)',
+        description='3-state quality gate for code review',
+        epilog=(
+            "Exit codes:\n"
+            "  0  PASS\n"
+            "  1  FAIL\n"
+            "  2  CLI_ERROR (invalid args, missing config, "
+            "parse error)\n"
+            "  3  BUSY (another forge process holds the lock)\n"
+            "  4  ESCALATED (non-convergence or human-frozen)\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    review_parser.add_argument(
         "--mode", choices=["local", "ci"], default=None,
         help="execution mode (default: local if TTY, ci otherwise)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--falsification-engine", choices=["auto", "stub", "real"],
         default=None,
         help="STATE-10 engine select (default: auto)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--sandbox", action="store_true",
         help="enable sandbox for autofixer "
              "(Phase 4 hook; v2.0 no-op + warning)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--baseline", default=None,
         help="baseline ref "
              "(git: HEAD/INDEX/<sha>; non-git: empty|<snapshot-path>)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--head", default=None,
         help="head ref (git only: WORKING/INDEX/<sha>; "
              "ignored non-git)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--registry", default=".forge/tools.yaml",
         help="path to tools.yaml (default: .forge/tools.yaml)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--state-dir", default=None,
         help="DEPRECATED v2.1: state directory is hardcoded to "
              "cwd/.forge per 02-02 StateMachine. Accepted for Phase 1 "
              "compat; value is ignored.",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--max-total-rounds", type=int, default=None,
         help="LOCAL mode round bound "
              "(default 20 or FORGE_MAX_TOTAL_ROUNDS)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--max-fix-attempts", type=int, default=None,
         help="per-fingerprint fix budget "
              "(default 3 or "
              "FORGE_MAX_FIX_ATTEMPTS_PER_FINGERPRINT)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "--quiet", action="store_true",
         help="suppress tool-skipped, version, and deprecation "
              "messages",
     )
-    parser.add_argument(
-        "--version", action="version",
-        version="forge %s" % __version__,
-    )
     # H1: Phase 1 flags preserved with deprecation.
-    parser.add_argument(
+    review_parser.add_argument(
         "--staged", action="store_true",
         help="DEPRECATED v2.1: use --head INDEX "
              "(mapped internally with warning)",
     )
-    parser.add_argument(
+    review_parser.add_argument(
         "paths", nargs="*",
         help="files/dirs to review; git mode filters diff, "
              "non-git lists files",
     )
+
+    # --- GATE-CHECK subcommand: test-based commit gate ---
+    gate_parser = subparsers.add_parser(
+        'gate-check',
+        help='run test gate for pre-commit hook',
+        description='Test-based commit gate (blocks on new failures)',
+    )
+    gate_parser.add_argument(
+        "--quiet", action="store_true",
+        help="suppress warning messages",
+    )
+
+    # --- INSTALL-HOOKS subcommand: hook installer ---
+    hooks_parser = subparsers.add_parser(
+        'install-hooks',
+        help='install forge pre-commit hook',
+        description='Write .git/hooks/pre-commit with forge gate-check',
+    )
+    hooks_parser.add_argument(
+        "--quiet", action="store_true",
+        help="suppress informational messages",
+    )
+
     return parser
 
 
@@ -192,33 +248,83 @@ def main() -> int:
     """Entry point. Returns exit code (int).
 
     setuptools entry-point shim calls sys.exit(main()).
+
+    Subcommand routing:
+      - review: existing pipeline (_run)
+      - gate-check: stub (not yet implemented, Plan 02)
+      - install-hooks: stub (not yet implemented, Plan 03)
+      - None (bare forge): default to review for backward compat
+
+    Backward compat for `forge a.py b.py`:
+      If sys.argv doesn't start with a known subcommand, prepend 'review'
+      to route positional args to the review subparser.
     """
     parser = _build_parser()
+
+    # Backward compat: detect if first arg is a known subcommand
+    # If not, prepend 'review' to sys.argv for argparse
+    known_subcommands = {'review', 'gate-check', 'install-hooks'}
+    argv = sys.argv[1:]  # skip program name
+
+    # Filter out --version and --help which are on root parser
+    non_flag_args = [a for a in argv if not a.startswith('-')]
+
+    if non_flag_args and non_flag_args[0] not in known_subcommands:
+        # First non-flag arg is not a subcommand, so prepend 'review'
+        argv = ['review'] + argv
+
     try:
-        args = parser.parse_args()
+        args = parser.parse_args(argv)
     except SystemExit as e:
         return int(e.code) if e.code is not None else EXIT_CLI_ERROR
 
-    try:
-        verdict = _run(args, env=os.environ, cwd=Path.cwd())
-    except CliError as exc:
-        print("forge: error: %s" % exc, file=sys.stderr)
-        return EXIT_CLI_ERROR
-    except ForgeLockBusy as exc:
-        print("forge: %s" % exc, file=sys.stderr)
-        return EXIT_BUSY
-    except Exception as exc:  # noqa: BLE001
-        import traceback
-        print(
-            "forge: unexpected error: %s" % exc, file=sys.stderr
-        )
-        traceback.print_exc(file=sys.stderr)
-        return EXIT_FAIL
+    # Backward compat: bare `forge` (no subcommand) defaults to review
+    if args.subcommand is None:
+        args.subcommand = 'review'
 
-    # B2: PENDING guard before verdict_to_exit.
-    if verdict == Verdict.PENDING:
-        return EXIT_PASS
-    return verdict_to_exit(verdict)
+    # Route to subcommand handler
+    if args.subcommand == 'review':
+        try:
+            verdict = _run(args, env=os.environ, cwd=Path.cwd())
+        except CliError as exc:
+            print("forge: error: %s" % exc, file=sys.stderr)
+            return EXIT_CLI_ERROR
+        except ForgeLockBusy as exc:
+            print("forge: %s" % exc, file=sys.stderr)
+            return EXIT_BUSY
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+            print(
+                "forge: unexpected error: %s" % exc, file=sys.stderr
+            )
+            traceback.print_exc(file=sys.stderr)
+            return EXIT_FAIL
+
+        # B2: PENDING guard before verdict_to_exit.
+        if verdict == Verdict.PENDING:
+            return EXIT_PASS
+        return verdict_to_exit(verdict)
+
+    elif args.subcommand == 'gate-check':
+        print(
+            "forge: gate-check not yet implemented (Plan 02)",
+            file=sys.stderr
+        )
+        return EXIT_CLI_ERROR
+
+    elif args.subcommand == 'install-hooks':
+        print(
+            "forge: install-hooks not yet implemented (Plan 03)",
+            file=sys.stderr
+        )
+        return EXIT_CLI_ERROR
+
+    else:
+        print(
+            "forge: unknown subcommand: %s" % args.subcommand,
+            file=sys.stderr
+        )
+        return EXIT_CLI_ERROR
 
 
 def _run(args, env, cwd: Path) -> Verdict:
