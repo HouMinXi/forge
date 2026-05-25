@@ -301,7 +301,7 @@ def run_gate_check(
     """Main gate-check entry point.
 
     Args:
-        args: parsed argparse Namespace (reserved for future flags)
+        args: parsed argparse Namespace; reads args.quiet if present
         env: environment variables (os.environ if None)
         cwd: working directory (Path.cwd() if None)
         stdout: output stream (sys.stdout if None)
@@ -321,6 +321,12 @@ def run_gate_check(
         stdout = sys.stdout
     if stderr is None:
         stderr = sys.stderr
+
+    quiet = getattr(args, "quiet", False)
+
+    def warn(msg):
+        if not quiet:
+            print(msg, file=stderr)
 
     # FAIL-OPEN guard: catch config/parse errors -> BLOCK (exit 1)
     try:
@@ -342,15 +348,9 @@ def run_gate_check(
     # Check FORGE_SKIP_TESTS (only in local mode, ignored in CI)
     if env.get("FORGE_SKIP_TESTS") == "1":
         if is_ci_mode(env):
-            print(
-                "forge: CI mode: FORGE_SKIP_TESTS ignored",
-                file=stderr
-            )
+            warn("forge: CI mode: FORGE_SKIP_TESTS ignored")
         else:
-            print(
-                "forge: FORGE_SKIP_TESTS=1, skipping tests",
-                file=stderr
-            )
+            warn("forge: FORGE_SKIP_TESTS=1, skipping tests")
             return EXIT_PASS  # Allow
 
     # Get staged files via git diff --cached --name-only
@@ -378,14 +378,14 @@ def run_gate_check(
     except subprocess.TimeoutExpired:
         print("forge: error: git diff --cached timed out", file=stderr)
         return EXIT_FAIL
+    except FileNotFoundError:
+        print("forge: error: git not found on PATH", file=stderr)
+        return EXIT_FAIL
 
     # Filter on source_patterns
     source_patterns = test_config.get("source_patterns", [])
     if not match_source_patterns(staged_files, source_patterns):
-        print(
-            "forge: no source files staged, skipping tests",
-            file=stderr
-        )
+        warn("forge: no source files staged, skipping tests")
         return EXIT_PASS  # Allow
 
     # Run test command
@@ -412,26 +412,31 @@ def run_gate_check(
             file=stderr
         )
         return EXIT_FAIL  # BLOCK on timeout
+    except FileNotFoundError:
+        print(
+            "forge: error: test runner not found: %s" % command[0],
+            file=stderr
+        )
+        return EXIT_FAIL
 
     # Translate exit code
     translated = translate_exit_code(test_returncode)
 
     # Special handling for exit 2-3 (warn but allow)
     if test_returncode == 2:
-        print(
+        warn(
             "forge: warning: tests exited with code 2 "
-            "(keyboard interrupt); allowing commit",
-            file=stderr
+            "(keyboard interrupt); allowing commit"
         )
     elif test_returncode == 3:
-        print(
+        warn(
             "forge: warning: tests exited with code 3 "
-            "(internal error); allowing commit",
-            file=stderr
+            "(internal error); allowing commit"
         )
 
-    # NF-1 fix: baseline delta applies ONLY to test exit 1 (real failure)
-    # Exit 4/5/timeout/>5 BLOCK immediately WITHOUT baseline delta check
+    # Baseline delta applies ONLY to real test failures (exit 1).
+    # Exit 4 (usage error), exit 5 (no tests collected), and timeout BLOCK
+    # directly -- vacuous delta would otherwise downgrade them to PASS.
     if translated == EXIT_FAIL and test_returncode == 1:
         # Real test failure -> check baseline delta
         should_block, new_failures = compute_baseline_delta(
@@ -439,16 +444,13 @@ def run_gate_check(
         )
         if not should_block:
             if baseline is None:
-                print(
-                    "forge: warning: no baseline; tests failed but allowing "
-                    "commit (run forge gate-check --record-baseline)",
-                    file=stderr
+                warn(
+                    "forge: warning: no baseline; tests failed but allowing commit"
                 )
             else:
-                print(
+                warn(
                     "forge: all failures are known (in baseline); "
-                    "allowing commit",
-                    file=stderr
+                    "allowing commit"
                 )
             return EXIT_PASS  # Downgrade to allow
         else:

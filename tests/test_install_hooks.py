@@ -236,6 +236,48 @@ class TestInstallHookChain:
         assert "echo original" in backup_path.read_text()
 
 
+class TestNonForgeHookWithBackup:
+    """Block when backup exists and hook_path is non-forge (ambiguous state)."""
+
+    def test_non_forge_hook_with_backup_blocks(self, tmp_path):
+        """Returns FAIL when backup exists and hook is not forge-generated."""
+        import io
+        subprocess.run(
+            ["git", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
+        )
+
+        hooks_result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        hooks_dir = tmp_path / hooks_result.stdout.strip()
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        # Manually create both: an existing backup and a non-forge hook
+        backup_path = hooks_dir / "pre-commit.forge-backup"
+        backup_path.write_text("#!/bin/sh\necho old-backup\n")
+        hook_path = hooks_dir / "pre-commit"
+        hook_path.write_text("#!/bin/sh\necho manual-hook\n")
+
+        stderr = io.StringIO()
+        result = run_install_hooks(
+            args=None, env={}, cwd=tmp_path,
+            stdout=None, stderr=stderr,
+        )
+        assert result == EXIT_FAIL
+        assert "error" in stderr.getvalue().lower()
+        # Manual hook content is NOT lost (hook_path still has it)
+        assert "manual-hook" in hook_path.read_text()
+        # Backup is NOT overwritten
+        assert "old-backup" in backup_path.read_text()
+
+
 class TestHooksPathAbort:
     """Abort when core.hooksPath is set."""
 
@@ -430,3 +472,46 @@ class TestIdempotency:
 
         # Backup should STILL not exist (idempotent)
         assert not backup_path.exists()
+
+
+class TestQuietFlag:
+    """quiet flag suppresses informational output."""
+
+    def test_quiet_suppresses_info(self, tmp_path):
+        """args.quiet=True suppresses installed-at message."""
+        import types
+        subprocess.run(
+            ["git", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
+        )
+
+        import io
+        stderr = io.StringIO()
+        args = types.SimpleNamespace(quiet=True)
+        result = run_install_hooks(
+            args=args, env={}, cwd=tmp_path,
+            stdout=None, stderr=stderr,
+        )
+        assert result == EXIT_PASS
+        # With quiet=True, no informational output
+        assert stderr.getvalue() == ""
+
+    def test_no_quiet_shows_info(self, tmp_path):
+        """Without quiet, installed-at message appears."""
+        subprocess.run(
+            ["git", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
+        )
+
+        import io
+        stderr = io.StringIO()
+        result = run_install_hooks(
+            args=None, env={}, cwd=tmp_path,
+            stdout=None, stderr=stderr,
+        )
+        assert result == EXIT_PASS
+        assert "pre-commit hook installed" in stderr.getvalue()

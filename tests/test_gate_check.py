@@ -341,6 +341,70 @@ class TestGateCheckIntegration:
             assert result == EXIT_PASS
             assert "FORGE_SKIP_TESTS" in stderr.getvalue()
 
+    def test_quiet_flag_suppresses_warnings(self):
+        """args.quiet=True suppresses warning messages."""
+        import types
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+
+            args = types.SimpleNamespace(quiet=True)
+            from io import StringIO
+            stderr = StringIO()
+            result = run_gate_check(
+                args=args,
+                env={"FORGE_SKIP_TESTS": "1"},  # No CI vars
+                cwd=cwd,
+                stdout=StringIO(),
+                stderr=stderr,
+            )
+            assert result == EXIT_PASS
+            # With quiet=True, the FORGE_SKIP_TESTS warning is suppressed
+            assert stderr.getvalue() == ""
+
+    @patch("forge.gate_check.subprocess.run")
+    def test_skip_tests_ignored_in_ci_mode(self, mock_run):
+        """FORGE_SKIP_TESTS=1 + CI=1 -> gate still runs (not skipped)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+
+            def side_effect(*args, **kwargs):
+                if args[0][0] == "git":
+                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                return Mock(returncode=0, stdout="", stderr="")
+
+            mock_run.side_effect = side_effect
+
+            from io import StringIO
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None,
+                env={"FORGE_SKIP_TESTS": "1", "CI": "1"},
+                cwd=cwd,
+                stdout=StringIO(),
+                stderr=stderr,
+            )
+            # In CI mode, FORGE_SKIP_TESTS is ignored; test ran and passed
+            assert result == EXIT_PASS
+            assert "CI mode" in stderr.getvalue()
+
     @patch("forge.gate_check.subprocess.run")
     def test_test_pass_returns_pass(self, mock_run):
         """Test exit 0 -> gate-check returns PASS."""
@@ -415,6 +479,193 @@ class TestGateCheckIntegration:
             )
             assert result == EXIT_FAIL
             assert "NEW test failures" in stderr.getvalue()
+
+    @patch("forge.gate_check.subprocess.run")
+    def test_exit_1_no_baseline_allows(self, mock_run):
+        """Test exit 1 + no baseline -> gate allows (bootstrap path)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+            # No test_baseline.json on disk
+
+            def side_effect(*args, **kwargs):
+                if args[0][0] == "git":
+                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                # Test command fails
+                return Mock(
+                    returncode=1,
+                    stdout="FAILED tests/test_foo.py::test_bar\n",
+                    stderr="",
+                )
+
+            mock_run.side_effect = side_effect
+
+            from io import StringIO
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=stderr,
+            )
+            assert result == EXIT_PASS
+            assert "no baseline" in stderr.getvalue()
+
+    @patch("forge.gate_check.subprocess.run")
+    def test_exit_4_blocks_regardless_of_baseline(self, mock_run):
+        """Exit 4 (usage error) BLOCKs even with permissive baseline."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+
+            # Permissive baseline: known failure listed as failed
+            baseline = {
+                "schema_version": "1.0",
+                "test_results": {
+                    "tests/test_foo.py::test_bar": "failed"
+                }
+            }
+            (forge_dir / "test_baseline.json").write_text(
+                json.dumps(baseline)
+            )
+
+            def side_effect(*args, **kwargs):
+                if args[0][0] == "git":
+                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                # Test runner exits with 4 (usage error)
+                return Mock(returncode=4, stdout="", stderr="")
+
+            mock_run.side_effect = side_effect
+
+            from io import StringIO
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=StringIO()
+            )
+            assert result == EXIT_FAIL, (
+                "exit 4 must BLOCK (1) regardless of baseline, got %d"
+                % result
+            )
+
+    @patch("forge.gate_check.subprocess.run")
+    def test_exit_5_blocks_regardless_of_baseline(self, mock_run):
+        """Exit 5 (no tests collected) BLOCKs even with empty baseline."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+
+            # Empty baseline: no known failures, so vacuous delta would PASS
+            baseline = {
+                "schema_version": "1.0",
+                "test_results": {}
+            }
+            (forge_dir / "test_baseline.json").write_text(
+                json.dumps(baseline)
+            )
+
+            def side_effect(*args, **kwargs):
+                if args[0][0] == "git":
+                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                # Test runner exits with 5 (no tests collected)
+                return Mock(returncode=5, stdout="", stderr="")
+
+            mock_run.side_effect = side_effect
+
+            from io import StringIO
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=StringIO()
+            )
+            assert result == EXIT_FAIL, (
+                "exit 5 must BLOCK (1) regardless of baseline, got %d"
+                % result
+            )
+
+
+    @patch("forge.gate_check.subprocess.run")
+    def test_git_not_found_blocks(self, mock_run):
+        """git not on PATH -> gate BLOCKs with clean error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+
+            def side_effect(*args, **kwargs):
+                if args[0][0] == "git":
+                    raise FileNotFoundError("git not found")
+                return Mock(returncode=0, stdout="", stderr="")
+
+            mock_run.side_effect = side_effect
+
+            from io import StringIO
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=stderr,
+            )
+            assert result == EXIT_FAIL
+            assert "error" in stderr.getvalue().lower()
+
+    @patch("forge.gate_check.subprocess.run")
+    def test_runner_not_found_blocks(self, mock_run):
+        """Test runner not on PATH -> gate BLOCKs with clean error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+
+            def side_effect(*args, **kwargs):
+                if args[0][0] == "git":
+                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                # Test runner not found
+                raise FileNotFoundError("python3 not found")
+
+            mock_run.side_effect = side_effect
+
+            from io import StringIO
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=stderr,
+            )
+            assert result == EXIT_FAIL
+            assert "error" in stderr.getvalue().lower()
 
 
 # --- Bug-inject tests ---
