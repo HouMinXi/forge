@@ -296,6 +296,7 @@ class StateMachine:
                             for f in mm_findings
                             if f.source == "MUTANT"
                             and f.disposition == Disposition.CONFIRMED
+                            and f.id != "MUTATION_ERROR"
                         ]
                         # f.id is "mutant-{mutant_name}" for survivors
                         done_data = {

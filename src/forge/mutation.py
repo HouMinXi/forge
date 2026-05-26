@@ -216,10 +216,10 @@ def run_mutation(
     pyproject_path = os.path.join(repo_root, "pyproject.toml")
     wrote_setup_cfg = False
     try:
-        has_user_setup_cfg = (
-            os.path.exists(setup_cfg_path)
-            and _FORGE_CFG_MARKER not in open(setup_cfg_path).read()
-        )
+        has_user_setup_cfg = False
+        if os.path.exists(setup_cfg_path):
+            with open(setup_cfg_path, encoding="utf-8") as _fh:
+                has_user_setup_cfg = _FORGE_CFG_MARKER not in _fh.read()
         has_user_pyproject_mutmut = False
         if os.path.exists(pyproject_path):
             try:
