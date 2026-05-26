@@ -220,3 +220,61 @@ class TestRunMutation:
             for f in skipped_findings:
                 assert f.source == "MUTANT", "scenario: %s" % scenario
                 assert f.disposition == Disposition.DISMISSED, "scenario: %s" % scenario
+
+
+class TestMutationRealCLI:
+    """Real mutmut CLI smoke tests (skipped if mutmut not installed)."""
+
+    def test_real_mutmut_runs_without_usage_error(self, tmp_path):
+        """Test that real mutmut CLI accepts our invocation."""
+        import shutil
+        import pytest
+
+        if shutil.which("mutmut") is None:
+            pytest.skip("mutmut not installed")
+
+        # Invoke run_mutation in isolated directory
+        import os
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+
+            # Create src/ structure (PYTHONPATH=src requirement)
+            src_dir = tmp_path / "src"
+            src_dir.mkdir()
+
+            target = src_dir / "target.py"
+            target.write_text(
+                "def add(a, b):\n"
+                "    return a + b\n"
+            )
+
+            test_file = tmp_path / "test_target.py"
+            test_file.write_text(
+                "from target import add\n"
+                "def test_add():\n"
+                "    assert add(1, 2) == 3\n"
+            )
+
+            findings, infra_errors = run_mutation(
+                diff_files=["src/target.py"],
+                baseline_cmd=["python3", "-m", "pytest", "-x", "test_target.py"],
+                timeout=60,
+            )
+
+            # The primary assertion: no MUTATION_ERROR finding (exit 2 usage error).
+            # If mutmut's invocation is correct, it will either:
+            # 1. Produce survivors (CONFIRMED findings)
+            # 2. Skip due to pytest incompatibility (MUTATION_SKIPPED)
+            # 3. Have no survivors (empty findings list, which is acceptable)
+            #
+            # The EC-7 bug was a usage error (exit 2) due to --paths-to-mutate not existing.
+            # This test verifies that bug is fixed.
+            error_findings = [f for f in findings if f.id == "MUTATION_ERROR"]
+            assert error_findings == [], (
+                "mutmut invocation failed with usage error (bug NOT fixed): %s"
+                % error_findings
+            )
+
+        finally:
+            os.chdir(original_cwd)

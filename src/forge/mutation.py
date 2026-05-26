@@ -11,6 +11,7 @@ changing the l2_runner interface.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -148,11 +149,14 @@ def run_mutation(
         return (findings, infra_errors)
 
     # Flaky guard: run baseline 3x
+    baseline_env = os.environ.copy()
+    baseline_env["PYTHONPATH"] = "src"
+
     for run_num in range(1, 4):
         try:
             result = subprocess.run(
                 baseline_cmd,
-                env={"PYTHONPATH": "src"},
+                env=baseline_env,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -209,28 +213,86 @@ def run_mutation(
         )
         return (findings, [])
 
-    # Run mutmut
+    # Write mutmut config (mutmut 3.x reads from setup.cfg, no CLI --paths-to-mutate)
+    # mutmut looks for setup.cfg in cwd, so we write it temporarily
+    config_content = (
+        "[mutmut]\n"
+        "paths_to_mutate=%s\n"
+        "runner=python3 -m pytest -x\n"
+        % ",".join(py_files)
+    )
+
+    cfg_path = "setup.cfg"
+    cfg_existed = os.path.exists(cfg_path)
+    original_content = None
+
+    if cfg_existed:
+        with open(cfg_path, "r") as f:
+            original_content = f.read()
+
     try:
-        subprocess.run(
-            ["mutmut", "run", "--paths-to-mutate"] + py_files,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        findings.append(
-            StateFinding(
-                id="MUTATION_SKIPPED",
-                fingerprint="mutation-timeout",
-                source="MUTANT",
-                disposition=Disposition.DISMISSED,
-                file="",
-                line_range=[],
-                description="mutmut timed out after %ds" % timeout,
+        # Write temporary config
+        with open(cfg_path, "w") as cfg:
+            cfg.write(config_content)
+
+        # Run mutmut with PYTHONPATH=src
+        run_env = os.environ.copy()
+        run_env["PYTHONPATH"] = "src"
+
+        try:
+            result = subprocess.run(
+                ["mutmut", "run"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=run_env,
             )
-        )
-        return (findings, [])
+
+            # Check for usage errors (exit 2 typically means bad invocation)
+            if result.returncode == 2:
+                findings.append(
+                    StateFinding(
+                        id="MUTATION_ERROR",
+                        fingerprint="mutation-invocation-error",
+                        source="MUTANT",
+                        disposition=Disposition.CONFIRMED,
+                        file="",
+                        line_range=[],
+                        description=(
+                            "mutmut invocation failed (exit %d): %s"
+                            % (result.returncode, result.stderr[:200])
+                        ),
+                    )
+                )
+                infra_errors.append(
+                    "mutmut invocation error: %s" % result.stderr[:100]
+                )
+                return (findings, infra_errors)
+
+        except subprocess.TimeoutExpired:
+            findings.append(
+                StateFinding(
+                    id="MUTATION_SKIPPED",
+                    fingerprint="mutation-timeout",
+                    source="MUTANT",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description="mutmut timed out after %ds" % timeout,
+                )
+            )
+            return (findings, [])
+    finally:
+        # Restore original config or remove temporary one
+        if cfg_existed and original_content is not None:
+            with open(cfg_path, "w") as f:
+                f.write(original_content)
+        elif not cfg_existed:
+            try:
+                os.unlink(cfg_path)
+            except OSError:
+                pass
 
     # Parse results
     try:
