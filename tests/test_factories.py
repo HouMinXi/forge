@@ -224,3 +224,20 @@ class TestBuildL2Runner:
             assert "not installed" in findings[0].description
             assert len(infra) == 1
             assert "not found" in infra[0]
+
+
+class TestBuildE2eChecker:
+    """Factory test for build_e2e_checker."""
+
+    def test_returns_callable_with_correct_signature(self):
+        """build_e2e_checker() returns a callable (diff_text, repo_root) -> (list, list)."""
+        from forge.factories import build_e2e_checker
+
+        fn = build_e2e_checker()
+        assert callable(fn)
+        out = fn("", Path("."))
+        assert isinstance(out, tuple)
+        assert len(out) == 2
+        findings, errors = out
+        assert isinstance(findings, list)
+        assert isinstance(errors, list)
