@@ -7,13 +7,16 @@ declarative and Phase 4 can swap impls without touching the CLI.
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable
 
 from .autofix import AutoFixer, FixOutcome, StubAutoFixer
 from .baseline import ResolvedReview
+from .disposition import Disposition
 from .falsify import Falsifier, StubFalsifier
+from .mutation import run_mutation
 from .state import StateFinding
 
 
@@ -128,3 +131,41 @@ def _make_snapshot_restore(
             "Tracked as v2.x candidate."
         )
     return _revert
+
+
+def build_l2_runner() -> Callable:
+    """Build l2_runner (mutation testing) callable.
+
+    Returns a callable with signature:
+        (diff_files: list[str], baseline_cmd: list[str])
+        -> tuple[list[StateFinding], list[str]]
+
+    If mutmut is not on PATH, returns a no-op callable that produces
+    a single MUTATION_SKIPPED finding (soft dependency per D-05).
+
+    The returned callable delegates to run_mutation from the mutation
+    module when mutmut is available.
+    """
+    if shutil.which("mutmut") is None:
+        # mutmut not available, return no-op with MUTATION_SKIPPED
+        def _no_mutation(
+            diff_files: list[str],
+            baseline_cmd: list[str],
+        ) -> tuple[list[StateFinding], list[str]]:
+            findings = [
+                StateFinding(
+                    id="MUTATION_SKIPPED",
+                    fingerprint="mutation-unavailable",
+                    source="MUTANT",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description="mutmut not installed (soft dependency)",
+                )
+            ]
+            infra_errors = ["mutmut not found on PATH"]
+            return (findings, infra_errors)
+        return _no_mutation
+
+    # mutmut is available, delegate to run_mutation
+    return run_mutation
