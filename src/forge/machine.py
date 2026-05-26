@@ -17,6 +17,10 @@ Per-round flow (STATE-08 ordering):
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -126,6 +130,9 @@ class StateMachine:
     registry: dict
     l0_runner: Callable = field(default=_default_l0_runner)
     l1_provider: L1Provider = field(default=lambda: [])
+    l2_runner: Callable = field(
+        default=lambda diff_files, baseline_cmd: ([], [])
+    )
     post_round_hook: Optional[Callable[[int], None]] = None
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
@@ -167,8 +174,196 @@ class StateMachine:
 
         Per R1 H5: converged=True on PASS only; FAIL exits early so
         converged=False.
+        02-02: Added async mutation result check and launch.
         """
         self._execute_round(round_index=0)
+
+        # Check for prior mutation result
+        result_path = self.cwd / ".forge" / "mutation-result.json"
+        if result_path.exists():
+            try:
+                with open(result_path, "r", encoding="utf-8") as f:
+                    result_data = json.load(f)
+
+                if "status" not in result_data:
+                    self._state.infra_errors.append(
+                        "CI: mutation-result.json missing status field"
+                    )
+                else:
+                    status = result_data["status"]
+                    if status == "done":
+                        survivors = result_data.get("survivors", [])
+                        if survivors:
+                            self._state.verdict = Verdict.FAIL
+                            self._state.converged = False
+                            self._state.infra_errors.append(
+                                "CI: mutation survivors found: %d survivors"
+                                % len(survivors)
+                            )
+                            self._persist_state()
+                            return Verdict.FAIL
+                    elif status == "running":
+                        pid = result_data.get("pid")
+                        if pid is not None:
+                            try:
+                                os.kill(pid, 0)
+                                # PID alive, skip new launch
+                                self._state.infra_errors.append(
+                                    "CI: mutation PID %d still running, "
+                                    "skipping new launch" % pid
+                                )
+                            except ProcessLookupError:
+                                # PID dead, treat as error
+                                from .disposition import Disposition as Disp
+
+                                finding = StateFinding(
+                                    id="MUTATION_SKIPPED",
+                                    fingerprint="mutation-process-died",
+                                    source="MUTANT",
+                                    disposition=Disp.DISMISSED,
+                                    file="",
+                                    line_range=[],
+                                    description=(
+                                        "CI: mutation process died (PID %d)"
+                                        % pid
+                                    ),
+                                )
+                                self._state.findings.append(finding)
+                                result_path.unlink()
+                    elif status == "error":
+                        error_msg = result_data.get(
+                            "message", "unknown error"
+                        )
+                        self._state.verdict = Verdict.FAIL
+                        self._state.converged = False
+                        self._state.infra_errors.append(
+                            "CI: mutation error: %s" % error_msg
+                        )
+                        self._persist_state()
+                        return Verdict.FAIL
+            except (json.JSONDecodeError, KeyError, OSError) as e:
+                self._state.infra_errors.append(
+                    "CI: failed to read mutation-result.json: %s" % e
+                )
+
+        # Launch new async mutation
+        import shutil
+
+        diff_files = [str(f) for f in self._source_files()]
+        py_files = [f for f in diff_files if f.endswith(".py")]
+
+        if py_files and shutil.which("mutmut") is not None:
+            try:
+                from .gate_check import load_gate_config
+
+                config = load_gate_config(
+                    self.cwd / ".forge" / "gate.yaml"
+                )
+                baseline_cmd = config["test"]["command"]
+            except Exception:  # noqa: BLE001
+                baseline_cmd = None
+
+            if baseline_cmd is not None:
+                # Launch wrapper thread
+                def _async_mutation():
+                    import subprocess
+
+                    # Write initial status
+                    initial_data = {
+                        "pid": threading.get_ident(),
+                        "started_at": time.time(),
+                        "status": "running",
+                        "survivors": [],
+                    }
+                    try:
+                        with open(
+                            result_path, "w", encoding="utf-8"
+                        ) as f:
+                            json.dump(initial_data, f)
+                    except OSError:
+                        return
+
+                    # Run mutmut
+                    try:
+                        mutmut_env = os.environ.copy()
+                        mutmut_env["PYTHONPATH"] = "src"
+                        subprocess.run(
+                            ["mutmut", "run", "--paths-to-mutate"]
+                            + py_files,
+                            capture_output=True,
+                            env=mutmut_env,
+                            timeout=600,
+                            check=False,
+                        )
+                        results_proc = subprocess.run(
+                            ["mutmut", "results"],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                            check=False,
+                        )
+                        from .mutation import parse_mutmut_results
+
+                        survivors = parse_mutmut_results(
+                            results_proc.stdout
+                        )
+                        survivor_list = [
+                            "%s:%d" % (s.file, s.mutant_id)
+                            for s in survivors
+                        ]
+                        done_data = {
+                            "pid": threading.get_ident(),
+                            "started_at": initial_data["started_at"],
+                            "status": "done",
+                            "survivors": survivor_list,
+                        }
+                        with open(
+                            result_path, "w", encoding="utf-8"
+                        ) as f:
+                            json.dump(done_data, f)
+                    except Exception as e:  # noqa: BLE001
+                        error_data = {
+                            "pid": threading.get_ident(),
+                            "started_at": initial_data["started_at"],
+                            "status": "error",
+                            "message": str(e),
+                        }
+                        try:
+                            with open(
+                                result_path, "w", encoding="utf-8"
+                            ) as f:
+                                json.dump(error_data, f)
+                        except OSError:
+                            pass
+
+                thread = threading.Thread(
+                    target=_async_mutation, daemon=True
+                )
+                thread.start()
+        elif not py_files:
+            # No Python files, write MUTATION_SKIPPED
+            skip_data = {
+                "status": "error",
+                "message": "no Python files in diff",
+            }
+            try:
+                with open(result_path, "w", encoding="utf-8") as f:
+                    json.dump(skip_data, f)
+            except OSError:
+                pass
+        elif shutil.which("mutmut") is None:
+            # mutmut not installed
+            skip_data = {
+                "status": "error",
+                "message": "mutmut not installed",
+            }
+            try:
+                with open(result_path, "w", encoding="utf-8") as f:
+                    json.dump(skip_data, f)
+            except OSError:
+                pass
+
+        # Proceed with normal L0+L1 verdict determination
         confirmed = self._count(Disposition.CONFIRMED)
         verdict = Verdict.FAIL if confirmed > 0 else Verdict.PASS
         self._state.verdict = verdict
@@ -189,6 +384,7 @@ class StateMachine:
                     round_index,
                     l0_findings=[],
                     l1_findings=[],
+                    l2_findings=[],
                 )
                 self._state.verdict = Verdict.ESCALATED
                 self._state.converged = False
@@ -209,6 +405,28 @@ class StateMachine:
                 self._persist_state()
                 return Verdict.ESCALATED
             self._execute_round(round_index)
+
+            # Check consecutive_survivor_rounds
+            mutant_survivors = sum(
+                1 for f in self._state.findings
+                if f.source == "MUTANT"
+                and f.disposition == Disposition.CONFIRMED
+            )
+            if mutant_survivors > 0:
+                self._state.consecutive_survivor_rounds += 1
+            else:
+                self._state.consecutive_survivor_rounds = 0
+
+            if self._state.consecutive_survivor_rounds >= 3:
+                self._state.verdict = Verdict.FAIL
+                self._state.converged = False
+                self._state.infra_errors.append(
+                    "mutation: 3 consecutive rounds with survivors -- "
+                    "tests are demonstrably weak"
+                )
+                self._persist_state()
+                return Verdict.FAIL
+
             if self._fixpoint_reached():
                 self._finalize_local_terminal()
                 return self._state.verdict
@@ -274,22 +492,55 @@ class StateMachine:
             l1_findings.append(f)
         return l1_findings
 
+    def _run_l2_phase(self) -> list[StateFinding]:
+        """L2 mutation phase. Runs after L1.
+
+        Calls l2_runner with diff-scoped files and baseline test command.
+        Returns MUTANT findings (survivors or MUTATION_SKIPPED).
+        """
+        try:
+            from .gate_check import load_gate_config
+
+            config = load_gate_config(self.cwd / ".forge" / "gate.yaml")
+            baseline_cmd = config["test"]["command"]
+        except Exception as exc:  # noqa: BLE001
+            self._state.infra_errors.append(
+                "L2: gate.yaml missing or test.command not configured: %s"
+                % exc
+            )
+            return []
+
+        diff_files = [str(f) for f in self._source_files()]
+
+        try:
+            l2_findings, l2_infra = self.l2_runner(diff_files, baseline_cmd)
+            self._state.infra_errors.extend(l2_infra)
+            return l2_findings
+        except Exception as exc:  # noqa: BLE001
+            self._state.infra_errors.append(
+                "L2 runner failed: %s" % exc
+            )
+            return []
+
     def _execute_round(self, round_index: int) -> None:
-        """STATE-08: both modes run L0 + L1 per LAYER0-07.
+        """STATE-08: both modes run L0 + L1 + L2 per 02-02.
 
         Difference is autofix scope:
-          LOCAL: L0 detect -> L0 autofix loop -> L1 detect (post-fix code)
-          CI:    L0 detect -> L1 detect (no autofix loop per STATE-03)
+          LOCAL: L0 detect -> L0 autofix loop -> L1 detect (post-fix code) -> L2
+          CI:    L0 detect -> L1 detect (no autofix loop per STATE-03) -> L2
         """
         self._state.round = round_index
         l0_findings = self._run_l0_phase()
         if self.mode == Mode.LOCAL:
             self._apply_autofix_loop_to(l0_findings)
         l1_findings = self._run_l1_phase()
-        merged = self._merge_findings(l0_findings, l1_findings)
+        l2_findings = self._run_l2_phase()
+        merged = self._merge_findings(l0_findings, l1_findings, l2_findings)
         merged = self._apply_promotion_stickiness(merged)
         self._state.findings = merged
-        self._append_round_snapshot(round_index, l0_findings, l1_findings)
+        self._append_round_snapshot(
+            round_index, l0_findings, l1_findings, l2_findings
+        )
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
@@ -311,6 +562,9 @@ class StateMachine:
         """
         mode_hint = self.resolved_review.mode_hint
         for finding in findings:
+            # MUTANT findings skip autofix (coverage gap, not code bug)
+            if finding.source == "MUTANT":
+                continue
             if finding.disposition != Disposition.CONFIRMED:
                 continue
             fp = finding.fingerprint
@@ -420,10 +674,13 @@ class StateMachine:
         self,
         l0_findings: list[StateFinding],
         l1_findings: list[StateFinding],
+        l2_findings: list[StateFinding] = None,
     ) -> list[StateFinding]:
-        """Merge L0 + L1 by fingerprint. FP-04: L0 wins on conflict."""
+        """Merge L0 + L1 + L2 by fingerprint. FP-04: L0 wins on conflict."""
         merged: dict[str, StateFinding] = {}
-        # L1 first so L0 overwrites on conflict
+        # L2 first, then L1, then L0 (L0 wins on conflict)
+        for f in (l2_findings or []):
+            merged[f.fingerprint] = f
         for f in l1_findings:
             merged[f.fingerprint] = f
         for f in l0_findings:
@@ -460,12 +717,16 @@ class StateMachine:
         round_index: int,
         l0_findings: list[StateFinding],
         l1_findings: list[StateFinding],
+        l2_findings: list[StateFinding] = None,
     ) -> None:
         """Append per-round snapshot to round_history for STATE-05."""
         snapshot = {
             "round": round_index,
             "l0_fingerprints": [f.fingerprint for f in l0_findings],
             "l1_fingerprints": [f.fingerprint for f in l1_findings],
+            "l2_fingerprints": [
+                f.fingerprint for f in (l2_findings or [])
+            ],
             "dispositions": {
                 f.fingerprint: f.disposition.value
                 for f in self._state.findings
