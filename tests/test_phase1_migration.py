@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """H2: Verify Phase 1 old API (read_state/write_state) fully migrated."""
 

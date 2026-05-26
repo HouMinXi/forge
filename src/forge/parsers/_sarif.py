@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Shared SARIF 2.1.0 parser for ruff and semgrep (DRY)."""
 

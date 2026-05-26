@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for STATE-11 signal handling (integration, subprocess-based).
 

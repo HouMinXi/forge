@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 
 [build-system]
@@ -10,7 +10,7 @@ name = "forge"
 version = "2.0.0a1"
 description = "3-state quality gate for code review"
 requires-python = ">=3.12"
-license = "AGPL-3.0-or-later"
+license = "Apache-2.0"
 authors = [
     {name = "Minxi Hou", email = "houminxi@gmail.com"},
 ]
