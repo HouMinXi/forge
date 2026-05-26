@@ -16,7 +16,7 @@ authors = [
 ]
 dependencies = [
     "pyyaml>=6.0",
-    "unidiff>=0.7.5",
+    "unidiff>=0.7.5,<0.8.0",
 ]
 
 [project.optional-dependencies]

@@ -16,6 +16,7 @@ from .autofix import AutoFixer, FixOutcome, StubAutoFixer
 from .baseline import ResolvedReview
 from .disposition import Disposition
 from .falsify import Falsifier, StubFalsifier
+from .e2e_check import run_e2e_check
 from .mutation import run_mutation
 from .state import StateFinding
 
@@ -169,3 +170,22 @@ def build_l2_runner() -> Callable:
 
     # mutmut is available, delegate to run_mutation
     return run_mutation
+
+
+def build_e2e_checker() -> Callable:
+    """Build e2e_checker callable for R3 coverage heuristic.
+
+    Returns a callable with signature:
+        (diff_text: str, repo_root: Path)
+        -> tuple[list[StateFinding], list[str]]
+
+    Unlike build_l2_runner, there is no external-binary availability check:
+    e2e_check has no soft dependency (unidiff is a hard dep already used by
+    diff.py). The factory returns run_e2e_check directly.
+
+    The factory exists for symmetry with build_l2_runner so plan 03-03 can
+    inject it into the state machine the same way as l2_runner, and a future
+    variant (e.g. with config loading) can be swapped without touching
+    machine.py.
+    """
+    return run_e2e_check
