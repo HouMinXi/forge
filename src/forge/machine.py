@@ -115,6 +115,8 @@ class StateMachine:
       registry: dict[str, ToolConfig] passed to l0_runner
       l0_runner: callable (registry, files) -> (findings, infra_errors)
       l1_provider: callable returning L1 candidates (default: no L1)
+      l2_runner: callable (diff_files, baseline_cmd) -> (findings, infra_errors)
+      e2e_runner: callable (diff_text, repo_root) -> (findings, infra_errors)
       post_round_hook: optional callable for test observability (R1 H6)
       max_total_rounds: STATE-04 LOCAL bound (default 20)
       max_fix_attempts: per-fingerprint budget (default from disposition)
@@ -132,6 +134,9 @@ class StateMachine:
     l1_provider: L1Provider = field(default=lambda: [])
     l2_runner: Callable = field(
         default=lambda diff_files, baseline_cmd: ([], [])
+    )
+    e2e_runner: Callable = field(
+        default=lambda diff_text, repo_root: ([], [])
     )
     post_round_hook: Optional[Callable[[int], None]] = None
     max_total_rounds: int = 20
@@ -510,12 +515,38 @@ class StateMachine:
             )
             return []
 
+    def _run_e2e_phase(self) -> list[StateFinding]:
+        """E2e coverage phase. Runs after L2.
+
+        Reads diff_text from the resolved review's canonical diff (captured at
+        review setup, same scope as L0/L1). Returns E2E_CHECK findings:
+        Layer 1 DISMISSED (advisory), Layer 2 UNCERTAIN (enters HOLD for human
+        triage). A failing e2e runner degrades to no findings, never crashes
+        the round.
+
+        Non-git mode: no diff is available; records a non-fatal infra signal
+        and returns no findings.
+        """
+        diff_text = self.resolved_review.git_diff
+        if diff_text is None:
+            self._state.infra_errors.append(
+                "e2e: no git diff available (non-git review)"
+            )
+            return []
+        try:
+            e2e_findings, e2e_infra = self.e2e_runner(diff_text, self.cwd)
+            self._state.infra_errors.extend(e2e_infra)
+            return e2e_findings
+        except Exception as exc:  # noqa: BLE001
+            self._state.infra_errors.append("e2e runner failed: %s" % exc)
+            return []
+
     def _execute_round(self, round_index: int) -> None:
-        """STATE-08: both modes run L0 + L1 + L2 per 02-02.
+        """STATE-08: both modes run L0 + L1 + L2 + E2E each round.
 
         Difference is autofix scope:
-          LOCAL: L0 detect -> L0 autofix loop -> L1 detect (post-fix code) -> L2
-          CI:    L0 detect -> L1 detect (no autofix loop per STATE-03) -> L2
+          LOCAL: L0 detect -> L0 autofix loop -> L1 -> L2 -> E2E
+          CI:    L0 detect -> L1 -> L2 -> E2E (no autofix loop per STATE-03)
         """
         self._state.round = round_index
         l0_findings = self._run_l0_phase()
@@ -523,11 +554,14 @@ class StateMachine:
             self._apply_autofix_loop_to(l0_findings)
         l1_findings = self._run_l1_phase()
         l2_findings = self._run_l2_phase()
-        merged = self._merge_findings(l0_findings, l1_findings, l2_findings)
+        e2e_findings = self._run_e2e_phase()
+        merged = self._merge_findings(
+            l0_findings, l1_findings, l2_findings, e2e_findings
+        )
         merged = self._apply_promotion_stickiness(merged)
         self._state.findings = merged
         self._append_round_snapshot(
-            round_index, l0_findings, l1_findings, l2_findings
+            round_index, l0_findings, l1_findings, l2_findings, e2e_findings
         )
         self._persist_state()
         if self.post_round_hook is not None:
@@ -550,8 +584,9 @@ class StateMachine:
         """
         mode_hint = self.resolved_review.mode_hint
         for finding in findings:
-            # MUTANT findings skip autofix (coverage gap, not code bug)
-            if finding.source == "MUTANT":
+            # Coverage-gap findings skip autofix: they are not code defects
+            # and the autofix loop cannot add a missing test.
+            if finding.source in ("MUTANT", "E2E_CHECK"):
                 continue
             if finding.disposition != Disposition.CONFIRMED:
                 continue
@@ -663,10 +698,19 @@ class StateMachine:
         l0_findings: list[StateFinding],
         l1_findings: list[StateFinding],
         l2_findings: list[StateFinding] = None,
+        e2e_findings: list[StateFinding] = None,
     ) -> list[StateFinding]:
-        """Merge L0 + L1 + L2 by fingerprint. FP-04: L0 wins on conflict."""
+        """Merge L0 + L1 + L2 + E2E by fingerprint. FP-04: L0 wins on conflict.
+
+        Merge order (lowest priority first; higher overwrites):
+          e2e (lowest) -> l2 -> l1 -> l0 (highest).
+        E2E fingerprints use an "e2e-" prefix and do not collide with
+        L0/L1/L2 fingerprints; the ordering is defensive correctness.
+        """
         merged: dict[str, StateFinding] = {}
-        # L2 first, then L1, then L0 (L0 wins on conflict)
+        # e2e lowest priority: insert first so l2/l1/l0 can overwrite.
+        for f in (e2e_findings or []):
+            merged[f.fingerprint] = f
         for f in (l2_findings or []):
             merged[f.fingerprint] = f
         for f in l1_findings:
@@ -706,6 +750,7 @@ class StateMachine:
         l0_findings: list[StateFinding],
         l1_findings: list[StateFinding],
         l2_findings: list[StateFinding] = None,
+        e2e_findings: list[StateFinding] = None,
     ) -> None:
         """Append per-round snapshot to round_history for STATE-05."""
         snapshot = {
@@ -714,6 +759,9 @@ class StateMachine:
             "l1_fingerprints": [f.fingerprint for f in l1_findings],
             "l2_fingerprints": [
                 f.fingerprint for f in (l2_findings or [])
+            ],
+            "e2e_fingerprints": [
+                f.fingerprint for f in (e2e_findings or [])
             ],
             "dispositions": {
                 f.fingerprint: f.disposition.value
