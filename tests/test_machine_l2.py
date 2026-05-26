@@ -3,7 +3,7 @@
 """Tests for StateMachine L2 integration (mutation pipeline).
 
 Covers: l2_runner wiring, consecutive_survivor_rounds, MUTANT autofix skip,
-CI async mutation, bug-inject teeth test (EC-6).
+CI async mutation, bug-inject teeth test.
 """
 
 import json
@@ -353,7 +353,7 @@ class TestCIModeReadsMutationResult:
 
 
 class TestBugInjectTeeth:
-    """Test 10 (EC-6): Bug-inject teeth test."""
+    """Test 10: Bug-inject teeth test."""
 
     def test_toothless_test_surfaces_survivor(self, tmp_path):
         """Toothless test scenario -- l2_runner always returns a survivor."""

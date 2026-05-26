@@ -7,8 +7,6 @@ Swappable design: keep subprocess calls in one place so future language
 runners (cargo-mutants, go-mutesting) can replace implementation without
 changing the l2_runner interface.
 
-D-02: Direct subprocess.run of mutmut run + mutmut results.
-D-05: mutmut is a soft dependency. Missing binary produces MUTATION_SKIPPED.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ class Survivor:
     mutant_id: int
 
 
-def parse_mutmut_results(stdout: str) -> list[Survivor]:
+def parse_mutmut_results(stdout: str) -> tuple[list[Survivor], list[str]]:
     """Parse mutmut results output to extract surviving mutants.
 
     Expected format from mutmut 3.x:
@@ -45,10 +43,11 @@ def parse_mutmut_results(stdout: str) -> list[Survivor]:
         stdout: raw stdout from mutmut results subprocess
 
     Returns:
-        list of Survivor instances. Empty list on unparseable input.
-        Never raises.
+        tuple[list[Survivor], list[str]] where second element is warnings
+        about unparseable segments. Never raises.
     """
     survivors = []
+    warnings = []
     current_file = None
 
     for line in stdout.split("\n"):
@@ -84,7 +83,9 @@ def parse_mutmut_results(stdout: str) -> list[Survivor]:
                             Survivor(file=current_file, mutant_id=mutant_id)
                         )
                 except ValueError:
-                    # Unparseable range, skip
+                    warnings.append(
+                        "skipping unparseable range: %r" % segment
+                    )
                     continue
             else:
                 # Single ID
@@ -94,10 +95,12 @@ def parse_mutmut_results(stdout: str) -> list[Survivor]:
                         Survivor(file=current_file, mutant_id=mutant_id)
                     )
                 except ValueError:
-                    # Unparseable ID, skip
+                    warnings.append(
+                        "skipping unparseable ID: %r" % segment
+                    )
                     continue
 
-    return survivors
+    return survivors, warnings
 
 
 def run_mutation(
@@ -149,6 +152,7 @@ def run_mutation(
         try:
             result = subprocess.run(
                 baseline_cmd,
+                env={"PYTHONPATH": "src"},
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -164,8 +168,8 @@ def run_mutation(
                         file="",
                         line_range=[],
                         description=(
-                            "tests flaky, mutation unreliable "
-                            "(3x baseline check)"
+                            "run %d: tests flaky, mutation unreliable "
+                            "(3x baseline check)" % run_num
                         ),
                     )
                 )
@@ -237,7 +241,8 @@ def run_mutation(
             timeout=10,
             check=False,
         )
-        survivors = parse_mutmut_results(results_proc.stdout)
+        survivors, parse_warnings = parse_mutmut_results(results_proc.stdout)
+        infra_errors.extend(parse_warnings)
     except subprocess.TimeoutExpired:
         findings.append(
             StateFinding(

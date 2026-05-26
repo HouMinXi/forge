@@ -141,7 +141,7 @@ def build_l2_runner() -> Callable:
         -> tuple[list[StateFinding], list[str]]
 
     If mutmut is not on PATH, returns a no-op callable that produces
-    a single MUTATION_SKIPPED finding (soft dependency per D-05).
+    a single MUTATION_SKIPPED finding (soft dependency).
 
     The returned callable delegates to run_mutation from the mutation
     module when mutmut is available.
