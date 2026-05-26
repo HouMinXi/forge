@@ -20,8 +20,8 @@ class TestParseMutmutResults:
 
     def test_empty_string_returns_empty_list(self):
         """Test 1: empty string returns []"""
-        result = parse_mutmut_results("")
-        assert result == []
+        survivors, warnings = parse_mutmut_results("")
+        assert survivors == []
 
     def test_single_survivor_single_id(self):
         """Test 2: single survivor single ID"""
@@ -29,10 +29,10 @@ class TestParseMutmutResults:
 ---- ./src/foo.py (1) ----
 5
 """
-        result = parse_mutmut_results(stdout)
-        assert len(result) == 1
-        assert result[0].file == "./src/foo.py"
-        assert result[0].mutant_id == 5
+        survivors, warnings = parse_mutmut_results(stdout)
+        assert len(survivors) == 1
+        assert survivors[0].file == "./src/foo.py"
+        assert survivors[0].mutant_id == 5
 
     def test_range_produces_multiple_ids(self):
         """Test 3: range "1-3" produces IDs 1, 2, 3"""
@@ -40,12 +40,12 @@ class TestParseMutmutResults:
 ---- ./src/bar.py (3) ----
 1-3
 """
-        result = parse_mutmut_results(stdout)
-        assert len(result) == 3
-        assert result[0].mutant_id == 1
-        assert result[1].mutant_id == 2
-        assert result[2].mutant_id == 3
-        assert all(s.file == "./src/bar.py" for s in result)
+        survivors, warnings = parse_mutmut_results(stdout)
+        assert len(survivors) == 3
+        assert survivors[0].mutant_id == 1
+        assert survivors[1].mutant_id == 2
+        assert survivors[2].mutant_id == 3
+        assert all(s.file == "./src/bar.py" for s in survivors)
 
     def test_comma_separated_produces_correct_ids(self):
         """Test 4: comma-separated "1, 5, 7" produces 3 survivors"""
@@ -53,11 +53,11 @@ class TestParseMutmutResults:
 ---- ./src/baz.py (3) ----
 1, 5, 7
 """
-        result = parse_mutmut_results(stdout)
-        assert len(result) == 3
-        assert result[0].mutant_id == 1
-        assert result[1].mutant_id == 5
-        assert result[2].mutant_id == 7
+        survivors, warnings = parse_mutmut_results(stdout)
+        assert len(survivors) == 3
+        assert survivors[0].mutant_id == 1
+        assert survivors[1].mutant_id == 5
+        assert survivors[2].mutant_id == 7
 
     def test_mixed_range_and_comma(self):
         """Test 5: mixed range+comma "1-3, 7" produces 4 survivors"""
@@ -65,12 +65,12 @@ class TestParseMutmutResults:
 ---- ./src/mixed.py (4) ----
 1-3, 7
 """
-        result = parse_mutmut_results(stdout)
-        assert len(result) == 4
-        assert result[0].mutant_id == 1
-        assert result[1].mutant_id == 2
-        assert result[2].mutant_id == 3
-        assert result[3].mutant_id == 7
+        survivors, warnings = parse_mutmut_results(stdout)
+        assert len(survivors) == 4
+        assert survivors[0].mutant_id == 1
+        assert survivors[1].mutant_id == 2
+        assert survivors[2].mutant_id == 3
+        assert survivors[3].mutant_id == 7
 
     def test_multiple_files_produce_correct_attribution(self):
         """Test 6: multiple files produce survivors with correct file attribution"""
@@ -80,16 +80,16 @@ class TestParseMutmutResults:
 ---- ./src/file2.py (2) ----
 3, 4
 """
-        result = parse_mutmut_results(stdout)
-        assert len(result) == 4
-        assert result[0].file == "./src/file1.py"
-        assert result[0].mutant_id == 1
-        assert result[1].file == "./src/file1.py"
-        assert result[1].mutant_id == 2
-        assert result[2].file == "./src/file2.py"
-        assert result[2].mutant_id == 3
-        assert result[3].file == "./src/file2.py"
-        assert result[3].mutant_id == 4
+        survivors, warnings = parse_mutmut_results(stdout)
+        assert len(survivors) == 4
+        assert survivors[0].file == "./src/file1.py"
+        assert survivors[0].mutant_id == 1
+        assert survivors[1].file == "./src/file1.py"
+        assert survivors[1].mutant_id == 2
+        assert survivors[2].file == "./src/file2.py"
+        assert survivors[2].mutant_id == 3
+        assert survivors[3].file == "./src/file2.py"
+        assert survivors[3].mutant_id == 4
 
     def test_malformed_input_returns_empty_list(self):
         """Test 7: malformed input (no "----" lines) returns []"""
@@ -97,8 +97,8 @@ class TestParseMutmutResults:
 some random text
 1, 2
 """
-        result = parse_mutmut_results(stdout)
-        assert result == []
+        survivors, warnings = parse_mutmut_results(stdout)
+        assert survivors == []
 
 
 class TestRunMutation:

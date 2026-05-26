@@ -212,6 +212,7 @@ class StateMachine:
                                     "CI: mutation PID %d still running, "
                                     "skipping new launch" % pid
                                 )
+                                return
                             except ProcessLookupError:
                                 # PID dead, treat as error
                                 from .disposition import Disposition as Disp
@@ -270,7 +271,7 @@ class StateMachine:
 
                     # Write initial status
                     initial_data = {
-                        "pid": threading.get_ident(),
+                        "pid": os.getpid(),
                         "started_at": time.time(),
                         "status": "running",
                         "survivors": [],
@@ -312,7 +313,7 @@ class StateMachine:
                             for s in survivors
                         ]
                         done_data = {
-                            "pid": threading.get_ident(),
+                            "pid": os.getpid(),
                             "started_at": initial_data["started_at"],
                             "status": "done",
                             "survivors": survivor_list,
@@ -323,7 +324,7 @@ class StateMachine:
                             json.dump(done_data, f)
                     except Exception as e:  # noqa: BLE001
                         error_data = {
-                            "pid": threading.get_ident(),
+                            "pid": os.getpid(),
                             "started_at": initial_data["started_at"],
                             "status": "error",
                             "message": str(e),

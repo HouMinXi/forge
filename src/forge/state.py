@@ -92,8 +92,8 @@ class State:
     # 02-04 additions:
     hold_reason: Optional[str] = None
     promoted_fingerprints: set[str] = field(default_factory=set)
-    # 02-02 addition (Plan 02):
-    consecutive_survivor_rounds: int = 0
+    # Mutation survivor round counter (LOCAL mode):
+    consecutive_survivor_rounds: int = 0  # LOCAL mode only
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
