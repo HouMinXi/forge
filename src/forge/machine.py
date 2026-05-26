@@ -305,9 +305,10 @@ class StateMachine:
                         )
                         from .mutation import parse_mutmut_results
 
-                        survivors = parse_mutmut_results(
+                        survivors, _parse_warnings = parse_mutmut_results(
                             results_proc.stdout
                         )
+                        # Note: _parse_warnings discarded in CI async context
                         survivor_list = [
                             "%s:%d" % (s.file, s.mutant_id)
                             for s in survivors
