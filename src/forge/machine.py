@@ -247,7 +247,7 @@ class StateMachine:
                     "CI: failed to read mutation-result.json: %s" % e
                 )
 
-        # Launch new async mutation
+        # Launch new async mutation via run_mutation (single invocation point)
         import shutil
 
         diff_files = [str(f) for f in self._source_files()]
@@ -265,10 +265,11 @@ class StateMachine:
                 baseline_cmd = None
 
             if baseline_cmd is not None:
-                # Launch wrapper thread
-                def _async_mutation():
-                    import subprocess
+                from .mutation import run_mutation
 
+                cwd_ref = self.cwd
+
+                def _async_mutation():
                     # Write initial status
                     initial_data = {
                         "pid": os.getpid(),
@@ -284,35 +285,19 @@ class StateMachine:
                     except OSError:
                         return
 
-                    # Run mutmut
                     try:
-                        mutmut_env = os.environ.copy()
-                        mutmut_env["PYTHONPATH"] = "src"
-                        subprocess.run(
-                            ["mutmut", "run", "--paths-to-mutate"]
-                            + py_files,
-                            capture_output=True,
-                            env=mutmut_env,
-                            timeout=600,
-                            check=False,
+                        mm_findings, _infra = run_mutation(
+                            diff_files=diff_files,
+                            baseline_cmd=baseline_cmd,
+                            cwd=cwd_ref,
                         )
-                        results_proc = subprocess.run(
-                            ["mutmut", "results"],
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                            check=False,
-                        )
-                        from .mutation import parse_mutmut_results
-
-                        survivors, _parse_warnings = parse_mutmut_results(
-                            results_proc.stdout
-                        )
-                        # Note: _parse_warnings discarded in CI async context
                         survivor_list = [
-                            "%s:%d" % (s.file, s.mutant_id)
-                            for s in survivors
+                            f.id
+                            for f in mm_findings
+                            if f.source == "MUTANT"
+                            and f.disposition == Disposition.CONFIRMED
                         ]
+                        # f.id is "mutant-{mutant_name}" for survivors
                         done_data = {
                             "pid": os.getpid(),
                             "started_at": initial_data["started_at"],
