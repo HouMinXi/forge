@@ -14,7 +14,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from .disposition import Disposition
 from .state import StateFinding
@@ -213,31 +215,23 @@ def run_mutation(
         )
         return (findings, [])
 
-    # Write mutmut config (mutmut 3.x reads from setup.cfg, no CLI --paths-to-mutate)
-    # mutmut looks for setup.cfg in cwd, so we write it temporarily
-    config_content = (
-        "[mutmut]\n"
-        "paths_to_mutate=%s\n"
-        "runner=python3 -m pytest -x\n"
-        % ",".join(py_files)
-    )
-
-    cfg_path = "setup.cfg"
-    cfg_existed = os.path.exists(cfg_path)
-    original_content = None
-
-    if cfg_existed:
-        with open(cfg_path, "r") as f:
-            original_content = f.read()
-
+    # Create temp dir for mutmut config isolation
+    tmpdir = tempfile.mkdtemp(prefix="forge-mutation-")
     try:
-        # Write temporary config
-        with open(cfg_path, "w") as cfg:
-            cfg.write(config_content)
+        # Write mutmut config to temp dir
+        config_content = (
+            "[mutmut]\n"
+            "paths_to_mutate=%s\n"
+            "runner=python3 -m pytest -x\n"
+            % ",".join(py_files)
+        )
+        cfg_path = Path(tmpdir) / "setup.cfg"
+        cfg_path.write_text(config_content)
 
-        # Run mutmut with PYTHONPATH=src
+        # Run mutmut in temp dir with PYTHONPATH pointing to repo src/
         run_env = os.environ.copy()
-        run_env["PYTHONPATH"] = "src"
+        repo_root = os.getcwd()
+        run_env["PYTHONPATH"] = os.path.join(repo_root, "src")
 
         try:
             result = subprocess.run(
@@ -247,6 +241,7 @@ def run_mutation(
                 timeout=timeout,
                 check=False,
                 env=run_env,
+                cwd=tmpdir,
             )
 
             # Check for usage errors (exit 2 typically means bad invocation)
@@ -283,57 +278,52 @@ def run_mutation(
                 )
             )
             return (findings, [])
+
+        # Parse results (while still in temp dir context)
+        try:
+            results_proc = subprocess.run(
+                ["mutmut", "results"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                cwd=tmpdir,
+            )
+            survivors, parse_warnings = parse_mutmut_results(results_proc.stdout)
+            infra_errors.extend(parse_warnings)
+        except subprocess.TimeoutExpired:
+            findings.append(
+                StateFinding(
+                    id="MUTATION_SKIPPED",
+                    fingerprint="mutation-results-timeout",
+                    source="MUTANT",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description="mutmut results timed out",
+                )
+            )
+            return (findings, [])
+
+        # Convert survivors to findings
+        for survivor in survivors:
+            findings.append(
+                StateFinding(
+                    id="mutant-%s-%d" % (survivor.file, survivor.mutant_id),
+                    fingerprint="mutant:%s:%d" % (survivor.file, survivor.mutant_id),
+                    source="MUTANT",
+                    disposition=Disposition.CONFIRMED,
+                    file=survivor.file,
+                    line_range=[0, 0],  # mutmut does not report line numbers
+                    description=(
+                        "mutant %d survived in %s"
+                        % (survivor.mutant_id, survivor.file)
+                    ),
+                )
+            )
+
     finally:
-        # Restore original config or remove temporary one
-        if cfg_existed and original_content is not None:
-            with open(cfg_path, "w") as f:
-                f.write(original_content)
-        elif not cfg_existed:
-            try:
-                os.unlink(cfg_path)
-            except OSError:
-                pass
-
-    # Parse results
-    try:
-        results_proc = subprocess.run(
-            ["mutmut", "results"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        survivors, parse_warnings = parse_mutmut_results(results_proc.stdout)
-        infra_errors.extend(parse_warnings)
-    except subprocess.TimeoutExpired:
-        findings.append(
-            StateFinding(
-                id="MUTATION_SKIPPED",
-                fingerprint="mutation-results-timeout",
-                source="MUTANT",
-                disposition=Disposition.DISMISSED,
-                file="",
-                line_range=[],
-                description="mutmut results timed out",
-            )
-        )
-        return (findings, [])
-
-    # Convert survivors to findings
-    for survivor in survivors:
-        findings.append(
-            StateFinding(
-                id="mutant-%s-%d" % (survivor.file, survivor.mutant_id),
-                fingerprint="mutant:%s:%d" % (survivor.file, survivor.mutant_id),
-                source="MUTANT",
-                disposition=Disposition.CONFIRMED,
-                file=survivor.file,
-                line_range=[0, 0],  # mutmut does not report line numbers
-                description=(
-                    "mutant %d survived in %s"
-                    % (survivor.mutant_id, survivor.file)
-                ),
-            )
-        )
+        # Clean up temp dir
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
     return (findings, infra_errors)

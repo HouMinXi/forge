@@ -278,3 +278,54 @@ class TestMutationRealCLI:
 
         finally:
             os.chdir(original_cwd)
+
+    def test_temp_dir_cleanup_after_run(self, tmp_path):
+        """Test that temp dir is cleaned up after run_mutation returns (F3)."""
+        import shutil
+        import pytest
+        import glob
+
+        if shutil.which("mutmut") is None:
+            pytest.skip("mutmut not installed")
+
+        import os
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+
+            # Create src/ structure
+            src_dir = tmp_path / "src"
+            src_dir.mkdir()
+
+            target = src_dir / "target.py"
+            target.write_text(
+                "def add(a, b):\n"
+                "    return a + b\n"
+            )
+
+            test_file = tmp_path / "test_target.py"
+            test_file.write_text(
+                "from target import add\n"
+                "def test_add():\n"
+                "    assert add(1, 2) == 3\n"
+            )
+
+            # Count forge-mutation-* dirs before
+            before = set(glob.glob("/tmp/forge-mutation-*"))
+
+            run_mutation(
+                diff_files=["src/target.py"],
+                baseline_cmd=["python3", "-m", "pytest", "-x", "test_target.py"],
+                timeout=60,
+            )
+
+            # Count forge-mutation-* dirs after
+            after = set(glob.glob("/tmp/forge-mutation-*"))
+            leaked = after - before
+
+            assert leaked == set(), (
+                "temp dirs not cleaned up: %s" % leaked
+            )
+
+        finally:
+            os.chdir(original_cwd)
