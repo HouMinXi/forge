@@ -28,3 +28,7 @@ class CliError(Exception):
 
     main() catches and maps to EXIT_CLI_ERROR (exit 2).
     """
+
+
+class ComponentsConfigError(Exception):
+    """Raised when .forge/components.yaml fails schema validation."""
