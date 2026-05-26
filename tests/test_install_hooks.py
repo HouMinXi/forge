@@ -4,6 +4,7 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -515,3 +516,81 @@ class TestQuietFlag:
         )
         assert result == EXIT_PASS
         assert "pre-commit hook installed" in stderr.getvalue()
+
+
+class TestResolveForgeLiveness:
+    """Test 11-14: resolve_forge_path liveness check."""
+
+    def test_forge_passes_version_check(self):
+        """Test 11: forge binary passes --version -> uses the binary path."""
+        from unittest.mock import MagicMock, patch
+
+        mock_which = MagicMock(return_value="/usr/bin/forge")
+        mock_run = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=["/usr/bin/forge", "--version"],
+                returncode=0,
+                stdout="forge 2.1.0\n",
+                stderr="",
+            )
+        )
+
+        with patch("forge.install_hooks.shutil.which", mock_which):
+            with patch("forge.install_hooks.subprocess.run", mock_run):
+                path = resolve_forge_path()
+                assert "/usr/bin/forge" in path or "forge" in path
+                assert "gate-check" in path
+
+    def test_forge_fails_version_check_fallback(self):
+        """Test 12: forge binary fails --version -> falls back to sys.executable."""
+        from unittest.mock import MagicMock, patch
+
+        mock_which = MagicMock(return_value="/usr/bin/forge")
+        mock_run = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=["/usr/bin/forge", "--version"],
+                returncode=1,
+                stdout="",
+                stderr="error",
+            )
+        )
+
+        with patch("forge.install_hooks.shutil.which", mock_which):
+            with patch("forge.install_hooks.subprocess.run", mock_run):
+                path = resolve_forge_path()
+                assert sys.executable in path or "-m forge" in path
+
+    def test_forge_version_times_out_fallback(self):
+        """Test 13: forge --version times out -> falls back to sys.executable."""
+        from unittest.mock import MagicMock, patch
+
+        mock_which = MagicMock(return_value="/usr/bin/forge")
+
+        def side_effect(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=1)
+
+        mock_run = MagicMock(side_effect=side_effect)
+
+        with patch("forge.install_hooks.shutil.which", mock_which):
+            with patch("forge.install_hooks.subprocess.run", mock_run):
+                path = resolve_forge_path()
+                assert sys.executable in path or "-m forge" in path
+
+    def test_forge_version_invalid_output_fallback(self):
+        """Test 14: forge --version stdout does not start with "forge " -> fallback."""
+        from unittest.mock import MagicMock, patch
+
+        mock_which = MagicMock(return_value="/usr/bin/forge")
+        mock_run = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=["/usr/bin/forge", "--version"],
+                returncode=0,
+                stdout="invalid output\n",
+                stderr="",
+            )
+        )
+
+        with patch("forge.install_hooks.shutil.which", mock_which):
+            with patch("forge.install_hooks.subprocess.run", mock_run):
+                path = resolve_forge_path()
+                assert sys.executable in path or "-m forge" in path

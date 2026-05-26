@@ -269,3 +269,40 @@ class TestStateFindingFieldCount:
         expected = 10  # id, fingerprint, source, disposition, file,
         # line_range, description, error, anchor, evidence_files
         assert len(fields(StateFinding)) == expected
+
+
+class TestConsecutiveSurvivorRounds:
+    """Test 17-18: consecutive_survivor_rounds serialization round-trip."""
+
+    def test_save_state_includes_consecutive_survivor_rounds(self, tmp_path):
+        """Test 17: save_state includes consecutive_survivor_rounds in JSON output."""
+        state = State()
+        state.consecutive_survivor_rounds = 2
+
+        path = tmp_path / "state.json"
+        save_state(state, path)
+
+        data = json.loads(path.read_text())
+        assert "consecutive_survivor_rounds" in data
+        assert data["consecutive_survivor_rounds"] == 2
+
+    def test_load_state_reads_consecutive_survivor_rounds(self, tmp_path):
+        """Test 18: load_state reads consecutive_survivor_rounds; defaults to 0 for old state files."""
+        # Case 1: new state file with consecutive_survivor_rounds
+        state = State()
+        state.consecutive_survivor_rounds = 3
+        path = tmp_path / "state.json"
+        save_state(state, path)
+
+        loaded = load_state(path)
+        assert loaded is not None
+        assert loaded.consecutive_survivor_rounds == 3
+
+        # Case 2: old state file without consecutive_survivor_rounds
+        data = json.loads(path.read_text())
+        del data["consecutive_survivor_rounds"]
+        path.write_text(json.dumps(data))
+
+        loaded = load_state(path)
+        assert loaded is not None
+        assert loaded.consecutive_survivor_rounds == 0

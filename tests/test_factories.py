@@ -182,3 +182,45 @@ class TestBuildRevertFn:
             assert cmd == ["git", "restore", "--", "a.py"]
             assert args[1]["cwd"] == str(tmp_path)
             assert args[1]["check"] is True
+
+
+class TestBuildL2Runner:
+    """Test 15-16: build_l2_runner factory."""
+
+    def test_mutmut_on_path_returns_run_mutation(self):
+        """Test 15: mutmut on PATH -> returns callable that delegates to run_mutation."""
+        from unittest.mock import MagicMock, patch
+
+        mock_which = MagicMock(return_value="/usr/bin/mutmut")
+
+        with patch("forge.factories.shutil.which", mock_which):
+            from forge.factories import build_l2_runner
+
+            l2_runner = build_l2_runner()
+            assert callable(l2_runner)
+            # Verify it's the actual run_mutation function
+            from forge.mutation import run_mutation
+
+            assert l2_runner is run_mutation
+
+    def test_mutmut_not_on_path_returns_no_op(self):
+        """Test 16: mutmut not on PATH -> returns callable that returns MUTATION_SKIPPED."""
+        from unittest.mock import MagicMock, patch
+
+        mock_which = MagicMock(return_value=None)
+
+        with patch("forge.factories.shutil.which", mock_which):
+            from forge.factories import build_l2_runner
+
+            l2_runner = build_l2_runner()
+            assert callable(l2_runner)
+
+            # Call it and verify it returns MUTATION_SKIPPED
+            findings, infra = l2_runner(["test.py"], ["pytest"])
+            assert len(findings) == 1
+            assert findings[0].id == "MUTATION_SKIPPED"
+            assert findings[0].source == "MUTANT"
+            assert findings[0].disposition == Disposition.DISMISSED
+            assert "not installed" in findings[0].description
+            assert len(infra) == 1
+            assert "not found" in infra[0]
