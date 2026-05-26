@@ -8,6 +8,7 @@ core.hooksPath is set. Idempotent on re-install.
 """
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 import shutil
@@ -119,10 +120,44 @@ def resolve_forge_path() -> str:
     Raises:
         RuntimeError: if no valid forge executable path found
     """
+    logger = logging.getLogger("forge")
+
     # Try shutil.which('forge') first
     forge_exe = shutil.which("forge")
     if forge_exe is not None and os.access(forge_exe, os.X_OK):
-        return "%s gate-check" % shlex.quote(forge_exe)
+        # Run liveness check
+        try:
+            result = subprocess.run(
+                [forge_exe, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=1,
+                check=False,
+            )
+            if (
+                result.returncode == 0
+                and result.stdout.strip().startswith("forge ")
+            ):
+                return "%s gate-check" % shlex.quote(forge_exe)
+            else:
+                logger.warning(
+                    "forge at %s failed --version check; "
+                    "falling back to sys.executable",
+                    forge_exe,
+                )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "forge at %s --version timed out; "
+                "falling back to sys.executable",
+                forge_exe,
+            )
+        except Exception as e:
+            logger.warning(
+                "forge at %s --version raised %s; "
+                "falling back to sys.executable",
+                forge_exe,
+                e,
+            )
 
     # Fallback to sys.executable + ' -m forge'
     if sys.executable and os.access(sys.executable, os.X_OK):

@@ -92,6 +92,8 @@ class State:
     # 02-04 additions:
     hold_reason: Optional[str] = None
     promoted_fingerprints: set[str] = field(default_factory=set)
+    # 02-02 addition (Plan 02):
+    consecutive_survivor_rounds: int = 0
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -186,6 +188,11 @@ def load_state(path: Path) -> Optional[State]:
         data.get("promoted_fingerprints", [])
     )
 
+    # 02-02 additions: backward-compat defaults for pre-02-02 state.json.
+    state.consecutive_survivor_rounds = data.get(
+        "consecutive_survivor_rounds", 0
+    )
+
     return state
 
 
@@ -231,6 +238,7 @@ def save_state(state: State, path: Path) -> None:
         "infra_errors": list(state.infra_errors),
         "hold_reason": state.hold_reason,
         "promoted_fingerprints": sorted(state.promoted_fingerprints),
+        "consecutive_survivor_rounds": state.consecutive_survivor_rounds,
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")
