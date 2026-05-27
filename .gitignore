@@ -4,6 +4,8 @@
 .DS_Store
 __pycache__/
 *.egg-info/
+dist/
+build/
 
 # Forge per-project runtime data (findings, review state)
 # Ignore everything inside .forge/ except committed config (tools.yaml, gate.yaml)
