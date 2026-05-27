@@ -1,7 +1,7 @@
 # code-forge
 
-[![PyPI version](https://img.shields.io/pypi/v/code-forge.svg)](https://pypi.org/project/code-forge/)
-[![Python](https://img.shields.io/pypi/pyversions/code-forge.svg)](https://pypi.org/project/code-forge/)
+[![PyPI version](https://img.shields.io/pypi/v/code-review-forge.svg)](https://pypi.org/project/code-review-forge/)
+[![Python](https://img.shields.io/pypi/pyversions/code-review-forge.svg)](https://pypi.org/project/code-review-forge/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/HouMinXi/forge/blob/main/LICENSE)
 
 A 5-step code review pipeline for AI coding assistants. Treats review as a
@@ -28,7 +28,7 @@ defects but misses two failure modes:
 ## Quick start
 
 ```bash
-pip install code-forge
+pip install code-review-forge
 code-forge install-skill
 ```
 
