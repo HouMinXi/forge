@@ -2,7 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for forge.disposition -- enum stability + protocol constants."""
 
-from forge.disposition import (
+from code_forge.disposition import (
     DISPOSITION_PROTOCOL_VERSION,
     FEEDBACK_SCHEMA_VERSION,
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,

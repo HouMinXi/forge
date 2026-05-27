@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from forge.baseline import (
+from code_forge.baseline import (
     EmptyBaseline,
     GitRefBaseline,
     SnapshotBaseline,
     resolve_baseline,
 )
-from forge.snapshot import (
+from code_forge.snapshot import (
     Snapshot,
     SnapshotEntry,
     _hash_file,
@@ -22,7 +22,7 @@ from forge.snapshot import (
     snapshot_path_for,
     validate_snapshot,
 )
-from forge.source import compute_source_hash
+from code_forge.source import compute_source_hash
 
 
 @pytest.fixture

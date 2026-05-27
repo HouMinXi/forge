@@ -7,9 +7,9 @@ from pathlib import Path
 
 
 class TestPhase1Migration:
-    """Old read_state/write_state must not appear in src/forge/."""
+    """Old read_state/write_state must not appear in src/code_forge/."""
 
-    _SRC_DIR = Path(__file__).parent.parent / "src" / "forge"
+    _SRC_DIR = Path(__file__).parent.parent / "src" / "code_forge"
 
     def test_no_old_api_references(self):
         """git grep for read_state|write_state returns no matches."""
@@ -19,6 +19,6 @@ class TestPhase1Migration:
             text=True,
         )
         assert result.returncode == 1, (
-            "Old API references found in src/forge/:\n%s" % result.stdout
+            "Old API references found in src/code_forge/:\n%s" % result.stdout
         )
         assert result.stdout == ""

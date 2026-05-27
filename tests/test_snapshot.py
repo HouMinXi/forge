@@ -6,12 +6,12 @@ import json
 
 import pytest
 
-from forge.errors import (
+from code_forge.errors import (
     BaselineResolutionError,
     CorruptedSnapshotError,
     SnapshotSchemaMismatchError,
 )
-from forge.snapshot import (
+from code_forge.snapshot import (
     SNAPSHOT_SCHEMA_VERSION,
     Snapshot,
     SnapshotEntry,
@@ -27,7 +27,7 @@ from forge.snapshot import (
 class TestSnapshotPathFor:
     def test_standard_location(self, tmp_path):
         p = snapshot_path_for("abc123", tmp_path)
-        assert p == tmp_path / ".forge" / "snapshots" / "abc123.json"
+        assert p == tmp_path / ".code-forge" / "snapshots" / "abc123.json"
 
 
 class TestSaveLoadRoundTrip:
@@ -107,7 +107,7 @@ class TestSaveLoadRoundTrip:
 
     def test_schema_version_independent(self):
         """SC-16: SNAPSHOT_SCHEMA_VERSION is independent constant."""
-        from forge.state import SCHEMA_VERSION as STATE_SV
+        from code_forge.state import SCHEMA_VERSION as STATE_SV
 
         # They may happen to be equal but are independent constants
         assert isinstance(SNAPSHOT_SCHEMA_VERSION, int)

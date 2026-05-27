@@ -4,7 +4,7 @@
 
 import pytest
 
-from forge.env_resolver import (
+from code_forge.env_resolver import (
     DEFAULT_MAX_TOTAL_ROUNDS,
     MAX_REASONABLE_FIX_ATTEMPTS,
     MAX_REASONABLE_TOTAL_ROUNDS,
@@ -12,8 +12,8 @@ from forge.env_resolver import (
     resolve_max_fix_attempts,
     resolve_max_total_rounds,
 )
-from forge.disposition import MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-from forge.errors import CliError
+from code_forge.disposition import MAX_FIX_ATTEMPTS_PER_FINGERPRINT
+from code_forge.errors import CliError
 
 
 class TestResolveMaxTotalRounds:

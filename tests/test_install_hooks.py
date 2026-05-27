@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from forge.exit_codes import EXIT_FAIL, EXIT_PASS
-from forge.install_hooks import (
+from code_forge.exit_codes import EXIT_FAIL, EXIT_PASS
+from code_forge.install_hooks import (
     check_hooks_path_override,
     generate_hook_content,
     resolve_forge_path,
@@ -104,7 +104,7 @@ class TestInstallHookFresh:
         assert "gate-check" in content
 
     def test_absolute_forge_path(self, tmp_path):
-        """Hook contains absolute path, not bare 'forge'."""
+        """Hook contains absolute path, not bare 'code-forge'."""
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -137,7 +137,7 @@ class TestInstallHookChain:
     """Backup + chain when existing hook present."""
 
     def test_existing_hook_backed_up(self, tmp_path):
-        """Existing hook is backed up to pre-commit.forge-backup."""
+        """Existing hook is backed up to pre-commit.code-forge-backup."""
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -161,7 +161,7 @@ class TestInstallHookChain:
         # Install forge hook
         run_install_hooks(args=None, env={}, cwd=tmp_path)
 
-        backup_path = hooks_dir / "pre-commit.forge-backup"
+        backup_path = hooks_dir / "pre-commit.code-forge-backup"
         assert backup_path.exists()
         assert "echo existing" in backup_path.read_text()
 
@@ -191,7 +191,7 @@ class TestInstallHookChain:
         run_install_hooks(args=None, env={}, cwd=tmp_path)
 
         content = hook_path.read_text()
-        backup_path = hooks_dir / "pre-commit.forge-backup"
+        backup_path = hooks_dir / "pre-commit.code-forge-backup"
         assert str(backup_path) in content
         # Backup call should appear before gate-check
         backup_line = -1
@@ -227,7 +227,7 @@ class TestInstallHookChain:
         hook_path.write_text("#!/bin/sh\necho original\n")
         run_install_hooks(args=None, env={}, cwd=tmp_path)
 
-        backup_path = hooks_dir / "pre-commit.forge-backup"
+        backup_path = hooks_dir / "pre-commit.code-forge-backup"
         assert "echo original" in backup_path.read_text()
 
         # Second install (over forge hook)
@@ -261,7 +261,7 @@ class TestNonForgeHookWithBackup:
         hooks_dir.mkdir(parents=True, exist_ok=True)
 
         # Manually create both: an existing backup and a non-forge hook
-        backup_path = hooks_dir / "pre-commit.forge-backup"
+        backup_path = hooks_dir / "pre-commit.code-forge-backup"
         backup_path.write_text("#!/bin/sh\necho old-backup\n")
         hook_path = hooks_dir / "pre-commit"
         hook_path.write_text("#!/bin/sh\necho manual-hook\n")
@@ -425,23 +425,23 @@ class TestHelperFunctions:
 
     def test_generate_hook_content_no_chain(self):
         """Hook content without chain."""
-        content = generate_hook_content("/usr/bin/forge gate-check", None)
+        content = generate_hook_content("/usr/bin/code-forge gate-check", None)
         assert "#!/bin/sh" in content
-        assert "/usr/bin/forge gate-check" in content
+        assert "/usr/bin/code-forge gate-check" in content
         assert "Chained" not in content
 
     def test_generate_hook_content_with_chain(self):
         """Hook content with chain."""
-        chain = Path("/hooks/pre-commit.forge-backup")
-        content = generate_hook_content("/usr/bin/forge gate-check", chain)
+        chain = Path("/hooks/pre-commit.code-forge-backup")
+        content = generate_hook_content("/usr/bin/code-forge gate-check", chain)
         assert "#!/bin/sh" in content
-        assert "/usr/bin/forge gate-check" in content
+        assert "/usr/bin/code-forge gate-check" in content
         assert str(chain) in content
         assert "Chained" in content
 
 
 class TestIdempotency:
-    """Idempotent re-install over forge hook."""
+    """Idempotent re-install over code-forge hook."""
 
     def test_reinstall_over_forge_hook_skips_backup(self, tmp_path):
         """Re-installing over forge hook does not create backup."""
@@ -463,7 +463,7 @@ class TestIdempotency:
             check=True,
         )
         hooks_dir = tmp_path / hooks_result.stdout.strip()
-        backup_path = hooks_dir / "pre-commit.forge-backup"
+        backup_path = hooks_dir / "pre-commit.code-forge-backup"
 
         # Backup should NOT exist (no existing hook before first install)
         assert not backup_path.exists()
@@ -522,75 +522,76 @@ class TestResolveForgeLiveness:
     """Test 11-14: resolve_forge_path liveness check."""
 
     def test_forge_passes_version_check(self):
-        """Test 11: forge binary passes --version -> uses the binary path."""
+        """Test 11: code-forge binary passes --version -> uses the binary path."""
         from unittest.mock import MagicMock, patch
 
-        mock_which = MagicMock(return_value="/usr/bin/forge")
+        mock_which = MagicMock(return_value="/usr/bin/code-forge")
         mock_run = MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=["/usr/bin/forge", "--version"],
+                args=["/usr/bin/code-forge", "--version"],
                 returncode=0,
-                stdout="forge 2.1.0\n",
+                stdout="code-forge 2.0.0a1\n",
                 stderr="",
             )
         )
 
-        with patch("forge.install_hooks.shutil.which", mock_which):
-            with patch("forge.install_hooks.subprocess.run", mock_run):
-                path = resolve_forge_path()
-                assert "/usr/bin/forge" in path or "forge" in path
+        with patch("code_forge.install_hooks.shutil.which", mock_which):
+            with patch("code_forge.install_hooks.subprocess.run", mock_run):
+                with patch("code_forge.install_hooks.os.access", return_value=True):
+                    path = resolve_forge_path()
+                assert "/usr/bin/code-forge" in path
                 assert "gate-check" in path
 
     def test_forge_fails_version_check_fallback(self):
-        """Test 12: forge binary fails --version -> falls back to sys.executable."""
+        """Test 12: code-forge binary fails --version -> falls back to sys.executable."""
         from unittest.mock import MagicMock, patch
 
-        mock_which = MagicMock(return_value="/usr/bin/forge")
+        mock_which = MagicMock(return_value="/usr/bin/code-forge")
         mock_run = MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=["/usr/bin/forge", "--version"],
+                args=["/usr/bin/code-forge", "--version"],
                 returncode=1,
                 stdout="",
                 stderr="error",
             )
         )
 
-        with patch("forge.install_hooks.shutil.which", mock_which):
-            with patch("forge.install_hooks.subprocess.run", mock_run):
+        with patch("code_forge.install_hooks.shutil.which", mock_which):
+            with patch("code_forge.install_hooks.subprocess.run", mock_run):
                 path = resolve_forge_path()
-                assert sys.executable in path or "-m forge" in path
+                assert sys.executable in path or "-m code_forge" in path
 
     def test_forge_version_times_out_fallback(self):
-        """Test 13: forge --version times out -> falls back to sys.executable."""
+        """Test 13: code-forge --version times out -> falls back to sys.executable."""
         from unittest.mock import MagicMock, patch
 
-        mock_which = MagicMock(return_value="/usr/bin/forge")
+        mock_which = MagicMock(return_value="/usr/bin/code-forge")
 
         def side_effect(*args, **kwargs):
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=1)
 
         mock_run = MagicMock(side_effect=side_effect)
 
-        with patch("forge.install_hooks.shutil.which", mock_which):
-            with patch("forge.install_hooks.subprocess.run", mock_run):
+        with patch("code_forge.install_hooks.shutil.which", mock_which):
+            with patch("code_forge.install_hooks.subprocess.run", mock_run):
                 path = resolve_forge_path()
-                assert sys.executable in path or "-m forge" in path
+                assert sys.executable in path or "-m code_forge" in path
 
     def test_forge_version_invalid_output_fallback(self):
-        """Test 14: forge --version stdout does not start with "forge " -> fallback."""
+        """Test 14: code-forge --version stdout does not start with "code-forge " -> fallback."""
         from unittest.mock import MagicMock, patch
 
-        mock_which = MagicMock(return_value="/usr/bin/forge")
+        mock_which = MagicMock(return_value="/usr/bin/code-forge")
         mock_run = MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=["/usr/bin/forge", "--version"],
+                args=["/usr/bin/code-forge", "--version"],
                 returncode=0,
                 stdout="invalid output\n",
                 stderr="",
             )
         )
 
-        with patch("forge.install_hooks.shutil.which", mock_which):
-            with patch("forge.install_hooks.subprocess.run", mock_run):
+        with patch("code_forge.install_hooks.shutil.which", mock_which):
+            with patch("code_forge.install_hooks.subprocess.run", mock_run):
                 path = resolve_forge_path()
-                assert sys.executable in path or "-m forge" in path
+                assert sys.executable in path or "-m code_forge" in path

@@ -9,8 +9,8 @@ backward compat with pre-02-02 state.json.
 import json
 
 
-from forge.disposition import Disposition
-from forge.state import (
+from code_forge.disposition import Disposition
+from code_forge.state import (
     Mode,
     State,
     StateFinding,
@@ -52,13 +52,13 @@ class TestBaselineSpecReprRoundTrip:
 
     def test_snapshot_repr_round_trips(self, tmp_path):
         state = State(
-            baseline_spec_repr="snapshot:.forge/snapshots/abc123.json"
+            baseline_spec_repr="snapshot:.code-forge/snapshots/abc123.json"
         )
         p = tmp_path / "state.json"
         save_state(state, p)
         loaded = load_state(p)
         assert loaded.baseline_spec_repr == (
-            "snapshot:.forge/snapshots/abc123.json"
+            "snapshot:.code-forge/snapshots/abc123.json"
         )
 
 

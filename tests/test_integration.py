@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from forge import EXIT_PASS, EXIT_FAIL
+from code_forge import EXIT_PASS, EXIT_FAIL
 
 pytestmark = pytest.mark.skipif(
     not shutil.which("shellcheck"),
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 
 def _write_tools_yaml(repo_dir):
     """Write a minimal tools.yaml with only shellcheck."""
-    forge_dir = os.path.join(repo_dir, ".forge")
+    forge_dir = os.path.join(repo_dir, ".code-forge")
     os.makedirs(forge_dir, exist_ok=True)
     tools_yaml = os.path.join(forge_dir, "tools.yaml")
     with open(tools_yaml, "w", encoding="utf-8") as f:
@@ -108,16 +108,16 @@ class TestIntegrationFail:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["forge", "--mode", "ci", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
         )
         monkeypatch.chdir(repo_str)
 
-        from forge.cli import main
+        from code_forge.cli import main
 
         exit_code = main()
         assert exit_code == EXIT_FAIL
 
-        state_path = os.path.join(repo_str, ".forge", "state.json")
+        state_path = os.path.join(repo_str, ".code-forge", "state.json")
         assert os.path.isfile(state_path)
         with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
@@ -144,16 +144,16 @@ class TestIntegrationPass:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["forge", "--mode", "ci", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
         )
         monkeypatch.chdir(repo_str)
 
-        from forge.cli import main
+        from code_forge.cli import main
 
         exit_code = main()
         assert exit_code == EXIT_PASS
 
-        state_path = os.path.join(repo_str, ".forge", "state.json")
+        state_path = os.path.join(repo_str, ".code-forge", "state.json")
         assert os.path.isfile(state_path)
         with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
@@ -193,12 +193,12 @@ class TestIntegrationBaseline:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "--head", "INDEX",
+            ["code-forge", "--mode", "ci", "--head", "INDEX",
              "clean.sh"],
         )
         monkeypatch.chdir(repo_str)
 
-        from forge.cli import main
+        from code_forge.cli import main
 
         exit_code = main()
         assert exit_code == EXIT_PASS
@@ -210,7 +210,7 @@ class TestIntegrationState:
     def test_state_json_written_with_versions(
         self, tmp_path, monkeypatch
     ):
-        """Verify .forge/state.json has Phase 2 typed fields."""
+        """Verify .code-forge/state.json has Phase 2 typed fields."""
         repo = tmp_path / "repo"
         repo.mkdir()
         repo_str = str(repo)
@@ -226,15 +226,15 @@ class TestIntegrationState:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["forge", "--mode", "ci", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
         )
         monkeypatch.chdir(repo_str)
 
-        from forge.cli import main
+        from code_forge.cli import main
 
         main()
 
-        state_path = os.path.join(repo_str, ".forge", "state.json")
+        state_path = os.path.join(repo_str, ".code-forge", "state.json")
         assert os.path.isfile(state_path), "state.json not written"
 
         with open(state_path, encoding="utf-8") as f:

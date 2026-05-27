@@ -6,12 +6,12 @@ import json
 import logging
 from pathlib import Path
 
-from forge.autofix import StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.disposition import Disposition
-from forge.falsify import StubFalsifier
-from forge.machine import StateMachine
-from forge.state import Mode, State, StateFinding, Verdict, save_state
+from code_forge.autofix import StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.disposition import Disposition
+from code_forge.falsify import StubFalsifier
+from code_forge.machine import StateMachine
+from code_forge.state import Mode, State, StateFinding, Verdict, save_state
 
 
 def _make_finding(fp="fp-fs-1", disp=Disposition.CONFIRMED):
@@ -66,7 +66,7 @@ def _write_prior_state(tmp_path):
     state.round = 3
     state.source_hash = "oldhash"
     state.baseline_spec_repr = "old"
-    state_path = tmp_path / ".forge" / "state.json"
+    state_path = tmp_path / ".code-forge" / "state.json"
     save_state(state, state_path)
     return state_path
 
@@ -91,7 +91,7 @@ class TestCIWarnsOnExistingState:
     def test_ci_logs_warning(self, tmp_path, caplog):
         _write_prior_state(tmp_path)
         machine = _make_machine(tmp_path, mode=Mode.CI)
-        with caplog.at_level(logging.WARNING, logger="forge"):
+        with caplog.at_level(logging.WARNING, logger="code_forge"):
             machine.run()
         assert any(
             "ignoring prior state.json in CI mode" in r.message
@@ -117,7 +117,7 @@ class TestLocalLoadsState:
         state.round = 2
         state.source_hash = "oldhash"
         state.baseline_spec_repr = "old"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
         save_state(state, state_path)
 
         # LOCAL machine that re-detects the same fingerprint as CONFIRMED
@@ -159,7 +159,7 @@ class TestCIMissingStateNoOp:
     def test_ci_no_file_no_warning(self, tmp_path, caplog):
         # No state.json written
         machine = _make_machine(tmp_path, mode=Mode.CI)
-        with caplog.at_level(logging.WARNING, logger="forge"):
+        with caplog.at_level(logging.WARNING, logger="code_forge"):
             machine.run()
         assert not any(
             "state.json" in r.message for r in caplog.records

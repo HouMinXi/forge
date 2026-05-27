@@ -31,8 +31,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from forge.disposition import Disposition
-from forge.sarif import (
+from code_forge.disposition import Disposition
+from code_forge.sarif import (
     DISPOSITION_TO_LEVEL,
     SARIF_SCHEMA_URI,
     SARIF_VERSION,
@@ -43,7 +43,7 @@ from forge.sarif import (
     build_sarif_log,
     format_summary,
 )
-from forge.state import State, StateFinding, Verdict
+from code_forge.state import State, StateFinding, Verdict
 
 
 def _make_finding(
@@ -101,7 +101,7 @@ class TestBuildSarifLogBasicShape:
         result = build_sarif_log(state, {}, "2.0.0a1")
 
         driver = result["runs"][0]["tool"]["driver"]
-        assert driver["name"] == "forge"
+        assert driver["name"] == "code-forge"
 
     def test_semantic_version_format(self):
         state = _make_state(Verdict.PASS, [])
@@ -110,14 +110,14 @@ class TestBuildSarifLogBasicShape:
 
         sem_ver = result["runs"][0]["tool"]["driver"]["semanticVersion"]
         # Sorted order: ruff before shellcheck
-        assert sem_ver == "forge 2.0.0a1 [ruff=0.4.2 shellcheck=0.10.0]"
+        assert sem_ver == "code-forge 2.0.0a1 [ruff=0.4.2 shellcheck=0.10.0]"
 
     def test_semantic_version_empty_tools(self):
         state = _make_state(Verdict.PASS, [])
         result = build_sarif_log(state, {}, "2.0.0a1")
 
         sem_ver = result["runs"][0]["tool"]["driver"]["semanticVersion"]
-        assert sem_ver == "forge 2.0.0a1 []"
+        assert sem_ver == "code-forge 2.0.0a1 []"
 
 
 class TestZeroFindings:
@@ -317,7 +317,7 @@ class TestFormatSummaryRegex:
     """(m) format_summary regex match."""
 
     SUMMARY_REGEX = (
-        r"^forge: (PASS|FAIL|ESCALATED) findings=\d+ confirmed=\d+ "
+        r"^code-forge: (PASS|FAIL|ESCALATED) findings=\d+ confirmed=\d+ "
         r"uncertain=\d+ dismissed=\d+ fixed=\d+$"
     )
 
@@ -474,4 +474,4 @@ class TestBuildSemanticVersion:
     def test_sorted_tool_order(self):
         tools = {"z_tool": "1.0", "a_tool": "2.0", "m_tool": "3.0"}
         result = _build_semantic_version("2.0.0a1", tools)
-        assert result == "forge 2.0.0a1 [a_tool=2.0 m_tool=3.0 z_tool=1.0]"
+        assert result == "code-forge 2.0.0a1 [a_tool=2.0 m_tool=3.0 z_tool=1.0]"

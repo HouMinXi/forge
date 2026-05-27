@@ -14,14 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from forge.parsers.base import Finding, ToolError
-from forge.parsers.shellcheck import parse_shellcheck
-from forge.parsers.ruff import parse_ruff
-from forge.parsers.semgrep import parse_semgrep
-from forge.parsers.clippy import parse_clippy
-from forge.parsers.checkpatch import parse_checkpatch
-from forge.parsers.non_ascii import parse_non_ascii
-from forge.parsers import PARSER_DISPATCH, parse_output
+from code_forge.parsers.base import Finding, ToolError
+from code_forge.parsers.shellcheck import parse_shellcheck
+from code_forge.parsers.ruff import parse_ruff
+from code_forge.parsers.semgrep import parse_semgrep
+from code_forge.parsers.clippy import parse_clippy
+from code_forge.parsers.checkpatch import parse_checkpatch
+from code_forge.parsers.non_ascii import parse_non_ascii
+from code_forge.parsers import PARSER_DISPATCH, parse_output
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

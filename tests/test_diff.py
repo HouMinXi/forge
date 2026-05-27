@@ -4,7 +4,7 @@
 
 import pytest
 
-from forge.diff import extract_changed_lines, get_changed_files
+from code_forge.diff import extract_changed_lines, get_changed_files
 
 
 # -- Test fixtures: actual unified diff format --

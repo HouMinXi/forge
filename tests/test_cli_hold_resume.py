@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forge.cli import MAX_HOLD_CYCLES, _run_hold_loop
-from forge.hold import HoldAborted
-from forge.state import (
+from code_forge.cli import MAX_HOLD_CYCLES, _run_hold_loop
+from code_forge.hold import HoldAborted
+from code_forge.state import (
     Disposition,
     Mode,
     State,
@@ -50,7 +50,7 @@ class TestHoldAbortedExit:
 
     def test_hold_aborted_returns_pending(self, tmp_path):
         """HoldAborted -> Verdict.PENDING (main maps to exit 0)."""
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         s = _make_state_with_finding()
         save_state(s, state_path)
@@ -62,9 +62,9 @@ class TestHoldAbortedExit:
             return Verdict.PENDING
 
         with patch(
-            "forge.cli.StateMachine.run", mock_sm_run
+            "code_forge.cli.StateMachine.run", mock_sm_run
         ), patch(
-            "forge.cli.run_hold_ui",
+            "code_forge.cli.run_hold_ui",
             side_effect=HoldAborted("user quit"),
         ):
             verdict = _run_hold_loop(
@@ -93,7 +93,7 @@ class TestHoldResumeTerminal:
 
     def test_pending_then_pass(self, tmp_path):
         """PENDING on first run, PASS on second -> PASS."""
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         s = _make_state_with_finding()
         save_state(s, state_path)
@@ -104,9 +104,9 @@ class TestHoldResumeTerminal:
             return next(results)
 
         with patch(
-            "forge.cli.StateMachine.run", mock_sm_run
+            "code_forge.cli.StateMachine.run", mock_sm_run
         ), patch(
-            "forge.cli.run_hold_ui",
+            "code_forge.cli.run_hold_ui",
         ):
             verdict = _run_hold_loop(
                 mode=Mode.LOCAL,
@@ -133,21 +133,21 @@ class TestMaxHoldCyclesExhaustion:
 
     def test_max_cycles_exhausted(self, tmp_path, monkeypatch):
         """Exhaust MAX_HOLD_CYCLES -> ESCALATED + infra_errors."""
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         s = _make_state_with_finding()
         save_state(s, state_path)
 
         # Monkeypatch MAX_HOLD_CYCLES to 2 for fast test.
-        monkeypatch.setattr("forge.cli.MAX_HOLD_CYCLES", 2)
+        monkeypatch.setattr("code_forge.cli.MAX_HOLD_CYCLES", 2)
 
         def mock_sm_run(self_sm):
             return Verdict.PENDING
 
         with patch(
-            "forge.cli.StateMachine.run", mock_sm_run
+            "code_forge.cli.StateMachine.run", mock_sm_run
         ), patch(
-            "forge.cli.run_hold_ui",
+            "code_forge.cli.run_hold_ui",
         ):
             verdict = _run_hold_loop(
                 mode=Mode.LOCAL,
@@ -184,19 +184,19 @@ class TestMaxHoldNoneStateFallback:
 
     def test_none_state_fallback(self, tmp_path, monkeypatch):
         """State.json deleted mid-run -> construct fresh State."""
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         s = _make_state_with_finding()
         save_state(s, state_path)
 
-        monkeypatch.setattr("forge.cli.MAX_HOLD_CYCLES", 1)
+        monkeypatch.setattr("code_forge.cli.MAX_HOLD_CYCLES", 1)
 
         def mock_sm_run(self_sm):
             return Verdict.PENDING
 
         # Patch load_state in state module to return None at the
         # MAX exhaustion path (simulates state.json deleted).
-        from forge.state import load_state as real_load
+        from code_forge.state import load_state as real_load
         load_call_count = [0]
 
         def patched_load(path):
@@ -208,11 +208,11 @@ class TestMaxHoldNoneStateFallback:
             return None
 
         with patch(
-            "forge.cli.StateMachine.run", mock_sm_run
+            "code_forge.cli.StateMachine.run", mock_sm_run
         ), patch(
-            "forge.cli.run_hold_ui",
+            "code_forge.cli.run_hold_ui",
         ), patch(
-            "forge.state.load_state", side_effect=patched_load,
+            "code_forge.state.load_state", side_effect=patched_load,
         ):
             verdict = _run_hold_loop(
                 mode=Mode.LOCAL,

@@ -23,7 +23,7 @@ def _lock_holder_script(lock_path: str) -> str:
         "import sys, os, time, signal\n"
         "sys.path.insert(0, %r)\n"
         "from pathlib import Path\n"
-        "from forge.lock import ForgeLock\n"
+        "from code_forge.lock import ForgeLock\n"
         "lock_path = Path(%r)\n"
         "with ForgeLock(lock_path):\n"
         "    sys.stdout.write('READY\\n')\n"
@@ -37,7 +37,7 @@ class TestSigintCleansLock:
     """(a) SIGINT during held lock -> lock removed."""
 
     def test_sigint_removes_lock(self, tmp_path):
-        lock_path = tmp_path / "forge.lock"
+        lock_path = tmp_path / "code-forge.lock"
         proc = subprocess.Popen(
             [sys.executable, "-c", _lock_holder_script(str(lock_path))],
             stdout=subprocess.PIPE,
@@ -57,7 +57,7 @@ class TestSigtermCleansLock:
     """(b) SIGTERM during held lock -> lock removed."""
 
     def test_sigterm_removes_lock(self, tmp_path):
-        lock_path = tmp_path / "forge.lock"
+        lock_path = tmp_path / "code-forge.lock"
         proc = subprocess.Popen(
             [sys.executable, "-c", _lock_holder_script(str(lock_path))],
             stdout=subprocess.PIPE,
@@ -76,7 +76,7 @@ class TestSigkillLeavesStale:
     """(c) SIGKILL during held lock -> lock NOT removed."""
 
     def test_sigkill_leaves_stale(self, tmp_path):
-        lock_path = tmp_path / "forge.lock"
+        lock_path = tmp_path / "code-forge.lock"
         proc = subprocess.Popen(
             [sys.executable, "-c", _lock_holder_script(str(lock_path))],
             stdout=subprocess.PIPE,
@@ -90,7 +90,7 @@ class TestSigkillLeavesStale:
         # Lock file still exists (stale)
         assert lock_path.exists()
         # Verify next acquire recovers the stale lock
-        from forge.lock import acquire_lock
+        from code_forge.lock import acquire_lock
         acquire_lock(lock_path)
         content = lock_path.read_text().strip()
         assert content == str(os.getpid())

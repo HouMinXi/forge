@@ -6,8 +6,8 @@ Tests use constructed Finding objects and changed_lines dicts
 directly -- no fixture files needed (pure data filtering).
 """
 
-from forge.delta import filter_delta
-from forge.parsers.base import Finding, ToolError
+from code_forge.delta import filter_delta
+from code_forge.parsers.base import Finding, ToolError
 
 
 def _finding(

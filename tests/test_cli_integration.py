@@ -15,9 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forge import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS
-from forge.cli import _run, main
-from forge.errors import CliError
+from code_forge import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS
+from code_forge.cli import _run, main
+from code_forge.errors import CliError
 
 
 def _git_init_repo(repo_path):
@@ -38,7 +38,7 @@ def _git_init_repo(repo_path):
 
 def _write_tools_yaml(repo_path):
     """Write empty tools.yaml (no tools configured)."""
-    forge_dir = repo_path / ".forge"
+    forge_dir = repo_path / ".code-forge"
     forge_dir.mkdir(parents=True, exist_ok=True)
     tools_yaml = forge_dir / "tools.yaml"
     tools_yaml.write_text("tools: {}\n")
@@ -73,13 +73,13 @@ class TestGitRepoPassCI:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
         assert exit_code == EXIT_PASS
 
-        state_path = repo / ".forge" / "state.json"
+        state_path = repo / ".code-forge" / "state.json"
         assert state_path.exists()
         state = json.loads(state_path.read_text())
         assert state["verdict"] == "PASS"
@@ -94,7 +94,7 @@ class TestRegistryMissing:
         _git_init_repo(repo)
         # No tools.yaml written.
         monkeypatch.setattr(
-            sys, "argv", ["forge", "--mode", "ci", "a.py"],
+            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -124,7 +124,7 @@ class TestSandboxWarning:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "--sandbox", "a.py"],
+            ["code-forge", "--mode", "ci", "--sandbox", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -140,13 +140,13 @@ class TestTopLevelExceptionCatch:
         self, tmp_path, monkeypatch, capsys
     ):
         monkeypatch.setattr(
-            sys, "argv", ["forge", "--mode", "ci", "a.py"],
+            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(tmp_path))
 
         # Inject a crash in _run by mocking resolve_mode.
         with patch(
-            "forge.cli.resolve_mode",
+            "code_forge.cli.resolve_mode",
             side_effect=RuntimeError("test panic"),
         ):
             exit_code = main()
@@ -177,7 +177,7 @@ class TestMainReturnsInt:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         result = main()

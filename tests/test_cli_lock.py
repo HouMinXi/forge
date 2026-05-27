@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-from forge import EXIT_BUSY, EXIT_PASS
-from forge.cli import main
-from forge.lock import ForgeLockBusy
+from code_forge import EXIT_BUSY, EXIT_PASS
+from code_forge.cli import main
+from code_forge.lock import ForgeLockBusy
 
 
 class TestLockBusy:
@@ -22,17 +22,17 @@ class TestLockBusy:
     ):
         """ForgeLockBusy -> stderr message + exit 3."""
         monkeypatch.setattr(
-            sys, "argv", ["forge", "--mode", "ci", "a.py"],
+            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(tmp_path))
 
         # Mock _run to raise ForgeLockBusy (simulates lock conflict
         # at any point inside the pipeline).
-        from forge.cli import _run as real_run
+        from code_forge.cli import _run as real_run
         with patch(
-            "forge.cli._run",
+            "code_forge.cli._run",
             side_effect=ForgeLockBusy(
-                12345, tmp_path / ".forge" / "forge.lock"
+                12345, tmp_path / ".code-forge" / "code-forge.lock"
             ),
         ):
             exit_code = main()
@@ -64,7 +64,7 @@ class TestLockReleasedOnExit:
             ["git", "config", "user.email", "test@test.com"],
             cwd=str(repo), capture_output=True, check=True,
         )
-        forge_dir = repo / ".forge"
+        forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text("# initial\n")
@@ -80,14 +80,14 @@ class TestLockReleasedOnExit:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
         assert exit_code == EXIT_PASS
 
         state_path = forge_dir / "state.json"
-        lock_path = forge_dir / "forge.lock"
+        lock_path = forge_dir / "code-forge.lock"
         assert state_path.exists()
         assert not lock_path.exists()
 
@@ -114,7 +114,7 @@ class TestLockReleasedOnException:
             ["git", "config", "user.email", "test@test.com"],
             cwd=str(repo), capture_output=True, check=True,
         )
-        forge_dir = repo / ".forge"
+        forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text("# initial\n")
@@ -130,20 +130,20 @@ class TestLockReleasedOnException:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
 
         # Inject crash inside the lock scope.
         with patch(
-            "forge.cli._run_hold_loop",
+            "code_forge.cli._run_hold_loop",
             side_effect=RuntimeError("test crash"),
         ):
             exit_code = main()
 
         # Exception caught by top-level handler -> EXIT_FAIL.
-        from forge import EXIT_FAIL
+        from code_forge import EXIT_FAIL
         assert exit_code == EXIT_FAIL
 
-        lock_path = forge_dir / "forge.lock"
+        lock_path = forge_dir / "code-forge.lock"
         assert not lock_path.exists()

@@ -4,8 +4,8 @@
 
 import pytest
 
-from forge.mode_resolver import resolve_mode
-from forge.state import Mode
+from code_forge.mode_resolver import resolve_mode
+from code_forge.state import Mode
 
 
 class TestCliArgWins:

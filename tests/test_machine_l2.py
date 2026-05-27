@@ -9,12 +9,12 @@ CI async mutation, bug-inject teeth test.
 import json
 from pathlib import Path
 
-from forge.autofix import StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.disposition import Disposition
-from forge.falsify import StubFalsifier
-from forge.machine import StateMachine
-from forge.state import Mode, StateFinding, Verdict
+from code_forge.autofix import StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.disposition import Disposition
+from code_forge.falsify import StubFalsifier
+from code_forge.machine import StateMachine
+from code_forge.state import Mode, StateFinding, Verdict
 
 
 def _make_finding(fp="fp-1", source="L0", disp=Disposition.CONFIRMED):
@@ -39,8 +39,8 @@ def _make_resolved():
 
 
 def _setup_gate_yaml(tmp_path):
-    """Create .forge/gate.yaml for l2_runner tests."""
-    forge_dir = tmp_path / ".forge"
+    """Create .code-forge/gate.yaml for l2_runner tests."""
+    forge_dir = tmp_path / ".code-forge"
     forge_dir.mkdir(exist_ok=True)
     gate_yaml = forge_dir / "gate.yaml"
     gate_yaml.write_text("test:\n  command: ['pytest']\n")
@@ -280,7 +280,7 @@ class TestCIModeReadsMutationResult:
     """Test 8 & 9: CI mode reads mutation-result.json."""
 
     def test_ci_status_done_with_survivors_fails(self, tmp_path):
-        forge_dir = tmp_path / ".forge"
+        forge_dir = tmp_path / ".code-forge"
         forge_dir.mkdir()
         result_path = forge_dir / "mutation-result.json"
         result_data = {
@@ -314,7 +314,7 @@ class TestCIModeReadsMutationResult:
         assert any("mutation survivors" in e for e in machine._state.infra_errors)
 
     def test_ci_status_running_dead_pid_appends_skipped(self, tmp_path):
-        forge_dir = tmp_path / ".forge"
+        forge_dir = tmp_path / ".code-forge"
         forge_dir.mkdir()
         result_path = forge_dir / "mutation-result.json"
         result_data = {

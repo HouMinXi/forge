@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from forge.disposition import Disposition
-from forge.falsify import Falsifier, StubFalsifier
-from forge.state import StateFinding
+from code_forge.disposition import Disposition
+from code_forge.falsify import Falsifier, StubFalsifier
+from code_forge.state import StateFinding
 
 
 def _make_finding(fingerprint="fp-001"):

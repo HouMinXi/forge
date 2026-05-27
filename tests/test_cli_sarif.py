@@ -20,9 +20,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forge.cli import _emit_ci_output
-from forge.disposition import Disposition
-from forge.state import Mode, State, StateFinding, Verdict, save_state
+from code_forge.cli import _emit_ci_output
+from code_forge.disposition import Disposition
+from code_forge.state import Mode, State, StateFinding, Verdict, save_state
 
 
 def _make_finding(
@@ -57,7 +57,7 @@ def _make_state(
 @pytest.fixture
 def state_dir(tmp_path):
     """Create a temporary .forge directory."""
-    forge_dir = tmp_path / ".forge"
+    forge_dir = tmp_path / ".code-forge"
     forge_dir.mkdir()
     return forge_dir
 
@@ -84,7 +84,7 @@ class TestCIModeZeroFindings:
         stderr = StringIO()
 
         with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             _emit_ci_output(state_path, mock_registry)
 
         # Parse SARIF from stdout
@@ -94,7 +94,7 @@ class TestCIModeZeroFindings:
 
         # Check summary on stderr
         summary = stderr.getvalue().strip()
-        assert summary.startswith("forge: PASS")
+        assert summary.startswith("code-forge: PASS")
         assert "findings=0" in summary
 
 
@@ -110,7 +110,7 @@ class TestCIModeConfirmedFinding:
         stdout = StringIO()
 
         with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             _emit_ci_output(state_path, mock_registry)
 
         sarif = json.loads(stdout.getvalue())
@@ -130,7 +130,7 @@ class TestCIModeUncertainFinding:
         stdout = StringIO()
 
         with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             _emit_ci_output(state_path, mock_registry)
 
         sarif = json.loads(stdout.getvalue())
@@ -175,7 +175,7 @@ class TestToolVersionsCaptured:
             return {"shellcheck": "0.10.0", "ruff": "0.4.2"}.get(cmd, "unknown")
 
         with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("forge.cli.capture_tool_version", side_effect=mock_version):
+             patch("code_forge.cli.capture_tool_version", side_effect=mock_version):
             _emit_ci_output(state_path, mock_registry)
 
         sarif = json.loads(stdout.getvalue())
@@ -197,7 +197,7 @@ class TestEscalatedWithInfraErrors:
         stderr = StringIO()
 
         with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             _emit_ci_output(state_path, mock_registry)
 
         # SARIF still emitted
@@ -221,7 +221,7 @@ class TestStdoutStderrSeparation:
         stderr = StringIO()
 
         with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             _emit_ci_output(state_path, mock_registry)
 
         # stdout is pure JSON
@@ -230,7 +230,7 @@ class TestStdoutStderrSeparation:
 
         # stderr is summary line, not JSON
         stderr_content = stderr.getvalue()
-        assert stderr_content.startswith("forge:")
+        assert stderr_content.startswith("code-forge:")
         with pytest.raises(json.JSONDecodeError):
             json.loads(stderr_content)
 
@@ -240,7 +240,7 @@ class TestForgeLockHeldDuringEmission:
 
     def test_lock_present_during_emit(self, state_dir, mock_registry):
         state_path = state_dir / "state.json"
-        lock_path = state_dir / "forge.lock"
+        lock_path = state_dir / "code-forge.lock"
         state = _make_state(Verdict.PASS, [])
         save_state(state, state_path)
 
@@ -253,7 +253,7 @@ class TestForgeLockHeldDuringEmission:
 
         with patch("sys.stdout", StringIO()), \
              patch("sys.stderr", StringIO()), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             _emit_ci_output(state_path, mock_registry, post_emit_hook=check_lock)
 
         assert lock_present_during_emit == [True]
@@ -278,10 +278,10 @@ class TestPendingCIDefensivePath:
 
         stdout = StringIO()
 
-        with patch("forge.cli._load_state", return_value=pending_state), \
+        with patch("code_forge.cli._load_state", return_value=pending_state), \
              patch("sys.stdout", stdout), \
              patch("sys.stderr", StringIO()), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             with pytest.raises(ValueError) as exc_info:
                 _emit_ci_output(state_path, mock_registry)
 
@@ -302,7 +302,7 @@ class TestLoadStateNoneDefensive:
         stderr = StringIO()
 
         with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("forge.cli.capture_tool_version", return_value="0.1.0"):
+             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
             # Should not raise, should return silently
             _emit_ci_output(state_path, mock_registry)
 

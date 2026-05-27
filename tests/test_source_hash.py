@@ -5,7 +5,7 @@
 import pytest
 from pathlib import Path
 
-from forge.source import compute_source_hash, normalize_text
+from code_forge.source import compute_source_hash, normalize_text
 
 
 class TestNormalizeText:

@@ -8,16 +8,16 @@ from unittest.mock import patch
 
 import pytest
 
-from forge.autofix import AutoFixer, FixOutcome, StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.factories import (
+from code_forge.autofix import AutoFixer, FixOutcome, StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.factories import (
     _NonGitSafeAutoFixer,
     build_autofixer,
     build_falsifier,
     build_revert_fn,
 )
-from forge.falsify import StubFalsifier
-from forge.state import Disposition, StateFinding
+from code_forge.falsify import StubFalsifier
+from code_forge.state import Disposition, StateFinding
 
 
 def _make_resolved(mode_hint: str) -> ResolvedReview:
@@ -174,7 +174,7 @@ class TestBuildRevertFn:
         resolved = _make_resolved("git")
         fn = build_revert_fn(resolved, tmp_path)
         finding = _make_finding()
-        with patch("forge.factories.subprocess.run") as mock_run:
+        with patch("code_forge.factories.subprocess.run") as mock_run:
             fn(finding)
             mock_run.assert_called_once()
             args = mock_run.call_args
@@ -193,13 +193,13 @@ class TestBuildL2Runner:
 
         mock_which = MagicMock(return_value="/usr/bin/mutmut")
 
-        with patch("forge.factories.shutil.which", mock_which):
-            from forge.factories import build_l2_runner
+        with patch("code_forge.factories.shutil.which", mock_which):
+            from code_forge.factories import build_l2_runner
 
             l2_runner = build_l2_runner()
             assert callable(l2_runner)
             # Verify it's the actual run_mutation function
-            from forge.mutation import run_mutation
+            from code_forge.mutation import run_mutation
 
             assert l2_runner is run_mutation
 
@@ -209,8 +209,8 @@ class TestBuildL2Runner:
 
         mock_which = MagicMock(return_value=None)
 
-        with patch("forge.factories.shutil.which", mock_which):
-            from forge.factories import build_l2_runner
+        with patch("code_forge.factories.shutil.which", mock_which):
+            from code_forge.factories import build_l2_runner
 
             l2_runner = build_l2_runner()
             assert callable(l2_runner)
@@ -231,7 +231,7 @@ class TestBuildE2eChecker:
 
     def test_returns_callable_with_correct_signature(self):
         """build_e2e_checker() returns a callable (diff_text, repo_root) -> (list, list)."""
-        from forge.factories import build_e2e_checker
+        from code_forge.factories import build_e2e_checker
 
         fn = build_e2e_checker()
         assert callable(fn)

@@ -298,14 +298,14 @@ def run_seed_test(diff_path, target_dim, description):
         except subprocess.TimeoutExpired:
             return (
                 None,
-                'forge review timed out (%ds). Set '
+                'code-forge review timed out (%ds). Set '
                 'SEED_TEST_TIMEOUT env var to increase.'
                 % timeout,
             )
 
         # Check if target dimension was flagged
         findings_path = os.path.join(
-            tmpdir, '.forge', 'findings.json',
+            tmpdir, '.code-forge', 'findings.json',
         )
         if os.path.isfile(findings_path):
             with open(findings_path, 'r', encoding='utf-8') as f:
@@ -455,11 +455,11 @@ def _write_seed_test_status(dim_name, status_value, config_path=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Run seed tests for forge dimensions',
+        description='Run seed tests for code-forge dimensions',
     )
     parser.add_argument(
         '--dry-run', action='store_true',
-        help='Validate diff format without running forge',
+        help='Validate diff format without running code-forge',
     )
     parser.add_argument(
         '--dimension', metavar='DIM',

@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from forge.baseline import (
+from code_forge.baseline import (
     EmptyBaseline,
     GitRefBaseline,
     SnapshotBaseline,
     resolve_baseline,
     serialize_baseline_spec,
 )
-from forge.errors import BaselineResolutionError
-from forge.snapshot import Snapshot, save_snapshot, snapshot_path_for
+from code_forge.errors import BaselineResolutionError
+from code_forge.snapshot import Snapshot, save_snapshot, snapshot_path_for
 
 
 @pytest.fixture

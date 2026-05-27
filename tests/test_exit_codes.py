@@ -4,7 +4,7 @@
 
 import pytest
 
-from forge.exit_codes import (
+from code_forge.exit_codes import (
     EXIT_BUSY,
     EXIT_CLI_ERROR,
     EXIT_ESCALATED,
@@ -12,7 +12,7 @@ from forge.exit_codes import (
     EXIT_PASS,
     verdict_to_exit,
 )
-from forge.state import Verdict
+from code_forge.state import Verdict
 
 
 class TestExitCodeConstants:
@@ -60,15 +60,15 @@ class TestInitReExport:
     """Verify __init__.py re-exports EXIT_* constants (H5, R3-L3)."""
 
     def test_all_exit_constants_importable_from_forge(self):
-        """SC-42 R3-4: from forge import EXIT_* works."""
-        from forge import (
+        """SC-42 R3-4: from code_forge import EXIT_* works."""
+        from code_forge import (
             EXIT_BUSY,
             EXIT_CLI_ERROR,
             EXIT_ESCALATED,
             EXIT_FAIL,
             EXIT_PASS,
         )
-        from forge.exit_codes import (
+        from code_forge.exit_codes import (
             EXIT_BUSY as EC_BUSY,
             EXIT_CLI_ERROR as EC_CLI,
             EXIT_ESCALATED as EC_ESC,

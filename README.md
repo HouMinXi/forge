@@ -44,7 +44,7 @@ Code Change
 
 | Skill | Pipeline Step | Purpose |
 |-------|-------------|---------|
-| forge | Orchestrator | Runs the full 5-step pipeline |
+| code-forge | Orchestrator | Runs the full 5-step pipeline |
 | qodo-review | Pass 1 | Change-aware pre-review with feature-grouped walkthrough |
 | code-review-expert | Pass 2 | SOLID, architecture, security analysis |
 | adversarial-qe | Pass 3 | Red-team QE with 12 attack dimensions |
@@ -83,7 +83,7 @@ Hook installation is manual -- see `hooks/README.md` and
 After installation, invoke the full pipeline in Claude Code:
 
 ```
-/forge
+/code-forge
 ```
 
 Or invoke individual skills:
