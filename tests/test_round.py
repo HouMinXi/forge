@@ -10,12 +10,12 @@ import hashlib
 from pathlib import Path
 
 
-from forge.autofix import StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.disposition import Disposition
-from forge.falsify import StubFalsifier
-from forge.machine import StateMachine
-from forge.state import Mode, StateFinding
+from code_forge.autofix import StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.disposition import Disposition
+from code_forge.falsify import StubFalsifier
+from code_forge.machine import StateMachine
+from code_forge.state import Mode, StateFinding
 
 
 def _make_finding(fp="fp-r-1", disp=Disposition.CONFIRMED, source="L0"):
@@ -228,7 +228,7 @@ class TestSaveStatePerRound:
         machine = _make_ci_machine(tmp_path, l0_runner=mock_l0)
         machine.run()
 
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
         assert state_path.exists()
         data = json.loads(state_path.read_text())
         assert data["round"] == 0

@@ -9,8 +9,8 @@ from unittest.mock import Mock, mock_open, patch
 import pytest
 import yaml
 
-from forge.exit_codes import EXIT_FAIL, EXIT_PASS
-from forge.gate_check import (
+from code_forge.exit_codes import EXIT_FAIL, EXIT_PASS
+from code_forge.gate_check import (
     compute_baseline_delta,
     is_ci_mode,
     load_gate_config,
@@ -126,7 +126,7 @@ class TestFailOpenGuard:
         """run_gate_check returns 1 (BLOCK) when gate.yaml missing."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            (cwd / ".forge").mkdir()
+            (cwd / ".code-forge").mkdir()
             # gate.yaml absent
 
             from io import StringIO
@@ -142,7 +142,7 @@ class TestFailOpenGuard:
         """run_gate_check returns 1 (BLOCK) on invalid YAML."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
             (forge_dir / "gate.yaml").write_text("{ invalid")
 
@@ -158,7 +158,7 @@ class TestFailOpenGuard:
         """run_gate_check returns 1 (BLOCK) on unsafe command."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -181,7 +181,7 @@ class TestFailOpenGuard:
         # This is a meta-test: run_gate_check MUST never return 2
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            (cwd / ".forge").mkdir()
+            (cwd / ".code-forge").mkdir()
 
             from io import StringIO
             result = run_gate_check(
@@ -319,7 +319,7 @@ class TestGateCheckIntegration:
         """FORGE_SKIP_TESTS=1 in local mode -> allow + warning."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -346,7 +346,7 @@ class TestGateCheckIntegration:
         import types
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -370,12 +370,12 @@ class TestGateCheckIntegration:
             # With quiet=True, the FORGE_SKIP_TESTS warning is suppressed
             assert stderr.getvalue() == ""
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_skip_tests_ignored_in_ci_mode(self, mock_run):
         """FORGE_SKIP_TESTS=1 + CI=1 -> gate still runs (not skipped)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -405,12 +405,12 @@ class TestGateCheckIntegration:
             assert result == EXIT_PASS
             assert "CI mode" in stderr.getvalue()
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_test_pass_returns_pass(self, mock_run):
         """Test exit 0 -> gate-check returns PASS."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -436,12 +436,12 @@ class TestGateCheckIntegration:
             )
             assert result == EXIT_PASS
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_test_fail_new_failure_returns_fail(self, mock_run):
         """Test exit 1 + NEW failure -> gate-check returns FAIL."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -480,12 +480,12 @@ class TestGateCheckIntegration:
             assert result == EXIT_FAIL
             assert "NEW test failures" in stderr.getvalue()
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_exit_1_no_baseline_allows(self, mock_run):
         """Test exit 1 + no baseline -> gate allows (bootstrap path)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -517,12 +517,12 @@ class TestGateCheckIntegration:
             assert result == EXIT_PASS
             assert "no baseline" in stderr.getvalue()
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_exit_4_blocks_regardless_of_baseline(self, mock_run):
         """Exit 4 (usage error) BLOCKs even with permissive baseline."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -561,12 +561,12 @@ class TestGateCheckIntegration:
                 % result
             )
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_exit_5_blocks_regardless_of_baseline(self, mock_run):
         """Exit 5 (no tests collected) BLOCKs even with empty baseline."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -604,12 +604,12 @@ class TestGateCheckIntegration:
             )
 
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_git_not_found_blocks(self, mock_run):
         """git not on PATH -> gate BLOCKs with clean error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -635,12 +635,12 @@ class TestGateCheckIntegration:
             assert result == EXIT_FAIL
             assert "error" in stderr.getvalue().lower()
 
-    @patch("forge.gate_check.subprocess.run")
+    @patch("code_forge.gate_check.subprocess.run")
     def test_runner_not_found_blocks(self, mock_run):
         """Test runner not on PATH -> gate BLOCKs with clean error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
-            forge_dir = cwd / ".forge"
+            forge_dir = cwd / ".code-forge"
             forge_dir.mkdir()
 
             config = {
@@ -675,7 +675,7 @@ class TestBugInjectExitTranslation:
 
     def test_all_block_codes_actually_block(self):
         """Every exit code that should BLOCK returns 1."""
-        from forge.gate_check import translate_exit_code
+        from code_forge.gate_check import translate_exit_code
 
         for code in [1, 4, 5, 99]:
             assert translate_exit_code(code) == 1, (
@@ -692,8 +692,8 @@ class TestBugInjectFailOpen:
 
         with tempfile.TemporaryDirectory() as cwd:
             cwd = Path(cwd)
-            (cwd / ".forge").mkdir()
-            (cwd / ".forge" / "gate.yaml").write_text("{{invalid yaml")
+            (cwd / ".code-forge").mkdir()
+            (cwd / ".code-forge" / "gate.yaml").write_text("{{invalid yaml")
 
             stderr = StringIO()
             result = run_gate_check(
@@ -726,8 +726,8 @@ class TestBugInjectFailOpen:
 
         with tempfile.TemporaryDirectory() as cwd:
             cwd = Path(cwd)
-            (cwd / ".forge").mkdir()
-            (cwd / ".forge" / "gate.yaml").write_text(
+            (cwd / ".code-forge").mkdir()
+            (cwd / ".code-forge" / "gate.yaml").write_text(
                 "---\ntest:\n"
                 "  command: ['sh', '-c', 'rm -rf /']\n"
                 "  timeout_seconds: 10\n"

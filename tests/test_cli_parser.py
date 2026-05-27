@@ -4,7 +4,7 @@
 
 import pytest
 
-from forge.cli import _build_parser
+from code_forge.cli import _build_parser
 
 
 class TestParserDefaults:
@@ -41,7 +41,7 @@ class TestParserDefaults:
         assert args.sandbox is False
         assert args.baseline is None
         assert args.head is None
-        assert args.registry == ".forge/tools.yaml"
+        assert args.registry == ".code-forge/tools.yaml"
         assert args.state_dir is None
         assert args.max_total_rounds is None
         assert args.max_fix_attempts is None
@@ -144,7 +144,7 @@ class TestParserVersion:
             parser.parse_args(["--version"])
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        assert captured.out.startswith("forge ")
+        assert captured.out.startswith("code-forge ")
 
 
 class TestSubcommands:

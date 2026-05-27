@@ -9,12 +9,12 @@ unfixed CONFIRMED == 0. Returns Verdict.PENDING.
 from pathlib import Path
 
 
-from forge.autofix import FixOutcome, StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.disposition import Disposition
-from forge.falsify import StubFalsifier
-from forge.machine import StateMachine
-from forge.state import Mode, StateFinding, Verdict
+from code_forge.autofix import FixOutcome, StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.disposition import Disposition
+from code_forge.falsify import StubFalsifier
+from code_forge.machine import StateMachine
+from code_forge.state import Mode, StateFinding, Verdict
 
 
 def _make_finding(fp="fp-h-1", disp=Disposition.CONFIRMED):

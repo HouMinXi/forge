@@ -10,12 +10,12 @@ autofix skip for E2E_CHECK, falsifier bypass, and the end-to-end UNCERTAIN
 
 from pathlib import Path
 
-from forge.autofix import StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.disposition import Disposition
-from forge.falsify import StubFalsifier
-from forge.machine import StateMachine
-from forge.state import Mode, StateFinding, Verdict
+from code_forge.autofix import StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.disposition import Disposition
+from code_forge.falsify import StubFalsifier
+from code_forge.machine import StateMachine
+from code_forge.state import Mode, StateFinding, Verdict
 
 
 def _make_finding(fp="fp-1", source="L0", disp=Disposition.CONFIRMED, desc=""):

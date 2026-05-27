@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from forge.cli import _build_parser, main
+from code_forge.cli import _build_parser, main
 
 
 class TestPreservedFlags:
@@ -55,7 +55,7 @@ class TestStateDirDeprecation:
             ["git", "config", "user.email", "test@test.com"],
             cwd=str(repo), capture_output=True, check=True,
         )
-        forge_dir = repo / ".forge"
+        forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text("# initial\n")
@@ -71,7 +71,7 @@ class TestStateDirDeprecation:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci",
+            ["code-forge", "--mode", "ci",
              "--state-dir", "/tmp/custom", "a.py"],
         )
         monkeypatch.chdir(str(repo))
@@ -79,7 +79,7 @@ class TestStateDirDeprecation:
         captured = capsys.readouterr()
         assert "deprecated" in captured.err.lower()
         # State.json written to cwd/.forge regardless.
-        assert (repo / ".forge" / "state.json").exists()
+        assert (repo / ".code-forge" / "state.json").exists()
 
 
 class TestStagedDeprecation:
@@ -103,7 +103,7 @@ class TestStagedDeprecation:
             ["git", "config", "user.email", "test@test.com"],
             cwd=str(repo), capture_output=True, check=True,
         )
-        forge_dir = repo / ".forge"
+        forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text("# initial\n")
@@ -123,7 +123,7 @@ class TestStagedDeprecation:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "--staged", "a.py"],
+            ["code-forge", "--mode", "ci", "--staged", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         main()
@@ -149,7 +149,7 @@ class TestStagedDeprecation:
             ["git", "config", "user.email", "test@test.com"],
             cwd=str(repo), capture_output=True, check=True,
         )
-        forge_dir = repo / ".forge"
+        forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text("# initial\n")
@@ -169,7 +169,7 @@ class TestStagedDeprecation:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["forge", "--mode", "ci", "--staged",
+            ["code-forge", "--mode", "ci", "--staged",
              "--quiet", "a.py"],
         )
         monkeypatch.chdir(str(repo))

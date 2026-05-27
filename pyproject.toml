@@ -6,7 +6,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forge"
+name = "code-forge"
 version = "2.0.0a1"
 description = "3-state quality gate for code review"
 requires-python = ">=3.12"
@@ -26,7 +26,7 @@ dev = [
 ]
 
 [project.scripts]
-forge = "forge.cli:main"
+code-forge = "code_forge.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

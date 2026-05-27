@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 
-from forge.diagnose import diagnose_non_convergence
+from code_forge.diagnose import diagnose_non_convergence
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "machine_scenarios"
 

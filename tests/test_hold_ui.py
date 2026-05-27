@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from forge.disposition import Disposition
-from forge.hold import HoldAborted, run_hold_ui
-from forge.state import State, StateFinding, save_state
+from code_forge.disposition import Disposition
+from code_forge.hold import HoldAborted, run_hold_ui
+from code_forge.state import State, StateFinding, save_state
 
 
 def _make_state(*findings):
@@ -40,7 +40,7 @@ class TestConfirmInput:
         finding = _make_finding()
         state = _make_state(finding)
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         inputs = iter(["c"])
         output = []
@@ -61,7 +61,7 @@ class TestDismissInput:
         finding = _make_finding()
         state = _make_state(finding)
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         inputs = iter(["d"])
         output = []
@@ -80,7 +80,7 @@ class TestSkipInput:
         finding = _make_finding()
         state = _make_state(finding)
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         inputs = iter(["s"])
         output = []
@@ -99,7 +99,7 @@ class TestInvalidInput:
         finding = _make_finding()
         state = _make_state(finding)
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         inputs = iter(["x", "c"])
         output = []
@@ -119,7 +119,7 @@ class TestEof:
         finding = _make_finding()
         state = _make_state(finding)
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         def eof_input(prompt):
             raise EOFError
@@ -135,7 +135,7 @@ class TestZeroUncertain:
         finding = _make_finding(disp=Disposition.CONFIRMED)
         state = _make_state(finding)
         state.hold_reason = "something"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         output = []
         run_hold_ui(
@@ -154,7 +154,7 @@ class TestHoldReasonCleared:
         finding = _make_finding()
         state = _make_state(finding)
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         inputs = iter(["c"])
         run_hold_ui(
@@ -172,7 +172,7 @@ class TestQuitInput:
         finding = _make_finding()
         state = _make_state(finding)
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
 
         inputs = iter(["q"])
         with pytest.raises(HoldAborted, match="HOLD UX aborted by user"):

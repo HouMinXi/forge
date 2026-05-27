@@ -15,8 +15,8 @@ from unittest.mock import patch
 
 import pytest
 
-from forge.disposition import Disposition
-from forge.mutation import parse_mutmut_results, run_mutation
+from code_forge.disposition import Disposition
+from code_forge.mutation import parse_mutmut_results, run_mutation
 
 
 class TestParseMutmutResults:
@@ -48,14 +48,14 @@ class TestParseMutmutResults:
     def test_multiple_survived_returned(self):
         """Test 4: multiple survived lines each produce a Survivor"""
         stdout = (
-            "    forge.mutation.x_run__mutmut_1: survived\n"
-            "    forge.mutation.x_run__mutmut_2: killed\n"
-            "    forge.mutation.x_run__mutmut_3: survived\n"
+            "    code_forge.mutation.x_run__mutmut_1: survived\n"
+            "    code_forge.mutation.x_run__mutmut_2: killed\n"
+            "    code_forge.mutation.x_run__mutmut_3: survived\n"
         )
         survivors, warnings = parse_mutmut_results(stdout)
         assert len(survivors) == 2
-        assert survivors[0].mutant_name == "forge.mutation.x_run__mutmut_1"
-        assert survivors[1].mutant_name == "forge.mutation.x_run__mutmut_3"
+        assert survivors[0].mutant_name == "code_forge.mutation.x_run__mutmut_1"
+        assert survivors[1].mutant_name == "code_forge.mutation.x_run__mutmut_3"
 
     def test_non_survived_statuses_skipped(self):
         """Test 5: all non-survived statuses produce no Survivor"""
@@ -109,7 +109,7 @@ class TestRunMutation:
         assert len(infra) == 1
         assert "no Python files" in infra[0]
 
-    @patch("forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.subprocess.run")
     def test_flaky_guard_baseline_fails_on_run_2(self, mock_run):
         """Test 11: flaky guard -- baseline fails on run 2 of 3"""
         mock_run.side_effect = [
@@ -125,8 +125,8 @@ class TestRunMutation:
         assert len(infra) == 1
         assert "flaky guard" in infra[0]
 
-    @patch("forge.mutation.subprocess.run")
-    @patch("forge.mutation.shutil.which", return_value=None)
+    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.shutil.which", return_value=None)
     def test_mutmut_not_installed(self, mock_which, mock_run):
         """Test 12: mutmut not installed returns MUTATION_SKIPPED"""
         mock_run.return_value = subprocess.CompletedProcess(
@@ -140,8 +140,8 @@ class TestRunMutation:
         assert "not installed" in findings[0].description
         assert len(infra) == 0
 
-    @patch("forge.mutation.subprocess.run")
-    @patch("forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_mutmut_timeout_returns_mutation_skipped(self, mock_which, mock_run):
         """Test 13: mutmut timeout returns MUTATION_SKIPPED"""
         call_count = {"n": 0}
@@ -162,8 +162,8 @@ class TestRunMutation:
         assert findings[0].disposition == Disposition.DISMISSED
         assert "timed out" in findings[0].description
 
-    @patch("forge.mutation.subprocess.run")
-    @patch("forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_successful_run_with_survivors(self, mock_which, mock_run):
         """Test 14: successful run with survivors returns CONFIRMED findings.
 
@@ -193,8 +193,8 @@ class TestRunMutation:
         assert "test.x_foo__mutmut_1" in findings[0].description
         assert "test.x_foo__mutmut_2" in findings[1].description
 
-    @patch("forge.mutation.subprocess.run")
-    @patch("forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_successful_run_zero_survivors(self, mock_which, mock_run):
         """Test 15: successful run with zero survivors returns empty findings"""
         def side_effect(*args, **kwargs):
@@ -209,8 +209,8 @@ class TestRunMutation:
         findings, infra = run_mutation(["test.py"], ["pytest"])
         assert len(findings) == 0
 
-    @patch("forge.mutation.subprocess.run")
-    @patch("forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_mutmut_non_zero_exit_returns_mutation_error(self, mock_which, mock_run):
         """Test 16: any non-zero exit from mutmut run produces MUTATION_ERROR.
 

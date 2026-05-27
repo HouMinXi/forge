@@ -4,13 +4,13 @@
 
 from pathlib import Path
 
-from forge.autofix import FixOutcome, StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.disposition import Disposition, MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-from forge.falsify import StubFalsifier
-from forge.hold import check_escalated_frozen, run_hold_ui
-from forge.machine import StateMachine
-from forge.state import Mode, State, StateFinding, Verdict, save_state
+from code_forge.autofix import FixOutcome, StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.disposition import Disposition, MAX_FIX_ATTEMPTS_PER_FINGERPRINT
+from code_forge.falsify import StubFalsifier
+from code_forge.hold import check_escalated_frozen, run_hold_ui
+from code_forge.machine import StateMachine
+from code_forge.state import Mode, State, StateFinding, Verdict, save_state
 
 
 def _make_finding(fp="fp-ef-1", disp=Disposition.CONFIRMED):
@@ -133,7 +133,7 @@ class TestIntegrationHoldResumeCycle:
         assert machine._state.verdict == Verdict.PENDING
 
         # Phase 2: human re-CONFIRMs via HOLD UI
-        state_path = tmp_path / ".forge" / "state.json"
+        state_path = tmp_path / ".code-forge" / "state.json"
         inputs = iter(["c"])
         run_hold_ui(
             machine._state, state_path,

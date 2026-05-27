@@ -7,9 +7,9 @@ from dataclasses import fields
 
 import pytest
 
-from forge.disposition import Disposition
-from forge.errors import CorruptedStateError, SchemaVersionMismatchError
-from forge.state import (
+from code_forge.disposition import Disposition
+from code_forge.errors import CorruptedStateError, SchemaVersionMismatchError
+from code_forge.state import (
     SCHEMA_VERSION,
     Mode,
     State,
@@ -227,8 +227,8 @@ class TestStateFindingVsParsersBaseFinding:
     """(g) Both Finding types importable in same module (B3)."""
 
     def test_no_import_collision(self):
-        from forge.parsers.base import Finding  # noqa: F811
-        from forge.state import StateFinding  # noqa: F811
+        from code_forge.parsers.base import Finding  # noqa: F811
+        from code_forge.state import StateFinding  # noqa: F811
 
         assert Finding is not StateFinding
         # Verify they have different fields
@@ -253,7 +253,7 @@ class TestStateDefaultInstantiation:
 
 
 class TestAutoCreateDirectory:
-    """SC-4: save_state creates .forge/ directory if it does not exist."""
+    """SC-4: save_state creates .code-forge/ directory if it does not exist."""
 
     def test_auto_create_parent_dir(self, tmp_path):
         path = tmp_path / "sub" / "dir" / "state.json"

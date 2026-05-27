@@ -8,12 +8,12 @@ Given same disposition ledger, repeated run yields same Verdict.
 from pathlib import Path
 
 
-from forge.autofix import StubAutoFixer
-from forge.baseline import ResolvedReview
-from forge.disposition import Disposition
-from forge.falsify import StubFalsifier
-from forge.machine import StateMachine
-from forge.state import Mode, StateFinding, Verdict
+from code_forge.autofix import StubAutoFixer
+from code_forge.baseline import ResolvedReview
+from code_forge.disposition import Disposition
+from code_forge.falsify import StubFalsifier
+from code_forge.machine import StateMachine
+from code_forge.state import Mode, StateFinding, Verdict
 
 
 def _make_finding(fp="fp-d-1", disp=Disposition.CONFIRMED):
@@ -84,7 +84,7 @@ class TestPassRequiresTerminalConfirmed:
 
     def test_active_confirmed_prevents_pass(self, tmp_path):
         """If CONFIRMED persists, fixpoint never reached -> no PASS."""
-        from forge.autofix import FixOutcome
+        from code_forge.autofix import FixOutcome
 
         class NoChangeAutoFixer(StubAutoFixer):
             def fix(self, finding, mode_hint):

@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forge.registry import ToolConfig
-from forge.runner import (
+from code_forge.registry import ToolConfig
+from code_forge.runner import (
     _resolve_command,
     capture_tool_version,
     run_tool,
@@ -47,16 +47,16 @@ def _make_tool(
 class TestResolveCommand:
     """Tests for _resolve_command -- PATH-based and relative path."""
 
-    @patch("forge.runner.os.access", return_value=True)
-    @patch("forge.runner.os.path.isfile", return_value=False)
-    @patch("forge.runner.shutil.which", return_value="/usr/bin/shellcheck")
+    @patch("code_forge.runner.os.access", return_value=True)
+    @patch("code_forge.runner.os.path.isfile", return_value=False)
+    @patch("code_forge.runner.shutil.which", return_value="/usr/bin/shellcheck")
     def test_path_based(self, mock_which, _isfile, _access):
         assert _resolve_command("shellcheck") == "/usr/bin/shellcheck"
         mock_which.assert_called_once_with("shellcheck")
 
-    @patch("forge.runner.os.access", return_value=True)
-    @patch("forge.runner.os.path.isfile", return_value=True)
-    @patch("forge.runner.shutil.which", return_value=None)
+    @patch("code_forge.runner.os.access", return_value=True)
+    @patch("code_forge.runner.os.path.isfile", return_value=True)
+    @patch("code_forge.runner.shutil.which", return_value=None)
     def test_relative_path(self, mock_which, mock_isfile, mock_access):
         result = _resolve_command("scripts/checkpatch.pl")
         assert result == "scripts/checkpatch.pl"
@@ -64,21 +64,21 @@ class TestResolveCommand:
         mock_isfile.assert_called_once_with("scripts/checkpatch.pl")
         mock_access.assert_called()
 
-    @patch("forge.runner.os.access", return_value=False)
-    @patch("forge.runner.os.path.isfile", return_value=False)
-    @patch("forge.runner.shutil.which", return_value=None)
+    @patch("code_forge.runner.os.access", return_value=False)
+    @patch("code_forge.runner.os.path.isfile", return_value=False)
+    @patch("code_forge.runner.shutil.which", return_value=None)
     def test_not_found(self, _which, _isfile, _access):
         assert _resolve_command("nonexistent") is None
 
-    @patch("forge.runner.os.access", return_value=False)
-    @patch("forge.runner.os.path.isfile", return_value=True)
-    @patch("forge.runner.shutil.which", return_value=None)
+    @patch("code_forge.runner.os.access", return_value=False)
+    @patch("code_forge.runner.os.path.isfile", return_value=True)
+    @patch("code_forge.runner.shutil.which", return_value=None)
     def test_relative_not_executable(self, _which, _isfile, _access):
         """File exists but is not executable -- should return None."""
         result = _resolve_command("scripts/not_exec.pl")
         assert result is None
 
-    @patch("forge.runner.shutil.which", return_value="/usr/bin/ruff")
+    @patch("code_forge.runner.shutil.which", return_value="/usr/bin/ruff")
     def test_no_separator_skips_file_check(self, mock_which):
         """Command without os.sep should not check isfile."""
         result = _resolve_command("ruff")
@@ -88,9 +88,9 @@ class TestResolveCommand:
 class TestCaptureToolVersion:
     """Tests for capture_tool_version -- Consensus #3, GATE-02."""
 
-    @patch("forge.runner.subprocess.run")
+    @patch("code_forge.runner.subprocess.run")
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/shellcheck",
     )
     def test_returns_version_string(self, _resolve, mock_run):
@@ -106,16 +106,16 @@ class TestCaptureToolVersion:
         assert _call_args[1].get("shell") is not True
 
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value=None,
     )
     def test_not_installed(self, _resolve):
         result = capture_tool_version("nonexistent")
         assert result == "not_installed"
 
-    @patch("forge.runner.subprocess.run", side_effect=OSError("no such file"))
+    @patch("code_forge.runner.subprocess.run", side_effect=OSError("no such file"))
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/broken",
     )
     def test_oserror_returns_unknown(self, _resolve, _run):
@@ -123,11 +123,11 @@ class TestCaptureToolVersion:
         assert result == "unknown"
 
     @patch(
-        "forge.runner.subprocess.run",
+        "code_forge.runner.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd=["x"], timeout=5),
     )
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/slow",
     )
     def test_timeout_returns_unknown(self, _resolve, _run):
@@ -138,9 +138,9 @@ class TestCaptureToolVersion:
 class TestRunTool:
     """Tests for run_tool -- subprocess orchestration."""
 
-    @patch("forge.runner.subprocess.run")
+    @patch("code_forge.runner.subprocess.run")
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/shellcheck",
     )
     def test_returns_3tuple(self, _resolve, mock_run):
@@ -157,7 +157,7 @@ class TestRunTool:
         assert stderr == ""
 
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value=None,
     )
     def test_missing_optional_returns_none(self, _resolve):
@@ -166,7 +166,7 @@ class TestRunTool:
         assert result is None
 
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value=None,
     )
     def test_missing_required_raises(self, _resolve):
@@ -175,11 +175,11 @@ class TestRunTool:
             run_tool(tool, ["test.sh"])
 
     @patch(
-        "forge.runner.subprocess.run",
+        "code_forge.runner.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd=["x"], timeout=30),
     )
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/shellcheck",
     )
     def test_timeout_returns_none(self, _resolve, _run):
@@ -187,9 +187,9 @@ class TestRunTool:
         result = run_tool(tool, ["test.sh"])
         assert result is None
 
-    @patch("forge.runner.subprocess.run")
+    @patch("code_forge.runner.subprocess.run")
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/shellcheck",
     )
     def test_never_uses_shell_true(self, _resolve, mock_run):
@@ -200,9 +200,9 @@ class TestRunTool:
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs.get("shell") is not True
 
-    @patch("forge.runner.subprocess.run")
+    @patch("code_forge.runner.subprocess.run")
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/shellcheck",
     )
     def test_command_is_list(self, _resolve, mock_run):
@@ -214,9 +214,9 @@ class TestRunTool:
         cmd_arg = mock_run.call_args[0][0]
         assert isinstance(cmd_arg, list)
 
-    @patch("forge.runner.subprocess.run")
+    @patch("code_forge.runner.subprocess.run")
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/shellcheck",
     )
     def test_captures_stderr(self, _resolve, mock_run):
@@ -229,20 +229,20 @@ class TestRunTool:
         assert stderr == "parse error at line 5"
 
     @patch(
-        "forge.runner.subprocess.run",
+        "code_forge.runner.subprocess.run",
         side_effect=OSError("file not found"),
     )
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/broken",
     )
     def test_oserror_returns_none(self, _resolve, _run):
         result = run_tool(_make_tool(), ["test.sh"])
         assert result is None
 
-    @patch("forge.runner.subprocess.run")
+    @patch("code_forge.runner.subprocess.run")
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/cargo",
     )
     def test_cargo_root_skips_file_args(self, _resolve, mock_run):
@@ -260,9 +260,9 @@ class TestRunTool:
         cmd_arg = mock_run.call_args[0][0]
         assert "src/main.rs" not in cmd_arg
 
-    @patch("forge.runner.subprocess.run")
+    @patch("code_forge.runner.subprocess.run")
     @patch(
-        "forge.runner._resolve_command",
+        "code_forge.runner._resolve_command",
         return_value="/usr/bin/shellcheck",
     )
     def test_respects_timeout(self, _resolve, mock_run):
@@ -278,9 +278,9 @@ class TestRunTool:
 class TestRunTools:
     """Tests for run_tools -- orchestrating multiple tools."""
 
-    @patch("forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
-    @patch("forge.runner.run_tool")
-    @patch("forge.runner.match_tools")
+    @patch("code_forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
+    @patch("code_forge.runner.run_tool")
+    @patch("code_forge.runner.match_tools")
     def test_returns_3tuple(self, mock_match, mock_run_tool, mock_version):
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         mock_run_tool.return_value = ('{"output":true}', 0, "")
@@ -290,9 +290,9 @@ class TestRunTools:
         assert isinstance(versions, dict)
         assert isinstance(skipped, list)
 
-    @patch("forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
-    @patch("forge.runner.run_tool")
-    @patch("forge.runner.match_tools")
+    @patch("code_forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
+    @patch("code_forge.runner.run_tool")
+    @patch("code_forge.runner.match_tools")
     def test_populates_tool_versions(self, mock_match, mock_run_tool, mock_ver):
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         mock_run_tool.return_value = ('{"output":true}', 0, "")
@@ -301,9 +301,9 @@ class TestRunTools:
         assert "shellcheck" in versions
         assert versions["shellcheck"] == "shellcheck 0.10.0"
 
-    @patch("forge.runner.capture_tool_version", return_value="ruff 0.4.0")
-    @patch("forge.runner.run_tool")
-    @patch("forge.runner.match_tools")
+    @patch("code_forge.runner.capture_tool_version", return_value="ruff 0.4.0")
+    @patch("code_forge.runner.run_tool")
+    @patch("code_forge.runner.match_tools")
     def test_skips_no_matching_files(self, mock_match, mock_run_tool, mock_ver):
         mock_match.return_value = {"ruff": []}
         registry = {"ruff": _make_tool(name="ruff", command="ruff")}
@@ -312,9 +312,9 @@ class TestRunTools:
         assert "ruff" in skipped
         mock_run_tool.assert_not_called()
 
-    @patch("forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
-    @patch("forge.runner.run_tool", return_value=None)
-    @patch("forge.runner.match_tools")
+    @patch("code_forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
+    @patch("code_forge.runner.run_tool", return_value=None)
+    @patch("code_forge.runner.match_tools")
     def test_run_tool_none_adds_to_skipped(
         self, mock_match, mock_run_tool, mock_ver
     ):
@@ -323,9 +323,9 @@ class TestRunTools:
         _, _, skipped = run_tools(registry, ["test.sh"])
         assert "shellcheck" in skipped
 
-    @patch("forge.runner.capture_tool_version")
-    @patch("forge.runner.run_tool")
-    @patch("forge.runner.match_tools")
+    @patch("code_forge.runner.capture_tool_version")
+    @patch("code_forge.runner.run_tool")
+    @patch("code_forge.runner.match_tools")
     def test_sorted_iteration_order(
         self, mock_match, mock_run_tool, mock_ver
     ):
@@ -349,9 +349,9 @@ class TestRunTools:
         ]
         assert call_names == ["aaa_tool", "mmm_tool", "zzz_tool"]
 
-    @patch("forge.runner.capture_tool_version", return_value="1.0")
-    @patch("forge.runner.run_tool")
-    @patch("forge.runner.match_tools")
+    @patch("code_forge.runner.capture_tool_version", return_value="1.0")
+    @patch("code_forge.runner.run_tool")
+    @patch("code_forge.runner.match_tools")
     def test_calls_match_tools_once(
         self, mock_match, mock_run_tool, mock_ver
     ):
@@ -368,9 +368,9 @@ class TestRunTools:
         run_tools(registry, ["test.sh"])
         mock_match.assert_called_once()
 
-    @patch("forge.runner.capture_tool_version", return_value="1.0")
-    @patch("forge.runner.run_tool")
-    @patch("forge.runner.match_tools")
+    @patch("code_forge.runner.capture_tool_version", return_value="1.0")
+    @patch("code_forge.runner.run_tool")
+    @patch("code_forge.runner.match_tools")
     def test_results_keyed_by_tool_name(
         self, mock_match, mock_run_tool, mock_ver
     ):

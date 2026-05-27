@@ -8,8 +8,8 @@ import warnings
 import pytest
 from pathlib import Path
 
-from forge.errors import BaselineResolutionError
-from forge.git import (
+from code_forge.errors import BaselineResolutionError
+from code_forge.git import (
     WORKING,
     INDEX,
     is_pseudo_ref,

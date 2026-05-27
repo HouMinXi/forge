@@ -4,7 +4,7 @@
 
 import pytest
 
-from forge.registry import ToolConfig, load_registry, match_tools
+from code_forge.registry import ToolConfig, load_registry, match_tools
 
 
 class TestToolConfigDefaults:

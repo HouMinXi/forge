@@ -5,7 +5,7 @@
 import json
 from pathlib import Path
 
-from forge.state import State, load_state, save_state
+from code_forge.state import State, load_state, save_state
 
 
 class TestHoldReasonRoundTrip:

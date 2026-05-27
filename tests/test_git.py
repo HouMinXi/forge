@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from forge.git import validate_diff_spec, run_git_diff
+from code_forge.git import validate_diff_spec, run_git_diff
 
 
 class TestValidateDiffSpec:
@@ -97,8 +97,8 @@ class TestValidateDiffSpec:
 class TestRunGitDiff:
     """Tests for run_git_diff()."""
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_calls_subprocess_with_validated_spec(self, mock_which, mock_run):
         """Calls subprocess.run with validated diff_spec."""
         mock_run.return_value = MagicMock(
@@ -115,8 +115,8 @@ class TestRunGitDiff:
         )
         assert result == "diff --git a/f.py b/f.py\n"
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_returns_diff_text_on_success(self, mock_which, mock_run):
         """Returns diff text string on exit 1 (differences found)."""
         mock_run.return_value = MagicMock(
@@ -126,8 +126,8 @@ class TestRunGitDiff:
         )
         assert run_git_diff("HEAD") == "diff output here"
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_returns_empty_on_no_diff(self, mock_which, mock_run):
         """Returns empty string on exit 0 (no differences)."""
         mock_run.return_value = MagicMock(
@@ -137,14 +137,14 @@ class TestRunGitDiff:
         )
         assert run_git_diff("HEAD") == ""
 
-    @patch("forge.git.shutil.which", return_value=None)
+    @patch("code_forge.git.shutil.which", return_value=None)
     def test_raises_when_git_unavailable(self, mock_which):
         """Raises RuntimeError when git is not found."""
         with pytest.raises(RuntimeError, match="git not found"):
             run_git_diff("HEAD")
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_raises_on_fatal_error(self, mock_which, mock_run):
         """Raises RuntimeError on exit 128+ (fatal git error)."""
         mock_run.return_value = MagicMock(
@@ -155,8 +155,8 @@ class TestRunGitDiff:
         with pytest.raises(RuntimeError, match="not a git repository"):
             run_git_diff("HEAD")
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_staged_flag(self, mock_which, mock_run):
         """--staged flag works correctly."""
         mock_run.return_value = MagicMock(
@@ -172,8 +172,8 @@ class TestRunGitDiff:
             check=False,
         )
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_extra_args(self, mock_which, mock_run):
         """extra_args are appended to command."""
         mock_run.return_value = MagicMock(
@@ -189,8 +189,8 @@ class TestRunGitDiff:
             check=False,
         )
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_unexpected_exit_code_raises(self, mock_which, mock_run):
         """Exit codes other than 0 or 1 raise RuntimeError."""
         mock_run.return_value = MagicMock(
@@ -201,8 +201,8 @@ class TestRunGitDiff:
         with pytest.raises(RuntimeError, match="error details"):
             run_git_diff("HEAD")
 
-    @patch("forge.git.subprocess.run")
-    @patch("forge.git.shutil.which", return_value="/usr/bin/git")
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
     def test_negative_exit_code_raises(self, mock_which, mock_run):
         """Negative exit codes (signal kill) raise RuntimeError."""
         mock_run.return_value = MagicMock(

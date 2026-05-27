@@ -5,8 +5,8 @@
 import pytest
 import unidiff
 
-from forge.disposition import Disposition
-from forge.e2e_check import (
+from code_forge.disposition import Disposition
+from code_forge.e2e_check import (
     check_layer_1,
     check_layer_2,
     detect_signature_changes,
@@ -15,7 +15,7 @@ from forge.e2e_check import (
     load_components_yaml,
     run_e2e_check,
 )
-from forge.errors import ComponentsConfigError
+from code_forge.errors import ComponentsConfigError
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ _DIFF_COMMON_BONDING = (
 
 
 def _make_components_yaml(tmp_path, content):
-    forge_dir = tmp_path / ".forge"
+    forge_dir = tmp_path / ".code-forge"
     forge_dir.mkdir(exist_ok=True)
     (forge_dir / "components.yaml").write_text(content)
 
