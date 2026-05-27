@@ -1,12 +1,12 @@
-# Forge
+# code-forge
 
 5-step code review pipeline for AI coding assistants. Minimum 9 static review
 passes before any commit is allowed.
 
-Forge treats code review as a state machine: three review cycles, each with
-three independent passes. Any finding resets the counter to zero. Only after
-three consecutive clean cycles does the code proceed to runtime smoke testing
-and the commit gate.
+code-forge treats code review as a state machine: three review cycles, each
+with three independent passes. Any finding resets the counter to zero. Only
+after three consecutive clean cycles does the code proceed to runtime smoke
+testing and the commit gate.
 
 ## Pipeline
 
@@ -66,7 +66,42 @@ Hooks are reference implementations. Some contain environment-specific logic
 (Kerberos auth, Chinese pattern matching) that you will need to adapt.
 See `hooks/README.md` for details.
 
-## Quick Start
+## Installation
+
+### pip (recommended for pip users)
+
+```bash
+pip install code-forge
+code-forge install-skill
+```
+
+This copies all bundled skills into `~/.claude/skills/` (the default Claude
+Code directory). Other targets:
+
+```bash
+# Claude Code user directory (default)
+code-forge install-skill --target claude
+
+# Project-scoped Claude directory (editor extension)
+code-forge install-skill --target vscode
+
+# Cross-agent .agents path
+code-forge install-skill --target universal
+
+# Explicit directory
+code-forge install-skill --dest /path/to/skills
+
+# One skill only
+code-forge install-skill --skill code-forge
+
+# Overwrite existing
+code-forge install-skill --force
+```
+
+Target directory conventions are based on current agent ecosystems and may
+change as the ecosystem evolves.
+
+### git clone
 
 ```bash
 git clone https://github.com/HouMinXi/forge.git

@@ -3,7 +3,7 @@
 """Forge CLI entry point.
 
 Subcommands: review (default), gate-check, mutation-check, e2e-check,
-install-hooks.
+install-hooks, install-skill.
 Bare invocation (no subcommand) routes to review for backward compatibility.
 """
 from __future__ import annotations
@@ -269,6 +269,54 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suppress informational messages",
     )
 
+    # --- INSTALL-SKILL subcommand: copy bundled skills into agent dir ---
+    skill_parser = subparsers.add_parser(
+        'install-skill',
+        help='copy bundled review skills into an agent skill directory',
+        description=(
+            'Copy bundled skills into a target agent skill directory. '
+            'Target conventions (subject to change): '
+            'claude=~/.claude/skills/, '
+            'vscode=<cwd>/.claude/skills/, '
+            'universal=<cwd>/.agents/skills/. '
+            'Use --dest to override. '
+            'Exit codes: 0=success, 2=CLI_ERROR.'
+        ),
+    )
+    skill_parser.add_argument(
+        "--target",
+        choices=["claude", "vscode", "universal"],
+        default="claude",
+        help=(
+            "agent target: claude (~/.claude/skills/), "
+            "vscode (<cwd>/.claude/skills/), "
+            "universal (<cwd>/.agents/skills/) "
+            "(default: claude)"
+        ),
+    )
+    skill_parser.add_argument(
+        "--dest",
+        default=None,
+        metavar="DIR",
+        help="override --target with an explicit destination directory",
+    )
+    skill_parser.add_argument(
+        "--skill",
+        default=None,
+        metavar="NAME",
+        help="install one named skill (default: all bundled skills)",
+    )
+    skill_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing skill directories",
+    )
+    skill_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress informational messages",
+    )
+
     return parser
 
 
@@ -295,7 +343,7 @@ def main() -> int:
     # If not, prepend 'review' to sys.argv for argparse
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
-        'install-hooks',
+        'install-hooks', 'install-skill',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -357,6 +405,9 @@ def main() -> int:
             args=args, env=os.environ, cwd=Path.cwd(),
             stdout=sys.stdout, stderr=sys.stderr
         )
+
+    elif args.subcommand == 'install-skill':
+        return _run_install_skill(args, cwd=Path.cwd())
 
     else:
         print(
@@ -800,3 +851,133 @@ def _paths(args, cwd: Path, resolved=None) -> list:
             "no files would be reviewed otherwise"
         )
     return []
+
+
+def _run_install_skill(args, cwd: Path) -> int:
+    """Install bundled review skills into an agent skill directory.
+
+    Target directory conventions (subject to change as agent ecosystems evolve):
+      claude    -> ~/.claude/skills/
+      vscode    -> <cwd>/.claude/skills/
+      universal -> <cwd>/.agents/skills/
+      --dest D  -> D/
+
+    Returns 0 on success, 2 on CLI_ERROR.
+    """
+    import shutil
+    from importlib.resources import files as _pkg_files
+
+    quiet = args.quiet
+
+    def _info(msg: str) -> None:
+        if not quiet:
+            print("code-forge: install-skill: %s" % msg)
+
+    def _warn(msg: str) -> None:
+        print("code-forge: install-skill: %s" % msg, file=sys.stderr)
+
+    # Resolve destination directory
+    if args.dest is not None:
+        dest_root = Path(args.dest)
+    elif args.target == "claude":
+        dest_root = Path.home() / ".claude" / "skills"
+    elif args.target == "vscode":
+        dest_root = cwd / ".claude" / "skills"
+    elif args.target == "universal":
+        dest_root = cwd / ".agents" / "skills"
+    else:
+        _warn("unknown target: %s" % args.target)
+        return EXIT_CLI_ERROR
+
+    # Locate bundled skills via importlib.resources
+    try:
+        src_root = _pkg_files("code_forge") / "skills"
+    except Exception as exc:
+        _warn("cannot locate bundled skills: %s" % exc)
+        return EXIT_CLI_ERROR
+
+    # Build list of skill names to install
+    if args.skill is not None:
+        # Reject names that contain path separators (path traversal guard)
+        if "/" in args.skill or "\\" in args.skill or args.skill in (".", ".."):
+            _warn("invalid skill name: %s" % args.skill)
+            return EXIT_CLI_ERROR
+        skill_src = src_root / args.skill
+        # Validate the named skill exists in the bundle
+        try:
+            # Access __iter__ or check the traversable exists
+            skill_files = list(skill_src.iterdir())
+            if not skill_files:
+                _warn("skill not found in bundle: %s" % args.skill)
+                return EXIT_CLI_ERROR
+        except (FileNotFoundError, NotADirectoryError, TypeError):
+            _warn("skill not found in bundle: %s" % args.skill)
+            return EXIT_CLI_ERROR
+        skill_names = [args.skill]
+    else:
+        try:
+            skill_names = sorted(
+                entry.name for entry in src_root.iterdir()
+                if entry.is_dir()
+            )
+        except Exception as exc:
+            _warn("cannot list bundled skills: %s" % exc)
+            return EXIT_CLI_ERROR
+        if not skill_names:
+            _warn("no bundled skills found")
+            return EXIT_CLI_ERROR
+
+    # Create destination root if needed
+    try:
+        dest_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _warn("cannot create destination directory %s: %s" % (dest_root, exc))
+        return EXIT_CLI_ERROR
+
+    # Copy each skill
+    for name in skill_names:
+        skill_src_dir = src_root / name
+        skill_dest_dir = dest_root / name
+
+        if skill_dest_dir.exists() and not args.force:
+            _warn(
+                "SKIP %s (exists; use --force to overwrite)" % name
+            )
+            continue
+
+        # If force and dest exists, remove it first
+        if skill_dest_dir.exists() and args.force:
+            try:
+                shutil.rmtree(str(skill_dest_dir))
+            except OSError as exc:
+                _warn(
+                    "cannot remove existing %s: %s" % (skill_dest_dir, exc)
+                )
+                return EXIT_CLI_ERROR
+
+        # Copy from importlib.resources traversable to filesystem
+        # importlib.resources Traversable does not support shutil.copytree
+        # directly; walk the traversable tree manually.
+        try:
+            _copy_traversable_tree(skill_src_dir, skill_dest_dir)
+        except OSError as exc:
+            _warn("failed to copy %s: %s" % (name, exc))
+            return EXIT_CLI_ERROR
+
+        _info("INSTALLED %s -> %s" % (name, skill_dest_dir))
+
+    return EXIT_PASS
+
+
+def _copy_traversable_tree(src, dest: Path) -> None:
+    """Recursively copy an importlib.resources Traversable tree to dest.
+
+    dest is created by this function. Caller must ensure it does not exist.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    for entry in src.iterdir():
+        child_dest = dest / entry.name
+        if entry.is_dir():
+            _copy_traversable_tree(entry, child_dest)
+        else:
+            child_dest.write_bytes(entry.read_bytes())
