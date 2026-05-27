@@ -67,7 +67,7 @@ def _make_machine(tmp_path, *, e2e_runner=None, l0_runner=None, diff_text=None,
 
 
 class TestE2eRunnerFieldDefault:
-    """Case 1: e2e_runner field exists with a no-op default."""
+    """e2e_runner field exists with a no-op default."""
 
     def test_field_exists_and_default_returns_empty_tuple(self, tmp_path):
         machine = _make_machine(tmp_path)
@@ -79,7 +79,7 @@ class TestE2eRunnerFieldDefault:
 
 
 class TestRunE2ePhaseInvokedOncePerRound:
-    """Case 2: _run_e2e_phase is called exactly once per _execute_round call."""
+    """_run_e2e_phase is called exactly once per _execute_round call."""
 
     def test_e2e_runner_called_once_per_round(self, tmp_path):
         call_log = []
@@ -98,7 +98,7 @@ class TestRunE2ePhaseInvokedOncePerRound:
 
 
 class TestE2eFindingsReachState:
-    """Case 3: E2E_CHECK findings from e2e_runner appear in self._state.findings."""
+    """E2E_CHECK findings from e2e_runner appear in self._state.findings."""
 
     def test_e2e_finding_in_state_after_round(self, tmp_path):
         fp = "e2e-test-1"
@@ -114,7 +114,7 @@ class TestE2eFindingsReachState:
 
 
 class TestMergeFindingsPriority:
-    """Case 4: _merge_findings priority -- L0 wins on collision; all appear disjoint."""
+    """_merge_findings priority -- L0 wins on collision; all appear disjoint."""
 
     def test_l0_wins_on_fingerprint_collision(self, tmp_path):
         machine = _make_machine(tmp_path)
@@ -141,7 +141,7 @@ class TestMergeFindingsPriority:
 
 
 class TestAppendRoundSnapshotRecordsE2eFp:
-    """Case 5: _append_round_snapshot records e2e_fingerprints."""
+    """_append_round_snapshot records e2e_fingerprints."""
 
     def test_e2e_fingerprints_in_snapshot(self, tmp_path):
         fp = "e2e-snap-1"
@@ -158,7 +158,7 @@ class TestAppendRoundSnapshotRecordsE2eFp:
 
 
 class TestAutofixSkipsE2eCheck:
-    """Case 6: _apply_autofix_loop_to never invokes autofixer for E2E_CHECK or MUTANT."""
+    """_apply_autofix_loop_to never invokes autofixer for E2E_CHECK or MUTANT."""
 
     def test_autofixer_not_called_for_e2e_and_mutant(self, tmp_path):
         call_count = {"n": 0}
@@ -182,7 +182,7 @@ class TestAutofixSkipsE2eCheck:
 
 
 class TestE2eCheckBypassesFalsifier:
-    """Case 7: e2e findings pass through _run_e2e_phase, not through falsifier."""
+    """e2e findings pass through _run_e2e_phase, not through falsifier."""
 
     def test_falsifier_not_called_on_e2e_only_round(self, tmp_path):
         call_count = {"n": 0}
@@ -212,7 +212,7 @@ class TestE2eCheckBypassesFalsifier:
 
 
 class TestUncertainE2eLeadsToHoldVerdict:
-    """Case 8: an UNCERTAIN E2E_CHECK finding drives the pipeline to PENDING.
+    """An UNCERTAIN E2E_CHECK finding drives the pipeline to PENDING.
 
     This is the primary user-visible behavior: Layer 2's UNCERTAIN output
     must enter the _should_enter_hold path and produce Verdict.PENDING.
@@ -258,7 +258,7 @@ class TestUncertainE2eLeadsToHoldVerdict:
 
 
 class TestRunE2ePhaseNonGitMode:
-    """Case 9: _run_e2e_phase with git_diff=None records the infra signal."""
+    """_run_e2e_phase with git_diff=None records the infra signal."""
 
     def test_run_e2e_phase_non_git_mode_returns_empty_with_infra_signal(
         self, tmp_path
