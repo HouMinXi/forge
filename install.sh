@@ -4,7 +4,7 @@ set -euo pipefail
 FORGE_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_DIR="${HOME}/.claude/skills"
 
-SKILLS=(forge qodo-review code-review-expert adversarial-qe kernel-fp-verify smoke-test)
+SKILLS=(code-forge qodo-review code-review-expert adversarial-qe kernel-fp-verify smoke-test)
 
 echo "Forge installer"
 echo "  Source: ${FORGE_DIR}/skills/"
