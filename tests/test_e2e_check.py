@@ -338,6 +338,22 @@ class TestLoadComponentsYaml:
         with pytest.raises(ComponentsConfigError):
             load_components_yaml(tmp_path)
 
+    def test_load_components_yaml_data_paths_not_list_raises(self, tmp_path):
+        """data_paths declared as a non-list raises ComponentsConfigError."""
+        _make_components_yaml(tmp_path, (
+            "version: 1\n"
+            "components:\n"
+            "  a:\n"
+            "    paths: [a/**]\n"
+            "  b:\n"
+            "    paths: [b/**]\n"
+            "data_paths: \"not_a_list\"\n"
+        ))
+        with pytest.raises(
+            ComponentsConfigError, match="data_paths.*must be a list"
+        ):
+            load_components_yaml(tmp_path)
+
 
 # ===========================================================================
 # Group D -- find_e2e_artifacts
@@ -362,6 +378,29 @@ class TestFindE2eArtifacts:
         (integ_dir / "test.sh").write_text("#!/bin/bash")
         result = find_e2e_artifacts(tmp_path, ["*/integration/**"])
         assert "bonding/integration/test.sh" in result
+
+    def test_find_e2e_artifacts_invalid_pattern_returns_empty(self, tmp_path):
+        """invalid glob pattern is non-fatal; the loop continues on the next pattern."""
+        # Create a real file so a valid pattern would match.
+        (tmp_path / "real_file.py").write_text("x = 1")
+
+        # A NUL byte in the pattern causes scandir to raise ValueError on
+        # all supported Python versions. The except (OSError, ValueError)
+        # branch in find_e2e_artifacts must swallow it and return an empty
+        # set for that pattern -- the loop then continues to the next one.
+        bad_pattern = "tests/\x00bad/**"
+        valid_pattern = "*.py"
+
+        result = find_e2e_artifacts(tmp_path, [bad_pattern, valid_pattern])
+
+        # The invalid pattern contributes nothing.
+        for path in result:
+            assert "\x00" not in path, "result must not contain paths from bad pattern"
+
+        # The valid pattern still finds the real file (loop continued).
+        assert "real_file.py" in result, (
+            "valid pattern after the bad one must still be evaluated"
+        )
 
 
 # ===========================================================================

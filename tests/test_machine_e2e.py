@@ -255,3 +255,53 @@ class TestUncertainE2eLeadsToHoldVerdict:
         assert e2e_fp in fps_in_state, (
             "e2e finding fingerprint %r must appear in state.findings" % e2e_fp
         )
+
+
+class TestRunE2ePhaseNonGitMode:
+    """Case 9: _run_e2e_phase with git_diff=None records the infra signal."""
+
+    def test_run_e2e_phase_non_git_mode_returns_empty_with_infra_signal(
+        self, tmp_path
+    ):
+        """non-git mode (git_diff=None) records the infra signal and
+        returns no findings without invoking the runner.
+        """
+        runner_call_count = {"n": 0}
+
+        def counting_runner(dt, rr):
+            runner_call_count["n"] += 1
+            return ([], [])
+
+        # Build a machine whose resolved_review has git_diff=None.
+        # _make_resolved with diff_text=None falls back to _STUB_DIFF (see
+        # module docstring), so construct ResolvedReview directly here.
+        resolved = ResolvedReview(
+            source_files=[],
+            baseline_content=None,
+            git_diff=None,
+            mode_hint="non-git",
+        )
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=resolved,
+            source_hash="test-hash",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda registry, files: ([], []),
+            e2e_runner=counting_runner,
+        )
+
+        findings = machine._run_e2e_phase()
+
+        assert findings == [], "non-git mode must return no findings"
+        assert any(
+            "e2e: no git diff available (non-git review)" in msg
+            for msg in machine._state.infra_errors
+        ), "infra signal must be recorded when git_diff is None"
+        assert runner_call_count["n"] == 0, (
+            "e2e_runner must not be called when git_diff is None"
+        )
