@@ -9,6 +9,7 @@ build-backend = "setuptools.build_meta"
 name = "code-forge"
 version = "2.0.0a1"
 description = "3-state quality gate for code review"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [
