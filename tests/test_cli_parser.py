@@ -177,3 +177,33 @@ class TestSubcommands:
         args = parser.parse_args(['install-hooks', '--quiet'])
         assert args.subcommand == 'install-hooks'
         assert args.quiet is True
+
+    def test_mutation_check_subcommand(self):
+        """mutation-check subcommand parses correctly."""
+        parser = _build_parser()
+        args = parser.parse_args(['mutation-check'])
+        assert args.subcommand == 'mutation-check'
+        assert args.diff is None
+        assert args.timeout == 600
+        assert args.paths is None
+
+    def test_e2e_check_subcommand(self):
+        """e2e-check subcommand parses correctly."""
+        parser = _build_parser()
+        args = parser.parse_args(['e2e-check'])
+        assert args.subcommand == 'e2e-check'
+        assert args.diff is None
+        assert args.repo_root is None
+
+    def test_all_five_subcommands_in_help(self, capsys):
+        """All 5 subcommands appear in top-level --help."""
+        parser = _build_parser()
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(['--help'])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        for cmd in ('review', 'gate-check', 'mutation-check',
+                    'e2e-check', 'install-hooks'):
+            assert cmd in captured.out, (
+                "Expected %r in --help output" % cmd
+            )
