@@ -20,6 +20,11 @@ description: "5-step code review pipeline with cycle-counter state machine, hook
 - Tooling/dependency commits (`# chore`)
 - Work-in-progress snapshots (`# wip`)
 
+For `# docs`, `# config`, `# chore`, and `# wip` commits, Steps 5-7 (R1/R2/R3
+dynamic gates) are also skipped, not just the static review pipeline. These
+commit types are exempt from test-gate, mutation-check, and e2e-check because
+they carry no runnable logic change.
+
 ## Arguments
 
 - No argument: review uncommitted changes (staged + unstaged)
@@ -57,7 +62,17 @@ Code Change
 [Step 4] Smoke test (runtime verification)
      |
      v
+[Step 5] R1 Test Gate (tests exist + pass for changed source)
+     |
+     v
+[Step 6] R2 Mutation Check (tests kill mutants, not just pass)
+     |
+     v
+[Step 7] R3 E2E Coverage (cross-component signature change has e2e artifact)
+     |
+     v
 [COMMIT GATE] git commit  # post-review-c3
+             Requires: 3 clean cycles + R1 PASS + R2 PASS + R3 PASS/SKIP
 ```
 
 ---
@@ -90,6 +105,54 @@ Run the appropriate tool for each language in the diff:
 | All | `semgrep` (security lint, all languages) |
 
 Project-specific overrides always win (e.g., kernel uses checkpatch.pl, not generic lint).
+
+## Comprehensive Language Tables
+
+Tool absence rule: if a tool is not installed, log `tool_missing: <tool>` to
+`.code-forge/findings.json` and continue (WARN, not FAIL).
+
+### Programming Languages (14)
+
+| Language | 0a Syntax | 0b Lint | Test Runner (R1) | Mutation (R2) |
+|---|---|---|---|---|
+| Python | `python3 -m py_compile` | `ruff check` (preferred) or `pylint` | `pytest` | `mutmut` or `cosmic-ray` |
+| Go | `go vet ./...` | `golangci-lint run` | `go test ./...` | `gremlins` or `go-mutesting` |
+| Rust | `cargo check` | `cargo clippy` | `cargo test` | `cargo mutants` |
+| JavaScript | `node --check` | `eslint` | `jest` / `vitest` / `mocha` | `stryker-mutator` |
+| TypeScript | `tsc --noEmit` | `eslint` + `@typescript-eslint` | `jest` / `vitest` | `stryker-mutator` |
+| Java | `javac -Xlint -d /tmp` | `checkstyle` + `spotbugs` | `mvn test` / `gradle test` | `pitest` |
+| Kotlin | `kotlinc -script` or `-Werror` | `ktlint` + `detekt` | `gradle test` | `pitest` |
+| C | `gcc -fsyntax-only -Wall` | `cppcheck` + `clang-tidy` | `ctest` / `make test` | `mull` |
+| C++ | `g++ -fsyntax-only -Wall` | `cppcheck` + `clang-tidy` | `ctest` / `make test` | `mull` |
+| Kernel C | `make` (subsystem build) | `scripts/checkpatch.pl --strict` | Beaker functional | N/A |
+| Shell | `bash -n` + `shellcheck` | `shellcheck` | `bats` / inline | LLM-inject 10 mutants |
+| Ruby | `ruby -c` | `rubocop` | `rspec` / `minitest` | `mutant` |
+| PHP | `php -l` | `phpstan` + `phpcs` | `phpunit` | `infection` |
+| Swift | `swift -frontend -parse` | `swiftlint` | `swift test` | `muter` |
+
+### Config / Markup (7)
+
+| Format | 0a Syntax | 0b Lint | Notes |
+|---|---|---|---|
+| YAML | `yamllint` or `python3 -c "import yaml; yaml.safe_load(open(p))"` | `yamllint` | YNL netlink specs MUST run yamllint |
+| JSON | `jq . > /dev/null` or `python3 -m json.tool` | `jsonlint` | |
+| TOML | `python3 -c "import tomllib; tomllib.load(open(p,'rb'))"` | `taplo lint` | |
+| XML | `xmllint --noout` | `xmllint --schema <xsd>` | |
+| Markdown | N/A (always parses) | `markdownlint-cli2` | |
+| HTML | `tidy -e -q` | `htmlhint` | |
+| CSS | `stylelint` | `stylelint` | |
+
+### Specialized DSL (7)
+
+| DSL | 0a Syntax | 0b Lint | Notes |
+|---|---|---|---|
+| SQL | `sqlfluff parse` | `sqlfluff lint` | Dialect-specific |
+| Dockerfile | `hadolint` (combined) | `hadolint` | |
+| Terraform | `terraform validate` | `tflint` | Run `terraform init` first |
+| Kubernetes YAML | `kubeconform` | `kube-linter` | Also run yamllint |
+| Ansible | `ansible-playbook --syntax-check` | `ansible-lint` | |
+| protobuf | `protoc --proto_path=. <file>` | `buf lint` | |
+| GraphQL | `graphql-cli parse` | `graphql-schema-linter` | |
 
 ## 0c. Non-ASCII Check
 
@@ -733,6 +796,240 @@ Step 5 (Beaker submission) = pre-merge gate, not pre-commit requirement.
 
 ---
 
+# Step 5: R1 Test Gate
+
+## Purpose
+
+Tests must exist for every diff-impacted source file and must pass. The gate
+detects changed source files, maps them to expected test files using ecosystem
+conventions, runs the test suite, and fails if any test fails or if no test
+file can be found for a public function in the changed source.
+
+## Algorithm (language-independent)
+
+1. Determine changed source files from the diff (exclude test files themselves).
+2. For each changed source file, locate candidate test files using ecosystem
+   naming conventions (see Tool Table below).
+3. Run the test suite restricted to those candidate test files.
+4. If no candidate test file exists for a public function in the changed source,
+   emit R1 PARTIAL (LLM fallback applies -- see Fallback).
+5. If any test fails, R1 FAIL. If all pass (or skip), R1 PASS.
+
+## Tool Table
+
+| Language | Test Runner (R1) | Test file naming convention |
+|---|---|---|
+| Python | `pytest` | `tests/test_<module>.py` or `test_<module>.py` |
+| Go | `go test ./...` | `<package>_test.go` in same directory |
+| Rust | `cargo test` | `tests/` dir or `#[cfg(test)]` in same file |
+| JavaScript | `jest` / `vitest` / `mocha` | `<module>.test.js` or `__tests__/<module>.js` |
+| TypeScript | `jest` / `vitest` | `<module>.test.ts` or `__tests__/<module>.ts` |
+| Java | `mvn test` / `gradle test` | `<Class>Test.java` or `Test<Class>.java` |
+| Kotlin | `gradle test` | `<Class>Test.kt` |
+| C | `ctest` / `make test` | `test_<module>.c` or `<module>_test.c` |
+| C++ | `ctest` / `make test` | `test_<module>.cpp` or `<module>_test.cpp` |
+| Kernel C | Beaker functional | `runtest.sh` under test case directory |
+| Shell | `bats` / inline | `test_<script>.bats` or `test_<script>.sh` |
+| Ruby | `rspec` / `minitest` | `<module>_spec.rb` or `test_<module>.rb` |
+| PHP | `phpunit` | `<Class>Test.php` |
+| Swift | `swift test` | `<Module>Tests.swift` |
+
+## Python CLI Fast Path (optional)
+
+```
+code-forge gate-check
+```
+
+Reads `.code-forge/gate.yaml` for test command and path filter configuration.
+
+## Fallback (no test file found)
+
+When no test file can be located for a changed public function:
+1. LLM identifies all public functions in the changed source.
+2. For each untested public function, generates a stub test that calls the
+   function with representative inputs and asserts the return type.
+3. Mark R1 PARTIAL in findings.json. The stub test is advisory -- it does not
+   replace a real test.
+
+## Failure Handling
+
+- FAIL -> fix (add or repair tests) -> cycle_counter = 0 -> restart from Step 0
+- Record to `.code-forge/findings.json`:
+
+```json
+{
+  "gate": "R1",
+  "result": "FAIL",
+  "failed_tests": ["tests/test_foo.py::test_bar"],
+  "missing_coverage": ["src/foo.py::public_fn"]
+}
+```
+
+---
+
+# Step 6: R2 Mutation Check
+
+## Purpose
+
+Tests must be capable of killing mutants introduced into the changed code, not
+just achieve line coverage. A passing test suite that cannot detect a simple
+mutation (e.g., flipped boolean, off-by-one) is toothless. R2 detects this by
+mutating the changed files and running the test suite against each mutant. Any
+surviving mutant means the tests cannot catch the corresponding change.
+
+## Algorithm (language-independent)
+
+1. Scope mutation to diff-changed files only (not the full codebase).
+2. Run the baseline test suite three times to confirm it is not flaky.
+3. If the mutation tool is not installed, log `tool_missing` and WARN (not FAIL).
+4. Apply the mutation tool to generate mutants for each changed file.
+5. Run the test suite against each mutant.
+6. Collect surviving mutants (mutants not killed by any test).
+7. If survivor count > 0, R2 FAIL with survivor list. Otherwise R2 PASS.
+
+## Tool Table
+
+| Language | Mutation Tool (R2) | Notes |
+|---|---|---|
+| Python | `mutmut` (preferred) or `cosmic-ray` | `mutmut run` + `mutmut results` |
+| Go | `gremlins` or `go-mutesting` | `gremlins unleash ./...` |
+| Rust | `cargo mutants` | `cargo mutants --workspace` |
+| JavaScript | `stryker-mutator` | `npx stryker run` |
+| TypeScript | `stryker-mutator` | `npx stryker run` |
+| Java | `pitest` | `mvn org.pitest:pitest-maven:mutationCoverage` |
+| Kotlin | `pitest` | `gradle pitest` |
+| C | `mull` | `mull-runner <test-binary>` |
+| C++ | `mull` | `mull-runner <test-binary>` |
+| Kernel C | N/A | Beaker functional tests only; skip R2 |
+| Shell | LLM-inject 10 mutants | See Fallback below |
+| Ruby | `mutant` | `mutant run` |
+| PHP | `infection` | `./vendor/bin/infection` |
+| Swift | `muter` | `muter run` |
+
+## Python CLI Fast Path (optional)
+
+```
+code-forge mutation-check --timeout 600
+```
+
+Defaults to uncommitted changes. Pass `--diff <path>` to specify a diff file.
+Pass `--paths <glob>` to restrict to matching files.
+
+## Fallback (no tool installed)
+
+When the mutation tool is not installed:
+1. Log `tool_missing: <tool_name>` to `.code-forge/findings.json`.
+2. LLM injects 10 representative mutants per changed function manually:
+   negate a boolean, flip a comparison operator, remove a guard clause,
+   swap two arguments, change a return value.
+3. Run the test suite after each manual mutation.
+4. Report surviving manual mutants as R2 advisory findings (not FAIL).
+5. Mark R2 PARTIAL in findings.json.
+
+## Failure Handling
+
+- FAIL -> add or strengthen tests -> cycle_counter = 0 -> restart from Step 0
+- Record to `.code-forge/findings.json`:
+
+```json
+{
+  "gate": "R2",
+  "result": "FAIL",
+  "survivors": [
+    "code_forge.mutation.run_mutation__mutmut_3",
+    "code_forge.mutation.run_mutation__mutmut_7"
+  ]
+}
+```
+
+---
+
+# Step 7: R3 E2E Coverage
+
+## Purpose
+
+When a diff touches multiple source components AND modifies a function signature
+or return type, cross-component integration is at risk. R3 checks whether an
+e2e test artifact exists that covers the boundary. It operates in two layers:
+Layer 1 (heuristic, always active) emits an advisory finding when >=2 source
+groups are changed and a signature modification is detected. Layer 2 (opt-in,
+requires `.code-forge/components.yaml`) emits a blocking finding when a hub
+component and a dependent are both modified and no e2e artifact exists under the
+dependent's paths.
+
+## Algorithm (language-independent)
+
+1. Parse the diff to detect signature changes (Python `def`, shell functions,
+   section headers matching a def pattern).
+2. Group changed source files by component using path heuristics or
+   `.code-forge/components.yaml` if present.
+3. **Layer 1 (heuristic):** if >=2 source groups changed AND a signature change
+   detected -> emit advisory finding (DISMISSED disposition, non-blocking).
+4. **Layer 2 (explicit, opt-in):** if `components.yaml` present, resolve hub +
+   dependent co-occurrence. If both touched and no e2e artifact matches the
+   configured `e2e_patterns` under the dependent's paths -> emit blocking finding
+   (UNCERTAIN disposition, R3 FAIL). `e2e_absent_ok` in components.yaml
+   provides an escape hatch for components intentionally lacking e2e coverage.
+5. If no components.yaml and no path heuristic match -> SKIP with WARN.
+
+## Tool Table
+
+| Ecosystem | E2E artifact patterns | Notes |
+|---|---|---|
+| Python | `tests/e2e/**`, `test_*integration*` | Default patterns |
+| Go | `*_integration_test.go`, `e2e/**/*_test.go` | |
+| Rust | `tests/integration_*.rs`, `tests/e2e_*.rs` | |
+| JavaScript/TS | `e2e/**/*.spec.*`, `**/*.e2e-spec.*`, `cypress/**` | |
+| Java/Kotlin | `*IT.java`, `*IntegrationTest.java`, `*IT.kt` | |
+| C/C++ | `test/integration_*`, `tests/e2e_*` | |
+| Shell | `tests/e2e_*.sh`, `tests/integration_*.sh` | |
+
+## Python CLI Fast Path (optional)
+
+```
+code-forge e2e-check
+```
+
+Defaults to uncommitted changes and current directory as repo root. Pass
+`--diff <path>` to specify a diff file. Pass `--repo-root <path>` to set
+the repository root for artifact search.
+
+## Fallback (no components.yaml, no path heuristic match)
+
+When `.code-forge/components.yaml` is absent and the path heuristic cannot
+group changed files into >=2 components:
+- SKIP with WARN: log `e2e_check: skip: no components config and no
+  cross-component change detected` to `.code-forge/findings.json`.
+- R3 result is SKIP (not FAIL); the pipeline proceeds to commit gate.
+
+## Failure Handling
+
+- Layer 1 finding (advisory): accumulate, do not block pipeline.
+- Layer 2 finding (blocking): FAIL -> add or identify e2e test artifact ->
+  cycle_counter = 0 -> restart from Step 0.
+- Record to `.code-forge/findings.json`:
+
+```json
+{
+  "gate": "R3",
+  "result": "FAIL",
+  "survivors": [],
+  "description": "cross-component change: hub 'core' + dependent 'api' both touched; no e2e artifact found"
+}
+```
+
+SKIP records:
+
+```json
+{
+  "gate": "R3",
+  "result": "SKIP",
+  "survivors": []
+}
+```
+
+---
+
 # Commit Gate
 
 Only after ALL steps complete:
@@ -745,6 +1042,49 @@ git commit -m "<subsystem>/<case>: <summary>
 Signed-off-by: Minxi Hou <houminxi@gmail.com>"  # post-review-c3
 ```
 
+## Completion Checklist
+
+Before committing, all of the following must be satisfied:
+
+- [ ] 3 consecutive clean review cycles (Steps 1-3) with zero findings
+- [ ] Step 3.5 false-positive verification complete (if findings were fixed)
+- [ ] Step 4 smoke test: PASS
+- [ ] Step 5 R1 test gate: PASS (or PARTIAL with stub tests generated)
+- [ ] Step 6 R2 mutation check: PASS (or PARTIAL if tool absent + LLM fallback done)
+- [ ] Step 7 R3 e2e check: PASS or SKIP (SKIP is acceptable when no cross-component change detected)
+
+## findings.json: dynamic_gate_run entry shape
+
+Each dynamic gate (R1/R2/R3) run appends an entry to `.code-forge/findings.json`
+under a `dynamic_gate_run` key. The schema:
+
+```json
+{
+  "dynamic_gate_run": {
+    "gate": "R1",
+    "result": "PASS",
+    "timestamp": "2026-05-27T12:00:00Z",
+    "survivors": [],
+    "failed_tests": [],
+    "missing_coverage": [],
+    "tool": "pytest",
+    "tool_missing": false,
+    "infra_errors": []
+  }
+}
+```
+
+Fields:
+- `gate`: "R1", "R2", or "R3"
+- `result`: "PASS", "FAIL", "SKIP", or "PARTIAL"
+- `timestamp`: ISO-8601 UTC
+- `survivors`: list of mutant names (R2) or finding descriptions (R3)
+- `failed_tests`: list of test identifiers that failed (R1 only)
+- `missing_coverage`: list of source locations with no test file (R1 only)
+- `tool`: name of the tool invoked (e.g., "mutmut", "pytest", "e2e_check")
+- `tool_missing`: true if the tool was not installed (soft dependency)
+- `infra_errors`: list of infrastructure error strings
+
 ## Rules
 
 - `# post-review-c3` is an internal gate marker ONLY -- it triggers the hook check
@@ -754,7 +1094,8 @@ Signed-off-by: Minxi Hou <houminxi@gmail.com>"  # post-review-c3
 
 ## Non-Code Exemptions
 
-These commit types bypass the full pipeline but still require worktree and AI-attribution checks:
+These commit types bypass the full pipeline but still require worktree and
+AI-attribution checks. Steps 5-7 (R1/R2/R3) are also skipped for these types:
 
 - `# docs` -- documentation only
 - `# config` -- configuration changes

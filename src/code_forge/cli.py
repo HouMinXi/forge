@@ -2,7 +2,8 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Forge CLI entry point.
 
-Subcommands: review (default), gate-check, install-hooks.
+Subcommands: review (default), gate-check, mutation-check, e2e-check,
+install-hooks.
 Bare invocation (no subcommand) routes to review for backward compatibility.
 """
 from __future__ import annotations
@@ -90,7 +91,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     Subcommands:
       - review: existing pipeline (all flags preserved)
-      - gate-check: test-based commit gate
+      - gate-check: test-based commit gate (R1)
+      - mutation-check: mutation testing gate (R2)
+      - e2e-check: cross-component coverage heuristic (R3)
       - install-hooks: hook installer
 
     Backward compat: bare `forge` (no subcommand) defaults to `review`
@@ -212,6 +215,49 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suppress warning messages",
     )
 
+    # --- MUTATION-CHECK subcommand: mutation testing gate (R2) ---
+    mutation_parser = subparsers.add_parser(
+        'mutation-check',
+        help='run mutation testing gate (R2)',
+        description=(
+            'Mutation testing gate: runs mutmut on diff-scoped files '
+            'and reports surviving mutants. '
+            'Exit codes: 0=PASS, 1=FAIL (survivors found), 2=CLI_ERROR.'
+        ),
+    )
+    mutation_parser.add_argument(
+        "--diff", default=None,
+        help="path to unified diff file (default: uncommitted changes)",
+    )
+    mutation_parser.add_argument(
+        "--timeout", type=int, default=600,
+        help="mutmut run timeout in seconds (default: 600)",
+    )
+    mutation_parser.add_argument(
+        "--paths", default=None,
+        help="glob pattern to restrict mutation to matching files",
+    )
+
+    # --- E2E-CHECK subcommand: cross-component coverage heuristic (R3) ---
+    e2e_parser = subparsers.add_parser(
+        'e2e-check',
+        help='run cross-component e2e coverage heuristic (R3)',
+        description=(
+            'E2E coverage heuristic: detects cross-component signature '
+            'changes and checks for e2e artifacts. '
+            'Exit codes: 0=PASS (no findings or skip), 1=FAIL (P2 findings), '
+            '2=CLI_ERROR.'
+        ),
+    )
+    e2e_parser.add_argument(
+        "--diff", default=None,
+        help="path to unified diff file (default: uncommitted changes)",
+    )
+    e2e_parser.add_argument(
+        "--repo-root", default=None,
+        help="repository root path (default: current directory)",
+    )
+
     # --- INSTALL-HOOKS subcommand: hook installer ---
     hooks_parser = subparsers.add_parser(
         'install-hooks',
@@ -234,6 +280,8 @@ def main() -> int:
     Subcommand routing:
       - review: existing pipeline (_run)
       - gate-check: gate_check.run_gate_check()
+      - mutation-check: _run_mutation_check()
+      - e2e-check: _run_e2e_check_cmd()
       - install-hooks: install_hooks.run_install_hooks()
       - None (bare forge): default to review for backward compat
 
@@ -245,7 +293,10 @@ def main() -> int:
 
     # Backward compat: detect if first arg is a known subcommand
     # If not, prepend 'review' to sys.argv for argparse
-    known_subcommands = {'review', 'gate-check', 'install-hooks'}
+    known_subcommands = {
+        'review', 'gate-check', 'mutation-check', 'e2e-check',
+        'install-hooks',
+    }
     argv = sys.argv[1:]  # skip program name
 
     # Filter out --version and --help which are on root parser
@@ -293,6 +344,12 @@ def main() -> int:
             args=args, env=os.environ, cwd=Path.cwd(),
             stdout=sys.stdout, stderr=sys.stderr
         )
+
+    elif args.subcommand == 'mutation-check':
+        return _run_mutation_check(args, cwd=Path.cwd())
+
+    elif args.subcommand == 'e2e-check':
+        return _run_e2e_check_cmd(args, cwd=Path.cwd())
 
     elif args.subcommand == 'install-hooks':
         from .install_hooks import run_install_hooks
@@ -491,6 +548,201 @@ def _run_hold_loop(
     final.converged = False
     save_state(final, state_path)
     return Verdict.ESCALATED
+
+
+def _run_mutation_check(args, cwd: Path) -> int:
+    """Synchronous wrapper for mutation-check subcommand.
+
+    Reads diff-scoped files from git, calls run_mutation(), translates
+    findings to exit code.
+
+    Exit codes:
+      0  PASS (no survivors)
+      1  FAIL (survivors found)
+      2  CLI_ERROR (git or invocation error)
+    """
+    from .mutation import run_mutation
+
+    # Resolve diff source.
+    if args.diff is not None:
+        diff_path = Path(args.diff)
+        if not diff_path.exists():
+            print(
+                "code-forge: mutation-check: diff file not found: %s"
+                % args.diff,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+        try:
+            diff_text = diff_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                "code-forge: mutation-check: cannot read diff: %s" % exc,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+        from .diff import get_changed_files
+        diff_files = get_changed_files(diff_text)
+    else:
+        # Uncommitted changes via git diff.
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=str(cwd),
+            )
+            if result.returncode != 0:
+                print(
+                    "code-forge: mutation-check: git diff failed: %s"
+                    % result.stderr.strip(),
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+            diff_files = [
+                f for f in result.stdout.splitlines() if f.strip()
+            ]
+        except FileNotFoundError:
+            print(
+                "code-forge: mutation-check: git not found",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+    # Apply --paths glob filter if requested.
+    if getattr(args, "paths", None):
+        from fnmatch import fnmatch as _fnmatch
+        glob_pat = args.paths
+        diff_files = [f for f in diff_files if _fnmatch(f, glob_pat)]
+
+    # Default baseline command: pytest (same as gate_check convention).
+    baseline_cmd = ["pytest", "--tb=no", "-q"]
+
+    findings, infra_errors = run_mutation(
+        diff_files=diff_files,
+        baseline_cmd=baseline_cmd,
+        timeout=args.timeout,
+        cwd=cwd,
+    )
+
+    # Report infra errors to stderr (informational).
+    for err in infra_errors:
+        print("code-forge: mutation-check: %s" % err, file=sys.stderr)
+
+    # Translate findings to exit code.
+    # CONFIRMED findings with source=MUTANT and id starting "mutant-" are
+    # survivors. DISMISSED findings (skips) are not failures.
+    from .disposition import Disposition
+    survivors = [
+        f for f in findings
+        if (f.disposition == Disposition.CONFIRMED
+            and f.source == "MUTANT"
+            and f.id.startswith("mutant-"))
+    ]
+    if survivors:
+        print(
+            "code-forge: mutation-check: %d survivor(s) found"
+            % len(survivors),
+            file=sys.stderr,
+        )
+        for s in survivors:
+            print(
+                "  %s" % s.description,
+                file=sys.stderr,
+            )
+        return EXIT_FAIL
+
+    print("code-forge: mutation-check: PASS", file=sys.stderr)
+    return EXIT_PASS
+
+
+def _run_e2e_check_cmd(args, cwd: Path) -> int:
+    """Synchronous wrapper for e2e-check subcommand.
+
+    Reads diff text, calls run_e2e_check(), translates findings to exit code.
+
+    Exit codes:
+      0  PASS (no UNCERTAIN findings or no diff)
+      1  FAIL (UNCERTAIN findings present -- P2 equivalent)
+      2  CLI_ERROR (diff read error)
+    """
+    from .e2e_check import run_e2e_check
+    from .disposition import Disposition
+
+    repo_root = Path(args.repo_root) if args.repo_root else cwd
+
+    # Resolve diff source.
+    if args.diff is not None:
+        diff_path = Path(args.diff)
+        if not diff_path.exists():
+            print(
+                "code-forge: e2e-check: diff file not found: %s" % args.diff,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+        try:
+            diff_text = diff_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                "code-forge: e2e-check: cannot read diff: %s" % exc,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+    else:
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["git", "diff", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=str(cwd),
+            )
+            if result.returncode != 0:
+                print(
+                    "code-forge: e2e-check: git diff failed: %s"
+                    % result.stderr.strip(),
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+            diff_text = result.stdout
+        except FileNotFoundError:
+            print(
+                "code-forge: e2e-check: git not found",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+    if not diff_text or not diff_text.strip():
+        print("code-forge: e2e-check: no diff -- SKIP", file=sys.stderr)
+        return EXIT_PASS
+
+    findings, infra_errors = run_e2e_check(
+        diff_text=diff_text,
+        repo_root=repo_root,
+    )
+
+    for err in infra_errors:
+        print("code-forge: e2e-check: %s" % err, file=sys.stderr)
+
+    # UNCERTAIN findings are the P2-equivalent gate failures.
+    uncertain = [
+        f for f in findings
+        if f.disposition == Disposition.UNCERTAIN
+    ]
+    if uncertain:
+        print(
+            "code-forge: e2e-check: %d finding(s)" % len(uncertain),
+            file=sys.stderr,
+        )
+        for f in uncertain:
+            print("  %s" % f.description, file=sys.stderr)
+        return EXIT_FAIL
+
+    print("code-forge: e2e-check: PASS", file=sys.stderr)
+    return EXIT_PASS
 
 
 def _build_baseline_specs(
