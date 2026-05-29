@@ -243,7 +243,10 @@ def build_l1_provider(
                 if not isinstance(f_raw, dict):
                     continue
                 file_path = f_raw.get("file") or "unknown"
-                line = f_raw.get("line") or 0
+                try:
+                    line = int(f_raw.get("line") or 0)
+                except (ValueError, TypeError):
+                    line = 0
                 desc = f_raw.get("description") or ""
                 fp_src = file_path + ":" + str(line) + ":" + desc
                 fp = _hl.sha256(fp_src.encode()).hexdigest()[:16]
