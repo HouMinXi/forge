@@ -433,6 +433,12 @@ def main() -> int:
         diff_result = subprocess.run(
             ["git", "diff", "HEAD"], capture_output=True, text=True, cwd=cwd
         )
+        if diff_result.returncode != 0:
+            print(
+                "verify: FAIL -- git diff failed: %s" % diff_result.stderr.strip(),
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
         diff_text = diff_result.stdout
         diff_sha = compute_source_hash(git_diff=diff_text)
         diff_f = parse_diff_files(diff_text)
