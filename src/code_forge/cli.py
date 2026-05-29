@@ -41,7 +41,7 @@ from .exit_codes import (
     EXIT_PASS,
     verdict_to_exit,
 )
-from .factories import build_autofixer, build_falsifier, build_revert_fn
+from .factories import build_autofixer, build_falsifier, build_l1_provider, build_revert_fn
 from .git import is_git_repo
 from .hold import HoldAborted, run_hold_ui
 from .lock import ForgeLock, ForgeLockBusy
@@ -516,6 +516,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     falsifier = build_falsifier(engine_choice)
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
+    l1_provider = build_l1_provider(engine_choice, resolved)
 
     # Step 7: lock + run
     with ForgeLock(lock_path):
@@ -524,6 +525,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             falsifier=falsifier,
             autofixer=autofixer,
             revert_fn=revert_fn,
+            l1_provider=l1_provider,
             resolved=resolved,
             source_hash=source_hash,
             baseline_repr=baseline_repr,
@@ -540,7 +542,7 @@ def _run(args, env, cwd: Path) -> Verdict:
 
 
 def _run_hold_loop(
-    *, mode, falsifier, autofixer, revert_fn, resolved,
+    *, mode, falsifier, autofixer, revert_fn, l1_provider, resolved,
     source_hash, baseline_repr, cwd, registry,
     max_rounds, max_fix_attempts, state_path,
     input_fn=input, output_fn=print,
@@ -552,6 +554,7 @@ def _run_hold_loop(
             falsifier=falsifier,
             autofixer=autofixer,
             revert_fn=revert_fn,
+            l1_provider=l1_provider,
             resolved_review=resolved,
             source_hash=source_hash,
             baseline_spec_repr=baseline_repr,

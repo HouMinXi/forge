@@ -189,3 +189,77 @@ def build_e2e_checker() -> Callable:
     machine.py.
     """
     return run_e2e_check
+
+
+def build_l1_provider(
+    engine: str,
+    resolved: "ResolvedReview",
+) -> "Callable":
+    """Build l1_provider. engine="stub" returns empty lambda (defect D fix)."""
+    if engine == "stub":
+        return lambda: []
+
+    import hashlib as _hl
+    from .llm_invoke import LLMInvokeError, llm_invoke
+
+    def _provider() -> list:
+        diff_text = resolved.git_diff or ""
+        if not diff_text:
+            return []
+
+        pass_configs = [
+            ("qodo", "structural code reviewer: correctness and logic errors"),
+            ("expert", "senior engineer: SOLID, architecture, security"),
+            ("adversarial", "adversarial QE: assume bugs exist"),
+        ]
+
+        all_candidates = []
+        seen = set()
+
+        for pass_name, role in pass_configs:
+            prompt = (
+                "You are a " + role + ". Review this diff. "
+                'Return JSON: {"findings": [{"file": "...", "line": N, '
+                '"severity": "P0"|"P1"|"P2"|"P3", '
+                '"description": "..."}]}\n\nDiff:\n' + diff_text
+            )
+            try:
+                response = llm_invoke(prompt)
+            except LLMInvokeError as exc:
+                import sys
+                print(
+                    "code-forge: L1 pass '%s' failed: %s" % (pass_name, exc),
+                    file=sys.stderr,
+                )
+                continue
+
+            if not isinstance(response, dict):
+                continue
+            findings_raw = response.get("findings")
+            if not isinstance(findings_raw, list):
+                continue
+
+            for f_raw in findings_raw:
+                if not isinstance(f_raw, dict):
+                    continue
+                file_path = f_raw.get("file") or "unknown"
+                line = f_raw.get("line") or 0
+                desc = f_raw.get("description") or ""
+                fp_src = file_path + ":" + str(line) + ":" + desc
+                fp = _hl.sha256(fp_src.encode()).hexdigest()[:16]
+                if fp in seen:
+                    continue
+                seen.add(fp)
+                from .disposition import Disposition
+                from .state import StateFinding
+                all_candidates.append(StateFinding(
+                    id="l1-" + pass_name + "-" + fp,
+                    fingerprint=fp, source="L1",
+                    disposition=Disposition.UNCERTAIN,
+                    file=file_path,
+                    line_range=[line, line],
+                    description="[" + pass_name + "] " + desc,
+                ))
+        return all_candidates
+
+    return _provider
