@@ -68,3 +68,33 @@ class TestLLMInvoke:
             llm_invoke("prompt")
             cmd = mock_run.call_args[0][0]
             assert "opus-4-7" in cmd
+
+    def test_large_prompt_uses_shell_command(self):
+        large_prompt = "x" * 1_100_000
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"ok": true}'
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = llm_invoke(large_prompt)
+        assert result == {"ok": True}
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "sh"
+        assert cmd[1] == "-c"
+
+    def test_strips_markdown_fences(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '```json\n{"key": "value"}\n```'
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result):
+            result = llm_invoke("prompt")
+        assert result == {"key": "value"}
+
+    def test_raises_on_oserror(self):
+        with patch(
+            "subprocess.run",
+            side_effect=OSError("No such file or directory"),
+        ):
+            with pytest.raises(LLMInvokeError, match="subprocess failed"):
+                llm_invoke("prompt")
