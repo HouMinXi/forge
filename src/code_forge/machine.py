@@ -577,6 +577,15 @@ class StateMachine:
         self._append_round_snapshot(
             round_index, l0_findings, l1_findings, l2_findings, e2e_findings
         )
+        from .receipt import write_receipts
+        write_receipts(
+            receipts_dir=self.cwd / ".code-forge" / "receipts",
+            round_index=round_index,
+            l1_findings=l1_findings,
+            diff_sha256=self.source_hash,
+            source_files=list(self._source_files()),
+            cwd=self.cwd,
+        )
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
