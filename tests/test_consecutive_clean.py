@@ -56,6 +56,21 @@ class TestConsecutiveClean:
         state = load_state(tmp_path / ".code-forge" / "state.json")
         assert state.round >= 4
 
+    def test_receipts_written_during_run(self, tmp_path):
+        """Integration: StateMachine.run() writes receipt files."""
+        sm = StateMachine(
+            mode=Mode.LOCAL, falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
+            resolved_review=_resolved(), source_hash="a",
+            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            l1_provider=lambda: [], max_total_rounds=10,
+        )
+        sm.run()
+        receipt_dir = tmp_path / ".code-forge" / "receipts"
+        assert receipt_dir.exists()
+        receipts = list(receipt_dir.glob("*.json"))
+        assert len(receipts) >= 3
+
     def test_threshold_1_recovers_single_fixpoint(self, tmp_path):
         os.environ["FORGE_CLEAN_ROUND_THRESHOLD"] = "1"
         try:
