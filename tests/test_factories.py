@@ -70,6 +70,36 @@ class TestBuildFalsifier:
             build_falsifier("bogus")
 
 
+class TestBuildL1Provider:
+    """L1 provider factory."""
+
+    def test_stub_returns_empty(self):
+        from code_forge.factories import build_l1_provider
+        p = build_l1_provider("stub", None)
+        assert p() == []
+
+    def test_real_returns_callable(self):
+        from code_forge.factories import build_l1_provider
+        resolved = _make_resolved("git")
+        p = build_l1_provider("real", resolved)
+        assert callable(p)
+
+    def test_auto_returns_callable(self):
+        from code_forge.factories import build_l1_provider
+        resolved = _make_resolved("git")
+        p = build_l1_provider("auto", resolved)
+        assert callable(p)
+
+    def test_stub_never_calls_llm(self):
+        from code_forge.factories import build_l1_provider
+        from unittest.mock import patch
+        p = build_l1_provider("stub", None)
+        with patch("code_forge.llm_invoke.llm_invoke") as mock:
+            result = p()
+        assert result == []
+        mock.assert_not_called()
+
+
 class TestBuildAutofixer:
     """AutoFixer factory with non-git wrapper."""
 
