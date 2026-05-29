@@ -50,7 +50,7 @@ def _build_excerpts(
         try:
             lines = src.read_text().splitlines()
             start = max(0, f.line_range[0] - 2) if f.line_range else 0
-            end = min(len(lines), f.line_range[0] + 3) if f.line_range else min(len(lines), 5)
+            end = min(len(lines), f.line_range[-1] + 3) if f.line_range else min(len(lines), 5)
             if start >= len(lines):
                 continue
             content = "\n".join(lines[start:end]) + "\n"
