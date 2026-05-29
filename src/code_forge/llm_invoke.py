@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -71,7 +72,7 @@ def llm_invoke(
         cmd = [
             "sh", "-c",
             "%s -p \"$(<'%s')\" --model %s --output-format json"
-            % (binary, _prompt_file, effective_model),
+            % (shlex.quote(binary), _prompt_file, shlex.quote(effective_model)),
         ]
     else:
         cmd = [
@@ -92,6 +93,12 @@ def llm_invoke(
             "LLM subprocess timed out after %ds" % timeout_s,
             exit_code=-1, stderr=str(exc), duration_s=duration,
         ) from exc
+    except OSError as exc:
+        duration = time.monotonic() - start
+        raise LLMInvokeError(
+            "LLM subprocess failed: %s" % exc,
+            exit_code=-1, stderr=str(exc), duration_s=duration,
+        ) from exc
     finally:
         if _prompt_file and os.path.exists(_prompt_file):
             os.unlink(_prompt_file)
@@ -110,8 +117,7 @@ def llm_invoke(
     stdout = result.stdout.strip()
     if stdout.startswith("```"):
         lines = stdout.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
+        lines = lines[1:]
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         stdout = "\n".join(lines)
