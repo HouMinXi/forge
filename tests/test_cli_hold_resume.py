@@ -80,6 +80,7 @@ class TestHoldAbortedExit:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
+                l1_provider=lambda: [],
                 input_fn=lambda p: "q",
                 output_fn=lambda m: None,
             )
@@ -121,6 +122,7 @@ class TestHoldResumeTerminal:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
+                l1_provider=lambda: [],
                 input_fn=lambda p: "d",
                 output_fn=lambda m: None,
             )
@@ -162,6 +164,7 @@ class TestMaxHoldCyclesExhaustion:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
+                l1_provider=lambda: [],
                 input_fn=lambda p: "s",
                 output_fn=lambda m: None,
             )
@@ -227,6 +230,7 @@ class TestMaxHoldNoneStateFallback:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
+                l1_provider=lambda: [],
                 input_fn=lambda p: "s",
                 output_fn=lambda m: None,
             )
