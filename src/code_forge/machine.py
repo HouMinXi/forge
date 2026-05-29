@@ -420,9 +420,14 @@ class StateMachine:
                 self._persist_state()
                 return Verdict.FAIL
 
-            _threshold = int(os.environ.get(
-                "FORGE_CLEAN_ROUND_THRESHOLD", "3"
-            ))
+            try:
+                _threshold = int(os.environ.get(
+                    "FORGE_CLEAN_ROUND_THRESHOLD", "3"
+                ))
+            except (ValueError, TypeError):
+                _threshold = 3
+            if _threshold < 1:
+                _threshold = 1
 
             if self._fixpoint_reached():
                 self._state.consecutive_clean_rounds += 1
