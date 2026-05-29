@@ -182,17 +182,24 @@ def generate_hook_content(
     Returns:
         Shell script content as string
     """
+    attestation_block = """# code-forge receipt attestation check
+code-forge verify --quiet 2>/dev/null || {
+    echo "code-forge: receipt verification failed. Run: code-forge verify" >&2
+    exit 1
+}
+
+"""
     if chain_path is not None:
         return f"""#!/bin/sh
 # code-forge pre-commit gate-check (installed by code-forge install-hooks)
 # Chained existing hook: {chain_path}
-"{chain_path}" "$@" || exit 1
+{attestation_block}"{chain_path}" "$@" || exit 1
 exec {forge_invocation}
 """
     else:
         return f"""#!/bin/sh
 # code-forge pre-commit gate-check (installed by code-forge install-hooks)
-exec {forge_invocation}
+{attestation_block}exec {forge_invocation}
 """
 
 
