@@ -1030,6 +1030,78 @@ SKIP records:
 
 ---
 
+# Receipt Protocol
+
+When running outside the CLI (editor mode / Path C), write one receipt JSON file per review pass to `.code-forge/receipts/`.
+
+## File naming
+
+`receipt-c{cycle}p{pass}.json` where cycle is 1-3 and pass is 1-3.
+
+A complete review produces 9 receipt files: c1p1 through c3p3.
+
+## Receipt schema
+
+```json
+{
+  "cycle": 1,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "<sha256 of normalized diff>",
+  "timestamp": "2026-05-28T10:04:00Z",
+  "findings_count": 2,
+  "findings": [
+    {
+      "file": "src/foo.py",
+      "line": 42,
+      "description": "[qodo] potential null dereference",
+      "disposition": "UNCERTAIN"
+    }
+  ],
+  "anchors": [
+    {"file": "src/foo.py", "line": 42, "text": "def bar():"}
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/foo.py",
+      "start_line": 40,
+      "end_line": 45,
+      "content": "def bar():\n    x = get()\n    return x.value\n",
+      "rationale": "null dereference if get() returns None"
+    }
+  ],
+  "covered_line_ranges": [
+    {"file": "src/foo.py", "start": 30, "end": 60}
+  ]
+}
+```
+
+## Pass-to-skill mapping
+
+| Pass | Skill name |
+|------|-----------|
+| 1 | qodo-review |
+| 2 | code-review-expert |
+| 3 | adversarial-qe |
+
+## Verification checks
+
+Run `code-forge verify` to validate receipts. Seven checks:
+
+1. **Completeness**: 9 receipts, unique cycle/pass matrix, findings_count matches
+2. **Diff hash**: All receipts reference the current diff SHA256
+3. **Anchor reality**: Anchor files exist in the current diff
+4. **Timestamps**: Monotonically increasing across all receipts
+5. **Excerpt verification**: Code excerpts match actual file content; missing file = FAIL
+6. **Coverage quota**: Each cycle covers at least 60% of changed lines
+7. **Jaccard overlap**: Coverage Jaccard between cycle pairs must be below 0.8 (anti-rubber-stamp)
+
+## Diff SHA256 computation
+
+The diff hash uses `compute_source_hash()` from `source.py` -- NOT shell `sha256sum`. The hash includes a `mode=git` prefix and normalizes whitespace. All three components (receipt writer, verify, hook) use this same function.
+
+---
+
 # Commit Gate
 
 Only after ALL steps complete:
