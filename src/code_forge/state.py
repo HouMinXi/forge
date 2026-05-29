@@ -94,6 +94,7 @@ class State:
     promoted_fingerprints: set[str] = field(default_factory=set)
     # Mutation survivor round counter (LOCAL mode):
     consecutive_survivor_rounds: int = 0  # LOCAL mode only
+    consecutive_clean_rounds: int = 0  # LOCAL mode only
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -192,6 +193,9 @@ def load_state(path: Path) -> Optional[State]:
     state.consecutive_survivor_rounds = data.get(
         "consecutive_survivor_rounds", 0
     )
+    state.consecutive_clean_rounds = data.get(
+        "consecutive_clean_rounds", 0
+    )
 
     return state
 
@@ -239,6 +243,7 @@ def save_state(state: State, path: Path) -> None:
         "hold_reason": state.hold_reason,
         "promoted_fingerprints": sorted(state.promoted_fingerprints),
         "consecutive_survivor_rounds": state.consecutive_survivor_rounds,
+        "consecutive_clean_rounds": state.consecutive_clean_rounds,
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")

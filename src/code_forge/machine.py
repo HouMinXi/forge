@@ -420,7 +420,16 @@ class StateMachine:
                 self._persist_state()
                 return Verdict.FAIL
 
+            _threshold = int(os.environ.get(
+                "FORGE_CLEAN_ROUND_THRESHOLD", "3"
+            ))
+
             if self._fixpoint_reached():
+                self._state.consecutive_clean_rounds += 1
+            else:
+                self._state.consecutive_clean_rounds = 0
+
+            if self._state.consecutive_clean_rounds >= _threshold:
                 self._finalize_local_terminal()
                 return self._state.verdict
             if self._should_enter_hold():
