@@ -518,6 +518,36 @@ class TestQuietFlag:
         assert "pre-commit hook installed" in stderr.getvalue()
 
 
+class TestHookAttestation:
+    """Hook content includes attestation check."""
+
+    def test_includes_attestation_check(self):
+        """Hook content includes code-forge verify call."""
+        content = generate_hook_content("/usr/bin/code-forge gate-check", None)
+        assert "code-forge verify" in content
+
+    def test_attestation_before_gate_check(self):
+        """Attestation check appears before gate-check."""
+        content = generate_hook_content("/usr/bin/code-forge gate-check", None)
+        lines = content.split("\n")
+        verify_line = -1
+        gate_line = -1
+        for i, line in enumerate(lines):
+            if "code-forge verify" in line and not line.strip().startswith("#"):
+                verify_line = i
+            if "gate-check" in line and not line.strip().startswith("#"):
+                gate_line = i
+        assert verify_line != -1, "verify not found"
+        assert gate_line != -1, "gate-check not found"
+        assert verify_line < gate_line
+
+    def test_attestation_with_chain(self):
+        """Attestation check also present when chaining."""
+        chain = Path("/hooks/pre-commit.code-forge-backup")
+        content = generate_hook_content("/usr/bin/code-forge gate-check", chain)
+        assert "code-forge verify" in content
+
+
 class TestResolveForgeLiveness:
     """Test 11-14: resolve_forge_path liveness check."""
 
