@@ -317,6 +317,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suppress informational messages",
     )
 
+    # --- VERIFY subcommand: validate review receipts ---
+    verify_parser = subparsers.add_parser(
+        'verify',
+        help='validate review receipts',
+        description=(
+            'Validates review receipts: completeness (9 receipts, cycle/pass '
+            'matrix), diff hash, anchor reality, timestamp monotonicity, '
+            'excerpt verbatim match, coverage >=60%, Jaccard overlap <0.8. '
+            'Exit codes: 0=PASS, 1=FAIL.'
+        ),
+    )
+    verify_parser.add_argument(
+        "--quiet", action="store_true",
+        help="exit code only, no output",
+    )
+
     return parser
 
 
@@ -343,7 +359,7 @@ def main() -> int:
     # If not, prepend 'review' to sys.argv for argparse
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
-        'install-hooks', 'install-skill',
+        'install-hooks', 'install-skill', 'verify',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -408,6 +424,22 @@ def main() -> int:
 
     elif args.subcommand == 'install-skill':
         return _run_install_skill(args, cwd=Path.cwd())
+
+    elif args.subcommand == 'verify':
+        from .source import compute_source_hash
+        from .verify import run_verify, parse_diff_files
+        import subprocess
+        cwd = Path.cwd()
+        diff_result = subprocess.run(
+            ["git", "diff", "HEAD"], capture_output=True, text=True, cwd=cwd
+        )
+        diff_text = diff_result.stdout
+        diff_sha = compute_source_hash(git_diff=diff_text)
+        diff_f = parse_diff_files(diff_text)
+        vr = run_verify(cwd, diff_sha, diff_f)
+        if not args.quiet:
+            print("verify: %s -- %s" % ("PASS" if vr.passed else "FAIL", vr.reason))
+        return EXIT_PASS if vr.passed else EXIT_FAIL
 
     else:
         print(
