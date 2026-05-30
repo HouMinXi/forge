@@ -1096,6 +1096,30 @@ Run `code-forge verify` to validate receipts. Seven checks:
 6. **Coverage quota**: Each cycle covers at least 60% of changed lines
 7. **Jaccard overlap**: Coverage Jaccard between cycle pairs must be below 0.8 (anti-rubber-stamp)
 
+## What verify does not catch
+
+These seven checks are a tamper check on the receipt set, not proof that a
+review happened. They confirm that nine receipts exist, hash to the current
+diff, quote file content verbatim, and claim adequate non-rubber-stamped
+coverage. They do not confirm that the reviewer read the code.
+
+A zero-findings receipt set passes whenever its claimed `covered_line_ranges`
+clear the 60% floor: check 5 (excerpt verification) only inspects reported
+findings, so a clean pass with no findings has nothing to verify, and an
+editor-mode reviewer (Path C) can hand-write coverage ranges it never
+performed. `code-forge verify` cannot distinguish a diligent clean review
+from a fabricated one.
+
+The real anti-shirk guarantees live elsewhere:
+
+- **R1 pre-commit test gate** runs the test suite and blocks on new failures
+  versus a baseline -- it gates on real test results, not self-reported claims.
+- **StateMachine consecutive-clean counter** (CLI / Path A) requires three
+  independent clean cycles and resets on any finding.
+
+Use `verify` to detect tampered or incomplete receipts, not as a substitute
+for running tests.
+
 ## Diff SHA256 computation
 
 The diff hash uses `compute_source_hash()` from `source.py` -- NOT shell `sha256sum`. The hash includes a `mode=git` prefix and normalizes whitespace. All three components (receipt writer, verify, hook) use this same function.
