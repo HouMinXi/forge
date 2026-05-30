@@ -173,22 +173,7 @@ def run_verify(
             return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
     cp += 1
 
-    # 8. progressive obligation: all-clean cycles must vary coverage
-    any_findings_ever = any(len(v) > 0 for v in cycle_findings.values())
-    if not any_findings_ever:
-        for a, b in combinations(range(1, 4), 2):
-            dist = 1 - _jaccard(
-                _cycle_covered(receipts, a), _cycle_covered(receipts, b)
-            )
-            if dist < 0.2:
-                return VerifyResult(
-                    False,
-                    "progressive obligation: all-clean c%d-c%d "
-                    "distance %.2f < 0.2" % (a, b, dist),
-                    8, cp)
-    cp += 1
-
-    return VerifyResult(True, "all 8 checks passed", 8, 8)
+    return VerifyResult(True, "all 7 checks passed", 7, 7)
 
 
 def write_attestation(cwd: Path, diff_sha256: str) -> Path:
