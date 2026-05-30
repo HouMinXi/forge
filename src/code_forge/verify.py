@@ -2,6 +2,17 @@
 
 parse_diff_files is a shared helper used by both the verify CLI
 handler and the receipt writer.
+
+Scope and limits: the seven checks validate the mechanical integrity of
+a receipt set (nine receipts, current diff hash, anchors present in the
+diff, monotonic timestamps, verbatim excerpts, a 60% coverage claim,
+sub-0.8 Jaccard). They do NOT prove the reviewer read the code. A
+zero-findings receipt set passes whenever its claimed
+covered_line_ranges clear the 60% floor -- check 5 only inspects
+reported findings, and an editor-mode reviewer (Path C) can hand-write
+coverage it never performed. The real anti-shirk guarantees are the R1
+pre-commit test gate and the StateMachine consecutive-clean counter;
+verify is a tamper check on receipts, not a replacement for them.
 """
 from __future__ import annotations
 
