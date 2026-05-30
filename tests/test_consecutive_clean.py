@@ -86,3 +86,61 @@ class TestConsecutiveClean:
             assert state.round == 0
         finally:
             del os.environ["FORGE_CLEAN_ROUND_THRESHOLD"]
+
+    def test_all_clean_run_passes_verify(self, tmp_path, monkeypatch):
+        """Regression: all-clean convergence with a real diff produces
+        receipts that pass verify.
+
+        The removed check #8 (progressive obligation) required coverage
+        Jaccard distance >= 0.2 between all-clean cycles. Clean cycles
+        cover the full diff every round, so the distance is always 0.0 --
+        check #8 permanently blocked this legitimate path. This test locks
+        the post-fix guarantee and the machine.py diff_files threading that
+        gives clean-cycle receipts their real (>= 60%) coverage.
+        """
+        import datetime
+        from unittest.mock import patch
+        from code_forge.verify import parse_diff_files, run_verify
+
+        monkeypatch.delenv("FORGE_CLEAN_ROUND_THRESHOLD", raising=False)
+        diff_text = (
+            "diff --git a/test.py b/test.py\n"
+            "--- a/test.py\n"
+            "+++ b/test.py\n"
+            "@@ -1,3 +1,5 @@\n"
+            " def f():\n"
+            "+    x = 1\n"
+            "+    y = 2\n"
+            "     return 1\n"
+        )
+        resolved = ResolvedReview(
+            source_files=[Path("test.py")], baseline_content=None,
+            git_diff=diff_text, mode_hint="git",
+        )
+        sm = StateMachine(
+            mode=Mode.LOCAL, falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
+            resolved_review=resolved, source_hash="a",
+            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            l1_provider=lambda: [], max_total_rounds=10,
+        )
+
+        base = datetime.datetime(
+            2026, 5, 28, 10, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        counter = {"n": 0}
+
+        def _monotonic_now(*args, **kwargs):
+            ts = base + datetime.timedelta(minutes=5 * counter["n"])
+            counter["n"] += 1
+            return ts
+
+        with patch("code_forge.receipt.datetime") as mock_dt:
+            mock_dt.datetime.now.side_effect = _monotonic_now
+            mock_dt.timedelta = datetime.timedelta
+            mock_dt.timezone = datetime.timezone
+            assert sm.run() == Verdict.PASS
+
+        diff_files = parse_diff_files(diff_text)
+        result = run_verify(tmp_path, "a", diff_files)
+        assert result.passed, result.reason

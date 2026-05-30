@@ -88,18 +88,6 @@ class TestVerifyChecks:
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 201))})
         assert not r.passed
 
-    def test_fail_progressive_obligation(self, tmp_path):
-        """All-clean cycles with identical coverage fail check #8."""
-        rd = tmp_path / ".code-forge" / "receipts"
-        rd.mkdir(parents=True)
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
-        sha = _sha("diff")
-        _write_all(rd, sha, vary=False)
-        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
-        assert not r.passed
-        assert "progressive obligation" in r.reason
-
 
 class TestReceiptVerifyE2E:
     """End-to-end: receipt writer output must pass verify checks."""

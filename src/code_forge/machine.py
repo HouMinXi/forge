@@ -578,6 +578,9 @@ class StateMachine:
             round_index, l0_findings, l1_findings, l2_findings, e2e_findings
         )
         from .receipt import write_receipts
+        from .verify import parse_diff_files
+        diff_text = self.resolved_review.git_diff
+        diff_files = parse_diff_files(diff_text) if diff_text else None
         write_receipts(
             receipts_dir=self.cwd / ".code-forge" / "receipts",
             round_index=round_index,
@@ -585,6 +588,7 @@ class StateMachine:
             diff_sha256=self.source_hash,
             source_files=list(self._source_files()),
             cwd=self.cwd,
+            diff_files=diff_files,
         )
         self._persist_state()
         if self.post_round_hook is not None:
