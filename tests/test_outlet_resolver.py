@@ -235,7 +235,7 @@ class TestLoadOutletFromGate:
     def test_corrupted_yaml(self, tmp_path):
         """Invalid YAML -> raises ValueError with 'gate.yaml read failed'."""
         gate = tmp_path / "gate.yaml"
-        gate.write_text(":::bad\nyaml")
+        gate.write_text("{unclosed: [bracket")
         with pytest.raises(ValueError, match="gate.yaml read failed"):
             load_outlet_from_gate(gate)
 
