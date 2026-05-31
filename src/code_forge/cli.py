@@ -333,6 +333,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="exit code only, no output",
     )
 
+    # --- DETECT subcommand: toolchain auto-detection ---
+    detect_parser = subparsers.add_parser(
+        'detect',
+        help='detect project toolchain and generate tools.yaml',
+        description=(
+            'Auto-detect project toolchain. '
+            'Generates .code-forge/tools.yaml from detected tools.'
+        ),
+    )
+    detect_parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite existing tools.yaml",
+    )
+
+    # --- RESOLVE-OUTLET subcommand: outlet selection ---
+    subparsers.add_parser(
+        'resolve-outlet',
+        help='resolve outlet selection (cli or inline)',
+        description=(
+            'Resolve which review outlet to use. '
+            'Outputs cli or inline to stdout. '
+            'Exits 1 with a diagnostic if the configured review '
+            'backend is unreachable and no explicit Outlet B is set.'
+        ),
+    )
+
     return parser
 
 
@@ -360,6 +386,7 @@ def main() -> int:
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
+        'detect', 'resolve-outlet',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -446,6 +473,12 @@ def main() -> int:
         if not args.quiet:
             print("verify: %s -- %s" % ("PASS" if vr.passed else "FAIL", vr.reason))
         return EXIT_PASS if vr.passed else EXIT_FAIL
+
+    elif args.subcommand == 'detect':
+        return _run_detect(args, cwd=Path.cwd())
+
+    elif args.subcommand == 'resolve-outlet':
+        return _run_resolve_outlet(env=os.environ, cwd=Path.cwd())
 
     else:
         print(
@@ -1022,3 +1055,58 @@ def _copy_traversable_tree(src, dest: Path) -> None:
             _copy_traversable_tree(entry, child_dest)
         else:
             child_dest.write_bytes(entry.read_bytes())
+
+
+def _run_detect(args, cwd: Path) -> int:
+    """Run toolchain detection and generate tools.yaml.
+
+    Lazy-imports detect_and_init to avoid circular imports and
+    keep startup fast for other subcommands.
+
+    Returns:
+        EXIT_PASS on success, EXIT_CLI_ERROR on detection failure.
+    """
+    from .detect import detect_and_init
+    try:
+        detect_and_init(cwd, force=args.force)
+    except CliError as exc:
+        print(
+            "code-forge: detect: %s" % exc,
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+    return EXIT_PASS
+
+
+def _run_resolve_outlet(env, cwd: Path) -> int:
+    """Resolve and print the active review outlet.
+
+    Lazy-imports resolve_outlet. Does NOT pass a reachability_fn
+    so resolve_outlet uses its default backend probe (D-29).
+
+    Returns:
+        EXIT_PASS on success.
+        EXIT_FAIL on backend-unreachable (runtime condition).
+        EXIT_CLI_ERROR on config/validation error (ValueError).
+    """
+    from .outlet_resolver import resolve_outlet
+    gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+    try:
+        outlet = resolve_outlet(
+            env,
+            gate_yaml_path if gate_yaml_path.exists() else None,
+        )
+        print(outlet)
+        return EXIT_PASS
+    except CliError as exc:
+        print(
+            "code-forge: resolve-outlet: %s" % exc,
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    except ValueError as exc:
+        print(
+            "code-forge: resolve-outlet: %s" % exc,
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
