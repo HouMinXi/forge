@@ -509,11 +509,32 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Step 1: mode
     mode = resolve_mode(args.mode, env, sys.stdout.isatty())
 
-    # Step 2: registry
+    # Step 2: registry (with auto-detect integration, D-20)
+    is_default_registry = (args.registry == ".code-forge/tools.yaml")
+
+    def _safe_load_registry(path):
+        """Load registry, translating ValueError to CliError (R2-4)."""
+        try:
+            return load_registry(path)
+        except ValueError as exc:
+            raise CliError("registry load failed: %s" % exc) from exc
+
     try:
-        registry = load_registry(args.registry)
-    except (FileNotFoundError, ValueError) as exc:
-        raise CliError("registry load failed: %s" % exc)
+        registry = _safe_load_registry(args.registry)
+    except FileNotFoundError:
+        if is_default_registry:
+            from .detect import detect_and_init
+            detect_and_init(cwd, quiet=True)
+            registry = _safe_load_registry(args.registry)
+        else:
+            raise CliError(
+                "registry load failed: %s not found" % args.registry
+            )
+
+    if registry == {} and is_default_registry:
+        from .detect import detect_and_init
+        detect_and_init(cwd, quiet=True)
+        registry = _safe_load_registry(args.registry)
 
     # Step 3: env overrides
     max_rounds = resolve_max_total_rounds(
