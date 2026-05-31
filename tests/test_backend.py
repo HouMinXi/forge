@@ -414,6 +414,9 @@ class TestProbeCache:
                 stderr="",
             )
 
+        # Call 1: _read_cache (file missing -> exception, no time_fn),
+        #         _write_cache (time_fn -> 1000.0)
+        # Call 2: _read_cache (time_fn -> 1060.0, 1060-1000=60<300 HIT)
         times = iter([1000.0, 1060.0])
 
         for _ in range(2):
@@ -439,7 +442,10 @@ class TestProbeCache:
                 stderr="",
             )
 
-        times = iter([1000.0, 1301.0])
+        # Call 1: _write_cache (time_fn -> 1000.0)
+        # Call 2: _read_cache (time_fn -> 1301.0, 1301-1000=301>=300 MISS),
+        #         _write_cache (time_fn -> 1301.0)
+        times = iter([1000.0, 1301.0, 1301.0])
 
         for _ in range(2):
             probe_backend(
