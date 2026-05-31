@@ -1,0 +1,600 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
+"""TDD tests for backend config + resolution + probe (BACKEND-01, CLI-05).
+
+Tests cover:
+  - BackendConfig parse + schema validation (D-27)
+  - Active-backend resolution (D-27 precedence + D-26 default)
+  - Timeout resolution (D-07 amended)
+  - Backend-agnostic reachability probe (D-28)
+  - Probe caching with TTL (D-08)
+  - Real-API opt-in (D-11)
+"""
+from __future__ import annotations
+
+import inspect
+import json
+import subprocess
+
+import pytest
+
+from code_forge.backend import (
+    DEFAULT_BACKEND,
+    BackendConfig,
+    ProbeResult,
+    invalidate_probe_cache,
+    load_backend_configs,
+    probe_backend,
+    resolve_auth_timeout,
+    resolve_backend,
+)
+from code_forge.errors import CliError
+
+
+# -- Helpers ----------------------------------------------------------
+
+
+def _api_entry(**overrides):
+    """Build a minimal valid api backend entry."""
+    base = {
+        "name": "deepseek",
+        "type": "api",
+        "format": "openai",
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-chat",
+    }
+    base.update(overrides)
+    return base
+
+
+def _cli_entry(**overrides):
+    """Build a minimal valid cli backend entry."""
+    base = {
+        "name": "claude-sub",
+        "type": "cli",
+        "model": "sonnet",
+    }
+    base.update(overrides)
+    return base
+
+
+def _noop_which(name):
+    return "/usr/bin/" + name
+
+
+def _noop_run(*_a, **_kw):
+    raise AssertionError("run_cmd should not be called")
+
+
+# =====================================================================
+# Config schema + parse (D-27)
+# =====================================================================
+
+
+class TestBackendConfigParse:
+    """BackendConfig parses entries into frozen dataclass (D-27)."""
+
+    def test_backendconfig_parses_api_openai(self):
+        entry = _api_entry()
+        cfgs = load_backend_configs({"backends": [entry]})
+        assert len(cfgs) == 1
+        cfg = cfgs[0]
+        assert cfg.name == "deepseek"
+        assert cfg.type == "api"
+        assert cfg.format == "openai"
+        assert cfg.base_url == "https://api.deepseek.com/v1"
+        assert cfg.api_key_env == "DEEPSEEK_API_KEY"
+        assert cfg.model == "deepseek-chat"
+
+    def test_backendconfig_parses_api_anthropic(self):
+        entry = _api_entry(
+            name="claude-api",
+            format="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key_env="ANTHROPIC_API_KEY",
+            model="claude-sonnet-4-20250514",
+        )
+        cfgs = load_backend_configs({"backends": [entry]})
+        cfg = cfgs[0]
+        assert cfg.type == "api"
+        assert cfg.format == "anthropic"
+        assert cfg.api_key_env == "ANTHROPIC_API_KEY"
+
+    def test_backendconfig_parses_cli(self):
+        entry = _cli_entry()
+        cfgs = load_backend_configs({"backends": [entry]})
+        cfg = cfgs[0]
+        assert cfg.type == "cli"
+        assert cfg.name == "claude-sub"
+        assert cfg.model == "sonnet"
+
+    def test_backendconfig_api_missing_format_raises(self):
+        entry = _api_entry()
+        del entry["format"]
+        with pytest.raises(CliError, match="format"):
+            load_backend_configs({"backends": [entry]})
+
+    def test_backendconfig_api_missing_api_key_env_raises(self):
+        entry = _api_entry()
+        del entry["api_key_env"]
+        with pytest.raises(CliError, match="api_key_env"):
+            load_backend_configs({"backends": [entry]})
+
+    def test_backendconfig_unknown_type_raises(self):
+        entry = _api_entry(type="grpc")
+        with pytest.raises(CliError, match="grpc"):
+            load_backend_configs({"backends": [entry]})
+
+    def test_backendconfig_inline_secret_rejected(self):
+        """api_key (raw key) instead of api_key_env -> CliError (D-27)."""
+        entry = _api_entry(api_key="sk-secret-raw-key-value")
+        with pytest.raises(CliError, match="api_key_env"):
+            load_backend_configs({"backends": [entry]})
+
+    def test_load_backend_configs_empty_returns_empty_list(self):
+        assert load_backend_configs(None) == []
+        assert load_backend_configs({}) == []
+        assert load_backend_configs({"backends": []}) == []
+
+
+# =====================================================================
+# Active-backend resolution (D-27 precedence + D-26 default)
+# =====================================================================
+
+
+class TestResolveBackend:
+    """resolve_backend honors FORGE_BACKEND > config > session default."""
+
+    def test_resolve_backend_env_override_wins(self):
+        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        result = resolve_backend(
+            env={"FORGE_BACKEND": "deepseek"}, configs=cfgs,
+        )
+        assert result.name == "deepseek"
+
+    def test_resolve_backend_env_override_unknown_name_raises(self):
+        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        with pytest.raises(CliError, match="ghost"):
+            resolve_backend(
+                env={"FORGE_BACKEND": "ghost"}, configs=cfgs,
+            )
+
+    def test_resolve_backend_config_default_when_no_env(self):
+        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        result = resolve_backend(env={}, configs=cfgs)
+        assert result.name == "deepseek"
+
+    def test_resolve_backend_session_default_when_no_config_no_env(self):
+        """No env + no configs -> DEFAULT_BACKEND (D-26 session model)."""
+        result = resolve_backend(env={}, configs=[])
+        assert result is DEFAULT_BACKEND
+        assert result.type == "cli"
+        assert result.model == ""
+
+    def test_resolve_backend_has_no_diff_parameter(self):
+        """D-26 NON-GOAL guard: signature has no diff/complexity/size."""
+        sig = inspect.signature(resolve_backend)
+        param_names = set(sig.parameters.keys())
+        forbidden = {
+            "diff", "complexity", "size", "change_size",
+            "code", "lines", "changesize",
+        }
+        overlap = param_names & forbidden
+        assert overlap == set(), (
+            "resolve_backend MUST NOT take diff-related params (D-26): %s"
+            % overlap
+        )
+
+    def test_resolve_backend_env_empty_falls_through(self):
+        """FORGE_BACKEND="" -> falls through to config/session default."""
+        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        result = resolve_backend(
+            env={"FORGE_BACKEND": ""}, configs=cfgs,
+        )
+        assert result.name == "deepseek"
+
+    def test_resolve_backend_env_whitespace_raises(self):
+        """FORGE_BACKEND="  " -> CliError with source attribution."""
+        with pytest.raises((CliError, ValueError)):
+            resolve_backend(env={"FORGE_BACKEND": "  "}, configs=[])
+
+    def test_resolve_backend_cli_override_wins(self):
+        """cli_value takes top priority over env and configs."""
+        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        result = resolve_backend(
+            env={"FORGE_BACKEND": "deepseek"},
+            configs=cfgs,
+            cli_value="deepseek",
+        )
+        assert result.name == "deepseek"
+
+
+# =====================================================================
+# Timeout resolution (D-07 amended)
+# =====================================================================
+
+
+class TestTimeoutResolution:
+    """resolve_auth_timeout follows env_resolver.py precedence."""
+
+    def test_resolve_timeout_default(self):
+        assert resolve_auth_timeout(cli_value=None, env={}) == 20
+
+    def test_resolve_timeout_env_override(self):
+        assert resolve_auth_timeout(
+            cli_value=None, env={"FORGE_AUTH_TIMEOUT": "30"},
+        ) == 30
+
+    def test_resolve_timeout_invalid_string(self):
+        with pytest.raises(CliError, match="FORGE_AUTH_TIMEOUT"):
+            resolve_auth_timeout(
+                cli_value=None, env={"FORGE_AUTH_TIMEOUT": "abc"},
+            )
+
+    def test_resolve_timeout_too_low(self):
+        with pytest.raises(CliError):
+            resolve_auth_timeout(
+                cli_value=None, env={"FORGE_AUTH_TIMEOUT": "0"},
+            )
+
+
+# =====================================================================
+# Backend-agnostic reachability probe -- CLI path (D-28)
+# =====================================================================
+
+
+class TestProbeCli:
+    """probe_backend for cli/claude backend."""
+
+    def test_probe_cli_claude_logged_in(self, tmp_path):
+        """Logged-in -> ok=True; command is auth status, NOT inference."""
+        called_with = {}
+
+        def mock_run(cmd, **kw):
+            called_with["cmd"] = cmd
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true, "authMethod": "subscription"}',
+                stderr="",
+            )
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+        assert called_with["cmd"] == ["claude", "auth", "status", "--json"]
+
+    def test_probe_cli_claude_not_logged_in(self, tmp_path):
+        def mock_run(cmd, **kw):
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": false}',
+                stderr="",
+            )
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "not logged in" in result.error.lower() or \
+            "login" in result.error.lower()
+
+    def test_probe_cli_binary_not_found(self, tmp_path):
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=lambda _name: None,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "not found" in result.error.lower()
+
+    def test_probe_cli_nonzero_exit(self, tmp_path):
+        """Non-zero exit with stderr=None must not crash (None-safe)."""
+        def mock_run(cmd, **kw):
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=1,
+                stdout="",
+                stderr=None,
+            )
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert result.error is not None
+
+    def test_probe_cli_malformed_json(self, tmp_path):
+        """returncode=0 but non-JSON stdout -> ok=False."""
+        def mock_run(cmd, **kw):
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout="not json at all",
+                stderr="",
+            )
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "parse" in result.error.lower()
+
+    def test_probe_cli_timeout(self, tmp_path):
+        def mock_run(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=20)
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "timed out" in result.error.lower()
+
+
+# =====================================================================
+# Backend-agnostic reachability probe -- API path (D-28)
+# =====================================================================
+
+
+class TestProbeApi:
+    """probe_backend for api backend: no subprocess, no network."""
+
+    def test_probe_api_key_present(self, tmp_path):
+        """Key env var set -> ok=True, run_cmd NOT called."""
+        cfg = load_backend_configs({"backends": [_api_entry()]})[0]
+        result = probe_backend(
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={"DEEPSEEK_API_KEY": "sk-test-key"},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+
+    def test_probe_api_key_missing(self, tmp_path):
+        """Key env var missing -> ok=False, error names the env var."""
+        cfg = load_backend_configs({"backends": [_api_entry()]})[0]
+        result = probe_backend(
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "DEEPSEEK_API_KEY" in result.error
+
+
+# =====================================================================
+# Probe caching (D-08)
+# =====================================================================
+
+
+class TestProbeCache:
+    """File-based reachability cache with 5-min TTL."""
+
+    def test_probe_cache_hit_within_ttl(self, tmp_path):
+        """Second call within TTL does not invoke run_cmd."""
+        call_count = [0]
+
+        def mock_run(cmd, **kw):
+            call_count[0] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        times = iter([1000.0, 1060.0])
+
+        for _ in range(2):
+            probe_backend(
+                DEFAULT_BACKEND,
+                which_fn=_noop_which,
+                run_cmd=mock_run,
+                env={},
+                cache_dir=tmp_path,
+                time_fn=lambda: next(times),
+            )
+        assert call_count[0] == 1
+
+    def test_probe_cache_miss_after_ttl(self, tmp_path):
+        """After 301s, cache is stale -> re-probe."""
+        call_count = [0]
+
+        def mock_run(cmd, **kw):
+            call_count[0] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        times = iter([1000.0, 1301.0])
+
+        for _ in range(2):
+            probe_backend(
+                DEFAULT_BACKEND,
+                which_fn=_noop_which,
+                run_cmd=mock_run,
+                env={},
+                cache_dir=tmp_path,
+                time_fn=lambda: next(times),
+            )
+        assert call_count[0] == 2
+
+    def test_probe_failure_not_cached(self, tmp_path):
+        """A failed probe is not cached; next call re-probes."""
+        call_count = [0]
+
+        def mock_run(cmd, **kw):
+            call_count[0] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": false}',
+                stderr="",
+            )
+
+        for _ in range(2):
+            probe_backend(
+                DEFAULT_BACKEND,
+                which_fn=_noop_which,
+                run_cmd=mock_run,
+                env={},
+                cache_dir=tmp_path,
+                time_fn=lambda: 1000.0,
+            )
+        assert call_count[0] == 2
+
+    def test_probe_corrupted_cache_treated_as_miss(self, tmp_path):
+        """Invalid JSON in cache file -> cache miss, re-probes."""
+        cache_file = tmp_path / "backend_probe_cache.json"
+        cache_file.write_text("{broken json!!")
+
+        call_count = [0]
+
+        def mock_run(cmd, **kw):
+            call_count[0] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert call_count[0] == 1
+
+    def test_probe_cache_missing_key_treated_as_miss(self, tmp_path):
+        """Cache JSON missing 'timestamp' key -> miss, re-probes."""
+        cache_file = tmp_path / "backend_probe_cache.json"
+        cache_file.write_text('{"ok": true}')
+
+        call_count = [0]
+
+        def mock_run(cmd, **kw):
+            call_count[0] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert call_count[0] == 1
+
+    def test_probe_cache_bad_timestamp_treated_as_miss(self, tmp_path):
+        """timestamp is non-numeric -> miss, re-probes."""
+        cache_file = tmp_path / "backend_probe_cache.json"
+        cache_file.write_text('{"ok": true, "timestamp": "not-a-number"}')
+
+        call_count = [0]
+
+        def mock_run(cmd, **kw):
+            call_count[0] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert call_count[0] == 1
+
+    def test_probe_cache_non_dict_treated_as_miss(self, tmp_path):
+        """Cache contains JSON array -> miss, re-probes."""
+        cache_file = tmp_path / "backend_probe_cache.json"
+        cache_file.write_text("[1, 2, 3]")
+
+        call_count = [0]
+
+        def mock_run(cmd, **kw):
+            call_count[0] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert call_count[0] == 1
+
+    def test_invalidate_probe_cache(self, tmp_path):
+        """invalidate_probe_cache removes the cache file."""
+        cache_file = tmp_path / "backend_probe_cache.json"
+        cache_file.write_text('{"ok": true, "timestamp": 1000}')
+        assert cache_file.exists()
+
+        invalidate_probe_cache(cache_dir=tmp_path)
+        assert not cache_file.exists()
+
+
+# =====================================================================
+# Real-API opt-in (D-11 generalized)
+# =====================================================================
+
+
+class TestRealApi:
+    """Real-API smoke test (skipped unless opted in)."""
+
+    @pytest.mark.real_api
+    def test_real_probe(self):
+        """Calls probe_backend(DEFAULT_BACKEND) with real defaults."""
+        result = probe_backend(DEFAULT_BACKEND)
+        assert isinstance(result, ProbeResult)
