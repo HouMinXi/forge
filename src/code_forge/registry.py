@@ -15,7 +15,16 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-# Known parser keys -- warn on unknown but do not reject
+# Known parser keys -- warn on unknown but do not reject.
+# "flake8" added for the flake8 text parser (parsers/flake8.py).
+# "sarif" added for the ruff entry (ruff emits output_format="sarif",
+#   dispatched via _parse_sarif; without this, load_registry warns).
+# "pylint_json" was already present (pylint --output-format=json).
+# NOTE: "ruff_json" is stale/unused -- no tool emits it after the
+#   ruff entry was fixed to output_format="sarif". Kept for backward
+#   compatibility; broader _KNOWN_FORMATS vs PARSER_DISPATCH
+#   reconciliation for non-Python tools (checkpatch, semgrep_json,
+#   golangci_json) is a deferred follow-up.
 _KNOWN_FORMATS = frozenset({
     "shellcheck_json",
     "ruff_json",
@@ -24,6 +33,8 @@ _KNOWN_FORMATS = frozenset({
     "pylint_json",
     "clippy_json",
     "golangci_json",
+    "flake8",
+    "sarif",
 })
 
 # Fields that must be present in each tool entry
