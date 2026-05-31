@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Pluggable review-backend abstraction (BACKEND-01, Phase-5 half).
+"""Pluggable review-backend abstraction.
 
 Provides:
-  - BackendConfig: frozen dataclass for a backend entry (D-27)
-  - ProbeResult: frozen dataclass for reachability result (D-28)
+  - BackendConfig: frozen dataclass for a backend entry
+  - ProbeResult: frozen dataclass for reachability result
   - load_backend_configs(): parse config entries into BackendConfig list
   - resolve_backend(): FORGE_BACKEND > config default > session default
-  - resolve_auth_timeout(): FORGE_AUTH_TIMEOUT resolution (D-07)
-  - probe_backend(): backend-agnostic reachability probe (D-28)
+  - resolve_auth_timeout(): FORGE_AUTH_TIMEOUT resolution
+  - probe_backend(): backend-agnostic reachability probe
   - invalidate_probe_cache(): remove cached probe result
-  - DEFAULT_BACKEND: session-model cli backend with no model pin (D-26)
+  - DEFAULT_BACKEND: session-model cli backend with no model pin
 
-Phase 5 scope (D-30): locks abstraction + config schema + resolution +
-probe ONLY.  HTTP clients and cli review wrappers land in Phase 7.
+Locks abstraction + config schema + resolution + probe ONLY.
+HTTP clients and cli review wrappers land later.
 
-NON-GOAL (D-26, hard): resolve_backend NEVER inspects diff, complexity,
+NON-GOAL: resolve_backend NEVER inspects diff, complexity,
 or change size.  The user configures the model; forge follows the session
 model by default.
 """
@@ -37,10 +37,10 @@ from .errors import CliError
 VALID_BACKEND_TYPES = {"api", "cli"}
 VALID_API_FORMATS = {"openai", "anthropic"}
 
-DEFAULT_AUTH_TIMEOUT = 20          # D-07 amended (generous cap)
+DEFAULT_AUTH_TIMEOUT = 20          # generous cap
 MAX_REASONABLE_AUTH_TIMEOUT = 120  # sanity bound
 
-CACHE_TTL_SECONDS = 300            # D-08: 5-minute TTL
+CACHE_TTL_SECONDS = 300            # 5-minute TTL
 CACHE_FILENAME = "backend_probe_cache.json"
 
 
@@ -57,7 +57,7 @@ class ProbeResult:
 
 @dataclass(frozen=True)
 class BackendConfig:
-    """A configured review backend entry (D-27).
+    """A configured review backend entry.
 
     api_key_env holds the NAME of an env var, NEVER a raw secret.
     The secret value is looked up at probe time, never stored.
@@ -72,7 +72,7 @@ class BackendConfig:
     default: bool = False              # config default marker
 
 
-# -- DEFAULT_BACKEND (D-26) ------------------------------------------
+# -- DEFAULT_BACKEND -------------------------------------------------
 
 DEFAULT_BACKEND = BackendConfig(
     name="session-default",
@@ -88,10 +88,10 @@ DEFAULT_BACKEND = BackendConfig(
 
 
 def _parse_backend_entry(entry: dict) -> BackendConfig:
-    """Parse and validate a single backend config entry (D-27)."""
+    """Parse and validate a single backend config entry."""
     name = entry.get("name", "<unnamed>")
 
-    # Reject inline secrets (D-27 secret hygiene)
+    # Reject inline secrets (never allow raw keys in config)
     if "api_key" in entry:
         raise CliError(
             "backend %r: store the env-var NAME in api_key_env, "
@@ -170,7 +170,7 @@ def load_backend_configs(
     return [_parse_backend_entry(e) for e in backends]
 
 
-# -- Timeout resolution (D-07) ---------------------------------------
+# -- Timeout resolution -----------------------------------------------
 
 
 def resolve_auth_timeout(
@@ -193,10 +193,10 @@ def _parse_env_timeout(raw: str) -> int:
     """Parse FORGE_AUTH_TIMEOUT string to validated int."""
     try:
         value = int(raw.strip())
-    except ValueError:
+    except ValueError as exc:
         raise CliError(
             "invalid FORGE_AUTH_TIMEOUT: %r (expected int)" % raw
-        )
+        ) from exc
     return _validate_timeout(value, "FORGE_AUTH_TIMEOUT")
 
 
@@ -214,7 +214,7 @@ def _validate_timeout(value: int, name: str) -> int:
     return value
 
 
-# -- Backend resolution (D-27 precedence) ----------------------------
+# -- Backend resolution ------------------------------------------------
 
 
 def resolve_backend(
@@ -225,9 +225,9 @@ def resolve_backend(
     """Resolve the active backend.
 
     Precedence: cli_value > FORGE_BACKEND env > config default > session
-    default (DEFAULT_BACKEND, D-26).
+    default (DEFAULT_BACKEND).
 
-    CRITICAL (D-26 NON-GOAL): This function MUST NOT accept a diff,
+    CRITICAL (NON-GOAL): This function MUST NOT accept a diff,
     complexity, or change-size parameter.  forge NEVER analyzes the diff
     to auto-select a backend or model.
     """
@@ -259,11 +259,11 @@ def resolve_backend(
                 return cfg
         return configs[0]
 
-    # Step 4: session-model default (D-26)
+    # Step 4: session-model default
     return DEFAULT_BACKEND
 
 
-# -- Probe cache (D-08) ----------------------------------------------
+# -- Probe cache ------------------------------------------------------
 
 
 def _default_cache_dir() -> Path:
@@ -276,19 +276,22 @@ def _default_cache_dir() -> Path:
 
 def _read_cache(
     cache_dir: Path,
+    backend_name: str,
     time_fn: Callable[[], float],
 ) -> Optional[ProbeResult]:
     """Read cached probe result if valid and within TTL.
 
-    Returns None on ANY read failure (D-08 + R2-2 generalization):
-    cache is convenience-only, so corrupted JSON, missing keys,
-    wrong types, binary garbage, or permission errors all trigger
-    a safe cache miss that re-probes.
+    Returns None on ANY read failure: cache is convenience-only,
+    so corrupted JSON, missing keys, wrong types, binary garbage,
+    backend name mismatch, or permission errors all trigger a safe
+    cache miss that re-probes.
     """
     try:
         cache_path = cache_dir / CACHE_FILENAME
         raw = cache_path.read_text()
         data = json.loads(raw)
+        if data.get("backend") != backend_name:
+            return None
         if data["ok"] and (time_fn() - data["timestamp"]) < CACHE_TTL_SECONDS:
             return ProbeResult(ok=True)
     except Exception:
@@ -298,6 +301,7 @@ def _read_cache(
 
 def _write_cache(
     cache_dir: Path,
+    backend_name: str,
     time_fn: Callable[[], float],
 ) -> None:
     """Write a successful probe result to cache."""
@@ -305,6 +309,7 @@ def _write_cache(
     cache_path = cache_dir / CACHE_FILENAME
     cache_path.write_text(json.dumps({
         "ok": True,
+        "backend": backend_name,
         "timestamp": time_fn(),
     }))
 
@@ -319,7 +324,7 @@ def invalidate_probe_cache(
     cache_path.unlink(missing_ok=True)
 
 
-# -- Backend-agnostic reachability probe (D-28) -----------------------
+# -- Backend-agnostic reachability probe ------------------------------
 
 
 def probe_backend(
@@ -331,13 +336,13 @@ def probe_backend(
     time_fn: Callable[[], float] = time.time,
     timeout: int = DEFAULT_AUTH_TIMEOUT,
 ) -> ProbeResult:
-    """Backend-agnostic reachability probe (D-28).
+    """Backend-agnostic reachability probe.
 
     For cli/claude: runs ``claude auth status --json`` (NOT an
     inference call).  For api: checks api_key_env presence in env
     (no subprocess, no network).
 
-    Successful results are cached with 5-min TTL (D-08).
+    Successful results are cached with 5-min TTL.
     Failures are NOT cached.
     """
     if env is None:
@@ -346,7 +351,7 @@ def probe_backend(
         cache_dir = _default_cache_dir()
 
     # Check cache first
-    cached = _read_cache(cache_dir, time_fn)
+    cached = _read_cache(cache_dir, backend.name, time_fn)
     if cached is not None:
         return cached
 
@@ -356,9 +361,9 @@ def probe_backend(
     else:
         result = _probe_cli(backend, which_fn, run_cmd, timeout)
 
-    # Cache successful results only (D-08)
+    # Cache successful results only
     if result.ok:
-        _write_cache(cache_dir, time_fn)
+        _write_cache(cache_dir, backend.name, time_fn)
 
     return result
 
@@ -367,7 +372,7 @@ def _probe_api(
     backend: BackendConfig,
     env: Mapping[str, str],
 ) -> ProbeResult:
-    """Check that the configured api_key_env is present (D-28).
+    """Check that the configured api_key_env is present.
 
     No subprocess, no network call.
     """
@@ -392,7 +397,7 @@ def _probe_cli(
     run_cmd: Callable,
     timeout: int,
 ) -> ProbeResult:
-    """Probe a cli backend via ``claude auth status --json`` (D-28).
+    """Probe a cli backend via ``claude auth status --json``.
 
     This is NOT an inference call -- zero token cost.
     """

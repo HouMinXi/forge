@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""BOTH-04 outlet resolution.
+"""Outlet resolution.
 
 Pure precedence function: FORGE_OUTLET env > gate.yaml outlet > backend
-reachability probe (D-29).
+reachability probe.
 
 Resolves which review outlet to use:
   - "cli"    -> Outlet A (CLI dispatcher, fresh subprocess per pass)
   - "inline" -> Outlet B (inline merged skill, in-process)
 
 Key invariants:
-  - Outlet B (inline) NEVER triggers the reachability probe (D-29).
+  - Outlet B (inline) NEVER triggers the reachability probe.
   - Backend unreachable with no explicit override raises CliError
-    (FAIL CLOSED, D-29) -- never silently degrades to inline.
-  - No model-capability auto-detection anywhere (D-16 LOCKED).
+    (FAIL CLOSED) -- never silently degrades to inline.
+  - No model-capability auto-detection anywhere (LOCKED).
   - gate.yaml is read via a lightweight reader that does NOT
-    require a "test:" section (D-22 option b).
+    require a "test:" section.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _parse_outlet_string(value: str, source: str) -> str:
 
     Structurally identical to mode_resolver._parse_mode_string:
     whitespace-only strips to "" which is not in the allow-list
-    and raises with source attribution (D-14).
+    and raises with source attribution.
     """
     key = value.strip().lower()
     if key not in VALID_OUTLET_STRINGS:
@@ -57,7 +57,7 @@ def _parse_outlet_string(value: str, source: str) -> str:
     return VALID_OUTLET_STRINGS[key]
 
 
-# -- gate.yaml reader (D-22 option b) ------------------------------------
+# -- gate.yaml reader ---------------------------------------------------
 
 
 def load_outlet_from_gate(
@@ -67,13 +67,13 @@ def load_outlet_from_gate(
     """Read only the 'outlet' key from gate.yaml.
 
     Does NOT call load_gate_config (avoids the "test section
-    required" constraint, D-22 option b).
+    required" constraint).
 
     Returns:
         The outlet string value if present, else None.
 
     Raises:
-        ValueError: corrupted YAML (C3) or unreadable file (R2-3).
+        ValueError: corrupted YAML or unreadable file.
     """
     try:
         with fs_open(gate_yaml_path, "r", encoding="utf-8") as f:
@@ -114,16 +114,16 @@ def resolve_outlet(
     Precedence (highest first):
       1. FORGE_OUTLET env var (if present and non-empty)
       2. gate.yaml outlet field (if gate_yaml_path given and key present)
-      3. Backend reachability probe (D-29)
+      3. Backend reachability probe
 
     The third signal uses the backend-agnostic probe from backend.py.
     Reachable -> "cli" (fail-safe Outlet A).
-    Unreachable -> CliError (FAIL CLOSED, D-29).
+    Unreachable -> CliError (FAIL CLOSED).
 
     An explicit "inline" (from env or gate.yaml) short-circuits
-    BEFORE any reachability probe -- Outlet B NEVER probes (D-29).
+    BEFORE any reachability probe -- Outlet B NEVER probes.
 
-    D-16 LOCKED: nowhere in this function is model capability
+    LOCKED: nowhere in this function is model capability
     inspected.  The only signals are the explicit override and the
     objective reachability of the configured backend.
 
@@ -141,24 +141,26 @@ def resolve_outlet(
         ValueError: invalid outlet string from env or gate.yaml
         CliError: backend unreachable with no explicit override
     """
-    # Lazy default reachability function (D-29)
+    # Default probes the session-default CLI backend only.
+    # Production callers should inject a reachability_fn that
+    # uses the loaded backend config.
     if reachability_fn is None:
         def reachability_fn() -> ProbeResult:
             backend = resolve_backend(env, configs=[], cli_value=None)
             return probe_backend(backend, env=env)
 
-    # Step 1: FORGE_OUTLET env override (D-12/D-13/D-14)
+    # Step 1: FORGE_OUTLET env override
     env_value = env.get("FORGE_OUTLET")
     if env_value is not None and env_value != "":
         return _parse_outlet_string(env_value, "FORGE_OUTLET env")
 
-    # Step 2: gate.yaml outlet field (D-12)
+    # Step 2: gate.yaml outlet field
     if gate_yaml_path is not None:
         gate_value = load_outlet_from_gate(gate_yaml_path)
         if gate_value is not None:
             return _parse_outlet_string(str(gate_value), "gate.yaml outlet")
 
-    # Step 3: backend reachability (D-29)
+    # Step 3: backend reachability
     result = reachability_fn()
     if result.ok:
         return "cli"

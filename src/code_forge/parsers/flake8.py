@@ -7,7 +7,7 @@ flake8 default output format is one finding per line:
 
 This parser mirrors parsers/checkpatch.py in structure: compiled
 module-level regex, empty -> [], match -> Finding, non-empty with
-zero matches -> [ToolError] (corrupt output, Consensus #4).
+zero matches -> [ToolError] (corrupt output).
 """
 
 import re

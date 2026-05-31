@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""TDD tests for toolchain auto-detection (CLI-03/CLI-04).
+"""TDD tests for toolchain auto-detection.
 
 Tests cover:
   - pyproject.toml-aware tool detection with PATH verification
-  - pyproject.toml with no [tool.*] sections -> PATH fallback (R2-1)
+  - pyproject.toml with no [tool.*] sections -> PATH fallback
   - Fallback detection (no pyproject.toml, has .py files)
-  - Empty project error stop (D-02)
-  - Idempotent init with real language metadata (D-03, DS-B1)
-  - Malformed existing tools.yaml fail-loud (D-24)
-  - Round-trip YAML through load_registry with str command (V1)
+  - Empty project error stop
+  - Idempotent init with real language metadata
+  - Malformed existing tools.yaml fail-loud
+  - Round-trip YAML through load_registry with str command
   - Force flag overwrite
-  - Detection report format (D-04)
-  - Corrupted TOML recovery (DS-W1)
-  - Quiet mode (Kimi-B4-1)
+  - Detection report format
+  - Corrupted TOML recovery
+  - Quiet mode
   - flake8 config-file detection (.flake8 / setup.cfg / tox.ini + PATH)
 """
 
@@ -74,7 +74,7 @@ class TestPyprojectDetection:
         assert "mypy" in result.missing
 
     def test_pyproject_no_tool_sections_falls_back_to_path(self, tmp_path):
-        """R2-1: pyproject.toml with only [project] metadata and no
+        """pyproject.toml with only [project] metadata and no
         [tool.*] sections falls back to PATH scan."""
         content = (
             "[project]\n"
@@ -119,7 +119,7 @@ class TestFallbackDetection:
 # -- empty project ---------------------------------------------------------
 
 class TestEmptyProject:
-    """D-02: empty project raises CliError."""
+    """Empty project raises CliError."""
 
     def test_empty_project_no_python(self, tmp_path):
         with pytest.raises(CliError, match="No toolchain detected"):
@@ -129,7 +129,7 @@ class TestEmptyProject:
 # -- idempotency -----------------------------------------------------------
 
 class TestIdempotency:
-    """D-03: existing non-empty tools.yaml skips regeneration."""
+    """Existing non-empty tools.yaml skips regeneration."""
 
     def test_idempotent_existing_nonempty_tools_yaml(self, tmp_path):
         cfg_dir = tmp_path / ".code-forge"
@@ -147,7 +147,7 @@ class TestIdempotency:
         assert "ruff" in result.detected
 
     def test_idempotent_existing_returns_actual_language(self, tmp_path):
-        """DS-B1: returned language is 'python', not 'existing'."""
+        """Returned language is 'python', not 'existing'."""
         cfg_dir = tmp_path / ".code-forge"
         cfg_dir.mkdir()
         tools_yaml = cfg_dir / "tools.yaml"
@@ -164,7 +164,7 @@ class TestIdempotency:
         assert result.language == "python"
 
     def test_empty_tools_yaml_treated_as_missing(self, tmp_path):
-        """D-03: tools.yaml with 'tools: []' -> regenerate."""
+        """tools.yaml with 'tools: []' -> regenerate."""
         cfg_dir = tmp_path / ".code-forge"
         cfg_dir.mkdir()
         (cfg_dir / "tools.yaml").write_text(
@@ -183,10 +183,10 @@ class TestIdempotency:
         assert "ruff" in result.detected
 
 
-# -- malformed existing config (D-24) -------------------------------------
+# -- malformed existing config --------------------------------------------
 
 class TestMalformedExisting:
-    """D-24: malformed existing tools.yaml fails loud."""
+    """Malformed existing tools.yaml fails loud."""
 
     def test_malformed_existing_tools_yaml_fails_loud(self, tmp_path):
         """Present + non-empty + schema-invalid -> CliError."""
@@ -203,7 +203,7 @@ class TestMalformedExisting:
             detect_and_init(tmp_path, which_fn=_make_which_fn("ruff"))
 
     def test_force_regenerates_malformed_tools_yaml(self, tmp_path):
-        """D-24 escape hatch: force=True regenerates over malformed."""
+        """Escape hatch: force=True regenerates over malformed."""
         cfg_dir = tmp_path / ".code-forge"
         cfg_dir.mkdir()
         (cfg_dir / "tools.yaml").write_text(
@@ -237,7 +237,7 @@ class TestRoundTrip:
         assert len(registry) > 0
         for tc in registry.values():
             assert isinstance(tc, ToolConfig)
-            # V1 fix: command must be str, not list
+            # command must be str, not list
             assert isinstance(tc.command, str)
 
 
@@ -270,7 +270,7 @@ class TestForceFlag:
 # -- detection report format -----------------------------------------------
 
 class TestReportFormat:
-    """D-04: DetectionResult has detected and missing lists."""
+    """DetectionResult has detected and missing lists."""
 
     def test_detection_report_format(self, tmp_path):
         content = (
@@ -294,7 +294,7 @@ class TestErrorHandling:
     """Edge case error handling."""
 
     def test_corrupted_pyproject_toml_falls_back(self, tmp_path):
-        """DS-W1: invalid TOML -> fallback to PATH detection."""
+        """Invalid TOML -> fallback to PATH detection."""
         _write_pyproject(tmp_path, "[[bad\ninvalid toml content\n")
         (tmp_path / "app.py").write_text("x = 1\n")
         result = detect_toolchain(
@@ -306,7 +306,7 @@ class TestErrorHandling:
 # -- quiet mode ------------------------------------------------------------
 
 class TestQuietMode:
-    """Kimi-B4-1: quiet=True suppresses stdout."""
+    """quiet=True suppresses stdout."""
 
     def test_quiet_mode_no_stdout(self, tmp_path, capsys):
         (tmp_path / "app.py").write_text("x = 1\n")

@@ -7,7 +7,7 @@ non_ascii, flake8, pylint) plus the PARSER_DISPATCH system.  Each parser
 is tested for:
   - valid output -> correct Finding fields
   - empty string -> [] (clean run)
-  - malformed/corrupt input -> [ToolError] (Consensus #4)
+  - malformed/corrupt input -> [ToolError]
 """
 
 import json

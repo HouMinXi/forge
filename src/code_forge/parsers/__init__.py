@@ -41,7 +41,7 @@ def parse_output(
     """Dispatch to the correct parser by output_format.
 
     Raises KeyError on unknown format (registry validation happens
-    at dispatch time per Mimo F-01).
+    at dispatch time).
     """
     parser_fn = PARSER_DISPATCH[output_format]
     return parser_fn(output, tool_name, exit_code)

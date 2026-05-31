@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""TDD tests for backend config + resolution + probe (BACKEND-01, CLI-05).
+"""TDD tests for backend config + resolution + probe.
 
 Tests cover:
-  - BackendConfig parse + schema validation (D-27)
-  - Active-backend resolution (D-27 precedence + D-26 default)
-  - Timeout resolution (D-07 amended)
-  - Backend-agnostic reachability probe (D-28)
-  - Probe caching with TTL (D-08)
-  - Real-API opt-in (D-11)
+  - BackendConfig parse + schema validation
+  - Active-backend resolution (precedence + session default)
+  - Timeout resolution
+  - Backend-agnostic reachability probe
+  - Probe caching with TTL
+  - Real-API opt-in
 """
 from __future__ import annotations
 
@@ -68,12 +68,12 @@ def _noop_run(*_a, **_kw):
 
 
 # =====================================================================
-# Config schema + parse (D-27)
+# Config schema + parse
 # =====================================================================
 
 
 class TestBackendConfigParse:
-    """BackendConfig parses entries into frozen dataclass (D-27)."""
+    """BackendConfig parses entries into frozen dataclass."""
 
     def test_backendconfig_parses_api_openai(self):
         entry = _api_entry()
@@ -127,7 +127,7 @@ class TestBackendConfigParse:
             load_backend_configs({"backends": [entry]})
 
     def test_backendconfig_inline_secret_rejected(self):
-        """api_key (raw key) instead of api_key_env -> CliError (D-27)."""
+        """api_key (raw key) instead of api_key_env -> CliError."""
         entry = _api_entry(api_key="sk-secret-raw-key-value")
         with pytest.raises(CliError, match="api_key_env"):
             load_backend_configs({"backends": [entry]})
@@ -139,7 +139,7 @@ class TestBackendConfigParse:
 
 
 # =====================================================================
-# Active-backend resolution (D-27 precedence + D-26 default)
+# Active-backend resolution (precedence + session default)
 # =====================================================================
 
 
@@ -166,14 +166,14 @@ class TestResolveBackend:
         assert result.name == "deepseek"
 
     def test_resolve_backend_session_default_when_no_config_no_env(self):
-        """No env + no configs -> DEFAULT_BACKEND (D-26 session model)."""
+        """No env + no configs -> DEFAULT_BACKEND (session model)."""
         result = resolve_backend(env={}, configs=[])
         assert result is DEFAULT_BACKEND
         assert result.type == "cli"
         assert result.model == ""
 
     def test_resolve_backend_has_no_diff_parameter(self):
-        """D-26 NON-GOAL guard: signature has no diff/complexity/size."""
+        """NON-GOAL guard: signature has no diff/complexity/size."""
         sig = inspect.signature(resolve_backend)
         param_names = set(sig.parameters.keys())
         forbidden = {
@@ -182,7 +182,7 @@ class TestResolveBackend:
         }
         overlap = param_names & forbidden
         assert overlap == set(), (
-            "resolve_backend MUST NOT take diff-related params (D-26): %s"
+            "resolve_backend MUST NOT take diff-related params: %s"
             % overlap
         )
 
@@ -211,7 +211,7 @@ class TestResolveBackend:
 
 
 # =====================================================================
-# Timeout resolution (D-07 amended)
+# Timeout resolution
 # =====================================================================
 
 
@@ -240,7 +240,7 @@ class TestTimeoutResolution:
 
 
 # =====================================================================
-# Backend-agnostic reachability probe -- CLI path (D-28)
+# Backend-agnostic reachability probe -- CLI path
 # =====================================================================
 
 
@@ -359,7 +359,7 @@ class TestProbeCli:
 
 
 # =====================================================================
-# Backend-agnostic reachability probe -- API path (D-28)
+# Backend-agnostic reachability probe -- API path
 # =====================================================================
 
 
@@ -395,7 +395,7 @@ class TestProbeApi:
 
 
 # =====================================================================
-# Probe caching (D-08)
+# Probe caching
 # =====================================================================
 
 
@@ -581,6 +581,57 @@ class TestProbeCache:
         )
         assert call_count[0] == 1
 
+    def test_probe_cache_cross_backend_miss(self, tmp_path):
+        """Cache from backend A must not satisfy a probe for backend B."""
+        call_count = {"a": 0, "b": 0}
+
+        def mock_run_a(cmd, **kw):
+            call_count["a"] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        def mock_run_b(cmd, **kw):
+            call_count["b"] += 1
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        backend_a = BackendConfig(
+            name="backend-a", type="cli", model="",
+        )
+        backend_b = BackendConfig(
+            name="backend-b", type="cli", model="",
+        )
+
+        # Probe backend A -- writes cache with backend="backend-a"
+        probe_backend(
+            backend_a,
+            which_fn=_noop_which,
+            run_cmd=mock_run_a,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert call_count["a"] == 1
+
+        # Probe backend B within TTL -- must NOT reuse A's cache
+        probe_backend(
+            backend_b,
+            which_fn=_noop_which,
+            run_cmd=mock_run_b,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1060.0,
+        )
+        assert call_count["b"] == 1, (
+            "backend B should re-probe, not use backend A's cached result"
+        )
+
     def test_invalidate_probe_cache(self, tmp_path):
         """invalidate_probe_cache removes the cache file."""
         cache_file = tmp_path / "backend_probe_cache.json"
@@ -592,7 +643,7 @@ class TestProbeCache:
 
 
 # =====================================================================
-# Real-API opt-in (D-11 generalized)
+# Real-API opt-in
 # =====================================================================
 
 

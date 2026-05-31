@@ -44,7 +44,7 @@ class DetectionResult:
 # PARSER_DISPATCH. Tools without it (pytest, mypy) are detected but
 # not written to tools.yaml.
 #
-# CRITICAL (V1 fix): command values are str, not list.
+# CRITICAL: command values are str, not list.
 # ToolConfig.command is type str (registry.py:38).
 #
 # flake8 has toml_section=None because flake8 does not read
@@ -149,7 +149,7 @@ def detect_toolchain(
 
     Strategy:
       1. Try pyproject.toml: walk [tool.*] sections, verify via PATH.
-      2. If pyproject.toml has no recognized [tool.*] sections (R2-1),
+      2. If pyproject.toml has no recognized [tool.*] sections,
          fall back to PATH scan for all known Python tools.
       3. If no pyproject.toml or TOML is corrupt, check for Python
          indicators (*.py, setup.py, setup.cfg, requirements.txt)
@@ -157,7 +157,7 @@ def detect_toolchain(
       4. flake8 config-file detection runs ALWAYS (independent of
          the [tool.*] walk) because flake8 has no pyproject.toml
          support.
-      5. If nothing detected, raise CliError (D-02).
+      5. If nothing detected, raise CliError.
 
     Args:
         project_root: Path to project root directory.
@@ -168,7 +168,7 @@ def detect_toolchain(
         DetectionResult with detected/missing tool lists.
 
     Raises:
-        CliError: if no Python indicators found (D-02).
+        CliError: if no Python indicators found.
     """
     detected: list[str] = []
     missing: list[str] = []
@@ -210,14 +210,14 @@ def detect_toolchain(
                         else:
                             missing.append(name)
 
-            # R2-1 fix: if pyproject.toml parsed OK but no recognized
+            # If pyproject.toml parsed OK but no recognized
             # [tool.*] sections produced any detected tools, fall back
             # to PATH scan for all known Python tools.
             if not detected:
                 _scan_path_for_tools(which_fn, detected, missing)
 
         except tomllib.TOMLDecodeError:
-            # DS-W1: corrupted TOML -> log warning, fall through to
+            # Corrupted TOML -> log warning, fall through to
             # fallback detection instead of crashing
             logger.warning(
                 "Failed to parse %s, falling back to PATH detection",
@@ -246,7 +246,7 @@ def detect_toolchain(
             _scan_path_for_tools(which_fn, detected, missing)
 
     # flake8 config-file detection: runs ALWAYS, independent of
-    # the [tool.*] walk and the R2-1 PATH-scan fallback.
+    # the [tool.*] walk and the PATH-scan fallback.
     # flake8 has no pyproject.toml [tool.flake8] support.
     if _has_flake8_config(project_root):
         binary = PYTHON_TOOL_REGISTRY["flake8"]["binary"]
@@ -262,7 +262,7 @@ def detect_toolchain(
         if name in missing:
             missing.remove(name)
 
-    # D-02: no tools detected at all
+    # No tools detected at all
     if not detected and not missing:
         raise CliError(
             "No toolchain detected. L0 has no static analysis tools. "
@@ -292,7 +292,7 @@ def generate_tools_yaml(
         output_path: Path to write tools.yaml.
 
     Raises:
-        CliError: if no linter tools have tools_yaml_entry (D-02).
+        CliError: if no linter tools have tools_yaml_entry.
     """
     tools_dict: dict[str, dict] = {}
     for tool_name in result.detected:
@@ -320,30 +320,30 @@ def detect_and_init(
 ) -> DetectionResult:
     """Detect toolchain and generate tools.yaml if missing.
 
-    Idempotency (D-03): if tools.yaml exists and is non-empty,
+    Idempotent: if tools.yaml exists and is non-empty,
     skip generation unless force=True.
 
     Args:
         project_root: Path to project root directory.
         force: Force regeneration even if tools.yaml exists.
-        quiet: Suppress stdout detection report (Kimi-B4-1).
+        quiet: Suppress stdout detection report.
         which_fn: Callable for PATH lookup (dependency injection).
 
     Returns:
         DetectionResult with detected/missing tool lists.
 
     Raises:
-        CliError: on empty project (D-02) or malformed existing
-            tools.yaml (D-24).
+        CliError: on empty project or malformed existing
+            tools.yaml.
     """
     tools_yaml_path = project_root / ".code-forge" / "tools.yaml"
 
-    # Idempotency check (D-03): skip if existing non-empty tools.yaml
+    # Idempotency check: skip if existing non-empty tools.yaml
     if tools_yaml_path.exists() and not force:
         try:
             registry = load_registry(str(tools_yaml_path))
         except (FileNotFoundError, ValueError) as exc:
-            # D-24: present but malformed -> fail loud, do not
+            # Present but malformed -> fail loud, do not
             # silently overwrite a hand-edited file
             raise CliError(
                 "Existing %s is malformed: %s. "
@@ -353,14 +353,14 @@ def detect_and_init(
 
         if registry:
             # Existing non-empty registry -> return without regeneration
-            # DS-B1: use "python" as language, not "existing" sentinel
+            # Use "python" as language, not "existing" sentinel
             return DetectionResult(
                 detected=list(registry.keys()),
                 missing=[],
                 language="python",
             )
         # load_registry returned {} -> empty/zero-byte/null tools
-        # Fall through to regenerate (D-03)
+        # Fall through to regenerate
 
     result = detect_toolchain(project_root, which_fn=which_fn)
     generate_tools_yaml(result, tools_yaml_path)
