@@ -64,7 +64,7 @@ class TestDetectSubcommand:
             language="python",
         )
         with patch(
-            "code_forge.cli.detect_and_init",
+            "code_forge.detect.detect_and_init",
             return_value=fake_result,
         ) as mock_dai:
             monkeypatch.setattr(
@@ -83,7 +83,7 @@ class TestDetectSubcommand:
             language="python",
         )
         with patch(
-            "code_forge.cli.detect_and_init",
+            "code_forge.detect.detect_and_init",
             return_value=fake_result,
         ) as mock_dai:
             monkeypatch.setattr(
@@ -97,7 +97,7 @@ class TestDetectSubcommand:
     def test_detect_no_python_exits_2(self, monkeypatch, capsys):
         """detect in empty project -> exits 2 (CliError)."""
         with patch(
-            "code_forge.cli.detect_and_init",
+            "code_forge.detect.detect_and_init",
             side_effect=CliError(
                 "No toolchain detected. L0 has no static "
                 "analysis tools."
@@ -136,7 +136,7 @@ class TestResolveOutletSubcommand:
     def test_resolve_outlet_prints_cli(self, monkeypatch, capsys):
         """FORGE_OUTLET=cli -> prints 'cli' to stdout, exits 0."""
         with patch(
-            "code_forge.cli.resolve_outlet",
+            "code_forge.outlet_resolver.resolve_outlet",
             return_value="cli",
         ):
             monkeypatch.setattr(
@@ -151,7 +151,7 @@ class TestResolveOutletSubcommand:
     def test_resolve_outlet_prints_inline(self, monkeypatch, capsys):
         """FORGE_OUTLET=inline -> prints 'inline' to stdout, exits 0."""
         with patch(
-            "code_forge.cli.resolve_outlet",
+            "code_forge.outlet_resolver.resolve_outlet",
             return_value="inline",
         ):
             monkeypatch.setattr(
@@ -168,7 +168,7 @@ class TestResolveOutletSubcommand:
     ):
         """Backend unreachable -> stderr diagnostic, exits 1."""
         with patch(
-            "code_forge.cli.resolve_outlet",
+            "code_forge.outlet_resolver.resolve_outlet",
             side_effect=CliError(
                 "Configure a review backend or set "
                 "FORGE_OUTLET=inline. Reachability: mock"
@@ -188,7 +188,7 @@ class TestResolveOutletSubcommand:
     ):
         """Invalid FORGE_OUTLET value -> exits 2 (ValueError)."""
         with patch(
-            "code_forge.cli.resolve_outlet",
+            "code_forge.outlet_resolver.resolve_outlet",
             side_effect=ValueError(
                 "invalid outlet 'bogus' from FORGE_OUTLET env "
                 "(expected: cli|inline)"
@@ -212,7 +212,7 @@ class TestResolveOutletSubcommand:
     def test_resolve_outlet_stdout_not_stderr(self, monkeypatch, capsys):
         """resolve-outlet prints outlet value to stdout, not stderr."""
         with patch(
-            "code_forge.cli.resolve_outlet",
+            "code_forge.outlet_resolver.resolve_outlet",
             return_value="cli",
         ):
             monkeypatch.setattr(
