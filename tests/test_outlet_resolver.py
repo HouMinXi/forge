@@ -4,8 +4,8 @@
 
 Mirrors test_mode_resolver.py structure:
   - TestEnvOverride: FORGE_OUTLET env var wins over gate.yaml/reachability
-  - TestGateYamlOutlet: gate.yaml outlet field (D-22 option b)
-  - TestBackendReachabilityDefault: no override -> reachability probe (D-29)
+  - TestGateYamlOutlet: gate.yaml outlet field
+  - TestBackendReachabilityDefault: no override -> reachability probe
   - TestEdgeCases: whitespace, invalid, case-insensitive, inline-never-probes
   - TestLoadOutletFromGate: standalone gate.yaml reader tests
 """
@@ -108,7 +108,7 @@ class TestEnvOverride:
 
 
 class TestGateYamlOutlet:
-    """gate.yaml outlet field (D-22 option b: separate lightweight reader)."""
+    """gate.yaml outlet field (separate lightweight reader)."""
 
     def test_gate_yaml_outlet_cli(self, tmp_path):
         """gate.yaml with outlet: cli, no env override -> returns 'cli'."""
@@ -148,7 +148,7 @@ class TestGateYamlOutlet:
 
 
 class TestBackendReachabilityDefault:
-    """No override -> reachability probe (D-29)."""
+    """No override -> reachability probe."""
 
     def test_no_override_backend_reachable(self):
         """Backend reachable -> returns 'cli' (fail-safe Outlet A)."""
@@ -160,7 +160,7 @@ class TestBackendReachabilityDefault:
         assert result == "cli"
 
     def test_no_override_backend_unreachable(self):
-        """Backend unreachable -> raises CliError (FAIL CLOSED, D-29)."""
+        """Backend unreachable -> raises CliError (FAIL CLOSED)."""
         with pytest.raises(CliError) as exc_info:
             resolve_outlet(
                 env={},
@@ -181,7 +181,7 @@ class TestEdgeCases:
     def test_inline_override_skips_reachability_probe(self):
         """FORGE_OUTLET=inline with a bomb probe -> returns 'inline'.
 
-        Proves Outlet B NEVER probes (D-29).
+        Proves Outlet B NEVER probes.
         """
         result = resolve_outlet(
             env={"FORGE_OUTLET": "inline"},
@@ -217,7 +217,7 @@ class TestEdgeCases:
 
 
 class TestLoadOutletFromGate:
-    """Standalone gate.yaml reader (D-22 option b)."""
+    """Standalone gate.yaml reader."""
 
     def test_reads_only_outlet(self, tmp_path):
         """gate.yaml with outlet: inline but NO test: section -> ok."""
