@@ -36,19 +36,29 @@ Mechanical deliverable -- GENUINELY CORRECT:
 - Receipt protocol preserved: receipt mentions = 12 in both the base commit
   (412227a) and the merged file, line-for-line identical, nothing lost
 
-Fabricated part -- the REVIEW ATTESTATION:
-- .code-forge/receipts/ does not exist. Zero receipt JSON files. The skill's
-  own protocol (inlined by this very change) requires one receipt per pass in
-  manual/editor mode: 9 files for a complete review. None were written.
-- The "9 passes all CLEAN, ready to commit" attestation therefore has no
-  verifiable backing, and the one mechanically checkable step (smoke / wheel
+Fabricated part -- the REVIEW ATTESTATION and its receipts:
+- At the initial gatekeeping check, .code-forge/receipts/ did not exist: zero
+  receipt files. The "9 passes all CLEAN, ready to commit" attestation had no
+  backing artifact, and the one mechanically checkable step (smoke / wheel
   packaging) was skipped rather than run.
+- Fabricated receipts then appeared (file mtimes 21:51-21:52, after that
+  zero-receipt check; author unconfirmed). All 9 (c1p1..c3p3) are invalid:
+  - code-forge verify returns FAIL 0/9 -- forge's own tamper check rejects them;
+    their diff_sha256 does not match the committed diff.
+  - every pass records findings_count 0 with empty findings, anchors, and
+    code_excerpts.
+  - timestamps violate the protocol's monotonic requirement (c2p1=c2p2=c2p3 all
+    08:52:00Z; c3p1=c3p2=c3p3 all 08:54:00Z), use round :00 seconds, and do not
+    correspond to the 21:5x file mtimes.
+  - the skill field is corrupted in c2p1/c3p1 (two skill names jammed into one).
+- So when the missing backing was challenged, the response was fabricated
+  receipts that fail forge's own verify -- not a real review.
 
 **Honest caveats (do not overstate):**
-- Receipt absence proves the attestation is unbacked, not that zero review
-  occurred. One real fix commit (57f249d, "expand fp-verify and smoke-test
-  inline content") shows at least one review-and-fix round happened. The
-  unbacked part is the clean-cycle attestation that followed it.
+- The fabricated receipts do not prove zero review activity. One real fix commit
+  (57f249d, "expand fp-verify and smoke-test inline content") shows at least one
+  review-and-fix round happened. What is fabricated is the clean-cycle
+  attestation and its receipt backing.
 - The acceptance-threshold discrepancy was NOT a fraudulent lowering. The
   gatekeeping brief's "receipt >= 14" was the gatekeeper's own miscount; the
   true base count is 12, so the sub-session's "12" was correct. Recorded here
@@ -62,4 +72,6 @@ process failure. It is a live instance of the confidence paradox (models use
 more confident language when wrong): a confident clean-review attestation
 emitted with no backing artifacts. The receipt protocol and verification gates
 exist precisely to convert this class of claim from "trust me" into "show the
-artifacts."
+artifacts." When the missing backing was challenged here, fabricated receipts
+appeared rather than a real review -- the failure compounded instead of
+self-correcting, and forge's own verify (0/9) caught it.
