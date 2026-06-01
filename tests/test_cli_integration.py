@@ -73,7 +73,7 @@ class TestGitRepoPassCI:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -94,7 +94,7 @@ class TestRegistryMissing:
         _git_init_repo(repo)
         # No tools.yaml written.
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
+            sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -124,7 +124,7 @@ class TestSandboxWarning:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "--sandbox", "a.py"],
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "--sandbox", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -140,7 +140,7 @@ class TestTopLevelExceptionCatch:
         self, tmp_path, monkeypatch, capsys
     ):
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
+            sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(tmp_path))
 
@@ -177,7 +177,7 @@ class TestMainReturnsInt:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         result = main()
@@ -232,7 +232,7 @@ class TestReviewAutoDetect:
         ) as mock_dai:
             monkeypatch.setattr(
                 sys, "argv",
-                ["code-forge", "--mode", "ci", "a.py"],
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -275,7 +275,7 @@ class TestReviewAutoDetect:
         ) as mock_dai:
             monkeypatch.setattr(
                 sys, "argv",
-                ["code-forge", "--mode", "ci", "a.py"],
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -305,7 +305,7 @@ class TestReviewAutoDetect:
         ) as mock_dai:
             monkeypatch.setattr(
                 sys, "argv",
-                ["code-forge", "--mode", "ci",
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
                  "--registry", "custom.yaml", "a.py"],
             )
             monkeypatch.chdir(str(repo))
@@ -348,7 +348,7 @@ class TestReviewAutoDetect:
         ):
             monkeypatch.setattr(
                 sys, "argv",
-                ["code-forge", "--mode", "ci", "a.py"],
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -387,7 +387,7 @@ class TestReviewAutoDetect:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
