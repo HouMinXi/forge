@@ -509,11 +509,11 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Step 1: mode
     mode = resolve_mode(args.mode, env, sys.stdout.isatty())
 
-    # Step 2: registry (with auto-detect integration, D-20)
+    # Step 2: registry (with auto-detect fallback)
     is_default_registry = (args.registry == ".code-forge/tools.yaml")
 
     def _safe_load_registry(path):
-        """Load registry, translating ValueError to CliError (R2-4)."""
+        """Load registry, translating ValueError to CliError."""
         try:
             return load_registry(path)
         except ValueError as exc:
@@ -1103,7 +1103,7 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
     """Resolve and print the active review outlet.
 
     Lazy-imports resolve_outlet. Does NOT pass a reachability_fn
-    so resolve_outlet uses its default backend probe (D-29).
+    so resolve_outlet uses its default backend probe.
 
     Returns:
         EXIT_PASS on success.
