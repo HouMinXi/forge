@@ -764,9 +764,35 @@ For each accumulated finding that was fixed, verify:
 
 No other dismissal reasons are valid.
 
+The following are NOT valid reasons to dismiss a finding:
+- "The caller normally prevents this input"
+- "This only happens if [upstream function] fails"
+- "Extremely unlikely in practice"
+- "I cannot construct a test case" (absence of test != absence of bug)
+
 ## Output
 
-Each finding classified as: CONFIRMED / DOWNGRADED / DISMISSED, with evidence and which verification steps failed.
+For each finding from the three-cycle review:
+
+```
+### Finding: <original title>
+**Source**: <which pass reported it> (e.g., adversarial-qe cycle 2)
+**Verdict**: CONFIRMED / DOWNGRADED / DISMISSED
+**Evidence**: <1-3 sentences of concrete evidence>
+**Steps failed**: <which of the 10 steps led to dismissal, if any>
+```
+
+Summary table at the end:
+
+| Finding | Source | Verdict | Reason |
+|---------|--------|---------|--------|
+| ...     | ...    | ...     | ...    |
+
+## Boundaries
+
+- This pass does NOT find new issues. It only validates existing findings.
+- Do not expand scope beyond the findings list.
+- Do not fix code -- only classify findings as confirmed/dismissed.
 
 ---
 
@@ -809,6 +835,22 @@ These evade `bash -n` and `shellcheck` -- test for them explicitly:
 3. `((x++))` returns old value (post-increment evaluates to 0 when x=0)
 4. `$(...)` captures multi-line output (use `grep -q` with stdout redirect)
 5. `jq -e` prints to stdout (always `>/dev/null 2>&1`)
+
+## Assembly Rules
+
+1. **One assertion per expected behavior** -- don't combine checks into one `[[ ... ]]`
+2. **Act before Assert** -- run the command first (via `run_and_capture`), then assert on the captured state
+3. **Values through parameters** -- captured stdout/stderr/status go directly into assertion parameters, not global regex
+4. **Every test starts with `source primitives.sh`** -- source path: `~/.claude/skills/smoke-test/test-library/shell/primitives.sh`; one line, all 19 functions (16 primitives + 3 helpers) available
+5. **No gaps in coverage** -- decision table required primitives are non-negotiable
+
+## Common Pitfalls
+
+1. **Skipping Act and going straight to Assert**: primitives need captured state -- always `run_and_capture` first
+2. **Checking zombie AFTER wait**: `assert_no_zombie` must run before `concurrent_wait` reaps processes
+3. **Using `$?` instead of `$SMOKE_LAST_STATUS`**: `$?` changes on every command; `$SMOKE_LAST_STATUS` is stable
+4. **Not sourcing primitives.sh**: every test script must start with `source primitives.sh`
+5. **Writing custom assertion libraries for Python/Go/C**: use the language's standard test framework (pytest, go test). Shell is the only language that needs `primitives.sh`
 
 ## Kernel C Exception
 
