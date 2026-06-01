@@ -427,6 +427,14 @@ def _probe_cli(
                 % timeout
             ),
         )
+    except OSError as exc:
+        return ProbeResult(
+            ok=False,
+            error=(
+                "claude reachability probe failed to start: %s"
+                % exc
+            ),
+        )
 
     if result.returncode != 0:
         stderr_text = (result.stderr or "")[:100]
