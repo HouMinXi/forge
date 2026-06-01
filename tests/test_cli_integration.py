@@ -185,12 +185,12 @@ class TestMainReturnsInt:
 
 
 # ---------------------------------------------------------------------------
-# Review auto-detect integration (D-20)
+# Review auto-detect integration
 # ---------------------------------------------------------------------------
 
 
 class TestReviewAutoDetect:
-    """D-20: review pipeline calls detect_and_init when tools.yaml missing."""
+    """Review pipeline calls detect_and_init when tools.yaml missing."""
 
     def test_review_missing_default_tools_yaml_triggers_detect(
         self, tmp_path, monkeypatch, capsys,
