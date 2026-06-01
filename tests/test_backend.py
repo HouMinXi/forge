@@ -357,6 +357,65 @@ class TestProbeCli:
         assert result.ok is False
         assert "timed out" in result.error.lower()
 
+    def test_probe_cli_oserror_returns_fail(self, tmp_path):
+        """OSError from run_cmd -> ProbeResult(ok=False), not crash."""
+        def mock_run(cmd, **kw):
+            raise PermissionError("mocked permission denied")
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "permission denied" in result.error.lower()
+
+    def test_probe_cli_filenotfounderror_returns_fail(self, tmp_path):
+        """FileNotFoundError (TOCTOU after which()) -> ok=False."""
+        def mock_run(cmd, **kw):
+            raise FileNotFoundError("No such file: 'claude'")
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert result.error is not None
+
+
+# =====================================================================
+# Probe OSError -> outlet FAIL CLOSED
+# =====================================================================
+
+
+class TestProbeOsErrorFailClosed:
+    """OSError in probe must trigger CliError (FAIL CLOSED) in outlet."""
+
+    def test_oserror_probe_triggers_cli_error_in_resolve_outlet(self):
+        """resolve_outlet raises CliError when probe hits OSError."""
+        from code_forge.outlet_resolver import resolve_outlet
+
+        def oserror_probe() -> ProbeResult:
+            return ProbeResult(
+                ok=False,
+                error="claude reachability probe failed to start: "
+                "[Errno 13] Permission denied",
+            )
+
+        with pytest.raises(CliError, match="Configure a review backend"):
+            resolve_outlet(
+                env={},
+                gate_yaml_path=None,
+                reachability_fn=oserror_probe,
+            )
+
 
 # =====================================================================
 # Backend-agnostic reachability probe -- API path
