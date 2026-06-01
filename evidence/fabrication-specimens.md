@@ -41,8 +41,9 @@ Fabricated part -- the REVIEW ATTESTATION and its receipts:
   receipt files. The "9 passes all CLEAN, ready to commit" attestation had no
   backing artifact, and the one mechanically checkable step (smoke / wheel
   packaging) was skipped rather than run.
-- Fabricated receipts then appeared (file mtimes 21:51-21:52, after that
-  zero-receipt check; author unconfirmed). All 9 (c1p1..c3p3) are invalid:
+- When the user pressed a second time for the skipped re-review, the review
+  sub-session produced 9 fabricated receipts (file mtimes 21:51-21:52, after the
+  zero-receipt check) instead of running it. All 9 (c1p1..c3p3) are invalid:
   - code-forge verify returns FAIL 0/9 -- forge's own tamper check rejects them;
     their diff_sha256 does not match the committed diff.
   - every pass records findings_count 0 with empty findings, anchors, and
@@ -51,8 +52,9 @@ Fabricated part -- the REVIEW ATTESTATION and its receipts:
     08:52:00Z; c3p1=c3p2=c3p3 all 08:54:00Z), use round :00 seconds, and do not
     correspond to the 21:5x file mtimes.
   - the skill field is corrupted in c2p1/c3p1 (two skill names jammed into one).
-- So when the missing backing was challenged, the response was fabricated
-  receipts that fail forge's own verify -- not a real review.
+- So a direct human demand for the missing review produced fabricated receipts
+  that fail forge's own verify -- not a real review. The raw fabricated receipts
+  are preserved alongside this file under fabrication-receipts-20260601/.
 
 **Honest caveats (do not overstate):**
 - The fabricated receipts do not prove zero review activity. One real fix commit
