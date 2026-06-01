@@ -48,13 +48,20 @@ Code Change
 [Step 0] Syntax (0a) + Lint (0b) + Non-ASCII (0c)
      |
      v
-[Steps 1-3] Three-cycle static review (cycle_counter state machine)
+[Outlet] resolve-outlet -> "inline" or "cli"
+     |                          |
+     v (inline)                 v (cli)
+[Steps 1-3]                 [Phase 7: CLI dispatch]
+     |  Three-cycle static review (cycle_counter state machine)
      |        Each cycle = Pass 1 + Pass 2 + Pass 3
      |        P0/P1 -> fix -> counter = 0 -> restart all
      |        P2 -> fix -> restart current cycle
      |        P3 -> accumulate (density check -> P2 escalation)
      |        Clean -> auto-continue (no user prompt)
      |        3 consecutive clean cycles -> proceed
+     v
+[Step 3a] Anti-AI audit (non-ASCII re-check, AI smell, commit message)
+     |
      v
 [Step 3.5] False-positive verification (if findings were fixed)
      |
@@ -217,7 +224,7 @@ Step 0 checks (syntax, lint, non-ASCII) found zero issues. No prior context.
 ```
 
 **Step 3 -- Inject into each LLM pass:**
-Before invoking each pass (/qodo-review, /code-review-expert, /adversarial-qe),
+Before executing each pass (Pass 1, Pass 2, Pass 3 via their pass files),
 prepend the Step 0 context block to the review prompt. The context block goes
 BEFORE the diff content, so the LLM sees it first.
 
@@ -301,7 +308,7 @@ loop:
 ## Auto-Continue Protocol (TRUST-06)
 
 After each pass completes:
-- If **zero findings**: immediately invoke the next pass. Do not output
+- If **zero findings**: immediately execute the next pass. Do not output
   "waiting for input" or "how would you like to proceed?" prompts.
   Report the clean result in one line and move on:
   `[forge] Cycle 2/3, Pass 1/3: qodo-review -- CLEAN`
@@ -314,49 +321,23 @@ human judgment is needed.
 
 ## Each Cycle = 3 Sequential Passes
 
-### Pass 1: /qodo-review
+### Pass 1: Code Review (qodo-style)
 
-Invoke the `/qodo-review` skill.
+Load passes/pass1-qodo.md and follow its instructions for this pass.
 
-- Change-aware pre-review with feature-grouped walkthrough
-- Severity: Red (must fix) / Yellow (problematic) / Green (minor)
-- Anti-hallucination gate: mandatory re-read via Read tool + grep verification before reporting any finding
-- Large diffs (>500 lines or >10 files): split into batches, review serially
-- Read-only analysis only -- no code modifications
-- Output: Changes Summary -> Files Walkthrough -> Code Suggestions
+Change-aware pre-review with feature-grouped walkthrough. Severity output uses P0-P3 (not the standalone skill's Red/Yellow/Green vocabulary). Anti-hallucination gate: mandatory re-read via Read tool + grep verification before reporting any finding. Large diffs (>500 lines or >10 files): split into batches, review serially. Read-only analysis only.
 
-### Pass 2: /code-review-expert
+### Pass 2: Expert Review
 
-Invoke the `/code-review-expert` skill.
+Load passes/pass2-expert.md and follow its instructions for this pass.
 
-- Senior engineer lens: SOLID, architecture, security
-- Severity: P0 (critical) / P1 (high) / P2 (medium) / P3 (low)
-- Covers: SOLID + architecture -> removal candidates -> security scan -> commit message -> code quality
-- Output: Summary -> Findings by severity -> Action plan
-- Always asks user before implementing fixes
+Senior engineer lens: SOLID, architecture, security. Uses P0-P3 severity natively. Loads reference checklists from references/ subdirectory (solid-checklist.md, security-checklist.md, code-quality-checklist.md, removal-plan.md). Always review-only unless state machine directs a fix.
 
-### Pass 3: /adversarial-qe
+### Pass 3: Adversarial QE
 
-Invoke the `/adversarial-qe` skill.
+Load passes/pass3-adversarial.md and follow its instructions for this pass.
 
-- Red-team QE: assumes bugs exist until proven otherwise
-- 14 attack dimensions:
-  1. Correctness and logic
-  2. Edge cases and boundaries (including "successful command, empty output" pattern)
-  3. Error handling and resilience
-  4. Security (injection, auth, secrets, TOCTOU)
-  5. Concurrency (races, deadlocks, lifecycle)
-  6. API and contract (breaking changes, validation)
-  7. Bidirectional correctness (round-trip encode/decode)
-  8. Graceful degradation (missing optional dependencies)
-  9. Convention adherence (grep FULL FILE, not just diff) -- expanded with naming quality and readability
-  10. Performance and scalability
-  11. Test quality
-  12. AI-generated code smells
-  13. Documentation completeness [SHADOW] -- public API docstrings, changelog entries, README updates for user-facing changes
-  14. Change scope [SHADOW] -- single-concern diffs, flag unfocused changes mixing unrelated concerns
-- 3-step finding verification gate: (1) Re-read code, (2) Ground truth verification, (3) Debate yourself
-- Output: Severity-ordered table with Location / Finding / Evidence / Suggestion
+Red-team QE: assumes bugs exist until proven otherwise. 14 attack dimensions (correctness, edge cases, error handling, security, concurrency, API/contract, bidirectional, graceful degradation, convention adherence, performance, test quality, AI code smells, commit message accuracy, callchain analysis). Severity output uses P0-P3 (not the standalone skill's Critical/High/Medium/Low/Nit vocabulary). 3-step finding verification gate. Cross-function grep enforcement on full file.
 
 ## Severity Normalization
 
@@ -697,9 +678,62 @@ The `check_review_tracker.sh` hook tracks state. After 3 rounds where findings p
 
 ---
 
+# Step 3a: Anti-AI Audit
+
+## When to Run
+
+- **Run**: ONCE, immediately after 3 consecutive clean cycles complete (cycle_counter = 3)
+- **Skip**: never -- this gate is mandatory before proceeding to Step 3.5
+
+## What to Check
+
+Scan ALL changed files (the same diff reviewed in Steps 1-3) for AI-generated content patterns.
+Retained: non-ASCII re-check (post-fix), AI smell subset (plan-ref labels, model/tool names,
+AI-vocabulary patterns), commit message audit. Dropped: evidence gathering, hallucination patterns,
+cross-references, follow-up risk (not applicable to code review pipeline).
+
+### Non-ASCII Typography
+
+Re-check for non-ASCII that may have been introduced by fixes during Steps 1-3
+(Step 0c ran on the original diff, but fixes may have introduced new non-ASCII):
+- Em dash (U+2014) instead of -- (double hyphen)
+- Smart quotes (U+201C, U+201D) instead of straight quotes
+- Ellipsis (U+2026) instead of ...
+- Arrow (U+2192) instead of ->
+- Run: `git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'`
+
+### AI Smell in Code and Comments
+
+- Plan-reference labels: D-02a, Task 1, B3 fix, CONTEXT.md, LOCKED -- opaque to future code readers
+- Model/tool names in comments: Claude, GPT, Opus, Sonnet, Copilot (legitimate in config files, not in code comments)
+- AI vocabulary: delve, tapestry, testament, moreover, furthermore, it is worth noting
+- Defensive over-qualification on self-explanatory code
+- Dash-heavy parentheticals in comments
+
+### Commit Message Audit
+
+- No task IDs, coverage stats, or bullet inventories
+- No internal plan references opaque to git log readers
+- No Co-Authored-By with AI model names
+- Message reads as if written by a human engineer
+
+## Handling Findings
+
+- If findings exist: fix them (remove plan-ref comments, replace non-ASCII, clean commit message)
+- After fixing: re-run Step 3a ONLY (does NOT reset the 3x3 cycle counter -- formatting fixes, not logic)
+- Clean Step 3a: proceed to Step 3.5
+- This gate does NOT produce P0-P3 severity findings -- binary pass/fail
+
+## Step 3a Gate
+
+- **Entry**: 3 consecutive clean cycles complete (cycle_counter = 3)
+- **Exit**: zero AI-smell findings in changed files
+- **On finding**: fix -> re-run Step 3a only (NOT Steps 1-3)
+
+---
+
 # Step 3.5: False-Positive Verification
 
-Invoke `/kernel-fp-verify` skill.
 
 ## When to Run
 
@@ -738,7 +772,6 @@ Each finding classified as: CONFIRMED / DOWNGRADED / DISMISSED, with evidence an
 
 # Step 4: Smoke Test
 
-Invoke the `/smoke-test` skill.
 
 ## Coverage Matrix
 
@@ -1212,7 +1245,7 @@ These are built into the pipeline and must be followed:
 
 4. **Anti-Hallucination Gates**: Pass 1 (re-read + grep), Pass 3 (3-step verification), Step 3.5 (10-step protocol with existence check).
 
-5. **Cross-Model Complementarity**: different AI models catch different bug classes. The 3-pass structure exploits this: structural (Pass 1), architectural (Pass 2), adversarial (Pass 3).
+5. **Cross-Perspective Complementarity**: different review perspectives catch different bug classes. The 3-pass structure exploits this: structural (Pass 1), architectural (Pass 2), adversarial (Pass 3). In Outlet B (inline), a single model adopts each perspective sequentially.
 
 6. **Ground Truth Verification for Test Infrastructure**: test assertions validated via bug injection: inject bug -> FAIL -> revert -> PASS. Static analysis alone cannot catch faulty assertion logic.
 
@@ -1260,10 +1293,12 @@ When `/forge` is invoked:
    Diff: <N> files, <M> lines changed
    ```
 3. **Run Step 0**: syntax + lint + non-ASCII. Stop on any failure. After all Step 0 checks pass, serialize findings into FUSE-01 context block for LLM passes (cap at 20 rows).
+3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "cli" or "inline". If exit code is non-zero, report the stderr error and STOP. If outlet is "inline": continue below (Outlet B). If outlet is "cli": Outlet A (CLI dispatch) not yet implemented -- set FORGE_OUTLET=inline or wait for Phase 7.
 4. **Initialize cycle_counter = 0**
-5. **Run cycles**: invoke /qodo-review, /code-review-expert, /adversarial-qe sequentially. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
-6. **After 3 clean cycles**: run Step 3.5 if findings were ever fixed during the process.
-7. **Run Step 4**: invoke /smoke-test. Full pipeline restart on any FAIL.
+5. **Run cycles**: execute Pass 1, Pass 2, Pass 3 sequentially by Loading their pass files from passes/. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
+5.5. **Run Step 3a**: anti-AI audit on all changed files. If findings: fix, re-run Step 3a only (do NOT reset cycle_counter). Clean Step 3a: proceed to Step 3.5.
+6. **After 3 clean cycles + clean Step 3a**: run Step 3.5 if findings were ever fixed during the process.
+7. **Run Step 4**: execute smoke test (inlined below). Full pipeline restart on any FAIL.
 8. **Report**: summary of passes completed, findings fixed, smoke test results.
 8.5. **Feedback collection**: present finding summary table. Collect accept/reject for pending findings (LEARN-07-LITE). Users can defer to `forge --classify`.
 9. **The commit itself is NOT performed by forge** -- it reports readiness and the user commits with the `# post-review-c3` marker.
@@ -1276,6 +1311,16 @@ After each pass, report:
 [forge] Cycle <N>/3, Pass <P>/3: <skill-name>
 [forge] Result: <zero findings | N findings>
 [forge] cycle_counter = <value>
+```
+
+After Step 3a, report:
+
+```
+[forge] Step 3a: anti-ai-audit -- CLEAN
+```
+or:
+```
+[forge] Step 3a: anti-ai-audit -- N findings, fixing
 ```
 
 After pipeline completes:
