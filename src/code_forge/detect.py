@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Toolchain auto-detection for Python projects (CLI-03/CLI-04).
+"""Toolchain auto-detection for Python projects.
 
 Detects project toolchain from pyproject.toml [tool.*] sections,
 flake8 config files (.flake8, setup.cfg, tox.ini), and PATH-based
@@ -66,7 +66,7 @@ PYTHON_TOOL_REGISTRY: dict[str, dict] = {
         "toml_section": "tool.pylint",
         "binary": "pylint",
         "tools_yaml_entry": {
-            # "pylint_json" dispatch key added by Task 3 (parse_pylint).
+            # "pylint_json" dispatch key (parse_pylint).
             "command": "pylint --output-format=json",
             "output_format": "pylint_json",
             "file_patterns": ["*.py"],
