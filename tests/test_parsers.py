@@ -361,7 +361,7 @@ class TestParserDispatch:
         assert findings[0].level == "warning"
 
     def test_dispatch_unknown_format(self):
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="unknown_format"):
             parse_output("data", "unknown_format", "x")
 
 

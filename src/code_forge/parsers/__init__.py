@@ -40,10 +40,15 @@ def parse_output(
 ) -> list[Finding | ToolError]:
     """Dispatch to the correct parser by output_format.
 
-    Raises KeyError on unknown format (registry validation happens
-    at dispatch time).
+    Raises ValueError on unknown format (defense-in-depth; registry
+    validation normally catches this at load time).
     """
-    parser_fn = PARSER_DISPATCH[output_format]
+    parser_fn = PARSER_DISPATCH.get(output_format)
+    if parser_fn is None:
+        raise ValueError(
+            "unknown output_format '%s' (valid: %s)"
+            % (output_format, ", ".join(sorted(PARSER_DISPATCH)))
+        )
     return parser_fn(output, tool_name, exit_code)
 
 

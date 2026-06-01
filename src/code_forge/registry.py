@@ -6,36 +6,18 @@ Reads .code-forge/tools.yaml and returns structured ToolConfig objects.
 Validates required fields and filters disabled entries (Round 3 C-4).
 """
 
-import logging
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from typing import Optional
 
 import yaml
 
-logger = logging.getLogger(__name__)
+# Single source of truth: the valid output_format values are exactly
+# the keys that PARSER_DISPATCH can handle.  Any format that passes
+# validation here is guaranteed to be dispatchable at parse time.
+from code_forge.parsers import PARSER_DISPATCH  # no cycle (verified)
 
-# Known parser keys -- warn on unknown but do not reject.
-# "flake8" added for the flake8 text parser (parsers/flake8.py).
-# "sarif" added for the ruff entry (ruff emits output_format="sarif",
-#   dispatched via _parse_sarif; without this, load_registry warns).
-# "pylint_json" was already present (pylint --output-format=json).
-# NOTE: "ruff_json" is stale/unused -- no tool emits it after the
-#   ruff entry was fixed to output_format="sarif". Kept for backward
-#   compatibility; broader _KNOWN_FORMATS vs PARSER_DISPATCH
-#   reconciliation for non-Python tools (checkpatch, semgrep_json,
-#   golangci_json) is a deferred follow-up.
-_KNOWN_FORMATS = frozenset({
-    "shellcheck_json",
-    "ruff_json",
-    "semgrep_json",
-    "checkpatch",
-    "pylint_json",
-    "clippy_json",
-    "golangci_json",
-    "flake8",
-    "sarif",
-})
+_KNOWN_FORMATS = frozenset(PARSER_DISPATCH)
 
 # Fields that must be present in each tool entry
 _REQUIRED_FIELDS = ("command", "output_format", "file_patterns")
@@ -114,8 +96,10 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
 
         fmt = entry["output_format"]
         if fmt not in _KNOWN_FORMATS:
-            logger.warning(
-                "Tool '%s': unknown output_format '%s'", name, fmt
+            raise ValueError(
+                "Tool '%s': unknown output_format '%s' "
+                "(valid: %s)"
+                % (name, fmt, ", ".join(sorted(_KNOWN_FORMATS)))
             )
 
         tc = ToolConfig(
