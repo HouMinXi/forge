@@ -660,14 +660,14 @@ def _run(args, env, cwd: Path) -> Verdict:
     from .backend import resolve_backend, DEFAULT_BACKEND
     try:
         backend = resolve_backend(env, configs=[], cli_value=None)
-    except CliError:
+    except CliError as exc:
         # configs=[] means no backends.yaml loaded yet (Phase 8)
         # Fall back to DEFAULT_BACKEND if FORGE_BACKEND is set but not found
         backend = DEFAULT_BACKEND
         if env.get("FORGE_BACKEND"):
             warn(
                 "warning: FORGE_BACKEND=%s not found in configuration; "
-                "using default backend" % env.get("FORGE_BACKEND")
+                "using default backend (%s)" % (env.get("FORGE_BACKEND"), exc)
             )
 
     if args.sandbox:
