@@ -109,6 +109,31 @@ class TestBackendConfigParse:
         assert cfg.name == "claude-sub"
         assert cfg.model == "sonnet"
 
+    def test_parse_cli_backend_with_command(self):
+        """cli backend with explicit command field."""
+        entry = _cli_entry(name="custom", command="aicc")
+        cfgs = load_backend_configs({"backends": [entry]})
+        cfg = cfgs[0]
+        assert cfg.command == "aicc"
+
+    def test_parse_cli_backend_default_command(self):
+        """cli backend without command key defaults to empty string."""
+        entry = _cli_entry(name="x")
+        cfgs = load_backend_configs({"backends": [entry]})
+        cfg = cfgs[0]
+        assert cfg.command == ""
+
+    def test_parse_api_backend_ignores_command(self):
+        """api backend always has empty command."""
+        entry = _api_entry(command="should-be-ignored")
+        cfgs = load_backend_configs({"backends": [entry]})
+        cfg = cfgs[0]
+        assert cfg.command == ""
+
+    def test_default_backend_has_empty_command(self):
+        """DEFAULT_BACKEND.command is empty string."""
+        assert DEFAULT_BACKEND.command == ""
+
     def test_backendconfig_api_missing_format_raises(self):
         entry = _api_entry()
         del entry["format"]
