@@ -1335,7 +1335,28 @@ When `/forge` is invoked:
    Diff: <N> files, <M> lines changed
    ```
 3. **Run Step 0**: syntax + lint + non-ASCII. Stop on any failure. After all Step 0 checks pass, serialize findings into FUSE-01 context block for LLM passes (cap at 20 rows).
-3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "cli" or "inline". If exit code is non-zero, report the stderr error and STOP. If outlet is "inline": continue below (Outlet B). If outlet is "cli": Outlet A (CLI dispatch) not yet implemented -- set FORGE_OUTLET=inline or wait for Phase 7.
+3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "cli" or "inline". If exit code is non-zero, report the stderr error and STOP.
+
+   **If outlet is "inline" (Outlet B)**: Continue below with the inline self-drive pipeline.
+
+   **If outlet is "cli" (Outlet A)**:
+
+   a. **Build the command**. Start with `code-forge review`. If the diff source is "committed" (step 1 above), append `--committed`. If there are specific file paths, append them. Do NOT pass `--outlet` to code-forge review -- the CLI pipeline IS Outlet A; passing `--outlet` would be redundant.
+
+   b. **Run the command** via Bash tool with timeout parameter `timeout=600000` (10 minutes, in milliseconds). A full review pipeline (3 cycles x 3 passes + falsification) can exceed the Bash tool's default 120s timeout. Capture the exit code.
+
+   c. **Interpret the exit code**:
+      - **Exit 0 (PASS)**: Review passed. Read `.code-forge/state.json` (if it exists; if state.json is absent, report the exit code and stderr only) via Read tool to get the final state. Report "Forge review PASSED" with a summary of rounds completed.
+      - **Exit 1 (FAIL)**: Review found issues that did not converge. Read `.code-forge/state.json` for findings. Report each finding (file, line, severity, description). STOP -- do not proceed to commit.
+      - **Exit 2 (CLI_ERROR)**: Configuration or argument error. Read stderr output. Report the error message verbatim. STOP.
+      - **Exit 3 (BUSY)**: Another forge process is running. Report "Another code-forge review is already running in this directory." STOP.
+      - **Exit 4 (ESCALATED)**: Non-convergence after max rounds. Read `.code-forge/state.json` for the escalation reason. Report "Review escalated: did not converge within the round limit." STOP.
+
+   d. **On ANY non-zero exit**: Report the error and STOP. NEVER fall back to inline self-drive. This is the FAIL CLOSED contract. Do not attempt to re-run, retry, or work around the failure.
+
+   e. **Do NOT re-orchestrate cycles, count passes, or manage convergence**. That is machine.py's responsibility. The SKILL.md bridge is a thin wrapper: call, wait, read result, report.
+
+   When Outlet A exits successfully, skip to step 9 (commit readiness report). The CLI pipeline has already executed all steps internally.
 4. **Initialize cycle_counter = 0**
 5. **Run cycles**: execute Pass 1, Pass 2, Pass 3 sequentially by Loading their pass files from passes/. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
 5.5. **Run Step 3a**: anti-AI audit on all changed files. If findings: fix, re-run Step 3a only (do NOT reset cycle_counter). Clean Step 3a: proceed to Step 3.5.
@@ -1344,6 +1365,16 @@ When `/forge` is invoked:
 8. **Report**: summary of passes completed, findings fixed, smoke test results.
 8.5. **Feedback collection**: present finding summary table. Collect accept/reject for pending findings (LEARN-07-LITE). Users can defer to `forge --classify`.
 9. **The commit itself is NOT performed by forge** -- it reports readiness and the user commits with the `# post-review-c3` marker.
+
+## Outlet Behavior: A vs B
+
+Outlet A (CLI) and Outlet B (Inline) are **NOT behaviorally identical** in how they handle the convergence counter:
+
+- **Outlet A (CLI)**: Uses machine.py's binary reset model. ANY confirmed finding (regardless of severity) resets consecutive_clean_rounds to zero. This is the existing machine.py behavior shipped as-is.
+
+- **Outlet B (Inline)**: Uses the TRUST-07 severity-gated model defined in this SKILL.md. P0/P1 findings trigger a full counter reset. P2 findings restart the current cycle without resetting the counter. P3 findings accumulate and only escalate to P2 via density check.
+
+**Implication**: Outlet A is available for use but applies stricter convergence rules than Outlet B. A finding that would only restart a cycle under Outlet B will fully reset the counter under Outlet A. Counter unification is planned for a future release.
 
 ## Progress Tracking
 
