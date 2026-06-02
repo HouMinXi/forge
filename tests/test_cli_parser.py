@@ -254,3 +254,36 @@ class TestOutletAndCommittedFlags:
         args = parser.parse_args(['review', '--outlet', 'cli', '--committed'])
         assert args.outlet == 'cli'
         assert args.committed is True
+
+    def test_committed_rejects_baseline_at_runtime(self, tmp_path):
+        """--committed + --baseline raises CliError in _build_baseline_specs."""
+        from code_forge.cli import _build_baseline_specs
+        from code_forge.errors import CliError
+        import argparse
+        args = argparse.Namespace(
+            committed=True, baseline="HEAD~2", head=None, staged=False
+        )
+        with pytest.raises(CliError, match="--committed cannot be combined with --baseline"):
+            _build_baseline_specs(args, cwd=tmp_path)
+
+    def test_committed_rejects_head_at_runtime(self, tmp_path):
+        """--committed + --head raises CliError in _build_baseline_specs."""
+        from code_forge.cli import _build_baseline_specs
+        from code_forge.errors import CliError
+        import argparse
+        args = argparse.Namespace(
+            committed=True, baseline=None, head="HEAD", staged=False
+        )
+        with pytest.raises(CliError, match="--committed cannot be combined with --head"):
+            _build_baseline_specs(args, cwd=tmp_path)
+
+    def test_committed_rejects_staged_at_runtime(self, tmp_path):
+        """--committed + --staged raises CliError."""
+        from code_forge.cli import _build_baseline_specs
+        from code_forge.errors import CliError
+        import argparse
+        args = argparse.Namespace(
+            committed=True, baseline=None, head=None, staged=True
+        )
+        with pytest.raises(CliError, match="--committed and --staged are mutually exclusive"):
+            _build_baseline_specs(args, cwd=tmp_path)
