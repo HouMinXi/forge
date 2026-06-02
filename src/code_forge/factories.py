@@ -21,25 +21,30 @@ from .mutation import run_mutation
 from .state import StateFinding
 
 
-def build_falsifier(engine: str) -> Falsifier:
+def build_falsifier(
+    engine: str,
+    backend: "Optional[BackendConfig]" = None,
+) -> Falsifier:
     """STATE-10 engine factory.
 
     engine = "auto": try Phase 4 import; fall back to stub if absent.
     engine = "stub": always StubFalsifier.
     engine = "real": Phase 4 falsifier (NOT shipped v2.0).
     """
+    from .backend import BackendConfig
+
     if engine == "stub":
         return StubFalsifier()
     if engine == "auto":
         try:
             from .falsify_real import RealFalsifier  # noqa: F401
-            return RealFalsifier()
+            return RealFalsifier(backend=backend)
         except ImportError:
             return StubFalsifier()
     if engine == "real":
         try:
             from .falsify_real import RealFalsifier
-            return RealFalsifier()
+            return RealFalsifier(backend=backend)
         except ImportError:
             raise NotImplementedError(
                 "--falsification-engine=real requires Phase 4 "
@@ -194,12 +199,14 @@ def build_e2e_checker() -> Callable:
 def build_l1_provider(
     engine: str,
     resolved: "ResolvedReview",
+    backend: "Optional[BackendConfig]" = None,
 ) -> "Callable":
     """Build l1_provider. engine="stub" returns empty lambda (defect D fix)."""
     if engine == "stub":
         return lambda: []
 
     import hashlib as _hl
+    from .backend import BackendConfig
     from .llm_invoke import LLMInvokeError, llm_invoke
 
     def _provider() -> list:
@@ -224,7 +231,7 @@ def build_l1_provider(
                 '"description": "..."}]}\n\nDiff:\n' + diff_text
             )
             try:
-                response = llm_invoke(prompt)
+                response = llm_invoke(prompt, backend=backend)
             except LLMInvokeError as exc:
                 import sys
                 print(

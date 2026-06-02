@@ -20,6 +20,7 @@ from code_forge.cli import _run, main
 from code_forge.errors import CliError
 
 
+
 def _git_init_repo(repo_path):
     """Create a minimal git repo."""
     subprocess.run(

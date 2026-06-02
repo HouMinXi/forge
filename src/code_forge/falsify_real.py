@@ -5,6 +5,9 @@ verify each L1 candidate.  Maps the verdict to a Disposition value.
 """
 from __future__ import annotations
 
+from typing import Optional
+
+from .backend import BackendConfig
 from .disposition import Disposition
 from .falsify import Falsifier
 from .llm_invoke import LLMInvokeError, llm_invoke
@@ -27,6 +30,9 @@ _PROMPT_PREFIX = (
 
 
 class RealFalsifier(Falsifier):
+    def __init__(self, backend: Optional[BackendConfig] = None):
+        self._backend = backend
+
     def falsify(self, finding: StateFinding) -> Disposition:
         prompt = (
             _PROMPT_PREFIX
@@ -35,7 +41,7 @@ class RealFalsifier(Falsifier):
             + "Description: " + finding.description + "\n"
         )
         try:
-            response = llm_invoke(prompt)
+            response = llm_invoke(prompt, backend=self._backend)
         except LLMInvokeError:
             return Disposition.UNCERTAIN
 
