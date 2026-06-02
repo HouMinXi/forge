@@ -257,3 +257,61 @@ class TestLoadOutletFromGate:
         gate.write_text("test:\n  command: [pytest]\n")
         result = load_outlet_from_gate(gate)
         assert result is None
+
+
+# -- TestCliValuePrecedence ------------------------------------------------
+
+
+class TestCliValuePrecedence:
+    """--outlet flag (cli_value) has highest precedence."""
+
+    def test_cli_value_wins_over_env(self):
+        """cli_value='inline' overrides FORGE_OUTLET='cli'."""
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "cli"},
+            gate_yaml_path=None,
+            cli_value="inline",
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "inline"
+
+    def test_cli_value_wins_over_gate_yaml(self, tmp_path):
+        """cli_value='cli' overrides gate.yaml outlet=inline."""
+        gate = tmp_path / "gate.yaml"
+        gate.write_text("outlet: inline\n")
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=gate,
+            cli_value="cli",
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "cli"
+
+    def test_cli_value_empty_falls_through(self):
+        """cli_value='' falls through to env."""
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "inline"},
+            gate_yaml_path=None,
+            cli_value="",
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "inline"
+
+    def test_cli_value_none_falls_through(self):
+        """cli_value=None falls through to env."""
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "cli"},
+            gate_yaml_path=None,
+            cli_value=None,
+            reachability_fn=_ok_probe,
+        )
+        assert result == "cli"
+
+    def test_cli_value_invalid_raises(self):
+        """cli_value='invalid' raises ValueError with source attribution."""
+        with pytest.raises(ValueError, match="--outlet flag"):
+            resolve_outlet(
+                env={},
+                gate_yaml_path=None,
+                cli_value="invalid",
+            )
