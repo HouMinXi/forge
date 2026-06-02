@@ -5,6 +5,8 @@ Dispatches by BackendConfig.type:
   - api: HTTP call (openai or anthropic format)
 
 FORGE_LLM_MODEL env var overrides default model for cli backends.
+
+Public types: Usage, LLMResult, LLMInvokeError
 """
 from __future__ import annotations
 
@@ -16,9 +18,27 @@ import subprocess
 import time
 import urllib.request
 import urllib.error
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from .backend import BackendConfig, DEFAULT_BACKEND
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Token usage from LLM response."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class LLMResult:
+    """LLM invocation result with cost metadata."""
+
+    content: Any
+    usage: Usage = Usage()
+    duration_s: float = 0.0
 
 
 class LLMInvokeError(Exception):
