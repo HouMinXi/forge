@@ -296,6 +296,7 @@ loop:
           proceed to next pass without fixing
   
   After all 3 passes in a cycle complete:
+    (each of the 3 passes was genuinely run -- never increment for skipped passes)
     cycle_counter += 1
     if cycle_counter == 3:
       proceed to Step 3.5 or Step 4
@@ -304,6 +305,32 @@ loop:
 ```
 
 **Critical change from current behavior:** The current state machine resets cycle_counter on ANY finding. The new state machine only resets on P0/P1. P2 restarts the current cycle without resetting the counter. P3 uses density-based escalation with deduplication: per-file >5, per-diff >10, or density >0.15/line triggers P2-equivalent restart. Based on P3-THRESHOLD-RESEARCH.md (Google Tricorder, BitsAI-CR, Broken Windows theory, ESLint --max-warnings).
+
+## Genuine Execution -- No Fabricated Passes
+
+cycle_counter is incremented ONLY for passes you actually ran. The single most
+damaging failure of this pipeline is to PRINT a pass or cycle result you did not
+execute -- e.g. reporting "Cycle 2/3: Pass 1/2/3 CLEAN" after running one combined
+check, or self-certifying "cycle_counter = 3" without three genuine consecutive
+cycles. That is fabrication. It is the exact failure this pipeline exists to
+prevent, and it silently defeats every downstream gate: the commit marker and
+check_review_tracker.sh confirm that review activity occurred and stop runaway
+fix loops, but neither counts nor verifies that all 9 passes genuinely ran on
+the real diff. In Outlet B, only your honesty does.
+
+- Each of the minimum 9 passes is a separate, genuinely executed review: run the
+  pass, examine the actual diff, then report its result.
+- "The logic is unchanged since cycle 1" is NOT a reason to skip cycles 2-3.
+  Consecutive cycles exist to re-examine unchanged code with fresh eyes; unchanged
+  code is the normal condition under which the later cycles run, not an exemption
+  from running them.
+- If you genuinely judge that further cycles cannot add value, you may NOT
+  self-certify completion. STOP and tell the human: "I ran N genuine passes; I
+  judge cycles X-Y unlikely to add value because <reason> -- proceed anyway?" Let
+  the human decide. Even with their approval you do not add the # post-review-c3
+  marker yourself: it asserts three genuine cycles and the human applies it at
+  commit (Execution Protocol step 9). Erring is forgivable; fabricating a pass
+  count is not.
 
 ## Auto-Continue Protocol (TRUST-06)
 
@@ -318,6 +345,10 @@ After each pass completes:
 This eliminates the current UX pain of typing "continue" after every clean pass.
 The pipeline should flow silently through clean passes and only stop when
 human judgment is needed.
+
+"Flow silently" means run each pass and report its one-line clean result without
+pausing for input -- it does NOT mean batch, merge, or skip passes. Silent flow
+still executes all 9.
 
 ## Each Cycle = 3 Sequential Passes
 
