@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
@@ -197,6 +198,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--staged", action="store_true",
         help="DEPRECATED v2.1: use --head INDEX "
              "(mapped internally with warning)",
+    )
+    review_parser.add_argument(
+        "--outlet", choices=["cli", "inline"], default=None,
+        help="review outlet (default: auto-detect via backend reachability)",
+    )
+    review_parser.add_argument(
+        "--committed", action="store_true",
+        help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
     )
     review_parser.add_argument(
         "paths", nargs="*",
@@ -493,6 +502,54 @@ def _run(args, env, cwd: Path) -> Verdict:
     warn = (lambda msg: None) if args.quiet else (
         lambda msg: print("code-forge: %s" % msg, file=sys.stderr)
     )
+
+    # Worktree validation (BOTH-03): only if in git repo
+    if is_git_repo(cwd):
+        skip_check = env.get("FORGE_SKIP_WORKTREE_CHECK") == "1"
+        if not skip_check:
+            try:
+                result_work_tree = subprocess.run(
+                    ["git", "rev-parse", "--is-inside-work-tree"],
+                    capture_output=True, text=True, cwd=cwd, check=False,
+                )
+                result_git_dir = subprocess.run(
+                    ["git", "rev-parse", "--git-dir"],
+                    capture_output=True, text=True, cwd=cwd, check=False,
+                )
+                result_common_dir = subprocess.run(
+                    ["git", "rev-parse", "--git-common-dir"],
+                    capture_output=True, text=True, cwd=cwd, check=False,
+                )
+
+                if result_work_tree.returncode == 0:
+                    git_dir = result_git_dir.stdout.strip()
+                    common_dir = result_common_dir.stdout.strip()
+
+                    # If git-dir and git-common-dir are the same, not a worktree
+                    if git_dir == common_dir:
+                        raise CliError(
+                            "code-forge review must run inside a linked git "
+                            "worktree, not the main tree. Create one: "
+                            "git worktree add .worktrees/work <branch>"
+                        )
+            except subprocess.SubprocessError as exc:
+                raise CliError(
+                    "git worktree check failed: %s" % exc
+                ) from exc
+
+    # Step 0: Outlet resolution (GA1 bridge)
+    from .outlet_resolver import resolve_outlet
+    gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+    outlet = resolve_outlet(
+        env,
+        gate_yaml_path if gate_yaml_path.exists() else None,
+        cli_value=getattr(args, 'outlet', None),
+    )
+    if outlet == "inline":
+        # Inline outlet: SKILL.md handles the review
+        # Return PASS immediately - the skill pipeline owns execution
+        return Verdict.PASS
+
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.
     if (args.state_dir is not None
             and args.state_dir != ".code-forge"):
@@ -599,16 +656,29 @@ def _run(args, env, cwd: Path) -> Verdict:
                 baseline_spec
             )
 
-    # Step 6: factories
+    # Step 6: backend resolution + factories
+    from .backend import resolve_backend, DEFAULT_BACKEND
+    try:
+        backend = resolve_backend(env, configs=[], cli_value=None)
+    except CliError:
+        # configs=[] means no backends.yaml loaded yet (Phase 8)
+        # Fall back to DEFAULT_BACKEND if FORGE_BACKEND is set but not found
+        backend = DEFAULT_BACKEND
+        if env.get("FORGE_BACKEND"):
+            warn(
+                "warning: FORGE_BACKEND=%s not found in configuration; "
+                "using default backend" % env.get("FORGE_BACKEND")
+            )
+
     if args.sandbox:
         warn(
             "warning: --sandbox is a Phase 4 hook; "
             "ignored in v2.0"
         )
-    falsifier = build_falsifier(engine_choice)
+    falsifier = build_falsifier(engine_choice, backend=backend)
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
-    l1_provider = build_l1_provider(engine_choice, resolved)
+    l1_provider = build_l1_provider(engine_choice, resolved, backend=backend)
 
     # Step 7: lock + run
     with ForgeLock(lock_path):
@@ -896,6 +966,29 @@ def _build_baseline_specs(
 ) -> tuple:
     """Parse --baseline + --head into BaselineSpec union members."""
     in_git = is_git_repo(cwd)
+
+    # Check --committed conflicts first
+    if args.committed:
+        if args.baseline is not None:
+            raise CliError(
+                "--committed cannot be combined with --baseline"
+            )
+        if args.head is not None:
+            raise CliError(
+                "--committed cannot be combined with --head"
+            )
+        if args.staged:
+            raise CliError(
+                "--committed and --staged are mutually exclusive "
+                "(--staged is deprecated; use --head INDEX)"
+            )
+
+    # Apply --committed mapping
+    if args.committed:
+        baseline = GitRefBaseline("HEAD~1")
+        head = GitRefBaseline("HEAD")
+        return baseline, head
+
     if args.baseline is None:
         baseline = (
             GitRefBaseline("HEAD") if in_git else EmptyBaseline()
@@ -1116,6 +1209,7 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
         outlet = resolve_outlet(
             env,
             gate_yaml_path if gate_yaml_path.exists() else None,
+            cli_value=None,
         )
         print(outlet)
         return EXIT_PASS

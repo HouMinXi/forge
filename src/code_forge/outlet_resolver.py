@@ -107,20 +107,23 @@ def load_outlet_from_gate(
 def resolve_outlet(
     env: Mapping[str, str],
     gate_yaml_path: Optional[Path] = None,
+    *,
+    cli_value: Optional[str] = None,
     reachability_fn: Optional[Callable[[], ProbeResult]] = None,
 ) -> str:
     """Resolve effective outlet given inputs.
 
     Precedence (highest first):
-      1. FORGE_OUTLET env var (if present and non-empty)
-      2. gate.yaml outlet field (if gate_yaml_path given and key present)
-      3. Backend reachability probe
+      1. cli_value from --outlet flag (if present and non-empty)
+      2. FORGE_OUTLET env var (if present and non-empty)
+      3. gate.yaml outlet field (if gate_yaml_path given and key present)
+      4. Backend reachability probe
 
-    The third signal uses the backend-agnostic probe from backend.py.
+    The fourth signal uses the backend-agnostic probe from backend.py.
     Reachable -> "cli" (fail-safe Outlet A).
     Unreachable -> CliError (FAIL CLOSED).
 
-    An explicit "inline" (from env or gate.yaml) short-circuits
+    An explicit "inline" (from cli_value, env, or gate.yaml) short-circuits
     BEFORE any reachability probe -- Outlet B NEVER probes.
 
     LOCKED: nowhere in this function is model capability
@@ -130,6 +133,7 @@ def resolve_outlet(
     Args:
         env: os.environ or test-injected mapping
         gate_yaml_path: path to gate.yaml (None to skip)
+        cli_value: value from --outlet flag (highest precedence)
         reachability_fn: callable returning ProbeResult (injected
             for testability; production default resolves + probes
             the configured backend)
@@ -138,9 +142,13 @@ def resolve_outlet(
         "cli" or "inline"
 
     Raises:
-        ValueError: invalid outlet string from env or gate.yaml
+        ValueError: invalid outlet string from cli_value, env, or gate.yaml
         CliError: backend unreachable with no explicit override
     """
+    # Check cli_value first (highest precedence)
+    if cli_value is not None and cli_value != "":
+        return _parse_outlet_string(cli_value, "--outlet flag")
+
     # Default probes the session-default CLI backend only.
     # Production callers should inject a reachability_fn that
     # uses the loaded backend config.
