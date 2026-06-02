@@ -107,8 +107,8 @@ def _invoke_cli(
         os.close(fd)
         cmd = [
             "sh", "-c",
-            "%s -p \"$(<'%s')\" --model %s --output-format json"
-            % (shlex.quote(binary), _prompt_file, shlex.quote(effective_model)),
+            "%s -p \"$(<%s)\" --model %s --output-format json"
+            % (shlex.quote(binary), shlex.quote(_prompt_file), shlex.quote(effective_model)),
         ]
     else:
         cmd = [

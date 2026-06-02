@@ -82,6 +82,7 @@ DEFAULT_BACKEND = BackendConfig(
     format=None,
     base_url=None,
     api_key_env=None,
+    command="",
 )
 
 
