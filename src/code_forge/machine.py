@@ -138,6 +138,8 @@ class StateMachine:
     e2e_runner: Callable = field(
         default=lambda diff_text, repo_root: ([], [])
     )
+    coverage_l1_active: bool = True
+    coverage_exempt_patterns: list = field(default_factory=list)
     post_round_hook: Optional[Callable[[int], None]] = None
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
@@ -356,9 +358,22 @@ class StateMachine:
             except OSError:
                 pass
 
-        # Proceed with normal L0+L1 verdict determination
+        # Proceed with normal L0+L1 verdict determination.
+        # Coverage gaps (files no review layer examined) also FAIL CI:
+        # a silent PASS over an unreviewed file is a false green.
         confirmed = self._count(Disposition.CONFIRMED)
-        verdict = Verdict.FAIL if confirmed > 0 else Verdict.PASS
+        coverage_gaps = self._count_coverage_gaps()
+        verdict = (
+            Verdict.FAIL
+            if confirmed > 0 or coverage_gaps > 0
+            else Verdict.PASS
+        )
+        if coverage_gaps > 0 and confirmed == 0:
+            self._state.infra_errors.append(
+                "coverage: %d in-scope file(s) had no review layer "
+                "(non-git review or no matching linter); see COVERAGE "
+                "findings" % coverage_gaps
+            )
         self._state.verdict = verdict
         self._state.converged = (verdict == Verdict.PASS)
         self._persist_state()
@@ -555,6 +570,33 @@ class StateMachine:
             self._state.infra_errors.append("e2e runner failed: %s" % exc)
             return []
 
+    def _run_coverage_phase(self) -> list[StateFinding]:
+        """Per-file review coverage gate. Runs after E2E.
+
+        Flags in-scope files that no review layer examined: no matching
+        L0 tool AND L1 inactive (non-git review or stub engine). Prevents
+        a silent clean PASS over an effectively unreviewed file. A failing
+        coverage computation degrades to no findings, never crashes the
+        pipeline (mirrors L2/E2E graceful degradation).
+        """
+        try:
+            from .coverage import (
+                build_coverage_findings,
+                compute_uncovered_files,
+            )
+            uncovered = compute_uncovered_files(
+                [str(f) for f in self._source_files()],
+                self.registry,
+                self.coverage_l1_active,
+                self.coverage_exempt_patterns,
+            )
+            return build_coverage_findings(uncovered)
+        except Exception as exc:  # noqa: BLE001
+            self._state.infra_errors.append(
+                "coverage runner failed: %s" % exc
+            )
+            return []
+
     def _execute_round(self, round_index: int) -> None:
         """STATE-08: both modes run L0 + L1 + L2 + E2E each round.
 
@@ -569,8 +611,10 @@ class StateMachine:
         l1_findings = self._run_l1_phase()
         l2_findings = self._run_l2_phase()
         e2e_findings = self._run_e2e_phase()
+        coverage_findings = self._run_coverage_phase()
         merged = self._merge_findings(
-            l0_findings, l1_findings, l2_findings, e2e_findings
+            l0_findings, l1_findings, l2_findings, e2e_findings,
+            coverage_findings,
         )
         merged = self._apply_promotion_stickiness(merged)
         self._state.findings = merged
@@ -726,16 +770,20 @@ class StateMachine:
         l1_findings: list[StateFinding],
         l2_findings: list[StateFinding] = None,
         e2e_findings: list[StateFinding] = None,
+        coverage_findings: list[StateFinding] = None,
     ) -> list[StateFinding]:
-        """Merge L0 + L1 + L2 + E2E by fingerprint. FP-04: L0 wins on conflict.
+        """Merge L0 + L1 + L2 + E2E + COVERAGE by fingerprint.
 
-        Merge order (lowest priority first; higher overwrites):
-          e2e (lowest) -> l2 -> l1 -> l0 (highest).
-        E2E fingerprints use an "e2e-" prefix and do not collide with
-        L0/L1/L2 fingerprints; the ordering is defensive correctness.
+        FP-04: L0 wins on conflict. Merge order (lowest priority first;
+        higher overwrites): coverage/e2e (lowest) -> l2 -> l1 -> l0
+        (highest). COVERAGE fingerprints use a "coverage:" prefix and E2E
+        a "e2e-" prefix; neither collides with L0/L1/L2 fingerprints, so
+        the ordering is defensive correctness.
         """
         merged: dict[str, StateFinding] = {}
-        # e2e lowest priority: insert first so l2/l1/l0 can overwrite.
+        # coverage + e2e lowest priority: insert first so l2/l1/l0 win.
+        for f in (coverage_findings or []):
+            merged[f.fingerprint] = f
         for f in (e2e_findings or []):
             merged[f.fingerprint] = f
         for f in (l2_findings or []):
@@ -807,6 +855,18 @@ class StateMachine:
         return sum(
             1 for f in self._state.findings
             if f.disposition == disposition
+        )
+
+    def _count_coverage_gaps(self) -> int:
+        """Count active COVERAGE findings (per-file review gaps).
+
+        A COVERAGE finding marks an in-scope file that no review layer
+        examined. DISMISSED (human-waived) gaps do not count.
+        """
+        return sum(
+            1 for f in self._state.findings
+            if f.source == "COVERAGE"
+            and f.disposition != Disposition.DISMISSED
         )
 
     def _persist_state(self) -> None:

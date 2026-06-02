@@ -32,3 +32,7 @@ class CliError(Exception):
 
 class ComponentsConfigError(Exception):
     """Raised when .code-forge/components.yaml fails schema validation."""
+
+
+class CoverageConfigError(Exception):
+    """Raised when .code-forge/coverage.yaml fails schema validation."""
