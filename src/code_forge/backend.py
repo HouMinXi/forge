@@ -69,6 +69,7 @@ class BackendConfig:
     format: Optional[str] = None       # "openai" | "anthropic"
     base_url: Optional[str] = None     # only for api
     api_key_env: Optional[str] = None  # env var NAME only
+    command: str = ""                  # cli binary name or path
     default: bool = False              # config default marker
 
 
@@ -140,10 +141,12 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
             format=fmt,
             base_url=base_url,
             api_key_env=api_key_env,
+            command="",
             default=is_default,
         )
 
     # type == "cli"
+    command = entry.get("command", "")
     return BackendConfig(
         name=name,
         type=btype,
@@ -151,6 +154,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
         format=None,
         base_url=None,
         api_key_env=None,
+        command=command,
         default=is_default,
     )
 
