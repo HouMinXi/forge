@@ -95,6 +95,12 @@ class State:
     # Mutation survivor round counter (LOCAL mode):
     consecutive_survivor_rounds: int = 0  # LOCAL mode only
     consecutive_clean_rounds: int = 0  # LOCAL mode only
+    # 08-02 additions: cost tracking fields (CLI-08)
+    cost_total_input: int = 0
+    cost_total_output: int = 0
+    cost_total_duration: float = 0.0
+    cost_passes: int = 0
+    cost_per_pass: list[dict] = field(default_factory=list)
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -197,6 +203,14 @@ def load_state(path: Path) -> Optional[State]:
         "consecutive_clean_rounds", 0
     )
 
+    # 08-02 additions: backward-compat defaults for pre-08-02 state.json.
+    cost_data = data.get("cost", {})
+    state.cost_total_input = cost_data.get("total_input_tokens", 0)
+    state.cost_total_output = cost_data.get("total_output_tokens", 0)
+    state.cost_total_duration = cost_data.get("total_duration_s", 0.0)
+    state.cost_passes = cost_data.get("passes", 0)
+    state.cost_per_pass = cost_data.get("per_pass", [])
+
     return state
 
 
@@ -244,6 +258,13 @@ def save_state(state: State, path: Path) -> None:
         "promoted_fingerprints": sorted(state.promoted_fingerprints),
         "consecutive_survivor_rounds": state.consecutive_survivor_rounds,
         "consecutive_clean_rounds": state.consecutive_clean_rounds,
+        "cost": {
+            "total_input_tokens": state.cost_total_input,
+            "total_output_tokens": state.cost_total_output,
+            "total_duration_s": state.cost_total_duration,
+            "passes": state.cost_passes,
+            "per_pass": state.cost_per_pass,
+        },
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")

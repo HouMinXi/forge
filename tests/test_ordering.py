@@ -8,6 +8,7 @@ from code_forge.autofix import FixOutcome, StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
+from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding, Verdict
 
@@ -51,7 +52,7 @@ class TestLocalOrdering:
 
         def l1_provider():
             events.append("l1_detect")
-            return []
+            return ([], Usage(), 0.0)
 
         machine = StateMachine(
             mode=Mode.LOCAL,
@@ -91,7 +92,7 @@ class TestL1SeesPostFixCode:
         def l1_provider():
             # L1 checks whether autofix ran before it
             l1_saw_fix["value"] = fix_happened["value"]
-            return []
+            return ([], Usage(), 0.0)
 
         machine = StateMachine(
             mode=Mode.LOCAL,
@@ -122,7 +123,7 @@ class TestCICallsL1:
 
         def l1_provider():
             l1_calls["count"] += 1
-            return []
+            return ([], Usage(), 0.0)
 
         machine = StateMachine(
             mode=Mode.CI,

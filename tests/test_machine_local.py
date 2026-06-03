@@ -12,6 +12,7 @@ from code_forge.autofix import FixOutcome, StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
+from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding, Verdict
 
@@ -228,3 +229,101 @@ class TestPostRoundHook:
             l0_runner=mock_l0,
         )
         machine.run()  # should not raise
+
+
+class TestCostAccumulation:
+    """CLI-08: StateMachine accumulates cost from l1_provider usage."""
+
+    def test_cost_accumulated_per_round(self, tmp_path):
+        """After 2 rounds, cost_passes=6 (2 rounds x 3 passes each)."""
+        round_counter = {"n": 0}
+
+        def mock_l0(registry, files):
+            n = round_counter["n"]
+            round_counter["n"] += 1
+            if n == 0:
+                return ([_make_finding()], [])
+            return ([], [])
+
+        def mock_l1():
+            return ([], Usage(input_tokens=1000, output_tokens=500), 12.5)
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            l1_provider=mock_l1,
+        )
+        machine.run()
+
+        state = machine._state
+        # Rounds until fixpoint (>= 2); each round = 3 passes.
+        assert state.cost_passes % 3 == 0  # always multiple of 3
+        assert state.cost_passes >= 6  # at least 2 rounds needed
+        assert state.cost_total_input == state.cost_passes // 3 * 1000
+        assert state.cost_total_output == state.cost_passes // 3 * 500
+        assert abs(state.cost_total_duration - state.cost_passes // 3 * 12.5) < 0.5
+        assert len(state.cost_per_pass) == state.cost_passes
+
+    def test_cost_per_pass_structure(self, tmp_path):
+        """cost_per_pass entries have pass (1-3), cycle, input, output, duration_s."""
+        def mock_l0(registry, files):
+            return ([], [])
+
+        def mock_l1():
+            return ([], Usage(input_tokens=300, output_tokens=150), 6.0)
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            l1_provider=mock_l1,
+        )
+        machine.run()
+
+        state = machine._state
+        # Multiple rounds until fixpoint; entries are multiples of 3
+        assert len(state.cost_per_pass) % 3 == 0
+        assert len(state.cost_per_pass) > 0
+        entry = state.cost_per_pass[0]
+        assert entry["pass"] == 1
+        assert entry["cycle"] == 0
+        assert "input" in entry
+        assert "output" in entry
+        assert "duration_s" in entry
+
+    def test_zero_cost_when_no_l1(self, tmp_path):
+        """No l1_provider calls -> cost fields remain zero."""
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda r, f: ([], []),
+        )
+        machine.run()
+
+        state = machine._state
+        assert state.cost_total_input == 0
+        assert state.cost_total_output == 0
+        assert state.cost_passes % 3 == 0  # always multiple of 3 passes
+        assert state.cost_passes >= 3  # at least 1 round
