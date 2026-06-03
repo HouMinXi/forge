@@ -1,58 +1,62 @@
 import json
 import os
 import subprocess
+import time
 import urllib.error
 from unittest.mock import patch, MagicMock, Mock
 
 import pytest
 
-from code_forge.llm_invoke import llm_invoke, LLMInvokeError
+from code_forge.llm_invoke import llm_invoke, LLMInvokeError, LLMResult, Usage
 from code_forge.backend import BackendConfig
 
 
+def _make_mock_proc(returncode=0, stdout="", stderr=""):
+    """Build a mock Popen process object."""
+    proc = MagicMock()
+    proc.returncode = returncode
+    proc.communicate.return_value = (stdout, stderr)
+    proc.pid = 12345
+    return proc
+
+
 class TestLLMInvoke:
-    def test_returns_parsed_json_on_success(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps({"findings": []})
-        mock_result.stderr = ""
+    def test_returns_llm_result_on_success(self):
+        mock_proc = _make_mock_proc(stdout=json.dumps({"findings": []}))
 
         backend = BackendConfig(
             name="test", type="cli", model="claude-sonnet-4-6", command=""
         )
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
             result = llm_invoke("review this code", backend=backend)
 
-        assert result == {"findings": []}
-        args = mock_run.call_args
-        cmd = args[0][0]
-        assert "claude" in cmd[0]
-        assert "-p" in cmd
-        assert "--output-format" in cmd
+        assert isinstance(result, LLMResult)
+        assert result.content == {"findings": []}
+        assert isinstance(result.usage, Usage)
+        assert result.duration_s >= 0.0
 
     def test_raises_on_timeout(self):
-        with patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["claude"], timeout=120),
-        ):
+        mock_proc = _make_mock_proc()
+        mock_proc.communicate.side_effect = subprocess.TimeoutExpired(
+            cmd=["claude"], timeout=120
+        )
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
+             patch("code_forge.llm_invoke._kill_tree"):
             with pytest.raises(LLMInvokeError, match="timed out"):
                 llm_invoke("prompt", timeout_s=120)
 
     def test_raises_on_nonzero_exit(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-        mock_result.stderr = "error: rate limited"
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = _make_mock_proc(returncode=1, stderr="error: rate limited")
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
             with pytest.raises(LLMInvokeError, match="exited with code 1"):
                 llm_invoke("prompt")
 
     def test_raises_on_invalid_json(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "not json at all"
-        mock_result.stderr = ""
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = _make_mock_proc(stdout="not json at all")
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
             with pytest.raises(LLMInvokeError, match="non-JSON"):
                 llm_invoke("prompt")
 
@@ -62,43 +66,35 @@ class TestLLMInvoke:
                 llm_invoke("prompt")
 
     def test_respects_forge_llm_model_env(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"ok": true}'
-        mock_result.stderr = ""
-        with (
-            patch("subprocess.run", return_value=mock_result) as mock_run,
-            patch.dict(os.environ, {"FORGE_LLM_MODEL": "opus-4-7"}),
-        ):
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen, \
+             patch.dict(os.environ, {"FORGE_LLM_MODEL": "opus-4-7"}):
             llm_invoke("prompt")
-            cmd = mock_run.call_args[0][0]
+            cmd = mock_popen.call_args[0][0]
             assert "opus-4-7" in cmd
 
     def test_large_prompt_uses_shell_command(self):
         large_prompt = "x" * 1_100_000
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"ok": true}'
-        mock_result.stderr = ""
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
             result = llm_invoke(large_prompt)
-        assert result == {"ok": True}
-        cmd = mock_run.call_args[0][0]
+        assert result.content == {"ok": True}
+        cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "sh"
         assert cmd[1] == "-c"
 
     def test_strips_markdown_fences(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '```json\n{"key": "value"}\n```'
-        mock_result.stderr = ""
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = _make_mock_proc(stdout='```json\n{"key": "value"}\n```')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
             result = llm_invoke("prompt")
-        assert result == {"key": "value"}
+        assert result.content == {"key": "value"}
 
     def test_raises_on_oserror(self):
         with patch(
-            "subprocess.run",
+            "code_forge.llm_invoke.subprocess.Popen",
             side_effect=OSError("No such file or directory"),
         ):
             with pytest.raises(LLMInvokeError, match="subprocess failed"):
@@ -106,13 +102,12 @@ class TestLLMInvoke:
 
     def test_cli_dispatch_default_backend(self):
         """backend=None uses DEFAULT_BACKEND cli path."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"ok": true}'
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
             result = llm_invoke("prompt")
-        assert result == {"ok": True}
-        cmd = mock_run.call_args[0][0]
+        assert result.content == {"ok": True}
+        cmd = mock_popen.call_args[0][0]
         assert "claude" in cmd[0]
 
     def test_cli_dispatch_custom_command(self):
@@ -120,14 +115,13 @@ class TestLLMInvoke:
         backend = BackendConfig(
             name="custom", type="cli", model="", command="aicc"
         )
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"ok": true}'
-        with patch("subprocess.run", return_value=mock_result) as mock_run, \
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch("shutil.which", return_value="/usr/bin/aicc"):
             result = llm_invoke("prompt", backend=backend)
-        assert result == {"ok": True}
-        cmd = mock_run.call_args[0][0]
+        assert result.content == {"ok": True}
+        cmd = mock_popen.call_args[0][0]
         assert "aicc" in cmd[0] or "/usr/bin/aicc" in cmd[0]
 
     def test_cli_dispatch_custom_model(self):
@@ -135,16 +129,33 @@ class TestLLMInvoke:
         backend = BackendConfig(
             name="test", type="cli", model="opus", command=""
         )
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '{"ok": true}'
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
             llm_invoke("prompt", backend=backend)
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "opus" in cmd
 
+    def test_cli_uses_start_new_session(self):
+        """cli backend passes start_new_session=True for process group isolation."""
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            llm_invoke("prompt")
+        kwargs = mock_popen.call_args[1]
+        assert kwargs.get("start_new_session") is True
+
+    def test_cli_usage_is_zero(self):
+        """cli backend returns Usage(0, 0) since claude -p has no per-invocation token data."""
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt")
+        assert result.usage.input_tokens == 0
+        assert result.usage.output_tokens == 0
+
     def test_api_dispatch_openai(self):
-        """api backend with openai format makes HTTP call."""
+        """api backend with openai format makes HTTP call and returns LLMResult."""
         backend = BackendConfig(
             name="deepseek",
             type="api",
@@ -155,7 +166,8 @@ class TestLLMInvoke:
         )
         mock_response = Mock()
         mock_response.read.return_value = json.dumps({
-            "choices": [{"message": {"content": '{"result": "pass"}'}}]
+            "choices": [{"message": {"content": '{"result": "pass"}'}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         }).encode("utf-8")
         mock_response.__enter__ = Mock(return_value=mock_response)
         mock_response.__exit__ = Mock(return_value=False)
@@ -164,13 +176,16 @@ class TestLLMInvoke:
              patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
             result = llm_invoke("prompt", backend=backend)
 
-        assert result == {"result": "pass"}
+        assert isinstance(result, LLMResult)
+        assert result.content == {"result": "pass"}
+        assert result.usage.input_tokens == 100
+        assert result.usage.output_tokens == 50
         req = mock_urlopen.call_args[0][0]
         assert "Bearer sk-test" in req.headers["Authorization"]
         assert req.full_url == "https://api.deepseek.com/v1/chat/completions"
 
     def test_api_dispatch_anthropic(self):
-        """api backend with anthropic format makes HTTP call."""
+        """api backend with anthropic format makes HTTP call and returns LLMResult."""
         backend = BackendConfig(
             name="claude-api",
             type="api",
@@ -181,7 +196,8 @@ class TestLLMInvoke:
         )
         mock_response = Mock()
         mock_response.read.return_value = json.dumps({
-            "content": [{"text": '{"result": "pass"}'}]
+            "content": [{"text": '{"result": "pass"}'}],
+            "usage": {"input_tokens": 200, "output_tokens": 75},
         }).encode("utf-8")
         mock_response.__enter__ = Mock(return_value=mock_response)
         mock_response.__exit__ = Mock(return_value=False)
@@ -190,7 +206,10 @@ class TestLLMInvoke:
              patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
             result = llm_invoke("prompt", backend=backend)
 
-        assert result == {"result": "pass"}
+        assert isinstance(result, LLMResult)
+        assert result.content == {"result": "pass"}
+        assert result.usage.input_tokens == 200
+        assert result.usage.output_tokens == 75
         req = mock_urlopen.call_args[0][0]
         assert req.headers.get("X-api-key") == "sk-ant-test"
         assert req.full_url == "https://api.anthropic.com/v1/messages"
@@ -252,3 +271,91 @@ class TestLLMInvoke:
         )
         with pytest.raises(LLMInvokeError, match="unsupported backend type"):
             llm_invoke("prompt", backend=backend)
+
+
+class TestLLMResult:
+    def test_llm_result_structure(self):
+        """Verify LLMResult has content, usage, duration_s fields."""
+        usage = Usage(input_tokens=100, output_tokens=50)
+        result = LLMResult(content={"test": "data"}, usage=usage, duration_s=1.5)
+        assert result.content == {"test": "data"}
+        assert result.usage.input_tokens == 100
+        assert result.usage.output_tokens == 50
+        assert result.duration_s == 1.5
+
+    def test_llm_result_is_frozen(self):
+        """LLMResult is immutable (frozen=True)."""
+        result = LLMResult(content={})
+        with pytest.raises((AttributeError, TypeError)):
+            result.content = "new"  # type: ignore[misc]
+
+    def test_usage_is_frozen(self):
+        """Usage is immutable (frozen=True)."""
+        usage = Usage(input_tokens=10, output_tokens=5)
+        with pytest.raises((AttributeError, TypeError)):
+            usage.input_tokens = 99  # type: ignore[misc]
+
+    def test_usage_default_zero(self):
+        """Usage defaults to zero tokens."""
+        usage = Usage()
+        assert usage.input_tokens == 0
+        assert usage.output_tokens == 0
+
+    def test_llm_result_default_usage(self):
+        """LLMResult default usage is Usage() with zero tokens."""
+        result = LLMResult(content={})
+        assert result.usage == Usage()
+        assert result.usage.input_tokens == 0
+        assert result.usage.output_tokens == 0
+
+    def test_llm_result_default_duration(self):
+        """LLMResult default duration_s is 0.0."""
+        result = LLMResult(content={})
+        assert result.duration_s == 0.0
+
+
+class TestSubprocessCleanup:
+    def test_subprocess_cleanup_on_timeout(self, tmp_path):
+        """Verify _kill_tree is called on timeout to prevent orphan processes."""
+        mock_proc = _make_mock_proc()
+        mock_proc.communicate.side_effect = subprocess.TimeoutExpired(
+            cmd=["claude"], timeout=1
+        )
+
+        kill_called = []
+
+        def mock_kill_tree(proc):
+            kill_called.append(proc)
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
+             patch("code_forge.llm_invoke._kill_tree", side_effect=mock_kill_tree):
+            with pytest.raises(LLMInvokeError, match="timed out"):
+                llm_invoke("test", timeout_s=1)
+
+        assert len(kill_called) == 1, "_kill_tree must be called exactly once on timeout"
+        assert kill_called[0] is mock_proc
+
+    def test_active_proc_cleared_after_success(self):
+        """_active_proc is cleared after successful invocation."""
+        import code_forge.llm_invoke as m
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            llm_invoke("prompt")
+
+        assert m._active_proc is None
+
+    def test_active_proc_cleared_after_error(self):
+        """_active_proc is cleared even when invocation raises."""
+        import code_forge.llm_invoke as m
+        mock_proc = _make_mock_proc()
+        mock_proc.communicate.side_effect = subprocess.TimeoutExpired(
+            cmd=["claude"], timeout=1
+        )
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
+             patch("code_forge.llm_invoke._kill_tree"):
+            with pytest.raises(LLMInvokeError):
+                llm_invoke("prompt", timeout_s=1)
+
+        assert m._active_proc is None

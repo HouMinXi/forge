@@ -231,7 +231,8 @@ def build_l1_provider(
                 '"description": "..."}]}\n\nDiff:\n' + diff_text
             )
             try:
-                response = llm_invoke(prompt, backend=backend)
+                result = llm_invoke(prompt, backend=backend)
+                response = result.content
             except LLMInvokeError as exc:
                 import sys
                 print(
