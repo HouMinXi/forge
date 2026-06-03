@@ -4,6 +4,7 @@ from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
+from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding, Verdict, load_state
 
@@ -30,7 +31,7 @@ class TestConsecutiveClean:
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=_resolved(), source_hash="a",
             baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: [], max_total_rounds=10,
+            l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
         )
         assert sm.run() == Verdict.PASS
         state = load_state(tmp_path / ".code-forge" / "state.json")
@@ -40,10 +41,11 @@ class TestConsecutiveClean:
     def test_resets_counter_on_confirmed_finding(self, tmp_path):
         calls = {"n": 0}
         def _prov():
+            from code_forge.llm_invoke import Usage
             calls["n"] += 1
             if calls["n"] <= 2:
-                return [_finding("fp-%d" % calls["n"])]
-            return []
+                return ([_finding("fp-%d" % calls["n"])], Usage(), 0.0)
+            return ([], Usage(), 0.0)
 
         sm = StateMachine(
             mode=Mode.LOCAL, falsifier=StubFalsifier(),
@@ -63,7 +65,7 @@ class TestConsecutiveClean:
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=_resolved(), source_hash="a",
             baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: [], max_total_rounds=10,
+            l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
         )
         sm.run()
         receipt_dir = tmp_path / ".code-forge" / "receipts"
@@ -79,7 +81,7 @@ class TestConsecutiveClean:
                 autofixer=StubAutoFixer(), revert_fn=lambda f: None,
                 resolved_review=_resolved(), source_hash="a",
                 baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-                l1_provider=lambda: [], max_total_rounds=10,
+                l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
             )
             assert sm.run() == Verdict.PASS
             state = load_state(tmp_path / ".code-forge" / "state.json")
@@ -122,7 +124,7 @@ class TestConsecutiveClean:
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=resolved, source_hash="a",
             baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: [], max_total_rounds=10,
+            l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
         )
 
         base = datetime.datetime(

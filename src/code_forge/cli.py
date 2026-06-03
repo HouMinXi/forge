@@ -727,6 +727,27 @@ def _run_hold_loop(
         )
         verdict = sm.run()
         if verdict != Verdict.PENDING:
+            # CLI-08 B6: load final state from disk for cost fields.
+            from .state import load_state as _load_cost_state
+            final_state = _load_cost_state(state_path)
+            if (final_state is not None and final_state.cost_passes > 0
+                    and (final_state.cost_total_input > 0
+                         or final_state.cost_total_output > 0)):
+                total_tokens = (
+                    final_state.cost_total_input
+                    + final_state.cost_total_output
+                )
+                print(
+                    "code-forge: cost: %d tokens "
+                    "(%d in + %d out), %d passes, %.1fs" % (
+                        total_tokens,
+                        final_state.cost_total_input,
+                        final_state.cost_total_output,
+                        final_state.cost_passes,
+                        final_state.cost_total_duration,
+                    ),
+                    file=sys.stderr,
+                )
             return verdict
         # M3: load state from disk (public API, not sm._state).
         from .state import load_state

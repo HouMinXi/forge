@@ -201,18 +201,23 @@ def build_l1_provider(
     resolved: "ResolvedReview",
     backend: "Optional[BackendConfig]" = None,
 ) -> "Callable":
-    """Build l1_provider. engine="stub" returns empty lambda (defect D fix)."""
+    """Build l1_provider (CLI-08). Returns (findings, Usage, duration_s) tuple.
+
+    engine="stub" returns empty lambda with zero-cost Usage.
+    """
+    from .llm_invoke import Usage
+
     if engine == "stub":
-        return lambda: []
+        return lambda: ([], Usage(), 0.0)
 
     import hashlib as _hl
     from .backend import BackendConfig
     from .llm_invoke import LLMInvokeError, llm_invoke
 
-    def _provider() -> list:
+    def _provider() -> tuple:
         diff_text = resolved.git_diff or ""
         if not diff_text:
-            return []
+            return ([], Usage(), 0.0)
 
         pass_configs = [
             ("qodo", "structural code reviewer: correctness and logic errors"),
@@ -222,6 +227,9 @@ def build_l1_provider(
 
         all_candidates = []
         seen = set()
+        total_input = 0
+        total_output = 0
+        total_duration = 0.0
 
         for pass_name, role in pass_configs:
             prompt = (
@@ -233,6 +241,9 @@ def build_l1_provider(
             try:
                 result = llm_invoke(prompt, backend=backend)
                 response = result.content
+                total_input += result.usage.input_tokens
+                total_output += result.usage.output_tokens
+                total_duration += result.duration_s
             except LLMInvokeError as exc:
                 import sys
                 print(
@@ -271,6 +282,6 @@ def build_l1_provider(
                     line_range=[line, line],
                     description="[" + pass_name + "] " + desc,
                 ))
-        return all_candidates
+        return (all_candidates, Usage(total_input, total_output), total_duration)
 
     return _provider
