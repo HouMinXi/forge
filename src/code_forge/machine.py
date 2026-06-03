@@ -36,6 +36,7 @@ from .disposition import (
 )
 from .falsify import Falsifier
 from .hold import check_escalated_frozen
+from .llm_invoke import Usage
 from .parsers.base import Finding, ToolError
 from .state import (
     Mode,
@@ -47,7 +48,8 @@ from .state import (
 )
 
 # L1 candidate provider type alias.
-L1Provider = Callable[[], list[StateFinding]]
+# Returns (candidates, usage, duration_s) tuple (CLI-08).
+L1Provider = Callable[[], tuple[list[StateFinding], Usage, float]]
 
 
 def _default_l0_runner(
@@ -131,7 +133,7 @@ class StateMachine:
     cwd: Path
     registry: dict
     l0_runner: Callable = field(default=_default_l0_runner)
-    l1_provider: L1Provider = field(default=lambda: [])
+    l1_provider: L1Provider = field(default=lambda: ([], Usage(), 0.0))
     l2_runner: Callable = field(
         default=lambda diff_files, baseline_cmd: ([], [])
     )
@@ -142,6 +144,13 @@ class StateMachine:
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
     _state: State = field(default_factory=State, init=False)
+
+    def __post_init__(self) -> None:
+        """Initialize per-round cost accumulator (CLI-08 H3)."""
+        self._round_input_tokens: int = 0
+        self._round_output_tokens: int = 0
+        self._round_duration: float = 0.0
+        self._pass_counter: int = 0
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -470,8 +479,16 @@ class StateMachine:
 
         Both modes invoke L1 per LAYER0-07 (SARIF includes L1 candidates).
         LOCAL L1 sees post-fix code; CI L1 sees raw L0 output (no autofix).
+
+        CLI-08: l1_provider now returns (candidates, usage, duration_s).
+        Usage accumulated to _round_input_tokens/_round_output_tokens for
+        cost tracking. Cost written to State after full round (H3 fix).
         """
-        l1_candidates = self.l1_provider()
+        l1_candidates, usage, duration = self.l1_provider()
+        # Accumulate round-level token usage (H3: applied after round ends)
+        self._round_input_tokens += usage.input_tokens
+        self._round_output_tokens += usage.output_tokens
+        self._round_duration += duration
         l1_findings: list[StateFinding] = []
         for f in l1_candidates:
             try:
@@ -563,6 +580,26 @@ class StateMachine:
         self._append_round_snapshot(
             round_index, l0_findings, l1_findings, l2_findings, e2e_findings
         )
+        # CLI-08 H3: accumulate cost AFTER full round (L0+L1+L2+E2E done).
+        # B7: "pass" = 1-3 within round (qodo/expert/adversarial),
+        #     "cycle" = round_index.
+        self._state.cost_total_input += self._round_input_tokens
+        self._state.cost_total_output += self._round_output_tokens
+        self._state.cost_total_duration += self._round_duration
+        for i in range(3):
+            self._pass_counter += 1
+            self._state.cost_per_pass.append({
+                "pass": i + 1,
+                "cycle": round_index,
+                "input": self._round_input_tokens // 3,
+                "output": self._round_output_tokens // 3,
+                "duration_s": round(self._round_duration / 3.0, 3),
+            })
+        self._state.cost_passes = self._pass_counter
+        # Reset round accumulators for next round.
+        self._round_input_tokens = 0
+        self._round_output_tokens = 0
+        self._round_duration = 0.0
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
