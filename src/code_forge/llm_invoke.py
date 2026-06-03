@@ -56,6 +56,9 @@ class LLMInvokeError(Exception):
 
 
 DEFAULT_TIMEOUT_S = 120
+# DEFAULT_MODEL is kept for backward-compat (external importers). It is no longer
+# used as the fallback inside _resolve_model(); omitting --model when unset lets the
+# session default model run instead of pinning a specific model (D-26 no-pin contract).
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Module-level active process tracker for signal handler cleanup. Per D-03.
@@ -68,7 +71,7 @@ _handlers_installed = False
 
 
 def _resolve_model() -> str:
-    return os.environ.get("FORGE_LLM_MODEL", DEFAULT_MODEL)
+    return os.environ.get("FORGE_LLM_MODEL", "")
 
 
 def _strip_fences(text: str) -> str:
@@ -188,18 +191,17 @@ def _invoke_cli(
         fd, _prompt_file = _tf.mkstemp(suffix=".txt", prefix="forge-llm-")
         os.write(fd, prompt.encode("utf-8"))
         os.close(fd)
+        model_part = " --model %s" % shlex.quote(effective_model) if effective_model else ""
         cmd = [
             "sh", "-c",
-            "%s -p \"$(<%s)\" --model %s --output-format json"
-            % (shlex.quote(binary), shlex.quote(_prompt_file), shlex.quote(effective_model)),
+            "%s -p \"$(<%s)\"%s --output-format json"
+            % (shlex.quote(binary), shlex.quote(_prompt_file), model_part),
         ]
     else:
-        cmd = [
-            binary,
-            "-p", prompt,
-            "--model", effective_model,
-            "--output-format", "json",
-        ]
+        cmd = [binary, "-p", prompt]
+        if effective_model:
+            cmd.extend(["--model", effective_model])
+        cmd.extend(["--output-format", "json"])
 
     start = time.monotonic()
     try:
