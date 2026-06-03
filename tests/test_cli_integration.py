@@ -396,3 +396,73 @@ class TestReviewAutoDetect:
         assert exit_code == EXIT_CLI_ERROR
         captured = capsys.readouterr()
         assert "registry load failed" in captured.err
+
+
+class TestCostSummaryStderr:
+    """CLI-08: state.json cost section and stderr cost summary."""
+
+    def test_cost_section_in_state_json(self, tmp_path):
+        """After review, state.json contains cost section with required keys."""
+        import json
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init_repo(repo)
+        _write_tools_yaml(repo)
+        _write_py_file(repo)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# clean\nx = 1\n")
+
+        import sys as _sys
+        _sys.argv = ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"]
+        import os
+        os.chdir(str(repo))
+
+        from code_forge.cli import main as _main
+        _main()
+
+        state_path = repo / ".code-forge" / "state.json"
+        assert state_path.exists()
+        state = json.loads(state_path.read_text())
+        assert "cost" in state
+        cost = state["cost"]
+        assert "total_input_tokens" in cost
+        assert "total_output_tokens" in cost
+        assert "total_duration_s" in cost
+        assert "passes" in cost
+        assert "per_pass" in cost
+
+    def test_cost_summary_no_output_when_zero_passes(self, tmp_path, capsys):
+        """When no L1 invocations, no cost line printed to stderr."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init_repo(repo)
+        _write_tools_yaml(repo)
+        _write_py_file(repo)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# clean\nx = 1\n")
+
+        import sys as _sys
+        _sys.argv = ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"]
+        import os
+        os.chdir(str(repo))
+
+        from code_forge.cli import main as _main
+        _main()
+
+        captured = capsys.readouterr()
+        # stub engine = zero tokens, so no cost line expected
+        assert "code-forge: cost:" not in captured.err

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from code_forge.llm_invoke import Usage
 from code_forge.cli import MAX_HOLD_CYCLES, _run_hold_loop
 from code_forge.hold import HoldAborted
 from code_forge.state import (
@@ -80,7 +81,7 @@ class TestHoldAbortedExit:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
-                l1_provider=lambda: [],
+                l1_provider=lambda: ([], Usage(), 0.0),
                 input_fn=lambda p: "q",
                 output_fn=lambda m: None,
             )
@@ -122,7 +123,7 @@ class TestHoldResumeTerminal:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
-                l1_provider=lambda: [],
+                l1_provider=lambda: ([], Usage(), 0.0),
                 input_fn=lambda p: "d",
                 output_fn=lambda m: None,
             )
@@ -164,7 +165,7 @@ class TestMaxHoldCyclesExhaustion:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
-                l1_provider=lambda: [],
+                l1_provider=lambda: ([], Usage(), 0.0),
                 input_fn=lambda p: "s",
                 output_fn=lambda m: None,
             )
@@ -230,7 +231,7 @@ class TestMaxHoldNoneStateFallback:
                 max_rounds=20,
                 max_fix_attempts=3,
                 state_path=state_path,
-                l1_provider=lambda: [],
+                l1_provider=lambda: ([], Usage(), 0.0),
                 input_fn=lambda p: "s",
                 output_fn=lambda m: None,
             )
