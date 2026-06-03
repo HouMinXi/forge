@@ -58,6 +58,9 @@ class LLMInvokeError(Exception):
 DEFAULT_TIMEOUT_S = 120
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
+# Module-level active process tracker for signal handler cleanup. Per D-03.
+_active_proc: Optional[subprocess.Popen] = None
+
 
 def _resolve_model() -> str:
     return os.environ.get("FORGE_LLM_MODEL", DEFAULT_MODEL)
@@ -73,6 +76,19 @@ def _strip_fences(text: str) -> str:
             lines = lines[:-1]
         text = "\n".join(lines)
     return text
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill process group with SIGTERM escalation. Per D-04."""
+    import signal as _signal
+    try:
+        os.killpg(proc.pid, _signal.SIGTERM)
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, _signal.SIGKILL)
+        proc.wait()
+    except ProcessLookupError:
+        pass  # already dead
 
 
 def llm_invoke(
@@ -140,35 +156,49 @@ def _invoke_cli(
 
     start = time.monotonic()
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout_s,
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,  # Unix: creates new session (setsid) per D-02
         )
-    except subprocess.TimeoutExpired as exc:
-        duration = time.monotonic() - start
-        raise LLMInvokeError(
-            "LLM subprocess timed out after %ds" % timeout_s,
-            exit_code=-1, stderr=str(exc), duration_s=duration,
-        ) from exc
     except OSError as exc:
         duration = time.monotonic() - start
+        if _prompt_file and os.path.exists(_prompt_file):
+            os.unlink(_prompt_file)
         raise LLMInvokeError(
             "LLM subprocess failed: %s" % exc,
             exit_code=-1, stderr=str(exc), duration_s=duration,
         ) from exc
+
+    global _active_proc
+    _active_proc = proc
+    try:
+        try:
+            stdout_data, stderr_data = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            _kill_tree(proc)
+            duration = time.monotonic() - start
+            raise LLMInvokeError(
+                "LLM subprocess timed out after %ds" % timeout_s,
+                exit_code=-1, stderr=str(exc), duration_s=duration,
+            ) from exc
     finally:
+        _active_proc = None
         if _prompt_file and os.path.exists(_prompt_file):
             os.unlink(_prompt_file)
 
     duration = time.monotonic() - start
 
-    if result.returncode != 0:
+    if proc.returncode != 0:
         raise LLMInvokeError(
-            "LLM subprocess exited with code %d" % result.returncode,
-            exit_code=result.returncode,
-            stderr=result.stderr, duration_s=duration,
+            "LLM subprocess exited with code %d" % proc.returncode,
+            exit_code=proc.returncode,
+            stderr=stderr_data, duration_s=duration,
         )
 
-    stdout = _strip_fences(result.stdout)
+    stdout = _strip_fences(stdout_data)
 
     try:
         return json.loads(stdout)
