@@ -1,7 +1,6 @@
 import json
 import os
 import subprocess
-import time
 import urllib.error
 from unittest.mock import patch, MagicMock, Mock
 
