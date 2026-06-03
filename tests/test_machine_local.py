@@ -59,7 +59,7 @@ class TestLocalZeroFindings:
         verdict = machine.run()
         assert verdict == Verdict.PASS
         assert machine._state.converged is True
-        assert machine._state.round == 0
+        assert machine._state.round == 2  # 3 consecutive clean rounds
 
 
 class TestLocalAutofixSuccess:
@@ -208,7 +208,7 @@ class TestPostRoundHook:
             post_round_hook=lambda r: calls.append(r),
         )
         machine.run()
-        assert calls == [0]  # PASS on round 0
+        assert calls == [0, 1, 2]  # 3 consecutive clean rounds
 
     def test_hook_none_is_noop(self, tmp_path):
         """Default None post_round_hook does not raise."""

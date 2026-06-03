@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
@@ -41,7 +42,7 @@ from .exit_codes import (
     EXIT_PASS,
     verdict_to_exit,
 )
-from .factories import build_autofixer, build_falsifier, build_revert_fn
+from .factories import build_autofixer, build_falsifier, build_l1_provider, build_revert_fn
 from .git import is_git_repo
 from .hold import HoldAborted, run_hold_ui
 from .lock import ForgeLock, ForgeLockBusy
@@ -199,6 +200,14 @@ def _build_parser() -> argparse.ArgumentParser:
              "(mapped internally with warning)",
     )
     review_parser.add_argument(
+        "--outlet", choices=["cli", "inline"], default=None,
+        help="review outlet (default: auto-detect via backend reachability)",
+    )
+    review_parser.add_argument(
+        "--committed", action="store_true",
+        help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
+    )
+    review_parser.add_argument(
         "paths", nargs="*",
         help="files/dirs to review; git mode filters diff, "
              "non-git lists files",
@@ -317,6 +326,48 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suppress informational messages",
     )
 
+    # --- VERIFY subcommand: validate review receipts ---
+    verify_parser = subparsers.add_parser(
+        'verify',
+        help='validate review receipts',
+        description=(
+            'Validates review receipts: completeness (9 receipts, cycle/pass '
+            'matrix), diff hash, anchor reality, timestamp monotonicity, '
+            'excerpt verbatim match, coverage >=60%, Jaccard overlap <0.8. '
+            'Exit codes: 0=PASS, 1=FAIL.'
+        ),
+    )
+    verify_parser.add_argument(
+        "--quiet", action="store_true",
+        help="exit code only, no output",
+    )
+
+    # --- DETECT subcommand: toolchain auto-detection ---
+    detect_parser = subparsers.add_parser(
+        'detect',
+        help='detect project toolchain and generate tools.yaml',
+        description=(
+            'Auto-detect project toolchain. '
+            'Generates .code-forge/tools.yaml from detected tools.'
+        ),
+    )
+    detect_parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite existing tools.yaml",
+    )
+
+    # --- RESOLVE-OUTLET subcommand: outlet selection ---
+    subparsers.add_parser(
+        'resolve-outlet',
+        help='resolve outlet selection (cli or inline)',
+        description=(
+            'Resolve which review outlet to use. '
+            'Outputs cli or inline to stdout. '
+            'Exits 1 with a diagnostic if the configured review '
+            'backend is unreachable and no explicit Outlet B is set.'
+        ),
+    )
+
     return parser
 
 
@@ -343,7 +394,8 @@ def main() -> int:
     # If not, prepend 'review' to sys.argv for argparse
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
-        'install-hooks', 'install-skill',
+        'install-hooks', 'install-skill', 'verify',
+        'detect', 'resolve-outlet',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -409,6 +461,34 @@ def main() -> int:
     elif args.subcommand == 'install-skill':
         return _run_install_skill(args, cwd=Path.cwd())
 
+    elif args.subcommand == 'verify':
+        from .source import compute_source_hash
+        from .verify import run_verify, parse_diff_files
+        import subprocess
+        cwd = Path.cwd()
+        diff_result = subprocess.run(
+            ["git", "diff", "HEAD"], capture_output=True, text=True, cwd=cwd
+        )
+        if diff_result.returncode != 0:
+            print(
+                "verify: FAIL -- git diff failed: %s" % diff_result.stderr.strip(),
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+        diff_text = diff_result.stdout
+        diff_sha = compute_source_hash(git_diff=diff_text)
+        diff_f = parse_diff_files(diff_text)
+        vr = run_verify(cwd, diff_sha, diff_f)
+        if not args.quiet:
+            print("verify: %s -- %s" % ("PASS" if vr.passed else "FAIL", vr.reason))
+        return EXIT_PASS if vr.passed else EXIT_FAIL
+
+    elif args.subcommand == 'detect':
+        return _run_detect(args, cwd=Path.cwd())
+
+    elif args.subcommand == 'resolve-outlet':
+        return _run_resolve_outlet(env=os.environ, cwd=Path.cwd())
+
     else:
         print(
             "code-forge: unknown subcommand: %s" % args.subcommand,
@@ -422,6 +502,54 @@ def _run(args, env, cwd: Path) -> Verdict:
     warn = (lambda msg: None) if args.quiet else (
         lambda msg: print("code-forge: %s" % msg, file=sys.stderr)
     )
+
+    # Worktree validation (BOTH-03): only if in git repo
+    if is_git_repo(cwd):
+        skip_check = env.get("FORGE_SKIP_WORKTREE_CHECK") == "1"
+        if not skip_check:
+            try:
+                result_work_tree = subprocess.run(
+                    ["git", "rev-parse", "--is-inside-work-tree"],
+                    capture_output=True, text=True, cwd=cwd, check=False,
+                )
+                result_git_dir = subprocess.run(
+                    ["git", "rev-parse", "--git-dir"],
+                    capture_output=True, text=True, cwd=cwd, check=False,
+                )
+                result_common_dir = subprocess.run(
+                    ["git", "rev-parse", "--git-common-dir"],
+                    capture_output=True, text=True, cwd=cwd, check=False,
+                )
+
+                if result_work_tree.returncode == 0:
+                    git_dir = result_git_dir.stdout.strip()
+                    common_dir = result_common_dir.stdout.strip()
+
+                    # If git-dir and git-common-dir are the same, not a worktree
+                    if git_dir == common_dir:
+                        raise CliError(
+                            "code-forge review must run inside a linked git "
+                            "worktree, not the main tree. Create one: "
+                            "git worktree add .worktrees/work <branch>"
+                        )
+            except subprocess.SubprocessError as exc:
+                raise CliError(
+                    "git worktree check failed: %s" % exc
+                ) from exc
+
+    # Step 0: Outlet resolution (GA1 bridge)
+    from .outlet_resolver import resolve_outlet
+    gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+    outlet = resolve_outlet(
+        env,
+        gate_yaml_path if gate_yaml_path.exists() else None,
+        cli_value=getattr(args, 'outlet', None),
+    )
+    if outlet == "inline":
+        # Inline outlet: SKILL.md handles the review
+        # Return PASS immediately - the skill pipeline owns execution
+        return Verdict.PASS
+
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.
     if (args.state_dir is not None
             and args.state_dir != ".code-forge"):
@@ -438,11 +566,32 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Step 1: mode
     mode = resolve_mode(args.mode, env, sys.stdout.isatty())
 
-    # Step 2: registry
+    # Step 2: registry (with auto-detect fallback)
+    is_default_registry = (args.registry == ".code-forge/tools.yaml")
+
+    def _safe_load_registry(path):
+        """Load registry, translating ValueError to CliError."""
+        try:
+            return load_registry(path)
+        except ValueError as exc:
+            raise CliError("registry load failed: %s" % exc) from exc
+
     try:
-        registry = load_registry(args.registry)
-    except (FileNotFoundError, ValueError) as exc:
-        raise CliError("registry load failed: %s" % exc)
+        registry = _safe_load_registry(args.registry)
+    except FileNotFoundError:
+        if is_default_registry:
+            from .detect import detect_and_init
+            detect_and_init(cwd, quiet=True)
+            registry = _safe_load_registry(args.registry)
+        else:
+            raise CliError(
+                "registry load failed: %s not found" % args.registry
+            )
+
+    if registry == {} and is_default_registry:
+        from .detect import detect_and_init
+        detect_and_init(cwd, quiet=True)
+        registry = _safe_load_registry(args.registry)
 
     # Step 3: env overrides
     max_rounds = resolve_max_total_rounds(
@@ -507,15 +656,29 @@ def _run(args, env, cwd: Path) -> Verdict:
                 baseline_spec
             )
 
-    # Step 6: factories
+    # Step 6: backend resolution + factories
+    from .backend import resolve_backend, DEFAULT_BACKEND
+    try:
+        backend = resolve_backend(env, configs=[], cli_value=None)
+    except CliError as exc:
+        # configs=[] means no backends.yaml loaded yet (Phase 8)
+        # Fall back to DEFAULT_BACKEND if FORGE_BACKEND is set but not found
+        backend = DEFAULT_BACKEND
+        if env.get("FORGE_BACKEND"):
+            warn(
+                "warning: FORGE_BACKEND=%s not found in configuration; "
+                "using default backend (%s)" % (env.get("FORGE_BACKEND"), exc)
+            )
+
     if args.sandbox:
         warn(
             "warning: --sandbox is a Phase 4 hook; "
             "ignored in v2.0"
         )
-    falsifier = build_falsifier(engine_choice)
+    falsifier = build_falsifier(engine_choice, backend=backend)
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
+    l1_provider = build_l1_provider(engine_choice, resolved, backend=backend)
 
     # Step 7: lock + run
     with ForgeLock(lock_path):
@@ -524,6 +687,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             falsifier=falsifier,
             autofixer=autofixer,
             revert_fn=revert_fn,
+            l1_provider=l1_provider,
             resolved=resolved,
             source_hash=source_hash,
             baseline_repr=baseline_repr,
@@ -540,7 +704,7 @@ def _run(args, env, cwd: Path) -> Verdict:
 
 
 def _run_hold_loop(
-    *, mode, falsifier, autofixer, revert_fn, resolved,
+    *, mode, falsifier, autofixer, revert_fn, l1_provider, resolved,
     source_hash, baseline_repr, cwd, registry,
     max_rounds, max_fix_attempts, state_path,
     input_fn=input, output_fn=print,
@@ -552,6 +716,7 @@ def _run_hold_loop(
             falsifier=falsifier,
             autofixer=autofixer,
             revert_fn=revert_fn,
+            l1_provider=l1_provider,
             resolved_review=resolved,
             source_hash=source_hash,
             baseline_spec_repr=baseline_repr,
@@ -801,6 +966,29 @@ def _build_baseline_specs(
 ) -> tuple:
     """Parse --baseline + --head into BaselineSpec union members."""
     in_git = is_git_repo(cwd)
+
+    # Check --committed conflicts first
+    if args.committed:
+        if args.baseline is not None:
+            raise CliError(
+                "--committed cannot be combined with --baseline"
+            )
+        if args.head is not None:
+            raise CliError(
+                "--committed cannot be combined with --head"
+            )
+        if args.staged:
+            raise CliError(
+                "--committed and --staged are mutually exclusive "
+                "(--staged is deprecated; use --head INDEX)"
+            )
+
+    # Apply --committed mapping
+    if args.committed:
+        baseline = GitRefBaseline("HEAD~1")
+        head = GitRefBaseline("HEAD")
+        return baseline, head
+
     if args.baseline is None:
         baseline = (
             GitRefBaseline("HEAD") if in_git else EmptyBaseline()
@@ -981,3 +1169,59 @@ def _copy_traversable_tree(src, dest: Path) -> None:
             _copy_traversable_tree(entry, child_dest)
         else:
             child_dest.write_bytes(entry.read_bytes())
+
+
+def _run_detect(args, cwd: Path) -> int:
+    """Run toolchain detection and generate tools.yaml.
+
+    Lazy-imports detect_and_init to avoid circular imports and
+    keep startup fast for other subcommands.
+
+    Returns:
+        EXIT_PASS on success, EXIT_CLI_ERROR on detection failure.
+    """
+    from .detect import detect_and_init
+    try:
+        detect_and_init(cwd, force=args.force)
+    except CliError as exc:
+        print(
+            "code-forge: detect: %s" % exc,
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+    return EXIT_PASS
+
+
+def _run_resolve_outlet(env, cwd: Path) -> int:
+    """Resolve and print the active review outlet.
+
+    Lazy-imports resolve_outlet. Does NOT pass a reachability_fn
+    so resolve_outlet uses its default backend probe.
+
+    Returns:
+        EXIT_PASS on success.
+        EXIT_FAIL on backend-unreachable (runtime condition).
+        EXIT_CLI_ERROR on config/validation error (ValueError).
+    """
+    from .outlet_resolver import resolve_outlet
+    gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+    try:
+        outlet = resolve_outlet(
+            env,
+            gate_yaml_path if gate_yaml_path.exists() else None,
+            cli_value=None,
+        )
+        print(outlet)
+        return EXIT_PASS
+    except CliError as exc:
+        print(
+            "code-forge: resolve-outlet: %s" % exc,
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+    except ValueError as exc:
+        print(
+            "code-forge: resolve-outlet: %s" % exc,
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR

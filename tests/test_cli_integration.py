@@ -20,6 +20,7 @@ from code_forge.cli import _run, main
 from code_forge.errors import CliError
 
 
+
 def _git_init_repo(repo_path):
     """Create a minimal git repo."""
     subprocess.run(
@@ -73,7 +74,7 @@ class TestGitRepoPassCI:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -94,7 +95,7 @@ class TestRegistryMissing:
         _git_init_repo(repo)
         # No tools.yaml written.
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
+            sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -124,7 +125,7 @@ class TestSandboxWarning:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "--sandbox", "a.py"],
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "--sandbox", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -140,7 +141,7 @@ class TestTopLevelExceptionCatch:
         self, tmp_path, monkeypatch, capsys
     ):
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
+            sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(tmp_path))
 
@@ -177,8 +178,221 @@ class TestMainReturnsInt:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(repo))
         result = main()
         assert isinstance(result, int)
+
+
+# ---------------------------------------------------------------------------
+# Review auto-detect integration
+# ---------------------------------------------------------------------------
+
+
+class TestReviewAutoDetect:
+    """Review pipeline calls detect_and_init when tools.yaml missing."""
+
+    def test_review_missing_default_tools_yaml_triggers_detect(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """Missing default tools.yaml triggers detect_and_init(quiet=True)."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init_repo(repo)
+        _write_py_file(repo)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# modified\n")
+
+        def fake_detect_and_init(project_root, quiet=False, **kwargs):
+            forge_dir = project_root / ".code-forge"
+            forge_dir.mkdir(parents=True, exist_ok=True)
+            tools_yaml = forge_dir / "tools.yaml"
+            tools_yaml.write_text(
+                "tools:\n"
+                "  ruff:\n"
+                "    command: ruff check --output-format=sarif\n"
+                "    output_format: sarif\n"
+                "    file_patterns: ['*.py']\n"
+            )
+            from code_forge.detect import DetectionResult
+            return DetectionResult(
+                detected=["ruff"], missing=[], language="python",
+            )
+
+        with patch(
+            "code_forge.detect.detect_and_init",
+            side_effect=fake_detect_and_init,
+        ) as mock_dai:
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+            )
+            monkeypatch.chdir(str(repo))
+            exit_code = main()
+
+        mock_dai.assert_called_once()
+        call_kwargs = mock_dai.call_args
+        assert call_kwargs[1].get("quiet") is True
+        assert exit_code == EXIT_PASS
+
+    def test_review_existing_nonempty_tools_yaml_skips_detect(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """Existing non-empty tools.yaml skips detect_and_init."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init_repo(repo)
+        forge_dir = repo / ".code-forge"
+        forge_dir.mkdir(parents=True, exist_ok=True)
+        tools_yaml = forge_dir / "tools.yaml"
+        tools_yaml.write_text(
+            "tools:\n"
+            "  ruff:\n"
+            "    command: ruff check --output-format=sarif\n"
+            "    output_format: sarif\n"
+            "    file_patterns: ['*.py']\n"
+        )
+        _write_py_file(repo)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# modified\n")
+
+        with patch(
+            "code_forge.detect.detect_and_init",
+        ) as mock_dai:
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+            )
+            monkeypatch.chdir(str(repo))
+            exit_code = main()
+
+        mock_dai.assert_not_called()
+        assert exit_code == EXIT_PASS
+
+    def test_review_custom_registry_path_no_detect(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """--registry=custom.yaml missing -> CliError, no detect."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init_repo(repo)
+        _write_py_file(repo)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+
+        with patch(
+            "code_forge.detect.detect_and_init",
+        ) as mock_dai:
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
+                 "--registry", "custom.yaml", "a.py"],
+            )
+            monkeypatch.chdir(str(repo))
+            exit_code = main()
+
+        mock_dai.assert_not_called()
+        assert exit_code == EXIT_CLI_ERROR
+        captured = capsys.readouterr()
+        assert "custom.yaml" in captured.err
+
+    def test_review_empty_tools_yaml_detect_fails_exits_cli_error(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """tools.yaml with tools: [] -> detect called -> CliError -> exit 2."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init_repo(repo)
+        forge_dir = repo / ".code-forge"
+        forge_dir.mkdir(parents=True, exist_ok=True)
+        tools_yaml = forge_dir / "tools.yaml"
+        tools_yaml.write_text("tools: []\n")
+        _write_py_file(repo)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# modified\n")
+
+        with patch(
+            "code_forge.detect.detect_and_init",
+            side_effect=CliError(
+                "No toolchain detected. L0 has no static "
+                "analysis tools. Install tools or manually "
+                "configure `.code-forge/tools.yaml`."
+            ),
+        ):
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+            )
+            monkeypatch.chdir(str(repo))
+            exit_code = main()
+
+        assert exit_code == EXIT_CLI_ERROR
+        captured = capsys.readouterr()
+        assert "No toolchain detected" in captured.err
+
+    def test_review_corrupted_tools_yaml_exits_cli_error(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """Corrupted tools.yaml -> ValueError from load_registry -> exit 2."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init_repo(repo)
+        forge_dir = repo / ".code-forge"
+        forge_dir.mkdir(parents=True, exist_ok=True)
+        tools_yaml = forge_dir / "tools.yaml"
+        tools_yaml.write_text(
+            "tools:\n"
+            "  ruff:\n"
+            "    command: ruff\n"
+            "    output_format: sarif\n"
+            "    file_patterns: not_a_list\n"
+        )
+        _write_py_file(repo)
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo), capture_output=True, check=True,
+        )
+        (repo / "a.py").write_text("# modified\n")
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+        )
+        monkeypatch.chdir(str(repo))
+        exit_code = main()
+
+        assert exit_code == EXIT_CLI_ERROR
+        captured = capsys.readouterr()
+        assert "registry load failed" in captured.err

@@ -14,16 +14,21 @@ from code_forge.parsers.clippy import parse_clippy
 from code_forge.parsers.checkpatch import parse_checkpatch
 from code_forge.parsers.non_ascii import parse_non_ascii
 from code_forge.parsers._sarif import _parse_sarif
+from code_forge.parsers.flake8 import parse_flake8
+from code_forge.parsers.pylint import parse_pylint
 
-# 5 keys map to 6 tools: ruff and semgrep both use output_format="sarif"
+# 7 keys map to 8 tools: ruff and semgrep both use output_format="sarif"
 # in tools.yaml, dispatching to the shared _parse_sarif function.
 # The tool_name parameter distinguishes them in the Finding objects.
+# flake8 uses "flake8" (text parser), pylint uses "pylint_json" (JSON).
 PARSER_DISPATCH: dict = {
     "shellcheck_json": parse_shellcheck,
     "sarif": _parse_sarif,
     "clippy_json": parse_clippy,
     "checkpatch_emacs": parse_checkpatch,
     "grep_line": parse_non_ascii,
+    "flake8": parse_flake8,
+    "pylint_json": parse_pylint,
 }
 
 
@@ -35,10 +40,15 @@ def parse_output(
 ) -> list[Finding | ToolError]:
     """Dispatch to the correct parser by output_format.
 
-    Raises KeyError on unknown format (registry validation happens
-    at dispatch time per Mimo F-01).
+    Raises ValueError on unknown format (defense-in-depth; registry
+    validation normally catches this at load time).
     """
-    parser_fn = PARSER_DISPATCH[output_format]
+    parser_fn = PARSER_DISPATCH.get(output_format)
+    if parser_fn is None:
+        raise ValueError(
+            "unknown output_format '%s' (valid: %s)"
+            % (output_format, ", ".join(sorted(PARSER_DISPATCH)))
+        )
     return parser_fn(output, tool_name, exit_code)
 
 
@@ -53,4 +63,6 @@ __all__ = [
     "parse_clippy",
     "parse_checkpatch",
     "parse_non_ascii",
+    "parse_flake8",
+    "parse_pylint",
 ]

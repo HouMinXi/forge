@@ -2,11 +2,12 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for forge.parsers -- tool output to Finding conversion.
 
-Covers all six parsers (shellcheck, ruff, semgrep, clippy, checkpatch,
-non_ascii) plus the PARSER_DISPATCH system.  Each parser is tested for:
+Covers all eight parsers (shellcheck, ruff, semgrep, clippy, checkpatch,
+non_ascii, flake8, pylint) plus the PARSER_DISPATCH system.  Each parser
+is tested for:
   - valid output -> correct Finding fields
   - empty string -> [] (clean run)
-  - malformed/corrupt input -> [ToolError] (Consensus #4)
+  - malformed/corrupt input -> [ToolError]
 """
 
 import json
@@ -21,6 +22,8 @@ from code_forge.parsers.semgrep import parse_semgrep
 from code_forge.parsers.clippy import parse_clippy
 from code_forge.parsers.checkpatch import parse_checkpatch
 from code_forge.parsers.non_ascii import parse_non_ascii
+from code_forge.parsers.flake8 import parse_flake8
+from code_forge.parsers.pylint import parse_pylint
 from code_forge.parsers import PARSER_DISPATCH, parse_output
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -299,6 +302,8 @@ class TestParserDispatch:
             "clippy_json",
             "checkpatch_emacs",
             "grep_line",
+            "flake8",
+            "pylint_json",
         }
         assert set(PARSER_DISPATCH.keys()) == expected
 
@@ -329,6 +334,210 @@ class TestParserDispatch:
         assert len(result) == 1
         assert isinstance(result[0], ToolError)
 
+    def test_dispatch_flake8(self):
+        raw = "src/foo.py:10:1: E501 line too long\n"
+        findings = parse_output(raw, "flake8", "flake8")
+        assert len(findings) == 1
+        assert isinstance(findings[0], Finding)
+        assert findings[0].tool_name == "flake8"
+
+    def test_dispatch_pylint(self):
+        raw = json.dumps([{
+            "type": "warning",
+            "path": "a.py",
+            "line": 1,
+            "column": 0,
+            "endLine": 1,
+            "endColumn": 2,
+            "symbol": "x",
+            "message": "m",
+            "message-id": "W0001",
+        }])
+        findings = parse_output(raw, "pylint_json", "pylint")
+        assert len(findings) == 1
+        assert isinstance(findings[0], Finding)
+        assert findings[0].tool_name == "pylint"
+        assert findings[0].rule_id == "W0001"
+        assert findings[0].level == "warning"
+
     def test_dispatch_unknown_format(self):
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="unknown_format"):
             parse_output("data", "unknown_format", "x")
+
+
+# -- flake8 ---------------------------------------------------------------
+
+class TestParseFlake8:
+    """Tests for parse_flake8()."""
+
+    def test_valid_output(self):
+        raw = (
+            "src/foo.py:10:1: E501 line too long\n"
+            "src/bar.py:3:5: F401 'os' imported but unused\n"
+        )
+        findings = parse_flake8(raw)
+        assert len(findings) == 2
+        f0 = findings[0]
+        assert isinstance(f0, Finding)
+        assert f0.file == "src/foo.py"
+        assert f0.line == 10
+        assert f0.end_line == 10
+        assert f0.column == 1
+        assert f0.rule_id == "E501"
+        assert f0.level == "warning"
+        assert f0.message == "line too long"
+        assert f0.tool_name == "flake8"
+        f1 = findings[1]
+        assert f1.file == "src/bar.py"
+        assert f1.line == 3
+        assert f1.column == 5
+        assert f1.rule_id == "F401"
+
+    def test_empty_input(self):
+        assert parse_flake8("") == []
+        assert parse_flake8("   ") == []
+
+    def test_malformed_input(self):
+        result = parse_flake8(
+            "random gibberish\nno colons here\n",
+            exit_code=5,
+        )
+        assert len(result) == 1
+        assert isinstance(result[0], ToolError)
+        assert result[0].tool_name == "flake8"
+        assert result[0].exit_code == 5
+
+    def test_multiple_findings_same_file(self):
+        raw = (
+            "src/x.py:1:1: E302 expected 2 blank lines\n"
+            "src/x.py:5:3: W291 trailing whitespace\n"
+        )
+        findings = parse_flake8(raw)
+        assert len(findings) == 2
+        assert findings[0].line == 1
+        assert findings[1].line == 5
+
+    def test_message_with_colon(self):
+        raw = (
+            "src/x.py:7:2: E712 comparison to True should be "
+            "'if cond is True:' or 'if cond:'\n"
+        )
+        findings = parse_flake8(raw)
+        assert len(findings) == 1
+        assert ":" in findings[0].message
+        assert findings[0].rule_id == "E712"
+
+
+# -- pylint ----------------------------------------------------------------
+
+class TestParsePylint:
+    """Tests for parse_pylint()."""
+
+    def test_valid_output(self):
+        data = [
+            {
+                "type": "warning",
+                "path": "src/foo.py",
+                "line": 10,
+                "column": 4,
+                "endLine": 10,
+                "endColumn": 9,
+                "symbol": "unused-import",
+                "message": "Unused import os",
+                "message-id": "W0611",
+            },
+            {
+                "type": "convention",
+                "path": "src/bar.py",
+                "line": 1,
+                "column": 0,
+                "endLine": None,
+                "endColumn": None,
+                "symbol": "missing-module-docstring",
+                "message": "Missing module docstring",
+                "message-id": "C0114",
+            },
+        ]
+        findings = parse_pylint(json.dumps(data))
+        assert len(findings) == 2
+        f0 = findings[0]
+        assert isinstance(f0, Finding)
+        assert f0.file == "src/foo.py"
+        assert f0.line == 10
+        assert f0.end_line == 10
+        assert f0.column == 4
+        assert f0.rule_id == "W0611"
+        assert f0.level == "warning"
+        assert f0.message == "Unused import os"
+        assert f0.tool_name == "pylint"
+        f1 = findings[1]
+        assert f1.file == "src/bar.py"
+        assert f1.line == 1
+        assert f1.end_line == 1  # endLine was null -> falls back to line
+        assert f1.column == 0
+        assert f1.rule_id == "C0114"
+        assert f1.level == "note"  # "convention" maps to "note"
+
+    def test_level_mapping(self):
+        """All 6 pylint types map to the correct Finding level."""
+        mapping = {
+            "fatal": "error",
+            "error": "error",
+            "warning": "warning",
+            "convention": "note",
+            "refactor": "note",
+            "information": "note",
+        }
+        for pylint_type, expected_level in mapping.items():
+            data = [
+                {
+                    "type": pylint_type,
+                    "path": "a.py",
+                    "line": 1,
+                    "column": 0,
+                    "endLine": 1,
+                    "endColumn": 1,
+                    "symbol": "test",
+                    "message": "test",
+                    "message-id": "X0001",
+                },
+            ]
+            findings = parse_pylint(json.dumps(data))
+            assert len(findings) == 1, (
+                "type=%s should produce 1 finding" % pylint_type
+            )
+            assert findings[0].level == expected_level, (
+                "type=%s should map to level=%s, got %s"
+                % (pylint_type, expected_level, findings[0].level)
+            )
+
+    def test_endline_null_fallback(self):
+        data = [
+            {
+                "type": "warning",
+                "path": "a.py",
+                "line": 5,
+                "column": 0,
+                "endLine": None,
+                "endColumn": None,
+                "symbol": "test",
+                "message": "test",
+                "message-id": "W0001",
+            },
+        ]
+        findings = parse_pylint(json.dumps(data))
+        assert len(findings) == 1
+        assert findings[0].end_line == findings[0].line
+
+    def test_empty_input(self):
+        assert parse_pylint("") == []
+        assert parse_pylint("   ") == []
+        # pylint emits "[]" for a clean file
+        assert parse_pylint("[]") == []
+
+    def test_malformed_input(self):
+        result = parse_pylint("not json at all", exit_code=5)
+        assert len(result) == 1
+        assert isinstance(result[0], ToolError)
+        assert result[0].tool_name == "pylint"
+        assert result[0].exit_code == 5

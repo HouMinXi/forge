@@ -42,3 +42,6 @@ aicc.conf
 
 # Dogfood verification (local only, never commit)
 dogfood/
+
+# code-forge runtime receipts (local artifacts, not tracked)
+.code-forge/

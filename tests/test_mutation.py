@@ -243,6 +243,296 @@ class TestRunMutation:
             assert f.disposition == Disposition.DISMISSED
 
 
+class TestVenvFallback:
+    """Tests for conditional VIRTUAL_ENV fallback in run_mutation.
+
+    When the test runner is unavailable in the inherited env (e.g.
+    "No module named pytest" under a uv-managed venv), run_mutation
+    should strip VIRTUAL_ENV and retry. But when the inherited env
+    works, or when the failure is a genuine test failure (not a
+    runner-missing error), no stripping should occur.
+    """
+
+    @patch("code_forge.mutation.subprocess.run")
+    @patch.dict("os.environ", {
+        "VIRTUAL_ENV": "/fake/venv",
+        "PATH": "/fake/venv/bin:/usr/bin:/bin",
+    }, clear=True)
+    def test_inherited_baseline_passes_no_strip(self, mock_run):
+        """T-A: When inherited baseline passes, VIRTUAL_ENV stays intact.
+
+        Regression guard: a normal user whose venv has the runner and
+        all deps must not have VIRTUAL_ENV stripped.
+        """
+        envs_seen = []
+
+        def side_effect(*args, **kwargs):
+            env = kwargs.get("env", {})
+            envs_seen.append(dict(env))
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            )
+
+        mock_run.side_effect = side_effect
+        run_mutation(["test.py"], ["python3", "-m", "pytest"])
+
+        # All 3 baseline calls must have VIRTUAL_ENV present
+        baseline_envs = envs_seen[:3]
+        assert len(baseline_envs) == 3
+        for i, env in enumerate(baseline_envs):
+            assert "VIRTUAL_ENV" in env, (
+                "baseline run %d lost VIRTUAL_ENV" % (i + 1)
+            )
+            assert env["VIRTUAL_ENV"] == "/fake/venv"
+
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    @patch.dict("os.environ", {
+        "VIRTUAL_ENV": "/fake/venv",
+        "PATH": "/fake/venv/bin:/usr/bin:/bin",
+    }, clear=True)
+    def test_runner_missing_triggers_strip_retry(self, mock_run, mock_which):
+        """T-B: Runner-missing error triggers strip-retry that succeeds.
+
+        First baseline attempt fails with "No module named 'pytest'"
+        (the runner module is missing in the inherited env). The
+        fallback strips VIRTUAL_ENV and retries; the retry succeeds.
+        Mutation should proceed (not MUTATION_SKIPPED).
+        """
+        call_count = {"n": 0}
+        envs_seen = []
+
+        def side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            env = kwargs.get("env", {})
+            envs_seen.append(dict(env))
+            cmd = args[0]
+
+            # First baseline call: runner missing in inherited env
+            if call_count["n"] == 1:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=1,
+                    stdout="",
+                    stderr="No module named 'pytest'",
+                )
+            # After strip: all calls succeed (baseline retries + mutmut)
+            if isinstance(cmd, list) and "mutmut" in cmd:
+                if "results" in cmd:
+                    return subprocess.CompletedProcess(
+                        args=cmd, returncode=0,
+                        stdout="    mod.fn__mutmut_1: survived\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="", stderr=""
+                )
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr=""
+            )
+
+        mock_run.side_effect = side_effect
+        findings, infra = run_mutation(["test.py"], ["python3", "-m", "pytest"])
+
+        # The first call had VIRTUAL_ENV; after strip, it should be gone
+        assert "VIRTUAL_ENV" in envs_seen[0]
+        # Find the retry calls (after the strip)
+        retry_envs = [e for e in envs_seen[1:] if "VIRTUAL_ENV" not in e]
+        assert len(retry_envs) > 0, (
+            "no retry with VIRTUAL_ENV stripped was attempted"
+        )
+
+        # Must NOT be MUTATION_SKIPPED -- mutation should have proceeded
+        skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
+        assert skipped == [], (
+            "mutation was skipped despite successful retry: %s" % skipped
+        )
+
+    @patch("code_forge.mutation.subprocess.run")
+    @patch.dict("os.environ", {
+        "VIRTUAL_ENV": "/fake/venv",
+        "PATH": "/fake/venv/bin:/usr/bin:/bin",
+    }, clear=True)
+    def test_genuine_failure_no_strip_retry(self, mock_run):
+        """T-C: Genuine test failure does NOT trigger strip-retry.
+
+        Baseline fails with returncode=1 but the output does NOT
+        contain a runner-missing signature. This is a real test
+        failure, so no fallback should occur and MUTATION_SKIPPED
+        should be returned.
+        """
+        envs_seen = []
+
+        def side_effect(*args, **kwargs):
+            env = kwargs.get("env", {})
+            envs_seen.append(dict(env))
+            return subprocess.CompletedProcess(
+                args=[], returncode=1,
+                stdout="FAILED tests/test_foo.py::test_bar - AssertionError",
+                stderr="",
+            )
+
+        mock_run.side_effect = side_effect
+        findings, infra = run_mutation(["test.py"], ["python3", "-m", "pytest"])
+
+        # Only 1 call should have been made (no retry)
+        assert len(envs_seen) == 1, (
+            "expected 1 subprocess call (no retry), got %d" % len(envs_seen)
+        )
+        # All calls should have VIRTUAL_ENV (no stripping)
+        for env in envs_seen:
+            assert "VIRTUAL_ENV" in env, "VIRTUAL_ENV was stripped on genuine failure"
+
+        # Must return MUTATION_SKIPPED
+        skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
+        assert len(skipped) == 1
+        assert "flaky" in skipped[0].description or "baseline" in infra[0]
+
+    @patch("code_forge.mutation.subprocess.run")
+    @patch.dict("os.environ", {
+        "VIRTUAL_ENV": "/fake/venv",
+        "PATH": "/fake/venv/bin:/usr/bin:/bin",
+    }, clear=True)
+    def test_project_dep_missing_no_strip_retry(self, mock_run):
+        """T-C2: Missing PROJECT dep (not runner) does NOT trigger strip.
+
+        Baseline fails with "No module named 'venvonly_marker'" -- this
+        is a project dependency, not the runner. No strip-retry should
+        occur, because stripping the venv would make it worse.
+        """
+        envs_seen = []
+
+        def side_effect(*args, **kwargs):
+            env = kwargs.get("env", {})
+            envs_seen.append(dict(env))
+            return subprocess.CompletedProcess(
+                args=[], returncode=1,
+                stdout="",
+                stderr="No module named 'venvonly_marker'",
+            )
+
+        mock_run.side_effect = side_effect
+        findings, infra = run_mutation(
+            ["test.py"], ["python3", "-m", "pytest"]
+        )
+
+        # Only 1 call -- no retry
+        assert len(envs_seen) == 1, (
+            "strip-retry triggered on project dep missing (should not)"
+        )
+        assert "VIRTUAL_ENV" in envs_seen[0]
+
+        skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
+        assert len(skipped) == 1
+
+    @patch("code_forge.mutation.subprocess.run")
+    @patch.dict("os.environ", {
+        "VIRTUAL_ENV": "/fake/venv",
+        "PATH": "/fake/venv/bin:/usr/bin:/bin",
+    }, clear=True)
+    def test_bare_binary_not_found_triggers_strip(self, mock_run):
+        """T-B2: Bare binary not on PATH triggers strip-retry.
+
+        When baseline_cmd is ["pytest", ...] (bare binary, not
+        python3 -m), and it raises FileNotFoundError, strip-retry
+        should activate.
+        """
+        call_count = {"n": 0}
+        envs_seen = []
+
+        def side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            env = kwargs.get("env", {})
+            envs_seen.append(dict(env))
+
+            if call_count["n"] == 1:
+                raise FileNotFoundError("pytest")
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            )
+
+        mock_run.side_effect = side_effect
+        # Use bare binary form -- mutmut not installed so it will skip
+        # after the guard passes, which is fine for this test
+        findings, infra = run_mutation(["test.py"], ["pytest"])
+
+        # First call had VIRTUAL_ENV; retry should not
+        assert "VIRTUAL_ENV" in envs_seen[0]
+        retry_envs = [e for e in envs_seen[1:] if "VIRTUAL_ENV" not in e]
+        assert len(retry_envs) > 0, "no strip-retry on FileNotFoundError"
+
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    @patch.dict("os.environ", {
+        "VIRTUAL_ENV": "/fake/venv",
+        "PATH": "/fake/venv/bin:/usr/bin:/bin",
+    }, clear=True)
+    def test_python_flags_before_m_still_detected(self, mock_run, _which):
+        """Flags between python and -m (e.g. -W ignore) do not break
+        runner-missing detection."""
+        call_count = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            cmd = args[0]
+            if call_count["n"] == 1:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=1,
+                    stdout="",
+                    stderr="No module named 'pytest'",
+                )
+            if isinstance(cmd, list) and "mutmut" in cmd:
+                if "results" in cmd:
+                    return subprocess.CompletedProcess(
+                        args=cmd, returncode=0,
+                        stdout="    mod.fn__mutmut_1: survived\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="", stderr="",
+                )
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr="",
+            )
+
+        mock_run.side_effect = side_effect
+        findings, _ = run_mutation(
+            ["test.py"], ["python3", "-W", "ignore", "-m", "pytest"],
+        )
+        skipped = [f for f in findings
+                    if f.id == "MUTATION_SKIPPED"
+                    and f.fingerprint == "mutation-flaky"]
+        assert skipped == [], (
+            "mutation skipped despite successful retry with flags: %s"
+            % skipped
+        )
+
+    @patch("code_forge.mutation.subprocess.run")
+    @patch.dict("os.environ", {
+        "VIRTUAL_ENV": "/fake/venv",
+        "PATH": "/fake/venv/bin:/usr/bin:/bin",
+    }, clear=True)
+    def test_pytest_marker_flag_not_confused_with_python_m(self, mock_run):
+        """pytest -m slow must NOT trigger runner-missing detection."""
+        envs_seen = []
+
+        def side_effect(*args, **kwargs):
+            envs_seen.append(dict(kwargs.get("env", {})))
+            return subprocess.CompletedProcess(
+                args=[], returncode=1,
+                stdout="FAILED test_foo.py -m slow",
+                stderr="",
+            )
+
+        mock_run.side_effect = side_effect
+        findings, _ = run_mutation(["test.py"], ["pytest", "-m", "slow"])
+        assert len(envs_seen) == 1, (
+            "strip-retry triggered for pytest -m flag (should not)"
+        )
+        assert "VIRTUAL_ENV" in envs_seen[0]
+        skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
+        assert len(skipped) == 1
+
+
 class TestMutationRealCLI:
     """Real mutmut CLI smoke tests (skipped if mutmut not installed).
 

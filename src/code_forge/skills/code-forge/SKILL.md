@@ -48,13 +48,20 @@ Code Change
 [Step 0] Syntax (0a) + Lint (0b) + Non-ASCII (0c)
      |
      v
-[Steps 1-3] Three-cycle static review (cycle_counter state machine)
+[Outlet] resolve-outlet -> "inline" or "cli"
+     |                          |
+     v (inline)                 v (cli)
+[Steps 1-3]                 [Phase 7: CLI dispatch]
+     |  Three-cycle static review (cycle_counter state machine)
      |        Each cycle = Pass 1 + Pass 2 + Pass 3
      |        P0/P1 -> fix -> counter = 0 -> restart all
      |        P2 -> fix -> restart current cycle
      |        P3 -> accumulate (density check -> P2 escalation)
      |        Clean -> auto-continue (no user prompt)
      |        3 consecutive clean cycles -> proceed
+     v
+[Step 3a] Anti-AI audit (non-ASCII re-check, AI smell, commit message)
+     |
      v
 [Step 3.5] False-positive verification (if findings were fixed)
      |
@@ -217,7 +224,7 @@ Step 0 checks (syntax, lint, non-ASCII) found zero issues. No prior context.
 ```
 
 **Step 3 -- Inject into each LLM pass:**
-Before invoking each pass (/qodo-review, /code-review-expert, /adversarial-qe),
+Before executing each pass (Pass 1, Pass 2, Pass 3 via their pass files),
 prepend the Step 0 context block to the review prompt. The context block goes
 BEFORE the diff content, so the LLM sees it first.
 
@@ -289,6 +296,7 @@ loop:
           proceed to next pass without fixing
   
   After all 3 passes in a cycle complete:
+    (each of the 3 passes was genuinely run -- never increment for skipped passes)
     cycle_counter += 1
     if cycle_counter == 3:
       proceed to Step 3.5 or Step 4
@@ -298,10 +306,36 @@ loop:
 
 **Critical change from current behavior:** The current state machine resets cycle_counter on ANY finding. The new state machine only resets on P0/P1. P2 restarts the current cycle without resetting the counter. P3 uses density-based escalation with deduplication: per-file >5, per-diff >10, or density >0.15/line triggers P2-equivalent restart. Based on P3-THRESHOLD-RESEARCH.md (Google Tricorder, BitsAI-CR, Broken Windows theory, ESLint --max-warnings).
 
+## Genuine Execution -- No Fabricated Passes
+
+cycle_counter is incremented ONLY for passes you actually ran. The single most
+damaging failure of this pipeline is to PRINT a pass or cycle result you did not
+execute -- e.g. reporting "Cycle 2/3: Pass 1/2/3 CLEAN" after running one combined
+check, or self-certifying "cycle_counter = 3" without three genuine consecutive
+cycles. That is fabrication. It is the exact failure this pipeline exists to
+prevent, and it silently defeats every downstream gate: the commit marker and
+check_review_tracker.sh confirm that review activity occurred and stop runaway
+fix loops, but neither counts nor verifies that all 9 passes genuinely ran on
+the real diff. In Outlet B, only your honesty does.
+
+- Each of the minimum 9 passes is a separate, genuinely executed review: run the
+  pass, examine the actual diff, then report its result.
+- "The logic is unchanged since cycle 1" is NOT a reason to skip cycles 2-3.
+  Consecutive cycles exist to re-examine unchanged code with fresh eyes; unchanged
+  code is the normal condition under which the later cycles run, not an exemption
+  from running them.
+- If you genuinely judge that further cycles cannot add value, you may NOT
+  self-certify completion. STOP and tell the human: "I ran N genuine passes; I
+  judge cycles X-Y unlikely to add value because <reason> -- proceed anyway?" Let
+  the human decide. Even with their approval you do not add the # post-review-c3
+  marker yourself: it asserts three genuine cycles and the human applies it at
+  commit (Execution Protocol step 9). Erring is forgivable; fabricating a pass
+  count is not.
+
 ## Auto-Continue Protocol (TRUST-06)
 
 After each pass completes:
-- If **zero findings**: immediately invoke the next pass. Do not output
+- If **zero findings**: immediately execute the next pass. Do not output
   "waiting for input" or "how would you like to proceed?" prompts.
   Report the clean result in one line and move on:
   `[forge] Cycle 2/3, Pass 1/3: qodo-review -- CLEAN`
@@ -312,51 +346,29 @@ This eliminates the current UX pain of typing "continue" after every clean pass.
 The pipeline should flow silently through clean passes and only stop when
 human judgment is needed.
 
+"Flow silently" means run each pass and report its one-line clean result without
+pausing for input -- it does NOT mean batch, merge, or skip passes. Silent flow
+still executes all 9.
+
 ## Each Cycle = 3 Sequential Passes
 
-### Pass 1: /qodo-review
+### Pass 1: Code Review (qodo-style)
 
-Invoke the `/qodo-review` skill.
+Load passes/pass1-qodo.md and follow its instructions for this pass.
 
-- Change-aware pre-review with feature-grouped walkthrough
-- Severity: Red (must fix) / Yellow (problematic) / Green (minor)
-- Anti-hallucination gate: mandatory re-read via Read tool + grep verification before reporting any finding
-- Large diffs (>500 lines or >10 files): split into batches, review serially
-- Read-only analysis only -- no code modifications
-- Output: Changes Summary -> Files Walkthrough -> Code Suggestions
+Change-aware pre-review with feature-grouped walkthrough. Severity output uses P0-P3 (not the standalone skill's Red/Yellow/Green vocabulary). Anti-hallucination gate: mandatory re-read via Read tool + grep verification before reporting any finding. Large diffs (>500 lines or >10 files): split into batches, review serially. Read-only analysis only.
 
-### Pass 2: /code-review-expert
+### Pass 2: Expert Review
 
-Invoke the `/code-review-expert` skill.
+Load passes/pass2-expert.md and follow its instructions for this pass.
 
-- Senior engineer lens: SOLID, architecture, security
-- Severity: P0 (critical) / P1 (high) / P2 (medium) / P3 (low)
-- Covers: SOLID + architecture -> removal candidates -> security scan -> commit message -> code quality
-- Output: Summary -> Findings by severity -> Action plan
-- Always asks user before implementing fixes
+Senior engineer lens: SOLID, architecture, security. Uses P0-P3 severity natively. Loads reference checklists from references/ subdirectory (solid-checklist.md, security-checklist.md, code-quality-checklist.md, removal-plan.md). Always review-only unless state machine directs a fix.
 
-### Pass 3: /adversarial-qe
+### Pass 3: Adversarial QE
 
-Invoke the `/adversarial-qe` skill.
+Load passes/pass3-adversarial.md and follow its instructions for this pass.
 
-- Red-team QE: assumes bugs exist until proven otherwise
-- 14 attack dimensions:
-  1. Correctness and logic
-  2. Edge cases and boundaries (including "successful command, empty output" pattern)
-  3. Error handling and resilience
-  4. Security (injection, auth, secrets, TOCTOU)
-  5. Concurrency (races, deadlocks, lifecycle)
-  6. API and contract (breaking changes, validation)
-  7. Bidirectional correctness (round-trip encode/decode)
-  8. Graceful degradation (missing optional dependencies)
-  9. Convention adherence (grep FULL FILE, not just diff) -- expanded with naming quality and readability
-  10. Performance and scalability
-  11. Test quality
-  12. AI-generated code smells
-  13. Documentation completeness [SHADOW] -- public API docstrings, changelog entries, README updates for user-facing changes
-  14. Change scope [SHADOW] -- single-concern diffs, flag unfocused changes mixing unrelated concerns
-- 3-step finding verification gate: (1) Re-read code, (2) Ground truth verification, (3) Debate yourself
-- Output: Severity-ordered table with Location / Finding / Evidence / Suggestion
+Red-team QE: assumes bugs exist until proven otherwise. 14 attack dimensions (correctness, edge cases, error handling, security, concurrency, API/contract, bidirectional, graceful degradation, convention adherence, performance, test quality, AI code smells, commit message accuracy, callchain analysis). Severity output uses P0-P3 (not the standalone skill's Critical/High/Medium/Low/Nit vocabulary). 3-step finding verification gate. Cross-function grep enforcement on full file.
 
 ## Severity Normalization
 
@@ -697,9 +709,62 @@ The `check_review_tracker.sh` hook tracks state. After 3 rounds where findings p
 
 ---
 
+# Step 3a: Anti-AI Audit
+
+## When to Run
+
+- **Run**: ONCE, immediately after 3 consecutive clean cycles complete (cycle_counter = 3)
+- **Skip**: never -- this gate is mandatory before proceeding to Step 3.5
+
+## What to Check
+
+Scan ALL changed files (the same diff reviewed in Steps 1-3) for AI-generated content patterns.
+Retained: non-ASCII re-check (post-fix), AI smell subset (plan-ref labels, model/tool names,
+AI-vocabulary patterns), commit message audit. Dropped: evidence gathering, hallucination patterns,
+cross-references, follow-up risk (not applicable to code review pipeline).
+
+### Non-ASCII Typography
+
+Re-check for non-ASCII that may have been introduced by fixes during Steps 1-3
+(Step 0c ran on the original diff, but fixes may have introduced new non-ASCII):
+- Em dash (U+2014) instead of -- (double hyphen)
+- Smart quotes (U+201C, U+201D) instead of straight quotes
+- Ellipsis (U+2026) instead of ...
+- Arrow (U+2192) instead of ->
+- Run: `git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'`
+
+### AI Smell in Code and Comments
+
+- Plan-reference labels: D-02a, Task 1, B3 fix, CONTEXT.md, LOCKED -- opaque to future code readers
+- Model/tool names in comments: Claude, GPT, Opus, Sonnet, Copilot (legitimate in config files, not in code comments)
+- AI vocabulary: delve, tapestry, testament, moreover, furthermore, it is worth noting
+- Defensive over-qualification on self-explanatory code
+- Dash-heavy parentheticals in comments
+
+### Commit Message Audit
+
+- No task IDs, coverage stats, or bullet inventories
+- No internal plan references opaque to git log readers
+- No Co-Authored-By with AI model names
+- Message reads as if written by a human engineer
+
+## Handling Findings
+
+- If findings exist: fix them (remove plan-ref comments, replace non-ASCII, clean commit message)
+- After fixing: re-run Step 3a ONLY (does NOT reset the 3x3 cycle counter -- formatting fixes, not logic)
+- Clean Step 3a: proceed to Step 3.5
+- This gate does NOT produce P0-P3 severity findings -- binary pass/fail
+
+## Step 3a Gate
+
+- **Entry**: 3 consecutive clean cycles complete (cycle_counter = 3)
+- **Exit**: zero AI-smell findings in changed files
+- **On finding**: fix -> re-run Step 3a only (NOT Steps 1-3)
+
+---
+
 # Step 3.5: False-Positive Verification
 
-Invoke `/kernel-fp-verify` skill.
 
 ## When to Run
 
@@ -730,15 +795,40 @@ For each accumulated finding that was fixed, verify:
 
 No other dismissal reasons are valid.
 
+The following are NOT valid reasons to dismiss a finding:
+- "The caller normally prevents this input"
+- "This only happens if [upstream function] fails"
+- "Extremely unlikely in practice"
+- "I cannot construct a test case" (absence of test != absence of bug)
+
 ## Output
 
-Each finding classified as: CONFIRMED / DOWNGRADED / DISMISSED, with evidence and which verification steps failed.
+For each finding from the three-cycle review:
+
+```
+### Finding: <original title>
+**Source**: <which pass reported it> (e.g., adversarial-qe cycle 2)
+**Verdict**: CONFIRMED / DOWNGRADED / DISMISSED
+**Evidence**: <1-3 sentences of concrete evidence>
+**Steps failed**: <which of the 10 steps led to dismissal, if any>
+```
+
+Summary table at the end:
+
+| Finding | Source | Verdict | Reason |
+|---------|--------|---------|--------|
+| ...     | ...    | ...     | ...    |
+
+## Boundaries
+
+- This pass does NOT find new issues. It only validates existing findings.
+- Do not expand scope beyond the findings list.
+- Do not fix code -- only classify findings as confirmed/dismissed.
 
 ---
 
 # Step 4: Smoke Test
 
-Invoke the `/smoke-test` skill.
 
 ## Coverage Matrix
 
@@ -776,6 +866,22 @@ These evade `bash -n` and `shellcheck` -- test for them explicitly:
 3. `((x++))` returns old value (post-increment evaluates to 0 when x=0)
 4. `$(...)` captures multi-line output (use `grep -q` with stdout redirect)
 5. `jq -e` prints to stdout (always `>/dev/null 2>&1`)
+
+## Assembly Rules
+
+1. **One assertion per expected behavior** -- don't combine checks into one `[[ ... ]]`
+2. **Act before Assert** -- run the command first (via `run_and_capture`), then assert on the captured state
+3. **Values through parameters** -- captured stdout/stderr/status go directly into assertion parameters, not global regex
+4. **Every test starts with `source primitives.sh`** -- source path: `~/.claude/skills/smoke-test/test-library/shell/primitives.sh`; one line, all 19 functions (16 primitives + 3 helpers) available
+5. **No gaps in coverage** -- decision table required primitives are non-negotiable
+
+## Common Pitfalls
+
+1. **Skipping Act and going straight to Assert**: primitives need captured state -- always `run_and_capture` first
+2. **Checking zombie AFTER wait**: `assert_no_zombie` must run before `concurrent_wait` reaps processes
+3. **Using `$?` instead of `$SMOKE_LAST_STATUS`**: `$?` changes on every command; `$SMOKE_LAST_STATUS` is stable
+4. **Not sourcing primitives.sh**: every test script must start with `source primitives.sh`
+5. **Writing custom assertion libraries for Python/Go/C**: use the language's standard test framework (pytest, go test). Shell is the only language that needs `primitives.sh`
 
 ## Kernel C Exception
 
@@ -1030,6 +1136,102 @@ SKIP records:
 
 ---
 
+# Receipt Protocol
+
+When running outside the CLI (editor mode / Path C), write one receipt JSON file per review pass to `.code-forge/receipts/`.
+
+## File naming
+
+`receipt-c{cycle}p{pass}.json` where cycle is 1-3 and pass is 1-3.
+
+A complete review produces 9 receipt files: c1p1 through c3p3.
+
+## Receipt schema
+
+```json
+{
+  "cycle": 1,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "<sha256 of normalized diff>",
+  "timestamp": "2026-05-28T10:04:00Z",
+  "findings_count": 2,
+  "findings": [
+    {
+      "file": "src/foo.py",
+      "line": 42,
+      "description": "[qodo] potential null dereference",
+      "disposition": "UNCERTAIN"
+    }
+  ],
+  "anchors": [
+    {"file": "src/foo.py", "line": 42, "text": "def bar():"}
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/foo.py",
+      "start_line": 40,
+      "end_line": 45,
+      "content": "def bar():\n    x = get()\n    return x.value\n",
+      "rationale": "null dereference if get() returns None"
+    }
+  ],
+  "covered_line_ranges": [
+    {"file": "src/foo.py", "start": 30, "end": 60}
+  ]
+}
+```
+
+## Pass-to-skill mapping
+
+| Pass | Skill name |
+|------|-----------|
+| 1 | qodo-review |
+| 2 | code-review-expert |
+| 3 | adversarial-qe |
+
+## Verification checks
+
+Run `code-forge verify` to validate receipts. Seven checks:
+
+1. **Completeness**: 9 receipts, unique cycle/pass matrix, findings_count matches
+2. **Diff hash**: All receipts reference the current diff SHA256
+3. **Anchor reality**: Anchor files exist in the current diff
+4. **Timestamps**: Monotonically increasing across all receipts
+5. **Excerpt verification**: Code excerpts match actual file content; missing file = FAIL
+6. **Coverage quota**: Each cycle covers at least 60% of changed lines
+7. **Jaccard overlap**: Coverage Jaccard between cycle pairs must be below 0.8 (anti-rubber-stamp)
+
+## What verify does not catch
+
+These seven checks are a tamper check on the receipt set, not proof that a
+review happened. They confirm that nine receipts exist, hash to the current
+diff, quote file content verbatim, and claim adequate non-rubber-stamped
+coverage. They do not confirm that the reviewer read the code.
+
+A zero-findings receipt set passes whenever its claimed `covered_line_ranges`
+clear the 60% floor: check 5 (excerpt verification) only inspects reported
+findings, so a clean pass with no findings has nothing to verify, and an
+editor-mode reviewer (Path C) can hand-write coverage ranges it never
+performed. `code-forge verify` cannot distinguish a diligent clean review
+from a fabricated one.
+
+The real anti-shirk guarantees live elsewhere:
+
+- **R1 pre-commit test gate** runs the test suite and blocks on new failures
+  versus a baseline -- it gates on real test results, not self-reported claims.
+- **StateMachine consecutive-clean counter** (CLI / Path A) requires three
+  independent clean cycles and resets on any finding.
+
+Use `verify` to detect tampered or incomplete receipts, not as a substitute
+for running tests.
+
+## Diff SHA256 computation
+
+The diff hash uses `compute_source_hash()` from `source.py` -- NOT shell `sha256sum`. The hash includes a `mode=git` prefix and normalizes whitespace. All three components (receipt writer, verify, hook) use this same function.
+
+---
+
 # Commit Gate
 
 Only after ALL steps complete:
@@ -1116,7 +1318,7 @@ These are built into the pipeline and must be followed:
 
 4. **Anti-Hallucination Gates**: Pass 1 (re-read + grep), Pass 3 (3-step verification), Step 3.5 (10-step protocol with existence check).
 
-5. **Cross-Model Complementarity**: different AI models catch different bug classes. The 3-pass structure exploits this: structural (Pass 1), architectural (Pass 2), adversarial (Pass 3).
+5. **Cross-Perspective Complementarity**: different review perspectives catch different bug classes. The 3-pass structure exploits this: structural (Pass 1), architectural (Pass 2), adversarial (Pass 3). In Outlet B (inline), a single model adopts each perspective sequentially.
 
 6. **Ground Truth Verification for Test Infrastructure**: test assertions validated via bug injection: inject bug -> FAIL -> revert -> PASS. Static analysis alone cannot catch faulty assertion logic.
 
@@ -1164,13 +1366,46 @@ When `/forge` is invoked:
    Diff: <N> files, <M> lines changed
    ```
 3. **Run Step 0**: syntax + lint + non-ASCII. Stop on any failure. After all Step 0 checks pass, serialize findings into FUSE-01 context block for LLM passes (cap at 20 rows).
+3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "cli" or "inline". If exit code is non-zero, report the stderr error and STOP.
+
+   **If outlet is "inline" (Outlet B)**: Continue below with the inline self-drive pipeline.
+
+   **If outlet is "cli" (Outlet A)**:
+
+   a. **Build the command**. Start with `code-forge review`. If the diff source is "committed" (step 1 above), append `--committed`. If there are specific file paths, append them. Do NOT pass `--outlet` to code-forge review -- the CLI pipeline IS Outlet A; passing `--outlet` would be redundant.
+
+   b. **Run the command** via Bash tool with timeout parameter `timeout=600000` (10 minutes, in milliseconds). A full review pipeline (3 cycles x 3 passes + falsification) can exceed the Bash tool's default 120s timeout. Capture the exit code.
+
+   c. **Interpret the exit code**:
+      - **Exit 0 (PASS)**: Review passed. Read `.code-forge/state.json` (if it exists; if state.json is absent, report the exit code and stderr only) via Read tool to get the final state. Report "Forge review PASSED" with a summary of rounds completed.
+      - **Exit 1 (FAIL)**: Review found issues that did not converge. Read `.code-forge/state.json` for findings. Report each finding (file, line, severity, description). STOP -- do not proceed to commit.
+      - **Exit 2 (CLI_ERROR)**: Configuration or argument error. Read stderr output. Report the error message verbatim. STOP.
+      - **Exit 3 (BUSY)**: Another forge process is running. Report "Another code-forge review is already running in this directory." STOP.
+      - **Exit 4 (ESCALATED)**: Non-convergence after max rounds. Read `.code-forge/state.json` for the escalation reason. Report "Review escalated: did not converge within the round limit." STOP.
+
+   d. **On ANY non-zero exit**: Report the error and STOP. NEVER fall back to inline self-drive. This is the FAIL CLOSED contract. Do not attempt to re-run, retry, or work around the failure.
+
+   e. **Do NOT re-orchestrate cycles, count passes, or manage convergence**. That is machine.py's responsibility. The SKILL.md bridge is a thin wrapper: call, wait, read result, report.
+
+   When Outlet A exits successfully, skip to step 9 (commit readiness report). The CLI pipeline has already executed all steps internally.
 4. **Initialize cycle_counter = 0**
-5. **Run cycles**: invoke /qodo-review, /code-review-expert, /adversarial-qe sequentially. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
-6. **After 3 clean cycles**: run Step 3.5 if findings were ever fixed during the process.
-7. **Run Step 4**: invoke /smoke-test. Full pipeline restart on any FAIL.
+5. **Run cycles**: execute Pass 1, Pass 2, Pass 3 sequentially by Loading their pass files from passes/. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
+5.5. **Run Step 3a**: anti-AI audit on all changed files. If findings: fix, re-run Step 3a only (do NOT reset cycle_counter). Clean Step 3a: proceed to Step 3.5.
+6. **After 3 clean cycles + clean Step 3a**: run Step 3.5 if findings were ever fixed during the process.
+7. **Run Step 4**: execute smoke test (inlined below). Full pipeline restart on any FAIL.
 8. **Report**: summary of passes completed, findings fixed, smoke test results.
 8.5. **Feedback collection**: present finding summary table. Collect accept/reject for pending findings (LEARN-07-LITE). Users can defer to `forge --classify`.
 9. **The commit itself is NOT performed by forge** -- it reports readiness and the user commits with the `# post-review-c3` marker.
+
+## Outlet Behavior: A vs B
+
+Outlet A (CLI) and Outlet B (Inline) are **NOT behaviorally identical** in how they handle the convergence counter:
+
+- **Outlet A (CLI)**: Uses machine.py's binary reset model. ANY confirmed finding (regardless of severity) resets consecutive_clean_rounds to zero. This is the existing machine.py behavior shipped as-is.
+
+- **Outlet B (Inline)**: Uses the TRUST-07 severity-gated model defined in this SKILL.md. P0/P1 findings trigger a full counter reset. P2 findings restart the current cycle without resetting the counter. P3 findings accumulate and only escalate to P2 via density check.
+
+**Implication**: Outlet A is available for use but applies stricter convergence rules than Outlet B. A finding that would only restart a cycle under Outlet B will fully reset the counter under Outlet A. Counter unification is planned for a future release.
 
 ## Progress Tracking
 
@@ -1180,6 +1415,16 @@ After each pass, report:
 [forge] Cycle <N>/3, Pass <P>/3: <skill-name>
 [forge] Result: <zero findings | N findings>
 [forge] cycle_counter = <value>
+```
+
+After Step 3a, report:
+
+```
+[forge] Step 3a: anti-ai-audit -- CLEAN
+```
+or:
+```
+[forge] Step 3a: anti-ai-audit -- N findings, fixing
 ```
 
 After pipeline completes:

@@ -133,19 +133,19 @@ class TestLoadRegistry:
         assert registry == {}
 
     def test_filters_disabled_entries(self, tmp_path):
-        """Entries with enabled=false are filtered out (Round 3 C-4)."""
+        """Entries with enabled=false are filtered out."""
         yaml_file = tmp_path / "tools.yaml"
         yaml_file.write_text(
             "tools:\n"
             "  active:\n"
             "    command: ruff\n"
             "    args: ['check']\n"
-            "    output_format: ruff_json\n"
+            "    output_format: sarif\n"
             "    file_patterns: ['*.py']\n"
             "  disabled:\n"
             "    command: checkpatch\n"
             "    args: []\n"
-            "    output_format: checkpatch\n"
+            "    output_format: checkpatch_emacs\n"
             "    file_patterns: ['*.c']\n"
             "    enabled: false\n"
         )
@@ -153,8 +153,8 @@ class TestLoadRegistry:
         assert "active" in registry
         assert "disabled" not in registry
 
-    def test_warns_unknown_output_format(self, tmp_path, caplog):
-        """Unknown output_format logs a warning but does not crash."""
+    def test_unknown_output_format_raises(self, tmp_path):
+        """Unknown output_format raises ValueError naming the bad format."""
         yaml_file = tmp_path / "tools.yaml"
         yaml_file.write_text(
             "tools:\n"
@@ -164,11 +164,46 @@ class TestLoadRegistry:
             "    output_format: unknown_format_xyz\n"
             "    file_patterns: ['*']\n"
         )
-        import logging
-        with caplog.at_level(logging.WARNING):
+        with pytest.raises(ValueError, match="unknown_format_xyz"):
+            load_registry(str(yaml_file))
+
+    def test_stale_format_name_rejected(self, tmp_path):
+        """Stale format names that have no parser are rejected."""
+        for stale in ("ruff_json", "semgrep_json", "golangci_json",
+                       "checkpatch"):
+            yaml_file = tmp_path / "tools.yaml"
+            yaml_file.write_text(
+                "tools:\n"
+                "  tool:\n"
+                "    command: x\n"
+                "    args: []\n"
+                "    output_format: %s\n"
+                "    file_patterns: ['*']\n" % stale
+            )
+            with pytest.raises(ValueError, match=stale):
+                load_registry(str(yaml_file))
+
+    def test_all_dispatch_keys_accepted(self, tmp_path):
+        """Every real dispatch key loads without error."""
+        from code_forge.parsers import PARSER_DISPATCH
+        for fmt in sorted(PARSER_DISPATCH):
+            yaml_file = tmp_path / "tools.yaml"
+            yaml_file.write_text(
+                "tools:\n"
+                "  tool:\n"
+                "    command: x\n"
+                "    args: []\n"
+                "    output_format: %s\n"
+                "    file_patterns: ['*']\n" % fmt
+            )
             registry = load_registry(str(yaml_file))
-        assert "weird" in registry
-        assert "unknown_format_xyz" in caplog.text
+            assert "tool" in registry
+
+    def test_known_formats_equals_dispatch_keys(self):
+        """Invariant: _KNOWN_FORMATS == set(PARSER_DISPATCH)."""
+        from code_forge.registry import _KNOWN_FORMATS
+        from code_forge.parsers import PARSER_DISPATCH
+        assert set(_KNOWN_FORMATS) == set(PARSER_DISPATCH)
 
 
 class TestMatchTools:
@@ -188,7 +223,7 @@ class TestMatchTools:
                 name="ruff",
                 command="ruff",
                 args=[],
-                output_format="ruff_json",
+                output_format="sarif",
                 file_patterns=["*.py"],
             ),
         }
@@ -204,7 +239,7 @@ class TestMatchTools:
                 name="ruff",
                 command="ruff",
                 args=[],
-                output_format="ruff_json",
+                output_format="sarif",
                 file_patterns=["*.py"],
             ),
         }
@@ -219,7 +254,7 @@ class TestMatchTools:
                 name="ruff",
                 command="ruff",
                 args=[],
-                output_format="ruff_json",
+                output_format="sarif",
                 file_patterns=["*.py"],
                 exclude_patterns=["test_*.py"],
             ),

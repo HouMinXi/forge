@@ -94,6 +94,7 @@ class State:
     promoted_fingerprints: set[str] = field(default_factory=set)
     # Mutation survivor round counter (LOCAL mode):
     consecutive_survivor_rounds: int = 0  # LOCAL mode only
+    consecutive_clean_rounds: int = 0  # LOCAL mode only
     # 08-02 additions: cost tracking fields (CLI-08)
     cost_total_input: int = 0
     cost_total_output: int = 0
@@ -198,6 +199,9 @@ def load_state(path: Path) -> Optional[State]:
     state.consecutive_survivor_rounds = data.get(
         "consecutive_survivor_rounds", 0
     )
+    state.consecutive_clean_rounds = data.get(
+        "consecutive_clean_rounds", 0
+    )
 
     # 08-02 additions: backward-compat defaults for pre-08-02 state.json.
     cost_data = data.get("cost", {})
@@ -253,6 +257,7 @@ def save_state(state: State, path: Path) -> None:
         "hold_reason": state.hold_reason,
         "promoted_fingerprints": sorted(state.promoted_fingerprints),
         "consecutive_survivor_rounds": state.consecutive_survivor_rounds,
+        "consecutive_clean_rounds": state.consecutive_clean_rounds,
         "cost": {
             "total_input_tokens": state.cost_total_input,
             "total_output_tokens": state.cost_total_output,
