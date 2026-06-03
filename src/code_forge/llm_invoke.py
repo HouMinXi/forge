@@ -139,13 +139,16 @@ def llm_invoke(
     prompt: str,
     backend: Optional[BackendConfig] = None,
     timeout_s: int = DEFAULT_TIMEOUT_S,
-) -> Any:
+) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
     Args:
         prompt: LLM prompt text
         backend: Backend config (defaults to DEFAULT_BACKEND)
         timeout_s: Timeout in seconds
+
+    Returns:
+        LLMResult with content, usage (tokens), and duration_s
 
     Raises:
         LLMInvokeError: on timeout, nonzero exit, HTTP error, or JSON parse failure
@@ -167,8 +170,8 @@ def _invoke_cli(
     prompt: str,
     backend: BackendConfig,
     timeout_s: int,
-) -> Any:
-    """Invoke LLM via cli subprocess."""
+) -> LLMResult:
+    """Invoke LLM via cli subprocess. Returns LLMResult with Usage(0,0) per D-07."""
     # Resolve binary: use backend.command if set, else default to "claude"
     binary_name = backend.command or "claude"
     binary = shutil.which(binary_name)
@@ -245,7 +248,7 @@ def _invoke_cli(
     stdout = _strip_fences(stdout_data)
 
     try:
-        return json.loads(stdout)
+        parsed = json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise LLMInvokeError(
             "LLM subprocess returned non-JSON stdout",
@@ -255,13 +258,19 @@ def _invoke_cli(
             duration_s=duration,
         ) from exc
 
+    return LLMResult(
+        content=parsed,
+        usage=Usage(0, 0),  # cli has no per-invocation token data per D-07
+        duration_s=duration,
+    )
+
 
 def _invoke_api(
     prompt: str,
     backend: BackendConfig,
     timeout_s: int,
-) -> Any:
-    """Invoke LLM via HTTP API (openai or anthropic format)."""
+) -> LLMResult:
+    """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
     # Look up API key from environment
     if not backend.api_key_env:
         raise LLMInvokeError(
