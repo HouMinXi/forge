@@ -160,7 +160,7 @@ def _scan_path_for_tools(
     which_fn: Callable[[str], Optional[str]],
     detected: list[str],
     missing: list[str],
-    registry: dict[str, dict] = PYTHON_TOOL_REGISTRY,
+    registry: dict[str, dict] = None,
 ) -> None:
     """Scan PATH for all entries in the given registry.
 
@@ -172,6 +172,8 @@ def _scan_path_for_tools(
         missing: List of missing tool names (mutated in place).
         registry: Tool registry to scan (default: PYTHON_TOOL_REGISTRY).
     """
+    if registry is None:
+        registry = PYTHON_TOOL_REGISTRY
     for name, meta in registry.items():
         binary = meta["binary"]
         if name in detected or name in missing:
@@ -273,7 +275,6 @@ def detect_toolchain(
                 pyproject_path,
             )
             pyproject_parsed = False
-            has_python = False
 
     # Fallback: no pyproject.toml or corrupted TOML
     if not pyproject_parsed and not detected:
