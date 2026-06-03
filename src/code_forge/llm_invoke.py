@@ -258,9 +258,30 @@ def _invoke_cli(
             duration_s=duration,
         ) from exc
 
+    # Claude Code CLI -p --output-format json emits a JSON envelope:
+    #   {"type": "result", "result": "<model response>", "usage": {...}}
+    # When detected, unwrap the inner result and extract token usage.
+    # Fall back to treating the full output as content when no envelope.
+    usage_data: dict = {}
+    content = parsed
+    if isinstance(parsed, dict) and parsed.get("type") == "result" and "result" in parsed:
+        usage_data = parsed.get("usage") or {}
+        raw_result = parsed["result"]
+        if isinstance(raw_result, str):
+            stripped = _strip_fences(raw_result)
+            try:
+                content = json.loads(stripped)
+            except json.JSONDecodeError:
+                content = raw_result
+        else:
+            content = raw_result
+
     return LLMResult(
-        content=parsed,
-        usage=Usage(0, 0),  # cli has no per-invocation token data per D-07
+        content=content,
+        usage=Usage(
+            input_tokens=usage_data.get("input_tokens", 0),
+            output_tokens=usage_data.get("output_tokens", 0),
+        ),
         duration_s=duration,
     )
 

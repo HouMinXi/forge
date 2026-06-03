@@ -438,8 +438,8 @@ class TestCostSummaryStderr:
         assert "passes" in cost
         assert "per_pass" in cost
 
-    def test_cost_summary_no_output_when_zero_passes(self, tmp_path, capsys):
-        """When no L1 invocations, no cost line printed to stderr."""
+    def test_cost_summary_shows_na_for_stub_engine(self, tmp_path, capsys):
+        """Stub engine (no token data) prints 'N/A' cost line, not silence."""
         repo = tmp_path / "repo"
         repo.mkdir()
         _git_init_repo(repo)
@@ -464,5 +464,7 @@ class TestCostSummaryStderr:
         _main()
 
         captured = capsys.readouterr()
-        # stub engine = zero tokens, so no cost line expected
-        assert "code-forge: cost:" not in captured.err
+        # stub engine has no token data: cost line shows N/A so CLI users
+        # always know a review ran (same visibility contract as API users).
+        assert "code-forge: cost:" in captured.err
+        assert "N/A" in captured.err

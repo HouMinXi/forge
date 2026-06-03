@@ -145,14 +145,32 @@ class TestLLMInvoke:
         kwargs = mock_popen.call_args[1]
         assert kwargs.get("start_new_session") is True
 
-    def test_cli_usage_is_zero(self):
-        """cli backend returns Usage(0, 0) since claude -p has no per-invocation token data."""
+    def test_cli_usage_zero_when_no_envelope(self):
+        """Direct JSON response (no Claude CLI envelope) returns Usage(0, 0)."""
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
             result = llm_invoke("prompt")
         assert result.usage.input_tokens == 0
         assert result.usage.output_tokens == 0
+        assert result.content == {"ok": True}
+
+    def test_cli_usage_extracted_from_envelope(self):
+        """Claude CLI JSON envelope format: extracts usage + unwraps inner result."""
+        envelope = json.dumps({
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps({"findings": []}),
+            "usage": {"input_tokens": 350, "output_tokens": 120,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 50},
+        })
+        mock_proc = _make_mock_proc(stdout=envelope)
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt")
+        assert result.usage.input_tokens == 350
+        assert result.usage.output_tokens == 120
+        assert result.content == {"findings": []}
 
     def test_api_dispatch_openai(self):
         """api backend with openai format makes HTTP call and returns LLMResult."""
