@@ -97,8 +97,8 @@ by runtime review quality signals.
 
 Injection happens in Python BEFORE the L1 provider prompt reaches the
 backend. Concretely, the injection point is between `_execute_round`
-calling `_run_l1_phase` (machine.py line 628) and the `l1_provider()`
-invocation inside `_run_l1_phase` (machine.py line 516). Python modifies
+calling `_run_l1_phase` (machine.py `_execute_round`) and the `l1_provider()`
+invocation inside `_run_l1_phase` (machine.py `_run_l1_phase`). Python modifies
 the diff/prompt payload to include a synthetic defect before the payload
 is handed to `l1_provider`.
 
@@ -151,7 +151,7 @@ canary_results audit log.
 ### BACKEND-AGNOSTIC
 
 Per D-25, injection happens above the backend layer. The `l1_provider`
-callable (machine.py line 136) receives the already-modified prompt
+callable (machine.py `StateMachine` dataclass) receives the already-modified prompt
 containing the canary hunk. Whether `l1_provider` dispatches to an HTTP
 API (openai/anthropic format) or a CLI subprocess (`claude -p`), the
 canary is present in the prompt identically. No backend-specific code is
@@ -279,7 +279,7 @@ errors.
 
 ## 5. Canary Finding Matching
 
-After `_run_l1_phase` (machine.py line 506) returns L1 candidate
+After `_run_l1_phase` (machine.py `_run_l1_phase`) returns L1 candidate
 StateFinding objects, Python scans the candidates for findings whose
 `file` field matches the synthetic canary file path (`_canary_NNN.py`).
 
@@ -306,20 +306,20 @@ separator.
 ### Post-match processing
 
 1. **Remove canary findings from the candidate list.** Canary findings
-   MUST NOT enter the falsification step (`falsify_real.py`), MUST NOT
-   reach `_merge_findings` (machine.py line 632), and MUST NOT appear
-   in `state.json` or affect `consecutive_clean_rounds`.
+ MUST NOT enter the falsification step (`falsify_real.py`), MUST NOT
+ reach `_merge_findings` (machine.py `_merge_findings`), and MUST NOT appear
+ in `state.json` or affect `consecutive_clean_rounds`.
 
 2. **Record canary result.** The match outcome (detected or missed) is
-   recorded in `canary_results` (see Section 6) for audit and
-   disqualification logic.
+ recorded in `canary_results` (see Section 6) for audit and
+ disqualification logic.
 
 3. **Return remaining candidates.** The real L1 findings (non-canary)
-   proceed through falsification and merge as normal.
+ proceed through falsification and merge as normal.
 
 ### Why canary findings must not enter falsification
 
-The falsification step (`RealFalsifier` in `falsify_real.py`, line 32)
+The falsification step (`RealFalsifier` in `falsify_real.py`)
 invokes `llm_invoke` to verify whether an L1 finding is real. The canary
 finding IS real (by construction -- forge planted it), but the canary
 file does not exist on disk. Falsification would attempt to re-read the
@@ -342,17 +342,17 @@ did not recognize the defect.
 When a canary MISS occurs in LOCAL mode:
 
 1. **All L1 findings from that round are discarded.** The round's L1
-   output is unreliable -- if the reviewer missed an obvious planted
-   defect, its judgment on real code cannot be trusted.
+ output is unreliable -- if the reviewer missed an obvious planted
+ defect, its judgment on real code cannot be trusted.
 2. **The round does NOT count toward `consecutive_clean_rounds`.** The
-   convergence counter (machine.py line 457) is not incremented. This
-   prevents a shirking reviewer from reaching the 3-clean threshold
-   by fabricating empty findings lists.
+ convergence counter (machine.py `_run_local`) is not incremented. This
+ prevents a shirking reviewer from reaching the 3-clean threshold
+ by fabricating empty findings lists.
 3. **An infra_error is appended** with the canary_id and round_index:
-   `"canary miss: round=%d canary_id=%s defect_type=%s"`.
+ `"canary miss: round=%d canary_id=%s defect_type=%s"`.
 4. **The pipeline continues.** The next round injects a new canary
-   (different defect type, different canary_id). A miss is per-round,
-   not permanent.
+ (different defect type, different canary_id). A miss is per-round,
+ not permanent.
 
 ### CI mode consequence
 
@@ -360,9 +360,9 @@ When a canary MISS occurs in CI mode, the same consequences as LOCAL
 apply, plus:
 
 5. **The verdict is forced to FAIL.** In CI mode there is no retry loop;
-   a single unreliable round means the pipeline cannot certify the diff.
-   The State verdict is set to `Verdict.FAIL` with an infra_error
-   explaining the canary miss.
+ a single unreliable round means the pipeline cannot certify the diff.
+ The State verdict is set to `Verdict.FAIL` with an infra_error
+ explaining the canary miss.
 
 ### Per-round scope
 
@@ -373,7 +373,7 @@ can pass in round N+1 if it reads the diff carefully.
 
 ### State tracking
 
-The `State` dataclass (state.py line 58) gains a new field:
+The `State` dataclass (state.py `State` dataclass) gains a new field:
 
 ```python
 # Illustrative addition to State dataclass
@@ -406,7 +406,7 @@ not diagnostic precision (D-26: attention vs. strength). The
 
 This section maps canary operations to real codebase identifiers.
 
-### machine.py -- _execute_round (line 617)
+### machine.py -- _execute_round
 
 The round lifecycle in `_execute_round` currently runs:
 ```
@@ -418,18 +418,18 @@ With canary, the sequence becomes:
 L0 -> autofix (LOCAL) -> INJECT CANARY -> L1 -> EXTRACT CANARY -> merge -> persist
 ```
 
-- **Inject canary:** Before `_run_l1_phase()` call at line 628. Python
-  modifies the diff/prompt payload to append the synthetic canary hunk.
-- **Extract canary:** After `_run_l1_phase()` returns at line 628 and
-  before `_merge_findings()` at line 632. Python scans L1 candidates,
-  removes canary findings, records the canary result, and applies
-  disqualification if the canary was missed.
+- **Inject canary:** Before `_run_l1_phase()` call. Python
+ modifies the diff/prompt payload to append the synthetic canary hunk.
+- **Extract canary:** After `_run_l1_phase()` returns and
+ before `_merge_findings()`. Python scans L1 candidates,
+ removes canary findings, records the canary result, and applies
+ disqualification if the canary was missed.
 
-### machine.py -- StateMachine dataclass (line 104)
+### machine.py -- StateMachine dataclass
 
 Add a `canary_injector` callable field to the StateMachine dataclass,
 following the same dependency-injection pattern as `l1_provider`
-(line 136), `l0_runner` (line 135), and `l2_runner` (line 137):
+, `l0_runner`, and `l2_runner`:
 
 ```python
 # Illustrative addition to StateMachine dataclass
@@ -442,27 +442,27 @@ canary_injector: Callable = field(
 
 The default is a no-op lambda, so existing tests and callers that do not
 use canary are unaffected (same pattern as the existing `l1_provider`
-default at line 136).
+default).
 
-### factories.py -- build_l1_provider (line 199)
+### factories.py -- build_l1_provider
 
-The `build_l1_provider` function constructs the L1 prompt at line 236
+The `build_l1_provider` function constructs the L1 prompt
 by concatenating `diff_text` with role instructions. Canary injection
 interacts with the L1 prompt here -- the canary hunk must be included
 in the diff portion of the prompt.
 
 The implementer chooses one of two strategies:
 1. **Wrapper approach:** wrap `l1_provider` in a canary-aware decorator
-   that prepends the canary hunk to the diff before calling the
-   original provider.
+ that prepends the canary hunk to the diff before calling the
+ original provider.
 2. **Direct approach:** inject the canary hunk directly in
-   `_execute_round` by modifying `resolved_review.git_diff` before
-   `_run_l1_phase` reads it.
+ `_execute_round` by modifying `resolved_review.git_diff` before
+ `_run_l1_phase` reads it.
 
 The choice is deferred to the v2.3+ implementation phase. Both approaches
 satisfy D-25 (backend-agnostic, prompt-level injection).
 
-### state.py -- StateFinding.source (line 48)
+### state.py -- StateFinding.source
 
 The `source` field on `StateFinding` is currently typed as:
 
@@ -480,7 +480,7 @@ Canary findings tagged with `source="CANARY"` are used only for internal
 matching and are removed before merge. They never appear in the persisted
 `state.json` findings list.
 
-### state.py -- State dataclass (line 58)
+### state.py -- State dataclass
 
 Add the `canary_results` field described in Section 6. This is an
 additive schema change (new field with default empty list), compatible
@@ -495,13 +495,13 @@ prompt containing the canary hunk. No Outlet-B-specific code is needed.
 
 ### llm_invoke.py
 
-No changes. The `llm_invoke` function (line 200+) and `LLMResult`
-dataclass (line 35) are below the canary injection layer. They receive
+No changes. The `llm_invoke` function and `LLMResult`
+dataclass are below the canary injection layer. They receive
 and process the prompt as-is, unaware of whether it contains a canary.
 
 ### falsify_real.py
 
-No changes to `RealFalsifier` (line 32). Canary findings are extracted
+No changes to `RealFalsifier`. Canary findings are extracted
 before falsification runs (Section 5). The falsifier never sees canary
 findings.
 
@@ -606,16 +606,16 @@ This design document is checked into the repository. A model fine-tuned
 on the repository's contents could learn canary patterns. Mitigations:
 
 1. **Randomized selection from a large library.** The defect library
-   contains many templates with parameterized placeholders. Even
-   knowing the categories, the specific code varies per round.
+ contains many templates with parameterized placeholders. Even
+ knowing the categories, the specific code varies per round.
 2. **UUID4 canary_id.** The canary metadata is unpredictable.
 3. **Reviewer sees only the code.** The canary metadata (canary_id,
-   defect_type, expected_keywords) is never included in the prompt.
-   The reviewer sees a diff hunk that looks like real code.
+ defect_type, expected_keywords) is never included in the prompt.
+ The reviewer sees a diff hunk that looks like real code.
 4. **Residual risk is acceptable.** A model that learns "forge injects
-   canaries" and actively looks for defects in synthetic-looking files
-   is, by definition, reading the diff carefully -- which is exactly
-   the behavior canary is designed to enforce.
+ canaries" and actively looks for defects in synthetic-looking files
+ is, by definition, reading the diff carefully -- which is exactly
+ the behavior canary is designed to enforce.
 
 
 ## 10. Deferred to v2.3+
@@ -624,46 +624,46 @@ The following items are explicitly out of scope for this spec phase.
 Each is listed with its rationale.
 
 1. **Implementation of canary.py and canary_library.py.**
-   This phase produces the design document only, per ROADMAP Phase 9
-   scope. Implementation requires the pipeline infrastructure from
-   Phases 5-8 to be stable.
+ This phase produces the design document only, per ROADMAP Phase 9
+ scope. Implementation requires the pipeline infrastructure from
+ Phases 5-8 to be stable.
 
 2. **Canary difficulty progression (adaptive difficulty).**
-   Adjusting canary difficulty based on historical pass/fail rates
-   requires telemetry infrastructure (canary result aggregation across
-   runs) that does not exist yet.
+ Adjusting canary difficulty based on historical pass/fail rates
+ requires telemetry infrastructure (canary result aggregation across
+ runs) that does not exist yet.
 
 3. **Multi-canary injection per round.**
-   Injecting multiple canaries per round would provide stronger signal
-   but increases prompt size and review cost. The single-canary baseline
-   must be validated first to establish the cost/benefit ratio.
+ Injecting multiple canaries per round would provide stronger signal
+ but increases prompt size and review cost. The single-canary baseline
+ must be validated first to establish the cost/benefit ratio.
 
 4. **Canary result telemetry dashboard.**
-   A dashboard showing canary pass/fail rates across projects and models
-   requires reporting infrastructure (data collection, storage,
-   visualization) that is out of scope for the review pipeline itself.
+ A dashboard showing canary pass/fail rates across projects and models
+ requires reporting infrastructure (data collection, storage,
+ visualization) that is out of scope for the review pipeline itself.
 
 5. **Custom canary defects via gate.yaml.**
-   Allowing teams to define custom canary templates in gate.yaml requires
-   a schema extension, template validation, and documentation that
-   depends on the implementation existing first.
+ Allowing teams to define custom canary templates in gate.yaml requires
+ a schema extension, template validation, and documentation that
+ depends on the implementation existing first.
 
 6. **Cross-language canary library.**
-   The initial canary library is Python-only. Extending to JavaScript,
-   Go, Rust, and other languages aligns with the deferred multi-language
-   detect feature (Phase 5 D-01) and should ship alongside it.
+ The initial canary library is Python-only. Extending to JavaScript,
+ Go, Rust, and other languages aligns with the deferred multi-language
+ detect feature (Phase 5 D-01) and should ship alongside it.
 
 7. **Outlet B enforcement mode.**
-   Outlet B (inline) operates in a trust context where the model is
-   assumed capable. Whether canary disqualification should force a
-   different consequence in Outlet B (e.g., switch to Outlet A) depends
-   on user feedback from Outlet B deployment.
+ Outlet B (inline) operates in a trust context where the model is
+ assumed capable. Whether canary disqualification should force a
+ different consequence in Outlet B (e.g., switch to Outlet A) depends
+ on user feedback from Outlet B deployment.
 
 8. **L0 canary injection.**
-   L0 tools are deterministic parsers (ruff, pylint, flake8), not LLMs.
-   Canary tests LLM attention; injecting a defect for a deterministic
-   parser is unnecessary (the parser either catches it or does not, based
-   on its rules, not on "attention").
+ L0 tools are deterministic parsers (ruff, pylint, flake8), not LLMs.
+ Canary tests LLM attention; injecting a defect for a deterministic
+ parser is unnecessary (the parser either catches it or does not, based
+ on its rules, not on "attention").
 
 
 ## 11. Open Questions for Implementation Phase
@@ -677,7 +677,7 @@ v2.3+ implementation phase.
 prepends the canary hunk to the diff before calling the original provider.
 Pro: clean separation, `l1_provider` is unmodified. Con: requires the
 wrapper to understand the prompt format constructed in `build_l1_provider`
-(factories.py line 236).
+(factories.py `build_l1_provider`).
 
 **Direct approach:** Inject the canary hunk directly in `_execute_round`
 by modifying `resolved_review.git_diff` before `_run_l1_phase` reads it.
