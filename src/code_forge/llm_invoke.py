@@ -276,9 +276,17 @@ def _invoke_api(
     start = time.monotonic()
 
     if backend.format == "openai":
-        content = _invoke_openai(prompt, backend, api_key, timeout_s)
+        content, usage_data = _invoke_openai(prompt, backend, api_key, timeout_s)
+        usage = Usage(
+            input_tokens=usage_data.get("prompt_tokens", 0),
+            output_tokens=usage_data.get("completion_tokens", 0),
+        )
     elif backend.format == "anthropic":
-        content = _invoke_anthropic(prompt, backend, api_key, timeout_s)
+        content, usage_data = _invoke_anthropic(prompt, backend, api_key, timeout_s)
+        usage = Usage(
+            input_tokens=usage_data.get("input_tokens", 0),
+            output_tokens=usage_data.get("output_tokens", 0),
+        )
     else:
         raise LLMInvokeError(
             "unsupported api format: %r" % backend.format
@@ -289,7 +297,7 @@ def _invoke_api(
     # Strip fences and parse JSON
     content = _strip_fences(content)
     try:
-        return json.loads(content)
+        parsed_content = json.loads(content)
     except json.JSONDecodeError as exc:
         raise LLMInvokeError(
             "API response content is not valid JSON",
@@ -299,14 +307,16 @@ def _invoke_api(
             duration_s=duration,
         ) from exc
 
+    return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
+
 
 def _invoke_openai(
     prompt: str,
     backend: BackendConfig,
     api_key: str,
     timeout_s: int,
-) -> str:
-    """OpenAI-format API call."""
+) -> tuple[str, dict]:
+    """OpenAI-format API call. Returns (content_str, usage_dict)."""
     url = backend.base_url + "/chat/completions"
     headers = {
         "Authorization": "Bearer " + api_key,
@@ -335,9 +345,11 @@ def _invoke_openai(
             "URLError from %s backend: %s" % (backend.format, exc.reason)
         ) from exc
 
-    # Extract content from OpenAI response structure
+    # Extract content and usage from OpenAI response structure
     try:
-        return resp_data["choices"][0]["message"]["content"]
+        content = resp_data["choices"][0]["message"]["content"]
+        usage_data = resp_data.get("usage", {})
+        return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.format
@@ -349,8 +361,8 @@ def _invoke_anthropic(
     backend: BackendConfig,
     api_key: str,
     timeout_s: int,
-) -> str:
-    """Anthropic-format API call."""
+) -> tuple[str, dict]:
+    """Anthropic-format API call. Returns (content_str, usage_dict)."""
     url = backend.base_url + "/v1/messages"
     headers = {
         "x-api-key": api_key,
@@ -380,9 +392,11 @@ def _invoke_anthropic(
             "URLError from %s backend: %s" % (backend.format, exc.reason)
         ) from exc
 
-    # Extract content from Anthropic response structure
+    # Extract content and usage from Anthropic response structure
     try:
-        return resp_data["content"][0]["text"]
+        content = resp_data["content"][0]["text"]
+        usage_data = resp_data.get("usage", {})
+        return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.format
