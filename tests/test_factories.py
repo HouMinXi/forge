@@ -75,8 +75,12 @@ class TestBuildL1Provider:
 
     def test_stub_returns_empty(self):
         from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import Usage
         p = build_l1_provider("stub", None)
-        assert p() == []
+        findings, usage, duration = p()
+        assert findings == []
+        assert usage == Usage()
+        assert duration == 0.0
 
     def test_real_returns_callable(self):
         from code_forge.factories import build_l1_provider
@@ -92,11 +96,14 @@ class TestBuildL1Provider:
 
     def test_stub_never_calls_llm(self):
         from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import Usage
         from unittest.mock import patch
         p = build_l1_provider("stub", None)
         with patch("code_forge.llm_invoke.llm_invoke") as mock:
-            result = p()
-        assert result == []
+            findings, usage, duration = p()
+        assert findings == []
+        assert usage == Usage()
+        assert duration == 0.0
         mock.assert_not_called()
 
 

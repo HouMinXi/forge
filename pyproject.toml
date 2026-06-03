@@ -39,3 +39,4 @@ code_forge = ["skills/**/*", "skills/**/.gitkeep"]
 markers = [
     "real_api: opt-in tests that call real backends (skipped by default)",
 ]
+pythonpath = ["src"]
