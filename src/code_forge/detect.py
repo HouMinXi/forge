@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Toolchain auto-detection for Python projects.
+"""Toolchain auto-detection for Python and shell projects.
 
 Detects project toolchain from pyproject.toml [tool.*] sections,
-flake8 config files (.flake8, setup.cfg, tox.ini), and PATH-based
-fallback heuristics. Generates .code-forge/tools.yaml for L0 linting.
+flake8 config files (.flake8, setup.cfg, tox.ini), shell indicators
+(*.sh files), and PATH-based fallback heuristics. Generates
+.code-forge/tools.yaml for L0 linting.
 """
 
 from __future__ import annotations
 
 import configparser
+import copy
 import logging
 import shutil
 import tomllib
@@ -31,7 +33,7 @@ class DetectionResult:
 
     detected: tools declared in project config AND available on PATH.
     missing: tools declared in project config but NOT on PATH.
-    language: detected project language (e.g. "python").
+    language: detected project language (e.g. "python", "shell").
     """
 
     detected: list[str]
@@ -96,6 +98,38 @@ PYTHON_TOOL_REGISTRY: dict[str, dict] = {
     },
 }
 
+# Shell tool registry: tool_name -> detection metadata + tools.yaml entry.
+# Shell projects do not use pyproject.toml, so no toml_section field.
+# Detection is driven by file extension presence (*.sh, *.bash).
+# output_format "shellcheck_json" matches the PARSER_DISPATCH key.
+SHELL_TOOL_REGISTRY: dict[str, dict] = {
+    "shellcheck": {
+        "binary": "shellcheck",
+        "tools_yaml_entry": {
+            "command": "shellcheck -f json",
+            "output_format": "shellcheck_json",
+            "file_patterns": ["*.sh", "*.bash"],
+        },
+    },
+}
+
+
+def _get_tool_meta(tool_name: str) -> Optional[dict]:
+    """Look up tool metadata across all registries.
+
+    Checks PYTHON_TOOL_REGISTRY first, then SHELL_TOOL_REGISTRY.
+
+    Args:
+        tool_name: Name of the tool to look up.
+
+    Returns:
+        Registry entry dict, or None if not found in any registry.
+    """
+    for registry in (PYTHON_TOOL_REGISTRY, SHELL_TOOL_REGISTRY):
+        if tool_name in registry:
+            return registry[tool_name]
+    return None
+
 
 def _has_flake8_config(project_root: Path) -> bool:
     """Check if flake8 config is declared in this project.
@@ -126,12 +160,19 @@ def _scan_path_for_tools(
     which_fn: Callable[[str], Optional[str]],
     detected: list[str],
     missing: list[str],
+    registry: dict[str, dict] = PYTHON_TOOL_REGISTRY,
 ) -> None:
-    """Scan PATH for all PYTHON_TOOL_REGISTRY entries.
+    """Scan PATH for all entries in the given registry.
 
     Appends to detected/missing lists, guarding against duplicates.
+
+    Args:
+        which_fn: Callable for PATH lookup.
+        detected: List of detected tool names (mutated in place).
+        missing: List of missing tool names (mutated in place).
+        registry: Tool registry to scan (default: PYTHON_TOOL_REGISTRY).
     """
-    for name, meta in PYTHON_TOOL_REGISTRY.items():
+    for name, meta in registry.items():
         binary = meta["binary"]
         if name in detected or name in missing:
             continue
@@ -157,7 +198,13 @@ def detect_toolchain(
       4. flake8 config-file detection runs ALWAYS (independent of
          the [tool.*] walk) because flake8 has no pyproject.toml
          support.
-      5. If nothing detected, raise CliError.
+      5. Shell detection: check for *.sh files in root and one level
+         deep; if found, scan SHELL_TOOL_REGISTRY.
+      6. If nothing detected, raise CliError.
+
+    Language priority: Python indicators take precedence over shell
+    in mixed projects. "shell" is returned only when no Python
+    indicators are present.
 
     Args:
         project_root: Path to project root directory.
@@ -168,18 +215,20 @@ def detect_toolchain(
         DetectionResult with detected/missing tool lists.
 
     Raises:
-        CliError: if no Python indicators found.
+        CliError: if no project indicators found.
     """
     detected: list[str] = []
     missing: list[str] = []
     pyproject_path = project_root / "pyproject.toml"
     pyproject_parsed = False
+    has_python = False
 
     if pyproject_path.exists():
         try:
             with open(pyproject_path, "rb") as f:
                 data = tomllib.load(f)
             pyproject_parsed = True
+            has_python = True
 
             tool_section = data.get("tool", {})
             if isinstance(tool_section, dict):
@@ -224,11 +273,10 @@ def detect_toolchain(
                 pyproject_path,
             )
             pyproject_parsed = False
+            has_python = False
 
     # Fallback: no pyproject.toml or corrupted TOML
     if not pyproject_parsed and not detected:
-        has_python = False
-
         # Check for Python indicators
         py_files = list(project_root.glob("*.py"))
         if not py_files:
@@ -257,6 +305,18 @@ def detect_toolchain(
             if "flake8" not in missing:
                 missing.append("flake8")
 
+    # Shell detection: check for *.sh files in root and one level deep.
+    # Runs independently of Python detection to support mixed projects.
+    has_shell = False
+    sh_files = list(project_root.glob("*.sh"))
+    if not sh_files:
+        sh_files = list(project_root.glob("*/*.sh"))
+    if sh_files:
+        has_shell = True
+        _scan_path_for_tools(
+            which_fn, detected, missing, registry=SHELL_TOOL_REGISTRY,
+        )
+
     # De-duplicate: a tool must not be in both lists
     for name in list(detected):
         if name in missing:
@@ -270,10 +330,14 @@ def detect_toolchain(
             "`.code-forge/tools.yaml`."
         )
 
+    # Language: Python takes priority in mixed projects.
+    # "shell" only when no Python indicators are present.
+    language = "python" if has_python else ("shell" if has_shell else "python")
+
     return DetectionResult(
         detected=detected,
         missing=missing,
-        language="python",
+        language=language,
     )
 
 
@@ -283,9 +347,13 @@ def generate_tools_yaml(
 ) -> None:
     """Generate tools.yaml from detection result.
 
-    Only includes tools with a tools_yaml_entry in the registry
+    Only includes tools with a tools_yaml_entry in any registry
     (linters with parsers). Tools without entries (pytest, mypy)
     are excluded.
+
+    Uses copy.deepcopy to ensure generated entries have independent
+    file_patterns lists -- no shared mutable alias with registry
+    module constants.
 
     Args:
         result: DetectionResult from detect_toolchain().
@@ -296,9 +364,9 @@ def generate_tools_yaml(
     """
     tools_dict: dict[str, dict] = {}
     for tool_name in result.detected:
-        meta = PYTHON_TOOL_REGISTRY.get(tool_name)
+        meta = _get_tool_meta(tool_name)
         if meta and "tools_yaml_entry" in meta:
-            tools_dict[tool_name] = dict(meta["tools_yaml_entry"])
+            tools_dict[tool_name] = copy.deepcopy(meta["tools_yaml_entry"])
 
     if not tools_dict:
         raise CliError(
@@ -312,6 +380,49 @@ def generate_tools_yaml(
         yaml.safe_dump({"tools": tools_dict}, f, default_flow_style=False)
 
 
+def _merge_and_write(result: DetectionResult, output_path: Path) -> None:
+    """Merge detected tools into existing tools.yaml, preserving user entries.
+
+    User-added entries (names not in any tool registry) are preserved.
+    Detected entries update/overwrite stale entries of the same name.
+    Falls back to fresh generation if existing file is empty or corrupt.
+
+    Args:
+        result: DetectionResult with detected tools to merge in.
+        output_path: Path to existing tools.yaml (must exist).
+    """
+    try:
+        with open(output_path, "r", encoding="utf-8") as f:
+            existing_data = yaml.safe_load(f)
+    except (yaml.YAMLError, OSError, ValueError):
+        existing_data = None
+
+    existing_tools = None
+    if isinstance(existing_data, dict):
+        candidate = existing_data.get("tools")
+        if isinstance(candidate, dict):
+            existing_tools = candidate
+
+    if existing_tools is None:
+        generate_tools_yaml(result, output_path)
+        return
+
+    # Build detected tools dict (same logic as generate_tools_yaml)
+    detected_tools: dict[str, dict] = {}
+    for tool_name in result.detected:
+        meta = _get_tool_meta(tool_name)
+        if meta and "tools_yaml_entry" in meta:
+            detected_tools[tool_name] = copy.deepcopy(meta["tools_yaml_entry"])
+
+    # Merge: existing entries preserved, detected entries update/add
+    merged = dict(existing_tools)
+    merged.update(detected_tools)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump({"tools": merged}, f, default_flow_style=False)
+
+
 def detect_and_init(
     project_root: Path,
     force: bool = False,
@@ -323,9 +434,15 @@ def detect_and_init(
     Idempotent: if tools.yaml exists and is non-empty,
     skip generation unless force=True.
 
+    When force=True and an existing tools.yaml is present, merges
+    detected tools into the existing file, preserving user-added
+    entries not in any tool registry.
+
     Args:
         project_root: Path to project root directory.
         force: Force regeneration even if tools.yaml exists.
+            Merges detected tools into existing file to preserve
+            user-added entries.
         quiet: Suppress stdout detection report.
         which_fn: Callable for PATH lookup (dependency injection).
 
@@ -352,18 +469,28 @@ def detect_and_init(
             ) from exc
 
         if registry:
-            # Existing non-empty registry -> return without regeneration
-            # Use "python" as language, not "existing" sentinel
+            # Existing non-empty registry -> return without regeneration.
+            # Infer language from tool names present in the registry.
+            has_shell_tools = any(t in SHELL_TOOL_REGISTRY for t in registry)
+            has_python_tools = any(t in PYTHON_TOOL_REGISTRY for t in registry)
+            if has_python_tools or not has_shell_tools:
+                lang = "python"
+            else:
+                lang = "shell"
             return DetectionResult(
                 detected=list(registry.keys()),
                 missing=[],
-                language="python",
+                language=lang,
             )
         # load_registry returned {} -> empty/zero-byte/null tools
         # Fall through to regenerate
 
     result = detect_toolchain(project_root, which_fn=which_fn)
-    generate_tools_yaml(result, tools_yaml_path)
+
+    if force and tools_yaml_path.exists():
+        _merge_and_write(result, tools_yaml_path)
+    else:
+        generate_tools_yaml(result, tools_yaml_path)
 
     if not quiet:
         print(
