@@ -61,6 +61,11 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 # Module-level active process tracker for signal handler cleanup. Per D-03.
 _active_proc: Optional[subprocess.Popen] = None
 
+# Signal handler state. Per D-03.
+_original_sigint: Any = None
+_original_sigterm: Any = None
+_handlers_installed = False
+
 
 def _resolve_model() -> str:
     return os.environ.get("FORGE_LLM_MODEL", DEFAULT_MODEL)
@@ -89,6 +94,45 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.wait()
     except ProcessLookupError:
         pass  # already dead
+
+
+def _install_signal_handlers() -> None:
+    """Install chained signal handlers for subprocess cleanup. Per D-03.
+
+    Copies lock.py chain pattern: save previous handler, call it after cleanup.
+    Idempotent: does nothing if handlers already installed.
+    """
+    import signal as _signal
+
+    global _original_sigint, _original_sigterm, _handlers_installed
+    if _handlers_installed:
+        return
+
+    def _make_chained_handler(prev: Any):
+        def _handler(signum: int, frame: Any) -> None:
+            global _active_proc
+            if _active_proc is not None:
+                try:
+                    _kill_tree(_active_proc)
+                except Exception:  # noqa: BLE001
+                    pass
+            if callable(prev):
+                prev(signum, frame)
+                return
+            if prev == _signal.SIG_IGN:
+                return
+            raise KeyboardInterrupt
+        return _handler
+
+    _original_sigint = _signal.getsignal(_signal.SIGINT)
+    _original_sigterm = _signal.getsignal(_signal.SIGTERM)
+    _signal.signal(_signal.SIGINT, _make_chained_handler(_original_sigint))
+    _signal.signal(_signal.SIGTERM, _make_chained_handler(_original_sigterm))
+    _handlers_installed = True
+
+
+# Install at module load time so cleanup is always active. Per D-03.
+_install_signal_handlers()
 
 
 def llm_invoke(
