@@ -34,7 +34,7 @@ from .env_resolver import (
     resolve_max_fix_attempts,
     resolve_max_total_rounds,
 )
-from .errors import BaselineResolutionError, CliError
+from .errors import BaselineResolutionError, CliError, CoverageConfigError
 from .exit_codes import (
     EXIT_BUSY,
     EXIT_CLI_ERROR,
@@ -680,6 +680,19 @@ def _run(args, env, cwd: Path) -> Verdict:
     revert_fn = build_revert_fn(resolved, cwd)
     l1_provider = build_l1_provider(engine_choice, resolved, backend=backend)
 
+    # Coverage gate inputs: L1 examines every changed file only when it
+    # actually runs over a diff (engine != stub AND a non-empty git diff).
+    # A non-git review or the stub engine leaves L1 inactive, so only L0
+    # tool matches provide per-file coverage.
+    coverage_l1_active = (
+        engine_choice != "stub" and bool(resolved.git_diff)
+    )
+    from .coverage import load_coverage_exempt_patterns
+    try:
+        coverage_exempt = load_coverage_exempt_patterns(cwd)
+    except CoverageConfigError as exc:
+        raise CliError(str(exc))
+
     # Step 7: lock + run
     with ForgeLock(lock_path):
         verdict = _run_hold_loop(
@@ -696,6 +709,8 @@ def _run(args, env, cwd: Path) -> Verdict:
             max_rounds=max_rounds,
             max_fix_attempts=max_fix,
             state_path=state_path,
+            coverage_l1_active=coverage_l1_active,
+            coverage_exempt_patterns=coverage_exempt,
         )
         # SARIF emission in CI mode, inside lock scope.
         if mode == Mode.CI:
@@ -707,6 +722,7 @@ def _run_hold_loop(
     *, mode, falsifier, autofixer, revert_fn, l1_provider, resolved,
     source_hash, baseline_repr, cwd, registry,
     max_rounds, max_fix_attempts, state_path,
+    coverage_l1_active=True, coverage_exempt_patterns=None,
     input_fn=input, output_fn=print,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
@@ -724,6 +740,8 @@ def _run_hold_loop(
             registry=registry,
             max_total_rounds=max_rounds,
             max_fix_attempts=max_fix_attempts,
+            coverage_l1_active=coverage_l1_active,
+            coverage_exempt_patterns=coverage_exempt_patterns or [],
         )
         verdict = sm.run()
         if verdict != Verdict.PENDING:
