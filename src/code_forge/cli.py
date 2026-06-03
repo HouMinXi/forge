@@ -730,19 +730,22 @@ def _run_hold_loop(
             # CLI-08 B6: load final state from disk for cost fields.
             from .state import load_state as _load_cost_state
             final_state = _load_cost_state(state_path)
-            if (final_state is not None and final_state.cost_passes > 0
-                    and (final_state.cost_total_input > 0
-                         or final_state.cost_total_output > 0)):
+            if final_state is not None and final_state.cost_passes > 0:
                 total_tokens = (
                     final_state.cost_total_input
                     + final_state.cost_total_output
                 )
-                print(
-                    "code-forge: cost: %d tokens "
-                    "(%d in + %d out), %d passes, %.1fs" % (
+                if total_tokens > 0:
+                    token_str = "%d tokens (%d in + %d out)" % (
                         total_tokens,
                         final_state.cost_total_input,
                         final_state.cost_total_output,
+                    )
+                else:
+                    token_str = "tokens: N/A (cli backend)"
+                print(
+                    "code-forge: cost: %s, %d passes, %.1fs" % (
+                        token_str,
                         final_state.cost_passes,
                         final_state.cost_total_duration,
                     ),
