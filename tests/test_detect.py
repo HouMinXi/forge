@@ -26,7 +26,6 @@ import pytest
 
 from code_forge.detect import (
     PYTHON_TOOL_REGISTRY,
-    SHELL_TOOL_REGISTRY,
     DetectionResult,
     detect_and_init,
     detect_toolchain,
