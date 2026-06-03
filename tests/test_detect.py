@@ -332,6 +332,9 @@ class TestForceFlag:
         assert "ruff" in result.detected
         registry = load_registry(str(tools_yaml))
         assert "ruff" in registry
+        assert "shellcheck" in registry, (
+            "shellcheck entry should be preserved after force=True merge"
+        )
 
     def test_force_preserves_user_entries(self, tmp_path):
         """force=True with Python project: existing shellcheck entry
