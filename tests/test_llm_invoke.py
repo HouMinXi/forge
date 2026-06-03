@@ -1,7 +1,6 @@
 import json
 import os
 import subprocess
-import time
 import urllib.error
 from unittest.mock import patch, MagicMock, Mock
 
@@ -289,6 +288,65 @@ class TestLLMInvoke:
         )
         with pytest.raises(LLMInvokeError, match="unsupported backend type"):
             llm_invoke("prompt", backend=backend)
+
+
+    def test_cli_omits_model_flag_when_empty(self):
+        """When backend.model='' and FORGE_LLM_MODEL unset, --model must NOT appear in cmd."""
+        backend = BackendConfig(name="test", type="cli", model="", command="")
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        env_without_forge_model = {
+            k: v for k, v in os.environ.items() if k != "FORGE_LLM_MODEL"
+        }
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen, \
+             patch.dict(os.environ, env_without_forge_model, clear=True):
+            llm_invoke("prompt", backend=backend)
+        cmd = mock_popen.call_args[0][0]
+        # Check both list elements and any shell string (large-prompt path embeds in cmd[2])
+        shell_str = cmd[2] if len(cmd) > 2 else ""
+        assert "--model" not in cmd, "cmd list must not contain --model when effective_model is empty"
+        assert "--model" not in shell_str, "shell string must not contain --model when effective_model is empty"
+
+    def test_cli_passes_model_flag_when_backend_has_model(self):
+        """When backend.model='opus', --model opus must appear in cmd."""
+        backend = BackendConfig(name="test", type="cli", model="opus", command="")
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            llm_invoke("prompt", backend=backend)
+        cmd = mock_popen.call_args[0][0]
+        assert "--model" in cmd, "cmd list must contain --model when backend.model is set"
+        assert "opus" in cmd, "cmd list must contain the model value"
+
+    def test_cli_passes_model_flag_when_forge_env_set(self):
+        """When FORGE_LLM_MODEL='haiku' and backend.model='', --model haiku must appear."""
+        backend = BackendConfig(name="test", type="cli", model="", command="")
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen, \
+             patch.dict(os.environ, {"FORGE_LLM_MODEL": "haiku"}):
+            llm_invoke("prompt", backend=backend)
+        cmd = mock_popen.call_args[0][0]
+        assert "--model" in cmd, "cmd list must contain --model when FORGE_LLM_MODEL is set"
+        assert "haiku" in cmd, "cmd list must contain the env-specified model value"
+
+    def test_large_prompt_omits_model_when_empty(self):
+        """Large-prompt shell path must omit --model when effective_model is empty."""
+        backend = BackendConfig(name="test", type="cli", model="", command="")
+        prompt = "x" * 1_100_000
+        mock_proc = _make_mock_proc(stdout='{"ok": true}')
+
+        env_without_forge_model = {
+            k: v for k, v in os.environ.items() if k != "FORGE_LLM_MODEL"
+        }
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen, \
+             patch.dict(os.environ, env_without_forge_model, clear=True):
+            llm_invoke(prompt, backend=backend)
+        cmd = mock_popen.call_args[0][0]
+        # Large-prompt path produces ["sh", "-c", shell_str]
+        shell_str = cmd[2] if len(cmd) > 2 else ""
+        assert "--model" not in cmd[:2], "sh -c prefix must not contain --model"
+        assert "--model" not in shell_str, "shell string must not contain --model when effective_model is empty"
 
 
 class TestLLMResult:
