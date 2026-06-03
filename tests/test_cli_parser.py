@@ -207,3 +207,83 @@ class TestSubcommands:
             assert cmd in captured.out, (
                 "Expected %r in --help output" % cmd
             )
+
+
+class TestOutletAndCommittedFlags:
+    """Tests for --outlet and --committed flags (Phase 07-02)."""
+
+    def test_outlet_flag_default(self):
+        """--outlet not specified -> None."""
+        parser = _build_parser()
+        args = parser.parse_args(['review'])
+        assert args.outlet is None
+
+    def test_outlet_flag_cli(self):
+        """--outlet cli -> 'cli'."""
+        parser = _build_parser()
+        args = parser.parse_args(['review', '--outlet', 'cli'])
+        assert args.outlet == 'cli'
+
+    def test_outlet_flag_inline(self):
+        """--outlet inline -> 'inline'."""
+        parser = _build_parser()
+        args = parser.parse_args(['review', '--outlet', 'inline'])
+        assert args.outlet == 'inline'
+
+    def test_outlet_flag_invalid_rejected(self):
+        """--outlet invalid raises SystemExit (argparse validation)."""
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(['review', '--outlet', 'invalid'])
+
+    def test_committed_flag_default(self):
+        """--committed not specified -> False."""
+        parser = _build_parser()
+        args = parser.parse_args(['review'])
+        assert args.committed is False
+
+    def test_committed_flag_set(self):
+        """--committed specified -> True."""
+        parser = _build_parser()
+        args = parser.parse_args(['review', '--committed'])
+        assert args.committed is True
+
+    def test_outlet_and_committed_together(self):
+        """--outlet and --committed can be used together (parser allows)."""
+        parser = _build_parser()
+        args = parser.parse_args(['review', '--outlet', 'cli', '--committed'])
+        assert args.outlet == 'cli'
+        assert args.committed is True
+
+    def test_committed_rejects_baseline_at_runtime(self, tmp_path):
+        """--committed + --baseline raises CliError in _build_baseline_specs."""
+        from code_forge.cli import _build_baseline_specs
+        from code_forge.errors import CliError
+        import argparse
+        args = argparse.Namespace(
+            committed=True, baseline="HEAD~2", head=None, staged=False
+        )
+        with pytest.raises(CliError, match="--committed cannot be combined with --baseline"):
+            _build_baseline_specs(args, cwd=tmp_path)
+
+    def test_committed_rejects_head_at_runtime(self, tmp_path):
+        """--committed + --head raises CliError in _build_baseline_specs."""
+        from code_forge.cli import _build_baseline_specs
+        from code_forge.errors import CliError
+        import argparse
+        args = argparse.Namespace(
+            committed=True, baseline=None, head="HEAD", staged=False
+        )
+        with pytest.raises(CliError, match="--committed cannot be combined with --head"):
+            _build_baseline_specs(args, cwd=tmp_path)
+
+    def test_committed_rejects_staged_at_runtime(self, tmp_path):
+        """--committed + --staged raises CliError."""
+        from code_forge.cli import _build_baseline_specs
+        from code_forge.errors import CliError
+        import argparse
+        args = argparse.Namespace(
+            committed=True, baseline=None, head=None, staged=True
+        )
+        with pytest.raises(CliError, match="--committed and --staged are mutually exclusive"):
+            _build_baseline_specs(args, cwd=tmp_path)

@@ -21,25 +21,30 @@ from .mutation import run_mutation
 from .state import StateFinding
 
 
-def build_falsifier(engine: str) -> Falsifier:
+def build_falsifier(
+    engine: str,
+    backend: "Optional[BackendConfig]" = None,
+) -> Falsifier:
     """STATE-10 engine factory.
 
     engine = "auto": try Phase 4 import; fall back to stub if absent.
     engine = "stub": always StubFalsifier.
     engine = "real": Phase 4 falsifier (NOT shipped v2.0).
     """
+    from .backend import BackendConfig
+
     if engine == "stub":
         return StubFalsifier()
     if engine == "auto":
         try:
             from .falsify_real import RealFalsifier  # noqa: F401
-            return RealFalsifier()
+            return RealFalsifier(backend=backend)
         except ImportError:
             return StubFalsifier()
     if engine == "real":
         try:
             from .falsify_real import RealFalsifier
-            return RealFalsifier()
+            return RealFalsifier(backend=backend)
         except ImportError:
             raise NotImplementedError(
                 "--falsification-engine=real requires Phase 4 "
@@ -189,3 +194,83 @@ def build_e2e_checker() -> Callable:
     machine.py.
     """
     return run_e2e_check
+
+
+def build_l1_provider(
+    engine: str,
+    resolved: "ResolvedReview",
+    backend: "Optional[BackendConfig]" = None,
+) -> "Callable":
+    """Build l1_provider. engine="stub" returns empty lambda (defect D fix)."""
+    if engine == "stub":
+        return lambda: []
+
+    import hashlib as _hl
+    from .backend import BackendConfig
+    from .llm_invoke import LLMInvokeError, llm_invoke
+
+    def _provider() -> list:
+        diff_text = resolved.git_diff or ""
+        if not diff_text:
+            return []
+
+        pass_configs = [
+            ("qodo", "structural code reviewer: correctness and logic errors"),
+            ("expert", "senior engineer: SOLID, architecture, security"),
+            ("adversarial", "adversarial QE: assume bugs exist"),
+        ]
+
+        all_candidates = []
+        seen = set()
+
+        for pass_name, role in pass_configs:
+            prompt = (
+                "You are a " + role + ". Review this diff. "
+                'Return JSON: {"findings": [{"file": "...", "line": N, '
+                '"severity": "P0"|"P1"|"P2"|"P3", '
+                '"description": "..."}]}\n\nDiff:\n' + diff_text
+            )
+            try:
+                result = llm_invoke(prompt, backend=backend)
+                response = result.content
+            except LLMInvokeError as exc:
+                import sys
+                print(
+                    "code-forge: L1 pass '%s' failed: %s" % (pass_name, exc),
+                    file=sys.stderr,
+                )
+                continue
+
+            if not isinstance(response, dict):
+                continue
+            findings_raw = response.get("findings")
+            if not isinstance(findings_raw, list):
+                continue
+
+            for f_raw in findings_raw:
+                if not isinstance(f_raw, dict):
+                    continue
+                file_path = f_raw.get("file") or "unknown"
+                try:
+                    line = int(f_raw.get("line") or 0)
+                except (ValueError, TypeError):
+                    line = 0
+                desc = f_raw.get("description") or ""
+                fp_src = file_path + ":" + str(line) + ":" + desc
+                fp = _hl.sha256(fp_src.encode()).hexdigest()[:16]
+                if fp in seen:
+                    continue
+                seen.add(fp)
+                from .disposition import Disposition
+                from .state import StateFinding
+                all_candidates.append(StateFinding(
+                    id="l1-" + pass_name + "-" + fp,
+                    fingerprint=fp, source="L1",
+                    disposition=Disposition.UNCERTAIN,
+                    file=file_path,
+                    line_range=[line, line],
+                    description="[" + pass_name + "] " + desc,
+                ))
+        return all_candidates
+
+    return _provider

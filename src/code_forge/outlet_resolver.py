@@ -1,0 +1,179 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
+"""Outlet resolution.
+
+Pure precedence function: FORGE_OUTLET env > gate.yaml outlet > backend
+reachability probe.
+
+Resolves which review outlet to use:
+  - "cli"    -> Outlet A (CLI dispatcher, fresh subprocess per pass)
+  - "inline" -> Outlet B (inline merged skill, in-process)
+
+Key invariants:
+  - Outlet B (inline) NEVER triggers the reachability probe.
+  - Backend unreachable with no explicit override raises CliError
+    (FAIL CLOSED) -- never silently degrades to inline.
+  - No model-capability auto-detection anywhere (LOCKED).
+  - gate.yaml is read via a lightweight reader that does NOT
+    require a "test:" section.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Callable, Mapping, Optional
+
+import yaml
+
+from .backend import (
+    DEFAULT_BACKEND,
+    ProbeResult,
+    probe_backend,
+    resolve_backend,
+)
+from .errors import CliError
+
+
+# -- Valid outlet values ---------------------------------------------------
+
+VALID_OUTLET_STRINGS = {"cli": "cli", "inline": "inline"}
+
+
+# -- Parsing ---------------------------------------------------------------
+
+
+def _parse_outlet_string(value: str, source: str) -> str:
+    """Strip, lowercase, look up in allow-list.
+
+    Structurally identical to mode_resolver._parse_mode_string:
+    whitespace-only strips to "" which is not in the allow-list
+    and raises with source attribution.
+    """
+    key = value.strip().lower()
+    if key not in VALID_OUTLET_STRINGS:
+        raise ValueError(
+            "invalid outlet %r from %s (expected: cli|inline)"
+            % (value, source)
+        )
+    return VALID_OUTLET_STRINGS[key]
+
+
+# -- gate.yaml reader ---------------------------------------------------
+
+
+def load_outlet_from_gate(
+    gate_yaml_path: Path,
+    fs_open: Callable = open,
+) -> Optional[str]:
+    """Read only the 'outlet' key from gate.yaml.
+
+    Does NOT call load_gate_config (avoids the "test section
+    required" constraint).
+
+    Returns:
+        The outlet string value if present, else None.
+
+    Raises:
+        ValueError: corrupted YAML or unreadable file.
+    """
+    try:
+        with fs_open(gate_yaml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except FileNotFoundError:
+        return None
+    except PermissionError as exc:
+        raise ValueError(
+            "gate.yaml read failed: permission denied"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            "gate.yaml read failed: %s" % exc
+        ) from exc
+
+    if isinstance(data, dict) and "outlet" in data:
+        val = data["outlet"]
+        if not isinstance(val, str):
+            raise ValueError(
+                "gate.yaml outlet must be a string, got %s"
+                % type(val).__name__
+            )
+        return val
+
+    return None
+
+
+# -- Main resolver ---------------------------------------------------------
+
+
+def resolve_outlet(
+    env: Mapping[str, str],
+    gate_yaml_path: Optional[Path] = None,
+    *,
+    cli_value: Optional[str] = None,
+    reachability_fn: Optional[Callable[[], ProbeResult]] = None,
+) -> str:
+    """Resolve effective outlet given inputs.
+
+    Precedence (highest first):
+      1. cli_value from --outlet flag (if present and non-empty)
+      2. FORGE_OUTLET env var (if present and non-empty)
+      3. gate.yaml outlet field (if gate_yaml_path given and key present)
+      4. Backend reachability probe
+
+    The fourth signal uses the backend-agnostic probe from backend.py.
+    Reachable -> "cli" (fail-safe Outlet A).
+    Unreachable -> CliError (FAIL CLOSED).
+
+    An explicit "inline" (from cli_value, env, or gate.yaml) short-circuits
+    BEFORE any reachability probe -- Outlet B NEVER probes.
+
+    LOCKED: nowhere in this function is model capability
+    inspected.  The only signals are the explicit override and the
+    objective reachability of the configured backend.
+
+    Args:
+        env: os.environ or test-injected mapping
+        gate_yaml_path: path to gate.yaml (None to skip)
+        cli_value: value from --outlet flag (highest precedence)
+        reachability_fn: callable returning ProbeResult (injected
+            for testability; production default resolves + probes
+            the configured backend)
+
+    Returns:
+        "cli" or "inline"
+
+    Raises:
+        ValueError: invalid outlet string from cli_value, env, or gate.yaml
+        CliError: backend unreachable with no explicit override
+    """
+    # Check cli_value first (highest precedence)
+    if cli_value is not None and cli_value != "":
+        return _parse_outlet_string(cli_value, "--outlet flag")
+
+    # Default probes the session-default CLI backend only.
+    # Production callers should inject a reachability_fn that
+    # uses the loaded backend config.
+    if reachability_fn is None:
+        def reachability_fn() -> ProbeResult:
+            backend = resolve_backend(env, configs=[], cli_value=None)
+            return probe_backend(backend, env=env)
+
+    # Step 1: FORGE_OUTLET env override
+    env_value = env.get("FORGE_OUTLET")
+    if env_value is not None and env_value != "":
+        return _parse_outlet_string(env_value, "FORGE_OUTLET env")
+
+    # Step 2: gate.yaml outlet field
+    if gate_yaml_path is not None:
+        gate_value = load_outlet_from_gate(gate_yaml_path)
+        if gate_value is not None:
+            return _parse_outlet_string(str(gate_value), "gate.yaml outlet")
+
+    # Step 3: backend reachability
+    result = reachability_fn()
+    if result.ok:
+        return "cli"
+
+    raise CliError(
+        "Configure a review backend or set FORGE_OUTLET=inline. "
+        "Reachability: %s" % result.error
+    )

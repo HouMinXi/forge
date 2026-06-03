@@ -47,25 +47,57 @@ def _make_finding(fp: str = "fp-test") -> StateFinding:
 class TestBuildFalsifier:
     """STATE-10 engine factory."""
 
-    def test_auto_returns_stub_when_phase4_absent(self):
-        """SC-7(a): auto + Phase 4 not importable -> StubFalsifier."""
+    def test_auto_returns_real_falsifier(self):
+        """SC-7(a): auto + Phase 4 importable -> RealFalsifier."""
+        from code_forge.falsify_real import RealFalsifier
         f = build_falsifier("auto")
-        assert isinstance(f, StubFalsifier)
+        assert isinstance(f, RealFalsifier)
 
     def test_stub_returns_stub(self):
         """SC-7(b): stub -> StubFalsifier always."""
         f = build_falsifier("stub")
         assert isinstance(f, StubFalsifier)
 
-    def test_real_raises_not_implemented(self):
-        """SC-7(c): real + Phase 4 absent -> NotImplementedError."""
-        with pytest.raises(NotImplementedError, match="Phase 4"):
-            build_falsifier("real")
+    def test_real_returns_real_falsifier(self):
+        """SC-7(c): real + Phase 4 present -> RealFalsifier."""
+        from code_forge.falsify_real import RealFalsifier
+        f = build_falsifier("real")
+        assert isinstance(f, RealFalsifier)
 
     def test_unknown_engine_raises(self):
         """Unknown engine -> ValueError."""
         with pytest.raises(ValueError, match="unknown engine"):
             build_falsifier("bogus")
+
+
+class TestBuildL1Provider:
+    """L1 provider factory."""
+
+    def test_stub_returns_empty(self):
+        from code_forge.factories import build_l1_provider
+        p = build_l1_provider("stub", None)
+        assert p() == []
+
+    def test_real_returns_callable(self):
+        from code_forge.factories import build_l1_provider
+        resolved = _make_resolved("git")
+        p = build_l1_provider("real", resolved)
+        assert callable(p)
+
+    def test_auto_returns_callable(self):
+        from code_forge.factories import build_l1_provider
+        resolved = _make_resolved("git")
+        p = build_l1_provider("auto", resolved)
+        assert callable(p)
+
+    def test_stub_never_calls_llm(self):
+        from code_forge.factories import build_l1_provider
+        from unittest.mock import patch
+        p = build_l1_provider("stub", None)
+        with patch("code_forge.llm_invoke.llm_invoke") as mock:
+            result = p()
+        assert result == []
+        mock.assert_not_called()
 
 
 class TestBuildAutofixer:

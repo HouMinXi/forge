@@ -429,7 +429,21 @@ class StateMachine:
                 self._persist_state()
                 return Verdict.FAIL
 
+            try:
+                _threshold = int(os.environ.get(
+                    "FORGE_CLEAN_ROUND_THRESHOLD", "3"
+                ))
+            except (ValueError, TypeError):
+                _threshold = 3
+            if _threshold < 1:
+                _threshold = 1
+
             if self._fixpoint_reached():
+                self._state.consecutive_clean_rounds += 1
+            else:
+                self._state.consecutive_clean_rounds = 0
+
+            if self._state.consecutive_clean_rounds >= _threshold:
                 self._finalize_local_terminal()
                 return self._state.verdict
             if self._should_enter_hold():
@@ -600,6 +614,19 @@ class StateMachine:
         self._round_input_tokens = 0
         self._round_output_tokens = 0
         self._round_duration = 0.0
+        from .receipt import write_receipts
+        from .verify import parse_diff_files
+        diff_text = self.resolved_review.git_diff
+        diff_files = parse_diff_files(diff_text) if diff_text else None
+        write_receipts(
+            receipts_dir=self.cwd / ".code-forge" / "receipts",
+            round_index=round_index,
+            l1_findings=l1_findings,
+            diff_sha256=self.source_hash,
+            source_files=list(self._source_files()),
+            cwd=self.cwd,
+            diff_files=diff_files,
+        )
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
