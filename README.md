@@ -60,6 +60,61 @@ code-forge install-skill --skill code-forge   # one skill only
 code-forge install-skill --force              # overwrite existing
 ```
 
+## Backend configuration
+
+By default, code-forge uses the `claude` CLI in your PATH with the session
+model (no model pin). Three environment variables control the backend:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `FORGE_BACKEND` | Select a named backend from `backends.yaml` | session-default |
+| `FORGE_OUTLET` | Force outlet: `cli` or `inline` | auto-detected |
+| `FORGE_LLM_MODEL` | Override model for CLI backends | `claude-sonnet-4-6` |
+
+**Quick examples:**
+
+```bash
+# Use the default (claude CLI, session model)
+code-forge review
+
+# Pin a specific model for this run
+FORGE_LLM_MODEL=claude-opus-4-5 code-forge review
+
+# Use a named API backend from backends.yaml
+FORGE_BACKEND=claude-api code-forge review
+
+# Force inline outlet (no CLI subprocess)
+FORGE_OUTLET=inline code-forge review
+```
+
+**Named backends** (optional) are defined in `~/.config/code-forge/backends.yaml`:
+
+```yaml
+backends:
+  - name: claude-api
+    type: api
+    format: anthropic
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+    default: true
+  - name: openai
+    type: api
+    format: openai
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  - name: local-claude
+    type: cli
+    model: claude-opus-4-5
+    command: claude
+```
+
+Full reference: [docs/configuration.md](docs/configuration.md)
+
+Editor setup guides:
+- VS Code: [docs/setup-vscode.md](docs/setup-vscode.md)
+- Cursor: [docs/setup-cursor.md](docs/setup-cursor.md)
+- PyCharm: [docs/setup-pycharm.md](docs/setup-pycharm.md)
+
 ## The pipeline
 
 ```
