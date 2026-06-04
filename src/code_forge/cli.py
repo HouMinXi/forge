@@ -200,7 +200,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "(mapped internally with warning)",
     )
     review_parser.add_argument(
-        "--outlet", choices=["cli", "inline"], default=None,
+        "--outlet", choices=["cli", "inline", "subagent"], default=None,
         help="review outlet (default: auto-detect via backend reachability)",
     )
     review_parser.add_argument(
@@ -546,8 +546,8 @@ def _run(args, env, cwd: Path) -> Verdict:
         cli_value=getattr(args, 'outlet', None),
     )
     if outlet == "inline":
-        # Inline outlet: SKILL.md handles the review
-        # Return PASS immediately - the skill pipeline owns execution
+        return Verdict.PASS
+    if outlet == "subagent":
         return Verdict.PASS
 
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.

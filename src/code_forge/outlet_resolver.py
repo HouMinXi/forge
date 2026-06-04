@@ -6,11 +6,13 @@ Pure precedence function: FORGE_OUTLET env > gate.yaml outlet > backend
 reachability probe.
 
 Resolves which review outlet to use:
-  - "cli"    -> Outlet A (CLI dispatcher, fresh subprocess per pass)
-  - "inline" -> Outlet B (inline merged skill, in-process)
+  - "cli"      -> Outlet A (CLI dispatcher, fresh subprocess per pass)
+  - "inline"   -> Outlet B (inline merged skill, in-process)
+  - "subagent" -> Outlet C (fresh Agent per pass, no CLI overhead)
 
 Key invariants:
-  - Outlet B (inline) NEVER triggers the reachability probe.
+  - Outlet B (inline) and Outlet C (subagent) NEVER trigger the
+    reachability probe.
   - Backend unreachable with no explicit override raises CliError
     (FAIL CLOSED) -- never silently degrades to inline.
   - No model-capability auto-detection anywhere (LOCKED).
@@ -35,7 +37,7 @@ from .errors import CliError
 
 # -- Valid outlet values ---------------------------------------------------
 
-VALID_OUTLET_STRINGS = {"cli": "cli", "inline": "inline"}
+VALID_OUTLET_STRINGS = {"cli": "cli", "inline": "inline", "subagent": "subagent"}
 
 
 # -- Parsing ---------------------------------------------------------------
@@ -51,8 +53,8 @@ def _parse_outlet_string(value: str, source: str) -> str:
     key = value.strip().lower()
     if key not in VALID_OUTLET_STRINGS:
         raise ValueError(
-            "invalid outlet %r from %s (expected: cli|inline)"
-            % (value, source)
+            "invalid outlet %r from %s (expected: %s)"
+            % (value, source, "|".join(sorted(VALID_OUTLET_STRINGS)))
         )
     return VALID_OUTLET_STRINGS[key]
 
@@ -123,8 +125,9 @@ def resolve_outlet(
     Reachable -> "cli" (fail-safe Outlet A).
     Unreachable -> CliError (FAIL CLOSED).
 
-    An explicit "inline" (from cli_value, env, or gate.yaml) short-circuits
-    BEFORE any reachability probe -- Outlet B NEVER probes.
+    An explicit "inline" or "subagent" (from cli_value, env, or gate.yaml)
+    short-circuits BEFORE any reachability probe -- Outlets B and C NEVER
+    probe.
 
     LOCKED: nowhere in this function is model capability
     inspected.  The only signals are the explicit override and the
@@ -139,7 +142,7 @@ def resolve_outlet(
             the configured backend)
 
     Returns:
-        "cli" or "inline"
+        "cli", "inline", or "subagent"
 
     Raises:
         ValueError: invalid outlet string from cli_value, env, or gate.yaml
