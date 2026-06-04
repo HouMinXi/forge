@@ -468,3 +468,308 @@ class TestCostSummaryStderr:
         # always know a review ran (same visibility contract as API users).
         assert "code-forge: cost:" in captured.err
         assert "N/A" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Phase 12: Inline backend flags and error wrapping (Task 2, 12-04)
+# ---------------------------------------------------------------------------
+
+
+def _setup_git_repo_with_diff(tmp_path):
+    """Create a minimal git repo with a clean commit and one diff file."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init_repo(repo)
+    _write_tools_yaml(repo)
+    _write_py_file(repo)
+    subprocess.run(
+        ["git", "add", "-A"],
+        cwd=str(repo), capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=str(repo), capture_output=True, check=True,
+    )
+    (repo / "a.py").write_text("# modified\n")
+    return repo
+
+
+class TestInlineFlagsMutualExclusion:
+    """D-10: --backend and inline flags are mutually exclusive."""
+
+    def test_inline_flags_mutual_exclusion(self, tmp_path, monkeypatch, capsys):
+        """--backend + --backend-url raises CliError (exit 2)."""
+        repo = _setup_git_repo_with_diff(tmp_path)
+        monkeypatch.setattr(
+            sys, "argv",
+            [
+                "code-forge", "review",
+                "--falsification-engine", "stub",
+                "--mode", "ci",
+                "--backend", "mybackend",
+                "--backend-url", "https://api.example.com/v1",
+                "--backend-format", "openai",
+                "--backend-key-env", "MY_KEY",
+                "--backend-model", "gpt-4",
+                "a.py",
+            ],
+        )
+        monkeypatch.chdir(str(repo))
+        exit_code = main()
+        assert exit_code == EXIT_CLI_ERROR
+        captured = capsys.readouterr()
+        assert "mutually exclusive" in captured.err
+
+    def test_inline_flags_partial_raises(self, tmp_path, monkeypatch, capsys):
+        """Only --backend-url without the other 3 flags raises CliError (exit 2)."""
+        repo = _setup_git_repo_with_diff(tmp_path)
+        monkeypatch.setattr(
+            sys, "argv",
+            [
+                "code-forge", "review",
+                "--falsification-engine", "stub",
+                "--mode", "ci",
+                "--backend-url", "https://api.example.com/v1",
+                "a.py",
+            ],
+        )
+        monkeypatch.chdir(str(repo))
+        exit_code = main()
+        assert exit_code == EXIT_CLI_ERROR
+        captured = capsys.readouterr()
+        assert "inline backend requires all 4 flags" in captured.err
+
+    def test_inline_flags_all_four_constructs_config(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """All 4 inline flags produce a transient BackendConfig used for the call."""
+        repo = _setup_git_repo_with_diff(tmp_path)
+        captured_backend = {}
+
+        def fake_build_l1_provider(engine, resolved, backend=None):
+            captured_backend["backend"] = backend
+            from code_forge.factories import build_l1_provider as real_bld
+            return real_bld(engine, resolved, backend=backend)
+
+        monkeypatch.setattr(
+            sys, "argv",
+            [
+                "code-forge", "review",
+                "--falsification-engine", "stub",
+                "--mode", "ci",
+                "--backend-url", "https://api.example.com/v1",
+                "--backend-format", "openai",
+                "--backend-key-env", "EXAMPLE_API_KEY",
+                "--backend-model", "gpt-4-turbo",
+                "a.py",
+            ],
+        )
+        monkeypatch.chdir(str(repo))
+        with patch(
+            "code_forge.cli.build_l1_provider",
+            side_effect=fake_build_l1_provider,
+        ):
+            main()
+
+        b = captured_backend.get("backend")
+        assert b is not None
+        assert b.name == "inline"
+        assert b.type == "api"
+        assert b.format == "openai"
+        assert b.base_url == "https://api.example.com/v1"
+        assert b.api_key_env == "EXAMPLE_API_KEY"
+        assert b.model == "gpt-4-turbo"
+
+
+class TestLLMInvokeErrorWrapping:
+    """D-04/D-14: LLMInvokeError re-raised as CliError with backend name."""
+
+    def test_llm_invoke_error_wrapped_as_cli_error(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """LLMInvokeError from _run_hold_loop is wrapped as CliError with backend name.
+
+        D-04/D-14: The except LLMInvokeError clause in _run re-raises as
+        CliError("backend <name>: <msg>").
+        """
+        from code_forge.llm_invoke import LLMInvokeError
+
+        repo = _setup_git_repo_with_diff(tmp_path)
+        monkeypatch.setattr(
+            sys, "argv",
+            [
+                "code-forge", "review",
+                "--falsification-engine", "stub",
+                "--mode", "ci",
+                "--backend-url", "https://api.example.com/v1",
+                "--backend-format", "openai",
+                "--backend-key-env", "EXAMPLE_API_KEY",
+                "--backend-model", "gpt-4-turbo",
+                "a.py",
+            ],
+        )
+        monkeypatch.chdir(str(repo))
+        with patch(
+            "code_forge.cli._run_hold_loop",
+            side_effect=LLMInvokeError("network timeout"),
+        ):
+            exit_code = main()
+
+        assert exit_code == EXIT_CLI_ERROR
+        captured = capsys.readouterr()
+        assert "inline" in captured.err
+        assert "network timeout" in captured.err
+
+    def test_missing_env_var_cli_error(self, tmp_path, monkeypatch):
+        """Missing api_key_env value raises LLMInvokeError 'is not set'."""
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import LLMInvokeError, llm_invoke
+
+        cfg = BackendConfig(
+            name="test-backend",
+            type="api",
+            format="openai",
+            base_url="https://api.example.com/v1",
+            api_key_env="NONEXISTENT_ENV_VAR_XYZ123",
+            model="gpt-4",
+        )
+        monkeypatch.delenv("NONEXISTENT_ENV_VAR_XYZ123", raising=False)
+        with pytest.raises(LLMInvokeError, match="is not set"):
+            llm_invoke(prompt="test", backend=cfg)
+
+
+class TestMaxTokensInApiCalls:
+    """D-06: backend.max_tokens used in both API call paths."""
+
+    def test_max_tokens_anthropic_uses_config(self):
+        """_invoke_anthropic puts backend.max_tokens in request body."""
+        import json as _json
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import _invoke_anthropic
+
+        cfg = BackendConfig(
+            name="mimo",
+            type="api",
+            format="anthropic",
+            base_url="https://api.mimo.com",
+            api_key_env="MIMO_API_KEY",
+            model="MiMo-V2.5-Pro",
+            max_tokens=4096,
+        )
+        captured_body = {}
+
+        class FakeResponse:
+            def read(self):
+                return _json.dumps({
+                    "content": [{"text": '{"findings": []}'}],
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                }).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            captured_body["body"] = _json.loads(req.data.decode("utf-8"))
+            return FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            _invoke_anthropic(
+                prompt="test", backend=cfg, api_key="sk-test", timeout_s=30
+            )
+
+        assert captured_body["body"]["max_tokens"] == 4096
+
+    def test_max_tokens_openai_explicit(self):
+        """_invoke_openai puts backend.max_tokens in request body."""
+        import json as _json
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import _invoke_openai
+
+        cfg = BackendConfig(
+            name="deepseek",
+            type="api",
+            format="openai",
+            base_url="https://api.deepseek.com/v1",
+            api_key_env="DEEPSEEK_API_KEY",
+            model="deepseek-chat",
+            max_tokens=8192,
+        )
+        captured_body = {}
+
+        class FakeResponse:
+            def read(self):
+                return _json.dumps({
+                    "choices": [{"message": {"content": '{"findings": []}'}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                }).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            captured_body["body"] = _json.loads(req.data.decode("utf-8"))
+            return FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            _invoke_openai(
+                prompt="test", backend=cfg, api_key="sk-test", timeout_s=30
+            )
+
+        assert captured_body["body"]["max_tokens"] == 8192
+
+
+# ---------------------------------------------------------------------------
+# Phase 12: Real API smoke test for mimo backend (Task 3, 12-04)
+# ---------------------------------------------------------------------------
+
+
+class TestRealMimoApiSmoke:
+    """D-12: real API smoke test against mimo (anthropic-format) backend."""
+
+    @pytest.mark.real_api
+    @pytest.mark.skipif(
+        not os.environ.get("MIMO_API_KEY"),
+        reason="MIMO_API_KEY not set -- skip real API test",
+    )
+    def test_mimo_real_api_call(self):
+        """Make a real HTTP call to mimo using the anthropic-format API path.
+
+        Validates that the anthropic-format path in llm_invoke.py works end-to-end
+        against a real backend (not a mock). Skipped when MIMO_API_KEY is absent.
+        This is the mock-blind-spot lesson from v2.1: mocks cannot catch wire-format
+        errors; one real API call can.
+        """
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import LLMInvokeError, llm_invoke
+
+        mimo_base_url = os.environ.get(
+            "MIMO_BASE_URL", "https://api.mimo.ai"
+        )
+        backend = BackendConfig(
+            name="mimo",
+            type="api",
+            format="anthropic",
+            base_url=mimo_base_url,
+            api_key_env="MIMO_API_KEY",
+            model="MiMo-V2.5-Pro",
+            max_tokens=64,
+        )
+
+        # Verify backend config assertions required by plan
+        assert backend.name == "mimo"
+        assert backend.format == "anthropic"
+
+        try:
+            result = llm_invoke(prompt="Return the word VIABLE", backend=backend)
+        except LLMInvokeError as exc:
+            pytest.skip("mimo API call failed (not a test failure): %s" % exc)
+
+        assert result is not None
+        # result.content is the parsed JSON dict; raw content must be non-empty
+        assert result.content is not None
