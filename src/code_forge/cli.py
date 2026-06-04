@@ -546,8 +546,10 @@ def _run(args, env, cwd: Path) -> Verdict:
         cli_value=getattr(args, 'outlet', None),
     )
     if outlet == "inline":
+        # SKILL.md owns the review pipeline; CLI exits early
         return Verdict.PASS
     if outlet == "subagent":
+        # SKILL.md dispatches per-pass Agents; CLI exits early
         return Verdict.PASS
 
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.

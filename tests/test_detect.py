@@ -312,8 +312,8 @@ class TestForceFlag:
     """force=True merges detected tools into existing tools.yaml."""
 
     def test_force_flag_overwrites(self, tmp_path):
-        """Original test: force=True on shellcheck-only tools.yaml
-        adds ruff. shellcheck entry is preserved (merge behavior)."""
+        """force=True on shellcheck-only tools.yaml with Python project:
+        ruff added, stale shellcheck removed (no *.sh files, not detected)."""
         cfg_dir = tmp_path / ".code-forge"
         cfg_dir.mkdir()
         tools_yaml = cfg_dir / "tools.yaml"
@@ -332,23 +332,23 @@ class TestForceFlag:
         assert "ruff" in result.detected
         registry = load_registry(str(tools_yaml))
         assert "ruff" in registry
-        assert "shellcheck" in registry, (
-            "shellcheck entry should be preserved after force=True merge"
+        assert "shellcheck" not in registry, (
+            "shellcheck is a registry tool not detected; stale entry removed"
         )
 
     def test_force_preserves_user_entries(self, tmp_path):
-        """force=True with Python project: existing shellcheck entry
-        is preserved alongside newly detected ruff."""
+        """force=True preserves user-added entries (not in any registry)
+        alongside newly detected tools."""
         cfg_dir = tmp_path / ".code-forge"
         cfg_dir.mkdir()
         tools_yaml = cfg_dir / "tools.yaml"
         tools_yaml.write_text(
             "tools:\n"
-            "  shellcheck:\n"
-            '    command: "shellcheck -f json"\n'
-            "    output_format: shellcheck_json\n"
+            "  custom_linter:\n"
+            '    command: "custom_linter --check"\n'
+            "    output_format: pylint_json\n"
             "    file_patterns:\n"
-            "    - '*.sh'\n",
+            "    - '*.py'\n",
             encoding="utf-8",
         )
         (tmp_path / "app.py").write_text("x = 1\n")
@@ -359,8 +359,8 @@ class TestForceFlag:
 
         registry = load_registry(str(tools_yaml))
         assert "ruff" in registry, "Detected tool ruff missing from merged file"
-        assert "shellcheck" in registry, (
-            "User-added shellcheck entry was clobbered by force=True"
+        assert "custom_linter" in registry, (
+            "User-added entry (not in any registry) must survive force merge"
         )
 
     def test_force_preserves_unknown_format_entry(self, tmp_path):
@@ -416,6 +416,38 @@ class TestForceFlag:
             tmp_path, force=True, which_fn=_make_which_fn("ruff"),
         )
         assert "ruff" in result.detected
+
+    def test_force_removes_stale_registry_entries(self, tmp_path):
+        """force=True with a previously-detected tool now uninstalled:
+        the stale registry entry must NOT survive the merge."""
+        cfg_dir = tmp_path / ".code-forge"
+        cfg_dir.mkdir()
+        (cfg_dir / "tools.yaml").write_text(
+            "tools:\n"
+            "  ruff:\n"
+            "    command: ruff check\n"
+            "    output_format: ruff_json\n"
+            "    file_patterns:\n"
+            "      - '*.py'\n"
+            "  my_custom_tool:\n"
+            "    command: my_custom_tool run\n"
+            "    output_format: pylint_json\n"
+            "    file_patterns:\n"
+            "      - '*.custom'\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.py").write_text("x = 1\n")
+        detect_and_init(
+            tmp_path, force=True,
+            which_fn=_make_which_fn(),
+        )
+        registry = load_registry(str(cfg_dir / "tools.yaml"))
+        assert "ruff" not in registry, (
+            "ruff was uninstalled; stale entry should be removed by force merge"
+        )
+        assert "my_custom_tool" in registry, (
+            "user-added entry (not in any registry) must survive force merge"
+        )
 
 
 # -- detection report format -----------------------------------------------
@@ -588,6 +620,15 @@ class TestShellDetection:
         """Only *.sh, no Python indicators -> shellcheck detected,
         language is shell."""
         (tmp_path / "script.sh").write_text("#!/bin/bash\necho hi\n")
+        result = detect_toolchain(
+            tmp_path, which_fn=_make_which_fn("shellcheck"),
+        )
+        assert "shellcheck" in result.detected
+        assert result.language == "shell"
+
+    def test_bash_extension_detected(self, tmp_path):
+        """*.bash files trigger shell detection (not just *.sh)."""
+        (tmp_path / "init.bash").write_text("#!/bin/bash\necho hi\n")
         result = detect_toolchain(
             tmp_path, which_fn=_make_which_fn("shellcheck"),
         )
