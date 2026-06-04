@@ -222,6 +222,79 @@ class TestBackendConfigParse:
         cfgs = load_backend_configs(_as_api_backends())
         assert cfgs[0].max_tokens == 16384
 
+    def test_load_backend_configs_max_tokens_override(self):
+        """max_tokens=8192 in entry is honoured (D-05)."""
+        entry = _api_entry(max_tokens=8192)
+        cfgs = load_backend_configs(_as_api_backends(entry))
+        assert cfgs[0].max_tokens == 8192
+
+    def test_load_backend_configs_dict_schema(self):
+        """dict-based backends block parses correctly; name injected from key (D-11)."""
+        data = {
+            "backends": {
+                "mimo": {
+                    "type": "api",
+                    "format": "anthropic",
+                    "base_url": "https://api.mimo.com",
+                    "api_key_env": "MIMO_API_KEY",
+                    "model": "MiMo-V2.5-Pro",
+                },
+            }
+        }
+        cfgs = load_backend_configs(data)
+        assert len(cfgs) == 1
+        cfg = cfgs[0]
+        assert cfg.name == "mimo"
+        assert cfg.format == "anthropic"
+        assert cfg.model == "MiMo-V2.5-Pro"
+        assert cfg.api_key_env == "MIMO_API_KEY"
+
+    def test_load_backend_configs_non_dict_raises(self):
+        """Non-dict backends value (list) raises CliError (D-11)."""
+        with pytest.raises(CliError, match="backends must be a dict"):
+            load_backend_configs({"backends": [_api_entry()]})
+
+    def test_load_backend_configs_entry_not_dict_raises(self):
+        """Dict entry whose value is not a dict raises CliError."""
+        with pytest.raises(CliError):
+            load_backend_configs({"backends": {"bad": "not-a-dict"}})
+
+    def test_multiple_defaults_raises(self):
+        """Two entries with default=True raises CliError naming both backends (D-03)."""
+        entry1 = _api_entry(default=True)
+        entry2 = _api_entry(
+            format="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key_env="ANTHROPIC_API_KEY",
+            model="claude-sonnet",
+            default=True,
+        )
+        data = {"backends": {"deepseek": entry1, "claude-api": entry2}}
+        with pytest.raises(CliError, match="multiple default backends"):
+            load_backend_configs(data)
+
+    def test_single_default_accepted(self):
+        """Exactly one default=True entry is accepted without error (D-03)."""
+        entry = _api_entry(default=True)
+        cfgs = load_backend_configs(_as_api_backends(entry))
+        assert len(cfgs) == 1
+        assert cfgs[0].default is True
+
+    def test_no_default_returns_first(self):
+        """No default=True entry -> resolve_backend returns configs[0] (D-03)."""
+        entry1 = _api_entry()
+        entry2 = _api_entry(
+            format="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key_env="ANTHROPIC_API_KEY",
+            model="claude-sonnet",
+        )
+        data = {"backends": {"deepseek": entry1, "claude-api": entry2}}
+        cfgs = load_backend_configs(data)
+        # Both entries have default=False; resolve_backend with no env -> first
+        result = resolve_backend(env={}, configs=cfgs)
+        assert result.name == "deepseek"
+
 
 # =====================================================================
 # Active-backend resolution (precedence + session default)
