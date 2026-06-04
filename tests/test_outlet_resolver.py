@@ -315,3 +315,61 @@ class TestCliValuePrecedence:
                 gate_yaml_path=None,
                 cli_value="invalid",
             )
+
+
+# -- TestSubagentOutlet ----------------------------------------------------
+
+
+class TestSubagentOutlet:
+    """Outlet C (subagent) acceptance tests."""
+
+    def test_env_subagent_accepted(self):
+        """FORGE_OUTLET=subagent -> returns 'subagent'."""
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "subagent"},
+            gate_yaml_path=None,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subagent"
+
+    def test_env_subagent_case_insensitive(self):
+        """FORGE_OUTLET=SUBAGENT -> returns 'subagent'."""
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "SUBAGENT"},
+            gate_yaml_path=None,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subagent"
+
+    def test_gate_yaml_subagent(self, tmp_path):
+        """gate.yaml with outlet: subagent -> returns 'subagent'."""
+        gate = tmp_path / "gate.yaml"
+        gate.write_text("outlet: subagent\n")
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=gate,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subagent"
+
+    def test_cli_value_subagent(self):
+        """cli_value='subagent' -> returns 'subagent'."""
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=None,
+            cli_value="subagent",
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subagent"
+
+    def test_subagent_skips_reachability_probe(self):
+        """FORGE_OUTLET=subagent with bomb probe -> no explosion.
+
+        Proves Outlet C NEVER probes (same as Outlet B).
+        """
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "subagent"},
+            gate_yaml_path=None,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subagent"

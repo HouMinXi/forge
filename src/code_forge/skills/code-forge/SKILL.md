@@ -48,10 +48,10 @@ Code Change
 [Step 0] Syntax (0a) + Lint (0b) + Non-ASCII (0c)
      |
      v
-[Outlet] resolve-outlet -> "inline" or "cli"
-     |                          |
-     v (inline)                 v (cli)
-[Steps 1-3]                 [Phase 7: CLI dispatch]
+[Outlet] resolve-outlet -> "inline" or "cli" or "subagent"
+     |                    |                    |
+     v (inline)           v (cli)              v (subagent)
+[Steps 1-3]          [CLI dispatch]       [Subagent dispatch]
      |  Three-cycle static review (cycle_counter state machine)
      |        Each cycle = Pass 1 + Pass 2 + Pass 3
      |        P0/P1 -> fix -> counter = 0 -> restart all
@@ -1366,7 +1366,7 @@ When `/forge` is invoked:
    Diff: <N> files, <M> lines changed
    ```
 3. **Run Step 0**: syntax + lint + non-ASCII. Stop on any failure. After all Step 0 checks pass, serialize findings into FUSE-01 context block for LLM passes (cap at 20 rows).
-3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "cli" or "inline". If exit code is non-zero, report the stderr error and STOP.
+3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "cli", "inline", or "subagent". If exit code is non-zero, report the stderr error and STOP.
 
    **If outlet is "inline" (Outlet B)**: Continue below with the inline self-drive pipeline.
 
@@ -1388,6 +1388,48 @@ When `/forge` is invoked:
    e. **Do NOT re-orchestrate cycles, count passes, or manage convergence**. That is machine.py's responsibility. The SKILL.md bridge is a thin wrapper: call, wait, read result, report.
 
    When Outlet A exits successfully, skip to step 9 (commit readiness report). The CLI pipeline has already executed all steps internally.
+
+   **If outlet is "subagent" (Outlet C)**:
+
+   The subagent outlet spawns one fresh Agent per review pass. Each Agent gets a clean
+   context window, providing fresh-context anti-fabrication without CLI cold-start or
+   API key requirements.
+
+   a. **Initialize cycle_counter = 0**
+
+   b. **For each cycle** (up to 3 consecutive clean cycles):
+      For each pass (Pass 1: structural/qodo, Pass 2: architectural/expert, Pass 3: adversarial):
+      - Spawn a fresh Agent (using the Agent tool) with the pass prompt.
+      - The Agent prompt MUST include:
+        - The pass role description (from passes/pass1-qodo.md, pass2-expert.md, or pass3-adversarial.md)
+        - The full diff text (same diff computed in step 1)
+        - The Step 0 findings context block (FUSE-01, same as Outlet B)
+        - The instruction: "Systematically cover the whole diff risk surface"
+        - The instruction to return JSON: {"findings": [{"file": "...", "line": N, "severity": "P0"|"P1"|"P2"|"P3", "description": "..."}]}
+      - The Agent MUST use a strong model (sonnet or opus). Haiku produces garbage
+        for code review (6/6 false positives in viability re-test). If model-pin is
+        empty/unset, default to sonnet.
+      - Parse the Agent response as JSON. If the response lacks a 'findings' key or
+        is not valid JSON, treat as an error (fail-closed).
+
+   c. **On Agent error, timeout, or non-JSON response**: Report the error verbatim and
+      STOP. NEVER fall back to inline self-drive. This is the FAIL CLOSED contract,
+      identical to Outlet A. Do not attempt to re-run, retry, or work around the failure.
+      Timeout should be 180-300 seconds per pass to accommodate the slowest configurable
+      backend (cross-Pacific models measured at 113s/pass).
+
+   d. **After each cycle of 3 passes**: Merge findings. Apply the same severity-gated
+      state machine as Outlet B: P0/P1 = full counter reset, P2 = cycle restart,
+      P3 = accumulate (density check -> P2 escalation), clean = increment counter.
+
+   e. **Fresh context guarantee**: Each Agent invocation is a separate subagent with
+      its own context window. Pass 2 cannot see Pass 1's findings or reasoning.
+      Pass 3 cannot see Pass 1 or Pass 2. This is the anti-fabrication property:
+      a reviewer cannot "agree with" a prior pass it never saw.
+
+   After 3 consecutive clean cycles via subagent passes, proceed to step 9
+   (commit readiness report).
+
 4. **Initialize cycle_counter = 0**
 5. **Run cycles**: execute Pass 1, Pass 2, Pass 3 sequentially by Loading their pass files from passes/. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
 5.5. **Run Step 3a**: anti-AI audit on all changed files. If findings: fix, re-run Step 3a only (do NOT reset cycle_counter). Clean Step 3a: proceed to Step 3.5.
@@ -1405,7 +1447,14 @@ Outlet A (CLI) and Outlet B (Inline) are **NOT behaviorally identical** in how t
 
 - **Outlet B (Inline)**: Uses the TRUST-07 severity-gated model defined in this SKILL.md. P0/P1 findings trigger a full counter reset. P2 findings restart the current cycle without resetting the counter. P3 findings accumulate and only escalate to P2 via density check.
 
-**Implication**: Outlet A is available for use but applies stricter convergence rules than Outlet B. A finding that would only restart a cycle under Outlet B will fully reset the counter under Outlet A. Counter unification is planned for a future release.
+- **Outlet C (Subagent)**: Uses the same severity-gated model as Outlet B (this SKILL.md's state machine). The key difference from Outlet B: each review pass runs in a FRESH context (separate Agent), so cross-pass contamination is structurally impossible. Outlet B runs all 3 passes in ONE shared context where the model can (consciously or not) echo prior pass findings. Outlet C provides Outlet A's isolation guarantee with Outlet B's cost model (no API key, no subprocess cold-start).
+
+**When to use each outlet:**
+- **Outlet A (CLI)**: Maximum mechanical enforcement. Python owns cycle counting. Requires claude CLI or API key. Best for CI and untrusted editor models.
+- **Outlet B (Inline)**: Zero overhead. Best for trusted terminal Opus sessions. All passes share context (trust-dependent anti-fabrication).
+- **Outlet C (Subagent)**: Fresh context per pass without CLI overhead. Best for trusted sessions that want isolation without API cost. Requires Agent tool availability.
+
+**Implication**: Outlet A is available for use but applies stricter convergence rules than Outlets B and C. A finding that would only restart a cycle under Outlet B/C will fully reset the counter under Outlet A. Counter unification is planned for a future release.
 
 ## Progress Tracking
 
