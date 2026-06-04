@@ -162,7 +162,8 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--baseline", default=None,
         help="baseline ref "
-             "(git: HEAD/INDEX/<sha>; non-git: empty|<snapshot-path>)",
+             "(HEAD/INDEX/<sha>/empty/<snapshot-path>; "
+             "empty reviews whole file in any repo)",
     )
     review_parser.add_argument(
         "--head", default=None,
@@ -206,6 +207,41 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--committed", action="store_true",
         help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
+    )
+
+    # Backend selection flags (D-02, D-10)
+    review_parser.add_argument(
+        "--backend", default=None, metavar="NAME",
+        help="named backend from gate.yaml backends block "
+             "(mutually exclusive with inline backend flags)",
+    )
+    backend_inline = review_parser.add_argument_group(
+        "inline backend flags",
+        "Define a transient backend without gate.yaml "
+        "(all 4 required together; mutually exclusive with --backend)",
+    )
+    backend_inline.add_argument(
+        "--backend-url", default=None, metavar="URL",
+        help="base URL for inline backend (e.g. https://api.deepseek.com/v1)",
+    )
+    backend_inline.add_argument(
+        "--backend-format", default=None,
+        choices=["openai", "anthropic"],
+        help="API format for inline backend",
+    )
+    backend_inline.add_argument(
+        "--backend-key-env", default=None, metavar="VAR_NAME",
+        help="env var name holding the API key for inline backend",
+    )
+    backend_inline.add_argument(
+        "--backend-model", default=None, metavar="MODEL_NAME",
+        help="model name for inline backend",
+    )
+
+    review_parser.add_argument(
+        "--whole-file", nargs="+", metavar="PATH",
+        help="review specific file(s) in full without baseline comparison; "
+             "paths must be relative and resolve under the repo root",
     )
     review_parser.add_argument(
         "paths", nargs="*",
@@ -359,12 +395,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- RESOLVE-OUTLET subcommand: outlet selection ---
     subparsers.add_parser(
         'resolve-outlet',
-        help='resolve outlet selection (cli or inline)',
+        help='resolve outlet selection (cli, inline, or subagent)',
         description=(
             'Resolve which review outlet to use. '
-            'Outputs cli or inline to stdout. '
+            'Outputs cli, inline, or subagent to stdout. '
             'Exits 1 with a diagnostic if the configured review '
-            'backend is unreachable and no explicit Outlet B is set.'
+            'backend is unreachable and no explicit override is set.'
         ),
     )
 
@@ -659,18 +695,68 @@ def _run(args, env, cwd: Path) -> Verdict:
             )
 
     # Step 6: backend resolution + factories
-    from .backend import resolve_backend, DEFAULT_BACKEND
-    try:
-        backend = resolve_backend(env, configs=[], cli_value=None)
-    except CliError as exc:
-        # configs=[] means no backends.yaml loaded yet (Phase 8)
-        # Fall back to DEFAULT_BACKEND if FORGE_BACKEND is set but not found
-        backend = DEFAULT_BACKEND
-        if env.get("FORGE_BACKEND"):
-            warn(
-                "warning: FORGE_BACKEND=%s not found in configuration; "
-                "using default backend (%s)" % (env.get("FORGE_BACKEND"), exc)
+    import yaml as _yaml
+    from .backend import (
+        BackendConfig,
+        load_backend_configs,
+        resolve_backend,
+    )
+    from .llm_invoke import LLMInvokeError
+
+    # T2: Validate mutual exclusion: --backend vs inline flags (D-10)
+    inline_flags = [
+        getattr(args, 'backend_url', None),
+        getattr(args, 'backend_format', None),
+        getattr(args, 'backend_key_env', None),
+        getattr(args, 'backend_model', None),
+    ]
+    has_inline = any(f is not None for f in inline_flags)
+    has_backend_name = getattr(args, 'backend', None) is not None
+    if has_backend_name and has_inline:
+        raise CliError(
+            "--backend and inline flags are mutually exclusive"
+        )
+    if has_inline and not all(f is not None for f in inline_flags):
+        raise CliError(
+            "inline backend requires all 4 flags: "
+            "--backend-url/format/key-env/model"
+        )
+
+    if has_inline:
+        # All 4 inline flags: construct transient BackendConfig, skip gate.yaml
+        backend = BackendConfig(
+            name="inline",
+            type="api",
+            format=args.backend_format,
+            base_url=args.backend_url,
+            api_key_env=args.backend_key_env,
+            model=args.backend_model,
+            max_tokens=16384,
+        )
+    else:
+        # T1: Load gate.yaml backends block (D-16 lightweight loader)
+        gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+        try:
+            with open(gate_yaml_path, "r", encoding="utf-8") as _f:
+                gate_data = _yaml.safe_load(_f)
+        except FileNotFoundError:
+            gate_data = None
+        except _yaml.YAMLError as exc:
+            raise CliError("gate.yaml parse error: %s" % exc) from exc
+
+        if isinstance(gate_data, dict):
+            configs = load_backend_configs(gate_data)
+        else:
+            configs = []
+
+        try:
+            backend = resolve_backend(
+                env,
+                configs=configs,
+                cli_value=getattr(args, 'backend', None),
             )
+        except CliError:
+            raise
 
     if args.sandbox:
         warn(
@@ -696,27 +782,33 @@ def _run(args, env, cwd: Path) -> Verdict:
         raise CliError(str(exc))
 
     # Step 7: lock + run
-    with ForgeLock(lock_path):
-        verdict = _run_hold_loop(
-            mode=mode,
-            falsifier=falsifier,
-            autofixer=autofixer,
-            revert_fn=revert_fn,
-            l1_provider=l1_provider,
-            resolved=resolved,
-            source_hash=source_hash,
-            baseline_repr=baseline_repr,
-            cwd=cwd,
-            registry=registry,
-            max_rounds=max_rounds,
-            max_fix_attempts=max_fix,
-            state_path=state_path,
-            coverage_l1_active=coverage_l1_active,
-            coverage_exempt_patterns=coverage_exempt,
-        )
-        # SARIF emission in CI mode, inside lock scope.
-        if mode == Mode.CI:
-            _emit_ci_output(state_path, registry)
+    try:
+        with ForgeLock(lock_path):
+            verdict = _run_hold_loop(
+                mode=mode,
+                falsifier=falsifier,
+                autofixer=autofixer,
+                revert_fn=revert_fn,
+                l1_provider=l1_provider,
+                resolved=resolved,
+                source_hash=source_hash,
+                baseline_repr=baseline_repr,
+                cwd=cwd,
+                registry=registry,
+                max_rounds=max_rounds,
+                max_fix_attempts=max_fix,
+                state_path=state_path,
+                coverage_l1_active=coverage_l1_active,
+                coverage_exempt_patterns=coverage_exempt,
+            )
+            # SARIF emission in CI mode, inside lock scope.
+            if mode == Mode.CI:
+                _emit_ci_output(state_path, registry)
+    except LLMInvokeError as exc:
+        # T4: D-04/D-14 boundary: re-wrap LLMInvokeError as CliError
+        raise CliError(
+            "backend %s: %s" % (backend.name, exc)
+        ) from exc
     return verdict
 
 
@@ -1005,11 +1097,61 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
     return EXIT_PASS
 
 
+def _resolve_whole_file_specs(args, cwd: Path):
+    """Resolve --whole-file paths into (baseline, head, paths) tuple.
+
+    Returns None when --whole-file is not set so callers can fall through
+    to their normal logic.
+
+    When set, validates all paths are relative and under cwd, enforces
+    mutual-exclusion with --committed/--staged/--baseline/--head, and
+    returns a 3-tuple: (EmptyBaseline(), head_spec, [Path, ...]).
+    """
+    whole_file = getattr(args, "whole_file", None)
+    if whole_file is None:
+        return None
+    in_git = is_git_repo(cwd)
+    # Mutual-exclusion: --whole-file conflicts with mode-selection flags
+    if getattr(args, "committed", False):
+        raise CliError("--whole-file cannot be combined with --committed")
+    if getattr(args, "staged", False):
+        raise CliError("--whole-file cannot be combined with --staged")
+    if args.baseline is not None:
+        raise CliError("--whole-file cannot be combined with --baseline")
+    if args.head is not None:
+        raise CliError("--whole-file cannot be combined with --head")
+    if getattr(args, "paths", None):
+        raise CliError("--whole-file cannot be combined with positional paths")
+    # Path validation: all entries must be relative and under cwd
+    cwd_resolved = cwd.resolve()
+    for p in whole_file:
+        pp = Path(p)
+        if pp.is_absolute():
+            raise CliError(
+                "--whole-file: path must be relative, got: %s" % p
+            )
+        resolved_p = (cwd / pp).resolve()
+        try:
+            resolved_p.relative_to(cwd_resolved)
+        except ValueError:
+            raise CliError(
+                "--whole-file: path escapes repo root: %s" % p
+            )
+    head_spec = GitRefBaseline("WORKING") if in_git else None
+    return EmptyBaseline(), head_spec, [Path(p) for p in whole_file]
+
+
 def _build_baseline_specs(
     args, cwd: Path, warn=None,
 ) -> tuple:
     """Parse --baseline + --head into BaselineSpec union members."""
     in_git = is_git_repo(cwd)
+
+    # Handle --whole-file via shared resolver; keep 2-tuple return for callers
+    wf_result = _resolve_whole_file_specs(args, cwd)
+    if wf_result is not None:
+        baseline, head, _ = wf_result
+        return baseline, head
 
     # Check --committed conflicts first
     if args.committed:
@@ -1068,6 +1210,10 @@ def _build_baseline_specs(
 
 def _paths(args, cwd: Path, resolved=None) -> list:
     """H4: derive paths from explicit args OR git_diff extraction."""
+    wf_result = _resolve_whole_file_specs(args, cwd)
+    if wf_result is not None:
+        _, _, paths_list = wf_result
+        return paths_list
     if args.paths:
         return [Path(p) for p in args.paths]
     if resolved is None:
