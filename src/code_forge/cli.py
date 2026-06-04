@@ -1120,6 +1120,8 @@ def _resolve_whole_file_specs(args, cwd: Path):
         raise CliError("--whole-file cannot be combined with --baseline")
     if args.head is not None:
         raise CliError("--whole-file cannot be combined with --head")
+    if getattr(args, "paths", None):
+        raise CliError("--whole-file cannot be combined with positional paths")
     # Path validation: all entries must be relative and under cwd
     cwd_resolved = cwd.resolve()
     for p in whole_file:

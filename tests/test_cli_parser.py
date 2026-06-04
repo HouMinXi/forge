@@ -307,7 +307,7 @@ class TestWholeFileFlag:
         from code_forge.cli import _build_baseline_specs
         import argparse
         args = argparse.Namespace(
-            whole_file="some/file.py", baseline=None,
+            whole_file=["some/file.py"], baseline=None,
             head=None, committed=False, staged=False, paths=[],
         )
         baseline, head = _build_baseline_specs(args, cwd=tmp_path)
@@ -324,7 +324,7 @@ class TestWholeFileFlag:
             check=True, capture_output=True,
         )
         args = argparse.Namespace(
-            whole_file="some/file.py", baseline=None,
+            whole_file=["some/file.py"], baseline=None,
             head=None, committed=False, staged=False, paths=[],
         )
         baseline, head = _build_baseline_specs(args, cwd=tmp_path)
@@ -338,7 +338,7 @@ class TestWholeFileFlag:
         from code_forge.errors import CliError
         import argparse
         args = argparse.Namespace(
-            whole_file="f.py", baseline="HEAD",
+            whole_file=["f.py"], baseline="HEAD",
             head=None, committed=False, staged=False, paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --baseline"):
@@ -350,7 +350,7 @@ class TestWholeFileFlag:
         from code_forge.errors import CliError
         import argparse
         args = argparse.Namespace(
-            whole_file="f.py", baseline=None,
+            whole_file=["f.py"], baseline=None,
             head=None, committed=True, staged=False, paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --committed"):
@@ -362,7 +362,7 @@ class TestWholeFileFlag:
         from code_forge.errors import CliError
         import argparse
         args = argparse.Namespace(
-            whole_file="f.py", baseline=None,
+            whole_file=["f.py"], baseline=None,
             head="HEAD", committed=False, staged=False, paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --head"):
@@ -374,7 +374,7 @@ class TestWholeFileFlag:
         from code_forge.errors import CliError
         import argparse
         args = argparse.Namespace(
-            whole_file="f.py", baseline=None,
+            whole_file=["f.py"], baseline=None,
             head=None, committed=False, staged=False,
             paths=["other.py"],
         )
@@ -387,7 +387,7 @@ class TestWholeFileFlag:
         from code_forge.errors import CliError
         import argparse
         args = argparse.Namespace(
-            whole_file="f.py", baseline=None,
+            whole_file=["f.py"], baseline=None,
             head=None, committed=False, staged=True, paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --staged"):
