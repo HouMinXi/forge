@@ -207,6 +207,36 @@ def _build_parser() -> argparse.ArgumentParser:
         "--committed", action="store_true",
         help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
     )
+
+    # Backend selection flags (D-02, D-10)
+    review_parser.add_argument(
+        "--backend", default=None, metavar="NAME",
+        help="named backend from gate.yaml backends block "
+             "(mutually exclusive with inline backend flags)",
+    )
+    backend_inline = review_parser.add_argument_group(
+        "inline backend flags",
+        "Define a transient backend without gate.yaml "
+        "(all 4 required together; mutually exclusive with --backend)",
+    )
+    backend_inline.add_argument(
+        "--backend-url", default=None, metavar="URL",
+        help="base URL for inline backend (e.g. https://api.deepseek.com/v1)",
+    )
+    backend_inline.add_argument(
+        "--backend-format", default=None,
+        choices=["openai", "anthropic"],
+        help="API format for inline backend",
+    )
+    backend_inline.add_argument(
+        "--backend-key-env", default=None, metavar="VAR_NAME",
+        help="env var name holding the API key for inline backend",
+    )
+    backend_inline.add_argument(
+        "--backend-model", default=None, metavar="MODEL_NAME",
+        help="model name for inline backend",
+    )
+
     review_parser.add_argument(
         "paths", nargs="*",
         help="files/dirs to review; git mode filters diff, "
