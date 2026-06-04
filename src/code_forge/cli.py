@@ -162,7 +162,8 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--baseline", default=None,
         help="baseline ref "
-             "(git: HEAD/INDEX/<sha>; non-git: empty|<snapshot-path>)",
+             "(HEAD/INDEX/<sha>/empty/<snapshot-path>; "
+             "empty reviews whole file in any repo)",
     )
     review_parser.add_argument(
         "--head", default=None,
@@ -206,6 +207,10 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--committed", action="store_true",
         help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
+    )
+    review_parser.add_argument(
+        "--whole-file", default=None, metavar="PATH",
+        help="review an entire file (alias for --baseline empty PATH)",
     )
     review_parser.add_argument(
         "paths", nargs="*",
@@ -1011,7 +1016,32 @@ def _build_baseline_specs(
     """Parse --baseline + --head into BaselineSpec union members."""
     in_git = is_git_repo(cwd)
 
-    # Check --committed conflicts first
+    # Check --whole-file conflicts first
+    whole_file = getattr(args, "whole_file", None)
+    if whole_file is not None:
+        for flag in ("baseline", "head", "committed", "staged"):
+            if flag == "committed" and args.committed:
+                raise CliError(
+                    "--whole-file cannot be combined with --committed"
+                )
+            if flag == "staged" and args.staged:
+                raise CliError(
+                    "--whole-file cannot be combined with --staged"
+                )
+            if flag in ("baseline", "head"):
+                val = getattr(args, flag, None)
+                if val is not None:
+                    raise CliError(
+                        "--whole-file cannot be combined with --%s" % flag
+                    )
+        if getattr(args, "paths", None):
+            raise CliError(
+                "--whole-file cannot be combined with positional paths"
+            )
+        head = GitRefBaseline("WORKING") if in_git else None
+        return EmptyBaseline(), head
+
+    # Check --committed conflicts
     if args.committed:
         if args.baseline is not None:
             raise CliError(
@@ -1068,6 +1098,9 @@ def _build_baseline_specs(
 
 def _paths(args, cwd: Path, resolved=None) -> list:
     """H4: derive paths from explicit args OR git_diff extraction."""
+    whole_file = getattr(args, "whole_file", None)
+    if whole_file is not None:
+        return [Path(whole_file)]
     if args.paths:
         return [Path(p) for p in args.paths]
     if resolved is None:
