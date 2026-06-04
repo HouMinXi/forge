@@ -71,6 +71,7 @@ class BackendConfig:
     api_key_env: Optional[str] = None  # env var NAME only
     command: str = ""                  # cli binary name or path
     default: bool = False              # config default marker
+    max_tokens: int = 16384            # output token cap for api calls
 
 
 # -- DEFAULT_BACKEND -------------------------------------------------
@@ -83,6 +84,7 @@ DEFAULT_BACKEND = BackendConfig(
     base_url=None,
     api_key_env=None,
     command="",
+    max_tokens=16384,
 )
 
 
@@ -109,6 +111,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
 
     model = entry.get("model", "")
     is_default = entry.get("default", False)
+    max_tokens = entry.get("max_tokens", 16384)
 
     if btype == "api":
         fmt = entry.get("format")
@@ -144,6 +147,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
             api_key_env=api_key_env,
             command="",
             default=is_default,
+            max_tokens=max_tokens,
         )
 
     # type == "cli"
@@ -157,6 +161,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
         api_key_env=None,
         command=command,
         default=is_default,
+        max_tokens=max_tokens,
     )
 
 
@@ -165,14 +170,39 @@ def load_backend_configs(
 ) -> List[BackendConfig]:
     """Parse already-loaded config mapping into BackendConfig list.
 
+    Expects backends as a dict with backend names as keys (D-11):
+      backends:
+        mimo:
+          type: api
+          ...
+
     Returns [] for None / empty / missing backends key.
+    Raises CliError on invalid schema or multiple default: true entries (D-03).
     """
     if data is None:
         return []
     backends = data.get("backends")
     if not backends:
         return []
-    return [_parse_backend_entry(e) for e in backends]
+    if not isinstance(backends, dict):
+        raise CliError(
+            "backends must be a dict with backend names as keys"
+        )
+    configs = []
+    for name, entry in backends.items():
+        if not isinstance(entry, dict):
+            raise CliError(
+                "backend %r: entry must be a dict, got %s"
+                % (name, type(entry).__name__)
+            )
+        entry["name"] = name
+        configs.append(_parse_backend_entry(entry))
+    # D-03: multiple default: true entries raise CliError
+    defaults = [c for c in configs if c.default]
+    if len(defaults) > 1:
+        names = ", ".join(c.name for c in defaults)
+        raise CliError("multiple default backends: %s" % names)
+    return configs
 
 
 # -- Timeout resolution -----------------------------------------------

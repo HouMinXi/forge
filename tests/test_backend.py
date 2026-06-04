@@ -13,7 +13,6 @@ Tests cover:
 from __future__ import annotations
 
 import inspect
-import json
 import subprocess
 
 import pytest
@@ -35,9 +34,13 @@ from code_forge.errors import CliError
 
 
 def _api_entry(**overrides):
-    """Build a minimal valid api backend entry."""
+    """Build a minimal valid api backend entry (D-11 dict-schema).
+
+    Returns an entry dict without the 'name' key; the dict key in
+    the backends mapping provides the name (injected by load_backend_configs).
+    Default backend name when used in _as_backends_dict is 'deepseek'.
+    """
     base = {
-        "name": "deepseek",
         "type": "api",
         "format": "openai",
         "base_url": "https://api.deepseek.com/v1",
@@ -49,14 +52,32 @@ def _api_entry(**overrides):
 
 
 def _cli_entry(**overrides):
-    """Build a minimal valid cli backend entry."""
+    """Build a minimal valid cli backend entry (D-11 dict-schema).
+
+    Returns an entry dict without the 'name' key; the dict key in
+    the backends mapping provides the name (injected by load_backend_configs).
+    Default backend name when used in _as_backends_dict is 'claude-sub'.
+    """
     base = {
-        "name": "claude-sub",
         "type": "cli",
         "model": "sonnet",
     }
     base.update(overrides)
     return base
+
+
+def _as_api_backends(entry=None, name="deepseek"):
+    """Wrap an api entry in the D-11 dict-schema backends mapping."""
+    if entry is None:
+        entry = _api_entry()
+    return {"backends": {name: entry}}
+
+
+def _as_cli_backends(entry=None, name="claude-sub"):
+    """Wrap a cli entry in the D-11 dict-schema backends mapping."""
+    if entry is None:
+        entry = _cli_entry()
+    return {"backends": {name: entry}}
 
 
 def _noop_which(name):
@@ -76,8 +97,7 @@ class TestBackendConfigParse:
     """BackendConfig parses entries into frozen dataclass."""
 
     def test_backendconfig_parses_api_openai(self):
-        entry = _api_entry()
-        cfgs = load_backend_configs({"backends": [entry]})
+        cfgs = load_backend_configs(_as_api_backends())
         assert len(cfgs) == 1
         cfg = cfgs[0]
         assert cfg.name == "deepseek"
@@ -89,21 +109,21 @@ class TestBackendConfigParse:
 
     def test_backendconfig_parses_api_anthropic(self):
         entry = _api_entry(
-            name="claude-api",
             format="anthropic",
             base_url="https://api.anthropic.com",
             api_key_env="ANTHROPIC_API_KEY",
             model="claude-sonnet-4-20250514",
         )
-        cfgs = load_backend_configs({"backends": [entry]})
+        cfgs = load_backend_configs(
+            {"backends": {"claude-api": entry}}
+        )
         cfg = cfgs[0]
         assert cfg.type == "api"
         assert cfg.format == "anthropic"
         assert cfg.api_key_env == "ANTHROPIC_API_KEY"
 
     def test_backendconfig_parses_cli(self):
-        entry = _cli_entry()
-        cfgs = load_backend_configs({"backends": [entry]})
+        cfgs = load_backend_configs(_as_cli_backends())
         cfg = cfgs[0]
         assert cfg.type == "cli"
         assert cfg.name == "claude-sub"
@@ -111,22 +131,21 @@ class TestBackendConfigParse:
 
     def test_parse_cli_backend_with_command(self):
         """cli backend with explicit command field."""
-        entry = _cli_entry(name="custom", command="aicc")
-        cfgs = load_backend_configs({"backends": [entry]})
+        entry = _cli_entry(command="aicc")
+        cfgs = load_backend_configs({"backends": {"custom": entry}})
         cfg = cfgs[0]
         assert cfg.command == "aicc"
 
     def test_parse_cli_backend_default_command(self):
         """cli backend without command key defaults to empty string."""
-        entry = _cli_entry(name="x")
-        cfgs = load_backend_configs({"backends": [entry]})
+        cfgs = load_backend_configs({"backends": {"x": _cli_entry()}})
         cfg = cfgs[0]
         assert cfg.command == ""
 
     def test_parse_api_backend_ignores_command(self):
         """api backend always has empty command."""
         entry = _api_entry(command="should-be-ignored")
-        cfgs = load_backend_configs({"backends": [entry]})
+        cfgs = load_backend_configs(_as_api_backends(entry))
         cfg = cfgs[0]
         assert cfg.command == ""
 
@@ -138,29 +157,70 @@ class TestBackendConfigParse:
         entry = _api_entry()
         del entry["format"]
         with pytest.raises(CliError, match="format"):
-            load_backend_configs({"backends": [entry]})
+            load_backend_configs(_as_api_backends(entry))
 
     def test_backendconfig_api_missing_api_key_env_raises(self):
         entry = _api_entry()
         del entry["api_key_env"]
         with pytest.raises(CliError, match="api_key_env"):
-            load_backend_configs({"backends": [entry]})
+            load_backend_configs(_as_api_backends(entry))
 
     def test_backendconfig_unknown_type_raises(self):
         entry = _api_entry(type="grpc")
         with pytest.raises(CliError, match="grpc"):
-            load_backend_configs({"backends": [entry]})
+            load_backend_configs(_as_api_backends(entry))
 
     def test_backendconfig_inline_secret_rejected(self):
         """api_key (raw key) instead of api_key_env -> CliError."""
         entry = _api_entry(api_key="sk-secret-raw-key-value")
         with pytest.raises(CliError, match="api_key_env"):
-            load_backend_configs({"backends": [entry]})
+            load_backend_configs(_as_api_backends(entry))
 
     def test_load_backend_configs_empty_returns_empty_list(self):
         assert load_backend_configs(None) == []
         assert load_backend_configs({}) == []
-        assert load_backend_configs({"backends": []}) == []
+        assert load_backend_configs({"backends": {}}) == []
+
+    def test_load_backend_configs_list_raises_cli_error(self):
+        """backends as list -> CliError (D-11: dict required)."""
+        with pytest.raises(CliError, match="backends must be a dict"):
+            load_backend_configs({"backends": [_api_entry()]})
+
+    def test_load_backend_configs_non_dict_entry_raises(self):
+        """backends dict value that is not a dict -> CliError."""
+        with pytest.raises(CliError):
+            load_backend_configs({"backends": {"bad": "not-a-dict"}})
+
+    def test_load_backend_configs_multiple_defaults_raises(self):
+        """Two backends with default: true -> CliError (D-03)."""
+        entry1 = _api_entry(default=True)
+        entry2 = _api_entry(
+            format="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key_env="ANTHROPIC_API_KEY",
+            model="claude-sonnet",
+            default=True,
+        )
+        data = {"backends": {"deepseek": entry1, "claude-api": entry2}}
+        with pytest.raises(CliError, match="multiple default backends"):
+            load_backend_configs(data)
+
+    def test_load_backend_configs_name_injected_from_key(self):
+        """Backend name comes from YAML dict key, not from entry."""
+        entry = _api_entry()
+        cfgs = load_backend_configs({"backends": {"my-backend": entry}})
+        assert cfgs[0].name == "my-backend"
+
+    def test_load_backend_configs_max_tokens_from_entry(self):
+        """max_tokens from entry overrides default 16384."""
+        entry = _api_entry(max_tokens=8192)
+        cfgs = load_backend_configs(_as_api_backends(entry))
+        assert cfgs[0].max_tokens == 8192
+
+    def test_load_backend_configs_max_tokens_default(self):
+        """max_tokens defaults to 16384 when not in entry."""
+        cfgs = load_backend_configs(_as_api_backends())
+        assert cfgs[0].max_tokens == 16384
 
 
 # =====================================================================
@@ -172,21 +232,21 @@ class TestResolveBackend:
     """resolve_backend honors FORGE_BACKEND > config > session default."""
 
     def test_resolve_backend_env_override_wins(self):
-        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        cfgs = load_backend_configs(_as_api_backends())
         result = resolve_backend(
             env={"FORGE_BACKEND": "deepseek"}, configs=cfgs,
         )
         assert result.name == "deepseek"
 
     def test_resolve_backend_env_override_unknown_name_raises(self):
-        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        cfgs = load_backend_configs(_as_api_backends())
         with pytest.raises(CliError, match="ghost"):
             resolve_backend(
                 env={"FORGE_BACKEND": "ghost"}, configs=cfgs,
             )
 
     def test_resolve_backend_config_default_when_no_env(self):
-        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        cfgs = load_backend_configs(_as_api_backends())
         result = resolve_backend(env={}, configs=cfgs)
         assert result.name == "deepseek"
 
@@ -213,7 +273,7 @@ class TestResolveBackend:
 
     def test_resolve_backend_env_empty_falls_through(self):
         """FORGE_BACKEND="" -> falls through to config/session default."""
-        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        cfgs = load_backend_configs(_as_api_backends())
         result = resolve_backend(
             env={"FORGE_BACKEND": ""}, configs=cfgs,
         )
@@ -226,7 +286,7 @@ class TestResolveBackend:
 
     def test_resolve_backend_cli_override_wins(self):
         """cli_value takes top priority over env and configs."""
-        cfgs = load_backend_configs({"backends": [_api_entry()]})
+        cfgs = load_backend_configs(_as_api_backends())
         result = resolve_backend(
             env={"FORGE_BACKEND": "deepseek"},
             configs=cfgs,
@@ -452,7 +512,7 @@ class TestProbeApi:
 
     def test_probe_api_key_present(self, tmp_path):
         """Key env var set -> ok=True, run_cmd NOT called."""
-        cfg = load_backend_configs({"backends": [_api_entry()]})[0]
+        cfg = load_backend_configs(_as_api_backends())[0]
         result = probe_backend(
             cfg,
             which_fn=_noop_which,
@@ -465,7 +525,7 @@ class TestProbeApi:
 
     def test_probe_api_key_missing(self, tmp_path):
         """Key env var missing -> ok=False, error names the env var."""
-        cfg = load_backend_configs({"backends": [_api_entry()]})[0]
+        cfg = load_backend_configs(_as_api_backends())[0]
         result = probe_backend(
             cfg,
             which_fn=_noop_which,
