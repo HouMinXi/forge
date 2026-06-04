@@ -29,6 +29,7 @@ they carry no runnable logic change.
 
 - No argument: review uncommitted changes (staged + unstaged)
 - `committed`: review current branch vs merge-base
+- `--whole-file PATH`: review an entire file (no diff required; alias for `--baseline empty PATH`)
 - `step N`: resume from a specific step (e.g., `step 4` to run smoke test only)
 - `--skip-0`: skip Step 0 pre-checks (use only when re-entering after a fix that did not change syntax/lint)
 
