@@ -364,12 +364,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- RESOLVE-OUTLET subcommand: outlet selection ---
     subparsers.add_parser(
         'resolve-outlet',
-        help='resolve outlet selection (cli or inline)',
+        help='resolve outlet selection (cli, inline, or subagent)',
         description=(
             'Resolve which review outlet to use. '
-            'Outputs cli or inline to stdout. '
+            'Outputs cli, inline, or subagent to stdout. '
             'Exits 1 with a diagnostic if the configured review '
-            'backend is unreachable and no explicit Outlet B is set.'
+            'backend is unreachable and no explicit override is set.'
         ),
     )
 
