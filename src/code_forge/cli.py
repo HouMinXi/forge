@@ -208,6 +208,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
     )
     review_parser.add_argument(
+        "--whole-file", nargs="+", metavar="PATH",
+        help="review specific file(s) in full without baseline comparison; "
+             "paths must be relative and resolve under the repo root",
+    )
+    review_parser.add_argument(
         "paths", nargs="*",
         help="files/dirs to review; git mode filters diff, "
              "non-git lists files",
@@ -1011,6 +1016,39 @@ def _build_baseline_specs(
     """Parse --baseline + --head into BaselineSpec union members."""
     in_git = is_git_repo(cwd)
 
+    # Handle --whole-file: validate paths, return short-circuit baseline
+    whole_file = getattr(args, "whole_file", None)
+    if whole_file is not None:
+        # Mutual-exclusion: --whole-file conflicts with mode-selection flags
+        for flag_name, flag_val in [
+            ("committed", getattr(args, "committed", False)),
+            ("staged", getattr(args, "staged", False)),
+            ("baseline", args.baseline),
+            ("head", args.head),
+        ]:
+            if flag_val:
+                raise CliError(
+                    "--whole-file cannot be combined with --%s" % flag_name
+                )
+        # Path validation: all entries must be relative and under cwd
+        for p in whole_file:
+            pp = Path(p)
+            if pp.is_absolute():
+                raise CliError(
+                    "--whole-file: path must be relative, got: %s" % p
+                )
+            resolved_p = (cwd / pp).resolve()
+            cwd_resolved = cwd.resolve()
+            try:
+                resolved_p.relative_to(cwd_resolved)
+            except ValueError:
+                raise CliError(
+                    "--whole-file: path escapes repo root: %s" % p
+                )
+        return EmptyBaseline(), (
+            GitRefBaseline("WORKING") if in_git else None
+        )
+
     # Check --committed conflicts first
     if args.committed:
         if args.baseline is not None:
@@ -1068,6 +1106,9 @@ def _build_baseline_specs(
 
 def _paths(args, cwd: Path, resolved=None) -> list:
     """H4: derive paths from explicit args OR git_diff extraction."""
+    whole_file = getattr(args, "whole_file", None)
+    if whole_file is not None:
+        return [Path(p) for p in whole_file]
     if args.paths:
         return [Path(p) for p in args.paths]
     if resolved is None:
