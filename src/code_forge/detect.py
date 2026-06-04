@@ -306,12 +306,15 @@ def detect_toolchain(
             if "flake8" not in missing:
                 missing.append("flake8")
 
-    # Shell detection: check for *.sh files in root and one level deep.
+    # Shell detection: check for *.sh / *.bash in root and one level deep.
     # Runs independently of Python detection to support mixed projects.
     has_shell = False
-    sh_files = list(project_root.glob("*.sh"))
+    sh_files = list(project_root.glob("*.sh")) + list(project_root.glob("*.bash"))
     if not sh_files:
-        sh_files = list(project_root.glob("*/*.sh"))
+        sh_files = (
+            list(project_root.glob("*/*.sh"))
+            + list(project_root.glob("*/*.bash"))
+        )
     if sh_files:
         has_shell = True
         _scan_path_for_tools(
@@ -415,8 +418,11 @@ def _merge_and_write(result: DetectionResult, output_path: Path) -> None:
         if meta and "tools_yaml_entry" in meta:
             detected_tools[tool_name] = copy.deepcopy(meta["tools_yaml_entry"])
 
-    # Merge: existing entries preserved, detected entries update/add
-    merged = dict(existing_tools)
+    # Merge: keep only user-added entries (not in any registry),
+    # then layer detected entries on top.
+    all_registry_names = set(PYTHON_TOOL_REGISTRY) | set(SHELL_TOOL_REGISTRY)
+    merged = {k: v for k, v in existing_tools.items()
+              if k not in all_registry_names}
     merged.update(detected_tools)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
