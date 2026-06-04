@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -244,8 +245,19 @@ def build_l1_provider(
                 total_input += result.usage.input_tokens
                 total_output += result.usage.output_tokens
                 total_duration += result.duration_s
+                # T5 D-13: per-pass token cost to stderr
+                if (result.usage.input_tokens > 0
+                        or result.usage.output_tokens > 0):
+                    bname = backend.name if backend else "unknown"
+                    sys.stderr.write(
+                        "[%s] %d in / %d out tokens\n"
+                        % (
+                            bname,
+                            result.usage.input_tokens,
+                            result.usage.output_tokens,
+                        )
+                    )
             except LLMInvokeError as exc:
-                import sys
                 print(
                     "code-forge: L1 pass '%s' failed: %s" % (pass_name, exc),
                     file=sys.stderr,
