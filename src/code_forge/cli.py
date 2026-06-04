@@ -1025,16 +1025,14 @@ def _resolve_whole_file_specs(args, cwd: Path):
         return None
     in_git = is_git_repo(cwd)
     # Mutual-exclusion: --whole-file conflicts with mode-selection flags
-    for flag_name, flag_val in [
-        ("committed", getattr(args, "committed", False)),
-        ("staged", getattr(args, "staged", False)),
-        ("baseline", args.baseline),
-        ("head", args.head),
-    ]:
-        if flag_val:
-            raise CliError(
-                "--whole-file cannot be combined with --%s" % flag_name
-            )
+    if getattr(args, "committed", False):
+        raise CliError("--whole-file cannot be combined with --committed")
+    if getattr(args, "staged", False):
+        raise CliError("--whole-file cannot be combined with --staged")
+    if args.baseline is not None:
+        raise CliError("--whole-file cannot be combined with --baseline")
+    if args.head is not None:
+        raise CliError("--whole-file cannot be combined with --head")
     # Path validation: all entries must be relative and under cwd
     cwd_resolved = cwd.resolve()
     for p in whole_file:
