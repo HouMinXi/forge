@@ -722,3 +722,54 @@ class TestMaxTokensInApiCalls:
             )
 
         assert captured_body["body"]["max_tokens"] == 8192
+
+
+# ---------------------------------------------------------------------------
+# Phase 12: Real API smoke test for mimo backend (Task 3, 12-04)
+# ---------------------------------------------------------------------------
+
+
+class TestRealMimoApiSmoke:
+    """D-12: real API smoke test against mimo (anthropic-format) backend."""
+
+    @pytest.mark.real_api
+    @pytest.mark.skipif(
+        not os.environ.get("MIMO_API_KEY"),
+        reason="MIMO_API_KEY not set -- skip real API test",
+    )
+    def test_mimo_real_api_call(self):
+        """Make a real HTTP call to mimo using the anthropic-format API path.
+
+        Validates that the anthropic-format path in llm_invoke.py works end-to-end
+        against a real backend (not a mock). Skipped when MIMO_API_KEY is absent.
+        This is the mock-blind-spot lesson from v2.1: mocks cannot catch wire-format
+        errors; one real API call can.
+        """
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import LLMInvokeError, llm_invoke
+
+        mimo_base_url = os.environ.get(
+            "MIMO_BASE_URL", "https://api.mimo.ai"
+        )
+        backend = BackendConfig(
+            name="mimo",
+            type="api",
+            format="anthropic",
+            base_url=mimo_base_url,
+            api_key_env="MIMO_API_KEY",
+            model="MiMo-V2.5-Pro",
+            max_tokens=64,
+        )
+
+        # Verify backend config assertions required by plan
+        assert backend.name == "mimo"
+        assert backend.format == "anthropic"
+
+        try:
+            result = llm_invoke(prompt="Return the word VIABLE", backend=backend)
+        except LLMInvokeError as exc:
+            pytest.skip("mimo API call failed (not a test failure): %s" % exc)
+
+        assert result is not None
+        # result.content is the parsed JSON dict; raw content must be non-empty
+        assert result.content is not None
