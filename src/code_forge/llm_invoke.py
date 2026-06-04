@@ -358,6 +358,7 @@ def _invoke_openai(
         "model": backend.model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
+        "max_tokens": backend.max_tokens,
     }
 
     try:
@@ -403,7 +404,7 @@ def _invoke_anthropic(
     }
     body = {
         "model": backend.model,
-        "max_tokens": 4096,
+        "max_tokens": backend.max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
 
