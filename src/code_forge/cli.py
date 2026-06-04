@@ -694,18 +694,68 @@ def _run(args, env, cwd: Path) -> Verdict:
             )
 
     # Step 6: backend resolution + factories
-    from .backend import resolve_backend, DEFAULT_BACKEND
-    try:
-        backend = resolve_backend(env, configs=[], cli_value=None)
-    except CliError as exc:
-        # configs=[] means no backends.yaml loaded yet (Phase 8)
-        # Fall back to DEFAULT_BACKEND if FORGE_BACKEND is set but not found
-        backend = DEFAULT_BACKEND
-        if env.get("FORGE_BACKEND"):
-            warn(
-                "warning: FORGE_BACKEND=%s not found in configuration; "
-                "using default backend (%s)" % (env.get("FORGE_BACKEND"), exc)
+    import yaml as _yaml
+    from .backend import (
+        BackendConfig,
+        load_backend_configs,
+        resolve_backend,
+    )
+    from .llm_invoke import LLMInvokeError
+
+    # T2: Validate mutual exclusion: --backend vs inline flags (D-10)
+    inline_flags = [
+        getattr(args, 'backend_url', None),
+        getattr(args, 'backend_format', None),
+        getattr(args, 'backend_key_env', None),
+        getattr(args, 'backend_model', None),
+    ]
+    has_inline = any(f is not None for f in inline_flags)
+    has_backend_name = getattr(args, 'backend', None) is not None
+    if has_backend_name and has_inline:
+        raise CliError(
+            "--backend and inline flags are mutually exclusive"
+        )
+    if has_inline and not all(f is not None for f in inline_flags):
+        raise CliError(
+            "inline backend requires all 4 flags: "
+            "--backend-url/format/key-env/model"
+        )
+
+    if has_inline:
+        # All 4 inline flags: construct transient BackendConfig, skip gate.yaml
+        backend = BackendConfig(
+            name="inline",
+            type="api",
+            format=args.backend_format,
+            base_url=args.backend_url,
+            api_key_env=args.backend_key_env,
+            model=args.backend_model,
+            max_tokens=16384,
+        )
+    else:
+        # T1: Load gate.yaml backends block (D-16 lightweight loader)
+        gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+        try:
+            with open(gate_yaml_path, "r", encoding="utf-8") as _f:
+                gate_data = _yaml.safe_load(_f)
+        except FileNotFoundError:
+            gate_data = None
+        except _yaml.YAMLError as exc:
+            raise CliError("gate.yaml parse error: %s" % exc) from exc
+
+        if isinstance(gate_data, dict):
+            configs = load_backend_configs(gate_data)
+        else:
+            configs = []
+
+        try:
+            backend = resolve_backend(
+                env,
+                configs=configs,
+                cli_value=getattr(args, 'backend', None),
             )
+        except CliError:
+            raise
 
     if args.sandbox:
         warn(
@@ -731,27 +781,33 @@ def _run(args, env, cwd: Path) -> Verdict:
         raise CliError(str(exc))
 
     # Step 7: lock + run
-    with ForgeLock(lock_path):
-        verdict = _run_hold_loop(
-            mode=mode,
-            falsifier=falsifier,
-            autofixer=autofixer,
-            revert_fn=revert_fn,
-            l1_provider=l1_provider,
-            resolved=resolved,
-            source_hash=source_hash,
-            baseline_repr=baseline_repr,
-            cwd=cwd,
-            registry=registry,
-            max_rounds=max_rounds,
-            max_fix_attempts=max_fix,
-            state_path=state_path,
-            coverage_l1_active=coverage_l1_active,
-            coverage_exempt_patterns=coverage_exempt,
-        )
-        # SARIF emission in CI mode, inside lock scope.
-        if mode == Mode.CI:
-            _emit_ci_output(state_path, registry)
+    try:
+        with ForgeLock(lock_path):
+            verdict = _run_hold_loop(
+                mode=mode,
+                falsifier=falsifier,
+                autofixer=autofixer,
+                revert_fn=revert_fn,
+                l1_provider=l1_provider,
+                resolved=resolved,
+                source_hash=source_hash,
+                baseline_repr=baseline_repr,
+                cwd=cwd,
+                registry=registry,
+                max_rounds=max_rounds,
+                max_fix_attempts=max_fix,
+                state_path=state_path,
+                coverage_l1_active=coverage_l1_active,
+                coverage_exempt_patterns=coverage_exempt,
+            )
+            # SARIF emission in CI mode, inside lock scope.
+            if mode == Mode.CI:
+                _emit_ci_output(state_path, registry)
+    except LLMInvokeError as exc:
+        # T4: D-04/D-14 boundary: re-wrap LLMInvokeError as CliError
+        raise CliError(
+            "backend %s: %s" % (backend.name, exc)
+        ) from exc
     return verdict
 
 
