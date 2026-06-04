@@ -239,10 +239,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     review_parser.add_argument(
-        "--whole-file", default=None, metavar="PATH",
-        help="review an entire file (alias for --baseline empty PATH)",
-    )
-    review_parser.add_argument(
         "--whole-file", nargs="+", metavar="PATH",
         help="review specific file(s) in full without baseline comparison; "
              "paths must be relative and resolve under the repo root",
