@@ -77,7 +77,7 @@ class TestGitRepoPassCI:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -102,7 +102,7 @@ class TestRegistryMissing:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -136,7 +136,7 @@ class TestSandboxWarning:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -156,7 +156,7 @@ class TestTopLevelExceptionCatch:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(tmp_path))
 
@@ -197,7 +197,7 @@ class TestMainReturnsInt:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         result = main()
@@ -256,7 +256,7 @@ class TestReviewAutoDetect:
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
-                lambda *a, **kw: "cli",
+                lambda *a, **kw: "subprocess",
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -303,7 +303,7 @@ class TestReviewAutoDetect:
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
-                lambda *a, **kw: "cli",
+                lambda *a, **kw: "subprocess",
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -338,7 +338,7 @@ class TestReviewAutoDetect:
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
-                lambda *a, **kw: "cli",
+                lambda *a, **kw: "subprocess",
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -384,7 +384,7 @@ class TestReviewAutoDetect:
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
-                lambda *a, **kw: "cli",
+                lambda *a, **kw: "subprocess",
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -427,7 +427,7 @@ class TestReviewAutoDetect:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -466,7 +466,7 @@ class TestCostSummaryStderr:
         from code_forge.cli import main as _main
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
-            return_value="cli",
+            return_value="subprocess",
         ):
             _main()
 
@@ -506,7 +506,7 @@ class TestCostSummaryStderr:
         from code_forge.cli import main as _main
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
-            return_value="cli",
+            return_value="subprocess",
         ):
             _main()
 
@@ -563,7 +563,7 @@ class TestInlineFlagsMutualExclusion:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -586,7 +586,7 @@ class TestInlineFlagsMutualExclusion:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -621,7 +621,7 @@ class TestInlineFlagsMutualExclusion:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         with patch(
@@ -669,7 +669,7 @@ class TestLLMInvokeErrorWrapping:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         with patch(

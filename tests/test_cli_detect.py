@@ -134,10 +134,10 @@ class TestResolveOutletSubcommand:
         assert args.subcommand == "resolve-outlet"
 
     def test_resolve_outlet_prints_cli(self, monkeypatch, capsys):
-        """FORGE_OUTLET=cli -> prints 'cli' to stdout, exits 0."""
+        """Mocked resolve_outlet returns 'cli' -> prints it to stdout, exits 0."""
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
-            return_value="cli",
+            return_value="subprocess",
         ):
             monkeypatch.setattr(
                 sys, "argv", ["code-forge", "resolve-outlet"],
@@ -146,7 +146,7 @@ class TestResolveOutletSubcommand:
 
         assert exit_code == EXIT_PASS
         captured = capsys.readouterr()
-        assert captured.out.strip() == "cli"
+        assert captured.out.strip() == "subprocess"
 
     def test_resolve_outlet_prints_inline(self, monkeypatch, capsys):
         """FORGE_OUTLET=inline -> prints 'inline' to stdout, exits 0."""
@@ -213,7 +213,7 @@ class TestResolveOutletSubcommand:
         """resolve-outlet prints outlet value to stdout, not stderr."""
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
-            return_value="cli",
+            return_value="subprocess",
         ):
             monkeypatch.setattr(
                 sys, "argv", ["code-forge", "resolve-outlet"],
@@ -221,4 +221,4 @@ class TestResolveOutletSubcommand:
             main()
 
         captured = capsys.readouterr()
-        assert "cli" in captured.out
+        assert "subprocess" in captured.out

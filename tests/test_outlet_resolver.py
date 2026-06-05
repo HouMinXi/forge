@@ -55,7 +55,7 @@ class TestEnvOverride:
             gate_yaml_path=None,
             reachability_fn=_bomb_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_env_inline_overrides_all(self):
         result = resolve_outlet(
@@ -77,7 +77,7 @@ class TestEnvOverride:
             has_explicit_backend=True,
             reachability_fn=_ok_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_env_whitespace_raises(self):
         """FORGE_OUTLET='  ' raises ValueError with source attribution."""
@@ -98,13 +98,13 @@ class TestEnvOverride:
             )
 
     def test_env_case_insensitive(self):
-        """FORGE_OUTLET=CLI returns 'cli' (case-insensitive)."""
+        """FORGE_OUTLET=CLI returns 'subprocess' via deprecated alias (case-insensitive)."""
         result = resolve_outlet(
             env={"FORGE_OUTLET": "CLI"},
             gate_yaml_path=None,
             reachability_fn=_bomb_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_env_case_insensitive_inline(self):
         """FORGE_OUTLET=INLINE returns 'inline' (case-insensitive)."""
@@ -123,7 +123,7 @@ class TestGateYamlOutlet:
     """gate.yaml outlet field (separate lightweight reader)."""
 
     def test_gate_yaml_outlet_cli(self, tmp_path):
-        """gate.yaml with outlet: cli, no env override -> returns 'cli'."""
+        """gate.yaml with outlet: cli (deprecated alias) -> returns 'subprocess'."""
         gate = tmp_path / "gate.yaml"
         gate.write_text("outlet: cli\n")
         result = resolve_outlet(
@@ -131,7 +131,7 @@ class TestGateYamlOutlet:
             gate_yaml_path=gate,
             reachability_fn=_bomb_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_gate_yaml_outlet_inline(self, tmp_path):
         """gate.yaml with outlet: inline -> returns 'inline' (no probe)."""
@@ -145,7 +145,7 @@ class TestGateYamlOutlet:
         assert result == "inline"
 
     def test_gate_yaml_no_outlet_key(self, tmp_path):
-        """gate.yaml without outlet key -> falls through to probe.
+        """gate.yaml without outlet key -> falls through to probe, returns 'subprocess'.
 
         has_explicit_backend=True simulates a configured backend so the
         zero-config guard does not fire before the reachability probe.
@@ -158,7 +158,7 @@ class TestGateYamlOutlet:
             has_explicit_backend=True,
             reachability_fn=_ok_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
 
 # -- TestBackendReachabilityDefault ----------------------------------------
@@ -168,7 +168,7 @@ class TestBackendReachabilityDefault:
     """No override -> reachability probe."""
 
     def test_no_override_backend_reachable(self):
-        """Backend reachable -> returns 'cli' (fail-safe Outlet A).
+        """Backend reachable -> returns 'subprocess' (fail-safe Outlet A).
 
         has_explicit_backend=True simulates a configured backend so the
         zero-config guard does not fire before the reachability probe.
@@ -179,7 +179,7 @@ class TestBackendReachabilityDefault:
             has_explicit_backend=True,
             reachability_fn=_ok_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_no_override_backend_unreachable(self):
         """Backend unreachable -> raises CliError (FAIL CLOSED).
@@ -230,7 +230,7 @@ class TestZeroConfigGuard:
             has_explicit_backend=False,
             reachability_fn=_ok_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_has_explicit_backend_bypasses_guard(self):
         """has_explicit_backend=True bypasses guard even with empty configs."""
@@ -241,7 +241,7 @@ class TestZeroConfigGuard:
             has_explicit_backend=True,
             reachability_fn=_ok_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_gate_yaml_outlet_bypasses_guard(self, tmp_path):
         """gate.yaml outlet=inline short-circuits before guard fires."""
@@ -381,7 +381,7 @@ class TestCliValuePrecedence:
             cli_value="cli",
             reachability_fn=_bomb_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_cli_value_empty_falls_through(self):
         """cli_value='' falls through to env."""
@@ -401,7 +401,7 @@ class TestCliValuePrecedence:
             cli_value=None,
             reachability_fn=_ok_probe,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_cli_value_invalid_raises(self):
         """cli_value='invalid' raises ValueError with source attribution."""
@@ -539,7 +539,7 @@ backends:
             configs=_cfgs,
             reachability_fn=_reachability,
         )
-        assert result == "cli"
+        assert result == "subprocess"
 
     def test_injected_fn_unknown_backend_still_errors(self):
         """Typo in FORGE_BACKEND must still fail with a clear error."""
@@ -579,7 +579,7 @@ class TestForgeBackendRealEntry:
     )
 
     def test_forge_backend_routes_via_real_entry(self, tmp_path):
-        """FORGE_BACKEND=deepseek resolves to 'cli' via _run_resolve_outlet."""
+        """FORGE_BACKEND=deepseek resolves to 'subprocess' via _run_resolve_outlet."""
         import io
         import sys
         from code_forge.cli import _run_resolve_outlet
@@ -599,4 +599,58 @@ class TestForgeBackendRealEntry:
             sys.stdout, sys.stderr = old_out, old_err
 
         assert rc == EXIT_PASS, "expected EXIT_PASS, got %d" % rc
-        assert "cli" in stdout_val
+        assert "subprocess" in stdout_val
+
+
+# -- TestDeprecatedOutletAlias ---------------------------------------------
+
+
+class TestDeprecatedOutletAlias:
+    """'cli' is accepted as a deprecated alias for 'subprocess'."""
+
+    def test_cli_alias_returns_subprocess(self):
+        """FORGE_OUTLET=cli returns 'subprocess' via deprecated alias."""
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "cli"},
+            gate_yaml_path=None,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subprocess"
+
+    def test_cli_alias_emits_warning(self, capsys):
+        """_parse_outlet_string('cli', ...) emits DeprecationWarning to stderr."""
+        from code_forge.outlet_resolver import _parse_outlet_string
+        result = _parse_outlet_string("cli", "test")
+        assert result == "subprocess"
+        captured = capsys.readouterr()
+        assert "DeprecationWarning" in captured.err
+        assert "renamed to 'subprocess'" in captured.err
+
+    def test_subprocess_value_no_warning(self, capsys):
+        """'subprocess' is the canonical value -- no DeprecationWarning emitted."""
+        from code_forge.outlet_resolver import _parse_outlet_string
+        result = _parse_outlet_string("subprocess", "test")
+        assert result == "subprocess"
+        captured = capsys.readouterr()
+        assert "DeprecationWarning" not in captured.err
+
+    def test_cli_alias_from_cli_flag(self):
+        """--outlet cli returns 'subprocess' via deprecated alias."""
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=None,
+            cli_value="cli",
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subprocess"
+
+    def test_cli_alias_from_gate_yaml(self, tmp_path):
+        """gate.yaml outlet: cli returns 'subprocess' via deprecated alias."""
+        gate = tmp_path / "gate.yaml"
+        gate.write_text("outlet: cli\n")
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=gate,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subprocess"

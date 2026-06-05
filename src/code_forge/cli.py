@@ -128,7 +128,7 @@ def _build_parser() -> argparse.ArgumentParser:
       - install-skill: install bundled skill
       - verify: validate review receipts
       - detect: auto-detect toolchain, write tools.yaml
-      - resolve-outlet: resolve review outlet (cli/inline/subagent)
+      - resolve-outlet: resolve review outlet (subprocess/inline/subagent)
       - init: generate a gate.yaml template in .code-forge/
 
     Backward compat: bare `forge` (no subcommand) defaults to `review`
@@ -235,7 +235,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "(mapped internally with warning)",
     )
     review_parser.add_argument(
-        "--outlet", choices=["cli", "inline", "subagent"], default=None,
+        "--outlet", choices=["subprocess", "cli", "inline", "subagent"], default=None,
         help="review outlet (default: auto-detect via backend reachability)",
     )
     review_parser.add_argument(
@@ -429,10 +429,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- RESOLVE-OUTLET subcommand: outlet selection ---
     subparsers.add_parser(
         'resolve-outlet',
-        help='resolve outlet selection (cli, inline, or subagent)',
+        help='resolve outlet selection (subprocess, inline, or subagent)',
         description=(
             'Resolve which review outlet to use. '
-            'Outputs cli, inline, or subagent to stdout. '
+            'Outputs subprocess, inline, or subagent to stdout. '
             'Exits 1 with a diagnostic if the configured review '
             'backend is unreachable and no explicit override is set.'
         ),
@@ -690,6 +690,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     if outlet == "subagent":
         # SKILL.md dispatches per-pass Agents; CLI exits early
         return Verdict.PASS
+    # outlet == "subprocess" (Outlet A): fall through to review pipeline
 
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.
     if (args.state_dir is not None

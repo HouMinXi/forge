@@ -112,7 +112,7 @@ class TestIntegrationFail:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(repo_str)
 
@@ -152,7 +152,7 @@ class TestIntegrationPass:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(repo_str)
 
@@ -206,7 +206,7 @@ class TestIntegrationBaseline:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(repo_str)
 
@@ -242,7 +242,7 @@ class TestIntegrationState:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(repo_str)
 
