@@ -806,7 +806,13 @@ class TestProbeCache:
         assert call_count[0] == 1
 
     def test_probe_cache_cross_backend_miss(self, tmp_path):
-        """Cache from backend A must not satisfy a probe for backend B."""
+        """Cache in one dir must not satisfy a probe using a different dir.
+
+        Explicit-named cli backends bypass the probe entirely (D-05), so
+        they cannot be used to test cache isolation.  Instead, use
+        DEFAULT_BACKEND (name="session-default") with two separate cache
+        directories to verify cache entries are dir-scoped, not shared.
+        """
         call_count = {"a": 0, "b": 0}
 
         def mock_run_a(cmd, **kw):
@@ -825,35 +831,31 @@ class TestProbeCache:
                 stderr="",
             )
 
-        backend_a = BackendConfig(
-            name="backend-a", type="cli", model="",
-        )
-        backend_b = BackendConfig(
-            name="backend-b", type="cli", model="",
-        )
+        cache_dir_a = tmp_path / "cache_a"
+        cache_dir_b = tmp_path / "cache_b"
 
-        # Probe backend A -- writes cache with backend="backend-a"
+        # Probe with cache dir A -- writes cache there
         probe_backend(
-            backend_a,
+            DEFAULT_BACKEND,
             which_fn=_noop_which,
             run_cmd=mock_run_a,
             env={},
-            cache_dir=tmp_path,
+            cache_dir=cache_dir_a,
             time_fn=lambda: 1000.0,
         )
         assert call_count["a"] == 1
 
-        # Probe backend B within TTL -- must NOT reuse A's cache
+        # Probe with cache dir B within TTL -- must NOT reuse dir A's cache
         probe_backend(
-            backend_b,
+            DEFAULT_BACKEND,
             which_fn=_noop_which,
             run_cmd=mock_run_b,
             env={},
-            cache_dir=tmp_path,
+            cache_dir=cache_dir_b,
             time_fn=lambda: 1060.0,
         )
         assert call_count["b"] == 1, (
-            "backend B should re-probe, not use backend A's cached result"
+            "probe with separate cache dir must re-probe, not reuse other dir's cache"
         )
 
     def test_invalidate_probe_cache(self, tmp_path):
@@ -864,6 +866,83 @@ class TestProbeCache:
 
         invalidate_probe_cache(cache_dir=tmp_path)
         assert not cache_file.exists()
+
+
+# =====================================================================
+# Probe bypass for explicitly-configured cli backends (D-05)
+# =====================================================================
+
+
+class TestProbeBypass:
+    """probe_backend bypasses reachability probe for named cli backends."""
+
+    def test_explicit_cli_backend_bypasses_probe(self, tmp_path):
+        """Named cli backend: which_fn and run_cmd must never be called."""
+        backend = BackendConfig(
+            name="vertex-claude",
+            type="cli",
+            model="claude-sonnet-4-6",
+        )
+
+        def should_not_probe(name):
+            raise AssertionError("which_fn should not be called for explicit cli backend")
+
+        def should_not_run(*_a, **_kw):
+            raise AssertionError("run_cmd should not be called for explicit cli backend")
+
+        result = probe_backend(
+            backend,
+            which_fn=should_not_probe,
+            run_cmd=should_not_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+
+    def test_default_backend_still_probes(self, tmp_path):
+        """DEFAULT_BACKEND (name="session-default") still calls _probe_cli."""
+        called = [False]
+
+        def mock_run(cmd, **kw):
+            called[0] = True
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout='{"loggedIn": true}',
+                stderr="",
+            )
+
+        result = probe_backend(
+            DEFAULT_BACKEND,
+            which_fn=_noop_which,
+            run_cmd=mock_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+        assert called[0] is True, "run_cmd must be called for DEFAULT_BACKEND"
+
+    def test_api_backend_not_affected_by_bypass(self, tmp_path):
+        """API backends are unaffected: probe checks api_key_env presence."""
+        backend = BackendConfig(
+            name="mimo",
+            type="api",
+            format="openai",
+            base_url="https://api.mimo.com",
+            api_key_env="MIMO_KEY",
+            model="mimo-v1",
+        )
+
+        result = probe_backend(
+            backend,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={"MIMO_KEY": "test-key"},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
 
 
 # =====================================================================
