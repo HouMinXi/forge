@@ -87,6 +87,29 @@ def _emit_ci_output(
         post_emit_hook()
 
 
+def _load_gate_backends(gate_yaml_path: Path):
+    """Load backend configs from gate.yaml, or return [] if absent.
+
+    Raises:
+        CliError: gate.yaml exists but is corrupt or has invalid backend config.
+    """
+    import yaml as _y
+    from .backend import load_backend_configs
+    from .errors import CliError as _CliError
+
+    try:
+        with open(gate_yaml_path, "r", encoding="utf-8") as _f:
+            gd = _y.safe_load(_f)
+    except FileNotFoundError:
+        return []
+    except _y.YAMLError as exc:
+        raise _CliError("gate.yaml parse error: %s" % exc) from exc
+
+    if isinstance(gd, dict):
+        return load_backend_configs(gd)
+    return []
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with subcommands.
 
@@ -573,13 +596,44 @@ def _run(args, env, cwd: Path) -> Verdict:
                     "git worktree check failed: %s" % exc
                 ) from exc
 
+
+    # Validate mutual exclusion BEFORE outlet resolution
+    # (prevents --backend from triggering reachability_fn probe)
+    inline_flags = [
+        getattr(args, 'backend_url', None),
+        getattr(args, 'backend_format', None),
+        getattr(args, 'backend_key_env', None),
+        getattr(args, 'backend_model', None),
+    ]
+    has_inline = any(f is not None for f in inline_flags)
+    has_backend_name = getattr(args, 'backend', None) is not None
+    if has_backend_name and has_inline:
+        raise CliError(
+            "--backend and inline flags are mutually exclusive"
+        )
+    if has_inline and not all(f is not None for f in inline_flags):
+        raise CliError(
+            "inline backend requires all 4 flags: "
+            "--backend-url/format/key-env/model"
+        )
+
+
     # Step 0: Outlet resolution (GA1 bridge)
     from .outlet_resolver import resolve_outlet
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+
+    def _reachability():
+        from .backend import resolve_backend, probe_backend
+        cfgs = _load_gate_backends(gate_yaml_path)
+        backend = resolve_backend(env, configs=cfgs,
+                                  cli_value=getattr(args, 'backend', None))
+        return probe_backend(backend, env=env)
+
     outlet = resolve_outlet(
         env,
         gate_yaml_path if gate_yaml_path.exists() else None,
         cli_value=getattr(args, 'outlet', None),
+        reachability_fn=_reachability,
     )
     if outlet == "inline":
         # SKILL.md owns the review pipeline; CLI exits early
@@ -703,24 +757,6 @@ def _run(args, env, cwd: Path) -> Verdict:
     )
     from .llm_invoke import LLMInvokeError
 
-    # T2: Validate mutual exclusion: --backend vs inline flags (D-10)
-    inline_flags = [
-        getattr(args, 'backend_url', None),
-        getattr(args, 'backend_format', None),
-        getattr(args, 'backend_key_env', None),
-        getattr(args, 'backend_model', None),
-    ]
-    has_inline = any(f is not None for f in inline_flags)
-    has_backend_name = getattr(args, 'backend', None) is not None
-    if has_backend_name and has_inline:
-        raise CliError(
-            "--backend and inline flags are mutually exclusive"
-        )
-    if has_inline and not all(f is not None for f in inline_flags):
-        raise CliError(
-            "inline backend requires all 4 flags: "
-            "--backend-url/format/key-env/model"
-        )
 
     if has_inline:
         # All 4 inline flags: construct transient BackendConfig, skip gate.yaml
@@ -1385,9 +1421,6 @@ def _run_detect(args, cwd: Path) -> int:
 def _run_resolve_outlet(env, cwd: Path) -> int:
     """Resolve and print the active review outlet.
 
-    Lazy-imports resolve_outlet. Does NOT pass a reachability_fn
-    so resolve_outlet uses its default backend probe.
-
     Returns:
         EXIT_PASS on success.
         EXIT_FAIL on backend-unreachable (runtime condition).
@@ -1395,11 +1428,19 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
     """
     from .outlet_resolver import resolve_outlet
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+
+    def _reachability():
+        from .backend import resolve_backend, probe_backend
+        cfgs = _load_gate_backends(gate_yaml_path)
+        backend = resolve_backend(env, configs=cfgs, cli_value=None)
+        return probe_backend(backend, env=env)
+
     try:
         outlet = resolve_outlet(
             env,
             gate_yaml_path if gate_yaml_path.exists() else None,
             cli_value=None,
+            reachability_fn=_reachability,
         )
         print(outlet)
         return EXIT_PASS
