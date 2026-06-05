@@ -93,7 +93,7 @@ def _emit_ci_output(
         post_emit_hook()
 
 
-def _load_gate_backends(gate_yaml_path: Path):
+def _load_gate_backends(gate_yaml_path: Path) -> list:
     """Load backend configs from gate.yaml, or return [] if absent.
 
     Raises:
@@ -101,7 +101,7 @@ def _load_gate_backends(gate_yaml_path: Path):
     """
     import yaml as _y
     from .backend import load_backend_configs
-    from .errors import CliError as _CliError
+
 
     try:
         with open(gate_yaml_path, "r", encoding="utf-8") as _f:
@@ -109,7 +109,7 @@ def _load_gate_backends(gate_yaml_path: Path):
     except FileNotFoundError:
         return []
     except _y.YAMLError as exc:
-        raise _CliError("gate.yaml parse error: %s" % exc) from exc
+        raise CliError("gate.yaml parse error: %s" % exc) from exc
 
     if isinstance(gd, dict):
         return load_backend_configs(gd)
@@ -628,17 +628,29 @@ def _run(args, env, cwd: Path) -> Verdict:
     from .outlet_resolver import resolve_outlet
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
 
+    # Load gate backends once; share with both the zero-config guard and
+    # the reachability closure so they operate on the same config list.
+    cfgs = _load_gate_backends(gate_yaml_path)
+    # has_explicit_backend is True when the user passed --backend <name>
+    # or assembled an inline backend via --backend-url/format/key-env/model.
+    _backend_arg = getattr(args, 'backend', None)
+    has_explicit_backend = has_inline or (_backend_arg is not None)
+
     def _reachability():
         from .backend import resolve_backend, probe_backend
-        cfgs = _load_gate_backends(gate_yaml_path)
-        backend = resolve_backend(env, configs=cfgs,
-                                  cli_value=getattr(args, 'backend', None))
+        backend = resolve_backend(
+            env,
+            configs=cfgs,
+            cli_value=_backend_arg,
+        )
         return probe_backend(backend, env=env)
 
     outlet = resolve_outlet(
         env,
         gate_yaml_path if gate_yaml_path.exists() else None,
         cli_value=getattr(args, 'outlet', None),
+        configs=cfgs,
+        has_explicit_backend=has_explicit_backend,
         reachability_fn=_reachability,
     )
     if outlet == "inline":
@@ -1442,10 +1454,10 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
     """
     from .outlet_resolver import resolve_outlet
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+    cfgs = _load_gate_backends(gate_yaml_path)
 
     def _reachability():
         from .backend import resolve_backend, probe_backend
-        cfgs = _load_gate_backends(gate_yaml_path)
         backend = resolve_backend(env, configs=cfgs, cli_value=None)
         return probe_backend(backend, env=env)
 
@@ -1454,6 +1466,7 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
             env,
             gate_yaml_path if gate_yaml_path.exists() else None,
             cli_value=None,
+            configs=cfgs,
             reachability_fn=_reachability,
         )
         print(outlet)
