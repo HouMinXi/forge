@@ -425,9 +425,14 @@ def _invoke_anthropic(
             "URLError from %s backend: %s" % (backend.format, exc.reason)
         ) from exc
 
-    # Extract content and usage from Anthropic response structure
+    # Extract first text block from Anthropic response.  Some backends
+    # (e.g. MiniMax) prepend a thinking block before the text block.
     try:
-        content = resp_data["content"][0]["text"]
+        blocks = resp_data["content"]
+        text_blocks = [b for b in blocks if b.get("type", "text") == "text"]
+        if not text_blocks:
+            raise KeyError("no text block in content")
+        content = text_blocks[0]["text"]
         usage_data = resp_data.get("usage", {})
         return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:

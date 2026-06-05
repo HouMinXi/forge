@@ -475,3 +475,76 @@ class TestBuildSemanticVersion:
         tools = {"z_tool": "1.0", "a_tool": "2.0", "m_tool": "3.0"}
         result = _build_semantic_version("2.0.0a1", tools)
         assert result == "code-forge 2.0.0a1 [a_tool=2.0 m_tool=3.0 z_tool=1.0]"
+
+
+class TestTokenCost:
+    """tokenCost property bag in runs[0].properties."""
+
+    def _make_cost_state(
+        self,
+        cost_total_input=100,
+        cost_total_output=50,
+        cost_passes=3,
+        cost_total_duration=10.5,
+        findings=None,
+    ):
+        st = _make_state(Verdict.PASS, findings or [])
+        st.cost_total_input = cost_total_input
+        st.cost_total_output = cost_total_output
+        st.cost_passes = cost_passes
+        st.cost_total_duration = cost_total_duration
+        return st
+
+    def test_sarif_log_with_token_cost(self):
+        """tokenCost emitted when backend_name provided and passes > 0."""
+        state = self._make_cost_state()
+        result = build_sarif_log(
+            state, {}, "2.0.0a1",
+            backend_name="mimo", backend_model="mimo-v2.5-pro",
+        )
+        tc = result["runs"][0]["properties"]["tokenCost"]
+        assert tc["inputTokens"] == 100
+        assert tc["outputTokens"] == 50
+        assert tc["totalTokens"] == 150
+        assert tc["backend"] == "mimo"
+        assert tc["model"] == "mimo-v2.5-pro"
+        assert tc["passes"] == 3
+        assert tc["durationSeconds"] == 10.5
+
+    def test_sarif_log_without_backend_name(self):
+        """No tokenCost when backend_name is None (cli backend)."""
+        state = self._make_cost_state()
+        result = build_sarif_log(state, {}, "2.0.0a1", backend_name=None)
+        run = result["runs"][0]
+        assert "properties" not in run or "tokenCost" not in run.get(
+            "properties", {}
+        )
+
+    def test_sarif_log_zero_passes(self):
+        """No tokenCost when cost_passes is 0 (no review ran)."""
+        state = self._make_cost_state(cost_passes=0)
+        result = build_sarif_log(
+            state, {}, "2.0.0a1", backend_name="mimo",
+        )
+        run = result["runs"][0]
+        assert "properties" not in run or "tokenCost" not in run.get(
+            "properties", {}
+        )
+
+    def test_sarif_log_preserves_results(self):
+        """tokenCost does not alter findings in results."""
+        findings = [
+            _make_finding(Disposition.CONFIRMED, fingerprint="fp-a"),
+            _make_finding(Disposition.UNCERTAIN, fingerprint="fp-b"),
+        ]
+        state = self._make_cost_state(findings=findings)
+        result_with = build_sarif_log(
+            state, {}, "2.0.0a1",
+            backend_name="mimo", backend_model="mimo-v2.5-pro",
+        )
+        result_without = build_sarif_log(state, {}, "2.0.0a1")
+        assert (
+            result_with["runs"][0]["results"]
+            == result_without["runs"][0]["results"]
+        )
+        assert len(result_with["runs"][0]["results"]) == 2
