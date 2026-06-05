@@ -435,3 +435,75 @@ class TestSubprocessCleanup:
                 llm_invoke("prompt", timeout_s=1)
 
         assert m._active_proc is None
+
+
+class TestAnthropicThinkingBlock:
+    """Guard for _invoke_anthropic thinking-block extraction.
+
+    Some anthropic-compatible backends (MiniMax) prepend a thinking
+    block before the text block.  _invoke_anthropic must skip the
+    thinking block and extract the first type=="text" entry.
+    """
+
+    def _make_anthropic_backend(self):
+        return BackendConfig(
+            name="minimax",
+            type="api",
+            model="MiniMax-M3",
+            format="anthropic",
+            base_url="https://api.minimaxi.com/anthropic",
+            api_key_env="MINIMAX_API_KEY",
+        )
+
+    def _mock_response(self, content_blocks):
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": content_blocks,
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+        return resp
+
+    def test_thinking_then_text(self):
+        """Extracts text block when thinking block precedes it."""
+        backend = self._make_anthropic_backend()
+        content_blocks = [
+            {"type": "thinking", "thinking": "let me think..."},
+            {"type": "text", "text": '{"findings": []}'},
+        ]
+        resp = self._mock_response(content_blocks)
+
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+
+        assert result.content == {"findings": []}
+        assert result.usage.input_tokens == 10
+
+    def test_text_only_no_type_field(self):
+        """Backward compat: block without type field treated as text."""
+        backend = self._make_anthropic_backend()
+        content_blocks = [
+            {"text": '{"status": "ok"}'},
+        ]
+        resp = self._mock_response(content_blocks)
+
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+
+        assert result.content == {"status": "ok"}
+
+    def test_thinking_only_no_text_block(self):
+        """Raises LLMInvokeError when no text block exists."""
+        backend = self._make_anthropic_backend()
+        content_blocks = [
+            {"type": "thinking", "thinking": "only thinking..."},
+        ]
+        resp = self._mock_response(content_blocks)
+
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="unexpected response"):
+                llm_invoke("prompt", backend=backend)
