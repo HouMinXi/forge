@@ -10,13 +10,12 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from code_forge import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS
-from code_forge.cli import _run, main
+from code_forge.cli import main
 from code_forge.errors import CliError
 
 
@@ -653,7 +652,7 @@ class TestMaxTokensInApiCalls:
             format="anthropic",
             base_url="https://api.mimo.com",
             api_key_env="MIMO_API_KEY",
-            model="MiMo-V2.5-Pro",
+            model="mimo-v2.5-pro",
             max_tokens=4096,
         )
         captured_body = {}
@@ -749,7 +748,7 @@ class TestRealMimoApiSmoke:
         from code_forge.llm_invoke import LLMInvokeError, llm_invoke
 
         mimo_base_url = os.environ.get(
-            "MIMO_BASE_URL", "https://api.mimo.ai"
+            "MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/anthropic"
         )
         backend = BackendConfig(
             name="mimo",
@@ -757,7 +756,7 @@ class TestRealMimoApiSmoke:
             format="anthropic",
             base_url=mimo_base_url,
             api_key_env="MIMO_API_KEY",
-            model="MiMo-V2.5-Pro",
+            model="mimo-v2.5-pro",
             max_tokens=64,
         )
 
@@ -766,10 +765,146 @@ class TestRealMimoApiSmoke:
         assert backend.format == "anthropic"
 
         try:
-            result = llm_invoke(prompt="Return the word VIABLE", backend=backend)
+            result = llm_invoke(
+                prompt='Respond with ONLY this JSON: {"status": "ok"}',
+                backend=backend,
+            )
         except LLMInvokeError as exc:
             pytest.skip("mimo API call failed (not a test failure): %s" % exc)
 
         assert result is not None
         # result.content is the parsed JSON dict; raw content must be non-empty
         assert result.content is not None
+        assert isinstance(result.content, dict)
+        assert result.usage.input_tokens > 0
+
+    @pytest.mark.real_api
+    @pytest.mark.skipif(
+        not os.environ.get("DEEPSEEK_API_KEY"),
+        reason="DEEPSEEK_API_KEY not set -- skip real API test",
+    )
+    def test_deepseek_real_api_call(self):
+        """Real HTTP call to deepseek using the openai-format API path."""
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import LLMInvokeError, LLMResult, llm_invoke
+
+        backend = BackendConfig(
+            name="deepseek",
+            type="api",
+            format="openai",
+            base_url="https://api.deepseek.com/v1",
+            api_key_env="DEEPSEEK_API_KEY",
+            model="deepseek-v4-pro",
+            max_tokens=64,
+        )
+        try:
+            result = llm_invoke(
+                prompt='Respond with ONLY this JSON: {"status": "ok"}',
+                backend=backend,
+            )
+        except LLMInvokeError as exc:
+            pytest.skip("deepseek API call failed: %s" % exc)
+
+        assert isinstance(result, LLMResult)
+        assert isinstance(result.content, dict)
+        assert result.usage.input_tokens > 0
+
+    @pytest.mark.real_api
+    @pytest.mark.skipif(
+        not os.environ.get("KIMI_API_KEY"),
+        reason="KIMI_API_KEY not set -- skip real API test",
+    )
+    def test_kimi_real_api_call(self):
+        """Real HTTP call to kimi using the anthropic-format API path."""
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import LLMInvokeError, LLMResult, llm_invoke
+
+        backend = BackendConfig(
+            name="kimi",
+            type="api",
+            format="anthropic",
+            base_url="https://api.moonshot.cn/anthropic",
+            api_key_env="KIMI_API_KEY",
+            model="kimi-k2.6",
+            max_tokens=64,
+        )
+        try:
+            result = llm_invoke(
+                prompt='Respond with ONLY this JSON: {"status": "ok"}',
+                backend=backend,
+            )
+        except LLMInvokeError as exc:
+            pytest.skip("kimi API call failed: %s" % exc)
+
+        assert isinstance(result, LLMResult)
+        assert isinstance(result.content, dict)
+        assert result.usage.input_tokens > 0
+
+    @pytest.mark.real_api
+    @pytest.mark.skipif(
+        not os.environ.get("GLM_API_KEY"),
+        reason="GLM_API_KEY not set -- skip real API test",
+    )
+    def test_glm_real_api_call(self):
+        """Real HTTP call to glm using the openai-format API path.
+
+        glm-4.5-air is a thinking model whose reasoning_content consumes
+        tokens from max_tokens, often leaving content empty.  The smoke
+        test verifies API connectivity, not JSON compliance: a "not valid
+        JSON" error still proves the openai-format round-trip works.
+        """
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import LLMInvokeError, LLMResult, llm_invoke
+
+        backend = BackendConfig(
+            name="glm",
+            type="api",
+            format="openai",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            api_key_env="GLM_API_KEY",
+            model="glm-4.5-air",
+            max_tokens=4096,
+        )
+        try:
+            result = llm_invoke(
+                prompt='Respond with ONLY this JSON: {"status": "ok"}',
+                backend=backend,
+            )
+        except LLMInvokeError as exc:
+            if "not valid JSON" in str(exc):
+                return
+            pytest.skip("glm API call failed: %s" % exc)
+
+        assert isinstance(result, LLMResult)
+        assert result.usage.input_tokens > 0
+
+    @pytest.mark.real_api
+    @pytest.mark.skipif(
+        not os.environ.get("MINIMAX_API_KEY"),
+        reason="MINIMAX_API_KEY not set -- skip real API test",
+    )
+    def test_minimax_real_api_call(self):
+        """Real HTTP call to minimax using the anthropic-format API path."""
+        from code_forge.backend import BackendConfig
+        from code_forge.llm_invoke import LLMInvokeError, LLMResult, llm_invoke
+
+        backend = BackendConfig(
+            name="minimax",
+            type="api",
+            format="anthropic",
+            base_url="https://api.minimaxi.com/anthropic",
+            api_key_env="MINIMAX_API_KEY",
+            model="MiniMax-M3",
+            max_tokens=64,
+        )
+        try:
+            result = llm_invoke(
+                prompt='Respond with ONLY this JSON: {"status": "ok"}',
+                backend=backend,
+            )
+        except LLMInvokeError as exc:
+            pytest.skip("minimax API call failed: %s" % exc)
+
+        assert isinstance(result, LLMResult)
+        assert isinstance(result.content, dict)
+        assert result.usage.input_tokens > 0

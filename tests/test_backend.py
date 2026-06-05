@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -237,7 +238,7 @@ class TestBackendConfigParse:
                     "format": "anthropic",
                     "base_url": "https://api.mimo.com",
                     "api_key_env": "MIMO_API_KEY",
-                    "model": "MiMo-V2.5-Pro",
+                    "model": "mimo-v2.5-pro",
                 },
             }
         }
@@ -246,7 +247,7 @@ class TestBackendConfigParse:
         cfg = cfgs[0]
         assert cfg.name == "mimo"
         assert cfg.format == "anthropic"
-        assert cfg.model == "MiMo-V2.5-Pro"
+        assert cfg.model == "mimo-v2.5-pro"
         assert cfg.api_key_env == "MIMO_API_KEY"
 
     def test_load_backend_configs_non_dict_raises(self):
@@ -872,3 +873,45 @@ class TestRealApi:
         """Calls probe_backend(DEFAULT_BACKEND) with real defaults."""
         result = probe_backend(DEFAULT_BACKEND)
         assert isinstance(result, ProbeResult)
+
+
+# =====================================================================
+# Fixture-based backend config parsing
+# =====================================================================
+
+
+class TestFixtureBackends:
+    """Validate 5-backend gate fixture loads and parses correctly."""
+
+    @pytest.fixture
+    def configs(self):
+        import yaml
+
+        fixture = Path(__file__).parent / "fixtures" / "gate_5backends.yaml"
+        with open(fixture) as f:
+            data = yaml.safe_load(f)
+        return load_backend_configs(data)
+
+    def test_load_5_backends_from_fixture(self, configs):
+        """Fixture file loads exactly 5 backend configs."""
+        assert len(configs) == 5
+
+    def test_fixture_backend_names(self, configs):
+        """All 5 expected backend names are present."""
+        names = {c.name for c in configs}
+        assert names == {"mimo", "deepseek", "kimi", "glm", "minimax"}
+
+    def test_fixture_backend_formats(self, configs):
+        """Each backend has the correct format (anthropic or openai)."""
+        fmt = {c.name: c.format for c in configs}
+        assert fmt["mimo"] == "anthropic"
+        assert fmt["deepseek"] == "openai"
+        assert fmt["kimi"] == "anthropic"
+        assert fmt["glm"] == "openai"
+        assert fmt["minimax"] == "anthropic"
+
+    def test_fixture_default_is_mimo(self, configs):
+        """Exactly one default backend, and it is mimo."""
+        defaults = [c for c in configs if c.default]
+        assert len(defaults) == 1
+        assert defaults[0].name == "mimo"

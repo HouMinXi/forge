@@ -57,8 +57,14 @@ def build_sarif_log(
     state: State,
     tool_versions: dict[str, str],
     forge_version: str,
+    backend_name: Optional[str] = None,
+    backend_model: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build SARIF 2.1.0 log dict.
+
+    When backend_name is provided and at least one review pass ran
+    (cost_passes > 0), a tokenCost property bag is attached to the run.
+    CLI backends pass backend_name=None so tokenCost is omitted.
 
     Raises:
         ValueError: state.verdict is PENDING. CI never PENDINGs (no HOLD
@@ -69,10 +75,21 @@ def build_sarif_log(
             "build_sarif_log called with PENDING verdict; CI mode does "
             "not enter HOLD (GATE-01b). Caller bug."
         )
+    run = _build_run(state, tool_versions, forge_version)
+    if backend_name is not None and state.cost_passes > 0:
+        run.setdefault("properties", {})["tokenCost"] = {
+            "inputTokens": state.cost_total_input,
+            "outputTokens": state.cost_total_output,
+            "totalTokens": state.cost_total_input + state.cost_total_output,
+            "backend": backend_name,
+            "model": backend_model or "",
+            "passes": state.cost_passes,
+            "durationSeconds": round(state.cost_total_duration, 1),
+        }
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
-        "runs": [_build_run(state, tool_versions, forge_version)],
+        "runs": [run],
     }
 
 
