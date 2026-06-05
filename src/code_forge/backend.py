@@ -377,6 +377,10 @@ def probe_backend(
     inference call).  For api: checks api_key_env presence in env
     (no subprocess, no network).
 
+    Explicitly configured cli backends (name != "session-default") bypass
+    the probe entirely and return ProbeResult(ok=True) immediately.
+    DEFAULT_BACKEND (name="session-default") still probes via _probe_cli.
+
     Successful results are cached with 5-min TTL.
     Failures are NOT cached.
     """
@@ -389,6 +393,12 @@ def probe_backend(
     cached = _read_cache(cache_dir, backend.name, time_fn)
     if cached is not None:
         return cached
+
+    # Explicitly configured cli backends bypass probe (trust configured).
+    # DEFAULT_BACKEND has name="session-default"; any gate.yaml cli backend
+    # has a user-chosen name and is assumed reachable as configured.
+    if backend.type == "cli" and backend.name != "session-default":
+        return ProbeResult(ok=True)
 
     # Dispatch on backend type
     if backend.type == "api":
