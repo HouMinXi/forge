@@ -507,3 +507,254 @@ class TestAnthropicThinkingBlock:
              patch("urllib.request.urlopen", return_value=resp):
             with pytest.raises(LLMInvokeError, match="unexpected response"):
                 llm_invoke("prompt", backend=backend)
+
+
+# -- TestVertexInvoke -------------------------------------------------------
+
+
+def _make_vertex_backend(**kwargs):
+    """Helper: create a vertex BackendConfig."""
+    defaults = dict(
+        name="vtx", type="api", model="claude-sonnet-4-6",
+        format="vertex", project_id="my-project", region="global",
+        base_url=None, api_key_env=None, command="",
+        default=False, max_tokens=8192,
+    )
+    defaults.update(kwargs)
+    return BackendConfig(**defaults)
+
+
+def _vertex_mock_response(content_str: str, usage: dict = None):
+    """Build a mock urlopen response for Vertex."""
+    resp_data = {
+        "content": [{"type": "text", "text": content_str}],
+        "usage": usage or {"input_tokens": 10, "output_tokens": 20},
+    }
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(resp_data).encode()
+    resp.__enter__ = lambda s: s
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+class TestVertexBuildUrl:
+    """Unit tests for _build_vertex_url."""
+
+    def test_build_vertex_url_global(self):
+        from code_forge.llm_invoke import _build_vertex_url
+        url = _build_vertex_url("proj", "global", "claude-sonnet-4-6")
+        assert url == (
+            "https://aiplatform.googleapis.com/v1/projects/proj/"
+            "locations/global/publishers/anthropic/models/"
+            "claude-sonnet-4-6:rawPredict"
+        )
+
+    def test_build_vertex_url_regional(self):
+        from code_forge.llm_invoke import _build_vertex_url
+        url = _build_vertex_url("proj", "us-east5", "claude-sonnet-4-6")
+        assert url == (
+            "https://us-east5-aiplatform.googleapis.com/v1/projects/proj/"
+            "locations/us-east5/publishers/anthropic/models/"
+            "claude-sonnet-4-6:rawPredict"
+        )
+
+    def test_build_vertex_url_multiregion_us(self):
+        from code_forge.llm_invoke import _build_vertex_url
+        url = _build_vertex_url("proj", "us", "claude-sonnet-4-6")
+        assert url == (
+            "https://aiplatform.us.rep.googleapis.com/v1/projects/proj/"
+            "locations/us/publishers/anthropic/models/"
+            "claude-sonnet-4-6:rawPredict"
+        )
+
+    def test_build_vertex_url_multiregion_eu(self):
+        from code_forge.llm_invoke import _build_vertex_url
+        url = _build_vertex_url("proj", "eu", "claude-sonnet-4-6")
+        assert url == (
+            "https://aiplatform.eu.rep.googleapis.com/v1/projects/proj/"
+            "locations/eu/publishers/anthropic/models/"
+            "claude-sonnet-4-6:rawPredict"
+        )
+
+
+class TestVertexInvoke:
+    """Tests for _invoke_vertex wire protocol and error handling."""
+
+    def _mock_google_auth(self, monkeypatch, token="fake-token"):
+        """Patch google-auth modules and return mock credentials."""
+        mock_creds = MagicMock()
+        mock_creds.token = token
+
+        mock_sa = MagicMock()
+        mock_sa.Credentials.from_service_account_file.return_value = mock_creds
+
+        mock_ga = MagicMock()
+        mock_ga.default.return_value = (mock_creds, "project")
+
+        mock_transport = MagicMock()
+
+        monkeypatch.setattr("code_forge.llm_invoke._invoke_vertex.__code__", None)
+        return mock_creds, mock_sa, mock_ga, mock_transport
+
+    def test_vertex_missing_google_auth_raises(self, monkeypatch):
+        """Missing google-auth raises LLMInvokeError with install instructions."""
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend()
+
+        import sys
+        # Simulate ImportError by removing google from sys.modules
+        saved = {k: v for k, v in sys.modules.items() if k.startswith('google')}
+        for k in list(sys.modules.keys()):
+            if k.startswith('google'):
+                del sys.modules[k]
+
+        with patch.dict(sys.modules, {"google.oauth2": None, "google.auth": None,
+                                       "google.oauth2.service_account": None,
+                                       "google.auth.transport.requests": None,
+                                       "google.auth.exceptions": None}):
+            with pytest.raises(LLMInvokeError, match="pip install code-review-forge"):
+                _invoke_vertex("prompt", backend, 30)
+
+        # Restore
+        sys.modules.update(saved)
+
+    def test_vertex_body_no_model_has_anthropic_version(self, monkeypatch):
+        """Vertex body: has anthropic_version, NO model key."""
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend()
+
+        captured_body = {}
+
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+
+        def fake_urlopen(req, timeout=None):
+            import json as _json
+            captured_body.update(_json.loads(req.data.decode()))
+            return _vertex_mock_response(json.dumps({"findings": []}))
+
+        with patch("google.oauth2.service_account.Credentials.from_service_account_file",
+                   return_value=mock_creds), \
+             patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            _invoke_vertex("prompt", backend, 30)
+
+        assert "anthropic_version" in captured_body
+        assert captured_body["anthropic_version"] == "vertex-2023-10-16"
+        assert "model" not in captured_body
+
+    def test_vertex_headers_bearer_no_api_key(self, monkeypatch):
+        """Vertex headers: Bearer token, NO x-api-key, NO anthropic-version."""
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend()
+
+        captured_headers = {}
+        mock_creds = MagicMock()
+        mock_creds.token = "my-bearer-token"
+
+        def fake_urlopen(req, timeout=None):
+            captured_headers.update(req.headers)
+            return _vertex_mock_response(json.dumps({"findings": []}))
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            _invoke_vertex("prompt", backend, 30)
+
+        # Authorization header is lowercased by urllib
+        auth = captured_headers.get("Authorization", captured_headers.get("authorization", ""))
+        assert auth.startswith("Bearer ")
+        assert "x-api-key" not in {k.lower() for k in captured_headers}
+        assert "anthropic-version" not in {k.lower() for k in captured_headers}
+
+    def test_vertex_returns_real_usage(self, monkeypatch):
+        """Vertex response returns real token usage (D-14)."""
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+
+        resp_data = {
+            "content": [{"type": "text", "text": json.dumps({"ok": True})}],
+            "usage": {"input_tokens": 100, "output_tokens": 50},
+        }
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(resp_data).encode()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", return_value=resp):
+            content, usage = _invoke_vertex("prompt", backend, 30)
+
+        assert usage.get("input_tokens") == 100
+        assert usage.get("output_tokens") == 50
+
+    def test_vertex_default_creds_not_found(self, monkeypatch):
+        """google.auth.default raises DefaultCredentialsError -> LLMInvokeError."""
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend()
+
+        from google.auth.exceptions import DefaultCredentialsError
+        with patch("google.auth.default", side_effect=DefaultCredentialsError("no creds")):
+            with pytest.raises(LLMInvokeError, match="No GCP credentials found"):
+                _invoke_vertex("prompt", backend, 30)
+
+    def test_vertex_refresh_error(self, monkeypatch):
+        """credentials.refresh raises RefreshError -> LLMInvokeError."""
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend()
+
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        from google.auth.exceptions import RefreshError
+        mock_creds.refresh.side_effect = RefreshError("token expired")
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"):
+            with pytest.raises(LLMInvokeError, match="Failed to refresh"):
+                _invoke_vertex("prompt", backend, 30)
+
+    def test_vertex_http_error(self, monkeypatch):
+        """HTTP error from Vertex -> LLMInvokeError with body excerpt."""
+        from code_forge.llm_invoke import _invoke_vertex
+        import io
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+
+        http_err = urllib.error.HTTPError(
+            url="https://example.com", code=400, msg="Bad Request",
+            hdrs={}, fp=io.BytesIO(b'{"error":{"message":"bad"}}'),
+        )
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", side_effect=http_err):
+            with pytest.raises(LLMInvokeError, match="HTTP 400"):
+                _invoke_vertex("prompt", backend, 30)
+
+    def test_vertex_missing_project_id_raises(self, monkeypatch):
+        """project_id=None raises LLMInvokeError with configuration guidance."""
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend(project_id=None)
+
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"):
+            with pytest.raises(LLMInvokeError, match="requires project_id"):
+                _invoke_vertex("prompt", backend, 30)
+
+    def test_invoke_api_vertex_skips_api_key_env(self, monkeypatch):
+        """_invoke_api with vertex format doesn't raise on api_key_env=None."""
+        from code_forge.llm_invoke import _invoke_api
+        backend = _make_vertex_backend()
+
+        mock_result = (json.dumps({"findings": []}), {"input_tokens": 1, "output_tokens": 1})
+        with patch("code_forge.llm_invoke._invoke_vertex", return_value=mock_result):
+            result = _invoke_api("prompt", backend, 30)
+        assert result.usage.input_tokens == 1

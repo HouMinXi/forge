@@ -25,6 +25,10 @@ dev = [
     "pytest>=8.0",
     "mutmut>=3.3,<4.0",
 ]
+vertex = [
+    "google-auth>=2.35.0",
+    "requests>=2.20.0",
+]
 
 [project.scripts]
 code-forge = "code_forge.cli:main"

@@ -22,6 +22,7 @@ from code_forge.backend import (
     DEFAULT_BACKEND,
     BackendConfig,
     ProbeResult,
+    _parse_backend_entry,
     invalidate_probe_cache,
     load_backend_configs,
     probe_backend,
@@ -1000,3 +1001,61 @@ class TestFixtureBackends:
         defaults = [c for c in configs if c.default]
         assert len(defaults) == 1
         assert defaults[0].name == "mimo"
+
+
+# -- TestVertexBackendParsing ----------------------------------------------
+
+
+class TestVertexBackendParsing:
+    """Vertex format (api/vertex) parsing and validation."""
+
+    def _entry(self, **kwargs):
+        base = {
+            "name": "vtx", "type": "api", "format": "vertex",
+            "model": "claude-sonnet-4-6", "project_id": "my-project",
+        }
+        base.update(kwargs)
+        return base
+
+    def test_vertex_parses_with_project_id(self):
+        cfg = _parse_backend_entry(self._entry())
+        assert cfg.format == "vertex"
+        assert cfg.project_id == "my-project"
+        assert cfg.region == "global"
+        assert cfg.base_url is None
+        assert cfg.api_key_env is None
+
+    def test_vertex_with_explicit_region(self):
+        cfg = _parse_backend_entry(self._entry(region="us-east5"))
+        assert cfg.region == "us-east5"
+
+    def test_vertex_with_credentials_path(self):
+        cfg = _parse_backend_entry(self._entry(credentials_path="/path/to/sa.json"))
+        assert cfg.credentials_path == "/path/to/sa.json"
+
+    def test_vertex_missing_project_id_raises(self):
+        entry = {
+            "name": "vtx", "type": "api", "format": "vertex",
+            "model": "claude-sonnet-4-6",
+        }
+        with pytest.raises(CliError, match="missing required field 'project_id'"):
+            _parse_backend_entry(entry)
+
+    def test_vertex_no_base_url_needed(self):
+        """vertex format works without base_url."""
+        cfg = _parse_backend_entry(self._entry())
+        assert cfg.base_url is None
+
+    def test_vertex_no_api_key_env_needed(self):
+        """vertex format works without api_key_env."""
+        cfg = _parse_backend_entry(self._entry())
+        assert cfg.api_key_env is None
+
+    def test_openai_still_requires_base_url(self):
+        """Regression: openai format still requires base_url after vertex branch."""
+        entry = {
+            "name": "bad", "type": "api", "format": "openai",
+            "model": "gpt-4", "api_key_env": "OPENAI_KEY",
+        }
+        with pytest.raises(CliError, match="missing required field 'base_url'"):
+            _parse_backend_entry(entry)
