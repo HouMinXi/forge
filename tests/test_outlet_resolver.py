@@ -373,3 +373,125 @@ class TestSubagentOutlet:
             reachability_fn=_bomb_probe,
         )
         assert result == "subagent"
+
+
+# -- FORGE_BACKEND + default reachability_fn --------------------------------
+
+
+class TestForgeBackendDefaultFn:
+    """Default reachability_fn must not crash when FORGE_BACKEND is set.
+
+    resolve_outlet's built-in default uses configs=[], so FORGE_BACKEND
+    with no injected fn raises CliError "unknown backend (configured: none)".
+    """
+
+    def test_default_fn_with_forge_backend_crashes_on_empty_configs(self):
+        """Default fn has no backends loaded; FORGE_BACKEND triggers crash."""
+        with pytest.raises(CliError, match="configured: none"):
+            resolve_outlet(
+                env={"FORGE_BACKEND": "deepseek"},
+                gate_yaml_path=None,
+            )
+
+    def test_injected_fn_with_forge_backend_succeeds(self, tmp_path):
+        """Injected fn with real gate.yaml resolves FORGE_BACKEND correctly."""
+        # Create a gate.yaml with backends config
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        gate_yaml = gate_dir / "gate.yaml"
+        gate_yaml.write_text("""
+backends:
+  deepseek:
+    type: api
+    format: openai
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    model: deepseek-chat
+""")
+
+        # Mimic the CLI closure that loads gate.yaml
+        def _reachability():
+            from code_forge.backend import (
+                load_backend_configs, resolve_backend,
+            )
+            import yaml as _y
+            cfgs = []
+            try:
+                with open(gate_yaml, "r", encoding="utf-8") as _f:
+                    gd = _y.safe_load(_f)
+                if isinstance(gd, dict):
+                    cfgs = load_backend_configs(gd)
+            except (FileNotFoundError, _y.YAMLError):
+                pass
+            # This should now succeed because deepseek is in cfgs
+            _ = resolve_backend(
+                {"FORGE_BACKEND": "deepseek"}, configs=cfgs, cli_value=None
+            )
+            # Stub the probe (we're testing resolution, not reachability)
+            return ProbeResult(ok=True)
+
+        result = resolve_outlet(
+            env={"FORGE_BACKEND": "deepseek"},
+            gate_yaml_path=gate_yaml,
+            reachability_fn=_reachability,
+        )
+        assert result == "cli"
+
+    def test_injected_fn_unknown_backend_still_errors(self):
+        """Typo in FORGE_BACKEND must still fail with a clear error."""
+        from code_forge.backend import resolve_backend
+        def _reachability():
+            resolve_backend(
+                {"FORGE_BACKEND": "typo-backend"}, configs=[], cli_value=None,
+            )
+            return ProbeResult(ok=True)
+        with pytest.raises(CliError, match="unknown backend.*typo-backend"):
+            resolve_outlet(
+                env={"FORGE_BACKEND": "typo-backend"},
+                gate_yaml_path=None,
+                reachability_fn=_reachability,
+            )
+
+
+# -- FORGE_BACKEND via real CLI entry point ---------------------------------
+
+
+class TestForgeBackendRealEntry:
+    """Drives cli._run_resolve_outlet with a real gate.yaml.
+
+    Exercises the actual CLI function to verify FORGE_BACKEND routing
+    works end-to-end when gate.yaml has matching backends configured.
+    """
+
+    _GATE = (
+        "backends:\n"
+        "  deepseek:\n"
+        "    type: api\n"
+        "    format: openai\n"
+        "    base_url: https://api.deepseek.com/v1\n"
+        "    api_key_env: DEEPSEEK_API_KEY\n"
+        "    model: deepseek-chat\n"
+    )
+
+    def test_forge_backend_routes_via_real_entry(self, tmp_path):
+        """FORGE_BACKEND=deepseek resolves to 'cli' via _run_resolve_outlet."""
+        import io
+        import sys
+        from code_forge.cli import _run_resolve_outlet
+        from code_forge.exit_codes import EXIT_PASS
+
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        (gate_dir / "gate.yaml").write_text(self._GATE)
+
+        env = {"FORGE_BACKEND": "deepseek", "DEEPSEEK_API_KEY": "dummy"}
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        try:
+            rc = _run_resolve_outlet(env, tmp_path)
+        finally:
+            stdout_val = sys.stdout.getvalue()
+            sys.stdout, sys.stderr = old_out, old_err
+
+        assert rc == EXIT_PASS, "expected EXIT_PASS, got %d" % rc
+        assert "cli" in stdout_val
