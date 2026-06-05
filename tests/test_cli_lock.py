@@ -84,7 +84,7 @@ class TestLockReleasedOnExit:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -138,7 +138,7 @@ class TestLockReleasedOnException:
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
-            lambda *a, **kw: "cli",
+            lambda *a, **kw: "subprocess",
         )
         monkeypatch.chdir(str(repo))
 

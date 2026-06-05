@@ -49,9 +49,9 @@ Code Change
 [Step 0] Syntax (0a) + Lint (0b) + Non-ASCII (0c)
      |
      v
-[Outlet] resolve-outlet -> "inline" or "cli" or "subagent"
+[Outlet] resolve-outlet -> "inline" or "subprocess" or "subagent"
      |                    |                    |
-     v (inline)           v (cli)              v (subagent)
+     v (inline)           v (subprocess)         v (subagent)
 [Steps 1-3]          [CLI dispatch]       [Subagent dispatch]
      |  Three-cycle static review (cycle_counter state machine)
      |        Each cycle = Pass 1 + Pass 2 + Pass 3
@@ -1367,11 +1367,11 @@ When `/forge` is invoked:
    Diff: <N> files, <M> lines changed
    ```
 3. **Run Step 0**: syntax + lint + non-ASCII. Stop on any failure. After all Step 0 checks pass, serialize findings into FUSE-01 context block for LLM passes (cap at 20 rows).
-3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "cli", "inline", or "subagent". If exit code is non-zero, report the stderr error and STOP.
+3.5. **Resolve outlet**: Run `code-forge resolve-outlet` via Bash tool. Read stdout for "subprocess", "inline", or "subagent". If exit code is non-zero, report the stderr error and STOP.
 
    **If outlet is "inline" (Outlet B)**: Continue below with the inline self-drive pipeline.
 
-   **If outlet is "cli" (Outlet A)**:
+   **If outlet is "subprocess" (Outlet A)**:
 
    a. **Build the command**. Start with `code-forge review`. If the diff source is "committed" (step 1 above), append `--committed`. If there are specific file paths, append them. Do NOT pass `--outlet` to code-forge review -- the CLI pipeline IS Outlet A; passing `--outlet` would be redundant.
 
