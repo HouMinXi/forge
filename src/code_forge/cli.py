@@ -60,12 +60,17 @@ def _emit_ci_output(
     state_path: Path,
     registry: dict[str, "ToolConfig"],
     post_emit_hook: Optional[Callable[[], None]] = None,
+    backend_name: Optional[str] = None,
+    backend_model: Optional[str] = None,
 ) -> None:
     """Emit SARIF to stdout and summary to stderr in CI mode.
 
     Re-loads state from disk for canonical view (catches any save_state
     divergence). Re-captures tool_versions to avoid constructor-time
     snapshot staleness.
+
+    When backend_name is provided (api backends), the SARIF output
+    includes a tokenCost property bag in runs[0].properties.
 
     If load_state returns None -> silent return (no log warning).
     SARIF is best-effort output, NOT canonical artifact; state.json is
@@ -79,7 +84,8 @@ def _emit_ci_output(
         for name, tc in registry.items()
     }
     log_dict = build_sarif_log(
-        final_state, tool_versions, forge_version=__version__
+        final_state, tool_versions, forge_version=__version__,
+        backend_name=backend_name, backend_model=backend_model,
     )
     print(json.dumps(log_dict), file=sys.stdout)
     print(format_summary(final_state), file=sys.stderr)
@@ -839,7 +845,15 @@ def _run(args, env, cwd: Path) -> Verdict:
             )
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
-                _emit_ci_output(state_path, registry)
+                _emit_ci_output(
+                    state_path, registry,
+                    backend_name=(
+                        backend.name if backend.type == "api" else None
+                    ),
+                    backend_model=(
+                        backend.model if backend.type == "api" else None
+                    ),
+                )
     except LLMInvokeError as exc:
         # T4: D-04/D-14 boundary: re-wrap LLMInvokeError as CliError
         raise CliError(
