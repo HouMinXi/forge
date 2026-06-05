@@ -3,7 +3,7 @@
 """Forge CLI entry point.
 
 Subcommands: review (default), gate-check, mutation-check, e2e-check,
-install-hooks, install-skill.
+install-hooks, install-skill, verify, detect, resolve-outlet, init.
 Bare invocation (no subcommand) routes to review for backward compatibility.
 """
 from __future__ import annotations
@@ -125,6 +125,11 @@ def _build_parser() -> argparse.ArgumentParser:
       - mutation-check: mutation testing gate (R2)
       - e2e-check: cross-component coverage heuristic (R3)
       - install-hooks: hook installer
+      - install-skill: install bundled skill
+      - verify: validate review receipts
+      - detect: auto-detect toolchain, write tools.yaml
+      - resolve-outlet: resolve review outlet (cli/inline/subagent)
+      - init: generate a gate.yaml template in .code-forge/
 
     Backward compat: bare `forge` (no subcommand) defaults to `review`
     in main() for existing workflows.
@@ -433,6 +438,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # --- INIT subcommand: generate gate.yaml template ---
+    init_parser = subparsers.add_parser(
+        'init',
+        help='generate a gate.yaml template in .code-forge/',
+    )
+    init_parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite existing gate.yaml",
+    )
+
     return parser
 
 
@@ -460,7 +475,7 @@ def main() -> int:
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
-        'detect', 'resolve-outlet',
+        'detect', 'resolve-outlet', 'init',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -553,6 +568,22 @@ def main() -> int:
 
     elif args.subcommand == 'resolve-outlet':
         return _run_resolve_outlet(env=os.environ, cwd=Path.cwd())
+
+    elif args.subcommand == 'init':
+        from .init_template import GATE_YAML_TEMPLATE
+        gate_dir = Path.cwd() / ".code-forge"
+        gate_dir.mkdir(parents=True, exist_ok=True)
+        gate_path = gate_dir / "gate.yaml"
+        if gate_path.exists() and not args.force:
+            print(
+                "gate.yaml already exists at %s" % gate_path,
+                file=sys.stderr,
+            )
+            print("Use --force to overwrite.", file=sys.stderr)
+            return EXIT_CLI_ERROR
+        gate_path.write_text(GATE_YAML_TEMPLATE)
+        print("Created %s" % gate_path, file=sys.stderr)
+        return EXIT_PASS
 
     else:
         print(
