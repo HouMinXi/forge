@@ -74,6 +74,10 @@ class TestStateDirDeprecation:
             ["code-forge", "--mode", "ci",
              "--state-dir", "/tmp/custom", "a.py"],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(str(repo))
         main()
         captured = capsys.readouterr()
@@ -125,6 +129,10 @@ class TestStagedDeprecation:
             sys, "argv",
             ["code-forge", "--mode", "ci", "--staged", "a.py"],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(str(repo))
         main()
         captured = capsys.readouterr()
@@ -171,6 +179,10 @@ class TestStagedDeprecation:
             sys, "argv",
             ["code-forge", "--mode", "ci", "--staged",
              "--quiet", "a.py"],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(repo))
         main()

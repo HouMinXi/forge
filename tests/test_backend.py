@@ -568,10 +568,16 @@ class TestProbeOsErrorFailClosed:
                 "[Errno 13] Permission denied",
             )
 
+        dummy_cfg = BackendConfig(
+            name="test-cli", type="cli", model="",
+            format="", base_url="", api_key_env="",
+            command="", default=False, max_tokens=0,
+        )
         with pytest.raises(CliError, match="Configure a review backend"):
             resolve_outlet(
                 env={},
                 gate_yaml_path=None,
+                configs=[dummy_cfg],
                 reachability_fn=oserror_probe,
             )
 
