@@ -309,3 +309,77 @@ class TestLoadStateNoneDefensive:
         # No output on either stream
         assert stdout.getvalue() == ""
         assert stderr.getvalue() == ""
+
+
+class TestTokenCostWiringApiBackend:
+    """api backend -> SARIF contains tokenCost property bag.
+
+    Covers cli.py call-site ternary: backend.type == "api" passes
+    backend.name/model to _emit_ci_output; verifies the wiring
+    end-to-end through _emit_ci_output -> build_sarif_log.
+    """
+
+    def test_api_backend_emits_token_cost(self, state_dir, mock_registry):
+        state_path = state_dir / "state.json"
+        state = _make_state(Verdict.PASS, [])
+        state.cost_total_input = 200
+        state.cost_total_output = 80
+        state.cost_total_duration = 5.0
+        state.cost_passes = 2
+        save_state(state, state_path)
+
+        stdout = StringIO()
+
+        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
+             patch("code_forge.cli.capture_tool_version",
+                   return_value="0.1.0"):
+            _emit_ci_output(
+                state_path, mock_registry,
+                backend_name="deepseek",
+                backend_model="deepseek-v4-pro",
+            )
+
+        sarif = json.loads(stdout.getvalue())
+        props = sarif["runs"][0].get("properties", {})
+        tc = props.get("tokenCost")
+        assert tc is not None, "tokenCost missing for api backend"
+        assert tc["backend"] == "deepseek"
+        assert tc["model"] == "deepseek-v4-pro"
+        assert tc["inputTokens"] == 200
+        assert tc["outputTokens"] == 80
+        assert tc["totalTokens"] == 280
+        assert tc["passes"] == 2
+        assert tc["durationSeconds"] == 5.0
+
+
+class TestTokenCostWiringCliBackend:
+    """cli backend -> SARIF omits tokenCost.
+
+    Covers the else branch of cli.py call-site ternary:
+    backend.type != "api" passes None for backend_name/model.
+    """
+
+    def test_cli_backend_omits_token_cost(self, state_dir, mock_registry):
+        state_path = state_dir / "state.json"
+        state = _make_state(Verdict.PASS, [])
+        state.cost_total_input = 100
+        state.cost_total_output = 50
+        state.cost_passes = 1
+        save_state(state, state_path)
+
+        stdout = StringIO()
+
+        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
+             patch("code_forge.cli.capture_tool_version",
+                   return_value="0.1.0"):
+            _emit_ci_output(
+                state_path, mock_registry,
+                backend_name=None,
+                backend_model=None,
+            )
+
+        sarif = json.loads(stdout.getvalue())
+        run = sarif["runs"][0]
+        props = run.get("properties", {})
+        assert "tokenCost" not in props, \
+            "tokenCost should be absent for cli backend"
