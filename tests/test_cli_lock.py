@@ -82,6 +82,10 @@ class TestLockReleasedOnExit:
             sys, "argv",
             ["code-forge", "--mode", "ci", "a.py"],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(str(repo))
         exit_code = main()
         assert exit_code == EXIT_PASS
@@ -131,6 +135,10 @@ class TestLockReleasedOnException:
         monkeypatch.setattr(
             sys, "argv",
             ["code-forge", "--mode", "ci", "a.py"],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(repo))
 

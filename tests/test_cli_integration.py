@@ -75,6 +75,10 @@ class TestGitRepoPassCI:
             sys, "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(str(repo))
         exit_code = main()
         assert exit_code == EXIT_PASS
@@ -95,6 +99,10 @@ class TestRegistryMissing:
         # No tools.yaml written.
         monkeypatch.setattr(
             sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -126,6 +134,10 @@ class TestSandboxWarning:
             sys, "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "--sandbox", "a.py"],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(str(repo))
         exit_code = main()
         captured = capsys.readouterr()
@@ -141,6 +153,10 @@ class TestTopLevelExceptionCatch:
     ):
         monkeypatch.setattr(
             sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(tmp_path))
 
@@ -178,6 +194,10 @@ class TestMainReturnsInt:
         monkeypatch.setattr(
             sys, "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(repo))
         result = main()
@@ -234,6 +254,10 @@ class TestReviewAutoDetect:
                 sys, "argv",
                 ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
+            monkeypatch.setattr(
+                "code_forge.outlet_resolver.resolve_outlet",
+                lambda *a, **kw: "cli",
+            )
             monkeypatch.chdir(str(repo))
             exit_code = main()
 
@@ -277,6 +301,10 @@ class TestReviewAutoDetect:
                 sys, "argv",
                 ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
+            monkeypatch.setattr(
+                "code_forge.outlet_resolver.resolve_outlet",
+                lambda *a, **kw: "cli",
+            )
             monkeypatch.chdir(str(repo))
             exit_code = main()
 
@@ -307,6 +335,10 @@ class TestReviewAutoDetect:
                 sys, "argv",
                 ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
                  "--registry", "custom.yaml", "a.py"],
+            )
+            monkeypatch.setattr(
+                "code_forge.outlet_resolver.resolve_outlet",
+                lambda *a, **kw: "cli",
             )
             monkeypatch.chdir(str(repo))
             exit_code = main()
@@ -350,6 +382,10 @@ class TestReviewAutoDetect:
                 sys, "argv",
                 ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
+            monkeypatch.setattr(
+                "code_forge.outlet_resolver.resolve_outlet",
+                lambda *a, **kw: "cli",
+            )
             monkeypatch.chdir(str(repo))
             exit_code = main()
 
@@ -389,6 +425,10 @@ class TestReviewAutoDetect:
             sys, "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(str(repo))
         exit_code = main()
 
@@ -424,7 +464,11 @@ class TestCostSummaryStderr:
         os.chdir(str(repo))
 
         from code_forge.cli import main as _main
-        _main()
+        with patch(
+            "code_forge.outlet_resolver.resolve_outlet",
+            return_value="cli",
+        ):
+            _main()
 
         state_path = repo / ".code-forge" / "state.json"
         assert state_path.exists()
@@ -460,7 +504,11 @@ class TestCostSummaryStderr:
         os.chdir(str(repo))
 
         from code_forge.cli import main as _main
-        _main()
+        with patch(
+            "code_forge.outlet_resolver.resolve_outlet",
+            return_value="cli",
+        ):
+            _main()
 
         captured = capsys.readouterr()
         # stub engine has no token data: cost line shows N/A so CLI users
@@ -513,6 +561,10 @@ class TestInlineFlagsMutualExclusion:
                 "a.py",
             ],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(str(repo))
         exit_code = main()
         assert exit_code == EXIT_CLI_ERROR
@@ -531,6 +583,10 @@ class TestInlineFlagsMutualExclusion:
                 "--backend-url", "https://api.example.com/v1",
                 "a.py",
             ],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(repo))
         exit_code = main()
@@ -562,6 +618,10 @@ class TestInlineFlagsMutualExclusion:
                 "--backend-model", "gpt-4-turbo",
                 "a.py",
             ],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(repo))
         with patch(
@@ -606,6 +666,10 @@ class TestLLMInvokeErrorWrapping:
                 "--backend-model", "gpt-4-turbo",
                 "a.py",
             ],
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(str(repo))
         with patch(
