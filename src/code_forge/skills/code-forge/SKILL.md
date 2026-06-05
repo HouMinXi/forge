@@ -1457,6 +1457,46 @@ Outlet A (CLI) and Outlet B (Inline) are **NOT behaviorally identical** in how t
 
 **Implication**: Outlet A is available for use but applies stricter convergence rules than Outlets B and C. A finding that would only restart a cycle under Outlet B/C will fully reset the counter under Outlet A. Counter unification is planned for a future release.
 
+
+## Backend Configuration: Vertex AI Native API (Stage B)
+
+Vertex AI can be configured as a native `api` backend (Stage B), bypassing the Claude CLI
+subprocess entirely and calling the Vertex AI rawPredict endpoint via HTTP with OAuth2.
+
+**Difference from Stage A (cli + env vars, Plan 02):**
+- Stage A: type: cli with CLAUDE_CODE_USE_VERTEX env vars. Uses Claude subprocess.
+- Stage B: type: api, format: vertex. Direct HTTP to rawPredict. No CLI dependency.
+
+### gate.yaml example
+
+```yaml
+backends:
+  vertex-claude:
+    type: api
+    format: vertex
+    model: claude-sonnet-4-6
+    project_id: my-gcp-project
+    region: us-east5          # optional (default: global)
+    credentials_path: /path/to/sa-key.json  # optional (default: ADC)
+    default: true
+```
+
+### Format: vertex fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| project_id | Yes | (required) | GCP project ID |
+| region | No | global | GCP region or multi-region (us, eu, us-east5, etc.) |
+| credentials_path | No | ADC | Path to service account JSON key |
+
+**Regions:**
+- `global` -> `aiplatform.googleapis.com`
+- `us` / `eu` -> `aiplatform.{region}.rep.googleapis.com`
+- Other (e.g. `us-east5`) -> `{region}-aiplatform.googleapis.com`
+
+**Installation:** `pip install code-review-forge[vertex]`
+(Adds `google-auth>=2.35.0` and `requests>=2.20.0`)
+
 ## Progress Tracking
 
 After each pass, report:

@@ -35,7 +35,7 @@ from .errors import CliError
 # -- Constants --------------------------------------------------------
 
 VALID_BACKEND_TYPES = {"api", "cli"}
-VALID_API_FORMATS = {"openai", "anthropic"}
+VALID_API_FORMATS = {"openai", "anthropic", "vertex"}
 
 DEFAULT_AUTH_TIMEOUT = 20          # generous cap
 MAX_REASONABLE_AUTH_TIMEOUT = 120  # sanity bound
@@ -72,6 +72,9 @@ class BackendConfig:
     command: str = ""                  # cli binary name or path
     default: bool = False              # config default marker
     max_tokens: int = 16384            # output token cap for api calls
+    project_id: Optional[str] = None  # vertex: GCP project ID
+    region: Optional[str] = None      # vertex: GCP region (default: global)
+    credentials_path: Optional[str] = None  # vertex: service account JSON path
 
 
 # -- DEFAULT_BACKEND -------------------------------------------------
@@ -126,6 +129,23 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
                 "backend %r (api): invalid format %r (expected: %s)"
                 % (name, fmt, "|".join(sorted(VALID_API_FORMATS)))
             )
+        if fmt == "vertex":
+            project_id = entry.get("project_id")
+            if not project_id:
+                raise CliError(
+                    "backend %r (api/vertex): missing required field "
+                    "'project_id'" % name
+                )
+            region = entry.get("region", "global")
+            credentials_path = entry.get("credentials_path")
+            return BackendConfig(
+                name=name, type=btype, model=model, format=fmt,
+                base_url=None, api_key_env=None, command="",
+                default=is_default, max_tokens=max_tokens,
+                project_id=project_id, region=region,
+                credentials_path=credentials_path,
+            )
+
         base_url = entry.get("base_url")
         if not base_url:
             raise CliError(

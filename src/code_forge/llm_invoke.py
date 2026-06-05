@@ -294,16 +294,19 @@ def _invoke_api(
     timeout_s: int,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
-    # Look up API key from environment
-    if not backend.api_key_env:
-        raise LLMInvokeError(
-            "backend %r: api_key_env not configured" % backend.name
-        )
-    api_key = os.environ.get(backend.api_key_env, "")
-    if not api_key:
-        raise LLMInvokeError(
-            "API key env var %r is not set" % backend.api_key_env
-        )
+    # Look up API key from environment (not needed for vertex which uses OAuth2)
+    if backend.format != "vertex":
+        if not backend.api_key_env:
+            raise LLMInvokeError(
+                "backend %r: api_key_env not configured" % backend.name
+            )
+        api_key = os.environ.get(backend.api_key_env, "")
+        if not api_key:
+            raise LLMInvokeError(
+                "API key env var %r is not set" % backend.api_key_env
+            )
+    else:
+        api_key = ""
 
     start = time.monotonic()
 
@@ -315,6 +318,12 @@ def _invoke_api(
         )
     elif backend.format == "anthropic":
         content, usage_data = _invoke_anthropic(prompt, backend, api_key, timeout_s)
+        usage = Usage(
+            input_tokens=usage_data.get("input_tokens", 0),
+            output_tokens=usage_data.get("output_tokens", 0),
+        )
+    elif backend.format == "vertex":
+        content, usage_data = _invoke_vertex(prompt, backend, timeout_s)
         usage = Usage(
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
@@ -438,4 +447,123 @@ def _invoke_anthropic(
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.format
+        ) from exc
+
+
+def _build_vertex_url(project_id: str, region: str = "global", model: str = "") -> str:
+    """Build the Vertex AI rawPredict endpoint URL."""
+    if region == "global":
+        base = "https://aiplatform.googleapis.com"
+    elif region in ("us", "eu"):
+        base = "https://aiplatform.%s.rep.googleapis.com" % region
+    else:
+        base = "https://%s-aiplatform.googleapis.com" % region
+    return (
+        "%s/v1/projects/%s/locations/%s/publishers/anthropic/models/%s:rawPredict"
+        % (base, project_id, region, model)
+    )
+
+
+def _invoke_vertex(
+    prompt: str,
+    backend: BackendConfig,
+    timeout_s: int,
+) -> tuple[str, dict]:
+    """Vertex AI rawPredict API call. Returns (content_str, usage_dict).
+
+    Uses OAuth2 Bearer token (google-auth). Requires code-review-forge[vertex].
+    Wire protocol per D-13:
+      - anthropic_version in body (not header)
+      - model in URL (not body)
+      - Bearer token auth (not x-api-key)
+    """
+    try:
+        from google.oauth2 import service_account
+        import google.auth
+        import google.auth.transport.requests
+        from google.auth.exceptions import DefaultCredentialsError, RefreshError
+    except ImportError as exc:
+        raise LLMInvokeError(
+            "Vertex AI format requires google-auth and requests. "
+            "Install: pip install code-review-forge[vertex]"
+        ) from exc
+
+    # Resolve credentials
+    try:
+        if backend.credentials_path:
+            creds = service_account.Credentials.from_service_account_file(
+                backend.credentials_path,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+        else:
+            creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+    except (FileNotFoundError, ValueError) as exc:
+        raise LLMInvokeError(
+            "Failed to load GCP credentials from %s: %s"
+            % (backend.credentials_path, exc)
+        ) from exc
+    except DefaultCredentialsError as exc:
+        raise LLMInvokeError(
+            "No GCP credentials found. Set GOOGLE_APPLICATION_CREDENTIALS "
+            "or use credentials_path in gate.yaml"
+        ) from exc
+
+    # Refresh token
+    try:
+        auth_req = google.auth.transport.requests.Request()
+        creds.refresh(auth_req)
+    except RefreshError as exc:
+        raise LLMInvokeError(
+            "Failed to refresh GCP credentials: %s" % exc
+        ) from exc
+
+    if not backend.project_id:
+        raise LLMInvokeError(
+            "vertex format requires project_id. Configure a vertex backend "
+            "in gate.yaml (see code-forge init)."
+        )
+
+    url = _build_vertex_url(
+        backend.project_id, backend.region or "global", backend.model
+    )
+    headers = {
+        "Authorization": "Bearer " + creds.token,
+        "Content-Type": "application/json",
+    }
+    body = {
+        "anthropic_version": "vertex-2023-10-16",
+        "max_tokens": backend.max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    try:
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode("utf-8"), headers=headers
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as response:
+            resp_data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body_excerpt = exc.read().decode("utf-8", errors="replace")[:200]
+        raise LLMInvokeError(
+            "HTTP %d from vertex backend: %s" % (exc.code, body_excerpt),
+            exit_code=exc.code,
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise LLMInvokeError(
+            "URLError from vertex backend: %s" % exc.reason
+        ) from exc
+
+    try:
+        blocks = resp_data["content"]
+        text_blocks = [b for b in blocks if b.get("type", "text") == "text"]
+        if not text_blocks:
+            raise KeyError("no text block in content")
+        content = text_blocks[0]["text"]
+        usage_data = resp_data.get("usage", {})
+        return (content, usage_data)
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LLMInvokeError(
+            "unexpected response structure from vertex backend"
         ) from exc

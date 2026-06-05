@@ -260,7 +260,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     backend_inline.add_argument(
         "--backend-format", default=None,
-        choices=["openai", "anthropic"],
+        choices=["openai", "anthropic", "vertex"],
         help="API format for inline backend",
     )
     backend_inline.add_argument(
