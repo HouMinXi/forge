@@ -110,6 +110,10 @@ class TestIntegrationFail:
         monkeypatch.setattr(
             sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(repo_str)
 
         from code_forge.cli import main
@@ -145,6 +149,10 @@ class TestIntegrationPass:
 
         monkeypatch.setattr(
             sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(repo_str)
 
@@ -196,6 +204,10 @@ class TestIntegrationBaseline:
             ["code-forge", "--mode", "ci", "--head", "INDEX",
              "clean.sh"],
         )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
+        )
         monkeypatch.chdir(repo_str)
 
         from code_forge.cli import main
@@ -227,6 +239,10 @@ class TestIntegrationState:
 
         monkeypatch.setattr(
             sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
+        )
+        monkeypatch.setattr(
+            "code_forge.outlet_resolver.resolve_outlet",
+            lambda *a, **kw: "cli",
         )
         monkeypatch.chdir(repo_str)
 

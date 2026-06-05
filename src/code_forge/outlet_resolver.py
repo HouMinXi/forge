@@ -15,6 +15,9 @@ Key invariants:
     reachability probe.
   - Backend unreachable with no explicit override raises CliError
     (FAIL CLOSED) -- never silently degrades to inline.
+  - No implicit claude -p fallthrough: when no backend is explicitly
+    configured and no FORGE_OUTLET is set, CLI refuses to probe and
+    raises CliError with configuration guidance.
   - No model-capability auto-detection anywhere (LOCKED).
   - gate.yaml is read via a lightweight reader that does NOT
     require a "test:" section.
@@ -27,7 +30,6 @@ from typing import Callable, Mapping, Optional
 import yaml
 
 from .backend import (
-    DEFAULT_BACKEND,
     ProbeResult,
     probe_backend,
     resolve_backend,
@@ -111,6 +113,8 @@ def resolve_outlet(
     gate_yaml_path: Optional[Path] = None,
     *,
     cli_value: Optional[str] = None,
+    configs: Optional[list] = None,
+    has_explicit_backend: bool = False,
     reachability_fn: Optional[Callable[[], ProbeResult]] = None,
 ) -> str:
     """Resolve effective outlet given inputs.
@@ -119,9 +123,10 @@ def resolve_outlet(
       1. cli_value from --outlet flag (if present and non-empty)
       2. FORGE_OUTLET env var (if present and non-empty)
       3. gate.yaml outlet field (if gate_yaml_path given and key present)
-      4. Backend reachability probe
+      4. Zero-config guard: raise CliError when no backend is configured
+      5. Backend reachability probe
 
-    The fourth signal uses the backend-agnostic probe from backend.py.
+    The fifth signal uses the backend-agnostic probe from backend.py.
     Reachable -> "cli" (fail-safe Outlet A).
     Unreachable -> CliError (FAIL CLOSED).
 
@@ -137,6 +142,10 @@ def resolve_outlet(
         env: os.environ or test-injected mapping
         gate_yaml_path: path to gate.yaml (None to skip)
         cli_value: value from --outlet flag (highest precedence)
+        configs: list of BackendConfig from gate.yaml ([] means no backend
+            configured; non-empty means user deliberately configured one)
+        has_explicit_backend: True when caller assembled an inline backend
+            via --backend-url/format/key-env/model or --backend <name>
         reachability_fn: callable returning ProbeResult (injected
             for testability; production default resolves + probes
             the configured backend)
@@ -146,8 +155,11 @@ def resolve_outlet(
 
     Raises:
         ValueError: invalid outlet string from cli_value, env, or gate.yaml
-        CliError: backend unreachable with no explicit override
+        CliError: zero-config (no backend configured) or backend unreachable
     """
+    if configs is None:
+        configs = []
+
     # Check cli_value first (highest precedence)
     if cli_value is not None and cli_value != "":
         return _parse_outlet_string(cli_value, "--outlet flag")
@@ -157,7 +169,7 @@ def resolve_outlet(
     # uses the loaded backend config.
     if reachability_fn is None:
         def reachability_fn() -> ProbeResult:
-            backend = resolve_backend(env, configs=[], cli_value=None)
+            backend = resolve_backend(env, configs=configs, cli_value=None)
             return probe_backend(backend, env=env)
 
     # Step 1: FORGE_OUTLET env override
@@ -171,7 +183,23 @@ def resolve_outlet(
         if gate_value is not None:
             return _parse_outlet_string(str(gate_value), "gate.yaml outlet")
 
-    # Step 3: backend reachability
+    # Step 3: zero-config guard -- refuse to probe the implicit subprocess
+    # when no backend is explicitly configured. This prevents a 120s timeout
+    # and billing the main session account.
+    if not configs and not has_explicit_backend:
+        raise CliError(
+            "No review backend configured. Choose one:\n"
+            "  1. gate.yaml backends (persistent):"
+            " create .code-forge/gate.yaml\n"
+            "  2. --backend-url/--backend-format/--backend-key-env/"
+            "--backend-model (one-off)\n"
+            "  3. FORGE_OUTLET=inline"
+            " (review in THIS session; uses main quota)\n"
+            "Implicit `claude -p` is disabled:"
+            " it nests a subprocess and bills the main account."
+        )
+
+    # Step 4: backend reachability
     result = reachability_fn()
     if result.ok:
         return "cli"

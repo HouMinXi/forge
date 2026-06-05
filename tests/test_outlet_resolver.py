@@ -13,10 +13,17 @@ from __future__ import annotations
 
 import pytest
 
-from code_forge.backend import ProbeResult
+from code_forge.backend import BackendConfig, ProbeResult
 from code_forge.errors import CliError
 from code_forge.outlet_resolver import load_outlet_from_gate, resolve_outlet
 
+
+
+_DUMMY_CFG = BackendConfig(
+    name="test-stub", type="cli", model="",
+    format="", base_url="", api_key_env="",
+    command="", default=False, max_tokens=0,
+)
 
 # -- Helpers ---------------------------------------------------------------
 
@@ -59,10 +66,15 @@ class TestEnvOverride:
         assert result == "inline"
 
     def test_env_empty_falls_through(self):
-        """FORGE_OUTLET='' falls through to gate.yaml / reachability."""
+        """FORGE_OUTLET='' falls through to gate.yaml / reachability.
+
+        has_explicit_backend=True simulates a configured backend so the
+        zero-config guard does not fire before the reachability probe.
+        """
         result = resolve_outlet(
             env={"FORGE_OUTLET": ""},
             gate_yaml_path=None,
+            has_explicit_backend=True,
             reachability_fn=_ok_probe,
         )
         assert result == "cli"
@@ -133,12 +145,17 @@ class TestGateYamlOutlet:
         assert result == "inline"
 
     def test_gate_yaml_no_outlet_key(self, tmp_path):
-        """gate.yaml without outlet key -> falls through to probe."""
+        """gate.yaml without outlet key -> falls through to probe.
+
+        has_explicit_backend=True simulates a configured backend so the
+        zero-config guard does not fire before the reachability probe.
+        """
         gate = tmp_path / "gate.yaml"
         gate.write_text("test:\n  command: [pytest]\n")
         result = resolve_outlet(
             env={},
             gate_yaml_path=gate,
+            has_explicit_backend=True,
             reachability_fn=_ok_probe,
         )
         assert result == "cli"
@@ -151,25 +168,104 @@ class TestBackendReachabilityDefault:
     """No override -> reachability probe."""
 
     def test_no_override_backend_reachable(self):
-        """Backend reachable -> returns 'cli' (fail-safe Outlet A)."""
+        """Backend reachable -> returns 'cli' (fail-safe Outlet A).
+
+        has_explicit_backend=True simulates a configured backend so the
+        zero-config guard does not fire before the reachability probe.
+        """
         result = resolve_outlet(
             env={},
             gate_yaml_path=None,
+            has_explicit_backend=True,
             reachability_fn=_ok_probe,
         )
         assert result == "cli"
 
     def test_no_override_backend_unreachable(self):
-        """Backend unreachable -> raises CliError (FAIL CLOSED)."""
+        """Backend unreachable -> raises CliError (FAIL CLOSED).
+
+        has_explicit_backend=True simulates a configured backend so the
+        zero-config guard does not fire; the reachability probe runs and
+        raises the unreachable CliError.
+        """
         with pytest.raises(CliError) as exc_info:
             resolve_outlet(
                 env={},
                 gate_yaml_path=None,
+                has_explicit_backend=True,
                 reachability_fn=_fail_probe,
             )
         msg = str(exc_info.value)
         assert "Configure a review backend" in msg
         assert "FORGE_OUTLET=inline" in msg
+
+
+# -- TestZeroConfigGuard ---------------------------------------------------
+
+
+class TestZeroConfigGuard:
+    """Zero-config guard: no backend configured -> CliError."""
+
+    def test_no_backend_no_env_raises(self):
+        """No configs, no has_explicit_backend, no env -> CliError."""
+        with pytest.raises(CliError) as exc_info:
+            resolve_outlet(
+                env={},
+                gate_yaml_path=None,
+                configs=[],
+                has_explicit_backend=False,
+                reachability_fn=_bomb_probe,
+            )
+        msg = str(exc_info.value)
+        assert "No review backend configured" in msg
+        assert "gate.yaml" in msg
+        assert "FORGE_OUTLET=inline" in msg
+
+    def test_configs_nonempty_bypasses_guard(self):
+        """Non-empty configs list means user configured a backend -> no guard."""
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=None,
+            configs=["any_truthy_value"],
+            has_explicit_backend=False,
+            reachability_fn=_ok_probe,
+        )
+        assert result == "cli"
+
+    def test_has_explicit_backend_bypasses_guard(self):
+        """has_explicit_backend=True bypasses guard even with empty configs."""
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=None,
+            configs=[],
+            has_explicit_backend=True,
+            reachability_fn=_ok_probe,
+        )
+        assert result == "cli"
+
+    def test_gate_yaml_outlet_bypasses_guard(self, tmp_path):
+        """gate.yaml outlet=inline short-circuits before guard fires."""
+        gate = tmp_path / "gate.yaml"
+        gate.write_text("outlet: inline\n")
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=gate,
+            configs=[],
+            has_explicit_backend=False,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "inline"
+
+    def test_forge_outlet_env_bypasses_guard(self):
+        """FORGE_OUTLET=inline short-circuits before guard fires."""
+        result = resolve_outlet(
+            env={"FORGE_OUTLET": "inline"},
+            gate_yaml_path=None,
+            configs=[],
+            has_explicit_backend=False,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "inline"
 
 
 # -- TestEdgeCases ---------------------------------------------------------
@@ -386,8 +482,8 @@ class TestForgeBackendDefaultFn:
     """
 
     def test_default_fn_with_forge_backend_crashes_on_empty_configs(self):
-        """Default fn has no backends loaded; FORGE_BACKEND triggers crash."""
-        with pytest.raises(CliError, match="configured: none"):
+        """Zero-config guard fires before FORGE_BACKEND is checked."""
+        with pytest.raises(CliError, match="No review backend configured"):
             resolve_outlet(
                 env={"FORGE_BACKEND": "deepseek"},
                 gate_yaml_path=None,
@@ -395,6 +491,7 @@ class TestForgeBackendDefaultFn:
 
     def test_injected_fn_with_forge_backend_succeeds(self, tmp_path):
         """Injected fn with real gate.yaml resolves FORGE_BACKEND correctly."""
+        from code_forge.backend import load_backend_configs
         # Create a gate.yaml with backends config
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
@@ -430,9 +527,16 @@ backends:
             # Stub the probe (we're testing resolution, not reachability)
             return ProbeResult(ok=True)
 
+        # Load configs outside the closure so the zero-config guard is bypassed
+        import yaml as _y
+        with open(gate_yaml, "r", encoding="utf-8") as _f:
+            _gd = _y.safe_load(_f)
+        _cfgs = load_backend_configs(_gd) if isinstance(_gd, dict) else []
+
         result = resolve_outlet(
             env={"FORGE_BACKEND": "deepseek"},
             gate_yaml_path=gate_yaml,
+            configs=_cfgs,
             reachability_fn=_reachability,
         )
         assert result == "cli"
@@ -449,6 +553,7 @@ backends:
             resolve_outlet(
                 env={"FORGE_BACKEND": "typo-backend"},
                 gate_yaml_path=None,
+                configs=[_DUMMY_CFG],
                 reachability_fn=_reachability,
             )
 
