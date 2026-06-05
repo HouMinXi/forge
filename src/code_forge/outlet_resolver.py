@@ -6,9 +6,12 @@ Pure precedence function: FORGE_OUTLET env > gate.yaml outlet > backend
 reachability probe.
 
 Resolves which review outlet to use:
-  - "cli"      -> Outlet A (CLI dispatcher, fresh subprocess per pass)
-  - "inline"   -> Outlet B (inline merged skill, in-process)
-  - "subagent" -> Outlet C (fresh Agent per pass, no CLI overhead)
+  - "subprocess" -> Outlet A (fresh subprocess per pass)
+  - "inline"     -> Outlet B (inline merged skill, in-process)
+  - "subagent"   -> Outlet C (fresh Agent per pass, no CLI overhead)
+
+Deprecated: "cli" is accepted as an alias for "subprocess" with a
+  stderr DeprecationWarning. Will be removed in a future release.
 
 Key invariants:
   - Outlet B (inline) and Outlet C (subagent) NEVER trigger the
@@ -24,6 +27,7 @@ Key invariants:
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
@@ -39,7 +43,16 @@ from .errors import CliError
 
 # -- Valid outlet values ---------------------------------------------------
 
-VALID_OUTLET_STRINGS = {"cli": "cli", "inline": "inline", "subagent": "subagent"}
+VALID_OUTLET_STRINGS = {
+    "subprocess": "subprocess",
+    "inline": "inline",
+    "subagent": "subagent",
+}
+
+# Deprecated aliases: old_value -> (canonical_value, deprecation_message)
+_DEPRECATED_OUTLET_ALIASES = {
+    "cli": ("subprocess", "outlet 'cli' renamed to 'subprocess'"),
+}
 
 
 # -- Parsing ---------------------------------------------------------------
@@ -51,8 +64,17 @@ def _parse_outlet_string(value: str, source: str) -> str:
     Structurally identical to mode_resolver._parse_mode_string:
     whitespace-only strips to "" which is not in the allow-list
     and raises with source attribution.
+
+    Deprecated aliases (e.g. "cli") are accepted with a stderr warning.
     """
     key = value.strip().lower()
+    if key in _DEPRECATED_OUTLET_ALIASES:
+        canonical, msg = _DEPRECATED_OUTLET_ALIASES[key]
+        print(
+            "code-forge: DeprecationWarning: %s. Update your config." % msg,
+            file=sys.stderr,
+        )
+        return canonical
     if key not in VALID_OUTLET_STRINGS:
         raise ValueError(
             "invalid outlet %r from %s (expected: %s)"
@@ -127,7 +149,7 @@ def resolve_outlet(
       5. Backend reachability probe
 
     The fifth signal uses the backend-agnostic probe from backend.py.
-    Reachable -> "cli" (fail-safe Outlet A).
+    Reachable -> "subprocess" (fail-safe Outlet A).
     Unreachable -> CliError (FAIL CLOSED).
 
     An explicit "inline" or "subagent" (from cli_value, env, or gate.yaml)
@@ -151,7 +173,7 @@ def resolve_outlet(
             the configured backend)
 
     Returns:
-        "cli", "inline", or "subagent"
+        "subprocess", "inline", or "subagent"
 
     Raises:
         ValueError: invalid outlet string from cli_value, env, or gate.yaml
@@ -202,7 +224,7 @@ def resolve_outlet(
     # Step 4: backend reachability
     result = reachability_fn()
     if result.ok:
-        return "cli"
+        return "subprocess"
 
     raise CliError(
         "Configure a review backend or set FORGE_OUTLET=inline. "

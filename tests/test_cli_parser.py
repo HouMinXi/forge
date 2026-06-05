@@ -218,8 +218,14 @@ class TestOutletAndCommittedFlags:
         args = parser.parse_args(['review'])
         assert args.outlet is None
 
+    def test_outlet_flag_subprocess(self):
+        """--outlet subprocess -> 'subprocess' (canonical value)."""
+        parser = _build_parser()
+        args = parser.parse_args(['review', '--outlet', 'subprocess'])
+        assert args.outlet == 'subprocess'
+
     def test_outlet_flag_cli(self):
-        """--outlet cli -> 'cli'."""
+        """--outlet cli -> 'cli' (deprecated alias; argparse accepts it)."""
         parser = _build_parser()
         args = parser.parse_args(['review', '--outlet', 'cli'])
         assert args.outlet == 'cli'
