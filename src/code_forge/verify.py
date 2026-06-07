@@ -3,23 +3,26 @@
 parse_diff_files is a shared helper used by both the verify CLI
 handler and the receipt writer.
 
-Scope and limits: the seven checks validate the mechanical integrity of
-a receipt set (nine receipts, current diff hash, anchors present in the
-diff, monotonic timestamps, verbatim excerpts, a 60% coverage claim,
-sub-0.8 Jaccard). They do NOT prove the reviewer read the code. A
-zero-findings receipt set passes whenever its claimed
-covered_line_ranges clear the 60% floor -- check 5 only inspects
-reported findings, and an editor-mode reviewer (Path C) can hand-write
-coverage it never performed. The real anti-shirk guarantees are the R1
-pre-commit test gate and the StateMachine consecutive-clean counter;
-verify is a tamper check on receipts, not a replacement for them.
+When hardened=True (default), checks 5/6/7 use reviewer-provided
+code_excerpts vs the diff post-image snapshot. When hardened=False,
+the original pre-Phase-14 checks run (for fail-before tests and
+backward compatibility).
+
+The real anti-shirk guarantees are the R1 pre-commit test gate and
+the StateMachine consecutive-clean counter; verify is a tamper check
+on receipts, not a replacement for them.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+from .diff import _extract_post_image_lines, parse_diff_hunks
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,6 +76,26 @@ def _cycle_covered(receipts: list[dict], cycle: int) -> set[tuple[str, int]]:
     return u
 
 
+def _excerpt_covered(receipt: dict) -> set[tuple[str, int]]:
+    s = set()
+    for exc in receipt.get("code_excerpts", []):
+        f = exc.get("file", "")
+        start = exc.get("start_line", 0)
+        end = exc.get("end_line", 0)
+        if isinstance(start, int) and isinstance(end, int) and f:
+            for ln in range(start, end + 1):
+                s.add((f, ln))
+    return s
+
+
+def _cycle_excerpt_covered(receipts: list[dict], cycle: int) -> set[tuple[str, int]]:
+    u = set()
+    for r in receipts:
+        if r["cycle"] == cycle:
+            u |= _excerpt_covered(r)
+    return u
+
+
 def _jaccard(a: set, b: set) -> float:
     if not a and not b:
         return 1.0
@@ -83,6 +106,8 @@ def _jaccard(a: set, b: set) -> float:
 def run_verify(
     cwd: Path, diff_sha256: str,
     diff_files: dict[str, list[int]],
+    hardened: bool = True,
+    diff_text: str | None = None,
 ) -> VerifyResult:
     receipts = _load_receipts(cwd / ".code-forge" / "receipts")
     cp = 0
@@ -124,65 +149,198 @@ def run_verify(
         return VerifyResult(False, "timestamps not monotonic", 4, cp)
     cp += 1
 
-    # 5. excerpt verification (missing file = FAIL)
-    for r in receipts:
-        for exc in r.get("code_excerpts", []):
-            fp = cwd / exc["file"]
-            if not fp.exists():
-                return VerifyResult(
-                    False,
-                    "excerpt file missing: %s (c%dp%d)" % (
-                        exc["file"], r["cycle"], r["pass"]),
-                    5, cp)
-            try:
-                lines = fp.read_text().splitlines()
-                actual = "\n".join(lines[exc["start_line"] - 1:exc["end_line"]]) + "\n"
-                claimed = exc["content"]
-                if not claimed.endswith("\n"):
-                    claimed += "\n"
-                if actual != claimed:
+    if hardened and diff_text is not None:
+        # 5. per-hunk excerpt witness + content/coverage gate. Returns FAIL on an
+        #    unwitnessed or fabricated excerpt. Complements (does not replace) the
+        #    R1/R2/R3 dynamic verification layer.
+        hunk_map, exempt_files = parse_diff_hunks(diff_text)
+        post_image = _extract_post_image_lines(diff_text)
+
+        if diff_text.strip() and not hunk_map and not exempt_files:
+            return VerifyResult(False, "diff parse failed -- cannot verify excerpts", 5, cp)
+
+        all_excerpts = []
+        for r in receipts:
+            all_excerpts.extend(r.get("code_excerpts", []))
+
+        # STEP 0: excerpt field validation (before any field access)
+        for exc in all_excerpts:
+            exc_file = exc.get("file", "<unknown>")
+            exc_start = exc.get("start_line", None)
+            exc_end = exc.get("end_line", None)
+            if (
+                exc_file == "<unknown>"
+                or not isinstance(exc_start, int)
+                or not isinstance(exc_end, int)
+                or not isinstance(exc.get("content"), str)
+            ):
+                return VerifyResult(False, "excerpt missing required fields", 5, cp)
+
+        # STEP A: per-hunk witness check
+        for file, hunks in hunk_map.items():
+            for hunk in hunks:
+                if hunk["is_deletion_only"]:
+                    continue
+                witnessed = any(
+                    exc["file"] == file
+                    and max(exc["start_line"], hunk["start"]) <= min(exc["end_line"], hunk["end"])
+                    for exc in all_excerpts
+                )
+                if not witnessed:
                     return VerifyResult(
                         False,
-                        "excerpt mismatch %s:%d-%d c%dp%d" % (
-                            exc["file"], exc["start_line"], exc["end_line"],
-                            r["cycle"], r["pass"]),
-                        5, cp)
-            except IndexError:
+                        "unwitnessed hunk %s:%d-%d" % (file, hunk["start"], hunk["end"]),
+                        5, cp,
+                    )
+
+        # STEP B: excerpt-to-hunk anchoring
+        for exc in all_excerpts:
+            content = exc.get("content", "")
+            if not content or not content.strip():
                 return VerifyResult(
                     False,
-                    "excerpt line range out of bounds %s:%d-%d" % (
-                        exc["file"], exc["start_line"], exc["end_line"]),
-                    5, cp)
-    cp += 1
+                    "excerpt %s:%d has empty content" % (exc["file"], exc["start_line"]),
+                    5, cp,
+                )
+            if exc["file"] not in hunk_map and exc["file"] not in exempt_files:
+                return VerifyResult(
+                    False,
+                    "excerpt %s:%d not in diff" % (exc["file"], exc["start_line"]),
+                    5, cp,
+                )
+            if exc["file"] in hunk_map:
+                overlaps = any(
+                    max(exc["start_line"], h["start"]) <= min(exc["end_line"], h["end"])
+                    for h in hunk_map[exc["file"]]
+                )
+                if not overlaps and exc["file"] not in exempt_files:
+                    return VerifyResult(
+                        False,
+                        "excerpt %s:%d-%d not in any diff hunk" % (
+                            exc["file"], exc["start_line"], exc["end_line"]),
+                        5, cp,
+                    )
 
-    # 6. coverage >= 60%
-    all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
-    if all_diff:
-        for c in range(1, 4):
-            cov = _cycle_covered(receipts, c) & all_diff
-            if len(cov) / len(all_diff) < 0.6:
-                return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
-                    100 * len(cov) / len(all_diff), c), 6, cp)
-    cp += 1
+        # STEP C: content verification against diff post-image
+        # The diff is immutable at verify time -- no TOCTOU with working tree.
+        # Only lines overlapping between excerpt and diff are compared (GM-B1).
+        for exc in all_excerpts:
+            actual_lines = exc.get("content", "").splitlines()
+            excerpt_line_map = {}
+            for i, ln in enumerate(range(exc["start_line"], exc["end_line"] + 1)):
+                if i < len(actual_lines):
+                    excerpt_line_map[ln] = actual_lines[i]
 
-    # 7. Jaccard overlap > 0.8 = rubber stamp (Option B)
-    from itertools import combinations
-    cycle_findings = {}
-    for r in receipts:
-        c = r.get("cycle", 0)
-        if c not in cycle_findings:
-            cycle_findings[c] = []
-        cycle_findings[c].extend(r.get("findings", []))
+            file_lines = post_image.get(exc["file"], {})
+            overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
 
-    for a, b in combinations(range(1, 4), 2):
-        has_findings_a = len(cycle_findings.get(a, [])) > 0
-        has_findings_b = len(cycle_findings.get(b, [])) > 0
-        if not has_findings_a and not has_findings_b:
-            continue
-        j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))
-        if j > 0.8:
-            return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
-    cp += 1
+            if overlap_lines:
+                normalize = lambda s: s.rstrip()
+                for ln in sorted(overlap_lines):
+                    if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
+                        return VerifyResult(
+                            False,
+                            "excerpt content mismatch at %s:%d (line %d)" % (
+                                exc["file"], exc["start_line"], ln),
+                            5, cp,
+                        )
+        cp += 1
+
+        # 6. excerpt-derived coverage >= 60%
+        # covered_line_ranges is self-reported, not measured -- audit-only. Ignored here.
+        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
+        if all_diff:
+            for c in range(1, 4):
+                cov = _cycle_excerpt_covered(receipts, c) & all_diff
+                if len(cov) / len(all_diff) < 0.6:
+                    return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
+                        100 * len(cov) / len(all_diff), c), 6, cp)
+        cp += 1
+
+        # 7. Jaccard overlap > 0.8 = rubber stamp
+        # NOTE: identical excerpts across cycles will cause Jaccard > 0.8.
+        # This is CORRECT -- it detects rubber-stamping.
+        from itertools import combinations
+        cycle_findings = {}
+        for r in receipts:
+            cyc = r.get("cycle", 0)
+            if cyc not in cycle_findings:
+                cycle_findings[cyc] = []
+            cycle_findings[cyc].extend(r.get("findings", []))
+
+        for a, b in combinations(range(1, 4), 2):
+            if not cycle_findings.get(a) and not cycle_findings.get(b):
+                continue
+            j = _jaccard(
+                _cycle_excerpt_covered(receipts, a),
+                _cycle_excerpt_covered(receipts, b),
+            )
+            if j > 0.8:
+                return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
+        cp += 1
+
+    else:
+        if hardened and diff_text is None:
+            logger.info("hardened=True but diff_text=None, using legacy checks")
+
+        # 5. legacy excerpt verification (working tree)
+        for r in receipts:
+            for exc in r.get("code_excerpts", []):
+                fp = cwd / exc["file"]
+                if not fp.exists():
+                    return VerifyResult(
+                        False,
+                        "excerpt file missing: %s (c%dp%d)" % (
+                            exc["file"], r["cycle"], r["pass"]),
+                        5, cp)
+                try:
+                    lines = fp.read_text().splitlines()
+                    actual = "\n".join(lines[exc["start_line"] - 1:exc["end_line"]]) + "\n"
+                    claimed = exc["content"]
+                    if not claimed.endswith("\n"):
+                        claimed += "\n"
+                    if actual != claimed:
+                        return VerifyResult(
+                            False,
+                            "excerpt mismatch %s:%d-%d c%dp%d" % (
+                                exc["file"], exc["start_line"], exc["end_line"],
+                                r["cycle"], r["pass"]),
+                            5, cp)
+                except (IndexError, OSError) as e:
+                    logging.warning("check 5 legacy: %s", e)
+                    return VerifyResult(
+                        False,
+                        "excerpt line range error %s:%d-%d" % (
+                            exc["file"], exc["start_line"], exc["end_line"]),
+                        5, cp)
+        cp += 1
+
+        # 6. legacy coverage >= 60% (self-reported covered_line_ranges)
+        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
+        if all_diff:
+            for c in range(1, 4):
+                cov = _cycle_covered(receipts, c) & all_diff
+                if len(cov) / len(all_diff) < 0.6:
+                    return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
+                        100 * len(cov) / len(all_diff), c), 6, cp)
+        cp += 1
+
+        # 7. legacy Jaccard
+        from itertools import combinations
+        cycle_findings = {}
+        for r in receipts:
+            cyc = r.get("cycle", 0)
+            if cyc not in cycle_findings:
+                cycle_findings[cyc] = []
+            cycle_findings[cyc].extend(r.get("findings", []))
+
+        for a, b in combinations(range(1, 4), 2):
+            if not cycle_findings.get(a) and not cycle_findings.get(b):
+                continue
+            j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))
+            if j > 0.8:
+                return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
+        cp += 1
 
     return VerifyResult(True, "all 7 checks passed", 7, 7)
 

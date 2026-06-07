@@ -48,8 +48,8 @@ from .state import (
 )
 
 # L1 candidate provider type alias.
-# Returns (candidates, usage, duration_s) tuple (CLI-08).
-L1Provider = Callable[[], tuple[list[StateFinding], Usage, float]]
+# Returns (candidates, excerpts, usage, duration_s) 4-tuple.
+L1Provider = Callable[[], tuple[list[StateFinding], list[dict], Usage, float]]
 
 
 def _default_l0_runner(
@@ -133,7 +133,7 @@ class StateMachine:
     cwd: Path
     registry: dict
     l0_runner: Callable = field(default=_default_l0_runner)
-    l1_provider: L1Provider = field(default=lambda: ([], Usage(), 0.0))
+    l1_provider: L1Provider = field(default=lambda: ([], [], Usage(), 0.0))
     l2_runner: Callable = field(
         default=lambda diff_files, baseline_cmd: ([], [])
     )
@@ -513,7 +513,7 @@ class StateMachine:
         Usage accumulated to _round_input_tokens/_round_output_tokens for
         cost tracking. Cost written to State after full round (H3 fix).
         """
-        l1_candidates, usage, duration = self.l1_provider()
+        l1_candidates, l1_excerpts, usage, duration = self.l1_provider()
         # Accumulate round-level token usage (H3: applied after round ends)
         self._round_input_tokens += usage.input_tokens
         self._round_output_tokens += usage.output_tokens
@@ -529,7 +529,7 @@ class StateMachine:
                     "falsify exception on %s: %s" % (f.fingerprint, exc)
                 )
             l1_findings.append(f)
-        return l1_findings
+        return (l1_findings, l1_excerpts)
 
     def _run_l2_phase(self) -> list[StateFinding]:
         """L2 mutation phase. Runs after L1.
@@ -625,7 +625,7 @@ class StateMachine:
         l0_findings = self._run_l0_phase()
         if self.mode == Mode.LOCAL:
             self._apply_autofix_loop_to(l0_findings)
-        l1_findings = self._run_l1_phase()
+        l1_findings, l1_excerpts = self._run_l1_phase()
         l2_findings = self._run_l2_phase()
         e2e_findings = self._run_e2e_phase()
         coverage_findings = self._run_coverage_phase()
@@ -670,6 +670,8 @@ class StateMachine:
             source_files=list(self._source_files()),
             cwd=self.cwd,
             diff_files=diff_files,
+            diff_text=diff_text,
+            reviewer_excerpts=l1_excerpts,
         )
         self._persist_state()
         if self.post_round_hook is not None:
