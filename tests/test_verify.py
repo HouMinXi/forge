@@ -1,8 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
-import pytest
-from code_forge.verify import run_verify, parse_diff_files, VerifyResult
+from code_forge.verify import run_verify, parse_diff_files
 
 
 def _sha(text: str) -> str:
@@ -94,7 +93,6 @@ class TestReceiptVerifyE2E:
 
     def test_receipt_writer_output_passes_verify(self, tmp_path):
         import datetime
-        import time
         from unittest.mock import patch
         from code_forge.receipt import write_receipts
         from code_forge.disposition import Disposition

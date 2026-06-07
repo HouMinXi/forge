@@ -687,22 +687,8 @@ def _run(args, env, cwd: Path) -> Verdict:
     if outlet == "inline":
         # SKILL.md owns the review pipeline; CLI exits early
         return Verdict.PASS
-    if outlet == "subagent":
-        from .outlet_c import run_outlet_c
-
-        def _subagent_spawn(pass_name: str, diff_text: str) -> str:
-            raise NotImplementedError(
-                "Outlet C spawn mechanism not yet configured. "
-                "Requires Agent tool or llm_invoke integration."
-            )
-
-        return run_outlet_c(
-            resolved_review=resolved,
-            source_hash=source_hash,
-            cwd=cwd,
-            spawn_fn=_subagent_spawn,
-        )
     # outlet == "subprocess" (Outlet A): fall through to review pipeline
+    # outlet == "subagent": dispatched below after resolved/source_hash are set
 
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.
     if (args.state_dir is not None
@@ -787,6 +773,25 @@ def _run(args, env, cwd: Path) -> Verdict:
             files=resolved.source_files
         )
     baseline_repr = serialize_baseline_spec(baseline_spec)
+
+    # Outlet C (subagent): dispatch here after resolved/source_hash are defined.
+    # Note: resolved is pre-M6 snapshot auto-detection (non-git mode only).
+    # Acceptable because the spawn_fn is NotImplementedError until Outlet C is wired.
+    if outlet == "subagent":
+        from .outlet_c import run_outlet_c
+
+        def _subagent_spawn(pass_name: str, diff_text: str) -> str:
+            raise NotImplementedError(
+                "Outlet C spawn mechanism not yet configured. "
+                "Requires Agent tool or llm_invoke integration."
+            )
+
+        return run_outlet_c(
+            resolved_review=resolved,
+            source_hash=source_hash,
+            cwd=cwd,
+            spawn_fn=_subagent_spawn,
+        )
 
     # M6: non-git snapshot auto-detection.
     if (resolved.mode_hint == "non-git"

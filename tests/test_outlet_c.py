@@ -97,6 +97,21 @@ class TestMalformedJsonFailClosed:
         )
         assert result != Verdict.PASS
 
+    def test_zero_cost_fabrication_rejected(self, tmp_path):
+        """findings=[] + code_excerpts=[] must be rejected (no free clean pass)."""
+        result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=tmp_path,
+            spawn_fn=lambda pn, dt: json.dumps({
+                "findings": [],
+                "code_excerpts": [],
+            }),
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        assert result != Verdict.PASS
+
 
 class TestCycleCountingViaStateMachine:
     """Case B: cycle counting via StateMachine reuse."""

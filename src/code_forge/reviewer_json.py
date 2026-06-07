@@ -6,6 +6,7 @@ Used by both factories.py (Outlet A) and outlet_c.py (Outlet C).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 _REQUIRED_FIELDS = {"findings", "code_excerpts"}
@@ -59,6 +60,11 @@ def validate_reviewer_json(raw: str | dict) -> dict:
             raise ValueError("code_excerpt[%d] start_line must be int" % i)
         if not isinstance(exc.get("end_line"), int):
             raise ValueError("code_excerpt[%d] end_line must be int" % i)
+        if exc["start_line"] > exc["end_line"]:
+            raise ValueError(
+                "code_excerpt[%d] start_line %d > end_line %d" % (
+                    i, exc["start_line"], exc["end_line"])
+            )
 
     if len(data["findings"]) == 0 and len(data["code_excerpts"]) == 0:
         raise ValueError(
@@ -72,3 +78,34 @@ def validate_reviewer_json(raw: str | dict) -> dict:
 def _collect_excerpts(data: dict) -> list[dict]:
     """Extract code_excerpts from validated reviewer JSON."""
     return data.get("code_excerpts", [])
+
+
+def _json_to_state_findings(data: dict, pass_name: str) -> list:
+    """Convert validated reviewer JSON findings to StateFinding list.
+
+    Shared by outlet_c.py (Outlet C) and factories.py (Outlet A) to
+    ensure identical fingerprint computation across both code paths.
+    """
+    from .disposition import Disposition
+    from .state import StateFinding
+
+    findings = []
+    for f_raw in data.get("findings", []):
+        file_path = f_raw.get("file") or "unknown"
+        try:
+            line = int(f_raw.get("line") or 0)
+        except (ValueError, TypeError):
+            line = 0
+        desc = f_raw.get("description") or ""
+        fp_src = "%s:%d:%s" % (file_path, line, desc)
+        fp = hashlib.sha256(fp_src.encode()).hexdigest()[:16]
+        findings.append(StateFinding(
+            id="l1-%s-%s" % (pass_name, fp),
+            fingerprint=fp,
+            source="L1",
+            disposition=Disposition.UNCERTAIN,
+            file=file_path,
+            line_range=[line, line],
+            description="[%s] %s" % (pass_name, desc),
+        ))
+    return findings
