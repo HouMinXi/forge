@@ -45,10 +45,10 @@ def _build_excerpts(
         return []
     return [
         {
-            "file": exc["file"],
-            "start_line": exc["start_line"],
-            "end_line": exc["end_line"],
-            "content": exc["content"],
+            "file": exc.get("file", ""),
+            "start_line": exc.get("start_line", 0),
+            "end_line": exc.get("end_line", 0),
+            "content": exc.get("content", ""),
             "rationale": "reviewer-provided",
         }
         for exc in reviewer_excerpts

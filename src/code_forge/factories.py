@@ -24,7 +24,7 @@ from .state import StateFinding
 
 def build_falsifier(
     engine: str,
-    backend: "Optional[BackendConfig]" = None,
+    backend=None,
 ) -> Falsifier:
     """STATE-10 engine factory.
 
@@ -33,7 +33,6 @@ def build_falsifier(
     engine = "real": RealFalsifier (falsify_real.py); NotImplementedError only if
         that import genuinely fails.
     """
-    from .backend import BackendConfig
 
     if engine == "stub":
         return StubFalsifier()
@@ -201,7 +200,7 @@ def build_e2e_checker() -> Callable:
 def build_l1_provider(
     engine: str,
     resolved: "ResolvedReview",
-    backend: "Optional[BackendConfig]" = None,
+    backend=None,
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple."""
     from .llm_invoke import Usage
@@ -209,10 +208,12 @@ def build_l1_provider(
     if engine == "stub":
         return lambda: ([], [], Usage(), 0.0)
 
-    import hashlib as _hl
-    from .backend import BackendConfig
     from .llm_invoke import LLMInvokeError, llm_invoke
-    from .reviewer_json import _collect_excerpts, validate_reviewer_json
+    from .reviewer_json import (
+        _collect_excerpts,
+        _json_to_state_findings,
+        validate_reviewer_json,
+    )
 
     def _provider() -> tuple:
         diff_text = resolved.git_diff or ""
@@ -300,28 +301,11 @@ def build_l1_provider(
 
             all_excerpts.extend(_collect_excerpts(validated))
 
-            for f_raw in validated["findings"]:
-                file_path = f_raw.get("file") or "unknown"
-                try:
-                    line = int(f_raw.get("line") or 0)
-                except (ValueError, TypeError):
-                    line = 0
-                desc = f_raw.get("description") or ""
-                fp_src = file_path + ":" + str(line) + ":" + desc
-                fp = _hl.sha256(fp_src.encode()).hexdigest()[:16]
-                if fp in seen:
+            for sf in _json_to_state_findings(validated, pass_name):
+                if sf.fingerprint in seen:
                     continue
-                seen.add(fp)
-                from .disposition import Disposition
-                from .state import StateFinding
-                all_candidates.append(StateFinding(
-                    id="l1-" + pass_name + "-" + fp,
-                    fingerprint=fp, source="L1",
-                    disposition=Disposition.UNCERTAIN,
-                    file=file_path,
-                    line_range=[line, line],
-                    description="[" + pass_name + "] " + desc,
-                ))
+                seen.add(sf.fingerprint)
+                all_candidates.append(sf)
         return (all_candidates, all_excerpts, Usage(total_input, total_output), total_duration)
 
     return _provider

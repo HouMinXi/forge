@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 
 from .diff import _extract_post_image_lines, parse_diff_hunks
@@ -113,6 +114,10 @@ def run_verify(
     cp = 0
 
     # 1. completeness: 9 receipts, cycle/pass matrix, findings_count
+    # Known design constraint: expects exactly cycles 1-3 x passes 1-3.
+    # Reviews that take >3 total rounds write cycle 4+ receipts and fail
+    # this check. Intended for post-convergence verification only (the last
+    # 3 consecutive clean cycles produce the authoritative 9 receipts).
     if len(receipts) < 9:
         return VerifyResult(False, "missing receipts: %d/9" % len(receipts), 1, cp)
     seen_keys = set()
@@ -208,6 +213,9 @@ def run_verify(
                     "excerpt %s:%d not in diff" % (exc["file"], exc["start_line"]),
                     5, cp,
                 )
+            # Exempt files (binary/rename/mode-change) pass without overlap check --
+            # they have no hunks in hunk_map, so hunk anchoring cannot be verified.
+            # This is intentional: exempt files produce no coverage obligation.
             if exc["file"] in hunk_map:
                 overlaps = any(
                     max(exc["start_line"], h["start"]) <= min(exc["end_line"], h["end"])
@@ -224,6 +232,10 @@ def run_verify(
         # STEP C: content verification against diff post-image
         # The diff is immutable at verify time -- no TOCTOU with working tree.
         # Only lines overlapping between excerpt and diff are compared (GM-B1).
+        # Known limitation: STEP C verifies that covered lines are faithful to the
+        # post-image but cannot distinguish "covers only context lines" from "covers
+        # actual changed lines." A reviewer can pass STEP C by citing only context
+        # lines around the change. The 60% coverage floor (check 6) mitigates this.
         for exc in all_excerpts:
             actual_lines = exc.get("content", "").splitlines()
             excerpt_line_map = {}
@@ -235,7 +247,8 @@ def run_verify(
             overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
 
             if overlap_lines:
-                normalize = lambda s: s.rstrip()
+                def normalize(s):
+                    return s.rstrip()
                 for ln in sorted(overlap_lines):
                     if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
                         return VerifyResult(
@@ -257,10 +270,12 @@ def run_verify(
                         100 * len(cov) / len(all_diff), c), 6, cp)
         cp += 1
 
-        # 7. Jaccard overlap > 0.8 = rubber stamp
+        # 7. Jaccard overlap > 0.8 = rubber stamp.
         # NOTE: identical excerpts across cycles will cause Jaccard > 0.8.
         # This is CORRECT -- it detects rubber-stamping.
-        from itertools import combinations
+        # Known limitation: when all cycles have empty findings (findings=[]),
+        # the skip condition below causes Jaccard to never trigger, so
+        # identical-excerpt clean reviews always pass (intentional design).
         cycle_findings = {}
         for r in receipts:
             cyc = r.get("cycle", 0)
@@ -271,10 +286,15 @@ def run_verify(
         for a, b in combinations(range(1, 4), 2):
             if not cycle_findings.get(a) and not cycle_findings.get(b):
                 continue
-            j = _jaccard(
-                _cycle_excerpt_covered(receipts, a),
-                _cycle_excerpt_covered(receipts, b),
-            )
+            cov_a = _cycle_excerpt_covered(receipts, a)
+            cov_b = _cycle_excerpt_covered(receipts, b)
+            if not cov_a and not cov_b:
+                return VerifyResult(
+                    False,
+                    "no excerpt coverage in cycles %d and %d (findings present but excerpts empty)" % (a, b),
+                    7, cp,
+                )
+            j = _jaccard(cov_a, cov_b)
             if j > 0.8:
                 return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
         cp += 1
@@ -326,7 +346,6 @@ def run_verify(
         cp += 1
 
         # 7. legacy Jaccard
-        from itertools import combinations
         cycle_findings = {}
         for r in receipts:
             cyc = r.get("cycle", 0)

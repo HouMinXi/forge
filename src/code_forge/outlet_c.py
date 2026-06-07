@@ -9,7 +9,6 @@ Reviewer-provided code_excerpts flow: reviewer JSON -> l1_provider
 """
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Callable
 
@@ -19,38 +18,17 @@ from .disposition import Disposition
 from .falsify import Falsifier
 from .llm_invoke import Usage
 from .machine import StateMachine
-from .reviewer_json import validate_reviewer_json, _collect_excerpts
+from .reviewer_json import (
+    validate_reviewer_json,
+    _collect_excerpts,
+    _json_to_state_findings,
+)
 from .state import Mode, StateFinding, Verdict
 
 _PASS_NAMES = ["qodo", "expert", "adversarial"]
 
 ReviewerSpawnFn = Callable[[str, str], str]
 
-
-def _json_to_state_findings(
-    data: dict, pass_name: str,
-) -> list[StateFinding]:
-    """Convert validated reviewer JSON findings to StateFinding list."""
-    findings = []
-    for f_raw in data.get("findings", []):
-        file_path = f_raw.get("file") or "unknown"
-        try:
-            line = int(f_raw.get("line") or 0)
-        except (ValueError, TypeError):
-            line = 0
-        desc = f_raw.get("description") or ""
-        fp_src = "%s:%d:%s" % (file_path, line, desc)
-        fp = hashlib.sha256(fp_src.encode()).hexdigest()[:16]
-        findings.append(StateFinding(
-            id="l1-%s-%s" % (pass_name, fp),
-            fingerprint=fp,
-            source="L1",
-            disposition=Disposition.UNCERTAIN,
-            file=file_path,
-            line_range=[line, line],
-            description="[%s] %s" % (pass_name, desc),
-        ))
-    return findings
 
 
 def run_outlet_c(
