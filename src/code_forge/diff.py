@@ -80,3 +80,102 @@ def get_changed_files(diff_text: str) -> list[str]:
     """
     changed = extract_changed_lines(diff_text)
     return sorted(changed.keys())
+
+
+def parse_diff_hunks(
+    diff_text: str,
+) -> tuple[dict[str, list[dict]], list[str]]:
+    """Parse diff into per-hunk structure with explicit exemption tracking.
+
+    Binary, rename-only, and mode-change files (zero hunks) are returned
+    in exempt_files. Verify check 5 treats these as explicitly exempt --
+    not silent fall-through (per CONTEXT.md boundary-hunk decision).
+    """
+    if not diff_text or not diff_text.strip():
+        return ({}, [])
+
+    try:
+        patchset = unidiff.PatchSet(diff_text)
+    except unidiff.errors.UnidiffParseError:
+        logger.warning("Failed to parse diff for hunk extraction")
+        return ({}, [])
+
+    hunk_map: dict[str, list[dict]] = {}
+    exempt_files: list[str] = []
+
+    for pf in patchset:
+        if pf.is_removed_file:
+            continue
+
+        hunks = list(pf)
+
+        if getattr(pf, "is_binary_file", False):
+            exempt_files.append(pf.path)
+            continue
+        if pf.is_rename and len(hunks) == 0:
+            exempt_files.append(pf.path)
+            continue
+        if not pf.is_rename and not getattr(pf, "is_binary_file", False) and len(hunks) == 0:
+            exempt_files.append(pf.path)
+            continue
+
+        file_hunks = []
+        for hunk in hunks:
+            added_lines = [
+                line.target_line_no for line in hunk if line.is_added
+            ]
+            start = hunk.target_start
+            end = (
+                hunk.target_start + hunk.target_length - 1
+                if hunk.target_length > 0
+                else hunk.target_start
+            )
+            file_hunks.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "added_lines": added_lines,
+                    "is_deletion_only": len(added_lines) == 0,
+                }
+            )
+
+        if file_hunks:
+            hunk_map[pf.path] = file_hunks
+
+    return (hunk_map, exempt_files)
+
+
+def _extract_post_image_lines(
+    diff_text: str,
+) -> dict[str, dict[int, str]]:
+    """Extract post-image lines from unified diff.
+
+    Returns {file_path: {line_no: line_content}}. Used by verify check 5
+    to compare excerpt content against the diff snapshot (not mutable
+    working tree).
+    """
+    if not diff_text or not diff_text.strip():
+        return {}
+
+    try:
+        patchset = unidiff.PatchSet(diff_text)
+    except unidiff.errors.UnidiffParseError:
+        logger.warning("Failed to parse diff for post-image extraction")
+        return {}
+
+    post_image: dict[str, dict[int, str]] = {}
+
+    for pf in patchset:
+        if pf.is_removed_file:
+            continue
+
+        file_lines: dict[int, str] = {}
+        for hunk in pf:
+            for line in hunk:
+                if (line.is_added or line.is_context) and line.target_line_no is not None:
+                    file_lines[line.target_line_no] = line.value
+
+        if file_lines:
+            post_image[pf.path] = file_lines
+
+    return post_image

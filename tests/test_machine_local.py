@@ -246,7 +246,7 @@ class TestCostAccumulation:
             return ([], [])
 
         def mock_l1():
-            return ([], Usage(input_tokens=1000, output_tokens=500), 12.5)
+            return ([], [], Usage(input_tokens=1000, output_tokens=500), 12.5)
 
         machine = StateMachine(
             mode=Mode.LOCAL,
@@ -278,7 +278,7 @@ class TestCostAccumulation:
             return ([], [])
 
         def mock_l1():
-            return ([], Usage(input_tokens=300, output_tokens=150), 6.0)
+            return ([], [], Usage(input_tokens=300, output_tokens=150), 6.0)
 
         machine = StateMachine(
             mode=Mode.LOCAL,

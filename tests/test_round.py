@@ -54,7 +54,7 @@ def _make_ci_machine(tmp_path, l0_runner, l1_provider=None,
         cwd=tmp_path,
         registry={},
         l0_runner=l0_runner,
-        l1_provider=l1_provider or (lambda: ([], Usage(), 0.0)),
+        l1_provider=l1_provider or (lambda: ([], [], Usage(), 0.0)),
     )
 
 
@@ -102,7 +102,7 @@ class TestL1Falsified:
 
     def test_l1_dispositioned(self, tmp_path):
         def l1_provider():
-            return ([_make_finding(fp="fp-l1", source="L1")], Usage(), 0.0)
+            return ([_make_finding(fp="fp-l1", source="L1")], [], Usage(), 0.0)
 
         # StubFalsifier default = CONFIRMED
         machine = _make_ci_machine(
@@ -133,7 +133,7 @@ class TestFP04Precedence:
         machine = _make_ci_machine(
             tmp_path,
             l0_runner=lambda r, f: ([l0_f], []),
-            l1_provider=lambda: ([l1_f], Usage(), 0.0),
+            l1_provider=lambda: ([l1_f], [], Usage(), 0.0),
         )
         machine.run()
         shared = [
@@ -164,7 +164,7 @@ class TestFalsifierErrorCatch:
             l0_runner=lambda r, f: ([], []),
             l1_provider=lambda: ([_make_finding(
                 fp="fp-err", source="L1"
-            )], Usage(), 0.0),
+            )], [], Usage(), 0.0),
             falsifier=falsifier,
         )
         machine.run()

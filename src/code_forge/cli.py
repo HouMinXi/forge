@@ -558,7 +558,7 @@ def main() -> int:
         diff_text = diff_result.stdout
         diff_sha = compute_source_hash(git_diff=diff_text)
         diff_f = parse_diff_files(diff_text)
-        vr = run_verify(cwd, diff_sha, diff_f)
+        vr = run_verify(cwd, diff_sha, diff_f, diff_text=diff_text)
         if not args.quiet:
             print("verify: %s -- %s" % ("PASS" if vr.passed else "FAIL", vr.reason))
         return EXIT_PASS if vr.passed else EXIT_FAIL
@@ -688,8 +688,20 @@ def _run(args, env, cwd: Path) -> Verdict:
         # SKILL.md owns the review pipeline; CLI exits early
         return Verdict.PASS
     if outlet == "subagent":
-        # SKILL.md dispatches per-pass Agents; CLI exits early
-        return Verdict.PASS
+        from .outlet_c import run_outlet_c
+
+        def _subagent_spawn(pass_name: str, diff_text: str) -> str:
+            raise NotImplementedError(
+                "Outlet C spawn mechanism not yet configured. "
+                "Requires Agent tool or llm_invoke integration."
+            )
+
+        return run_outlet_c(
+            resolved_review=resolved,
+            source_hash=source_hash,
+            cwd=cwd,
+            spawn_fn=_subagent_spawn,
+        )
     # outlet == "subprocess" (Outlet A): fall through to review pipeline
 
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.

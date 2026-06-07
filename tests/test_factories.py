@@ -77,7 +77,7 @@ class TestBuildL1Provider:
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import Usage
         p = build_l1_provider("stub", None)
-        findings, usage, duration = p()
+        findings, excerpts, usage, duration = p()
         assert findings == []
         assert usage == Usage()
         assert duration == 0.0
@@ -100,7 +100,7 @@ class TestBuildL1Provider:
         from unittest.mock import patch
         p = build_l1_provider("stub", None)
         with patch("code_forge.llm_invoke.llm_invoke") as mock:
-            findings, usage, duration = p()
+            findings, excerpts, usage, duration = p()
         assert findings == []
         assert usage == Usage()
         assert duration == 0.0

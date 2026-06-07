@@ -31,7 +31,7 @@ class TestConsecutiveClean:
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=_resolved(), source_hash="a",
             baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
+            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
         )
         assert sm.run() == Verdict.PASS
         state = load_state(tmp_path / ".code-forge" / "state.json")
@@ -44,8 +44,8 @@ class TestConsecutiveClean:
             from code_forge.llm_invoke import Usage
             calls["n"] += 1
             if calls["n"] <= 2:
-                return ([_finding("fp-%d" % calls["n"])], Usage(), 0.0)
-            return ([], Usage(), 0.0)
+                return ([_finding("fp-%d" % calls["n"])], [], Usage(), 0.0)
+            return ([], [], Usage(), 0.0)
 
         sm = StateMachine(
             mode=Mode.LOCAL, falsifier=StubFalsifier(),
@@ -65,7 +65,7 @@ class TestConsecutiveClean:
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=_resolved(), source_hash="a",
             baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
+            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
         )
         sm.run()
         receipt_dir = tmp_path / ".code-forge" / "receipts"
@@ -81,7 +81,7 @@ class TestConsecutiveClean:
                 autofixer=StubAutoFixer(), revert_fn=lambda f: None,
                 resolved_review=_resolved(), source_hash="a",
                 baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-                l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
+                l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
             )
             assert sm.run() == Verdict.PASS
             state = load_state(tmp_path / ".code-forge" / "state.json")
@@ -124,7 +124,7 @@ class TestConsecutiveClean:
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=resolved, source_hash="a",
             baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: ([], Usage(), 0.0), max_total_rounds=10,
+            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
         )
 
         base = datetime.datetime(

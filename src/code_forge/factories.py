@@ -28,9 +28,10 @@ def build_falsifier(
 ) -> Falsifier:
     """STATE-10 engine factory.
 
-    engine = "auto": try Phase 4 import; fall back to stub if absent.
+    engine = "auto": try RealFalsifier import; fall back to stub if absent.
     engine = "stub": always StubFalsifier.
-    engine = "real": Phase 4 falsifier (NOT shipped v2.0).
+    engine = "real": RealFalsifier (falsify_real.py); NotImplementedError only if
+        that import genuinely fails.
     """
     from .backend import BackendConfig
 
@@ -48,8 +49,8 @@ def build_falsifier(
             return RealFalsifier(backend=backend)
         except ImportError:
             raise NotImplementedError(
-                "--falsification-engine=real requires Phase 4 "
-                "(not shipped in v2.0). Use "
+                "--falsification-engine=real requires falsify_real.py "
+                "(import failed). Use "
                 "--falsification-engine=auto or =stub."
             )
     raise ValueError(
@@ -202,23 +203,21 @@ def build_l1_provider(
     resolved: "ResolvedReview",
     backend: "Optional[BackendConfig]" = None,
 ) -> "Callable":
-    """Build l1_provider (CLI-08). Returns (findings, Usage, duration_s) tuple.
-
-    engine="stub" returns empty lambda with zero-cost Usage.
-    """
+    """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple."""
     from .llm_invoke import Usage
 
     if engine == "stub":
-        return lambda: ([], Usage(), 0.0)
+        return lambda: ([], [], Usage(), 0.0)
 
     import hashlib as _hl
     from .backend import BackendConfig
     from .llm_invoke import LLMInvokeError, llm_invoke
+    from .reviewer_json import _collect_excerpts, validate_reviewer_json
 
     def _provider() -> tuple:
         diff_text = resolved.git_diff or ""
         if not diff_text:
-            return ([], Usage(), 0.0)
+            return ([], [], Usage(), 0.0)
 
         pass_configs = [
             ("qodo", "structural code reviewer: correctness and logic errors"),
@@ -227,6 +226,7 @@ def build_l1_provider(
         ]
 
         all_candidates = []
+        all_excerpts = []
         seen = set()
         total_input = 0
         total_output = 0
@@ -234,10 +234,18 @@ def build_l1_provider(
 
         for pass_name, role in pass_configs:
             prompt = (
-                "You are a " + role + ". Review this diff. "
+                "You are a " + role + ". Review this diff.\n"
                 'Return JSON: {"findings": [{"file": "...", "line": N, '
                 '"severity": "P0"|"P1"|"P2"|"P3", '
-                '"description": "..."}]}\n\nDiff:\n' + diff_text
+                '"description": "..."}], '
+                '"code_excerpts": [{"file": "...", "start_line": N, '
+                '"end_line": M, "content": "..."}]}\n'
+                "Each diff hunk MUST have at least one code_excerpt.\n"
+                "Even if findings is empty, provide code_excerpts "
+                "covering each changed hunk.\n"
+                "code_excerpts content must be actual source code lines, "
+                "not diff format -- no +/- prefixes, no @@ headers.\n"
+                "\nDiff:\n" + diff_text
             )
             try:
                 result = llm_invoke(prompt, backend=backend)
@@ -245,7 +253,6 @@ def build_l1_provider(
                 total_input += result.usage.input_tokens
                 total_output += result.usage.output_tokens
                 total_duration += result.duration_s
-                # T5 D-13: per-pass token cost to stderr
                 if (result.usage.input_tokens > 0
                         or result.usage.output_tokens > 0):
                     bname = backend.name if backend else "unknown"
@@ -262,17 +269,38 @@ def build_l1_provider(
                     "code-forge: L1 pass '%s' failed: %s" % (pass_name, exc),
                     file=sys.stderr,
                 )
+                from .disposition import Disposition
+                from .state import StateFinding
+                all_candidates.append(StateFinding(
+                    id="l1-%s-invoke-fail" % pass_name,
+                    fingerprint="invoke-fail-%s" % pass_name,
+                    source="L1",
+                    disposition=Disposition.CONFIRMED,
+                    file="<llm-invoke>",
+                    line_range=[0, 0],
+                    description="L1 invoke failed: %s" % exc,
+                ))
                 continue
 
-            if not isinstance(response, dict):
-                continue
-            findings_raw = response.get("findings")
-            if not isinstance(findings_raw, list):
+            try:
+                validated = validate_reviewer_json(response)
+            except ValueError as exc:
+                from .disposition import Disposition
+                from .state import StateFinding
+                all_candidates.append(StateFinding(
+                    id="l1-%s-schema-fail" % pass_name,
+                    fingerprint="schema-fail-%s" % pass_name,
+                    source="L1",
+                    disposition=Disposition.CONFIRMED,
+                    file="<schema-validation>",
+                    line_range=[0, 0],
+                    description="schema validation failed: %s" % exc,
+                ))
                 continue
 
-            for f_raw in findings_raw:
-                if not isinstance(f_raw, dict):
-                    continue
+            all_excerpts.extend(_collect_excerpts(validated))
+
+            for f_raw in validated["findings"]:
                 file_path = f_raw.get("file") or "unknown"
                 try:
                     line = int(f_raw.get("line") or 0)
@@ -294,6 +322,6 @@ def build_l1_provider(
                     line_range=[line, line],
                     description="[" + pass_name + "] " + desc,
                 ))
-        return (all_candidates, Usage(total_input, total_output), total_duration)
+        return (all_candidates, all_excerpts, Usage(total_input, total_output), total_duration)
 
     return _provider

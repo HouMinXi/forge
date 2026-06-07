@@ -39,31 +39,20 @@ def _split_by_pass(
 
 
 def _build_excerpts(
-    findings: list[StateFinding],
-    cwd: Path,
+    reviewer_excerpts: list[dict] | None = None,
 ) -> list[dict]:
-    excerpts = []
-    for f in findings:
-        src = cwd / f.file
-        if not src.exists():
-            continue
-        try:
-            lines = src.read_text().splitlines()
-            start = max(0, f.line_range[0] - 2) if f.line_range else 0
-            end = min(len(lines), f.line_range[-1] + 3) if f.line_range else min(len(lines), 5)
-            if start >= len(lines):
-                continue
-            content = "\n".join(lines[start:end]) + "\n"
-            excerpts.append({
-                "file": f.file,
-                "start_line": start + 1,
-                "end_line": end,
-                "content": content,
-                "rationale": f.description[:120],
-            })
-        except OSError:
-            continue
-    return excerpts
+    if not reviewer_excerpts:
+        return []
+    return [
+        {
+            "file": exc["file"],
+            "start_line": exc["start_line"],
+            "end_line": exc["end_line"],
+            "content": exc["content"],
+            "rationale": "reviewer-provided",
+        }
+        for exc in reviewer_excerpts
+    ]
 
 
 def write_receipts(
@@ -74,6 +63,8 @@ def write_receipts(
     source_files: list[Path],
     cwd: Path,
     diff_files: dict[str, list[int]] | None = None,
+    diff_text: str | None = None,
+    reviewer_excerpts: list[dict] | None = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
     receipts_dir.mkdir(parents=True, exist_ok=True)
@@ -81,6 +72,8 @@ def write_receipts(
     cycle = round_index + 1
     now = datetime.datetime.now(datetime.timezone.utc)
     written = []
+
+    assembled_excerpts = _build_excerpts(reviewer_excerpts)
 
     for pass_idx, (pass_name, skill_name) in enumerate(
         zip(_PASS_NAMES, _SKILL_NAMES)
@@ -113,7 +106,8 @@ def write_receipts(
                 }
                 for f in pass_findings
             ],
-            "code_excerpts": _build_excerpts(pass_findings, cwd),
+            "code_excerpts": assembled_excerpts,
+            # self-reported, not measured -- audit-only
             "covered_line_ranges": [
                 {
                     "file": f.file,
