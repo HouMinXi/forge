@@ -201,8 +201,18 @@ def build_l1_provider(
     engine: str,
     resolved: "ResolvedReview",
     backend=None,
+    conventions_digest: str = "",
+    post_image: str = "",
 ) -> "Callable":
-    """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple."""
+    """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
+
+    Args:
+        engine: falsification engine name (e.g. "auto", "stub").
+        resolved: resolved review with git_diff and source_files.
+        backend: BackendConfig for llm_invoke, or None for default.
+        conventions_digest: compact naming conventions for reviewer context (D11).
+        post_image: current content of changed files for excerpt verification (D11).
+    """
     from .llm_invoke import Usage
 
     if engine == "stub":
@@ -246,8 +256,18 @@ def build_l1_provider(
                 "covering each changed hunk.\n"
                 "code_excerpts content must be actual source code lines, "
                 "not diff format -- no +/- prefixes, no @@ headers.\n"
-                "\nDiff:\n" + diff_text
             )
+            if post_image:
+                prompt += (
+                    "\n## Post-Image (current file content)\n"
+                    + post_image + "\n"
+                )
+            if conventions_digest:
+                prompt += (
+                    "\n## Conventions Digest\n"
+                    + conventions_digest + "\n"
+                )
+            prompt += "\nDiff:\n" + diff_text
             try:
                 result = llm_invoke(prompt, backend=backend)
                 response = result.content
