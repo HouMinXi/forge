@@ -121,9 +121,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     Subcommands:
       - review: existing pipeline (all flags preserved)
-      - gate-check: test-based commit gate (R1)
-      - mutation-check: mutation testing gate (R2)
-      - e2e-check: cross-component coverage heuristic (R3)
+      - gate-check: test-based commit gate
+      - mutation-check: mutation testing gate
+      - e2e-check: cross-component coverage heuristic
       - install-hooks: hook installer
       - install-skill: install bundled skill
       - verify: validate review receipts
@@ -243,7 +243,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
     )
 
-    # Backend selection flags (D-02, D-10)
+    # Backend selection flags
     review_parser.add_argument(
         "--backend", default=None, metavar="NAME",
         help="named backend from gate.yaml backends block "
@@ -294,10 +294,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="suppress warning messages",
     )
 
-    # --- MUTATION-CHECK subcommand: mutation testing gate (R2) ---
+    # --- MUTATION-CHECK subcommand: mutation testing gate ---
     mutation_parser = subparsers.add_parser(
         'mutation-check',
-        help='run mutation testing gate (R2)',
+        help='run mutation testing gate',
         description=(
             'Mutation testing gate: runs mutmut on diff-scoped files '
             'and reports surviving mutants. '
@@ -317,10 +317,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="glob pattern to restrict mutation to matching files",
     )
 
-    # --- E2E-CHECK subcommand: cross-component coverage heuristic (R3) ---
+    # --- E2E-CHECK subcommand: cross-component coverage heuristic ---
     e2e_parser = subparsers.add_parser(
         'e2e-check',
-        help='run cross-component e2e coverage heuristic (R3)',
+        help='run cross-component e2e coverage heuristic',
         description=(
             'E2E coverage heuristic: detects cross-component signature '
             'changes and checks for e2e artifacts. '
@@ -449,6 +449,151 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _make_subagent_spawn(backend, conv_digest: str, post_image: str):
+    """Factory for subagent spawn_fn. Module-level for testability.
+
+    Returns a spawn_fn(pass_name, diff_text) -> str that calls llm_invoke
+    per pass with a fresh context (no shared session). The prompt contains
+    only the diff, post-image content, conventions digest, and pass role --
+    no implementer session context (D3 / SC1-SC3).
+
+    Args:
+        backend: BackendConfig for llm_invoke, or None for default.
+        conv_digest: conventions digest string (D11 slot), may be "".
+        post_image: post-image content of changed files, may be "".
+    """
+    _PASS_ROLES = {
+        "qodo": "structural code reviewer: correctness and logic errors",
+        "expert": "senior engineer: SOLID, architecture, security",
+        "adversarial": "adversarial QE: assume bugs exist",
+    }
+
+    def _spawn(pass_name: str, diff_text: str) -> str:
+        from .llm_invoke import llm_invoke
+        role = _PASS_ROLES.get(pass_name, "code reviewer")
+        prompt = (
+            "You are a " + role + ". Review this diff.\n"
+            'Return JSON: {"findings": [{"file": "...", "line": N, '
+            '"severity": "P0"|"P1"|"P2"|"P3", '
+            '"description": "..."}], '
+            '"code_excerpts": [{"file": "...", "start_line": N, '
+            '"end_line": M, "content": "..."}]}\n'
+            "Each diff hunk MUST have at least one code_excerpt.\n"
+            "Even if findings is empty, provide code_excerpts "
+            "covering each changed hunk.\n"
+            "code_excerpts content must be actual source code lines, "
+            "not diff format -- no +/- prefixes, no @@ headers.\n"
+        )
+        if post_image:
+            prompt += (
+                "\n## Post-Image (current file content)\n"
+                + post_image + "\n"
+            )
+        if conv_digest:
+            prompt += (
+                "\n## Conventions Digest\n"
+                + conv_digest + "\n"
+            )
+        prompt += "\nDiff:\n" + diff_text
+        result = llm_invoke(prompt, backend=backend)
+        content = result.content
+        if isinstance(content, dict):
+            return json.dumps(content)
+        return str(content)
+
+    return _spawn
+
+
+def _assemble_post_image(cwd: Path, diff_text: str) -> tuple[str, str]:
+    """Build post-image content and conventions digest for reviewer context.
+
+    Shared by both Outlet C (subagent) and Outlet A (subprocess) paths.
+    Returns (post_image, conventions_digest).
+    """
+    from .diff import get_changed_files
+    from .conventions import get_digest
+
+    changed_files = get_changed_files(diff_text or "")
+    cap = 50 * 1024
+    parts: list[str] = []
+    for cf in changed_files:
+        fp = cwd / cf
+        try:
+            st = fp.stat()
+            if st.st_size > cap:
+                with open(fp, "rb") as fh:
+                    raw = fh.read(cap)
+                if b"\x00" in raw[:1024]:
+                    continue
+                text = raw.decode("utf-8", errors="replace")
+                text += "\n... [truncated at 50KB]"
+            else:
+                text = fp.read_text(encoding="utf-8", errors="replace")
+                if b"\x00" in text.encode("utf-8", errors="replace")[:1024]:
+                    continue
+            parts.append("## File: %s\n```\n%s\n```" % (cf, text))
+        except (OSError, IOError):
+            pass
+    return "\n\n".join(parts), get_digest(cwd)
+
+
+def _run_test_assertion_review(
+    diff_text: str,
+    backend: Optional["BackendConfig"] = None,
+) -> list:
+    """SC4: test-assertion review by independent reviewer.
+
+    Fresh llm_invoke, never the impl/test author. Runs BEFORE R1.
+    Returns list of advisory findings (do not reset cycle counter).
+
+    Advisory-only: findings are printed to stderr but NOT recorded in
+    the receipt system. This is an explicit D8 exception -- the
+    test-assertion gate is structurally separate from the 3-cycle
+    static review. It provides an independent signal for the human
+    backstop to act on, not a machine-verified gate. Rationale:
+    recording advisory findings in receipts would contaminate the cycle
+    counter (Pitfall 4 in RESEARCH.md).
+    """
+    from .llm_invoke import llm_invoke
+    from .reviewer_json import validate_reviewer_json, _json_to_state_findings
+    from .diff import get_changed_files
+
+    changed = get_changed_files(diff_text)
+    # Test file heuristic -- precise, not "test" in f.lower():
+    # Matches /tests/ path component, tests/ prefix, test_ filename prefix,
+    # or _test. filename suffix. Does NOT match "contest.py", "protest.py", etc.
+    test_files = [
+        f for f in changed
+        if "/tests/" in f
+        or f.startswith("tests/")
+        or "test_" in f.split("/")[-1]
+        or "_test." in f.split("/")[-1]
+    ]
+    if not test_files:
+        return []
+
+    prompt = (
+        "You are a test-assertion reviewer. Review this diff for test quality.\n"
+        "Check: assertion completeness, edge case coverage, mock accuracy, "
+        "assertion specificity.\n"
+        'Return JSON: {"findings": [{"file": "...", "line": N, '
+        '"severity": "P0"|"P1"|"P2"|"P3", '
+        '"description": "..."}], '
+        '"code_excerpts": [{"file": "...", "start_line": N, '
+        '"end_line": M, "content": "..."}]}\n'
+        "Each diff hunk MUST have at least one code_excerpt.\n"
+        "\nDiff:\n" + diff_text
+    )
+    # H-R3-01: llm_invoke MUST be inside the try block so that
+    # network/timeout/auth errors are caught and fail-open.
+    try:
+        result = llm_invoke(prompt, backend=backend)
+        validated = validate_reviewer_json(result.content)
+        return _json_to_state_findings(validated, "test-assertion")
+    except Exception:
+        return []
 
 
 def main() -> int:
@@ -687,8 +832,55 @@ def _run(args, env, cwd: Path) -> Verdict:
     if outlet == "inline":
         # SKILL.md owns the review pipeline; CLI exits early
         return Verdict.PASS
+
+    # Step 6: backend resolution (moved above subagent dispatch so backend
+    # is available to the C-leg spawn_fn closure -- M-R2-07).
+    # has_inline is defined at line ~645, confirmed in scope here.
+    import yaml as _yaml
+    from .backend import (
+        BackendConfig,
+        load_backend_configs,
+        resolve_backend,
+    )
+    from .llm_invoke import LLMInvokeError
+
+    if has_inline:
+        # All 4 inline flags: construct transient BackendConfig, skip gate.yaml
+        backend = BackendConfig(
+            name="inline",
+            type="api",
+            format=args.backend_format,
+            base_url=args.backend_url,
+            api_key_env=args.backend_key_env,
+            model=args.backend_model,
+            max_tokens=16384,
+        )
+    else:
+        # T1: Load gate.yaml backends block (D-16 lightweight loader)
+        _gate_yaml_path_b = cwd / ".code-forge" / "gate.yaml"
+        try:
+            with open(_gate_yaml_path_b, "r", encoding="utf-8") as _f:
+                gate_data = _yaml.safe_load(_f)
+        except FileNotFoundError:
+            gate_data = None
+        except _yaml.YAMLError as exc:
+            raise CliError("gate.yaml parse error: %s" % exc) from exc
+
+        if isinstance(gate_data, dict):
+            configs = load_backend_configs(gate_data)
+        else:
+            configs = []
+
+        try:
+            backend = resolve_backend(
+                env,
+                configs=configs,
+                cli_value=getattr(args, 'backend', None),
+            )
+        except CliError:
+            raise
+
     # outlet == "subprocess" (Outlet A): fall through to review pipeline
-    # outlet == "subagent": dispatched below after resolved/source_hash are set
 
     # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.
     if (args.state_dir is not None
@@ -774,24 +966,33 @@ def _run(args, env, cwd: Path) -> Verdict:
         )
     baseline_repr = serialize_baseline_spec(baseline_spec)
 
-    # Outlet C (subagent): dispatch here after resolved/source_hash are defined.
-    # Note: resolved is pre-M6 snapshot auto-detection (non-git mode only).
-    # Acceptable because the spawn_fn is NotImplementedError until Outlet C is wired.
+    # Outlet C (subagent): dispatch via run_outlet_c with llm_invoke-based
+    # spawn_fn. Backend is resolved above. resolved/source_hash
+    # are now in scope at this point in the flow.
     if outlet == "subagent":
         from .outlet_c import run_outlet_c
 
-        def _subagent_spawn(pass_name: str, diff_text: str) -> str:
-            raise NotImplementedError(
-                "Outlet C spawn mechanism not yet configured. "
-                "Requires Agent tool or llm_invoke integration."
-            )
-
-        return run_outlet_c(
+        _post_image, _conv_digest = _assemble_post_image(
+            cwd, resolved.git_diff or ""
+        )
+        _subagent_spawn = _make_subagent_spawn(backend, _conv_digest, _post_image)
+        verdict = run_outlet_c(
             resolved_review=resolved,
             source_hash=source_hash,
             cwd=cwd,
             spawn_fn=_subagent_spawn,
         )
+        # Test-assertion review gate (D14/SC4): advisory findings to stderr.
+        # D8 exception: not recorded in receipts (see _run_test_assertion_review).
+        if resolved.git_diff:
+            _ta_findings = _run_test_assertion_review(
+                resolved.git_diff, backend
+            )
+            for _f in _ta_findings:
+                sys.stderr.write(
+                    "[test-assertion] %s\n" % _f.description
+                )
+        return verdict
 
     # M6: non-git snapshot auto-detection.
     if (resolved.mode_hint == "non-git"
@@ -815,61 +1016,26 @@ def _run(args, env, cwd: Path) -> Verdict:
                 baseline_spec
             )
 
-    # Step 6: backend resolution + factories
-    import yaml as _yaml
-    from .backend import (
-        BackendConfig,
-        load_backend_configs,
-        resolve_backend,
-    )
-    from .llm_invoke import LLMInvokeError
-
-
-    if has_inline:
-        # All 4 inline flags: construct transient BackendConfig, skip gate.yaml
-        backend = BackendConfig(
-            name="inline",
-            type="api",
-            format=args.backend_format,
-            base_url=args.backend_url,
-            api_key_env=args.backend_key_env,
-            model=args.backend_model,
-            max_tokens=16384,
-        )
-    else:
-        # T1: Load gate.yaml backends block (D-16 lightweight loader)
-        gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
-        try:
-            with open(gate_yaml_path, "r", encoding="utf-8") as _f:
-                gate_data = _yaml.safe_load(_f)
-        except FileNotFoundError:
-            gate_data = None
-        except _yaml.YAMLError as exc:
-            raise CliError("gate.yaml parse error: %s" % exc) from exc
-
-        if isinstance(gate_data, dict):
-            configs = load_backend_configs(gate_data)
-        else:
-            configs = []
-
-        try:
-            backend = resolve_backend(
-                env,
-                configs=configs,
-                cli_value=getattr(args, 'backend', None),
-            )
-        except CliError:
-            raise
+    # Step 6 (backend) already resolved above for both outlet paths.
 
     if args.sandbox:
         warn(
             "warning: --sandbox is a Phase 4 hook; "
             "ignored in v2.0"
         )
+
+    _post_image_a, _conv_digest_a = _assemble_post_image(
+        cwd, resolved.git_diff or ""
+    )
+
     falsifier = build_falsifier(engine_choice, backend=backend)
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
-    l1_provider = build_l1_provider(engine_choice, resolved, backend=backend)
+    l1_provider = build_l1_provider(
+        engine_choice, resolved, backend=backend,
+        conventions_digest=_conv_digest_a,
+        post_image=_post_image_a,
+    )
 
     # Coverage gate inputs: L1 examines every changed file only when it
     # actually runs over a diff (engine != stub AND a non-empty git diff).
@@ -920,6 +1086,17 @@ def _run(args, env, cwd: Path) -> Verdict:
         raise CliError(
             "backend %s: %s" % (backend.name, exc)
         ) from exc
+
+    # Test-assertion review gate (D14/SC4) on subprocess path: runs BEFORE
+    # return, advisory-only (D8 exception per _run_test_assertion_review).
+    if resolved.git_diff:
+        _ta_findings_a = _run_test_assertion_review(
+            resolved.git_diff, backend
+        )
+        for _f_a in _ta_findings_a:
+            sys.stderr.write(
+                "[test-assertion] %s\n" % _f_a.description
+            )
     return verdict
 
 

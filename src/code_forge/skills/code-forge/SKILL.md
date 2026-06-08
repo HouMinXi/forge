@@ -79,6 +79,9 @@ Code Change
 [Step 7] R3 E2E Coverage (cross-component signature change has e2e artifact)
      |
      v
+[Step 8] Human Backstop (D13: independent reviewer done, human reviews judgment)
+     |
+     v
 [COMMIT GATE] git commit  # post-review-c3
              Requires: 3 clean cycles + R1 PASS + R2 PASS + R3 PASS/SKIP
 ```
@@ -1134,6 +1137,37 @@ SKIP records:
   "survivors": []
 }
 ```
+
+---
+
+# Step 8: Human Backstop (D13)
+
+After the independent reviewer completes all cycles, a human performs one
+round of focused review. The gate's coverage proof (receipts + excerpts)
+has verified that every hunk was examined. The human reviews JUDGMENT,
+not coverage.
+
+## Checklist
+
+- [ ] Read each P0/P1 finding that was fixed -- is the fix correct, or did
+      it introduce a new issue?
+- [ ] For clean passes (0 findings): spot-check 2-3 code_excerpts -- does
+      the reviewer's coverage match what actually changed?
+- [ ] Check test assertions: do the tests verify the actual behavior, not
+      just that code runs without error?
+- [ ] Check naming consistency with sibling repos (if conventions digest
+      was provided).
+- [ ] If [test-assertion] findings were printed to stderr, review each one.
+- [ ] Final judgment: "approved" or describe issues.
+
+## When to Skip
+
+The human backstop may be skipped ONLY for:
+- Documentation-only commits (# docs)
+- Configuration-only commits (# config)
+- Trivial formatting (# chore)
+
+All code changes require the human backstop.
 
 ---
 

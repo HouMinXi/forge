@@ -601,7 +601,7 @@ class TestInlineFlagsMutualExclusion:
         repo = _setup_git_repo_with_diff(tmp_path)
         captured_backend = {}
 
-        def fake_build_l1_provider(engine, resolved, backend=None):
+        def fake_build_l1_provider(engine, resolved, backend=None, **kwargs):
             captured_backend["backend"] = backend
             from code_forge.factories import build_l1_provider as real_bld
             return real_bld(engine, resolved, backend=backend)
@@ -972,3 +972,281 @@ class TestRealMimoApiSmoke:
         assert isinstance(result, LLMResult)
         assert isinstance(result.content, dict)
         assert result.usage.input_tokens > 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 15 tests: SC4 test-assertion gate, _make_subagent_spawn integration,
+# and A-leg build_l1_provider conventions_digest + post_image threading.
+# ---------------------------------------------------------------------------
+
+from code_forge.cli import _run_test_assertion_review, _make_subagent_spawn
+from code_forge.llm_invoke import LLMResult as _LLMResult, Usage as _Usage
+from unittest.mock import patch as _patch
+
+
+def _make_valid_reviewer_json_p15():
+    """Minimal valid reviewer JSON with one excerpt (Phase 15 tests)."""
+    import json as _json
+    return _json.dumps({
+        "findings": [],
+        "code_excerpts": [{
+            "file": "test_foo.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": "def test_a():\n    assert True\n    pass\n",
+        }],
+    })
+
+
+# Concrete diff texts (L-R2-06)
+_TEST_DIFF = (
+    "diff --git a/tests/test_foo.py b/tests/test_foo.py\n"
+    "--- a/tests/test_foo.py\n"
+    "+++ b/tests/test_foo.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " def test_a():\n"
+    "+    assert True\n"
+    "     pass\n"
+)
+
+_CODE_DIFF = (
+    "diff --git a/src/code.py b/src/code.py\n"
+    "--- a/src/code.py\n"
+    "+++ b/src/code.py\n"
+    "@@ -5,3 +5,4 @@\n"
+    " def process():\n"
+    "+    result = compute()\n"
+    "     return None\n"
+)
+
+_CONTEST_DIFF = (
+    "diff --git a/src/contest.py b/src/contest.py\n"
+    "--- a/src/contest.py\n"
+    "+++ b/src/contest.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " def run_contest():\n"
+    "+    scores = tally()\n"
+    "     return []\n"
+)
+
+
+class TestAssertionGate:
+    """SC4: _run_test_assertion_review independence tests."""
+
+    def test_gate_runs_on_test_files(self):
+        """Gate must invoke llm_invoke for diffs touching test files."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=_make_valid_reviewer_json_p15(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            _run_test_assertion_review(_TEST_DIFF, backend=None)
+        assert mock_llm.call_count == 1
+        prompt = mock_llm.call_args[0][0]
+        assert "test-assertion reviewer" in prompt
+
+    def test_gate_skips_non_test_files(self):
+        """Gate must NOT invoke llm_invoke for non-test diffs."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            result = _run_test_assertion_review(_CODE_DIFF, backend=None)
+        assert mock_llm.call_count == 0
+        assert result == []
+
+    def test_gate_skips_contest_py(self):
+        """M-02 regression: src/contest.py must NOT match test file heuristic."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            result = _run_test_assertion_review(_CONTEST_DIFF, backend=None)
+        assert mock_llm.call_count == 0
+        assert result == []
+
+    def test_gate_prompt_independent(self):
+        """Gate prompt must not contain implementer session context."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=_make_valid_reviewer_json_p15(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            _run_test_assertion_review(_TEST_DIFF, backend=None)
+        prompt = mock_llm.call_args[0][0]
+        for forbidden in ["I implemented", "my change", "Human:", "Assistant:"]:
+            assert forbidden not in prompt
+        assert "Diff:" in prompt
+
+    def test_gate_fails_open_on_error(self):
+        """H-R3-01: llm_invoke inside try; exception -> fail-open (return [])."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.side_effect = Exception("timeout")
+            result = _run_test_assertion_review(_TEST_DIFF, backend=None)
+        assert result == []
+
+
+class TestSubagentSpawnIntegration:
+    """H-02: integration tests using actual _make_subagent_spawn from cli.py."""
+
+    def test_spawn_calls_llm_invoke(self):
+        """_make_subagent_spawn must produce a spawn_fn that calls llm_invoke."""
+        import json as _json
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=_make_valid_reviewer_json_p15(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            spawn = _make_subagent_spawn(
+                backend=None, conv_digest="", post_image=""
+            )
+            result = spawn("qodo", "diff --git a/test.py b/test.py\n+x=1\n")
+        assert mock_llm.call_count == 1
+        # M-R5-03: prompt via call_args[0][0]
+        prompt = mock_llm.call_args[0][0]
+        assert "structural code reviewer" in prompt
+        _json.loads(result)  # must be valid JSON string
+
+    def test_spawn_includes_post_image(self):
+        """_spawn must include post-image content in prompt."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=_make_valid_reviewer_json_p15(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            spawn = _make_subagent_spawn(
+                backend=None,
+                conv_digest="",
+                post_image="## File: x.py\n```\ncode here\n```",
+            )
+            spawn("expert", "some diff")
+        prompt = mock_llm.call_args[0][0]
+        assert "Post-Image" in prompt
+        assert "code here" in prompt
+
+    def test_spawn_includes_digest(self):
+        """_spawn must include conventions digest when non-empty."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=_make_valid_reviewer_json_p15(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            spawn = _make_subagent_spawn(
+                backend=None,
+                conv_digest="## conventions\n- foo_bar",
+                post_image="",
+            )
+            spawn("adversarial", "some diff")
+        prompt = mock_llm.call_args[0][0]
+        assert "Conventions Digest" in prompt
+        assert "foo_bar" in prompt
+
+    def test_spawn_no_session_context(self):
+        """_spawn prompt must not contain implementer session context."""
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=_make_valid_reviewer_json_p15(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            spawn = _make_subagent_spawn(
+                backend=None, conv_digest="", post_image=""
+            )
+            spawn("qodo", "diff text here")
+        prompt = mock_llm.call_args[0][0]
+        for forbidden in ["Human:", "Assistant:", "previous message"]:
+            assert forbidden not in prompt
+
+
+class TestBuildL1ProviderDigestAndPostImage:
+    """M-R2-03: A-leg build_l1_provider threads conventions_digest + post_image."""
+
+    def _make_resolved(self):
+        from code_forge.baseline import ResolvedReview
+        _diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " def bar():\n"
+            "+    pass\n"
+            "     return None\n"
+        )
+        return ResolvedReview(
+            source_files=[],
+            baseline_content=None,
+            git_diff=_diff,
+            mode_hint="git",
+        )
+
+    def _make_excerpt_json(self):
+        import json as _json
+        return _json.dumps({
+            "findings": [],
+            "code_excerpts": [{
+                "file": "foo.py",
+                "start_line": 1,
+                "end_line": 3,
+                "content": "def bar():\n    pass\n    return None\n",
+            }],
+        })
+
+    def test_build_l1_provider_includes_digest(self):
+        """conventions_digest must appear in the L1 provider prompt (M-R2-03)."""
+        from code_forge.factories import build_l1_provider
+        resolved = self._make_resolved()
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=self._make_excerpt_json(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            provider = build_l1_provider(
+                "auto", resolved,
+                conventions_digest="## test digest",
+                post_image="",
+            )
+            provider()
+        # M-R5-03: prompt via call_args[0][0]
+        prompt = mock_llm.call_args[0][0]
+        assert "## test digest" in prompt
+        assert "Conventions Digest" in prompt
+
+    def test_build_l1_provider_includes_post_image(self):
+        """post_image must appear in the L1 provider prompt (M-R2-03)."""
+        from code_forge.factories import build_l1_provider
+        resolved = self._make_resolved()
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=self._make_excerpt_json(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            provider = build_l1_provider(
+                "auto", resolved,
+                conventions_digest="",
+                post_image="## File: foo.py\n```\ndef bar(): pass\n```",
+            )
+            provider()
+        prompt = mock_llm.call_args[0][0]
+        assert "Post-Image" in prompt
+        assert "def bar(): pass" in prompt
+
+    def test_build_l1_provider_no_digest_no_post_image(self):
+        """When both empty, prompt must NOT contain digest or post-image sections."""
+        from code_forge.factories import build_l1_provider
+        resolved = self._make_resolved()
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
+            mock_llm.return_value = _LLMResult(
+                content=self._make_excerpt_json(),
+                usage=_Usage(),
+                duration_s=0.1,
+            )
+            provider = build_l1_provider(
+                "auto", resolved,
+                conventions_digest="",
+                post_image="",
+            )
+            provider()
+        prompt = mock_llm.call_args[0][0]
+        assert "Conventions Digest" not in prompt
+        assert "Post-Image" not in prompt

@@ -509,7 +509,7 @@ class StateMachine:
         Both modes invoke L1 per LAYER0-07 (SARIF includes L1 candidates).
         LOCAL L1 sees post-fix code; CI L1 sees raw L0 output (no autofix).
 
-        CLI-08: l1_provider now returns (candidates, usage, duration_s).
+        CLI-08: l1_provider returns (candidates, excerpts, usage, duration_s).
         Usage accumulated to _round_input_tokens/_round_output_tokens for
         cost tracking. Cost written to State after full round (H3 fix).
         """
