@@ -310,28 +310,43 @@ def _invoke_api(
 
     start = time.monotonic()
 
-    if backend.format == "openai":
-        content, usage_data = _invoke_openai(prompt, backend, api_key, timeout_s)
-        usage = Usage(
-            input_tokens=usage_data.get("prompt_tokens", 0),
-            output_tokens=usage_data.get("completion_tokens", 0),
-        )
-    elif backend.format == "anthropic":
-        content, usage_data = _invoke_anthropic(prompt, backend, api_key, timeout_s)
-        usage = Usage(
-            input_tokens=usage_data.get("input_tokens", 0),
-            output_tokens=usage_data.get("output_tokens", 0),
-        )
-    elif backend.format == "vertex":
-        content, usage_data = _invoke_vertex(prompt, backend, timeout_s)
-        usage = Usage(
-            input_tokens=usage_data.get("input_tokens", 0),
-            output_tokens=usage_data.get("output_tokens", 0),
-        )
-    else:
+    # socket.timeout is an alias of TimeoutError on all supported interpreters
+    # (project requires Python 3.12+). TimeoutError is an OSError subclass,
+    # NOT a URLError subclass, so _invoke_openai/_invoke_anthropic do not catch
+    # it. Wrap the entire format dispatch so all api formats fail closed: the
+    # bare TimeoutError becomes LLMInvokeError, which factories.py turns into an
+    # INFRA finding + FAIL verdict instead of an unhandled crash. Only
+    # urllib.request.urlopen and google-auth HTTP calls live inside this try
+    # block, so non-network TimeoutError sources are not a concern here.
+    try:
+        if backend.format == "openai":
+            content, usage_data = _invoke_openai(prompt, backend, api_key, timeout_s)
+            usage = Usage(
+                input_tokens=usage_data.get("prompt_tokens", 0),
+                output_tokens=usage_data.get("completion_tokens", 0),
+            )
+        elif backend.format == "anthropic":
+            content, usage_data = _invoke_anthropic(prompt, backend, api_key, timeout_s)
+            usage = Usage(
+                input_tokens=usage_data.get("input_tokens", 0),
+                output_tokens=usage_data.get("output_tokens", 0),
+            )
+        elif backend.format == "vertex":
+            content, usage_data = _invoke_vertex(prompt, backend, timeout_s)
+            usage = Usage(
+                input_tokens=usage_data.get("input_tokens", 0),
+                output_tokens=usage_data.get("output_tokens", 0),
+            )
+        else:
+            raise LLMInvokeError(
+                "unsupported api format: %r" % backend.format
+            )
+    except TimeoutError as exc:
         raise LLMInvokeError(
-            "unsupported api format: %r" % backend.format
-        )
+            "%s backend timed out after %ds" % (backend.format, timeout_s),
+            stderr=str(exc),
+            duration_s=time.monotonic() - start,
+        ) from exc
 
     duration = time.monotonic() - start
 

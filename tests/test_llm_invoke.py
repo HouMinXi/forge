@@ -281,6 +281,43 @@ class TestLLMInvoke:
             with pytest.raises(LLMInvokeError, match="URLError"):
                 llm_invoke("prompt", backend=backend)
 
+    def test_api_bare_timeout_error_openai_raises_llm_invoke_error(self):
+        """Regression: bare TimeoutError (OSError, not URLError) must not propagate.
+
+        socket.timeout is an alias of TimeoutError on all supported interpreters.
+        _invoke_openai and _invoke_anthropic only catch HTTPError / URLError, so
+        a bare TimeoutError escapes to the caller and crashes code-forge (exit 1,
+        full traceback). After the fix it must be converted to LLMInvokeError so
+        the pipeline records an INFRA finding and exits FAIL gracefully.
+        """
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="model",
+            format="openai",
+            base_url="https://example.com",
+            api_key_env="TEST_KEY",
+        )
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")):
+            with pytest.raises(LLMInvokeError, match="timed out"):
+                llm_invoke("prompt", backend=backend)
+
+    def test_api_bare_timeout_error_anthropic_raises_llm_invoke_error(self):
+        """Regression: bare TimeoutError on anthropic format must not propagate."""
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="model",
+            format="anthropic",
+            base_url="https://example.com",
+            api_key_env="TEST_KEY",
+        )
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")):
+            with pytest.raises(LLMInvokeError, match="timed out"):
+                llm_invoke("prompt", backend=backend)
+
     def test_unsupported_backend_type(self):
         """Unsupported backend type raises LLMInvokeError."""
         backend = BackendConfig(
