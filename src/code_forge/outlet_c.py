@@ -38,6 +38,7 @@ def run_outlet_c(
     spawn_fn: ReviewerSpawnFn,
     falsifier: "Falsifier | None" = None,
     max_total_rounds: int = 20,
+    clean_round_threshold: int = 3,
 ) -> Verdict:
     """Run Outlet C through StateMachine with reviewer excerpt passthrough."""
     if falsifier is None:
@@ -56,7 +57,7 @@ def run_outlet_c(
                 findings.append(StateFinding(
                     id="l1-%s-spawn-fail" % pass_name,
                     fingerprint="spawn-fail-%s" % pass_name,
-                    source="L1",
+                    source="INFRA",
                     disposition=Disposition.CONFIRMED,
                     file="<spawn>",
                     line_range=[0, 0],
@@ -73,7 +74,7 @@ def run_outlet_c(
                 findings.append(StateFinding(
                     id="l1-%s-schema-fail" % pass_name,
                     fingerprint="schema-fail-%s" % pass_name,
-                    source="L1",
+                    source="INFRA",
                     disposition=Disposition.CONFIRMED,
                     file="<schema-validation>",
                     line_range=[0, 0],
@@ -96,5 +97,6 @@ def run_outlet_c(
         l2_runner=lambda df, bc: ([], []),
         e2e_runner=lambda dt, rr: ([], []),
         max_total_rounds=max_total_rounds,
+        clean_round_threshold=clean_round_threshold,
     )
     return sm.run()

@@ -145,6 +145,7 @@ class StateMachine:
     post_round_hook: Optional[Callable[[int], None]] = None
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
+    clean_round_threshold: int = 3
     _state: State = field(default_factory=State, init=False)
 
     def __post_init__(self) -> None:
@@ -444,14 +445,7 @@ class StateMachine:
                 self._persist_state()
                 return Verdict.FAIL
 
-            try:
-                _threshold = int(os.environ.get(
-                    "FORGE_CLEAN_ROUND_THRESHOLD", "3"
-                ))
-            except (ValueError, TypeError):
-                _threshold = 3
-            if _threshold < 1:
-                _threshold = 1
+            _threshold = self.clean_round_threshold
 
             if self._fixpoint_reached():
                 self._state.consecutive_clean_rounds += 1
@@ -520,6 +514,9 @@ class StateMachine:
         self._round_duration += duration
         l1_findings: list[StateFinding] = []
         for f in l1_candidates:
+            if f.source == "INFRA":
+                l1_findings.append(f)
+                continue
             try:
                 f.disposition = self.falsifier.falsify(f)
             except RuntimeError as exc:

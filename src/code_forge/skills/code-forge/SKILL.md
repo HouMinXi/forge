@@ -310,6 +310,27 @@ loop:
 
 **Critical change from current behavior:** The current state machine resets cycle_counter on ANY finding. The new state machine only resets on P0/P1. P2 restarts the current cycle without resetting the counter. P3 uses density-based escalation with deduplication: per-file >5, per-diff >10, or density >0.15/line triggers P2-equivalent restart. Based on P3-THRESHOLD-RESEARCH.md (Google Tricorder, BitsAI-CR, Broken Windows theory, ESLint --max-warnings).
 
+## Adaptive Cycle Count (Relief Mechanism)
+
+Forge adjusts the clean round threshold based on diff size so that small,
+safe changes get less friction while large changes get extra scrutiny.
+
+| Diff size (insertions + deletions) | Clean cycles | Total passes |
+|------------------------------------|--------------|--------------|
+| <50 lines                          | 2            | 6            |
+| 50-199 lines                       | 3 (default)  | 9            |
+| >=200 lines                        | 4            | 12           |
+
+Overrides:
+- `FORGE_CLEAN_ROUND_THRESHOLD=N` overrides tiering completely. The
+  explicit env var always wins.
+- `--whole-file` mode always uses 3 cycles (the default) regardless of
+  file size, because the diff is artificial (entire file presented as
+  changed).
+
+This is a RELIEF mechanism -- it reduces friction for small, safe changes.
+It does NOT weaken review for large, risky changes.
+
 ## Genuine Execution -- No Fabricated Passes
 
 cycle_counter is incremented ONLY for passes you actually ran. The single most

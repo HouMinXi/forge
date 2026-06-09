@@ -327,3 +327,58 @@ class TestCostAccumulation:
         assert state.cost_total_output == 0
         assert state.cost_passes % 3 == 0  # always multiple of 3 passes
         assert state.cost_passes >= 3  # at least 1 round
+
+
+class TestInfraFindingSkipsFalsifier:
+    """F3 regression: INFRA findings skip falsifier, block fixpoint."""
+
+    def test_infra_finding_blocks_fixpoint(self, tmp_path):
+        """INFRA finding stays CONFIRMED even with a dismiss-all falsifier.
+
+        Machine must not converge to PASS because the INFRA finding
+        blocks fixpoint every round (consecutive_clean_rounds stays 0).
+        """
+        import json as _json
+        fixture = tmp_path / "falsify.json"
+        fixture.write_text(_json.dumps({"default": "DISMISSED"}))
+        dismisser = StubFalsifier(fixture_path=fixture)
+
+        infra_finding = StateFinding(
+            id="l1-qodo-invoke-fail",
+            fingerprint="invoke-fail-qodo",
+            source="INFRA",
+            disposition=Disposition.CONFIRMED,
+            file="<llm-invoke>",
+            line_range=[0, 0],
+            description="L1 invoke failed: timeout",
+        )
+
+        def mock_l1():
+            return ([infra_finding], [], Usage(), 0.0)
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=dismisser,
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda r, f: ([], []),
+            l1_provider=mock_l1,
+            max_total_rounds=5,
+            clean_round_threshold=3,
+        )
+        verdict = machine.run()
+        assert verdict == Verdict.ESCALATED
+        assert machine._state.consecutive_clean_rounds == 0
+        # INFRA finding disposition must remain CONFIRMED (not DISMISSED)
+        infra_in_state = [
+            f for f in machine._state.findings
+            if f.source == "INFRA"
+        ]
+        assert len(infra_in_state) > 0
+        for f in infra_in_state:
+            assert f.disposition == Disposition.CONFIRMED
