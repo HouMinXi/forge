@@ -295,7 +295,7 @@ def build_l1_provider(
                 all_candidates.append(StateFinding(
                     id="l1-%s-invoke-fail" % pass_name,
                     fingerprint="invoke-fail-%s" % pass_name,
-                    source="L1",
+                    source="INFRA",
                     disposition=Disposition.CONFIRMED,
                     file="<llm-invoke>",
                     line_range=[0, 0],
@@ -311,7 +311,7 @@ def build_l1_provider(
                 all_candidates.append(StateFinding(
                     id="l1-%s-schema-fail" % pass_name,
                     fingerprint="schema-fail-%s" % pass_name,
-                    source="L1",
+                    source="INFRA",
                     disposition=Disposition.CONFIRMED,
                     file="<schema-validation>",
                     line_range=[0, 0],

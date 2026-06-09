@@ -280,3 +280,53 @@ class TestBuildE2eChecker:
         findings, errors = out
         assert isinstance(findings, list)
         assert isinstance(errors, list)
+
+
+class TestInfraSourceTagging:
+    """F3: error-path findings tagged source=INFRA."""
+
+    def test_factories_invoke_fail_tagged_infra(self):
+        """invoke-fail finding has source=INFRA and disposition=CONFIRMED."""
+        from unittest.mock import patch as _patch
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+
+        resolved = _make_resolved("git")
+
+        with _patch(
+            "code_forge.llm_invoke.llm_invoke"
+        ) as mock_invoke:
+            mock_invoke.side_effect = LLMInvokeError("timeout")
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) >= 1
+        for f in infra:
+            assert f.disposition == Disposition.CONFIRMED
+            assert "invoke-fail" in f.fingerprint
+
+    def test_factories_schema_fail_tagged_infra(self):
+        """schema-fail finding has source=INFRA and disposition=CONFIRMED."""
+        from unittest.mock import patch as _patch
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+
+        resolved = _make_resolved("git")
+
+        with _patch(
+            "code_forge.llm_invoke.llm_invoke"
+        ) as mock_invoke:
+            mock_invoke.return_value = LLMResult(
+                content="not json at all",
+                usage=LLMUsage(input_tokens=0, output_tokens=0),
+                duration_s=0.0,
+            )
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) >= 1
+        for f in infra:
+            assert f.disposition == Disposition.CONFIRMED
+            assert "schema-fail" in f.fingerprint

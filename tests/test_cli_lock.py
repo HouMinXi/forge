@@ -80,7 +80,8 @@ class TestLockReleasedOnExit:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--mode", "ci",
+             "--falsification-engine", "stub", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -134,7 +135,8 @@ class TestLockReleasedOnException:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "a.py"],
+            ["code-forge", "--mode", "ci",
+             "--falsification-engine", "stub", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",

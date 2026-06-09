@@ -18,6 +18,79 @@ import unidiff
 logger = logging.getLogger(__name__)
 
 
+def count_diff_lines(diff_text: str | None) -> int:
+    """Count insertions + deletions across all hunks in a unified diff.
+
+    Used by tier_threshold() to determine cycle count based on diff size.
+    Returns 0 for empty, None, malformed, binary, rename-only, or
+    mode-only diffs.
+
+    Args:
+        diff_text: raw unified diff text (from git diff output)
+
+    Returns:
+        Total number of added + removed lines. 0 on any parse failure.
+    """
+    if not diff_text or not diff_text.strip():
+        return 0
+
+    try:
+        patchset = unidiff.PatchSet(diff_text)
+    except unidiff.errors.UnidiffParseError:
+        logger.warning("Failed to parse diff for line counting")
+        return 0
+
+    total = 0
+    for patched_file in patchset:
+        for hunk in patched_file:
+            for line in hunk:
+                if line.is_added or line.is_removed:
+                    total += 1
+
+    return total
+
+
+def tier_threshold(
+    line_count: int,
+    whole_file: bool = False,
+    env_override: int | None = None,
+) -> int:
+    """Map diff line count to review cycle threshold.
+
+    Priority chain:
+      1. env_override (from FORGE_CLEAN_ROUND_THRESHOLD) always wins
+      2. whole_file flag forces default 3 cycles
+      3. line_count <= 0 returns 3 (safe default for empty/parse-error)
+      4. line_count < 50 returns 2 (small diff relief)
+      5. line_count >= 200 returns 4 (large diff extra scrutiny)
+      6. else returns 3 (default)
+
+    Args:
+        line_count: total insertions + deletions from count_diff_lines()
+        whole_file: True when --whole-file flag is active
+        env_override: explicit threshold from env var (None = not set)
+
+    Returns:
+        Number of consecutive clean cycles required (minimum 1).
+    """
+    if env_override is not None:
+        return max(1, env_override)
+
+    if whole_file:
+        return 3
+
+    if line_count <= 0:
+        return 3
+
+    if line_count < 50:
+        return 2
+
+    if line_count >= 200:
+        return 4
+
+    return 3
+
+
 def extract_changed_lines(diff_text: str) -> dict[str, set[int]]:
     """Parse unified diff, return {file: set_of_changed_line_numbers}.
 

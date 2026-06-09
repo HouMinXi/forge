@@ -108,7 +108,8 @@ class TestIntegrationFail:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci",
+                          "--falsification-engine", "stub", "hello.sh"]
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -148,7 +149,8 @@ class TestIntegrationPass:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci",
+                          "--falsification-engine", "stub", "hello.sh"]
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -201,8 +203,9 @@ class TestIntegrationBaseline:
 
         monkeypatch.setattr(
             sys, "argv",
-            ["code-forge", "--mode", "ci", "--head", "INDEX",
-             "clean.sh"],
+            ["code-forge", "--mode", "ci",
+             "--falsification-engine", "stub",
+             "--head", "INDEX", "clean.sh"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -238,7 +241,8 @@ class TestIntegrationState:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci",
+                          "--falsification-engine", "stub", "hello.sh"]
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",

@@ -176,6 +176,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "parse error)\n"
             "  3  BUSY (another code-forge process holds the lock)\n"
             "  4  ESCALATED (non-convergence or human-frozen)\n"
+            "\n"
+            "Cycle count adapts to diff size: <50 lines = 2 cycles,\n"
+            "50-199 = 3 (default), >=200 = 4. Override with\n"
+            "FORGE_CLEAN_ROUND_THRESHOLD=N.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -966,6 +970,21 @@ def _run(args, env, cwd: Path) -> Verdict:
         )
     baseline_repr = serialize_baseline_spec(baseline_spec)
 
+    # Compute diff-size tier threshold
+    from .diff import count_diff_lines, tier_threshold
+    _line_count = count_diff_lines(resolved.git_diff or "")
+    _whole_file = bool(getattr(args, "whole_file", None))
+    _env_threshold = None
+    try:
+        _env_raw = os.environ.get("FORGE_CLEAN_ROUND_THRESHOLD")
+        if _env_raw is not None:
+            _env_threshold = int(_env_raw)
+    except (ValueError, TypeError):
+        pass
+    _clean_threshold = tier_threshold(
+        _line_count, _whole_file, _env_threshold
+    )
+
     # Outlet C (subagent): dispatch via run_outlet_c with llm_invoke-based
     # spawn_fn. Backend is resolved above. resolved/source_hash
     # are now in scope at this point in the flow.
@@ -981,6 +1000,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             source_hash=source_hash,
             cwd=cwd,
             spawn_fn=_subagent_spawn,
+            clean_round_threshold=_clean_threshold,
         )
         # Test-assertion review gate (D14/SC4): advisory findings to stderr.
         # D8 exception: not recorded in receipts (see _run_test_assertion_review).
@@ -1069,6 +1089,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 state_path=state_path,
                 coverage_l1_active=coverage_l1_active,
                 coverage_exempt_patterns=coverage_exempt,
+                clean_round_threshold=_clean_threshold,
             )
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
@@ -1105,6 +1126,7 @@ def _run_hold_loop(
     source_hash, baseline_repr, cwd, registry,
     max_rounds, max_fix_attempts, state_path,
     coverage_l1_active=True, coverage_exempt_patterns=None,
+    clean_round_threshold=3,
     input_fn=input, output_fn=print,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
@@ -1124,6 +1146,7 @@ def _run_hold_loop(
             max_fix_attempts=max_fix_attempts,
             coverage_l1_active=coverage_l1_active,
             coverage_exempt_patterns=coverage_exempt_patterns or [],
+            clean_round_threshold=clean_round_threshold,
         )
         verdict = sm.run()
         if verdict != Verdict.PENDING:

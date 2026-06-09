@@ -12,6 +12,12 @@ GATE_YAML_TEMPLATE = """\
 #   subagent -- fresh Agent per pass (no CLI overhead)
 # outlet: subprocess
 
+# Cycle count adapts to diff size (relief, not defense):
+#   <50 lines:  2 clean cycles (6 passes)
+#   50-199:     3 clean cycles (9 passes, default)
+#   >=200:      4 clean cycles (12 passes)
+# Override: FORGE_CLEAN_ROUND_THRESHOLD=N
+
 backends:
   mimo:
     type: api

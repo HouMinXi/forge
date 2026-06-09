@@ -463,3 +463,64 @@ class TestContextIsolation:
                 "Bug from call %d ('%s') leaked into call %d prompt"
                 % (i - 1, prev_bug, i)
             )
+
+
+class TestThresholdThreading:
+    """clean_round_threshold threaded to StateMachine."""
+
+    def test_threshold_threading(self, tmp_path):
+        """run_outlet_c with clean_round_threshold=2 converges after 2."""
+        result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=tmp_path,
+            spawn_fn=lambda pn, dt: _valid_reviewer_json(),
+            falsifier=StubFalsifier(),
+            max_total_rounds=10,
+            clean_round_threshold=2,
+        )
+        assert result == Verdict.PASS
+        state = load_state(tmp_path / ".code-forge" / "state.json")
+        assert state.consecutive_clean_rounds >= 2
+        assert state.round == 1  # rounds 0 and 1 are clean
+
+
+class TestOutletCInfraSourceTagging:
+    """F3: outlet_c error-path findings tagged source=INFRA."""
+
+    def test_outlet_c_spawn_fail_tagged_infra(self, tmp_path):
+        """spawn-fail finding has source=INFRA and disposition=CONFIRMED."""
+        def _raise_spawn(pn, dt):
+            raise RuntimeError("spawn exploded")
+
+        result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=tmp_path,
+            spawn_fn=_raise_spawn,
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        state = load_state(tmp_path / ".code-forge" / "state.json")
+        infra = [f for f in state.findings if f.source == "INFRA"]
+        assert len(infra) >= 1
+        for f in infra:
+            assert f.disposition.value == "CONFIRMED"
+            assert "spawn-fail" in f.fingerprint
+
+    def test_outlet_c_schema_fail_tagged_infra(self, tmp_path):
+        """schema-fail finding has source=INFRA and disposition=CONFIRMED."""
+        result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=tmp_path,
+            spawn_fn=lambda pn, dt: "NOT VALID JSON",
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        state = load_state(tmp_path / ".code-forge" / "state.json")
+        infra = [f for f in state.findings if f.source == "INFRA"]
+        assert len(infra) >= 1
+        for f in infra:
+            assert f.disposition.value == "CONFIRMED"
+            assert "schema-fail" in f.fingerprint

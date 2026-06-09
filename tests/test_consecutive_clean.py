@@ -74,20 +74,47 @@ class TestConsecutiveClean:
         assert len(receipts) >= 3
 
     def test_threshold_1_recovers_single_fixpoint(self, tmp_path):
-        os.environ["FORGE_CLEAN_ROUND_THRESHOLD"] = "1"
-        try:
-            sm = StateMachine(
-                mode=Mode.LOCAL, falsifier=StubFalsifier(),
-                autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-                resolved_review=_resolved(), source_hash="a",
-                baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-                l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
-            )
-            assert sm.run() == Verdict.PASS
-            state = load_state(tmp_path / ".code-forge" / "state.json")
-            assert state.round == 0
-        finally:
-            del os.environ["FORGE_CLEAN_ROUND_THRESHOLD"]
+        sm = StateMachine(
+            mode=Mode.LOCAL, falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
+            resolved_review=_resolved(), source_hash="a",
+            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            clean_round_threshold=1,
+        )
+        assert sm.run() == Verdict.PASS
+        state = load_state(tmp_path / ".code-forge" / "state.json")
+        assert state.round == 0
+
+    def test_threshold_param_2(self, tmp_path):
+        """SM with clean_round_threshold=2 exits PASS after 2 clean rounds."""
+        sm = StateMachine(
+            mode=Mode.LOCAL, falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
+            resolved_review=_resolved(), source_hash="a",
+            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            clean_round_threshold=2,
+        )
+        assert sm.run() == Verdict.PASS
+        state = load_state(tmp_path / ".code-forge" / "state.json")
+        assert state.consecutive_clean_rounds >= 2
+        assert state.round == 1  # rounds 0 and 1 are clean
+
+    def test_threshold_param_4(self, tmp_path):
+        """SM with clean_round_threshold=4 requires 4 clean rounds."""
+        sm = StateMachine(
+            mode=Mode.LOCAL, falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
+            resolved_review=_resolved(), source_hash="a",
+            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            clean_round_threshold=4,
+        )
+        assert sm.run() == Verdict.PASS
+        state = load_state(tmp_path / ".code-forge" / "state.json")
+        assert state.consecutive_clean_rounds >= 4
+        assert state.round == 3  # rounds 0,1,2,3 are clean
 
     def test_all_clean_run_passes_verify(self, tmp_path, monkeypatch):
         """Regression: all-clean convergence with a real diff produces
