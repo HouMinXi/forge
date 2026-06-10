@@ -1,0 +1,163 @@
+"""Trust gate for repo-supplied gate.yaml backends (SEC-01).
+
+Implements a direnv-style allow/deny model: the user explicitly trusts
+each repo's gate.yaml before its backends are used. Trust is stored in
+~/.config/code-forge/trusted.json (honoring XDG_CONFIG_HOME), keyed by
+the realpath of gate.yaml. A repo cannot carry its own trust record.
+
+The hash covers ONLY the backends block (D-03), not the entire file.
+Changes to outlet/test/detect sections do not require re-trusting.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+
+# -- Dangerous fields (D-05) -----------------------------------------------
+
+DANGEROUS_FIELDS: frozenset[str] = frozenset({
+    "base_url",          # controls where credentials are sent (CWE-522)
+    "api_key_env",       # names the env var containing the credential
+    "api_key_file",      # names the file containing the credential
+    "shell",             # arbitrary shell execution (CWE-78)
+    "command",           # arbitrary command execution
+    "hook",              # lifecycle hook execution
+    "credentials_path",  # vertex: service account JSON path
+})
+
+
+# -- TrustStatus dataclass -------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TrustStatus:
+    """Result of a trust check."""
+
+    trusted: bool
+    stored_hash: Optional[str]
+    current_hash: str
+    gate_yaml_path: str
+
+
+# -- Internal helpers -------------------------------------------------------
+
+
+def _config_dir() -> Path:
+    """Return XDG_CONFIG_HOME/code-forge, matching backend.py XDG pattern."""
+    base = os.environ.get(
+        "XDG_CONFIG_HOME", str(Path.home() / ".config")
+    )
+    return Path(base) / "code-forge"
+
+
+def _trust_store_path() -> Path:
+    """Return the path to the trust store JSON file."""
+    return _config_dir() / "trusted.json"
+
+
+def _load_trust_store() -> dict:
+    """Load trusted.json, returning {} on missing or corrupt file."""
+    path = _trust_store_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_trust_store(store: dict) -> None:
+    """Write trust store atomically (tmp + replace, POSIX safe)."""
+    path = _trust_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+# -- Public API -------------------------------------------------------------
+
+
+def hash_backends_block(gate_data: Optional[dict]) -> str:
+    """Return sha256 hex of the canonical JSON of the backends block.
+
+    Canonical form: json.dumps(backends, sort_keys=True, separators=(",",":"))
+    This produces a stable hash regardless of YAML key ordering.
+    """
+    if gate_data is None:
+        gate_data = {}
+    backends = gate_data.get("backends", {})
+    canonical = json.dumps(backends, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_trusted(gate_yaml_path: Path, gate_data: dict) -> bool:
+    """Check if gate.yaml's backends block matches the stored trust hash."""
+    store = _load_trust_store()
+    key = str(gate_yaml_path.resolve())
+    entry = store.get(key)
+    if entry is None:
+        return False
+    current_hash = hash_backends_block(gate_data)
+    return entry.get("hash") == current_hash
+
+
+def record_trust(gate_yaml_path: Path, gate_data: dict) -> None:
+    """Record trust for gate.yaml's current backends block."""
+    store = _load_trust_store()
+    key = str(gate_yaml_path.resolve())
+    current_hash = hash_backends_block(gate_data)
+    store[key] = {"hash": current_hash}
+    _save_trust_store(store)
+
+
+def revoke_trust(gate_yaml_path: Path) -> None:
+    """Remove the trust record for gate.yaml (no-op if not trusted).
+
+    Operates on the trusted.json entry keyed by the current gate.yaml
+    realpath. There is NO in-repo trust file to read or delete (D-04).
+    """
+    store = _load_trust_store()
+    key = str(gate_yaml_path.resolve())
+    store.pop(key, None)
+    _save_trust_store(store)
+
+
+def trust_status(gate_yaml_path: Path, gate_data: dict) -> TrustStatus:
+    """Return detailed trust status for gate.yaml."""
+    store = _load_trust_store()
+    key = str(gate_yaml_path.resolve())
+    entry = store.get(key)
+    current_hash = hash_backends_block(gate_data)
+    stored_hash = entry.get("hash") if entry else None
+    return TrustStatus(
+        trusted=(stored_hash == current_hash) if stored_hash else False,
+        stored_hash=stored_hash,
+        current_hash=current_hash,
+        gate_yaml_path=key,
+    )
+
+
+def find_dangerous_fields(
+    gate_data: dict,
+) -> list[tuple[str, str, str]]:
+    """Return list of (backend_name, field_name, field_value) for dangerous fields.
+
+    Dangerous fields are those that control where credentials are sent,
+    what commands are executed, or where secrets are read from.
+    """
+    dangers: list[tuple[str, str, str]] = []
+    backends = gate_data.get("backends", {})
+    for bname, bconfig in backends.items():
+        if not isinstance(bconfig, dict):
+            continue
+        for field_name in DANGEROUS_FIELDS:
+            value = bconfig.get(field_name)
+            if value is not None and value != "":
+                dangers.append((bname, field_name, str(value)))
+    return dangers
