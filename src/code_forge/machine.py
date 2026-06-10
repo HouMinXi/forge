@@ -146,6 +146,7 @@ class StateMachine:
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
     clean_round_threshold: int = 3
+    advisory_runners: list = field(default_factory=list)
     _state: State = field(default_factory=State, init=False)
 
     def __post_init__(self) -> None:
@@ -154,6 +155,7 @@ class StateMachine:
         self._round_output_tokens: int = 0
         self._round_duration: float = 0.0
         self._pass_counter: int = 0
+        self._advisories: list = []
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -162,10 +164,18 @@ class StateMachine:
         self._state.source_hash = self.source_hash
         self._state.baseline_spec_repr = self.baseline_spec_repr
         if self.mode == Mode.LOCAL:
-            return self._run_local()
-        if self.mode == Mode.CI:
-            return self._run_ci()
-        raise ValueError("unknown mode: %s" % self.mode)
+            verdict = self._run_local()
+        elif self.mode == Mode.CI:
+            verdict = self._run_ci()
+        else:
+            raise ValueError("unknown mode: %s" % self.mode)
+
+        # Advisory axes run once after convergence, regardless of verdict
+        # (D-16). Covers PASS, HOLD/PENDING, ESCALATED.
+        self._run_advisory_axes()
+        self._serialize_advisories()
+        self._display_advisories()
+        return verdict
 
     def _maybe_load_prior_state(self) -> None:
         """Load .code-forge/state.json if LOCAL mode; skip if CI (STATE-09).
@@ -799,6 +809,65 @@ class StateMachine:
         self._state.verdict = Verdict.PASS
         self._state.converged = True
         self._persist_state()
+
+    def _run_advisory_axes(self) -> None:
+        """Post-convergence dispatch point for advisory axes (D-16).
+
+        Iterates self.advisory_runners, calls runner.run() on each,
+        and extends self._advisories with results. Advisory findings
+        are stored in self._advisories (list[AdvisoryFinding]), completely
+        separate from self._state.findings (list[StateFinding]).
+        """
+        from .advisory import AdvisoryFinding
+
+        diff_text = self.resolved_review.git_diff or ""
+        for runner in self.advisory_runners:
+            try:
+                findings = runner.run(diff_text, self.cwd)
+                self._advisories.extend(findings)
+            except Exception as exc:  # noqa: BLE001
+                self._state.infra_errors.append(
+                    "advisory runner failed: %s" % exc
+                )
+
+    def _serialize_advisories(self) -> None:
+        """Write advisory findings to advisory-findings.json (D-15).
+
+        Separate file from review-state.json. Uses tmp+replace atomic
+        pattern matching state.py convention.
+        """
+        if not self._advisories:
+            return
+        import dataclasses
+        out_dir = self.cwd / ".code-forge"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "advisory-findings.json"
+        tmp_path = out_path.with_suffix(".tmp")
+        data = [dataclasses.asdict(f) for f in self._advisories]
+        tmp_path.write_text(
+            json.dumps(data, indent=2), encoding="utf-8"
+        )
+        tmp_path.replace(out_path)
+
+    def _display_advisories(self) -> None:
+        """Display advisory findings on stderr after separator (D-17).
+
+        Advisory findings appear after blocking findings, separated by
+        a "--- Advisory ---" line. Each finding formatted as:
+        [AXIS] file:line_range - description
+        """
+        import sys
+        if not self._advisories:
+            return
+        print("", file=sys.stderr)
+        print("--- Advisory ---", file=sys.stderr)
+        for f in self._advisories:
+            line_str = "%d-%d" % (f.line_range[0], f.line_range[1]) \
+                if len(f.line_range) == 2 else str(f.line_range)
+            print(
+                "[%s] %s:%s - %s" % (f.axis, f.file, line_str, f.description),
+                file=sys.stderr,
+            )
 
     def _merge_findings(
         self,
