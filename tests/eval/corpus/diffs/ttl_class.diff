@@ -1,0 +1,48 @@
+diff --git a/src/code_forge/llm_invoke.py b/src/code_forge/llm_invoke.py
+index 4a5b6c7..8d9e0f1 100644
+--- a/src/code_forge/llm_invoke.py
++++ b/src/code_forge/llm_invoke.py
+@@ -42,7 +42,7 @@ def _build_openai_request(
+         prompt: str,
+         model: str,
+         max_tokens: int,
+-        **kwargs,
++        ttl_class: str = "standard",
+ ) -> dict:
+     """Build an OpenAI-compatible chat completion request body.
+
+@@ -52,12 +52,14 @@ def _build_openai_request(
+         model: model identifier string.
+         max_tokens: maximum tokens in response.
+
+     Returns:
+         Dict ready for requests.post(json=...).
+     """
+     return {
+         "model": model,
++        "ttl_class": ttl_class,
+         "max_tokens": max_tokens,
+         "messages": [
+             {"role": "user", "content": prompt},
+         ],
+     }
+diff --git a/tests/test_llm_invoke.py b/tests/test_llm_invoke.py
+index 2c3d4e5..6f7a8b9 100644
+--- a/tests/test_llm_invoke.py
++++ b/tests/test_llm_invoke.py
+@@ -28,6 +28,14 @@ class TestBuildOpenAIRequest:
+         body = _build_openai_request("hello", "gpt-4", 1024)
+         assert body["model"] == "gpt-4"
+         assert body["max_tokens"] == 1024
++        assert body["messages"][0]["content"] == "hello"
++
++    def test_ttl_class_default(self):
++        """Verify ttl_class defaults to standard."""
++        body = _build_openai_request("hello", "gpt-4", 1024)
++        assert body["ttl_class"] == "standard"
++
++    def test_ttl_class_override(self):
++        """Verify ttl_class can be overridden."""
++        body = _build_openai_request("hello", "gpt-4", 1024, ttl_class="priority")
++        assert body["ttl_class"] == "priority"
+

@@ -1,0 +1,49 @@
+diff --git a/surflare_watchdog.sh b/surflare_watchdog.sh
+index aad8963..3c5786f 100755
+--- a/surflare_watchdog.sh
++++ b/surflare_watchdog.sh
+@@ -775,9 +775,8 @@ EOF
+ 		return 1
+ 	fi
+ 
+-	# Ring buffer: max 2MB x 3 files = 6MB hard cap
+ 	tcpdump -i "nflog:$_trace_group" -w "$_trace_pcap" \
+-		-C 2 -W 3 2>"${_trace_pcap}.err" &
++		2>"${_trace_pcap}.err" &
+ 	_trace_tcpdump_pid=$!
+ 
+ 	local ready=0
+@@ -1060,10 +1059,7 @@ while true; do
+ 				if [ "$reconnect_count" -ge "$STORM_MAX" ]; then
+ 					stop_packet_trace >/dev/null 2>&1
+ 					log "Storm protection triggered: cooling for ${STORM_COOLING}s"
+-					sleep "$STORM_COOLING" &
+-					storm_sleep_pid=$!
+-					wait "$storm_sleep_pid"
+-					storm_sleep_pid=""
++					sleep "$STORM_COOLING" & storm_sleep_pid=$!; wait "$storm_sleep_pid"; storm_sleep_pid=""
+ 					reconnect_count=0
+ 					fail_count=0
+ 					transient_count=0
+@@ -1076,10 +1072,7 @@ while true; do
+ 			if [ "$reconnect_count" -ge "$STORM_MAX" ]; then
+ 				stop_packet_trace >/dev/null 2>&1
+ 				log "Storm protection triggered (connect failure): cooling for ${STORM_COOLING}s"
+-				sleep "$STORM_COOLING" &
+-				storm_sleep_pid=$!
+-				wait "$storm_sleep_pid"
+-				storm_sleep_pid=""
++				sleep "$STORM_COOLING" & storm_sleep_pid=$!; wait "$storm_sleep_pid"; storm_sleep_pid=""
+ 				reconnect_count=0
+ 				fail_count=0
+ 				transient_count=0
+@@ -1087,8 +1080,5 @@ while true; do
+ 		fi
+ 	fi
+ 
+-	# "sleep & wait" allows bash to handle SIGTERM immediately instead of
+-	# blocking until sleep finishes
+-	sleep "$CHECK_INTERVAL" &
+-	wait $!
++	sleep "$CHECK_INTERVAL" & storm_sleep_pid=$!; wait "$storm_sleep_pid"; storm_sleep_pid=""
+ done
