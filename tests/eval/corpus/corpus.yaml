@@ -1,0 +1,8 @@
+# Eval corpus manifest (EVAL-01 SC1).
+# Each entry is a real bug that forge should detect.
+# Format per D-07: name, diff_file (relative), expected_verdict, axis_tags.
+entries:
+  - name: gate-yaml-rce
+    diff_file: diffs/gate-yaml-rce.diff
+    expected_verdict: HOLD
+    axis_tags: [TRUST, SEC]
