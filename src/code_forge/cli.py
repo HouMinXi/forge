@@ -670,9 +670,24 @@ def _run_eval(args) -> int:
         return EXIT_CLI_ERROR
 
     # Lazy imports (cli.py convention)
+    import yaml as _y
     from .eval.corpus import load_corpus
     from .eval.runner import replay_entry
     from .eval.scorer import compute_summary, format_table, write_json_report
+
+    # Read caller's gate.yaml to get real backend config for replay
+    _gate_path = Path.cwd() / ".code-forge" / "gate.yaml"
+    _backend_config = None
+    try:
+        _gd = _y.safe_load(_gate_path.read_text(encoding="utf-8"))
+        if isinstance(_gd, dict):
+            _backends = _gd.get("backends", {})
+            if isinstance(_backends, dict) and args.backend in _backends:
+                _bc = _backends[args.backend]
+                if isinstance(_bc, dict):
+                    _backend_config = dict(_bc)
+    except (FileNotFoundError, _y.YAMLError):
+        pass
 
     # Load corpus
     try:
@@ -695,6 +710,7 @@ def _run_eval(args) -> int:
             corpus_dir=corpus_dir,
             backend_name=args.backend,
             runs=args.runs,
+            backend_config=_backend_config,
         )
         results.append(result)
 
