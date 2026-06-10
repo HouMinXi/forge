@@ -1,0 +1,282 @@
+"""Tests for eval pipeline replay runner (runner.py)."""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from code_forge.eval.corpus import CorpusEntry
+from code_forge.eval.runner import (
+    DETERMINISTIC_TAGS,
+    AxisHook,
+    register_axis_hook,
+    replay_entry,
+)
+from code_forge.eval.scorer import EvalResult
+
+
+def _entry(
+    name: str = "test",
+    expected: str = "HOLD",
+    tags: list[str] | None = None,
+    diff_file: str = "diffs/test.diff",
+) -> CorpusEntry:
+    return CorpusEntry(
+        name=name,
+        diff_file=diff_file,
+        expected_verdict=expected,
+        axis_tags=tags or ["TRUST"],
+    )
+
+
+class TestDeterministicTags:
+    """DETERMINISTIC_TAGS constant tests."""
+
+    def test_contains_trust(self) -> None:
+        assert "TRUST" in DETERMINISTIC_TAGS
+
+    def test_contains_sec(self) -> None:
+        assert "SEC" in DETERMINISTIC_TAGS
+
+    def test_contains_fixval(self) -> None:
+        assert "FIXVAL" in DETERMINISTIC_TAGS
+
+    def test_is_frozenset(self) -> None:
+        assert isinstance(DETERMINISTIC_TAGS, frozenset)
+
+
+class TestReplayEntry:
+    """replay_entry function tests."""
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_returns_eval_result(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """replay_entry returns EvalResult with correct caught_count."""
+        # git init succeeds, git apply succeeds, code-forge review exits 1 (HOLD)
+        mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        # Override for code-forge review call (non-zero = flagged)
+        def side_effect(cmd, **kwargs):
+            m = MagicMock()
+            if cmd[0] == "code-forge":
+                m.returncode = 1
+            else:
+                m.returncode = 0
+            m.stderr = b""
+            m.stdout = b""
+            return m
+        mock_run.side_effect = side_effect
+
+        diff_dir = tmp_path / "corpus"
+        diff_dir.mkdir()
+        diffs_dir = diff_dir / "diffs"
+        diffs_dir.mkdir()
+        (diffs_dir / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+        entry = _entry(tags=["TRUST"])
+        result = replay_entry(entry, diff_dir, "test-backend")
+        assert isinstance(result, EvalResult)
+        assert result.caught_count >= 1
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_skipped_on_apply_failure(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Diff apply error = SKIPPED result with reason string (D-12)."""
+        call_count = [0]
+        def side_effect(cmd, **kwargs):
+            call_count[0] += 1
+            m = MagicMock()
+            if "apply" in cmd:
+                m.returncode = 1
+                m.stderr = b"error: patch failed"
+            else:
+                m.returncode = 0
+            m.stdout = b""
+            return m
+        mock_run.side_effect = side_effect
+
+        diff_dir = tmp_path / "corpus"
+        diff_dir.mkdir()
+        diffs_dir = diff_dir / "diffs"
+        diffs_dir.mkdir()
+        (diffs_dir / "test.diff").write_text("bad diff")
+
+        entry = _entry(tags=["TRUST"])
+        result = replay_entry(entry, diff_dir, "test-backend")
+        assert result.actual_verdict == "SKIPPED"
+        assert "apply failed" in result.skipped_reason
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_skipped_on_timeout(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """subprocess.TimeoutExpired = SKIPPED result."""
+        call_count = [0]
+        def side_effect(cmd, **kwargs):
+            call_count[0] += 1
+            m = MagicMock()
+            if cmd[0] == "code-forge":
+                raise subprocess.TimeoutExpired(cmd, 300)
+            m.returncode = 0
+            m.stderr = b""
+            m.stdout = b""
+            return m
+        mock_run.side_effect = side_effect
+
+        diff_dir = tmp_path / "corpus"
+        diff_dir.mkdir()
+        diffs_dir = diff_dir / "diffs"
+        diffs_dir.mkdir()
+        (diffs_dir / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+        entry = _entry(tags=["TRUST"])
+        result = replay_entry(entry, diff_dir, "test-backend")
+        assert result.actual_verdict == "SKIPPED"
+        assert "timeout" in result.skipped_reason.lower()
+
+    def test_deterministic_tags_get_runs_1(self) -> None:
+        """Deterministic axis tags (TRUST, SEC, FIXVAL) default to runs=1."""
+        for tag in ["TRUST", "SEC", "FIXVAL"]:
+            entry = _entry(tags=[tag])
+            assert any(t in DETERMINISTIC_TAGS for t in entry.axis_tags)
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_llm_tags_get_runs_3(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """LLM axis tags (RUNTIME, LEGACY, INTENT) default to runs=3."""
+        mock_run.return_value = MagicMock(
+            returncode=1, stderr=b"", stdout=b"",
+        )
+
+        diff_dir = tmp_path / "corpus"
+        diff_dir.mkdir()
+        diffs_dir = diff_dir / "diffs"
+        diffs_dir.mkdir()
+        (diffs_dir / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+        entry = _entry(tags=["RUNTIME"])
+        result = replay_entry(entry, diff_dir, "test-backend")
+        assert result.runs == 3
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_runs_override(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """--runs N overrides default run count."""
+        mock_run.return_value = MagicMock(
+            returncode=0, stderr=b"", stdout=b"",
+        )
+
+        diff_dir = tmp_path / "corpus"
+        diff_dir.mkdir()
+        diffs_dir = diff_dir / "diffs"
+        diffs_dir.mkdir()
+        (diffs_dir / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+        entry = _entry(tags=["RUNTIME"])
+        result = replay_entry(entry, diff_dir, "test-backend", runs=5)
+        assert result.runs == 5
+
+    def test_missing_diff_file_skipped(self, tmp_path: Path) -> None:
+        """Missing diff file at runtime = SKIPPED (D-12)."""
+        diff_dir = tmp_path / "corpus"
+        diff_dir.mkdir()
+
+        entry = _entry(diff_file="diffs/nonexistent.diff")
+        result = replay_entry(entry, diff_dir, "test-backend")
+        assert result.actual_verdict == "SKIPPED"
+        assert "not found" in result.skipped_reason
+
+
+class TestAxisHook:
+    """AxisHook registration tests."""
+
+    def test_hook_has_pre_review(self) -> None:
+        hook = AxisHook()
+        assert hasattr(hook, "pre_review")
+
+    def test_hook_has_post_review(self) -> None:
+        hook = AxisHook()
+        assert hasattr(hook, "post_review")
+
+    def test_default_methods_are_noop(self) -> None:
+        hook = AxisHook()
+        entry = _entry()
+        result = EvalResult(
+            entry=entry, actual_verdict="PASS",
+            runs=1, caught_count=0, skipped_reason="",
+        )
+        # Should not raise
+        hook.pre_review(entry)
+        hook.post_review(entry, result)
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_hooks_called_during_replay(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """register_axis_hook: pre_review and post_review called during replay."""
+        import code_forge.eval.runner as runner_mod
+        original_hooks = runner_mod._AXIS_HOOKS.copy()
+        try:
+            runner_mod._AXIS_HOOKS.clear()
+
+            mock_hook = MagicMock(spec=AxisHook)
+            register_axis_hook(mock_hook)
+
+            mock_run.return_value = MagicMock(
+                returncode=0, stderr=b"", stdout=b"",
+            )
+
+            diff_dir = tmp_path / "corpus"
+            diff_dir.mkdir()
+            diffs_dir = diff_dir / "diffs"
+            diffs_dir.mkdir()
+            (diffs_dir / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+            entry = _entry(tags=["TRUST"])
+            replay_entry(entry, diff_dir, "test-backend")
+
+            mock_hook.pre_review.assert_called()
+            mock_hook.post_review.assert_called()
+        finally:
+            runner_mod._AXIS_HOOKS[:] = original_hooks
+
+    def test_register_appends_to_list(self) -> None:
+        """register_axis_hook appends, does NOT use entry_points or importlib."""
+        import code_forge.eval.runner as runner_mod
+        original_hooks = runner_mod._AXIS_HOOKS.copy()
+        try:
+            runner_mod._AXIS_HOOKS.clear()
+            h1 = AxisHook()
+            h2 = AxisHook()
+            register_axis_hook(h1)
+            register_axis_hook(h2)
+            assert len(runner_mod._AXIS_HOOKS) == 2
+            assert runner_mod._AXIS_HOOKS[0] is h1
+            assert runner_mod._AXIS_HOOKS[1] is h2
+        finally:
+            runner_mod._AXIS_HOOKS[:] = original_hooks
+
+    def test_no_plugin_discovery_imports(self) -> None:
+        """No entry_points, importlib.import_module, or pkg_resources (carry-forward 3)."""
+        import inspect
+        import code_forge.eval.runner as runner_mod
+        source = inspect.getsource(runner_mod)
+        for banned in ["entry_points", "importlib.import_module", "pkg_resources"]:
+            # Check import statements only, not docstring prose
+            for line in source.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'"):
+                    continue
+                if (stripped.startswith("from") or stripped.startswith("import")) and banned in stripped:
+                    pytest.fail(f"Found banned import: {stripped}")
