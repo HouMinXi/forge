@@ -128,6 +128,11 @@ You are a **quality engineer** whose job is to **find problems**, not to confirm
 - **Change categories to check**: return semantics, precondition changes, data structure layout, resource lifetime, global/shared state, dispatch/resolution tables (e.g., nla_map, getattr, registry dicts).
 - Applies to all languages: C callchain, Python getattr/dispatch, shell source/function calls, nla_map class resolution.
 
+### External input provenance
+
+For each external input in the changed code: who controls the source of
+this data, and what is the worst value a malicious caller could inject?
+
 ### Dismissal discipline
 
 - **Retraction skepticism**: if you initially flag an issue then retract it, apply higher evidence burden to the retraction. State the retraction explicitly. "The caller normally prevents this input" is NOT a valid dismiss.

@@ -1340,6 +1340,11 @@ def _run_hold_loop(
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
     for cycle in range(MAX_HOLD_CYCLES):
+        # Fresh TaintRunner per cycle to prevent cross-cycle state
+        # accumulation (infra_errors, source_files).
+        from .taint import TaintRunner
+
+        _taint_runner = TaintRunner()
         sm = StateMachine(
             mode=mode,
             falsifier=falsifier,
@@ -1356,6 +1361,7 @@ def _run_hold_loop(
             coverage_l1_active=coverage_l1_active,
             coverage_exempt_patterns=coverage_exempt_patterns or [],
             clean_round_threshold=clean_round_threshold,
+            advisory_runners=[_taint_runner],
         )
         verdict = sm.run()
         if verdict != Verdict.PENDING:
