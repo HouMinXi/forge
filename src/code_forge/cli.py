@@ -682,7 +682,12 @@ def _run_eval(args) -> int:
         _gd = _y.safe_load(_gate_path.read_text(encoding="utf-8"))
         if isinstance(_gd, dict):
             _backends = _gd.get("backends", {})
-            if isinstance(_backends, dict) and args.backend in _backends:
+            if isinstance(_backends, list):
+                for _entry in _backends:
+                    if isinstance(_entry, dict) and _entry.get("name") == args.backend:
+                        _backend_config = dict(_entry)
+                        break
+            elif isinstance(_backends, dict) and args.backend in _backends:
                 _bc = _backends[args.backend]
                 if isinstance(_bc, dict):
                     _backend_config = dict(_bc)
