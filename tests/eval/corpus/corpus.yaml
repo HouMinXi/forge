@@ -6,3 +6,43 @@ entries:
     diff_file: diffs/gate-yaml-rce.diff
     expected_verdict: HOLD
     axis_tags: [TRUST, SEC]
+
+  - name: E1-stale-nftables
+    diff_file: diffs/E1-stale-nftables.diff
+    expected_verdict: HOLD
+    axis_tags: [RUNTIME]
+
+  - name: E2-pcap-suffix
+    diff_file: diffs/E2-pcap-suffix.diff
+    expected_verdict: HOLD
+    axis_tags: [RUNTIME]
+
+  - name: E3-transit-probe
+    diff_file: diffs/E3-transit-probe.diff
+    expected_verdict: HOLD
+    axis_tags: [RUNTIME]
+
+  - name: E4-curl-tproxy
+    diff_file: diffs/E4-curl-tproxy.diff
+    expected_verdict: HOLD
+    axis_tags: [RUNTIME]
+
+  - name: E5-fast-502
+    diff_file: diffs/E5-fast-502.diff
+    expected_verdict: HOLD
+    axis_tags: [RUNTIME]
+
+  - name: E6-reprobe-blackout
+    diff_file: diffs/E6-reprobe-blackout.diff
+    expected_verdict: HOLD
+    axis_tags: [RUNTIME]
+
+  - name: BUG-P12-01
+    diff_file: diffs/BUG-P12-01.diff
+    expected_verdict: HOLD
+    axis_tags: [FIXVAL]
+
+  - name: ttl_class
+    diff_file: diffs/ttl_class.diff
+    expected_verdict: HOLD
+    axis_tags: [RUNTIME, FIXVAL]

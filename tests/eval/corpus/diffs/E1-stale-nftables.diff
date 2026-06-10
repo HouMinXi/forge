@@ -1,0 +1,19 @@
+diff --git a/surflare_watchdog.sh b/surflare_watchdog.sh
+index 383f15c..a0d1052 100755
+--- a/surflare_watchdog.sh
++++ b/surflare_watchdog.sh
+@@ -990,6 +990,14 @@ while true; do
+ 		# Local VPN state lost (process/nftables/routing gone) -- definitive failure,
+ 		# no network uncertainty. Skip accumulation and force reconnect immediately.
+ 		log "Local VPN state lost (process/nftables/routing), triggering immediate reconnect"
++		if nft list table inet surflare >/dev/null 2>&1; then
++			nft flush table inet surflare 2>/dev/null || true
++			nft delete table inet surflare 2>/dev/null || true
++			_stale=0
++			while ip rule del fwmark 0x1 lookup 100 2>/dev/null; do _stale=$((_stale+1)); done
++			ip route flush table 100 2>/dev/null || true
++			log "Flushed stale nftables/routing (${_stale} rule(s))"
++		fi
+ 		transient_count=0
+ 		fail_count=$FAIL_THRESHOLD
+ 
