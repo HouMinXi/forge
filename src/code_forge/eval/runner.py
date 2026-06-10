@@ -15,6 +15,7 @@ no config-driven plugin discovery.
 """
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -168,8 +169,9 @@ def replay_entry(
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # Determine actual verdict
-    if caught_count > 0:
+    # Determine actual verdict (D-11 majority vote for multi-run)
+    threshold = math.ceil(num_runs / 2) if num_runs > 1 else 1
+    if caught_count >= threshold:
         actual_verdict = "HOLD"
     else:
         actual_verdict = "PASS"
