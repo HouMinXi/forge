@@ -578,16 +578,26 @@ class TestForgeBackendRealEntry:
         "    model: deepseek-chat\n"
     )
 
-    def test_forge_backend_routes_via_real_entry(self, tmp_path):
+    def test_forge_backend_routes_via_real_entry(self, tmp_path, monkeypatch):
         """FORGE_BACKEND=deepseek resolves to 'subprocess' via _run_resolve_outlet."""
         import io
         import sys
+        import yaml
         from code_forge.cli import _run_resolve_outlet
         from code_forge.exit_codes import EXIT_PASS
+        from code_forge.trust import record_trust
 
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
-        (gate_dir / "gate.yaml").write_text(self._GATE)
+        gate_yaml_path = gate_dir / "gate.yaml"
+        gate_yaml_path.write_text(self._GATE)
+
+        # Trust the gate.yaml so _load_gate_backends returns configs.
+        config_home = tmp_path / "xdg-config"
+        config_home.mkdir()
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+        gate_data = yaml.safe_load(gate_yaml_path.read_text())
+        record_trust(gate_yaml_path, gate_data)
 
         env = {"FORGE_BACKEND": "deepseek", "DEEPSEEK_API_KEY": "dummy"}
         old_out, old_err = sys.stdout, sys.stderr
