@@ -7,11 +7,12 @@ Computes four-quadrant classification of eval results:
   - false_positive: expected PASS, actual HOLD (over-block)
 
 SKIPPED entries are excluded from the caught+missed denominator (D-12).
-Output uses raw counts ("Caught: 7/9"), NEVER percentages (carry-forward 2).
+Output uses raw counts ("Caught: 7/9"), never ratios (carry-forward 2).
 """
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -84,7 +85,8 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
             continue
 
         if r.entry.expected_verdict == "HOLD":
-            if r.caught_count > 0:
+            threshold = math.ceil(r.runs / 2) if r.runs > 1 else 1
+            if r.caught_count >= threshold:
                 caught += 1
             else:
                 missed += 1
@@ -108,7 +110,7 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
 def format_table(summary: EvalSummary) -> str:
     """Format eval summary as a human-readable ASCII table for stderr.
 
-    Uses raw counts "Caught: 7/9" NOT percentages (carry-forward 2).
+    Uses raw counts "Caught: 7/9", never ratios (carry-forward 2).
     Skip rate shown beside catch count (D-12).
 
     Args:
@@ -148,7 +150,7 @@ def format_table(summary: EvalSummary) -> str:
 
     lines.append("-" * len(header))
 
-    # Summary line: raw counts, never percentages
+    # Summary line: raw counts only
     denominator = summary.caught + summary.missed
     summary_parts = [f"Caught: {summary.caught}/{denominator}"]
     if summary.skipped > 0:
