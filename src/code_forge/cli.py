@@ -686,8 +686,13 @@ def _run_eval(args) -> int:
                 _bc = _backends[args.backend]
                 if isinstance(_bc, dict):
                     _backend_config = dict(_bc)
-    except (FileNotFoundError, _y.YAMLError):
-        pass
+    except FileNotFoundError:
+        pass  # no gate.yaml present; eval will use placeholder backend URL
+    except _y.YAMLError as exc:
+        print(
+            "Warning: could not parse gate.yaml backend config: %s" % exc,
+            file=sys.stderr,
+        )
 
     # Load corpus
     try:
