@@ -505,12 +505,30 @@ class StateMachine:
                 self.registry, self._source_files()
             )
             self._state.infra_errors.extend(l0_infra)
-            return l0_findings
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
                 "L0 runner failed: %s" % exc
             )
-            return []
+            l0_findings = []
+        # Danger-score (D-02/D-15): L0 CONFIRMED, can HOLD
+        if self.resolved_review.git_diff is None:
+            self._state.infra_errors.append(
+                "Danger-score requires a diff"
+                " -- skipping in non-git mode"
+            )
+        else:
+            try:
+                from .taint import danger_score_from_diff
+
+                danger_findings = danger_score_from_diff(
+                    self.resolved_review.git_diff,
+                )
+                l0_findings.extend(danger_findings)
+            except Exception as exc:  # noqa: BLE001
+                self._state.infra_errors.append(
+                    "Danger-score failed: %s" % exc
+                )
+        return l0_findings
 
     def _run_l1_phase(self) -> list[StateFinding]:
         """STATE-08 L1 detect phase. Runs AFTER L0 autofix in LOCAL mode.
@@ -826,6 +844,12 @@ class StateMachine:
         from .advisory import AdvisoryFinding
 
         diff_text = self.resolved_review.git_diff or ""
+        # Inject source_files for runners that need it (D-09).
+        for runner in self.advisory_runners:
+            if hasattr(runner, "source_files"):
+                runner.source_files = list(
+                    self.resolved_review.source_files
+                )
         for runner in self.advisory_runners:
             try:
                 findings = runner.run(diff_text, self.cwd)
@@ -834,6 +858,9 @@ class StateMachine:
                 self._state.infra_errors.append(
                     "advisory runner failed: %r\n%s" % (exc, traceback.format_exc())
                 )
+            # Collect infra_errors from runners that track them.
+            if hasattr(runner, "infra_errors"):
+                self._state.infra_errors.extend(runner.infra_errors)
 
     def _serialize_advisories(self) -> None:
         """Write advisory findings to advisory-findings.json (D-15).
