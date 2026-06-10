@@ -55,14 +55,14 @@ def _config_dir() -> Path:
     return Path(base) / "code-forge"
 
 
-def _trust_store_path() -> Path:
+def _trust_store_path(config_dir: Optional[Path] = None) -> Path:
     """Return the path to the trust store JSON file."""
-    return _config_dir() / "trusted.json"
+    return (config_dir if config_dir is not None else _config_dir()) / "trusted.json"
 
 
-def _load_trust_store() -> dict:
+def _load_trust_store(config_dir: Optional[Path] = None) -> dict:
     """Load trusted.json, returning {} on missing or corrupt file."""
-    path = _trust_store_path()
+    path = _trust_store_path(config_dir)
     if not path.exists():
         return {}
     try:
@@ -71,9 +71,9 @@ def _load_trust_store() -> dict:
         return {}
 
 
-def _save_trust_store(store: dict) -> None:
+def _save_trust_store(store: dict, config_dir: Optional[Path] = None) -> None:
     """Write trust store atomically (tmp + replace, POSIX safe)."""
-    path = _trust_store_path()
+    path = _trust_store_path(config_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
@@ -107,13 +107,22 @@ def is_trusted(gate_yaml_path: Path, gate_data: dict) -> bool:
     return entry.get("hash") == current_hash
 
 
-def record_trust(gate_yaml_path: Path, gate_data: dict) -> None:
-    """Record trust for gate.yaml's current backends block."""
-    store = _load_trust_store()
+def record_trust(
+    gate_yaml_path: Path,
+    gate_data: dict,
+    config_dir: Optional[Path] = None,
+) -> None:
+    """Record trust for gate.yaml's current backends block.
+
+    Args:
+        config_dir: override the trust store directory (used by eval runner
+            to isolate per-run trust state without mutating os.environ).
+    """
+    store = _load_trust_store(config_dir)
     key = str(gate_yaml_path.resolve())
     current_hash = hash_backends_block(gate_data)
     store[key] = {"hash": current_hash}
-    _save_trust_store(store)
+    _save_trust_store(store, config_dir)
 
 
 def revoke_trust(gate_yaml_path: Path) -> None:
