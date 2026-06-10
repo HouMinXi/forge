@@ -362,3 +362,123 @@ class TestCloseoutBehaviors:
         assert "apply" in call_order
         assert "record_trust" in call_order
         assert call_order.index("apply") < call_order.index("record_trust")
+
+    @patch("code_forge.eval.runner.shutil.copytree")
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_base_files_seeded_before_apply(
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_copytree: MagicMock, tmp_path: Path,
+    ) -> None:
+        """When base_files/<entry> exists, copytree runs before git apply."""
+        call_order: list[str] = []
+
+        def run_side(cmd, **kwargs):
+            if "apply" in (cmd or []):
+                call_order.append("apply")
+            m = MagicMock()
+            m.returncode = 0
+            m.stderr = b""
+            m.stdout = b""
+            return m
+
+        mock_run.side_effect = run_side
+        mock_copytree.side_effect = lambda *a, **kw: call_order.append("copytree")
+
+        diff_dir = tmp_path / "corpus"
+        (diff_dir / "diffs").mkdir(parents=True)
+        (diff_dir / "diffs" / "test.diff").write_text("--- a/f\n+++ b/f\n")
+        base = diff_dir / "base_files" / "test"
+        base.mkdir(parents=True)
+        (base / "seed.py").write_text("# seed\n")
+
+        entry = _entry(name="test", tags=["TRUST"])
+        replay_entry(entry, diff_dir, "test-backend")
+
+        mock_copytree.assert_called_once()
+        assert "copytree" in call_order
+        assert "apply" in call_order
+        assert call_order.index("copytree") < call_order.index("apply")
+
+    @patch("code_forge.eval.runner.shutil.copytree")
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_base_files_seed_oserror_returns_skipped(
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_copytree: MagicMock, tmp_path: Path,
+    ) -> None:
+        """OSError during seed copytree -> SKIPPED, not crash."""
+        mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        mock_copytree.side_effect = OSError("Permission denied")
+
+        diff_dir = tmp_path / "corpus"
+        (diff_dir / "diffs").mkdir(parents=True)
+        (diff_dir / "diffs" / "test.diff").write_text("--- a/f\n+++ b/f\n")
+        base = diff_dir / "base_files" / "test"
+        base.mkdir(parents=True)
+        (base / "seed.py").write_text("# seed\n")
+
+        entry = _entry(name="test", tags=["TRUST"])
+        result = replay_entry(entry, diff_dir, "test-backend")
+        assert result.actual_verdict == "SKIPPED"
+        assert "infra" in result.skipped_reason.lower()
+
+
+class TestInfraFailureDetection:
+    """Skip-taxonomy: backend/infra failures must score SKIPPED, not caught."""
+
+    def test_connection_refused_is_infra(self) -> None:
+        from code_forge.eval.runner import _is_infra_failure
+        assert _is_infra_failure("ConnectionRefusedError: [Errno 111]")
+
+    def test_connection_timed_out_is_infra(self) -> None:
+        from code_forge.eval.runner import _is_infra_failure
+        assert _is_infra_failure("Connection timed out")
+
+    def test_read_timed_out_is_infra(self) -> None:
+        from code_forge.eval.runner import _is_infra_failure
+        assert _is_infra_failure("Read timed out")
+
+    def test_api_connection_error_is_infra(self) -> None:
+        from code_forge.eval.runner import _is_infra_failure
+        assert _is_infra_failure("APIConnectionError: server unreachable")
+
+    def test_normal_review_failure_is_not_infra(self) -> None:
+        from code_forge.eval.runner import _is_infra_failure
+        assert not _is_infra_failure("Review completed with findings")
+
+    def test_empty_stderr_is_not_infra(self) -> None:
+        from code_forge.eval.runner import _is_infra_failure
+        assert not _is_infra_failure("")
+
+    def test_generic_timeout_word_is_not_infra(self) -> None:
+        """'Timeout' as a lone word must NOT trigger infra classification."""
+        from code_forge.eval.runner import _is_infra_failure
+        assert not _is_infra_failure("WARNING: timeout parameter was ignored")
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_infra_failure_returns_skipped(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Backend down during review -> SKIPPED, not HOLD."""
+        def side_effect(cmd, **kwargs):
+            m = MagicMock()
+            if cmd and cmd[0] == "code-forge":
+                m.returncode = 1
+                m.stderr = b"ConnectionRefusedError: [Errno 111]"
+            else:
+                m.returncode = 0
+                m.stderr = b""
+            m.stdout = b""
+            return m
+        mock_run.side_effect = side_effect
+
+        diff_dir = tmp_path / "corpus"
+        (diff_dir / "diffs").mkdir(parents=True)
+        (diff_dir / "diffs" / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+        entry = _entry(tags=["TRUST"])
+        result = replay_entry(entry, diff_dir, "test-backend")
+        assert result.actual_verdict == "SKIPPED"
+        assert "infra" in result.skipped_reason.lower()

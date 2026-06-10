@@ -44,3 +44,4 @@ markers = [
     "real_api: opt-in tests that call real backends (skipped by default)",
 ]
 pythonpath = ["src"]
+norecursedirs = ["tests/eval/corpus/base_files"]
