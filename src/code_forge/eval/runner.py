@@ -83,23 +83,45 @@ def _default_runs(entry: CorpusEntry) -> int:
     return _DEFAULT_LLM_RUNS
 
 
-def _create_gate_yaml(repo_dir: Path, backend_name: str) -> Path:
-    """Create a minimal gate.yaml in the temp repo for eval."""
+def _create_gate_yaml(
+    repo_dir: Path,
+    backend_name: str,
+    backend_config: Optional[dict] = None,
+) -> Path:
+    """Create or merge harness gate.yaml in the temp repo for eval.
+
+    If gate.yaml already exists (e.g., from the applied diff), merge the
+    harness backend into it. The harness backend config wins if the diff
+    created one with the same name.
+    """
     gate_dir = repo_dir / ".code-forge"
     gate_dir.mkdir(parents=True, exist_ok=True)
     gate_path = gate_dir / "gate.yaml"
-    gate_data = {
-        "backends": {
-            backend_name: {
-                "type": "api",
-                "format": "openai",
-                "base_url": "http://localhost:0/v1",
-                "model": "eval-placeholder",
-            },
-        },
-    }
+
+    existing: dict = {}
+    if gate_path.exists():
+        loaded = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            existing = loaded
+
+    if backend_config is not None:
+        harness_backend = dict(backend_config)
+    else:
+        harness_backend = {
+            "type": "api",
+            "format": "openai",
+            "base_url": "http://localhost:0/v1",
+            "model": "eval-placeholder",
+        }
+
+    backends = existing.get("backends", {})
+    if not isinstance(backends, dict):
+        backends = {}
+    backends[backend_name] = harness_backend
+    existing["backends"] = backends
+
     gate_path.write_text(
-        yaml.dump(gate_data, default_flow_style=False),
+        yaml.dump(existing, default_flow_style=False),
         encoding="utf-8",
     )
     return gate_path
@@ -110,6 +132,7 @@ def replay_entry(
     corpus_dir: Path,
     backend_name: str,
     runs: Optional[int] = None,
+    backend_config: Optional[dict] = None,
 ) -> EvalResult:
     """Run a single corpus entry through code-forge review via subprocess.
 
@@ -150,6 +173,7 @@ def replay_entry(
         try:
             flagged, skip_reason = _run_single(
                 entry, diff_path, temp_dir, backend_name,
+                backend_config,
             )
             if skip_reason:
                 # SKIPPED -- return immediately
@@ -196,8 +220,14 @@ def _run_single(
     diff_path: Path,
     temp_dir: str,
     backend_name: str,
+    backend_config: Optional[dict] = None,
 ) -> tuple[bool, str]:
     """Run one replay pass in an isolated temp directory.
+
+    Order: git init -> apply diff -> write/merge harness gate.yaml ->
+    record_trust -> code-forge review. The diff is applied BEFORE gate.yaml
+    so diffs that create .code-forge/gate.yaml (e.g., gate-yaml-rce) do not
+    collide with the harness config.
 
     Returns:
         Tuple of (flagged, skip_reason). If skip_reason is non-empty,
@@ -206,7 +236,7 @@ def _run_single(
     """
     repo_path = Path(temp_dir)
 
-    # Initialize git repo
+    # 1. Initialize git repo
     subprocess.run(
         ["git", "init", "-b", "main"],
         cwd=temp_dir, capture_output=True, check=False,
@@ -217,29 +247,7 @@ def _run_single(
         cwd=temp_dir, capture_output=True, check=False,
     )
 
-    # Create gate.yaml and trust it
-    gate_path = _create_gate_yaml(repo_path, backend_name)
-
-    # Set XDG_CONFIG_HOME to isolate trust state
-    xdg_dir = repo_path / ".xdg-config"
-    xdg_dir.mkdir(parents=True, exist_ok=True)
-    eval_env = os.environ.copy()
-    eval_env["XDG_CONFIG_HOME"] = str(xdg_dir)
-
-    # Read gate data and record trust
-    gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
-    # Temporarily set XDG_CONFIG_HOME for record_trust
-    old_xdg = os.environ.get("XDG_CONFIG_HOME")
-    try:
-        os.environ["XDG_CONFIG_HOME"] = str(xdg_dir)
-        record_trust(gate_path, gate_data)
-    finally:
-        if old_xdg is None:
-            os.environ.pop("XDG_CONFIG_HOME", None)
-        else:
-            os.environ["XDG_CONFIG_HOME"] = old_xdg
-
-    # Apply the diff (note: no --allow-empty flag, that is git-commit only)
+    # 2. Apply the diff FIRST (before gate.yaml to avoid collision)
     apply_result = subprocess.run(
         ["git", "apply", str(diff_path.resolve())],
         cwd=temp_dir, capture_output=True, check=False,
@@ -250,7 +258,29 @@ def _run_single(
             stderr_text = stderr_text.decode("utf-8", errors="replace")
         return False, "git apply failed: %s" % stderr_text
 
-    # Run code-forge review
+    # 3. Write/merge harness gate.yaml (after diff; harness backend wins)
+    gate_path = _create_gate_yaml(repo_path, backend_name, backend_config)
+
+    # 4. Set XDG_CONFIG_HOME to isolate trust state + skip worktree check
+    xdg_dir = repo_path / ".xdg-config"
+    xdg_dir.mkdir(parents=True, exist_ok=True)
+    eval_env = os.environ.copy()
+    eval_env["XDG_CONFIG_HOME"] = str(xdg_dir)
+    eval_env["FORGE_SKIP_WORKTREE_CHECK"] = "1"
+
+    # 5. Record trust on the final merged gate.yaml
+    gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
+    old_xdg = os.environ.get("XDG_CONFIG_HOME")
+    try:
+        os.environ["XDG_CONFIG_HOME"] = str(xdg_dir)
+        record_trust(gate_path, gate_data)
+    finally:
+        if old_xdg is None:
+            os.environ.pop("XDG_CONFIG_HOME", None)
+        else:
+            os.environ["XDG_CONFIG_HOME"] = old_xdg
+
+    # 6. Run code-forge review
     try:
         review_result = subprocess.run(
             ["code-forge", "review", "--backend", backend_name],
