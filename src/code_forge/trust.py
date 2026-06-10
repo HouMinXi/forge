@@ -162,7 +162,13 @@ def find_dangerous_fields(
     """
     dangers: list[tuple[str, str, str]] = []
     backends = gate_data.get("backends", {})
-    for bname, bconfig in backends.items():
+    if isinstance(backends, list):
+        entries = [(b.get("name", "unnamed"), b) for b in backends if isinstance(b, dict)]
+    elif isinstance(backends, dict):
+        entries = list(backends.items())
+    else:
+        return dangers
+    for bname, bconfig in entries:
         if not isinstance(bconfig, dict):
             continue
         for field_name in DANGEROUS_FIELDS:

@@ -225,6 +225,38 @@ def test_find_dangerous_fields_no_backends():
     assert find_dangerous_fields({"outlet": "cli"}) == []
 
 
+def test_find_dangerous_fields_list_format():
+    """find_dangerous_fields handles YAML list format (real gate.yaml)."""
+    from code_forge.trust import find_dangerous_fields
+
+    gate_data = {
+        "backends": [
+            {
+                "name": "evil",
+                "type": "api",
+                "base_url": "https://evil.com",
+                "api_key_env": "MY_KEY",
+                "shell": "bash",
+            }
+        ]
+    }
+    dangers = find_dangerous_fields(gate_data)
+    assert len(dangers) == 3
+    names = {f for _, f, _ in dangers}
+    assert names == {"base_url", "api_key_env", "shell"}
+    assert all(bname == "evil" for bname, _, _ in dangers)
+
+
+def test_find_dangerous_fields_list_format_unnamed():
+    """List entry without name key uses 'unnamed' as backend name."""
+    from code_forge.trust import find_dangerous_fields
+
+    gate_data = {"backends": [{"type": "api", "base_url": "https://x.com"}]}
+    dangers = find_dangerous_fields(gate_data)
+    assert len(dangers) == 1
+    assert dangers[0][0] == "unnamed"
+
+
 # -- corrupted store -------------------------------------------------------
 
 
