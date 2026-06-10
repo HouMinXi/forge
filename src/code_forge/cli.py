@@ -484,6 +484,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="revoke trust for current repo",
     )
 
+    # --- EVAL subcommand: false-green rate evaluation (D-08) ---
+    eval_parser = subparsers.add_parser(
+        'eval',
+        help='evaluate false-green rate on bug corpus',
+    )
+    eval_parser.add_argument(
+        "--corpus", required=True, type=Path,
+        help="path to corpus.yaml manifest",
+    )
+    eval_parser.add_argument(
+        "--backend", required=True,
+        help="backend name to evaluate",
+    )
+    eval_parser.add_argument(
+        "--runs", type=int, default=None,
+        help="override run count per entry (must be >= 1)",
+    )
+    eval_parser.add_argument(
+        "--output", type=Path, default=None,
+        help="path for JSON results file",
+    )
+
     return parser
 
 
@@ -632,6 +654,60 @@ def _run_test_assertion_review(
         return []
 
 
+def _run_eval(args) -> int:
+    """Handle ``code-forge eval`` subcommand (D-08).
+
+    Loads the corpus manifest, replays each entry through the pipeline,
+    computes summary, prints table to stderr, optionally writes JSON.
+
+    Returns EXIT_PASS (0) on success, EXIT_CLI_ERROR (2) on bad args or
+    missing/malformed corpus. Does NOT raise CliError (non-review
+    subcommand convention, matches gate-check/mutation-check).
+    """
+    # Validate --runs (must be >= 1 if provided)
+    if args.runs is not None and args.runs < 1:
+        print("--runs must be >= 1", file=sys.stderr)
+        return EXIT_CLI_ERROR
+
+    # Lazy imports (cli.py convention)
+    from .eval.corpus import load_corpus
+    from .eval.runner import replay_entry
+    from .eval.scorer import compute_summary, format_table, write_json_report
+
+    # Load corpus
+    try:
+        entries = load_corpus(args.corpus)
+    except FileNotFoundError:
+        print(
+            "corpus not found: %s" % args.corpus, file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+    except ValueError as exc:
+        print("corpus error: %s" % exc, file=sys.stderr)
+        return EXIT_CLI_ERROR
+
+    # Replay each entry
+    corpus_dir = args.corpus.parent
+    results = []
+    for entry in entries:
+        result = replay_entry(
+            entry,
+            corpus_dir=corpus_dir,
+            backend_name=args.backend,
+            runs=args.runs,
+        )
+        results.append(result)
+
+    # Compute summary + output
+    summary = compute_summary(results)
+    print(format_table(summary), file=sys.stderr)
+
+    if args.output is not None:
+        write_json_report(summary, args.output)
+
+    return EXIT_PASS
+
+
 def _run_trust(args, cwd: Path) -> int:
     """Handle ``code-forge trust`` subcommand (D-04).
 
@@ -725,7 +801,7 @@ def main() -> int:
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
-        'detect', 'resolve-outlet', 'init', 'trust',
+        'detect', 'resolve-outlet', 'init', 'trust', 'eval',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -821,6 +897,9 @@ def main() -> int:
 
     elif args.subcommand == 'trust':
         return _run_trust(args, cwd=Path.cwd())
+
+    elif args.subcommand == 'eval':
+        return _run_eval(args)
 
     elif args.subcommand == 'init':
         from .init_template import GATE_YAML_TEMPLATE

@@ -117,10 +117,10 @@ class TestRunEval:
         mock_args.runs = None
         mock_args.output = None
 
-        with patch("code_forge.cli.load_corpus", return_value=[entry]), \
-             patch("code_forge.cli.replay_entry", return_value=result), \
-             patch("code_forge.cli.compute_summary") as mock_summary, \
-             patch("code_forge.cli.format_table", return_value="table-output"):
+        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
+             patch("code_forge.eval.runner.replay_entry", return_value=result), \
+             patch("code_forge.eval.scorer.compute_summary") as mock_summary, \
+             patch("code_forge.eval.scorer.format_table", return_value="table-output"):
 
             summary = EvalSummary(
                 total=1, caught=1, missed=0, correct_pass=0,
@@ -153,11 +153,11 @@ class TestRunEval:
             false_positive=0, skipped=0, results=[result],
         )
 
-        with patch("code_forge.cli.load_corpus", return_value=[entry]), \
-             patch("code_forge.cli.replay_entry", return_value=result), \
-             patch("code_forge.cli.compute_summary", return_value=summary), \
-             patch("code_forge.cli.format_table", return_value="t"), \
-             patch("code_forge.cli.write_json_report") as mock_write:
+        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
+             patch("code_forge.eval.runner.replay_entry", return_value=result), \
+             patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
+             patch("code_forge.eval.scorer.format_table", return_value="t"), \
+             patch("code_forge.eval.scorer.write_json_report") as mock_write:
 
             rc = _run_eval(mock_args)
 
@@ -182,10 +182,10 @@ class TestRunEval:
             false_positive=0, skipped=0, results=[result],
         )
 
-        with patch("code_forge.cli.load_corpus", return_value=[entry]), \
-             patch("code_forge.cli.replay_entry", return_value=result) as mock_replay, \
-             patch("code_forge.cli.compute_summary", return_value=summary), \
-             patch("code_forge.cli.format_table", return_value="t"):
+        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
+             patch("code_forge.eval.runner.replay_entry", return_value=result) as mock_replay, \
+             patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
+             patch("code_forge.eval.scorer.format_table", return_value="t"):
 
             rc = _run_eval(mock_args)
 
