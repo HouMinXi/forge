@@ -96,6 +96,12 @@ def _emit_ci_output(
 def _load_gate_backends(gate_yaml_path: Path) -> list:
     """Load backend configs from gate.yaml, or return [] if absent.
 
+    Trust guard (SEC-01): refuses to return backend configs for untrusted
+    repos. When gate.yaml exists but its backends block hash does not match
+    the stored trust record in ~/.config/code-forge/trusted.json, returns []
+    and prints a warning to stderr (D-06). The user must run
+    ``code-forge trust`` to explicitly authorize the backends.
+
     Raises:
         CliError: gate.yaml exists but is corrupt or has invalid backend config.
     """
@@ -111,9 +117,20 @@ def _load_gate_backends(gate_yaml_path: Path) -> list:
     except _y.YAMLError as exc:
         raise CliError("gate.yaml parse error: %s" % exc) from exc
 
-    if isinstance(gd, dict):
-        return load_backend_configs(gd)
-    return []
+    if gd is None or not isinstance(gd, dict):
+        return []
+
+    # Trust guard (SEC-01 / D-06): check trust before loading backends.
+    from .trust import is_trusted
+    if not is_trusted(gate_yaml_path, gd):
+        print(
+            "Untrusted repo backends ignored. "
+            "Run 'code-forge trust' to enable.",
+            file=sys.stderr,
+        )
+        return []
+
+    return load_backend_configs(gd)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -452,6 +469,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="overwrite existing gate.yaml",
     )
 
+    # --- TRUST subcommand: manage trust for repo-supplied backends ---
+    trust_parser = subparsers.add_parser(
+        'trust',
+        help='manage trust for repo-supplied backends',
+    )
+    trust_group = trust_parser.add_mutually_exclusive_group()
+    trust_group.add_argument(
+        "--status", action="store_true",
+        help="show trust state for current repo",
+    )
+    trust_group.add_argument(
+        "--revoke", action="store_true",
+        help="revoke trust for current repo",
+    )
+
     return parser
 
 
@@ -600,6 +632,75 @@ def _run_test_assertion_review(
         return []
 
 
+def _run_trust(args, cwd: Path) -> int:
+    """Handle ``code-forge trust`` subcommand (D-04).
+
+    Bare trust: mark current repo's gate.yaml as trusted.
+    --status: show trust state for current repo.
+    --revoke: remove the repo entry from trusted.json.
+    """
+    import yaml as _y
+    from .trust import (
+        find_dangerous_fields,
+        record_trust,
+        revoke_trust,
+        trust_status,
+    )
+
+    gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+    try:
+        with open(gate_yaml_path, "r", encoding="utf-8") as _f:
+            gd = _y.safe_load(_f)
+    except FileNotFoundError:
+        print(
+            "gate.yaml not found at %s" % gate_yaml_path,
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+    except _y.YAMLError as exc:
+        print(
+            "gate.yaml parse error: %s" % exc, file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+
+    if gd is None or not isinstance(gd, dict):
+        print(
+            "gate.yaml is empty or invalid", file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+
+    if args.status:
+        s = trust_status(gate_yaml_path, gd)
+        print("Trusted: %s" % s.trusted, file=sys.stderr)
+        print(
+            "Stored hash: %s" % (s.stored_hash or "(none)"),
+            file=sys.stderr,
+        )
+        print("Current hash: %s" % s.current_hash, file=sys.stderr)
+        print("Path: %s" % s.gate_yaml_path, file=sys.stderr)
+        return EXIT_PASS
+
+    if args.revoke:
+        revoke_trust(gate_yaml_path)
+        print(
+            "Trust revoked for %s" % gate_yaml_path, file=sys.stderr,
+        )
+        return EXIT_PASS
+
+    # Bare trust: display dangerous fields (D-05), then record trust.
+    dangers = find_dangerous_fields(gd)
+    if dangers:
+        print("Dangerous fields found:", file=sys.stderr)
+        for bname, fname, fvalue in dangers:
+            print(
+                "  %s.%s = %s" % (bname, fname, fvalue),
+                file=sys.stderr,
+            )
+    record_trust(gate_yaml_path, gd)
+    print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
+    return EXIT_PASS
+
+
 def main() -> int:
     """Entry point. Returns exit code (int).
 
@@ -624,7 +725,7 @@ def main() -> int:
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
-        'detect', 'resolve-outlet', 'init',
+        'detect', 'resolve-outlet', 'init', 'trust',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -717,6 +818,9 @@ def main() -> int:
 
     elif args.subcommand == 'resolve-outlet':
         return _run_resolve_outlet(env=os.environ, cwd=Path.cwd())
+
+    elif args.subcommand == 'trust':
+        return _run_trust(args, cwd=Path.cwd())
 
     elif args.subcommand == 'init':
         from .init_template import GATE_YAML_TEMPLATE
