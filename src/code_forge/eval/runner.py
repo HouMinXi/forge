@@ -224,10 +224,9 @@ def _run_single(
 ) -> tuple[bool, str]:
     """Run one replay pass in an isolated temp directory.
 
-    Order: git init -> apply diff -> write/merge harness gate.yaml ->
-    record_trust -> code-forge review. The diff is applied BEFORE gate.yaml
-    so diffs that create .code-forge/gate.yaml (e.g., gate-yaml-rce) do not
-    collide with the harness config.
+    The diff is applied before the harness gate.yaml is written so that
+    diffs which create .code-forge/gate.yaml (e.g., gate-yaml-rce) do not
+    collide with the harness backend config.
 
     Returns:
         Tuple of (flagged, skip_reason). If skip_reason is non-empty,
@@ -236,7 +235,6 @@ def _run_single(
     """
     repo_path = Path(temp_dir)
 
-    # 1. Initialize git repo
     subprocess.run(
         ["git", "init", "-b", "main"],
         cwd=temp_dir, capture_output=True, check=False,
@@ -247,7 +245,6 @@ def _run_single(
         cwd=temp_dir, capture_output=True, check=False,
     )
 
-    # 2. Apply the diff FIRST (before gate.yaml to avoid collision)
     apply_result = subprocess.run(
         ["git", "apply", str(diff_path.resolve())],
         cwd=temp_dir, capture_output=True, check=False,
@@ -258,29 +255,18 @@ def _run_single(
             stderr_text = stderr_text.decode("utf-8", errors="replace")
         return False, "git apply failed: %s" % stderr_text
 
-    # 3. Write/merge harness gate.yaml (after diff; harness backend wins)
     gate_path = _create_gate_yaml(repo_path, backend_name, backend_config)
 
-    # 4. Set XDG_CONFIG_HOME to isolate trust state + skip worktree check
     xdg_dir = repo_path / ".xdg-config"
     xdg_dir.mkdir(parents=True, exist_ok=True)
     eval_env = os.environ.copy()
     eval_env["XDG_CONFIG_HOME"] = str(xdg_dir)
     eval_env["FORGE_SKIP_WORKTREE_CHECK"] = "1"
 
-    # 5. Record trust on the final merged gate.yaml
+    # Pass xdg_dir directly to avoid mutating os.environ (thread-safe).
     gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
-    old_xdg = os.environ.get("XDG_CONFIG_HOME")
-    try:
-        os.environ["XDG_CONFIG_HOME"] = str(xdg_dir)
-        record_trust(gate_path, gate_data)
-    finally:
-        if old_xdg is None:
-            os.environ.pop("XDG_CONFIG_HOME", None)
-        else:
-            os.environ["XDG_CONFIG_HOME"] = old_xdg
+    record_trust(gate_path, gate_data, config_dir=xdg_dir)
 
-    # 6. Run code-forge review
     try:
         review_result = subprocess.run(
             ["code-forge", "review", "--backend", backend_name],

@@ -266,3 +266,22 @@ def test_no_in_repo_trust_file():
 
     source = inspect.getsource(trust_mod)
     assert ".trusted" not in source
+
+
+def test_record_trust_with_explicit_config_dir(tmp_path, gate_yaml, monkeypatch):
+    """record_trust(config_dir=...) isolates writes from os.environ trust store."""
+    from code_forge.trust import record_trust, _load_trust_store
+
+    isolated_dir = tmp_path / "isolated-config" / "code-forge"
+    isolated_dir.mkdir(parents=True)
+    # Ensure os.environ does not point here
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "env-config"))
+
+    gate_data = {"backends": {"x": {"type": "api"}}}
+    record_trust(gate_yaml, gate_data, config_dir=isolated_dir)
+
+    # Written to explicit dir
+    assert (isolated_dir / "trusted.json").exists()
+    # os.environ trust store untouched
+    env_store = _load_trust_store()
+    assert str(gate_yaml.resolve()) not in env_store
