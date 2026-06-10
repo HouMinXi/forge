@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# Semgrep taint rules for forge REVIEW-TRUST-01 sub-capability (b).
+#
+# Intraprocedural only (semgrep CE). Cross-function flows require
+# semgrep Pro and are out of scope (D-11).
+#
+# D-12 source/sink pairs. open() is source only -- open-as-sink
+# deferred per self-loop constraint (see 18-CONTEXT.md D-12).
+rules:
+  - id: forge-taint-config-to-subprocess
+    severity: WARNING
+    languages: [python]
+    message: >-
+      Tainted data from $SOURCE flows to subprocess sink.
+      Intraprocedural only -- cross-function flows not detected.
+    mode: taint
+    pattern-sources:
+      - pattern: os.environ[...]
+      - pattern: os.environ.get(...)
+      - pattern: os.getenv(...)
+      - pattern: yaml.safe_load(...)
+      - pattern: yaml.load(...)
+      - pattern: json.load(...)
+      - pattern: open(...)
+    pattern-sinks:
+      - pattern: subprocess.run($CMD, ...)
+        focus-metavariable: $CMD
+      - pattern: subprocess.Popen($CMD, ...)
+        focus-metavariable: $CMD
+      - pattern: subprocess.call($CMD, ...)
+        focus-metavariable: $CMD
+      - pattern: os.system($CMD)
+        focus-metavariable: $CMD
+      - pattern: os.popen($CMD)
+        focus-metavariable: $CMD
+
+  - id: forge-taint-config-to-network
+    severity: WARNING
+    languages: [python]
+    message: >-
+      Tainted data from $SOURCE flows to network sink.
+      Intraprocedural only -- cross-function flows not detected.
+    mode: taint
+    pattern-sources:
+      - pattern: os.environ[...]
+      - pattern: os.environ.get(...)
+      - pattern: os.getenv(...)
+      - pattern: yaml.safe_load(...)
+      - pattern: yaml.load(...)
+      - pattern: json.load(...)
+      - pattern: open(...)
+    pattern-sinks:
+      - pattern: urllib.request.urlopen($URL, ...)
+        focus-metavariable: $URL
+      - pattern: requests.get($URL, ...)
+        focus-metavariable: $URL
+      - pattern: requests.post($URL, ...)
+        focus-metavariable: $URL

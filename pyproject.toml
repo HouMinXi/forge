@@ -37,7 +37,7 @@ code-forge = "code_forge.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-code_forge = ["skills/**/*", "skills/**/.gitkeep"]
+code_forge = ["skills/**/*", "skills/**/.gitkeep", "rules/**/*"]
 
 [tool.pytest.ini_options]
 markers = [
