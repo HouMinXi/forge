@@ -23,7 +23,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    from .advisory import AdvisoryFinding, AxisRunner
 
 import logging
 
@@ -146,7 +149,7 @@ class StateMachine:
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
     clean_round_threshold: int = 3
-    advisory_runners: list = field(default_factory=list)
+    advisory_runners: "list[AxisRunner]" = field(default_factory=list)
     _state: State = field(default_factory=State, init=False)
 
     def __post_init__(self) -> None:
@@ -155,7 +158,7 @@ class StateMachine:
         self._round_output_tokens: int = 0
         self._round_duration: float = 0.0
         self._pass_counter: int = 0
-        self._advisories: list = []
+        self._advisories: "list[AdvisoryFinding]" = []
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
