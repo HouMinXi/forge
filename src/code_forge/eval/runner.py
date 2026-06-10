@@ -69,6 +69,32 @@ def register_axis_hook(hook: AxisHook) -> None:
     _AXIS_HOOKS.append(hook)
 
 
+# -- Infra failure detection ----------------------------------------------------
+
+_INFRA_PATTERNS: tuple[str, ...] = (
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "ECONNREFUSED",
+    "Connection refused",
+    "Connection timed out",
+    "Read timed out",
+    "No such backend",
+    "Backend not found",
+    "APIConnectionError",
+)
+
+
+def _is_infra_failure(stderr: str) -> bool:
+    """Detect backend/infra failures vs review findings.
+
+    Backend down or connection refused must score SKIPPED/ERROR, never
+    "caught". Only pattern-match stderr; a review that exits non-zero
+    with findings is NOT an infra failure.
+    """
+    lower = stderr.lower()
+    return any(pat.lower() in lower for pat in _INFRA_PATTERNS)
+
+
 # -- Pipeline replay -----------------------------------------------------------
 
 
@@ -173,7 +199,7 @@ def replay_entry(
         try:
             flagged, skip_reason = _run_single(
                 entry, diff_path, temp_dir, backend_name,
-                backend_config,
+                backend_config, corpus_dir,
             )
             if skip_reason:
                 # SKIPPED -- return immediately
@@ -221,6 +247,7 @@ def _run_single(
     temp_dir: str,
     backend_name: str,
     backend_config: Optional[dict] = None,
+    corpus_dir: Optional[Path] = None,
 ) -> tuple[bool, str]:
     """Run one replay pass in an isolated temp directory.
 
@@ -244,6 +271,23 @@ def _run_single(
          "commit", "--allow-empty", "-m", "init"],
         cwd=temp_dir, capture_output=True, check=False,
     )
+
+    if corpus_dir is not None:
+        base_dir = corpus_dir / "base_files" / entry.name
+        if base_dir.is_dir():
+            try:
+                shutil.copytree(base_dir, temp_dir, dirs_exist_ok=True)
+            except OSError as exc:
+                return False, "infra: base_files seed error: %s" % exc
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=temp_dir, capture_output=True, check=False,
+            )
+            subprocess.run(
+                ["git", "-c", "user.name=eval", "-c", "user.email=eval@test",
+                 "commit", "-m", "seed base files"],
+                cwd=temp_dir, capture_output=True, check=False,
+            )
 
     apply_result = subprocess.run(
         ["git", "apply", str(diff_path.resolve())],
@@ -274,7 +318,14 @@ def _run_single(
             capture_output=True, check=False,
             env=eval_env,
         )
-        # exit 0 = PASS, non-zero = flagged (HOLD/FAIL)
-        return review_result.returncode != 0, ""
     except subprocess.TimeoutExpired:
-        return False, "code-forge review timeout after 300s"
+        return False, "infra: code-forge review timeout after 300s"
+
+    stderr_text = review_result.stderr
+    if isinstance(stderr_text, bytes):
+        stderr_text = stderr_text.decode("utf-8", errors="replace")
+
+    if review_result.returncode != 0 and _is_infra_failure(stderr_text):
+        return False, "infra: backend failure: %s" % stderr_text[:200]
+
+    return review_result.returncode != 0, ""

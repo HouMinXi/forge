@@ -2,7 +2,7 @@ diff --git a/src/code_forge/outlet_c.py b/src/code_forge/outlet_c.py
 index 1a2b3c4..5e6f7a8 100644
 --- a/src/code_forge/outlet_c.py
 +++ b/src/code_forge/outlet_c.py
-@@ -18,7 +18,7 @@ class OutletC:
+@@ -18,6 +18,6 @@ class OutletC:
      def spawn_review(self, pass_name: str, diff_text: str) -> str:
          """Spawn a subagent review pass.
 
@@ -11,12 +11,11 @@ index 1a2b3c4..5e6f7a8 100644
          """
 -        return self._spawn_fn(pass_name, diff_text)
 +        raise NotImplementedError("OutletC.spawn_review")
-
 diff --git a/tests/test_outlet_c.py b/tests/test_outlet_c.py
 index 9a8b7c6..3d4e5f0 100644
 --- a/tests/test_outlet_c.py
 +++ b/tests/test_outlet_c.py
-@@ -10,12 +10,10 @@ class TestOutletC:
+@@ -10,17 +10,13 @@ class TestOutletC:
      """Tests for OutletC subagent dispatch."""
 
      def test_spawn_review_dispatches(self):
