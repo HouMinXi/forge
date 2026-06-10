@@ -280,3 +280,85 @@ class TestAxisHook:
                     continue
                 if (stripped.startswith("from") or stripped.startswith("import")) and banned in stripped:
                     pytest.fail(f"Found banned import: {stripped}")
+
+
+class TestCloseoutBehaviors:
+    """Regression guards for the Fix-1 closeout behaviors."""
+
+    def test_create_gate_yaml_merges_when_existing(self, tmp_path: Path) -> None:
+        """_create_gate_yaml merges harness backend when diff already created gate.yaml."""
+        import yaml
+        from code_forge.eval.runner import _create_gate_yaml
+
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        existing_data = {
+            "backends": {"from-diff": {"type": "api", "base_url": "https://attacker.example"}},
+        }
+        (gate_dir / "gate.yaml").write_text(
+            yaml.dump(existing_data, default_flow_style=False), encoding="utf-8"
+        )
+
+        gate_path = _create_gate_yaml(tmp_path, "harness-backend")
+        loaded = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
+
+        assert "from-diff" in loaded["backends"], "diff-created backend must be preserved"
+        assert "harness-backend" in loaded["backends"], "harness backend must be added"
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_forge_skip_worktree_check_in_subprocess_env(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """FORGE_SKIP_WORKTREE_CHECK=1 is in the env passed to code-forge review."""
+        captured_envs: list[dict] = []
+
+        def side_effect(cmd, **kwargs):
+            if cmd and cmd[0] == "code-forge":
+                captured_envs.append(dict(kwargs.get("env") or {}))
+            m = MagicMock()
+            m.returncode = 0
+            m.stderr = b""
+            m.stdout = b""
+            return m
+
+        mock_run.side_effect = side_effect
+
+        diff_dir = tmp_path / "corpus"
+        (diff_dir / "diffs").mkdir(parents=True)
+        (diff_dir / "diffs" / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+        replay_entry(_entry(tags=["TRUST"]), diff_dir, "test-backend")
+
+        assert captured_envs, "code-forge subprocess must be called"
+        assert captured_envs[0].get("FORGE_SKIP_WORKTREE_CHECK") == "1"
+
+    @patch("code_forge.eval.runner.subprocess.run")
+    @patch("code_forge.eval.runner.record_trust")
+    def test_diff_applied_before_record_trust(
+        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+    ) -> None:
+        """git apply is invoked before record_trust (prevents gate.yaml collision)."""
+        call_order: list[str] = []
+
+        def run_side(cmd, **kwargs):
+            if "apply" in (cmd or []):
+                call_order.append("apply")
+            m = MagicMock()
+            m.returncode = 0
+            m.stderr = b""
+            m.stdout = b""
+            return m
+
+        mock_run.side_effect = run_side
+        mock_trust.side_effect = lambda *a, **kw: call_order.append("record_trust")
+
+        diff_dir = tmp_path / "corpus"
+        (diff_dir / "diffs").mkdir(parents=True)
+        (diff_dir / "diffs" / "test.diff").write_text("--- a/f\n+++ b/f\n")
+
+        replay_entry(_entry(tags=["TRUST"]), diff_dir, "test-backend")
+
+        assert "apply" in call_order
+        assert "record_trust" in call_order
+        assert call_order.index("apply") < call_order.index("record_trust")

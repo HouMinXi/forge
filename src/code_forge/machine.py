@@ -19,9 +19,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import threading
 import time
-from dataclasses import dataclass, field
+import traceback
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -830,7 +832,7 @@ class StateMachine:
                 self._advisories.extend(findings)
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(
-                    "advisory runner failed: %s" % exc
+                    "advisory runner failed: %r\n%s" % (exc, traceback.format_exc())
                 )
 
     def _serialize_advisories(self) -> None:
@@ -841,12 +843,11 @@ class StateMachine:
         """
         if not self._advisories:
             return
-        import dataclasses
         out_dir = self.cwd / ".code-forge"
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "advisory-findings.json"
         tmp_path = out_path.with_suffix(".tmp")
-        data = [dataclasses.asdict(f) for f in self._advisories]
+        data = [asdict(f) for f in self._advisories]
         tmp_path.write_text(
             json.dumps(data, indent=2), encoding="utf-8"
         )
@@ -859,7 +860,6 @@ class StateMachine:
         a "--- Advisory ---" line. Each finding formatted as:
         [AXIS] file:line_range - description
         """
-        import sys
         if not self._advisories:
             return
         print("", file=sys.stderr)
