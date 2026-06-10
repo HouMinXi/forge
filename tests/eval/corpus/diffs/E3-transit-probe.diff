@@ -1,0 +1,48 @@
+diff --git a/surflare_watchdog.sh b/surflare_watchdog.sh
+index 93dc09d..b952a7b 100755
+--- a/surflare_watchdog.sh
++++ b/surflare_watchdog.sh
+@@ -18,8 +18,10 @@
+ NODE="Los Angeles"                    # Set to your node tag (run: surflare nodes)
+ MODE="global"                         # Connection mode: global, rule, direct
+ TRANSIT=""                            # Transit server for multi-hop: auto, or "" to disable
+-TRANSIT_CANDIDATES="Tokyo Seoul"              # Ordered probe list; connect_vpn picks lowest-latency
++TRANSIT_CANDIDATES="Tokyo Seoul"            # Ordered probe list; connect_vpn picks lowest-latency
+ TRANSIT_CONNECT_TIMEOUT=12             # max seconds for surflare connect per candidate
++TRANSIT_ROUTE_READY_TIMEOUT=15        # max seconds to poll for routing readiness after connect
++TRANSIT_PROBE_SETTLE=20              # seconds of quiet time for tunnel handshake after routing ready
+ CHECK_INTERVAL=30                     # Exit IP check interval in seconds
+ FAIL_THRESHOLD=4                      # Consecutive failures before reconnect
+ LOCK_FILE=/run/surflare_watchdog.lock # Mutex lock to prevent concurrent reconnects
+@@ -326,12 +328,20 @@ probe_best_transit() {
+ 			cleanup_probe_state
+ 			continue
+ 		fi
+-		sleep 6
+-		if ! pgrep -x surflare-proxy >/dev/null 2>&1; then
+-			log "Probe ${node}: proxy not running after connect"
++		local wait_sec=0
++		while [ "$wait_sec" -lt "$TRANSIT_ROUTE_READY_TIMEOUT" ]; do
++			pgrep -x surflare-proxy >/dev/null 2>&1 && \
++			nft list table inet surflare >/dev/null 2>&1 && \
++			ip rule show | grep -q 'fwmark 0x1 lookup 100' && break
++			sleep 1
++			wait_sec=$((wait_sec + 1))
++		done
++		if [ "$wait_sec" -ge "$TRANSIT_ROUTE_READY_TIMEOUT" ]; then
++			log "Probe ${node}: VPN routing not ready after ${TRANSIT_ROUTE_READY_TIMEOUT}s"
+ 			cleanup_probe_state
+ 			continue
+ 		fi
++		sleep "$TRANSIT_PROBE_SETTLE"
+ 		# Require 200/30x from Google -- local proxy errors (502/503) return
+ 		# instantly and would otherwise produce a falsely-low latency reading.
+ 		local probe_result http_code ms
+@@ -446,6 +456,7 @@ connect_vpn() {
+ 
+ 		if [ -n "$DESKTOP_CPU_SET" ]; then
+ 			local irq pinned=0
++			# shellcheck disable=SC2013  # word-split intentional: iterating over IRQ numbers
+ 			for irq in $(grep iwlwifi /proc/interrupts | grep -oP '^\s*\K[0-9]+(?=:)'); do
+ 				if echo "$DESKTOP_CPU_SET" > "/proc/irq/${irq}/smp_affinity_list" 2>/dev/null; then
+ 					pinned=$((pinned + 1))

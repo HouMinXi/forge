@@ -1,0 +1,349 @@
+diff --git a/surflare_watchdog.sh b/surflare_watchdog.sh
+index 7b4404f..53715a3 100755
+--- a/surflare_watchdog.sh
++++ b/surflare_watchdog.sh
+@@ -37,7 +37,7 @@ TOKEN_REFRESH_INTERVAL=1800           # seconds between proactive auth token ref
+ LOGIN_RETRIES=5                       # max login attempts per refresh cycle
+ LOGIN_RETRY_DELAY=3                   # seconds between login retries
+ HEARTBEAT_INTERVAL=600                # seconds between periodic "VPN healthy" log entries (0=off)
+-TRANSIENT_THRESHOLD=4                 # consecutive external timeouts (local state OK) before escalating to fail_count
++TRANSIENT_THRESHOLD=6                 # consecutive external timeouts (local state OK) before escalating to fail_count
+ # Auto-detect WiFi interface; fallback to wlp9s0f0 if iw is unavailable
+ WIFI_INTERFACE=$(iw dev 2>/dev/null | awk '/Interface/{print $2; exit}')
+ [ -z "$WIFI_INTERFACE" ] && WIFI_INTERFACE="wlp9s0f0"
+@@ -177,6 +177,11 @@ crash_rate_exceeded() {
+ #   <country>    -- country probe returned a country code (non-empty)
+ #   ""           -- all external probes timed out (but local state was OK = transient)
+ # "CN" is a valid country code return (VPN up but routing via China = broken exit).
++#
++# Architecture: "first success wins" -- probes run in parallel; results are polled
++# every 1s. As soon as any probe produces a usable result, remaining probes are
++# killed and the result is returned immediately. This avoids waiting the full
++# max-time when at least one probe succeeds quickly.
+ check_vpn_health() {
+ 	# Layer 1: local state -- deterministic, milliseconds, no network dependency
+ 	if ! check_vpn_local_state; then
+@@ -184,63 +189,165 @@ check_vpn_health() {
+ 		return
+ 	fi
+ 
+-	# Layer 2: parallel external probes -- all four run concurrently, max wait = one timeout
+-	local tmp_g tmp_cf tmp_ifc tmp_ipa r_g r_cf r_ifc r_ipa r_country
++	# Layer 2: parallel external probes -- six run concurrently, first success wins
++	local tmp_g tmp_cf tmp_cf2 tmp_ifc tmp_ich tmp_myip
++	local pid_g pid_cf pid_cf2 pid_ifc pid_ich pid_myip
+ 	tmp_g=$(mktemp /tmp/surflare_hc.XXXXXX)
+ 	tmp_cf=$(mktemp /tmp/surflare_hc.XXXXXX)
++	tmp_cf2=$(mktemp /tmp/surflare_hc.XXXXXX)
+ 	tmp_ifc=$(mktemp /tmp/surflare_hc.XXXXXX)
+-	tmp_ipa=$(mktemp /tmp/surflare_hc.XXXXXX)
++	tmp_ich=$(mktemp /tmp/surflare_hc.XXXXXX)
++	tmp_myip=$(mktemp /tmp/surflare_hc.XXXXXX)
+ 	# Ensure temp files are removed even if this function is interrupted mid-wait.
+ 	# Stored in a global so the main EXIT trap can also clean up on unclean exit.
+-	_hc_tmp="$tmp_g $tmp_cf $tmp_ifc $tmp_ipa"
++	_hc_tmp="$tmp_g $tmp_cf $tmp_cf2 $tmp_ifc $tmp_ich $tmp_myip"
+ 
+-	# Google: blocked by GFW -> 200/30x means VPN is working
++	# Probe 1: Google -- blocked by GFW -> 200/30x means VPN is working
+ 	(
+-		code=$(curl -s --connect-timeout 3 --max-time 8 \
++		code=$(curl -s --connect-timeout 5 --max-time 12 \
+ 		       -o /dev/null -w '%{http_code}' https://www.google.com 2>/dev/null)
+ 		case "$code" in 200|301|302) echo "OK" ;; esac
+ 	) >"$tmp_g" 2>/dev/null &
+-	local pid_g=$!
++	pid_g=$!
+ 
+-	# Country probe A: Cloudflare trace (no rate limit, parse loc= field)
++	# Probe 2: Cloudflare trace via domain (parse loc= field, no rate limit)
+ 	(
+-		curl -s --connect-timeout 3 --max-time 8 \
++		curl -s --connect-timeout 5 --max-time 12 \
+ 		     'https://cloudflare.com/cdn-cgi/trace' 2>/dev/null \
+ 		| awk -F= '/^loc=/{print $2}' | tr -d '[:space:]'
+ 	) >"$tmp_cf" 2>/dev/null &
+-	local pid_cf=$!
++	pid_cf=$!
++
++	# Probe 3: Cloudflare trace via IP 1.0.0.1 (skips DNS for cloudflare.com,
++	# uses a different Cloudflare anycast edge -- may succeed when domain probe fails)
++	(
++		curl -s --connect-timeout 5 --max-time 12 \
++		     'https://1.0.0.1/cdn-cgi/trace' 2>/dev/null \
++		| awk -F= '/^loc=/{print $2}' | tr -d '[:space:]'
++	) >"$tmp_cf2" 2>/dev/null &
++	pid_cf2=$!
+ 
+-	# Country probe B: ifconfig.co ISO country code (degrades gracefully on rate limit)
++	# Probe 4: ifconfig.co ISO country code (degrades gracefully on rate limit)
+ 	(
+-		curl -s --connect-timeout 3 --max-time 8 \
++		curl -s --connect-timeout 5 --max-time 12 \
+ 		     'https://ifconfig.co/country-iso' 2>/dev/null \
+ 		| tr -d '[:space:]'
+ 	) >"$tmp_ifc" 2>/dev/null &
+-	local pid_ifc=$!
++	pid_ifc=$!
+ 
+-	# Country probe C: ipapi.co (1000 req/day free tier; degrades gracefully above limit)
++	# Probe 5: icanhazip.com (Cloudflare-backed, tiny response -- returns raw IP only).
++	# Cannot determine country directly, but a non-empty response from a GFW-blocked
++	# CDN proves the tunnel is routing correctly. Caller uses the IP to infer status.
+ 	(
+-		curl -s --connect-timeout 3 --max-time 8 \
+-		     'https://ipapi.co/country/' 2>/dev/null \
+-		| tr -d '[:space:]'
+-	) >"$tmp_ipa" 2>/dev/null &
+-	local pid_ipa=$!
+-
+-	wait "$pid_g" "$pid_cf" "$pid_ifc" "$pid_ipa"
+-	r_g=$(cat "$tmp_g" 2>/dev/null)
+-	r_cf=$(cat "$tmp_cf" 2>/dev/null)
+-	r_ifc=$(cat "$tmp_ifc" 2>/dev/null)
+-	r_ipa=$(cat "$tmp_ipa" 2>/dev/null)
+-	rm -f "$tmp_g" "$tmp_cf" "$tmp_ifc" "$tmp_ipa"
+-	_hc_tmp=""
++		local ip
++		ip=$(curl -s --connect-timeout 5 --max-time 12 \
++		     'https://icanhazip.com' 2>/dev/null | tr -d '[:space:]')
++		# Validate: must look like an IP (v4 or v6), not an error page
++		if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$ip" =~ : ]]; then
++			echo "IP:${ip}"
++		fi
++	) >"$tmp_ich" 2>/dev/null &
++	pid_ich=$!
++
++	# Probe 6: myip.wtf (returns raw IP, lightweight)
++	(
++		local ip
++		ip=$(curl -s --connect-timeout 5 --max-time 12 \
++		     'https://myip.wtf/text' 2>/dev/null | tr -d '[:space:]')
++		if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$ip" =~ : ]]; then
++			echo "IP:${ip}"
++		fi
++	) >"$tmp_myip" 2>/dev/null &
++	pid_myip=$!
++
++	# --- Early-exit polling loop ---
++	# Poll results every 1s. Return as soon as any probe produces a usable result.
++	# Maximum wait = max-time (12s), but typically returns in 1-3s when tunnel is healthy.
++	local all_pids="$pid_g $pid_cf $pid_cf2 $pid_ifc $pid_ich $pid_myip"
++	local deadline=$((SECONDS + 13))  # 13s absolute deadline (max-time + 1s margin)
++	local result=""
++
++	while [ "$SECONDS" -lt "$deadline" ]; do
++		# Check Google first (most reliable GFW indicator)
++		local r_g
++		r_g=$(cat "$tmp_g" 2>/dev/null)
++		if [ "$r_g" = "OK" ]; then
++			result="OK"
++			break
++		fi
++
++		# Check country probes (Cloudflare domain, Cloudflare IP, ifconfig.co)
++		local r_country
++		for tmp_file in "$tmp_cf" "$tmp_cf2" "$tmp_ifc"; do
++			r_country=$(cat "$tmp_file" 2>/dev/null)
++			if [[ "$r_country" =~ ^[A-Z]{2}$ ]]; then
++				result="$r_country"
++				break 2  # break out of both for and while
++			fi
++		done
+ 
+-	# Google result takes priority (most reliable GFW indicator)
+-	[ "$r_g" = "OK" ] && echo "OK" && return
+-	# Country probes: first valid 2-letter code wins (A->B->C priority)
+-	for r_country in "$r_cf" "$r_ifc" "$r_ipa"; do
+-		[[ "$r_country" =~ ^[A-Z]{2}$ ]] && echo "$r_country" && return
++		# Check IP probes (icanhazip, myip.wtf) -- a valid IP from a GFW-blocked CDN
++		# proves the tunnel works. We don't know the country, so return "TUNNEL_OK"
++		# which the caller treats same as a non-CN country code (healthy).
++		local r_ip
++		for tmp_file in "$tmp_ich" "$tmp_myip"; do
++			r_ip=$(cat "$tmp_file" 2>/dev/null)
++			if [ -n "$r_ip" ]; then
++				result="TUNNEL_OK"
++				break 2
++			fi
++		done
++
++		# Check if all probes have already exited (no point polling further)
++		local still_running=0
++		for pid in $all_pids; do
++			if kill -0 "$pid" 2>/dev/null; then
++				still_running=1
++				break
++			fi
++		done
++		[ "$still_running" -eq 0 ] && break
++
++		# Sleep 1s before next poll (safer than 0.2s for POSIX/busybox compatibility)
++		sleep 1
+ 	done
+-	echo ""
++
++	# Kill remaining probes (some may still be running if we got an early result)
++	for pid in $all_pids; do
++		kill "$pid" 2>/dev/null
++	done
++	# shellcheck disable=SC2086
++	wait $all_pids 2>/dev/null || true
++
++	# Final check after wait: a probe may have written between the last poll and exit
++	if [ -z "$result" ]; then
++		local r_g r_country r_ip
++		r_g=$(cat "$tmp_g" 2>/dev/null)
++		[ "$r_g" = "OK" ] && result="OK"
++		if [ -z "$result" ]; then
++			for tmp_file in "$tmp_cf" "$tmp_cf2" "$tmp_ifc"; do
++				r_country=$(cat "$tmp_file" 2>/dev/null)
++				if [[ "$r_country" =~ ^[A-Z]{2}$ ]]; then
++					result="$r_country"
++					break
++				fi
++			done
++		fi
++		if [ -z "$result" ]; then
++			for tmp_file in "$tmp_ich" "$tmp_myip"; do
++				r_ip=$(cat "$tmp_file" 2>/dev/null)
++				if [ -n "$r_ip" ]; then
++					result="TUNNEL_OK"
++					break
++				fi
++			done
++		fi
++	fi
++
++	rm -f "$tmp_g" "$tmp_cf" "$tmp_cf2" "$tmp_ifc" "$tmp_ich" "$tmp_myip"
++	_hc_tmp=""
++
++	echo "$result"
+ }
+ 
+ wait_for_exit() {
+@@ -303,6 +410,27 @@ refresh_auth() {
+ 	return "$rc"
+ }
+ 
++TRANSIT_CACHE_FILE="/run/surflare_transit_cache"
++TRANSIT_REPROBE_AFTER=3
++
++_transit_fail_count=0
++
++get_cached_transit() {
++	if [ -f "$TRANSIT_CACHE_FILE" ]; then
++		local cached
++		cached=$(cat "$TRANSIT_CACHE_FILE" 2>/dev/null)
++		if [ -n "$cached" ]; then
++			echo "$cached"
++			return
++		fi
++	fi
++	echo ""
++}
++
++save_transit_cache() {
++	echo "$1" > "$TRANSIT_CACHE_FILE" 2>/dev/null || true
++}
++
+ cleanup_probe_state() {
+ 	surflare disconnect >/dev/null 2>&1
+ 	killall surflare-proxy 2>/dev/null
+@@ -360,6 +488,11 @@ probe_best_transit() {
+ 				continue
+ 				;;
+ 		esac
++		if ! [[ "$ms" =~ ^[0-9]+\.?[0-9]*$ ]]; then
++			log "Probe ${node}: non-numeric latency '${ms}'"
++			cleanup_probe_state
++			continue
++		fi
+ 		local ms_int
+ 		ms_int=$(awk "BEGIN {printf \"%.0f\", ${ms} * 1000}" 2>/dev/null)
+ 		if [ -z "$ms_int" ] || [ "$ms_int" -le 0 ] 2>/dev/null; then
+@@ -429,8 +562,9 @@ connect_vpn() {
+ 
+ 		local effective_transit="$TRANSIT"
+ 		if [ -n "$TRANSIT_CANDIDATES" ] && [ -z "$TRANSIT" ]; then
+-			effective_transit=$(probe_best_transit)
+-			cleanup_probe_state
++			effective_transit=$(get_cached_transit)
++			[ -z "$effective_transit" ] && effective_transit="${TRANSIT_CANDIDATES%% *}"
++			log "Using transit: ${effective_transit} (from cache or first candidate)"
+ 		fi
+ 
+ 		log "Connecting to ${NODE} mode=${MODE:-global} transit=${effective_transit:-off} (daemon mode)..."
+@@ -651,9 +785,21 @@ while true; do
+ 				fail_count=0
+ 				reconnect_count=0
+ 				transient_count=0
++				_transit_fail_count=0
+ 			else
+ 				reconnect_count=$((reconnect_count + 1))
+-				log "Post-reconnect health check anomalous (reconnect_count=${reconnect_count})"
++				_transit_fail_count=$((_transit_fail_count + 1))
++				log "Post-reconnect health check anomalous (reconnect_count=${reconnect_count} transit_fails=${_transit_fail_count})"
++				if [ "$_transit_fail_count" -ge "$TRANSIT_REPROBE_AFTER" ]; then
++					log "Transit fail threshold reached, reprobing..."
++					new_transit=$(probe_best_transit)
++					cleanup_probe_state
++					if [ -n "$new_transit" ]; then
++						save_transit_cache "$new_transit"
++						log "Transit cache updated: ${new_transit}"
++					fi
++					_transit_fail_count=0
++				fi
+ 				if [ "$reconnect_count" -ge "$STORM_MAX" ]; then
+ 					log "Storm protection triggered: cooling for ${STORM_COOLING}s"
+ 					sleep "$STORM_COOLING" &
+@@ -667,7 +813,18 @@ while true; do
+ 			fi
+ 		else
+ 			reconnect_count=$((reconnect_count + 1))
+-			log "Reconnect attempt failed (reconnect_count=${reconnect_count})"
++			_transit_fail_count=$((_transit_fail_count + 1))
++			log "Reconnect attempt failed (reconnect_count=${reconnect_count} transit_fails=${_transit_fail_count})"
++			if [ "$_transit_fail_count" -ge "$TRANSIT_REPROBE_AFTER" ]; then
++				log "Transit fail threshold reached, reprobing..."
++				new_transit=$(probe_best_transit)
++				cleanup_probe_state
++				if [ -n "$new_transit" ]; then
++					save_transit_cache "$new_transit"
++					log "Transit cache updated: ${new_transit}"
++				fi
++				_transit_fail_count=0
++			fi
+ 			if [ "$reconnect_count" -ge "$STORM_MAX" ]; then
+ 				log "Storm protection triggered (connect failure): cooling for ${STORM_COOLING}s"
+ 				sleep "$STORM_COOLING" &
+diff --git a/tests/probe_rca_test.sh b/tests/probe_rca_test.sh
+index 51545f9..457be2c 100755
+--- a/tests/probe_rca_test.sh
++++ b/tests/probe_rca_test.sh
+@@ -43,6 +43,17 @@ cleanup() {
+     ip route flush table 100 2>/dev/null || true
+ }
+ 
++trap_cleanup() {
++    local rc=$?
++    log "Signal caught (rc=${rc}), cleaning up..."
++    cleanup
++    log "Restarting surflare-watchdog..."
++    systemctl start surflare-watchdog 2>/dev/null
++    log "Aborted. Output: $OUTDIR"
++    exit "$rc"
++}
++trap trap_cleanup INT TERM
++
+ snapshot_state() {
+     local outfile="$1"
+     {
+@@ -258,6 +269,7 @@ log "  5. Read T5 seoul_state_*s.txt -- what does surflare status say over time?
+ log "  6. Read final_curl_verbose.txt -- connection refused vs timeout vs SSL?"
+ log "============================================"
+ log ""
++trap - INT TERM
+ log "Restarting surflare-watchdog..."
+ systemctl start surflare-watchdog
+ log "Done."

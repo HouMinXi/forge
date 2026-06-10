@@ -1,0 +1,35 @@
+diff --git a/surflare_watchdog.sh b/surflare_watchdog.sh
+index b4f9e1d..e037a32 100755
+--- a/surflare_watchdog.sh
++++ b/surflare_watchdog.sh
+@@ -332,15 +332,22 @@ probe_best_transit() {
+ 			cleanup_probe_state
+ 			continue
+ 		fi
+-		local ms
+-		ms=$(curl -s --connect-timeout 4 --max-time 6 \
+-			-o /dev/null -w '%{time_starttransfer}' \
++		# Require 200/30x from Google -- local proxy errors (502/503) return
++		# instantly and would otherwise produce a falsely-low latency reading.
++		local probe_result http_code ms
++		probe_result=$(curl -s --connect-timeout 4 --max-time 6 \
++			-o /dev/null -w '%{http_code}:%{time_starttransfer}' \
+ 			https://www.google.com 2>/dev/null)
+-		if [ -z "$ms" ] || [ "$ms" = "0.000000" ]; then
+-			log "Probe ${node}: health check unreachable"
+-			cleanup_probe_state
+-			continue
+-		fi
++		http_code="${probe_result%%:*}"
++		ms="${probe_result##*:}"
++		case "$http_code" in
++			200|301|302) ;;
++			*)
++				log "Probe ${node}: health check unreachable (http=${http_code:-none})"
++				cleanup_probe_state
++				continue
++				;;
++		esac
+ 		local ms_int
+ 		ms_int=$(awk "BEGIN {printf \"%.0f\", ${ms} * 1000}" 2>/dev/null)
+ 		if [ -z "$ms_int" ] || [ "$ms_int" -le 0 ] 2>/dev/null; then
