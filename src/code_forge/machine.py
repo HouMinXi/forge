@@ -836,7 +836,6 @@ class StateMachine:
         PASS status (advisory only, D-03).
         """
         from .fixval import (
-            FixvalCandidate,
             FixvalSkip,
             FixvalStatus,
             classify_fixval_candidate,
@@ -975,7 +974,6 @@ class StateMachine:
         are stored in self._advisories (list[AdvisoryFinding]), completely
         separate from self._state.findings (list[StateFinding]).
         """
-        from .advisory import AdvisoryFinding
 
         diff_text = self.resolved_review.git_diff or ""
         # Inject source_files for runners that support it (no git dependency).
