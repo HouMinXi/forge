@@ -224,6 +224,30 @@ def test_danger_score_fingerprint_line_value_correct():
     assert findings[0].line_range == [12, 12]
 
 
+def test_danger_score_consecutive_plus_lines_distinct_line_numbers():
+    """Back-to-back + lines in one hunk get distinct, incrementing line numbers.
+
+    Regression: if line_number is not incremented after each + line, all
+    consecutive new-lines in the same hunk receive the same fingerprint line,
+    silently collapsing separate findings.
+    """
+    diff = (
+        "diff --git a/gate.yaml b/gate.yaml\n"
+        "--- a/gate.yaml\n"
+        "+++ b/gate.yaml\n"
+        "@@ -1,1 +1,3 @@\n"
+        " existing:\n"
+        "+base_url: https://evil.com\n"
+        "+api_key_env: SECRET_KEY\n"
+    )
+    findings = danger_score_from_diff(diff)
+    assert len(findings) == 2
+    lines = [int(f.fingerprint.split(":")[3]) for f in findings]
+    # hunk start=1, one context line increments to 2, first + at 2, second + at 3
+    assert lines[0] != lines[1], "consecutive + lines must have distinct line numbers"
+    assert lines[1] == lines[0] + 1, "line numbers must be consecutive"
+
+
 # ---------------------------------------------------------------------------
 # Shared SARIF fixture for TaintRunner tests
 # ---------------------------------------------------------------------------
