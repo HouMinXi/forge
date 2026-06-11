@@ -724,9 +724,9 @@ class StateMachine:
         """
         mode_hint = self.resolved_review.mode_hint
         for finding in findings:
-            # Coverage-gap findings skip autofix: they are not code defects
-            # and the autofix loop cannot add a missing test.
-            if finding.source in ("MUTANT", "E2E_CHECK"):
+            # Coverage-gap and gate-mechanism findings skip autofix:
+            # they are not code defects the autofix loop can address.
+            if finding.source in ("MUTANT", "E2E_CHECK", "FIXVAL"):
                 continue
             if finding.disposition != Disposition.CONFIRMED:
                 continue
@@ -828,10 +828,144 @@ class StateMachine:
         return has_uncertain and not has_unfixed_confirmed
 
     def _finalize_local_terminal(self) -> None:
-        """R3 LOW5: terminal state writer for LOCAL fixpoint exit."""
+        """R3 LOW5: terminal state writer for LOCAL fixpoint exit.
+
+        FIXVAL gate (D-06): runs only on otherwise-GREEN diffs, after
+        convergence, before the verdict is written. Hollow tests block
+        with FAIL; non-hollow proceed to PASS. Overfit guard runs on
+        PASS status (advisory only, D-03).
+        """
+        from .fixval import (
+            FixvalCandidate,
+            FixvalSkip,
+            FixvalStatus,
+            classify_fixval_candidate,
+            run_fixval,
+            run_overfit_guard,
+        )
+
+        changed_files = [str(f) for f in self._source_files()]
+        candidate = classify_fixval_candidate(changed_files)
+
+        if isinstance(candidate, FixvalSkip):
+            # D-08: record SKIPPED with reason (never silent)
+            skip_finding = StateFinding(
+                id="FIXVAL_SKIPPED",
+                fingerprint="fixval-skipped",
+                source="FIXVAL",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description="FIXVAL skipped: %s" % candidate.reason,
+            )
+            self._state.findings.append(skip_finding)
+            # Skip is not a block -- proceed to PASS
+            self._state.verdict = Verdict.PASS
+            self._state.converged = True
+            self._persist_state()
+            return
+
+        # FixvalCandidate: run the gate
+        try:
+            from .gate_check import load_gate_config
+
+            config = load_gate_config(
+                self.cwd / ".code-forge" / "gate.yaml"
+            )
+            test_cmd = config["test"]["command"]
+        except Exception as exc:  # noqa: BLE001
+            self._state.infra_errors.append(
+                "FIXVAL: gate.yaml missing or test.command not "
+                "configured: %s" % exc
+            )
+            # Cannot run FIXVAL without test command -- proceed to PASS
+            self._state.verdict = Verdict.PASS
+            self._state.converged = True
+            self._persist_state()
+            return
+
+        commit_message = self._get_commit_message()
+        diff_text = self.resolved_review.git_diff
+
+        result = run_fixval(
+            candidate, test_cmd, self.cwd, commit_message, diff_text,
+        )
+
+        # Extend findings and advisories
+        self._state.findings.extend(result.findings)
+        self._advisories.extend(result.advisories)
+
+        if result.status == FixvalStatus.BLOCK:
+            # Hollow test blocks the pipeline
+            # block_message stored in the FIXVAL_HOLLOW finding's error
+            for f in result.findings:
+                if f.id == "FIXVAL_HOLLOW":
+                    f.error = result.block_message
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._persist_state()
+            return
+
+        if result.status == FixvalStatus.PASS:
+            # Non-hollow: run overfit guard (advisory only)
+            overfit_advisories = run_overfit_guard(
+                candidate, test_cmd, self.cwd,
+            )
+            self._advisories.extend(overfit_advisories)
+
+        # PASS / SKIPPED / WAIVED -- proceed to PASS verdict
         self._state.verdict = Verdict.PASS
         self._state.converged = True
         self._persist_state()
+
+    def _get_commit_message(self) -> str:
+        """Read the current commit message (worktree-safe).
+
+        Uses git rev-parse --git-path COMMIT_EDITMSG to resolve the
+        correct path (worktree-safe: .git may be a file, not a dir).
+        Falls back to git log -1 --format=%B for post-commit / CI.
+        Returns empty string on any failure (with logger.warning).
+        """
+        import subprocess as _sp
+
+        logger = logging.getLogger("code_forge")
+
+        try:
+            result = _sp.run(
+                ["git", "rev-parse", "--git-path", "COMMIT_EDITMSG"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=str(self.cwd),
+            )
+            if result.returncode == 0:
+                path = Path(result.stdout.strip())
+                if not path.is_absolute():
+                    path = self.cwd / path
+                if path.exists():
+                    return path.read_text(encoding="utf-8").strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "FIXVAL: COMMIT_EDITMSG read failed: %s", exc
+            )
+
+        # Fallback: git log -1 for post-commit / CI
+        try:
+            result = _sp.run(
+                ["git", "log", "-1", "--format=%B"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=str(self.cwd),
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "FIXVAL: git log fallback failed: %s", exc
+            )
+
+        return ""
 
     def _run_advisory_axes(self) -> None:
         """Post-convergence dispatch point for advisory axes (D-16).
