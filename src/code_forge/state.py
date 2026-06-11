@@ -45,7 +45,7 @@ class StateFinding:
     """
     id: str
     fingerprint: str
-    source: Literal["L0", "L1", "MUTANT", "E2E_CHECK", "COVERAGE", "INFRA"]
+    source: Literal["L0", "L1", "MUTANT", "E2E_CHECK", "COVERAGE", "INFRA", "FIXVAL"]
     disposition: Disposition
     file: str
     line_range: list[int]
