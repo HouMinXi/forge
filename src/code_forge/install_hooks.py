@@ -182,25 +182,52 @@ def generate_hook_content(
     Returns:
         Shell script content as string
     """
-    attestation_block = """# code-forge receipt attestation check
-code-forge verify --quiet 2>/dev/null || {
-    echo "code-forge: receipt verification failed. Run: code-forge verify" >&2
-    exit 1
-}
-
-"""
+    carveout_block = (
+        '# non-code carve-out: skip verify+gate-check for non-code commits\n'
+        "NON_CODE="
+        r"'\.md$|\.txt$|\.yaml$|\.yml$|\.json$|\.toml$|\.cfg$|\.ini$"
+        r"|\.conf$|(^|/)\.gitignore$|(^|/)\.editorconfig$|(^|/)\.env\.example$"
+        r"|(^|/)LICENSE$|(^|/)README$|(^|/)CHANGELOG$"
+        r"|(^|/)Makefile$|(^|/)Dockerfile$|(^|/)\.dockerignore$'"
+        "\n"
+        'STAGED=$(git diff --cached --name-only)\n'
+        'if [ -z "$STAGED" ]; then exit 0; fi\n'
+        'NON_MATCH=$(printf \'%s\\n\' "$STAGED" | grep -vE "$NON_CODE")\n'
+        'if [ -z "$NON_MATCH" ]; then\n'
+        '    echo "code-forge: skipping verify (non-code commit)" >&2\n'
+        '    exit 0\n'
+        'fi\n'
+        '\n'
+    )
+    attestation_block = (
+        "# code-forge receipt attestation check\n"
+        "code-forge verify --quiet 2>/dev/null || {\n"
+        '    echo "code-forge: receipt verification failed.'
+        ' Run: code-forge verify" >&2\n'
+        "    exit 1\n"
+        "}\n"
+        "\n"
+    )
     if chain_path is not None:
-        return f"""#!/bin/sh
-# code-forge pre-commit gate-check (installed by code-forge install-hooks)
-# Chained existing hook: {chain_path}
-{attestation_block}"{chain_path}" "$@" || exit 1
-exec {forge_invocation}
-"""
+        return (
+            "#!/bin/sh\n"
+            "# code-forge pre-commit gate-check"
+            " (installed by code-forge install-hooks)\n"
+            "# Chained existing hook: %s\n" % chain_path
+            + carveout_block
+            + attestation_block
+            + '"%s" "$@" || exit 1\n' % chain_path
+            + "exec %s\n" % forge_invocation
+        )
     else:
-        return f"""#!/bin/sh
-# code-forge pre-commit gate-check (installed by code-forge install-hooks)
-{attestation_block}exec {forge_invocation}
-"""
+        return (
+            "#!/bin/sh\n"
+            "# code-forge pre-commit gate-check"
+            " (installed by code-forge install-hooks)\n"
+            + carveout_block
+            + attestation_block
+            + "exec %s\n" % forge_invocation
+        )
 
 
 def run_install_hooks(
