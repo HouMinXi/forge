@@ -226,6 +226,48 @@ Symlinks each of the 6 skills from `~/.claude/skills/<name>` to this
 repo's `skills/<name>`. Hook installation is manual -- see
 `hooks/README.md` and `hooks/settings-snippet.json`.
 
+## Enabling the commit gate (R1)
+
+`install-skill` and `./install.sh` install the review **skills** only -- they
+do not set up enforcement. The R1 pre-commit gate -- the un-fakeable layer that
+runs the test suite on every commit and blocks on new failures, regardless of
+what the in-editor review claims -- is a separate, manual step:
+
+1. Add a `test:` section to `.code-forge/gate.yaml`. Without it, `gate-check`
+   exits with `gate.yaml must have a 'test' section`:
+
+   ```yaml
+   test:
+     command: [pytest, -q]
+     timeout_seconds: 900
+   ```
+
+   `command[0]` must be a known runner (`python3`, `python`, `pytest`, `cargo`,
+   `go`, `make`, `npm`, `npx`, `node`); no shell metacharacters are allowed.
+
+2. Install the hook:
+
+   ```bash
+   code-forge install-hooks
+   ```
+
+   This writes `.git/hooks/pre-commit` that runs `code-forge verify` (a receipt
+   tamper check) and then `code-forge gate-check` (the test gate).
+
+3. If `git config core.hooksPath` is set, `install-hooks` refuses to write to a
+   custom hooks path and prints a manual fallback. Add these two lines to your
+   existing pre-commit hook by hand:
+
+   ```sh
+   code-forge verify --quiet 2>/dev/null || exit 1
+   exec code-forge gate-check
+   ```
+
+The skills give you the review passes; this gate is what makes a green verdict
+mean the tests actually pass. Without it, an in-editor review that never ran can
+still reach a commit. Non-code commits that legitimately have no receipts (docs,
+config) bypass the gate with `git commit --no-verify`.
+
 ## Hooks (reference implementations)
 
 | Hook                          | Trigger               | Purpose                       |
