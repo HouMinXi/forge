@@ -14,6 +14,7 @@ before the verdict (D-06).
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 import subprocess
@@ -28,6 +29,8 @@ from .advisory import AdvisoryFinding
 from .disposition import Disposition
 from .mutation import _run_baseline_guard, _strip_venv_from_env
 from .state import StateFinding
+
+_logger = logging.getLogger("code_forge")
 
 
 class FixvalStatus(str, Enum):
@@ -393,13 +396,21 @@ def run_fixval(
 
         finally:
             # (f) Restore: forward re-apply (never git checkout --)
-            subprocess.run(
+            _restore = subprocess.run(
                 ["git", "apply", patch_path],
                 capture_output=True,
                 text=True,
                 check=False,
                 cwd=repo_root,
             )
+            if _restore.returncode != 0:
+                _logger.error(
+                    "FIXVAL: restore failed -- working tree may be "
+                    "left in reverted state. Run 'git apply %s' to "
+                    "restore manually. stderr: %s",
+                    patch_path,
+                    _restore.stderr[:200],
+                )
 
     finally:
         # Clean up temp patch file
