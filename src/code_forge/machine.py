@@ -510,7 +510,7 @@ class StateMachine:
                 "L0 runner failed: %s" % exc
             )
             l0_findings = []
-        # Danger-score (D-02/D-15): L0 CONFIRMED, can HOLD
+        # Danger-score: L0 CONFIRMED StateFinding, causes HOLD on dangerous config fields.
         if self.resolved_review.git_diff is None:
             self._state.infra_errors.append(
                 "Danger-score requires a diff"
@@ -844,7 +844,7 @@ class StateMachine:
         from .advisory import AdvisoryFinding
 
         diff_text = self.resolved_review.git_diff or ""
-        # Inject source_files for runners that need it (D-09).
+        # Inject source_files for runners that support it (no git dependency).
         for runner in self.advisory_runners:
             if hasattr(runner, "source_files"):
                 runner.source_files = list(
