@@ -415,7 +415,7 @@ class TestEvalFixvalHookRegistered:
         if mod_name in sys.modules:
             importlib.reload(sys.modules[mod_name])
 
-        from code_forge.eval.runner import FixvalAxisHook, _AXIS_HOOKS
+        from code_forge.eval.runner import _AXIS_HOOKS
 
         hook_types = [h.__class__.__name__ for h in _AXIS_HOOKS]
         assert "FixvalAxisHook" in hook_types

@@ -8,20 +8,13 @@ Covers: classify_fixval_candidate, parse_fixval_waiver, run_fixval,
 """
 from __future__ import annotations
 
-import ast
-import os
 import subprocess
-import textwrap
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
-from code_forge.advisory import AdvisoryFinding
 from code_forge.disposition import Disposition
 from code_forge.fixval import (
     FixvalCandidate,
-    FixvalResult,
     FixvalSkip,
     FixvalStatus,
     classify_fixval_candidate,
