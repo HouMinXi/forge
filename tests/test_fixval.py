@@ -609,6 +609,40 @@ class TestEndToEndRealGit:
         assert "return a + b" in code_file.read_text()
 
 
+# ---- _VariableRenamer tests ----
+
+
+class TestVariableRenamer:
+    """_VariableRenamer must produce valid code (target + uses both renamed)."""
+
+    def test_renames_target_and_uses_consistently(self):
+        import ast as _ast
+        from code_forge.fixval import _VariableRenamer
+
+        code = "def f():\n    x = 1\n    return x\n"
+        tree = _ast.parse(code)
+        renamer = _VariableRenamer()
+        transformed = renamer.visit(tree)
+        _ast.fix_missing_locations(transformed)
+        out = _ast.unparse(transformed)
+        assert "x_renamed = 1" in out
+        assert "return x_renamed" in out
+
+    def test_renamed_code_executes_without_name_error(self):
+        import ast as _ast
+        from code_forge.fixval import _VariableRenamer
+
+        code = "def compute():\n    result = 42\n    return result\n"
+        tree = _ast.parse(code)
+        renamer = _VariableRenamer()
+        transformed = renamer.visit(tree)
+        _ast.fix_missing_locations(transformed)
+        out = _ast.unparse(transformed)
+        ns: dict = {}
+        exec(compile(out, "<string>", "exec"), ns)
+        assert ns["compute"]() == 42
+
+
 # ---- run_overfit_guard tests ----
 
 
