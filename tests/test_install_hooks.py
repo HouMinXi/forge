@@ -22,8 +22,13 @@ from code_forge.install_hooks import (
 class TestInstallHookFresh:
     """Hook installation in a fresh repo (no existing hook)."""
 
-    def test_creates_pre_commit_hook(self, tmp_path):
+    def test_creates_pre_commit_hook(self, tmp_path, monkeypatch):
         """Hook file exists after install."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         # Setup a git repo
         subprocess.run(
             ["git", "init"],
@@ -54,8 +59,13 @@ class TestInstallHookFresh:
         hook_path = hooks_dir / "pre-commit"
         assert hook_path.exists()
 
-    def test_hook_is_executable(self, tmp_path):
+    def test_hook_is_executable(self, tmp_path, monkeypatch):
         """Hook file has executable bit set."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -79,8 +89,13 @@ class TestInstallHookFresh:
         mode = os.stat(hook_path).st_mode
         assert mode & 0o111  # Any execute bit set
 
-    def test_hook_contains_gate_check(self, tmp_path):
+    def test_hook_contains_gate_check(self, tmp_path, monkeypatch):
         """Hook content includes 'gate-check'."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -103,8 +118,13 @@ class TestInstallHookFresh:
         content = hook_path.read_text()
         assert "gate-check" in content
 
-    def test_absolute_forge_path(self, tmp_path):
+    def test_absolute_forge_path(self, tmp_path, monkeypatch):
         """Hook contains absolute path, not bare 'code-forge'."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -136,8 +156,13 @@ class TestInstallHookFresh:
 class TestInstallHookChain:
     """Backup + chain when existing hook present."""
 
-    def test_existing_hook_backed_up(self, tmp_path):
+    def test_existing_hook_backed_up(self, tmp_path, monkeypatch):
         """Existing hook is backed up to pre-commit.code-forge-backup."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -165,8 +190,13 @@ class TestInstallHookChain:
         assert backup_path.exists()
         assert "echo existing" in backup_path.read_text()
 
-    def test_chain_calls_backup_first(self, tmp_path):
+    def test_chain_calls_backup_first(self, tmp_path, monkeypatch):
         """New hook calls backup before forge gate-check."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -203,8 +233,13 @@ class TestInstallHookChain:
                 gate_line = i
         assert backup_line < gate_line
 
-    def test_backup_preserved_on_reinstall(self, tmp_path):
+    def test_backup_preserved_on_reinstall(self, tmp_path, monkeypatch):
         """Re-install does not overwrite existing backup."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -240,8 +275,13 @@ class TestInstallHookChain:
 class TestNonForgeHookWithBackup:
     """Block when backup exists and hook_path is non-forge (ambiguous state)."""
 
-    def test_non_forge_hook_with_backup_blocks(self, tmp_path):
+    def test_non_forge_hook_with_backup_blocks(self, tmp_path, monkeypatch):
         """Returns FAIL when backup exists and hook is not forge-generated."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         import io
         subprocess.run(
             ["git", "init"],
@@ -282,8 +322,13 @@ class TestNonForgeHookWithBackup:
 class TestHooksPathAbort:
     """Abort when core.hooksPath is set."""
 
-    def test_hooks_path_set_aborts(self, tmp_path):
+    def test_hooks_path_set_aborts(self, tmp_path, monkeypatch):
         """Returns FAIL when core.hooksPath is set."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -301,8 +346,13 @@ class TestHooksPathAbort:
 
         assert result == EXIT_FAIL
 
-    def test_hooks_path_unset_succeeds(self, tmp_path):
+    def test_hooks_path_unset_succeeds(self, tmp_path, monkeypatch):
         """Returns PASS when core.hooksPath is not set."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -318,8 +368,13 @@ class TestHooksPathAbort:
 class TestHooksDirResolution:
     """Hooks directory resolution via git rev-parse."""
 
-    def test_resolves_via_git_rev_parse(self, tmp_path):
+    def test_resolves_via_git_rev_parse(self, tmp_path, monkeypatch):
         """Uses git rev-parse --git-path hooks."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -344,8 +399,13 @@ class TestHooksDirResolution:
         )
         assert hooks_dir.exists()
 
-    def test_not_git_repo_fails(self, tmp_path):
+    def test_not_git_repo_fails(self, tmp_path, monkeypatch):
         """Raises RuntimeError outside git repo."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         with pytest.raises(RuntimeError, match="Not in a git repository"):
             resolve_hooks_dir(tmp_path)
 
@@ -353,8 +413,13 @@ class TestHooksDirResolution:
 class TestInstallHookIntegration:
     """Full install cycle integration test."""
 
-    def test_full_install_cycle(self, tmp_path):
+    def test_full_install_cycle(self, tmp_path, monkeypatch):
         """Init repo, install, verify hook works."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -387,8 +452,13 @@ class TestInstallHookIntegration:
 class TestHelperFunctions:
     """Unit tests for individual helper functions."""
 
-    def test_check_hooks_path_override_set(self, tmp_path):
+    def test_check_hooks_path_override_set(self, tmp_path, monkeypatch):
         """Returns value when core.hooksPath is set."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -405,8 +475,13 @@ class TestHelperFunctions:
         result = check_hooks_path_override(tmp_path)
         assert result == "/custom/hooks"
 
-    def test_check_hooks_path_override_unset(self, tmp_path):
+    def test_check_hooks_path_override_unset(self, tmp_path, monkeypatch):
         """Returns None when core.hooksPath is not set."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -443,8 +518,13 @@ class TestHelperFunctions:
 class TestIdempotency:
     """Idempotent re-install over code-forge hook."""
 
-    def test_reinstall_over_forge_hook_skips_backup(self, tmp_path):
+    def test_reinstall_over_forge_hook_skips_backup(self, tmp_path, monkeypatch):
         """Re-installing over forge hook does not create backup."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -478,8 +558,13 @@ class TestIdempotency:
 class TestQuietFlag:
     """quiet flag suppresses informational output."""
 
-    def test_quiet_suppresses_info(self, tmp_path):
+    def test_quiet_suppresses_info(self, tmp_path, monkeypatch):
         """args.quiet=True suppresses installed-at message."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         import types
         subprocess.run(
             ["git", "init"],
@@ -499,8 +584,13 @@ class TestQuietFlag:
         # With quiet=True, no informational output
         assert stderr.getvalue() == ""
 
-    def test_no_quiet_shows_info(self, tmp_path):
+    def test_no_quiet_shows_info(self, tmp_path, monkeypatch):
         """Without quiet, installed-at message appears."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
