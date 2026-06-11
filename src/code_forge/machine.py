@@ -830,10 +830,10 @@ class StateMachine:
     def _finalize_local_terminal(self) -> None:
         """R3 LOW5: terminal state writer for LOCAL fixpoint exit.
 
-        FIXVAL gate (D-06): runs only on otherwise-GREEN diffs, after
+        FIXVAL gate: runs only on otherwise-GREEN diffs, after
         convergence, before the verdict is written. Hollow tests block
         with FAIL; non-hollow proceed to PASS. Overfit guard runs on
-        PASS status (advisory only, D-03).
+        PASS status (advisory only, never blocking).
         """
         from .fixval import (
             FixvalSkip,
@@ -847,7 +847,7 @@ class StateMachine:
         candidate = classify_fixval_candidate(changed_files)
 
         if isinstance(candidate, FixvalSkip):
-            # D-08: record SKIPPED with reason (never silent)
+            # Record SKIPPED with reason (never silent)
             skip_finding = StateFinding(
                 id="FIXVAL_SKIPPED",
                 fingerprint="fixval-skipped",

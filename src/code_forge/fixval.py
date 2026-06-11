@@ -6,10 +6,10 @@ Proves a diff's new tests are not hollow by reverting non-test changes
 and asserting the test goes RED, then restoring and asserting GREEN.
 
 FIXVAL CAN BLOCK -- it gates only the diff's own hollow test.
-Overfit guard (STING) is ADVISORY only (D-03).
+Overfit guard (STING) is ADVISORY only (never blocking).
 
 Pipeline position: post-convergence, co-located with R2/L2 mutation,
-before the verdict (D-06).
+before the verdict.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class FixvalResult:
     block_message: str = ""
 
 
-# D-07: test file detection patterns (multi-language).
+# Test file detection patterns (multi-language).
 # Order: longest regex alternative first per project convention.
 _TEST_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"(^|/)tests/test_[^/]+\.py$"),
@@ -93,7 +93,7 @@ def _is_test_file(path: str) -> bool:
 def classify_fixval_candidate(
     changed_files: list[str],
 ) -> FixvalCandidate | FixvalSkip:
-    """Classify a diff as FIXVAL candidate or skip (D-01).
+    """Classify a diff as FIXVAL candidate or skip.
 
     A diff is a candidate if and only if it has BOTH test and non-test
     files. When only one kind is present, return FixvalSkip with reason.
@@ -124,13 +124,13 @@ def parse_fixval_waiver(
     commit_message: str,
     env: dict[str, str] | None = None,
 ) -> str | None:
-    """Parse FIXVAL waiver from env var or commit trailer (D-04).
+    """Parse FIXVAL waiver from env var or commit trailer.
 
     Dual-channel waiver:
       Channel 1 (primary): FIXVAL_WAIVER env var.
       Channel 2: Fixval-Waiver: trailer in commit message.
     Env takes precedence when both present.
-    Empty reason (whitespace-only) returns None (D-04: reason required).
+    Empty reason (whitespace-only) returns None.
 
     Args:
         commit_message: the commit message to scan for trailer.
@@ -202,7 +202,7 @@ def run_fixval(
     commit_message: str,
     diff_text: str | None,
 ) -> FixvalResult:
-    """Run FIXVAL gate on a candidate diff (D-02).
+    """Run FIXVAL gate on a candidate diff.
 
     Steps:
       a. Guard: diff_text None -> SKIPPED
@@ -463,7 +463,7 @@ def run_overfit_guard(
     test_cmd: list[str],
     cwd: Path,
 ) -> list[AdvisoryFinding]:
-    """Run STING overfit guard (D-03): advisory only, never blocking.
+    """Run STING overfit guard: advisory only, never blocking.
 
     Applies a variable-rename transform to the first .py file in
     non_test_files. If the test breaks after rename, it is overfitting
