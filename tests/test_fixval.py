@@ -299,6 +299,34 @@ class TestRunFixval:
             if isinstance(args, list):
                 assert "checkout" not in args
 
+    @patch("code_forge.fixval._logger")
+    @patch("code_forge.fixval._run_baseline_guard")
+    @patch("subprocess.run")
+    def test_restore_failure_logs_error(
+        self, mock_run, mock_guard, mock_logger, tmp_path
+    ):
+        """If restore patch fails, _logger.error is called with details."""
+        mock_guard.return_value = ("passed", [], [])
+        mock_run.side_effect = [
+            MagicMock(returncode=0),                     # git apply -R
+            MagicMock(returncode=0),                     # test passes -> BLOCK
+            MagicMock(returncode=1, stderr="conflict"),  # restore FAILS
+        ]
+        candidate = _make_candidate()
+        diff = (
+            "--- a/src/foo.py\n+++ b/src/foo.py\n"
+            "@@ -1 +1 @@\n-old\n+new\n"
+        )
+        result = run_fixval(
+            candidate,
+            test_cmd=["python", "-m", "pytest"],
+            cwd=tmp_path,
+            commit_message="fix: foo",
+            diff_text=diff,
+        )
+        assert result.status == FixvalStatus.BLOCK
+        assert mock_logger.error.called
+
     @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
     def test_scoped_test_cmd(self, mock_run, mock_guard, tmp_path):
