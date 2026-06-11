@@ -232,7 +232,6 @@ def run_fixval(
         commit_message, env=os.environ
     )
     if waiver_reason is not None:
-        channel = "FIXVAL_WAIVER env var"
         if os.environ.get("FIXVAL_WAIVER", "").strip():
             channel = "FIXVAL_WAIVER env var"
         else:
@@ -512,10 +511,13 @@ def run_overfit_guard(
         file_path.write_text(new_source, encoding="utf-8")
 
         try:
-            # Run test
+            # Run test (match run_fixval: set PYTHONPATH=src/ so imports work)
             scoped_cmd = test_cmd + candidate.test_files
+            run_env = os.environ.copy()
+            run_env["PYTHONPATH"] = os.path.join(str(cwd), "src")
             result = subprocess.run(
                 scoped_cmd,
+                env=run_env,
                 capture_output=True,
                 text=True,
                 timeout=600,
