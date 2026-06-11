@@ -2,10 +2,12 @@
 # Semgrep taint rules for forge REVIEW-TRUST-01 sub-capability (b).
 #
 # Intraprocedural only (semgrep CE). Cross-function flows require
-# semgrep Pro and are out of scope (D-11).
+# semgrep Pro and are not covered here.
 #
-# D-12 source/sink pairs. open() is source only -- open-as-sink
-# deferred per self-loop constraint (see 18-CONTEXT.md D-12).
+# Sources: os.environ, yaml.safe_load, json.load, open().
+# Sinks: subprocess, os.system/popen, urllib.urlopen, requests.
+# open() is source only -- open-as-sink deferred: using open() as both
+# source and sink in one taint rule creates a self-loop (false positives).
 rules:
   - id: forge-taint-config-to-subprocess
     severity: WARNING

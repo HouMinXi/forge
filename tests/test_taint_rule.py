@@ -143,9 +143,11 @@ def test_forge_taint_yaml_severity():
 
 
 def test_forge_taint_open_not_sink():
-    """open() appears only as source, never as sink (D-12 self-loop).
+    """open() appears only as source, never as sink.
 
-    Uses regex word-boundary check to avoid false-matching subprocess.Popen.
+    open() as both source and sink creates a self-loop (false positives);
+    open-as-sink is deferred. Uses regex word-boundary to avoid false-matching
+    subprocess.Popen.
     """
     import re
 
@@ -155,7 +157,7 @@ def test_forge_taint_open_not_sink():
             pat = sink.get("pattern", "")
             # Match standalone open( but not Popen( or other *open(
             assert not re.search(r"(?<![A-Za-z])open\(", pat), (
-                "Rule %s has open() as sink -- violates D-12" % rule["id"]
+                "Rule %s has open() as sink (self-loop risk)" % rule["id"]
             )
 
 

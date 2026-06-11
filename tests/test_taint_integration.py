@@ -2,12 +2,12 @@
 """Integration tests for Phase 18 pipeline wiring.
 
 Covers:
-- danger_score_from_diff wired into _run_l0_phase (D-02/D-15)
-- Non-git mode loud-skip for danger-score (D-16)
-- TaintRunner wired as advisory runner (D-09)
-- source_files injection from resolved_review (D-09)
-- Provenance question in pass3-adversarial.md (D-07/D-08)
-- gate-yaml-rce corpus entry has TRUST tag (SC#5)
+- danger_score_from_diff wired into _run_l0_phase as L0 CONFIRMED finding
+- Non-git mode: danger-score loud-skips with infra_error
+- TaintRunner wired as advisory runner (never blocks, never resets cycle counter)
+- source_files injected from resolved_review before advisory dispatch
+- Provenance question present in pass3-adversarial.md
+- gate-yaml-rce corpus entry has TRUST axis tag (regression guard)
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ class TestDangerScoreWiredToL0:
 
 
 class TestDangerScoreNonGit:
-    """Non-git mode: danger-score loud-skips (D-16)."""
+    """Non-git mode: danger-score loud-skips with infra_error."""
 
     def test_nongit_loud_skip(self, tmp_path):
         resolved = _make_resolved(git_diff=None)
@@ -117,7 +117,7 @@ class TestTaintRunnerWiredAsAdvisory:
     """TaintRunner registered as advisory runner dispatches correctly."""
 
     def test_taint_runner_semgrep_absent_infra_error(self, tmp_path):
-        """When semgrep is absent, infra_errors contains D-06 message."""
+        """When semgrep is absent, infra_errors contains the install-hint message."""
         runner = TaintRunner()
         sm = _make_sm(
             tmp_path,
@@ -134,7 +134,7 @@ class TestTaintRunnerWiredAsAdvisory:
 
 
 class TestTaintRunnerSourceFilesInjection:
-    """machine.py injects source_files from resolved_review (D-09)."""
+    """machine.py injects source_files from resolved_review before advisory dispatch."""
 
     def test_source_files_injected_before_run(self, tmp_path):
         runner = TaintRunner()
@@ -153,7 +153,7 @@ class TestTaintRunnerSourceFilesInjection:
 
 
 class TestProvenanceQuestion:
-    """Provenance question present in pass3-adversarial.md (D-07/D-08).
+    """Provenance question present in pass3-adversarial.md (runs every review).
 
     Uses git toplevel to locate the file, since editable installs may
     resolve code_forge.__file__ to a different tree than the worktree
