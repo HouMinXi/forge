@@ -446,6 +446,7 @@ class _VariableRenamer(ast.NodeTransformer):
             if isinstance(target, ast.Name):
                 self.renamed = target.id
                 self.new_name = target.id + "_renamed"
+                target.id = self.new_name  # rename the target itself
                 self._done = True
                 break
         return node
