@@ -41,13 +41,13 @@ _HUNK_HEADER_RE: re.Pattern[str] = re.compile(
     r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@"
 )
 
-# Config file paths that danger-score scans (D-01).
+# Config file paths that danger-score scans: gate.yaml and .code-forge/* only.
 _CONFIG_FILE = "gate.yaml"
 _CONFIG_DIR_PREFIX = ".code-forge/"
 
 
 def _is_config_path(path: str) -> bool:
-    """Check if a file path is a config file we scan (D-01)."""
+    """Return True if path is a gate.yaml or .code-forge/* config file."""
     return path == _CONFIG_FILE or path.startswith(_CONFIG_DIR_PREFIX)
 
 
@@ -56,13 +56,13 @@ def danger_score_from_diff(
 ) -> list[StateFinding]:
     """Scan diff new-lines for dangerous config fields (L0 blocking).
 
-    Only scans files matching gate.yaml or .code-forge/* (D-01).
-    Only scans lines starting with + (excluding +++ header) (D-03).
+    Only scans files matching gate.yaml or .code-forge/*.
+    Only scans lines starting with + (excluding +++ header).
     Returns L0 CONFIRMED StateFindings with fingerprint
-    "danger-score:{file}:{field}:{line}" (D-17).
+    "danger-score:{file}:{field}:{line}".
 
     Args:
-        diff_text: unified diff string, or None in non-git mode (D-16).
+        diff_text: unified diff string, or None when no git diff is available.
 
     Returns:
         List of StateFinding for each dangerous field found in new-lines.
@@ -95,7 +95,6 @@ def danger_score_from_diff(
             continue
         file_path = header_match.group(1)
 
-        # Only process config files (D-01).
         if not _is_config_path(file_path):
             continue
 
@@ -118,7 +117,7 @@ def danger_score_from_diff(
             if raw_line.startswith("\\"):
                 continue
 
-            # Process new-lines (D-03): only lines starting with +.
+            # New-lines start with +; strip prefix before matching.
             if raw_line.startswith("+"):
                 # Strip the leading '+' (diff syntax, not file content).
                 content = raw_line[1:]
@@ -163,9 +162,9 @@ def _findings_to_advisories(
 ) -> list[AdvisoryFinding]:
     """Convert parser Finding objects to AdvisoryFinding for the taint axis.
 
-    description is finding.message verbatim -- the intraprocedural caveat
-    is already in the semgrep rule message text (Plan 02). Do NOT append
-    it again here to avoid double caveat in output.
+    description is finding.message verbatim. The intraprocedural caveat is
+    embedded in the semgrep rule's message template (forge-taint.yaml), so
+    it must not be appended here again to avoid a double caveat.
     """
     advisories: list[AdvisoryFinding] = []
     for f in findings:
@@ -185,7 +184,7 @@ class TaintRunner:
 
     Satisfies the AxisRunner Protocol (is_advisory=True).
     machine.py sets source_files before dispatch; TaintRunner does NOT
-    invoke git (D-09 forward-guard).
+    invoke git -- it uses the already-resolved source file list.
     """
 
     def __init__(self) -> None:
@@ -219,7 +218,7 @@ class TaintRunner:
         if self.source_files is None or len(self.source_files) == 0:
             return []
 
-        # Guard: semgrep not installed (D-05, D-06).
+        # Guard: semgrep not installed -- loud-skip, never silent.
         if shutil.which("semgrep") is None:
             msg = "Taint gate requires semgrep. Install: pip install semgrep"
             self.infra_errors.append(msg)
@@ -273,7 +272,7 @@ class TaintRunner:
         # Parse SARIF output via existing parser.
         parsed = parse_semgrep(result.stdout, exit_code=result.returncode)
 
-        # Separate Finding and ToolError items (D-05: never silent).
+        # Separate Finding and ToolError items; log errors, never discard silently.
         findings: list[Finding] = []
         for item in parsed:
             if isinstance(item, ToolError):
