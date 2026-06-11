@@ -265,8 +265,11 @@ what the in-editor review claims -- is a separate, manual step:
 
 The skills give you the review passes; this gate is what makes a green verdict
 mean the tests actually pass. Without it, an in-editor review that never ran can
-still reach a commit. Non-code commits that legitimately have no receipts (docs,
-config) bypass the gate with `git commit --no-verify`.
+still reach a commit. Commits that stage only non-code files (docs, config,
+metadata such as `.md`, `.yaml`, `.toml`, `LICENSE`, `README`) are detected by
+the hook and skip the gate automatically -- no receipts and no `--no-verify`
+needed. Any staged file outside that set, including unknown extensions, re-arms
+the gate for the whole commit.
 
 ## Hooks (reference implementations)
 
