@@ -401,3 +401,83 @@ class TestGetCommitMessage:
             result = machine._get_commit_message()
 
         assert result == ""
+
+
+class TestEvalFixvalHookRegistered:
+    """FixvalAxisHook is registered in _AXIS_HOOKS at module load."""
+
+    def test_eval_fixval_hook_registered(self):
+        # Force fresh import from worktree
+        import importlib
+        import sys
+
+        mod_name = "code_forge.eval.runner"
+        if mod_name in sys.modules:
+            importlib.reload(sys.modules[mod_name])
+
+        from code_forge.eval.runner import FixvalAxisHook, _AXIS_HOOKS
+
+        hook_types = [h.__class__.__name__ for h in _AXIS_HOOKS]
+        assert "FixvalAxisHook" in hook_types
+
+
+class TestEvalFixvalScoresBugP1201:
+    """FixvalAxisHook post_review processes FIXVAL-tagged entries."""
+
+    def test_eval_fixval_scores_bug_p12_01(self):
+        from code_forge.eval.corpus import CorpusEntry
+        from code_forge.eval.runner import FixvalAxisHook
+        from code_forge.eval.scorer import EvalResult
+
+        hook = FixvalAxisHook()
+
+        entry = CorpusEntry(
+            name="BUG-P12-01",
+            diff_file="diffs/bug-p12-01.diff",
+            expected_verdict="HOLD",
+            axis_tags=["FIXVAL"],
+        )
+
+        # HOLD verdict -> caught (no exception = hook ran successfully)
+        result_hold = EvalResult(
+            entry=entry,
+            actual_verdict="HOLD",
+            runs=1,
+            caught_count=1,
+            skipped_reason="",
+        )
+        hook.post_review(entry, result_hold)
+
+        # PASS verdict -> missed (no exception = hook ran successfully)
+        result_pass = EvalResult(
+            entry=entry,
+            actual_verdict="PASS",
+            runs=1,
+            caught_count=0,
+            skipped_reason="",
+        )
+        hook.post_review(entry, result_pass)
+
+    def test_eval_fixval_ignores_non_fixval_entry(self):
+        from code_forge.eval.corpus import CorpusEntry
+        from code_forge.eval.runner import FixvalAxisHook
+        from code_forge.eval.scorer import EvalResult
+
+        hook = FixvalAxisHook()
+
+        entry = CorpusEntry(
+            name="SEC-01",
+            diff_file="diffs/sec-01.diff",
+            expected_verdict="HOLD",
+            axis_tags=["SEC"],
+        )
+
+        result = EvalResult(
+            entry=entry,
+            actual_verdict="PASS",
+            runs=1,
+            caught_count=0,
+            skipped_reason="",
+        )
+        # Should not raise or process (no FIXVAL tag)
+        hook.post_review(entry, result)

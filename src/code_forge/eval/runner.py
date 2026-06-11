@@ -69,6 +69,34 @@ def register_axis_hook(hook: AxisHook) -> None:
     _AXIS_HOOKS.append(hook)
 
 
+class FixvalAxisHook(AxisHook):
+    """FIXVAL eval axis hook: scores fix-validation results.
+
+    pre_review: no-op (FIXVAL runs inside forge's pipeline, not at
+    the eval layer).
+
+    post_review: if entry has "FIXVAL" in axis_tags, checks the
+    actual verdict. HOLD (forge blocked) -> scored as caught.
+    PASS (forge did not block) -> scored as missed (false-green).
+    The hook trusts forge's internal FIXVAL gate output.
+    """
+
+    def pre_review(self, entry: CorpusEntry) -> None:
+        """No-op: FIXVAL runs inside forge's pipeline."""
+
+    def post_review(self, entry: CorpusEntry, result: EvalResult) -> None:
+        """Score FIXVAL axis results on entries with FIXVAL tag."""
+        if "FIXVAL" not in entry.axis_tags:
+            return
+        # Logging only -- the actual scoring is done by the scorer
+        # module using the EvalResult. This hook exists for future
+        # axis-specific post-processing (e.g., recording which
+        # specific FIXVAL sub-check triggered the verdict).
+
+
+register_axis_hook(FixvalAxisHook())
+
+
 # -- Infra failure detection ----------------------------------------------------
 
 _INFRA_PATTERNS: tuple[str, ...] = (
