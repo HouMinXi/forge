@@ -115,7 +115,7 @@ def test_danger_score_empty_diff():
 
 
 def test_danger_score_none_diff():
-    """None input -> expect [] (non-git guard per D-16)."""
+    """None input -> expect [] (non-git mode: diff unavailable, returns early)."""
     findings = danger_score_from_diff(None)
     assert findings == []
 
@@ -295,7 +295,7 @@ def test_taint_runner_protocol_conformance():
 
 
 def test_taint_runner_semgrep_absent():
-    """shutil.which returns None -> [] returned, infra_errors has D-06 message."""
+    """shutil.which returns None -> [] returned, infra_errors has install-hint message."""
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py")]
     with patch("code_forge.taint.shutil.which", return_value=None):
