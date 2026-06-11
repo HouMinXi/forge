@@ -11,21 +11,29 @@ like `f` and would crash if run as tests.
 """
 from __future__ import annotations
 
-import os
 import json
+import os
 import shutil
 import subprocess
 import urllib.request
+from pathlib import Path
+
+import pytest
 
 try:
     import yaml
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[assignment]
 
 try:
     import requests
 except ImportError:
-    requests = None
+    requests = None  # type: ignore[assignment]
+
+# Semgrep annotation placeholder: `f` is a file-like object used in
+# example_* snippets below. semgrep --test parses but never executes these
+# functions; defining f = None here satisfies ruff without affecting semgrep.
+f = None  # type: ignore[assignment]
 
 
 # -------------------------------------------------------------------
@@ -87,10 +95,6 @@ def example_hardcoded_url():
 # -------------------------------------------------------------------
 # Pytest wrappers: validate YAML structure (always) + semgrep (if present)
 # -------------------------------------------------------------------
-
-from pathlib import Path
-
-import pytest
 
 _RULES_PATH = (
     Path(__file__).resolve().parent.parent

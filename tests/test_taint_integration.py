@@ -14,14 +14,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from code_forge.advisory import AdvisoryFinding
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
-from code_forge.state import Mode, Verdict
+from code_forge.state import Mode
 from code_forge.taint import TaintRunner
 
 
