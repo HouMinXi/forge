@@ -543,6 +543,7 @@ class TestRuntimeRunnerSmokeReceipts:
     def test_surfaces_null_json_returns_no_summary_not_skipped(self, tmp_path):
         """LLM returns surfaces=null: coerced to [] not TypeError (M1 kill test)."""
         from unittest.mock import MagicMock, patch
+
         from code_forge.runtime import RuntimeRunner
         response = MagicMock()
         response.content = {"surfaces": None, "findings": []}
@@ -556,7 +557,7 @@ class TestRuntimeRunnerSmokeReceipts:
     def test_one_directional_surface_match_is_verified(self, tmp_path):
         """Short receipt surface matches longer LLM surface (M2 kill: or not and, D-11)."""
         from unittest.mock import MagicMock, patch
-        from pathlib import Path
+
         from code_forge.runtime import RuntimeRunner, write_smoke_receipt
         diff = "diff --git a/rules.nft b/rules.nft\n+add rule"
         # receipt surface "nft" is substring of LLM surface "nftables-filter"
@@ -570,6 +571,6 @@ class TestRuntimeRunnerSmokeReceipts:
         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
         assert summary is not None
         assert "all 1 surfaces verified" in summary.description, (
-            "short receipt surface 'nft' should match LLM surface 'nftables-filter' (D-11 either direction)"
+            "D-11 either direction: short receipt surface 'nft' must match 'nftables-filter'"
         )
 
