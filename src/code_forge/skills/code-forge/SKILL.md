@@ -927,6 +927,48 @@ Step 5 (Beaker submission) = pre-merge gate, not pre-commit requirement.
 
 ---
 
+## RUNTIME Axis (Advisory, Always-On)
+
+The RUNTIME advisory axis runs on every review post-convergence (D-04: always-on,
+no gate.yaml opt-out). It enumerates runtime surfaces (systemd, nftables, sockets,
+subprocess, file side effects, kernel modules, firewall rules) and reports which
+surfaces lack a verified smoke receipt.
+
+**Inline outlet users:** Ask the following question verbatim after three-cycle
+review completes. The question is the canonical D-05 lifecycle question; the
+drift test (D-10) asserts that the text here matches the constant in runtime.py.
+
+```
+You are reviewing a code diff for runtime lifecycle and side-effect risks.
+
+Given this diff, identify:
+1. What runtime surfaces does this change affect? (e.g., systemd units, nftables rules, network sockets, subprocess calls, file side effects, cron/timer jobs, kernel modules, firewall rules)
+2. For each surface: what lifecycle or side-effect could break at runtime even if the code is syntactically correct and all unit tests pass?
+3. What smoke test would need to exercise each surface to verify it actually works after the change?
+
+Return your answer as JSON with exactly these keys:
+{"surfaces": ["surface1", "surface2"], "findings": [{"file": "path/to/file", "line": 1, "surface": "surface_name", "description": "what could break and why"}]}
+
+If no runtime surfaces are affected, return: {"surfaces": [], "findings": []}
+
+Diff:
+{diff_text}
+```
+
+**Behavior:**
+- Results appear as advisory findings (axis=RUNTIME) -- never blocking, never reset cycle counter (SC4).
+- When a surface is enumerated but no verified smoke receipt exists for the current diff, it is reported as NOT VERIFIED.
+- Silence never reads as verified (D-09): the Smoke Status line always prints on stderr.
+
+**Recording a verified receipt (CLI outlet):**
+```bash
+code-forge smoke-run [--surface "<surface-name>"] -- <command>
+```
+This executes the command, captures transcript + exit code, and writes a receipt
+keyed by diff content-hash. When the diff changes, the receipt is invalidated.
+
+---
+
 # Step 5: R1 Test Gate
 
 ## Purpose
