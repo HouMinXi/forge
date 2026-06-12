@@ -982,7 +982,7 @@ class TestBuiltinD12Check:
         assert m is not None, "grep -P pattern not found in hook"
         pattern = m.group(1)
         # em dash U+2014 = \xe2\x80\x94 in UTF-8
-        em_dash = "—".encode("utf-8")
+        em_dash = "\u2014".encode("utf-8")
         r = subprocess.run(["grep", "-P", pattern], input=em_dash, capture_output=True)
         assert r.returncode == 0, "em dash should be blocked in ai-smell mode"
 
@@ -993,7 +993,7 @@ class TestBuiltinD12Check:
         m = re.search(r"grep -P '([^']+)'", content)
         assert m is not None
         pattern = m.group(1)
-        cjk = "中".encode("utf-8")
+        cjk = "\u4e2d".encode("utf-8")
         r = subprocess.run(["grep", "-P", pattern], input=cjk, capture_output=True)
         assert r.returncode != 0, "CJK should pass in ai-smell mode (grep returns no match)"
 
@@ -1004,7 +1004,7 @@ class TestBuiltinD12Check:
         m = re.search(r"grep -P '([^']+)'", content)
         assert m is not None
         pattern = m.group(1)
-        cjk = "中".encode("utf-8")
+        cjk = "\u4e2d".encode("utf-8")
         r = subprocess.run(["grep", "-P", pattern], input=cjk, capture_output=True)
         assert r.returncode == 0, "CJK should be blocked in strict mode"
 
