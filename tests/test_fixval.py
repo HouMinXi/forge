@@ -29,7 +29,7 @@ from code_forge.state import StateFinding
 
 
 class TestClassifyFixvalCandidate:
-    """D-01: structural trigger -- BOTH test and non-test files required."""
+    """Structural trigger -- BOTH test and non-test files required."""
 
     def test_both_code_and_test_returns_candidate(self):
         result = classify_fixval_candidate(
@@ -86,7 +86,7 @@ class TestClassifyFixvalCandidate:
 
 
 class TestParseFixvalWaiver:
-    """D-04/D-05: dual-channel waiver (env var + trailer)."""
+    """Dual-channel waiver (env var + trailer)."""
 
     def test_waiver_from_trailer(self):
         msg = "fix: foo\n\nFixval-Waiver: flaky network test"
@@ -647,7 +647,7 @@ class TestVariableRenamer:
 
 
 class TestRunOverfitGuard:
-    """D-03: overfit guard is ADVISORY, never blocking."""
+    """Overfit guard is ADVISORY, never blocking."""
 
     def test_rename_breaks_test_emits_advisory(self, tmp_path):
         # Create a .py file with a local variable
