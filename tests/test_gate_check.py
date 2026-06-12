@@ -10,14 +10,19 @@ import pytest
 import yaml
 
 from code_forge.exit_codes import EXIT_FAIL, EXIT_PASS
+import subprocess
+
 from code_forge.gate_check import (
     compute_baseline_delta,
+    fnmatch_to_grep,
     is_ci_mode,
     load_gate_config,
     match_source_patterns,
     run_gate_check,
     translate_exit_code,
     validate_command_safety,
+    validate_presubmit_command,
+    validate_presubmit_entry,
 )
 
 
@@ -742,3 +747,328 @@ class TestBugInjectFailOpen:
             assert result == EXIT_FAIL, (
                 "unsafe command must BLOCK (1), got %d" % result
             )
+
+
+# --- Presubmit Schema Validation ---
+
+
+class TestPresubmitValidation:
+    """Tests for presubmit section validation in load_gate_config
+    and helper functions validate_presubmit_entry, validate_presubmit_command,
+    and fnmatch_to_grep.
+    """
+
+    # -- load_gate_config: valid presubmit section --
+
+    def test_valid_presubmit_list_loads_ok(self):
+        """gate.yaml with valid presubmit list loads without error."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: "*.go"
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert "presubmit" in config
+        assert len(config["presubmit"]) == 1
+
+    def test_valid_presubmit_with_when_exists_loads_ok(self):
+        """gate.yaml with presubmit entry with valid when_exists string loads ok."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["scripts/checkpatch.pl", "--strict"]
+    applies_to: "*.c"
+    on: "patch"
+    when_exists: "scripts/checkpatch.pl"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["presubmit"][0]["when_exists"] == "scripts/checkpatch.pl"
+
+    def test_no_presubmit_section_loads_ok(self):
+        """gate.yaml with no presubmit section loads ok (section is optional)."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert "presubmit" not in config
+
+    def test_on_diff_loads_ok(self):
+        """gate.yaml with presubmit entry with on='diff' loads without error."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: "*.go"
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["presubmit"][0]["on"] == "diff"
+
+    def test_on_patch_loads_ok(self):
+        """gate.yaml with presubmit entry with on='patch' loads without error."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["scripts/checkpatch.pl"]
+    applies_to: "*.c"
+    on: "patch"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["presubmit"][0]["on"] == "patch"
+
+    # -- load_gate_config: non_ascii field --
+
+    def test_non_ascii_ai_smell_loads_ok(self):
+        """gate.yaml with non_ascii: 'ai-smell' loads ok."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+non_ascii: "ai-smell"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["non_ascii"] == "ai-smell"
+
+    def test_non_ascii_strict_loads_ok(self):
+        """gate.yaml with non_ascii: 'strict' loads ok."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+non_ascii: "strict"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["non_ascii"] == "strict"
+
+    def test_non_ascii_absent_defaults_to_ai_smell(self):
+        """gate.yaml with no non_ascii field defaults to 'ai-smell'."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config.get("non_ascii", "ai-smell") == "ai-smell"
+
+    def test_non_ascii_unknown_raises(self):
+        """gate.yaml with non_ascii: 'unknown-value' raises ValueError (fail-closed)."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+non_ascii: "unknown-value"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="non_ascii"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    # -- load_gate_config: presubmit error cases --
+
+    def test_presubmit_non_list_raises(self):
+        """gate.yaml with presubmit as non-list raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  command: ["go", "vet", "./..."]
+  applies_to: "*.go"
+  on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="presubmit"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_missing_command_raises(self):
+        """gate.yaml with presubmit entry missing 'command' raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - applies_to: "*.go"
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="presubmit.*command"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_metachar_in_command_raises(self):
+        """gate.yaml with presubmit entry command containing '|' raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./...", "|", "grep", "error"]
+    applies_to: "*.go"
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_command_not_list_raises(self):
+        """gate.yaml with presubmit entry command that is not a list raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: "go vet ./..."
+    applies_to: "*.go"
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_on_message_raises(self):
+        """gate.yaml with presubmit entry with on='message' raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: "*.go"
+    on: "message"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="message"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_on_invalid_value_raises(self):
+        """gate.yaml with presubmit entry with invalid 'on' value raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: "*.go"
+    on: "staged"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_applies_to_non_string_raises(self):
+        """gate.yaml with presubmit entry applies_to as non-string raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to:
+      - "*.go"
+      - "*.rs"
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_applies_to_single_quote_raises(self):
+        """gate.yaml with applies_to containing single-quote raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: "*.go'"
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_applies_to_double_quote_raises(self):
+        """gate.yaml with applies_to containing double-quote raises ValueError."""
+        yaml_content = r"""
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: '*.go"'
+    on: "diff"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_when_exists_single_quote_raises(self):
+        """gate.yaml with when_exists containing single-quote raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: "*.go"
+    on: "diff"
+    when_exists: "scripts/check'.pl"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_when_exists_double_quote_raises(self):
+        """gate.yaml with when_exists containing double-quote raises ValueError."""
+        yaml_content = r"""
+test:
+  command: ["python3", "-m", "pytest"]
+presubmit:
+  - command: ["go", "vet", "./..."]
+    applies_to: "*.go"
+    on: "diff"
+    when_exists: 'scripts/check".pl'
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    # -- validate_presubmit_command --
+
+    def test_validate_presubmit_command_rejects_metachar_in_each_element(self):
+        """validate_presubmit_command rejects metacharacters in each element."""
+        for meta in list("|;&$><`"):
+            bad_command = ["go", "vet", "./..." + meta]
+            with pytest.raises(ValueError):
+                validate_presubmit_command(bad_command)
+
+    # -- fnmatch_to_grep via real grep -E --
+
+    def _grep_matches(self, pattern: str, text: str) -> bool:
+        """Run real grep -E to test the pattern against text."""
+        result = subprocess.run(
+            ["grep", "-E", pattern],
+            input=text,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def test_fnmatch_star_matches_zero_chars(self):
+        """fnmatch_to_grep('test_*.py') matches 'test_.py' (star=zero chars OK)."""
+        pattern = fnmatch_to_grep("test_*.py")
+        assert self._grep_matches(pattern, "test_.py")
+
+    def test_fnmatch_star_matches_nonempty(self):
+        """fnmatch_to_grep('test_*.py') matches 'test_foo.py'."""
+        pattern = fnmatch_to_grep("test_*.py")
+        assert self._grep_matches(pattern, "test_foo.py")
+
+    def test_fnmatch_star_no_match_wrong_ext(self):
+        """fnmatch_to_grep('*.py') does NOT match 'foo.js' via real grep -E."""
+        pattern = fnmatch_to_grep("*.py")
+        assert not self._grep_matches(pattern, "foo.js")
+
+    def test_fnmatch_star_matches_foo_py(self):
+        """fnmatch_to_grep('*.py') matches 'foo.py' via real grep -E."""
+        pattern = fnmatch_to_grep("*.py")
+        assert self._grep_matches(pattern, "foo.py")
