@@ -640,7 +640,7 @@ def _run_test_assertion_review(
     static review. It provides an independent signal for the human
     backstop to act on, not a machine-verified gate. Rationale:
     recording advisory findings in receipts would contaminate the cycle
-    counter (Pitfall 4 in RESEARCH.md).
+    counter.
     """
     from .llm_invoke import llm_invoke
     from .reviewer_json import validate_reviewer_json, _json_to_state_findings
@@ -1560,7 +1560,7 @@ def _run_hold_loop(
     from .state import State, load_state, save_state
     final = load_state(state_path)
     if final is None:
-        # R4-L3: fallback if state.json deleted mid-run.
+        # fallback if state.json deleted mid-run.
         final = State(
             mode=mode,
             source_hash=source_hash,
