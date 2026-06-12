@@ -21,7 +21,6 @@ D-11: Per-surface NOT VERIFIED = (LLM-enumerated) minus (receipt-declared),
 """
 from __future__ import annotations
 
-import datetime
 import hashlib
 import json
 import tempfile
@@ -185,6 +184,82 @@ def _build_skipped_finding(reason: str) -> AdvisoryFinding:
     )
 
 
+def _parse_llm_response(
+    content: object,
+) -> tuple[list[str], list[dict]]:
+    """Parse LLM response content into (surfaces, findings).
+
+    Accepts dict or JSON string. Raises ValueError/KeyError/JSONDecodeError
+    on malformed input so callers can map to a SKIPPED finding.
+    """
+    if isinstance(content, dict):
+        parsed = content
+    elif isinstance(content, str):
+        parsed = json.loads(content)
+    else:
+        raise ValueError(
+            "unexpected LLM content type: %s" % type(content).__name__
+        )
+    if "surfaces" not in parsed:
+        raise KeyError("missing 'surfaces' key in LLM response")
+    surfaces = list(parsed.get("surfaces", []) or [])
+    llm_findings = list(parsed.get("findings", []) or [])
+    return surfaces, llm_findings
+
+
+def _build_smoke_summary(
+    surfaces: list[str],
+    valid_receipts: list[dict],
+) -> AdvisoryFinding | None:
+    """Build the runtime-smoke-summary AdvisoryFinding.
+
+    Returns None when surfaces is empty (GM-R5-L2: no summary for zero
+    surfaces, callers must handle the no-surfaces case explicitly).
+    """
+    if not surfaces:
+        return None
+
+    verified_surfaces: list[str] = []
+    unverified_surfaces: list[str] = []
+    fingerprints: list[str] = []
+
+    for s in surfaces:
+        verified, fp = False, ""
+        for receipt in valid_receipts:
+            if _surface_matches(s, receipt.get("surface", "")):
+                fp = receipt.get("diff_sha256", "")[:8]
+                verified = True
+                break
+        if verified:
+            verified_surfaces.append(s)
+            fingerprints.append("%s[%s]" % (s, fp))
+        else:
+            unverified_surfaces.append(s)
+
+    total = len(surfaces)
+    verified_count = len(verified_surfaces)
+
+    if verified_count == total:
+        description = "smoke: all %d surfaces verified (%s)" % (
+            total, ", ".join(fingerprints)
+        )
+    else:
+        description = "smoke: %d/%d surfaces verified; NOT VERIFIED: [%s]" % (
+            verified_count, total, ", ".join(unverified_surfaces)
+        )
+        if fingerprints:
+            description += " (verified: %s)" % ", ".join(fingerprints)
+
+    return AdvisoryFinding(
+        id="runtime-smoke-summary",
+        axis="RUNTIME",
+        file="",
+        line_range=[0, 0],
+        description=description,
+        attribution="runtime-axis/smoke-evidence",
+    )
+
+
 class RuntimeRunner:
     """Advisory axis: lifecycle/side-effect review + smoke evidence.
 
@@ -210,16 +285,6 @@ class RuntimeRunner:
     ) -> list[AdvisoryFinding]:
         """Run the RUNTIME advisory axis on the given diff.
 
-        Steps:
-          (a) Guard: empty diff -> return [].
-          (b) Compute diff hash for receipt validation.
-          (c) LLM call with RUNTIME_LIFECYCLE_QUESTION (str.replace, not format).
-          (d) Parse JSON response: extract "surfaces" and "findings".
-          (e) Read smoke receipts from repo_root/.code-forge/smoke-receipts/.
-          (f) Validate receipts: diff_sha256 must match, status must be VERIFIED.
-          (g) Compute NOT VERIFIED = LLM-enumerated minus receipt-declared.
-          (h) Build AdvisoryFinding list: per-finding findings + optional summary.
-
         Args:
             diff_text: unified diff of the changes under review.
             repo_root: path to the repository root.
@@ -227,129 +292,49 @@ class RuntimeRunner:
         Returns:
             List of AdvisoryFinding. Advisory only -- never blocks verdict.
         """
-        # Prevent cross-run accumulation when runner is reused across cycles.
         self.infra_errors.clear()
-
-        # (a) Guard: empty diff returns nothing.
         if not diff_text or not diff_text.strip():
             return []
 
-        # (b) Compute diff hash for TOCTOU detection (Pitfall 3).
         diff_hash = compute_source_hash(git_diff=diff_text)
 
-        # (c) LLM call -- use str.replace NOT str.format.
-        # Diffs can contain literal { or } which would KeyError with .format().
+        # str.replace NOT str.format: diffs can contain literal { or }.
         prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", diff_text)
         try:
             result = llm_invoke(prompt, backend=self._backend)
         except LLMInvokeError as exc:
-            # D-04: SKIPPED with reason, never silent.
             reason = str(exc)
             self.infra_errors.append("RUNTIME axis LLM call failed: %s" % reason)
             return [_build_skipped_finding(reason)]
 
-        # (d) Parse JSON response.
-        content = result.content
-        surfaces: list[str] = []
-        llm_findings: list[dict] = []
-
         try:
-            if isinstance(content, dict):
-                parsed = content
-            elif isinstance(content, str):
-                parsed = json.loads(content)
-            else:
-                raise ValueError("unexpected LLM content type: %s" % type(content).__name__)
-
-            if "surfaces" not in parsed:
-                raise KeyError("missing 'surfaces' key in LLM response")
-
-            surfaces = list(parsed.get("surfaces", []) or [])
-            llm_findings = list(parsed.get("findings", []) or [])
-
+            surfaces, llm_findings = _parse_llm_response(result.content)
         except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-            # D-04: malformed JSON -> SKIPPED with parse error reason.
             reason = "LLM response parse error: %s" % exc
             self.infra_errors.append(reason)
             return [_build_skipped_finding(reason)]
 
-        # (e) Read smoke receipts.
         receipts_dir = repo_root / ".code-forge" / "smoke-receipts"
-        all_receipts = read_smoke_receipts(receipts_dir)
-
-        # (f) Validate receipts: diff_sha256 must match AND status == VERIFIED.
         valid_receipts = [
-            r for r in all_receipts
-            if r.get("diff_sha256") == diff_hash
-            and r.get("status") == "VERIFIED"
+            r for r in read_smoke_receipts(receipts_dir)
+            if r.get("diff_sha256") == diff_hash and r.get("status") == "VERIFIED"
         ]
 
-        # (g) Compute NOT VERIFIED = LLM-enumerated minus receipt-declared.
-        # Case-insensitive substring containment (D-11, either direction).
-        def _is_verified(llm_surface: str) -> tuple[bool, str]:
-            """Return (verified, receipt_fingerprint)."""
-            for receipt in valid_receipts:
-                rs = receipt.get("surface", "")
-                if _surface_matches(llm_surface, rs):
-                    fp = receipt.get("diff_sha256", "")[:8]
-                    return True, fp
-            return False, ""
-
-        # (h) Build AdvisoryFinding list.
-        findings: list[AdvisoryFinding] = []
-
-        # Per-finding entries from LLM "findings" list.
-        for idx, lf in enumerate(llm_findings):
-            if not isinstance(lf, dict):
-                continue
-            findings.append(AdvisoryFinding(
+        findings: list[AdvisoryFinding] = [
+            AdvisoryFinding(
                 id="runtime-%d" % idx,
                 axis="RUNTIME",
                 file=str(lf.get("file", "")),
                 line_range=[int(lf.get("line", 0)), int(lf.get("line", 0))],
                 description=str(lf.get("description", "")),
                 attribution="runtime-axis/llm",
-            ))
+            )
+            for idx, lf in enumerate(llm_findings)
+            if isinstance(lf, dict)
+        ]
 
-        # Summary finding: only when total surfaces > 0 (GM-R5-L2 fix).
-        # Plan 02 _display_smoke_status parses id="runtime-smoke-summary".
-        if surfaces:
-            verified_surfaces: list[str] = []
-            unverified_surfaces: list[str] = []
-            fingerprints: list[str] = []
-
-            for s in surfaces:
-                ok, fp = _is_verified(s)
-                if ok:
-                    verified_surfaces.append(s)
-                    fingerprints.append("%s[%s]" % (s, fp))
-                else:
-                    unverified_surfaces.append(s)
-
-            total = len(surfaces)
-            verified_count = len(verified_surfaces)
-
-            if verified_count == total:
-                # All verified.
-                description = "smoke: all %d surfaces verified (%s)" % (
-                    total, ", ".join(fingerprints)
-                )
-            else:
-                # Some or all unverified.
-                description = (
-                    "smoke: %d/%d surfaces verified; NOT VERIFIED: [%s]"
-                    % (verified_count, total, ", ".join(unverified_surfaces))
-                )
-                if fingerprints:
-                    description += " (verified: %s)" % ", ".join(fingerprints)
-
-            findings.append(AdvisoryFinding(
-                id="runtime-smoke-summary",
-                axis="RUNTIME",
-                file="",
-                line_range=[0, 0],
-                description=description,
-                attribution="runtime-axis/smoke-evidence",
-            ))
+        summary = _build_smoke_summary(surfaces, valid_receipts)
+        if summary is not None:
+            findings.append(summary)
 
         return findings

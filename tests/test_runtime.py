@@ -21,10 +21,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from code_forge.advisory import AdvisoryFinding
-
 
 # ---------------------------------------------------------------------------
 # RUNTIME_LIFECYCLE_QUESTION constant tests
@@ -244,8 +241,8 @@ class TestRuntimeRunnerLLMError:
     """run() on LLMInvokeError returns SKIPPED AdvisoryFinding (D-04)."""
 
     def test_llm_error_returns_skipped_finding(self, tmp_path):
-        from code_forge.runtime import RuntimeRunner
         from code_forge.llm_invoke import LLMInvokeError
+        from code_forge.runtime import RuntimeRunner
 
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=LLMInvokeError("connection refused")):
@@ -261,8 +258,8 @@ class TestRuntimeRunnerLLMError:
                "skipped" in finding.description.lower()
 
     def test_llm_error_records_to_infra_errors(self, tmp_path):
-        from code_forge.runtime import RuntimeRunner
         from code_forge.llm_invoke import LLMInvokeError
+        from code_forge.runtime import RuntimeRunner
 
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=LLMInvokeError("timeout")):
@@ -273,8 +270,8 @@ class TestRuntimeRunnerLLMError:
 
     def test_llm_error_never_silent(self, tmp_path):
         """LLM failure must return a non-empty list (never silently return [])."""
-        from code_forge.runtime import RuntimeRunner
         from code_forge.llm_invoke import LLMInvokeError
+        from code_forge.runtime import RuntimeRunner
 
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=LLMInvokeError("auth failed")):
@@ -384,7 +381,6 @@ class TestRuntimeRunnerSmokeReceipts:
     def test_no_receipts_all_surfaces_unverified(self, tmp_path):
         """No receipts present -> all LLM-enumerated surfaces UNVERIFIED (D-08)."""
         from code_forge.runtime import RuntimeRunner
-        from code_forge.source import compute_source_hash
 
         diff = "diff --git a/rules.sh b/rules.sh\n+change"
         response = self._mock_response(surfaces=["nftables", "systemd"])
@@ -510,7 +506,6 @@ class TestRuntimeRunnerSmokeReceipts:
     def test_summary_finding_has_runtime_axis(self, tmp_path):
         """Summary finding axis must be RUNTIME."""
         from code_forge.runtime import RuntimeRunner
-        from code_forge.source import compute_source_hash
 
         diff = "diff --git a/f b/f\n+change"
         response = self._mock_response(surfaces=["nftables"], findings=[])
@@ -525,8 +520,8 @@ class TestRuntimeRunnerSmokeReceipts:
 
     def test_infra_errors_cleared_on_each_run(self, tmp_path):
         """infra_errors is cleared at start of each run() call."""
-        from code_forge.runtime import RuntimeRunner
         from code_forge.llm_invoke import LLMInvokeError
+        from code_forge.runtime import RuntimeRunner
 
         runner = RuntimeRunner()
         # First run: LLM error

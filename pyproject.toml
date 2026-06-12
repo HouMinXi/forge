@@ -39,6 +39,9 @@ where = ["src"]
 [tool.setuptools.package-data]
 code_forge = ["skills/**/*", "skills/**/.gitkeep", "rules/**/*"]
 
+[tool.ruff]
+line-length = 105
+
 [tool.pytest.ini_options]
 markers = [
     "real_api: opt-in tests that call real backends (skipped by default)",

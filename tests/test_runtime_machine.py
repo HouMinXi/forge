@@ -30,7 +30,6 @@ from code_forge.machine import StateMachine
 from code_forge.runtime import RuntimeRunner
 from code_forge.state import Mode
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
