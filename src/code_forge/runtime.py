@@ -202,7 +202,8 @@ def _parse_llm_response(
         )
     if "surfaces" not in parsed:
         raise KeyError("missing 'surfaces' key in LLM response")
-    surfaces = list(parsed.get("surfaces", []) or [])
+    # Coerce to str: LLM may return integers or nulls in surfaces array.
+    surfaces = [str(s) for s in (parsed.get("surfaces", []) or [])]
     llm_findings = list(parsed.get("findings", []) or [])
     return surfaces, llm_findings
 
