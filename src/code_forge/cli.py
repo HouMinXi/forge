@@ -1445,6 +1445,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 coverage_l1_active=coverage_l1_active,
                 coverage_exempt_patterns=coverage_exempt,
                 clean_round_threshold=_clean_threshold,
+                backend=backend,
             )
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
@@ -1482,6 +1483,7 @@ def _run_hold_loop(
     max_rounds, max_fix_attempts, state_path,
     coverage_l1_active=True, coverage_exempt_patterns=None,
     clean_round_threshold=3,
+    backend=None,
     input_fn=input, output_fn=print,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
@@ -1492,7 +1494,7 @@ def _run_hold_loop(
         from .runtime import RuntimeRunner
 
         _taint_runner = TaintRunner()
-        _runtime_runner = RuntimeRunner()
+        _runtime_runner = RuntimeRunner(backend=backend)
         sm = StateMachine(
             mode=mode,
             falsifier=falsifier,
