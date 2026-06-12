@@ -17,11 +17,11 @@ Advisory scoring (D-06/D-12):
   - After each _run_single call, BEFORE temp dir cleanup, reads
     advisory-findings.json from the temp dir.
   - Concatenates description text of findings whose id != "runtime-smoke-summary"
-    (GM-R6: surface names in summary would false-positive keyword matching).
+    (surface names in the summary would false-positive keyword matching).
   - Calls advisory_caught(concat_text, entry.expected_advisory) per-run.
   - Accumulates advisory_hit_count; sets EvalResult.advisory_caught_count.
   - advisory_caught_count is SEPARATE from caught_count; never affects
-    actual_verdict computation (DS-R3).
+    actual_verdict computation.
 """
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ class RuntimeAxisHook(AxisHook):
     EvalResult is already computed). This hook exists for registration
     confirmation and future axis-specific post-processing.
 
-    Scoring architecture (GM-R4/Kimi-R2): post_review runs after EvalResult
+    Scoring architecture: post_review runs after EvalResult
     is constructed and the temp dir is cleaned up, so it cannot read
     advisory-findings.json. Advisory scoring must happen in the per-run
     loop inside replay_entry(), BEFORE shutil.rmtree().
@@ -159,7 +159,7 @@ def _read_advisory_findings(temp_dir: str) -> list[dict]:
 def _concat_advisory_text(findings: list[dict]) -> str:
     """Concatenate advisory finding descriptions, excluding runtime-smoke-summary.
 
-    Excludes findings with id == "runtime-smoke-summary" (GM-R6: the summary
+    Excludes findings with id == "runtime-smoke-summary" (the summary
     finding contains surface names that would false-positive keyword matching
     in eval scoring -- e.g., "NOT VERIFIED: [nftables]" would match the
     "nftables" keyword even if the LLM found no stale-nftables risk).

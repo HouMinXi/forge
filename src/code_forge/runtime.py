@@ -214,8 +214,8 @@ def _build_smoke_summary(
 ) -> AdvisoryFinding | None:
     """Build the runtime-smoke-summary AdvisoryFinding.
 
-    Returns None when surfaces is empty (GM-R5-L2: no summary for zero
-    surfaces, callers must handle the no-surfaces case explicitly).
+    Returns None when surfaces is empty (no summary for zero
+    surfaces; callers must handle the no-surfaces case explicitly).
     """
     if not surfaces:
         return None

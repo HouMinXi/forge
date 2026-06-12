@@ -1064,7 +1064,7 @@ class StateMachine:
         Smoke status is always printed first (D-09) when a RuntimeRunner is
         present, before the early-return guard. The generic advisory loop
         skips runtime-smoke-summary and runtime-skipped findings to avoid
-        double-printing (DEDUP: GM-R5-L1 + GM-R7-L1 fix).
+        double-printing.
 
         Each generic finding formatted as: [AXIS] file:line_range - description
         """

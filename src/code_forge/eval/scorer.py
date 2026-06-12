@@ -11,7 +11,7 @@ Advisory axis scoring (D-06/D-12):
     non-empty) where advisory_caught_count >= majority threshold
   - advisory_missed: pure-RUNTIME entries where advisory_caught_count < threshold
   - advisory_caught_count on EvalResult is SEPARATE from caught_count; it never
-    affects actual_verdict computation (DS-R3: prevents eval result corruption)
+    affects actual_verdict computation (prevents eval result corruption)
 
 SKIPPED entries are excluded from the caught+missed denominator (D-12).
 Output uses raw counts ("Caught: 7/9"), never ratios (carry-forward 2).
@@ -61,7 +61,7 @@ class EvalResult:
         skipped_reason: why it was skipped ("" if not skipped).
         advisory_caught_count: how many runs had advisory text matching expected_advisory
             keywords. SEPARATE from caught_count -- never affects actual_verdict
-            computation (DS-R3). Default 0 for non-RUNTIME entries.
+            computation. Default 0 for non-RUNTIME entries.
     """
 
     entry: CorpusEntry
