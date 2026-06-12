@@ -12,7 +12,6 @@ import pytest
 from code_forge.exit_codes import EXIT_FAIL, EXIT_PASS
 from code_forge.install_hooks import (
     check_hooks_path_override,
-    generate_commit_msg_hook_content,
     generate_hook_content,
     resolve_forge_path,
     resolve_hooks_dir,
