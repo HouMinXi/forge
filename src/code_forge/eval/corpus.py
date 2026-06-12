@@ -9,7 +9,7 @@ created. SKIPPED handling happens at run time per D-12.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -24,12 +24,17 @@ class CorpusEntry:
         diff_file: path to .diff file, relative to manifest parent.
         expected_verdict: "HOLD" or "PASS" -- what forge should produce.
         axis_tags: which review axes this entry exercises (e.g. TRUST, SEC).
+        expected_advisory: keyword strings for advisory axis scoring (D-06/D-12).
+            RUNTIME entries list keywords that must appear in advisory text for
+            the entry to be counted as "caught" by the RUNTIME axis. Empty list
+            (default) means no advisory scoring for this entry.
     """
 
     name: str
     diff_file: str
     expected_verdict: str
     axis_tags: list[str]
+    expected_advisory: list[str] = field(default_factory=list)
 
 
 def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
@@ -68,6 +73,7 @@ def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
                 diff_file=raw["diff_file"],
                 expected_verdict=raw["expected_verdict"],
                 axis_tags=list(raw.get("axis_tags", [])),
+                expected_advisory=list(raw.get("expected_advisory", [])),
             )
         )
     return entries
