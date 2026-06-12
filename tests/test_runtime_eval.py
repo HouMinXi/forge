@@ -733,3 +733,36 @@ class TestCorpusYamlE1E6:
         for name in ["E1-stale-nftables", "E2-pcap-suffix", "E3-transit-probe",
                      "E4-curl-tproxy", "E5-fast-502", "E6-reprobe-blackout"]:
             assert "RUNTIME" in entries[name].axis_tags, f"{name} missing RUNTIME tag"
+
+
+class TestMutantKillCoverage:
+    """Kill tests for R2 surviving mutants (M8, M10)."""
+
+    def test_read_advisory_findings_rejects_dict_json(self, tmp_path):
+        """advisory-findings.json as dict returns [] not [dict] (M8 kill test)."""
+        import json
+        from code_forge.eval.runner import _read_advisory_findings
+        (tmp_path / "advisory-findings.json").write_text(json.dumps({"error": "timeout"}))
+        result = _read_advisory_findings(str(tmp_path))
+        assert result == [], "dict-format advisory-findings.json must return [] not [dict]"
+
+    def test_is_pure_runtime_empty_advisory_not_classified(self):
+        """PASS+empty expected_advisory is NOT pure-RUNTIME (M10 kill test)."""
+        from code_forge.eval.scorer import _is_pure_runtime_advisory, EvalResult
+        from code_forge.eval.corpus import CorpusEntry
+        entry = CorpusEntry("t", "f.diff", "PASS", ["RUNTIME"], [])
+        result = EvalResult(entry, "PASS", 1, 0, None, advisory_caught_count=0)
+        assert not _is_pure_runtime_advisory(result), (
+            "PASS+empty advisory must NOT be pure-RUNTIME (no keywords to match)"
+        )
+
+    def test_compute_summary_skips_empty_advisory_entry(self):
+        """PASS+empty advisory entry does not inflate advisory_missed (M10 kill)."""
+        from code_forge.eval.scorer import compute_summary, EvalResult
+        from code_forge.eval.corpus import CorpusEntry
+        entry = CorpusEntry("no-advisory", "f.diff", "PASS", ["RUNTIME"], [])
+        result = EvalResult(entry, "PASS", 1, 0, None, advisory_caught_count=0)
+        summary = compute_summary([result])
+        assert summary.advisory_missed == 0, "empty advisory entry must not count as missed"
+        assert summary.advisory_caught == 0
+        assert summary.correct_pass == 1
