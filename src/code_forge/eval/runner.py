@@ -13,7 +13,7 @@ AxisHook is an INTERNAL registration seam for the 5 scheduled axes (D-13,
 carry-forward 3). It is NOT a public SPI -- no entry_points, no importlib,
 no config-driven plugin discovery.
 
-Advisory scoring (Plan 20-03, D-06/D-12):
+Advisory scoring (D-06/D-12):
   - After each _run_single call, BEFORE temp dir cleanup, reads
     advisory-findings.json from the temp dir.
   - Concatenates description text of findings whose id != "runtime-smoke-summary"
