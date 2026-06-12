@@ -841,8 +841,6 @@ class StateMachine:
         are stored in self._advisories (list[AdvisoryFinding]), completely
         separate from self._state.findings (list[StateFinding]).
         """
-        from .advisory import AdvisoryFinding
-
         diff_text = self.resolved_review.git_diff or ""
         # Inject source_files for runners that support it (no git dependency).
         for runner in self.advisory_runners:
@@ -880,18 +878,77 @@ class StateMachine:
         )
         tmp_path.replace(out_path)
 
+    def _display_smoke_status(self) -> None:
+        """Print the RUNTIME smoke status block to stderr (D-09: always prints).
+
+        Precondition: only called when a RuntimeRunner is in advisory_runners.
+
+        Three cases (D-09/F4 graceful handling):
+          (a) runtime-smoke-summary finding: display verified/unverified counts.
+          (b) runtime-skipped finding: print UNVERIFIED (axis skipped: reason).
+          (c) neither: print "smoke: no runtime surfaces detected" fallback.
+
+        Always prints -- silence never reads as verified (D-09).
+        Called BEFORE the early-return guard in _display_advisories so an
+        empty _advisories list does not suppress the smoke status.
+        """
+        from .runtime import RuntimeRunner as _RuntimeRunner
+
+        # Only print when a RuntimeRunner is present in advisory_runners.
+        has_runtime = any(
+            isinstance(r, _RuntimeRunner) for r in self.advisory_runners
+        )
+        if not has_runtime:
+            return
+
+        print("", file=sys.stderr)
+        print("--- Smoke Status ---", file=sys.stderr)
+
+        # Case (a): summary finding
+        for f in self._advisories:
+            if f.id == "runtime-smoke-summary":
+                print(f.description, file=sys.stderr)
+                return
+
+        # Case (b): skipped finding
+        for f in self._advisories:
+            if f.id == "runtime-skipped":
+                desc = f.description
+                prefix = "RUNTIME axis SKIPPED: "
+                reason = desc[len(prefix):] if desc.startswith(prefix) else desc
+                print(
+                    "smoke: UNVERIFIED (axis skipped: %s)" % reason,
+                    file=sys.stderr,
+                )
+                return
+
+        # Case (c): fallback -- no summary and no skipped finding
+        print("smoke: no runtime surfaces detected", file=sys.stderr)
+
     def _display_advisories(self) -> None:
         """Display advisory findings on stderr after separator (D-17).
 
-        Advisory findings appear after blocking findings, separated by
-        a "--- Advisory ---" line. Each finding formatted as:
-        [AXIS] file:line_range - description
+        Smoke status is always printed first (D-09) when a RuntimeRunner is
+        present, before the early-return guard. The generic advisory loop
+        skips runtime-smoke-summary and runtime-skipped findings to avoid
+        double-printing (DEDUP: GM-R5-L1 + GM-R7-L1 fix).
+
+        Each generic finding formatted as: [AXIS] file:line_range - description
         """
+        # D-09: smoke status ALWAYS prints when RuntimeRunner is present,
+        # even when _advisories is empty (before early-return guard).
+        self._display_smoke_status()
+
+        # IDs exclusively displayed by _display_smoke_status -- skip in generic loop.
+        _RUNTIME_EXCLUSIVE_IDS = {"runtime-smoke-summary", "runtime-skipped"}
+
         if not self._advisories:
             return
         print("", file=sys.stderr)
         print("--- Advisory ---", file=sys.stderr)
         for f in self._advisories:
+            if f.id in _RUNTIME_EXCLUSIVE_IDS:
+                continue
             line_str = "%d-%d" % (f.line_range[0], f.line_range[1]) \
                 if len(f.line_range) == 2 else str(f.line_range)
             print(
