@@ -243,6 +243,49 @@ Code Change -> Step 0: Syntax Pre-Check -> Cycle 1 (coder/expert/adversarial)
 4. **Not sourcing primitives.sh**: every test script must start with `source primitives.sh`
 5. **Writing custom assertion libraries for Python/Go/C**: use the language's standard test framework (pytest, go test). Shell is the only language that needs `primitives.sh`
 
+## code-forge smoke-run: Recording Verified Receipts
+
+`code-forge smoke-run` records a machine-verifiable receipt after running a smoke
+test command. The receipt is keyed by diff content-hash, so it is invalidated
+when the diff changes.
+
+```bash
+code-forge smoke-run [--surface "<surface-name>"] [--target <git-ref>] -- <cmd>
+```
+
+**Arguments:**
+- `--surface NAME`: runtime surface label (default: `default`). Use descriptive
+  names matching the LLM-enumerated surfaces (e.g. `nftables`, `systemd`, `socket`).
+  Case-insensitive substring match: `nftables` matches `nftables-rules`.
+- `--target REF`: git ref for diff-hash keying (default: `HEAD`).
+- `-- CMD [ARGS...]`: the command to execute. The `--` separator is optional.
+
+**UNVERIFIED reporting contract (D-09):**
+When no valid receipt exists for the current diff, the RUNTIME advisory axis
+reports the surface as NOT VERIFIED. Silence never reads as verified -- the
+Smoke Status line always prints on stderr after every review run.
+
+**Examples:**
+```bash
+# Record that nftables rules load correctly after the change
+code-forge smoke-run --surface nftables -- nft -f rules.nft
+
+# Record that the systemd unit file passes validation
+code-forge smoke-run --surface systemd -- systemctl --no-pager cat myservice.service
+
+# Record that the test suite passes (surface: pytest)
+code-forge smoke-run --surface pytest -- pytest tests/ -x -q
+
+# Default surface (no --surface flag)
+code-forge smoke-run -- ./scripts/integration-test.sh
+```
+
+**Receipt location:** `.code-forge/smoke-receipts/smoke-receipt-<surface>.json`
+
+**Status values:**
+- `VERIFIED`: command exited with code 0
+- `FAILED`: command exited with non-zero code (receipt still written; RUNTIME axis reports UNVERIFIED)
+
 ## References
 
 - `test-library/shell/primitives.sh`  --  15 assertion primitives + 3 helper functions

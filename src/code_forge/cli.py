@@ -469,6 +469,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="overwrite existing gate.yaml",
     )
 
+    # --- SMOKE-RUN subcommand: execute a command and write a smoke receipt ---
+    smoke_run_parser = subparsers.add_parser(
+        'smoke-run',
+        help='run a smoke test and record a receipt',
+        description=(
+            'Execute a command, capture transcript + exit code, and write '
+            'a smoke receipt keyed by diff content-hash. '
+            'When no receipt exists for the current diff, the RUNTIME axis '
+            'reports UNVERIFIED. Silence never reads as verified (D-09). '
+            'Exit codes: passthrough from the executed command.'
+        ),
+    )
+    smoke_run_parser.add_argument(
+        '--surface',
+        default='default',
+        help='runtime surface name (default: default)',
+    )
+    smoke_run_parser.add_argument(
+        '--target',
+        default='HEAD',
+        help='git diff target for diff-hash keying (default: HEAD)',
+    )
+    smoke_run_parser.add_argument(
+        'command',
+        nargs=argparse.REMAINDER,
+        help='command to execute (may be preceded by -- separator)',
+    )
+
     # --- TRUST subcommand: manage trust for repo-supplied backends ---
     trust_parser = subparsers.add_parser(
         'trust',
@@ -654,6 +682,121 @@ def _run_test_assertion_review(
         return []
 
 
+def _handle_smoke_run(args, cwd: Path) -> int:
+    """Handle ``code-forge smoke-run`` subcommand (D-07).
+
+    Executes the user-supplied command, captures stdout+stderr, writes a
+    smoke receipt keyed by the current diff content-hash. Exits with the
+    command's exit code (passthrough).
+
+    Surface name sanitization: any character outside [a-zA-Z0-9_-] is
+    replaced with a dash (T-20-06: no path-traversal in receipt filename).
+
+    Args:
+        args: parsed argparse namespace with .surface, .target, .command.
+        cwd: current working directory.
+
+    Returns:
+        int: the command's exit code (or 2 on usage error).
+    """
+    import datetime
+    import re
+    import shlex
+    from .runtime import write_smoke_receipt
+
+    # Strip leading "--" separator if present (argparse REMAINDER convention)
+    cmd_args = list(args.command or [])
+    if cmd_args and cmd_args[0] == '--':
+        cmd_args = cmd_args[1:]
+
+    if not cmd_args:
+        print(
+            "code-forge smoke-run: error: no command specified\n"
+            "Usage: code-forge smoke-run [--surface NAME] [--target REF] -- CMD [ARGS...]",
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+
+    # Sanitize surface name: replace non-[a-zA-Z0-9_-] with dash (T-20-05/F5).
+    raw_surface = args.surface or "default"
+    surface = re.sub(r'[^a-zA-Z0-9_\-]', '-', raw_surface)
+
+    # Compute repo root via git rev-parse
+    try:
+        _gr = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, cwd=cwd, check=False,
+        )
+        if _gr.returncode == 0:
+            repo_root = Path(_gr.stdout.strip())
+        else:
+            repo_root = cwd
+    except Exception:
+        repo_root = cwd
+
+    # Compute current diff for hash keying
+    target = getattr(args, 'target', 'HEAD') or 'HEAD'
+    try:
+        _diff = subprocess.run(
+            ["git", "diff", target],
+            capture_output=True, text=True, cwd=repo_root, check=False,
+        )
+        diff_text = _diff.stdout if _diff.returncode == 0 else ""
+    except Exception:
+        diff_text = ""
+
+    receipts_dir = repo_root / ".code-forge" / "smoke-receipts"
+
+    # Execute the user command (shell=False; user owns the command -- T-20-06)
+    try:
+        _result = subprocess.run(
+            cmd_args,
+            capture_output=True,
+            text=False,
+            cwd=cwd,
+        )
+    except FileNotFoundError:
+        print(
+            "code-forge smoke-run: command not found: %s" % cmd_args[0],
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+    except Exception as exc:
+        print(
+            "code-forge smoke-run: error running command: %s" % exc,
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+
+    exit_code = _result.returncode
+    transcript = _result.stdout + _result.stderr
+    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    cmd_str = " ".join(shlex.quote(a) for a in cmd_args)
+
+    try:
+        receipt_path = write_smoke_receipt(
+            receipts_dir=receipts_dir,
+            diff_text=diff_text,
+            surface=surface,
+            command=cmd_str,
+            exit_code=exit_code,
+            transcript=transcript,
+            timestamp=timestamp,
+        )
+        status = "VERIFIED" if exit_code == 0 else "FAILED"
+        print(
+            "smoke-run: %s [surface=%s] -> %s" % (status, surface, receipt_path),
+            file=sys.stderr,
+        )
+    except Exception as exc:
+        print(
+            "code-forge smoke-run: warning: could not write receipt: %s" % exc,
+            file=sys.stderr,
+        )
+
+    return exit_code
+
+
 def _run_eval(args) -> int:
     """Handle ``code-forge eval`` subcommand (D-08).
 
@@ -827,7 +970,7 @@ def main() -> int:
     known_subcommands = {
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
-        'detect', 'resolve-outlet', 'init', 'trust', 'eval',
+        'detect', 'resolve-outlet', 'init', 'trust', 'eval', 'smoke-run',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -926,6 +1069,9 @@ def main() -> int:
 
     elif args.subcommand == 'eval':
         return _run_eval(args)
+
+    elif args.subcommand == 'smoke-run':
+        return _handle_smoke_run(args, cwd=Path.cwd())
 
     elif args.subcommand == 'init':
         from .init_template import GATE_YAML_TEMPLATE
@@ -1340,11 +1486,13 @@ def _run_hold_loop(
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
     for cycle in range(MAX_HOLD_CYCLES):
-        # Fresh TaintRunner per cycle to prevent cross-cycle state
+        # Fresh runners per cycle to prevent cross-cycle state
         # accumulation (infra_errors, source_files).
         from .taint import TaintRunner
+        from .runtime import RuntimeRunner
 
         _taint_runner = TaintRunner()
+        _runtime_runner = RuntimeRunner()
         sm = StateMachine(
             mode=mode,
             falsifier=falsifier,
@@ -1361,7 +1509,7 @@ def _run_hold_loop(
             coverage_l1_active=coverage_l1_active,
             coverage_exempt_patterns=coverage_exempt_patterns or [],
             clean_round_threshold=clean_round_threshold,
-            advisory_runners=[_taint_runner],
+            advisory_runners=[_taint_runner, _runtime_runner],
         )
         verdict = sm.run()
         if verdict != Verdict.PENDING:
