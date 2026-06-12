@@ -937,3 +937,101 @@ class TestPresubmitRunner:
         stderr_buf = _io.StringIO()
         result = run_install_hooks(args=None, env={}, cwd=tmp_path, stderr=stderr_buf)
         assert result == EXIT_FAIL
+
+
+# ---------------------------------------------------------------------------
+# TestBuiltinD12Check -- D-12 built-in non-ASCII + AI-vocab check
+# ---------------------------------------------------------------------------
+
+class TestBuiltinD12Check:
+    """D-12 built-in staged-diff non-ASCII and AI-vocab checks."""
+
+    def test_d12_block_present_no_presubmit_entries(self):
+        """D-12 block is always emitted even when presubmit_entries is empty."""
+        content = generate_hook_content("code-forge gate-check", None)
+        assert "_NON_ASCII=" in content
+        assert "_AI_VOCAB=" in content
+
+    def test_d12_block_present_none_entries(self):
+        """D-12 block is always emitted when presubmit_entries is None."""
+        content = generate_hook_content("code-forge gate-check", None, presubmit_entries=None)
+        assert "_NON_ASCII=" in content
+
+    def test_d12_block_after_carveout(self):
+        """D-12 block placed after carveout block (non-code commits skip D-12)."""
+        content = generate_hook_content("code-forge gate-check", None)
+        lines = content.split("\n")
+        carveout_line = next(i for i, l in enumerate(lines) if "skipping verify" in l)
+        d12_line = next(i for i, l in enumerate(lines) if "_NON_ASCII=" in l)
+        assert carveout_line < d12_line
+
+    def test_d12_block_before_gate_check(self):
+        """D-12 block placed before exec gate-check."""
+        content = generate_hook_content("code-forge gate-check", None)
+        lines = content.split("\n")
+        d12_line = next(i for i, l in enumerate(lines) if "_NON_ASCII=" in l)
+        gate_line = next(i for i, l in enumerate(lines) if "exec code-forge gate-check" in l)
+        assert d12_line < gate_line
+
+    def test_ai_smell_mode_em_dash_blocked_real_grep(self):
+        """ai-smell mode: em dash (U+2014) is blocked by real grep."""
+        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
+        # Extract the grep -P pattern from the generated hook
+        import re
+        m = re.search(r"grep -P '([^']+)'", content)
+        assert m is not None, "grep -P pattern not found in hook"
+        pattern = m.group(1)
+        # em dash U+2014 = \xe2\x80\x94 in UTF-8
+        em_dash = "—".encode("utf-8")
+        r = subprocess.run(["grep", "-P", pattern], input=em_dash, capture_output=True)
+        assert r.returncode == 0, "em dash should be blocked in ai-smell mode"
+
+    def test_ai_smell_mode_cjk_passes_real_grep(self):
+        """ai-smell mode: CJK character (U+4E2D) passes through grep."""
+        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
+        import re
+        m = re.search(r"grep -P '([^']+)'", content)
+        assert m is not None
+        pattern = m.group(1)
+        cjk = "中".encode("utf-8")
+        r = subprocess.run(["grep", "-P", pattern], input=cjk, capture_output=True)
+        assert r.returncode != 0, "CJK should pass in ai-smell mode (grep returns no match)"
+
+    def test_strict_mode_cjk_blocked_real_grep(self):
+        """strict mode: CJK character (U+4E2D) is blocked."""
+        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="strict")
+        import re
+        m = re.search(r"grep -P '([^']+)'", content)
+        assert m is not None
+        pattern = m.group(1)
+        cjk = "中".encode("utf-8")
+        r = subprocess.run(["grep", "-P", pattern], input=cjk, capture_output=True)
+        assert r.returncode == 0, "CJK should be blocked in strict mode"
+
+    def test_run_install_hooks_installs_commit_msg(self, tmp_path, monkeypatch):
+        """run_install_hooks installs BOTH pre-commit AND commit-msg hooks."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep
+        )
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+        result = run_install_hooks(args=None, env={}, cwd=tmp_path)
+        assert result == EXIT_PASS
+        hooks_dir = tmp_path / ".git" / "hooks"
+        assert (hooks_dir / "pre-commit").exists()
+        assert (hooks_dir / "commit-msg").exists()
+
+    def test_commit_msg_hook_readable(self, tmp_path, monkeypatch):
+        """commit-msg hook contains non-ASCII and AI-vocab checks."""
+        from code_forge.install_hooks import generate_commit_msg_hook_content
+        content = generate_commit_msg_hook_content(None, non_ascii_mode="ai-smell")
+        assert "_MSG_FILE=" in content
+        assert "_NON_ASCII=" in content
+        assert "_AI_VOCAB=" in content
+        assert "exit 1" in content
+
+    def test_commit_msg_hook_no_carveout(self, tmp_path, monkeypatch):
+        """commit-msg hook has no non-code carveout (checks ALL commits)."""
+        from code_forge.install_hooks import generate_commit_msg_hook_content
+        content = generate_commit_msg_hook_content(None)
+        assert "skipping verify" not in content
+        assert "NON_CODE" not in content
