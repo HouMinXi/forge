@@ -12,9 +12,20 @@ Run count is axis-dependent (D-11):
 AxisHook is an INTERNAL registration seam for the 5 scheduled axes (D-13,
 carry-forward 3). It is NOT a public SPI -- no entry_points, no importlib,
 no config-driven plugin discovery.
+
+Advisory scoring (Plan 20-03, D-06/D-12):
+  - After each _run_single call, BEFORE temp dir cleanup, reads
+    advisory-findings.json from the temp dir.
+  - Concatenates description text of findings whose id != "runtime-smoke-summary"
+    (GM-R6: surface names in summary would false-positive keyword matching).
+  - Calls advisory_caught(concat_text, entry.expected_advisory) per-run.
+  - Accumulates advisory_hit_count; sets EvalResult.advisory_caught_count.
+  - advisory_caught_count is SEPARATE from caught_count; never affects
+    actual_verdict computation (DS-R3).
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import shutil
@@ -26,7 +37,7 @@ from typing import Optional
 import yaml
 
 from code_forge.eval.corpus import CorpusEntry
-from code_forge.eval.scorer import EvalResult
+from code_forge.eval.scorer import EvalResult, advisory_caught
 from code_forge.trust import record_trust
 
 
@@ -95,6 +106,80 @@ class FixvalAxisHook(AxisHook):
 
 
 register_axis_hook(FixvalAxisHook())
+
+
+
+class RuntimeAxisHook(AxisHook):
+    """RUNTIME eval axis hook: advisory content-match scoring (D-06/D-12).
+
+    pre_review: no-op (no per-entry setup needed for RUNTIME advisory).
+
+    post_review: no-op (advisory scoring is handled in the runner's
+    per-run loop BEFORE temp dir cleanup, not in hooks which run after
+    EvalResult is already computed). This hook exists for registration
+    confirmation and future axis-specific post-processing.
+
+    Scoring architecture (GM-R4/Kimi-R2): post_review runs after EvalResult
+    is constructed and the temp dir is cleaned up, so it cannot read
+    advisory-findings.json. Advisory scoring must happen in the per-run
+    loop inside replay_entry(), BEFORE shutil.rmtree().
+    """
+
+    def pre_review(self, entry: CorpusEntry) -> None:
+        """No-op: no per-entry setup needed for RUNTIME advisory axis."""
+
+    def post_review(self, entry: CorpusEntry, result: EvalResult) -> None:
+        """No-op: advisory scoring is done in the runner per-run loop."""
+
+
+register_axis_hook(RuntimeAxisHook())
+
+
+# -- Advisory findings reading -------------------------------------------------
+
+
+def _read_advisory_findings(temp_dir: str) -> list[dict]:
+    """Read advisory-findings.json from temp review directory.
+
+    Returns list of finding dicts. Empty list if file absent or malformed.
+    Called BEFORE temp dir cleanup (shutil.rmtree) in the per-run loop.
+    """
+    findings_path = Path(temp_dir) / "advisory-findings.json"
+    if not findings_path.exists():
+        return []
+    try:
+        data = json.loads(findings_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+        return []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _concat_advisory_text(findings: list[dict]) -> str:
+    """Concatenate advisory finding descriptions, excluding runtime-smoke-summary.
+
+    Excludes findings with id == "runtime-smoke-summary" (GM-R6: the summary
+    finding contains surface names that would false-positive keyword matching
+    in eval scoring -- e.g., "NOT VERIFIED: [nftables]" would match the
+    "nftables" keyword even if the LLM found no stale-nftables risk).
+
+    Args:
+        findings: list of advisory finding dicts from advisory-findings.json.
+
+    Returns:
+        Space-joined description strings, excluding the smoke summary finding.
+    """
+    parts: list[str] = []
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        if f.get("id") == "runtime-smoke-summary":
+            continue
+        desc = str(f.get("description", ""))
+        if desc:
+            parts.append(desc)
+    return " ".join(parts)
 
 
 # -- Infra failure detection ----------------------------------------------------
@@ -194,14 +279,22 @@ def replay_entry(
     applies the diff, and invokes code-forge review. Run count is
     axis-dependent per D-11 unless overridden with ``runs``.
 
+    Advisory scoring (D-06/D-12): for entries with expected_advisory, reads
+    advisory-findings.json from the temp dir BEFORE cleanup, concatenates
+    descriptions (excluding runtime-smoke-summary), and calls advisory_caught()
+    per-run. The per-run advisory hit count is stored in advisory_caught_count
+    on the final EvalResult; it does NOT affect caught_count or actual_verdict.
+
     Args:
         entry: corpus entry to evaluate.
         corpus_dir: directory containing the corpus manifest and diff files.
         backend_name: backend to use for review.
         runs: override run count (None = axis-dependent default).
+        backend_config: optional backend config dict.
 
     Returns:
-        EvalResult with actual verdict, run count, and caught count.
+        EvalResult with actual verdict, run count, caught count, and
+        advisory_caught_count.
     """
     # Check diff file exists
     diff_path = corpus_dir / entry.diff_file
@@ -217,6 +310,7 @@ def replay_entry(
     # Determine run count
     num_runs = runs if runs is not None else _default_runs(entry)
     caught_count = 0
+    advisory_hit_count = 0
 
     # Call pre_review hooks
     for hook in _AXIS_HOOKS:
@@ -237,11 +331,21 @@ def replay_entry(
                     runs=num_runs,
                     caught_count=caught_count,
                     skipped_reason=skip_reason,
+                    advisory_caught_count=advisory_hit_count,
                 )
                 # Call post_review hooks
                 for hook in _AXIS_HOOKS:
                     hook.post_review(entry, eval_result)
                 return eval_result
+
+            # Advisory scoring: read advisory-findings.json BEFORE cleanup (D-06).
+            # Only score if entry has expected_advisory keywords.
+            if entry.expected_advisory:
+                findings = _read_advisory_findings(temp_dir)
+                concat_text = _concat_advisory_text(findings)
+                if advisory_caught(concat_text, entry.expected_advisory):
+                    advisory_hit_count += 1
+
             if flagged:
                 caught_count += 1
         finally:
@@ -260,6 +364,7 @@ def replay_entry(
         runs=num_runs,
         caught_count=caught_count,
         skipped_reason="",
+        advisory_caught_count=advisory_hit_count,
     )
 
     # Call post_review hooks
