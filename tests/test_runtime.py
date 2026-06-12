@@ -622,3 +622,42 @@ class TestRuntimeRunnerSmokeReceipts:
             "D-11 either direction: short receipt surface 'nft' must match 'nftables-filter'"
         )
 
+    def test_hyphen_space_equivalence_receipt_matches_llm(self, tmp_path):
+        """Receipt 'nftables-rules' matches LLM surface 'nftables rules' after normalization."""
+        from unittest.mock import MagicMock, patch
+
+        from code_forge.runtime import RuntimeRunner, write_smoke_receipt
+        diff = "diff --git a/fw.sh b/fw.sh\n+nft add rule"
+        receipts_dir = tmp_path / ".code-forge" / "smoke-receipts"
+        # smoke-run sanitizes spaces to hyphens; store "nftables-rules"
+        write_smoke_receipt(receipts_dir, diff, "nftables-rules", "echo ok", 0, b"ok", "2026-06-13T00:00:00Z")
+        response = MagicMock()
+        response.content = {"surfaces": ["nftables rules"], "findings": []}
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            result = runner.run(diff, tmp_path)
+        summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
+        assert summary is not None
+        assert "all 1 surfaces verified" in summary.description, (
+            "receipt 'nftables-rules' must match LLM 'nftables rules' after normalization"
+        )
+
+    def test_underscore_space_equivalence_receipt_matches_llm(self, tmp_path):
+        """Receipt 'nftables_rules' matches LLM surface 'nftables rules' after normalization."""
+        from unittest.mock import MagicMock, patch
+
+        from code_forge.runtime import RuntimeRunner, write_smoke_receipt
+        diff = "diff --git a/fw.sh b/fw.sh\n+nft add rule"
+        receipts_dir = tmp_path / ".code-forge" / "smoke-receipts"
+        write_smoke_receipt(receipts_dir, diff, "nftables_rules", "echo ok", 0, b"ok", "2026-06-13T00:00:00Z")
+        response = MagicMock()
+        response.content = {"surfaces": ["nftables rules"], "findings": []}
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            result = runner.run(diff, tmp_path)
+        summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
+        assert summary is not None
+        assert "all 1 surfaces verified" in summary.description, (
+            "receipt 'nftables_rules' must match LLM 'nftables rules' after normalization"
+        )
+

@@ -164,11 +164,15 @@ def read_smoke_receipts(receipts_dir: Path) -> list[dict]:
 def _surface_matches(llm_surface: str, receipt_surface: str) -> bool:
     """Case-insensitive substring containment match (D-11, either direction).
 
-    A surface is VERIFIED if any valid receipt's surface field contains
-    or is contained by the LLM surface string (either direction).
+    Normalizes hyphens and underscores to spaces before comparing so that
+    a receipt written with --surface "nftables-rules" matches the LLM surface
+    "nftables rules" (smoke-run sanitizes spaces to hyphens in filenames).
     """
-    a = llm_surface.lower()
-    b = receipt_surface.lower()
+    def _norm(s: str) -> str:
+        return s.lower().replace("-", " ").replace("_", " ")
+
+    a = _norm(llm_surface)
+    b = _norm(receipt_surface)
     return a in b or b in a
 
 
