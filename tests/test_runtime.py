@@ -539,3 +539,37 @@ class TestRuntimeRunnerSmokeReceipts:
 
         # infra_errors should be cleared from previous run
         assert runner.infra_errors == []
+
+    def test_surfaces_null_json_returns_no_summary_not_skipped(self, tmp_path):
+        """LLM returns surfaces=null: coerced to [] not TypeError (M1 kill test)."""
+        from unittest.mock import MagicMock, patch
+        from code_forge.runtime import RuntimeRunner
+        response = MagicMock()
+        response.content = {"surfaces": None, "findings": []}
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            result = runner.run("diff --git a/f b/f\n+c", tmp_path)
+        ids = {f.id for f in result}
+        assert "runtime-skipped" not in ids, "surfaces=null must not return SKIPPED"
+        assert "runtime-smoke-summary" not in ids, "surfaces=null (->empty) must produce no summary"
+
+    def test_one_directional_surface_match_is_verified(self, tmp_path):
+        """Short receipt surface matches longer LLM surface (M2 kill: or not and, D-11)."""
+        from unittest.mock import MagicMock, patch
+        from pathlib import Path
+        from code_forge.runtime import RuntimeRunner, write_smoke_receipt
+        diff = "diff --git a/rules.nft b/rules.nft\n+add rule"
+        # receipt surface "nft" is substring of LLM surface "nftables-filter"
+        receipts_dir = tmp_path / ".code-forge" / "smoke-receipts"
+        write_smoke_receipt(receipts_dir, diff, "nft", "nft list", 0, b"ok", "2026-06-12T00:00:00Z")
+        response = MagicMock()
+        response.content = {"surfaces": ["nftables-filter"], "findings": []}
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            result = runner.run(diff, tmp_path)
+        summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
+        assert summary is not None
+        assert "all 1 surfaces verified" in summary.description, (
+            "short receipt surface 'nft' should match LLM surface 'nftables-filter' (D-11 either direction)"
+        )
+
