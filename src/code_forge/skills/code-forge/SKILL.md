@@ -173,7 +173,7 @@ LLMs silently emit non-ASCII characters (em dash U+2014, smart quotes U+201C/201
 git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]' && echo "FAIL: non-ASCII in new code"
 ```
 
-Any hit = fix before proceeding. This check applies to ALL output: code, comments, commit messages, emails, drafts.
+Any hit = fix before proceeding. This check applies to code, comments, and commit messages.
 
 ## Step 0 Gate
 
