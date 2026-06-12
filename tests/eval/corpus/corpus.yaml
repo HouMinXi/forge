@@ -1,6 +1,10 @@
 # Eval corpus manifest (EVAL-01 SC1).
 # Each entry is a real bug that forge should detect.
 # Format per D-07: name, diff_file (relative), expected_verdict, axis_tags.
+# Plan 20-03 D-06: E1-E6 expected_verdict corrected to PASS (RUNTIME is advisory,
+# cannot block; verified per-entry -- these diffs trigger no blocking axis).
+# Plan 20-03 D-12: expected_advisory keyword lists (wide-but-fair, case-insensitive
+# substring matching).
 entries:
   - name: gate-yaml-rce
     diff_file: diffs/gate-yaml-rce.diff
@@ -9,33 +13,39 @@ entries:
 
   - name: E1-stale-nftables
     diff_file: diffs/E1-stale-nftables.diff
-    expected_verdict: HOLD
+    expected_verdict: PASS
     axis_tags: [RUNTIME]
+    expected_advisory: ["nftables", "stale", "reload"]
 
   - name: E2-pcap-suffix
     diff_file: diffs/E2-pcap-suffix.diff
-    expected_verdict: HOLD
+    expected_verdict: PASS
     axis_tags: [RUNTIME]
+    expected_advisory: ["pcap", "suffix", "capture"]
 
   - name: E3-transit-probe
     diff_file: diffs/E3-transit-probe.diff
-    expected_verdict: HOLD
+    expected_verdict: PASS
     axis_tags: [RUNTIME]
+    expected_advisory: ["transit", "probe", "routing"]
 
   - name: E4-curl-tproxy
     diff_file: diffs/E4-curl-tproxy.diff
-    expected_verdict: HOLD
+    expected_verdict: PASS
     axis_tags: [RUNTIME]
+    expected_advisory: ["tproxy", "proxy", "curl"]
 
   - name: E5-fast-502
     diff_file: diffs/E5-fast-502.diff
-    expected_verdict: HOLD
+    expected_verdict: PASS
     axis_tags: [RUNTIME]
+    expected_advisory: ["502", "timeout", "upstream"]
 
   - name: E6-reprobe-blackout
     diff_file: diffs/E6-reprobe-blackout.diff
-    expected_verdict: HOLD
+    expected_verdict: PASS
     axis_tags: [RUNTIME]
+    expected_advisory: ["reprobe", "blackout", "probe"]
 
   - name: BUG-P12-01
     diff_file: diffs/BUG-P12-01.diff
@@ -46,3 +56,4 @@ entries:
     diff_file: diffs/ttl_class.diff
     expected_verdict: HOLD
     axis_tags: [RUNTIME, FIXVAL]
+    expected_advisory: ["ttl", "class", "header"]
