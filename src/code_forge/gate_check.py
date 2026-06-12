@@ -177,6 +177,11 @@ def validate_presubmit_command(command: list[str]) -> None:
                     "Shell metacharacter %r not allowed in presubmit command"
                     % char
                 )
+        if "%" in arg:
+            raise ValueError(
+                "Percent sign not allowed in presubmit command elements"
+                " (breaks hook-generation string formatting)"
+            )
 
 
 def validate_presubmit_entry(entry: dict) -> None:
@@ -233,6 +238,11 @@ def validate_presubmit_entry(entry: dict) -> None:
         raise ValueError(
             "presubmit entry 'applies_to' must not contain double-quote"
         )
+    if "%" in entry["applies_to"]:
+        raise ValueError(
+            "presubmit entry 'applies_to' must not contain percent sign"
+            " (breaks hook-generation string formatting)"
+        )
     # Store the grep-compatible ERE for direct shell use
     entry["applies_to_grep"] = fnmatch_to_grep(entry["applies_to"])
 
@@ -274,6 +284,11 @@ def validate_presubmit_entry(entry: dict) -> None:
         if '"' in we:
             raise ValueError(
                 "presubmit entry 'when_exists' must not contain double-quote"
+            )
+        if "%" in we:
+            raise ValueError(
+                "presubmit entry 'when_exists' must not contain percent sign"
+                " (breaks hook-generation string formatting)"
             )
 
 
