@@ -1040,6 +1040,17 @@ presubmit:
             with pytest.raises(ValueError):
                 validate_presubmit_command(bad_command)
 
+    def test_validate_presubmit_command_rejects_percent_in_command(self):
+        """validate_presubmit_command rejects % in command elements.
+
+        A % in a command arg causes TypeError at hook-generation time because
+        _build_presubmit_block uses Python % string formatting with the command.
+        """
+        with pytest.raises(ValueError, match="Percent sign"):
+            validate_presubmit_command(["checkpatch%", "--strict"])
+        with pytest.raises(ValueError, match="Percent sign"):
+            validate_presubmit_command(["lint", "--flag=%s"])
+
     # -- fnmatch_to_grep via real grep -E --
 
     def _grep_matches(self, pattern: str, text: str) -> bool:
@@ -1071,3 +1082,13 @@ presubmit:
         """fnmatch_to_grep('*.py') matches 'foo.py' via real grep -E."""
         pattern = fnmatch_to_grep("*.py")
         assert self._grep_matches(pattern, "foo.py")
+
+    def test_fnmatch_anchor_rejects_path_prefix(self):
+        """fnmatch_to_grep('test_*.py') must NOT match 'src/test_foo.py'.
+
+        Without the leading ^ anchor, grep -E 'test_.*\\.py$' matches the
+        substring 'test_foo.py' inside 'src/test_foo.py'. The anchor ensures
+        the pattern is applied to the full filename only.
+        """
+        pattern = fnmatch_to_grep("test_*.py")
+        assert not self._grep_matches(pattern, "src/test_foo.py")
