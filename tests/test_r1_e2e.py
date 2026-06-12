@@ -134,7 +134,7 @@ class TestR1EndToEnd:
             f.name for f in hooks_dir.iterdir()
             if f.is_file() and not f.name.endswith(".sample")
         ]
-        assert non_sample == ["pre-commit"]
+        assert set(non_sample) == {"pre-commit", "commit-msg"}
 
     def test_existing_prepush_survives_install(self, tmp_path, monkeypatch):
         monkeypatch.setenv(
