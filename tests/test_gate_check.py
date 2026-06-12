@@ -22,7 +22,6 @@ from code_forge.gate_check import (
     translate_exit_code,
     validate_command_safety,
     validate_presubmit_command,
-    validate_presubmit_entry,
 )
 
 
