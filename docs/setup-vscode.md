@@ -159,6 +159,76 @@ Or set it in your VS Code terminal environment:
 }
 ```
 
+## Committing with code-forge hooks installed
+
+`code-forge install-hooks` writes two real Git hooks into `.git/hooks` --
+a `pre-commit` hook and a `commit-msg` hook. They run on every commit no
+matter how you commit: the VS Code Source Control panel and the integrated
+terminal both shell out to `git`, so there is no editor-GUI bypass.
+
+Install them once per repository:
+
+```bash
+code-forge install-hooks
+```
+
+If `core.hooksPath` is set to a custom directory, install-hooks refuses and
+tells you to wire the gate in manually -- it will not overwrite a custom
+hooks path.
+
+### Non-code commits skip review automatically
+
+The `pre-commit` hook compares the staged file list against a non-code
+carve-out. If every staged path matches, the hook exits without running
+review. The carve-out covers:
+
+```
+.md  .txt  .yaml  .yml  .json  .toml  .cfg  .ini  .conf
+.gitignore  .editorconfig  .env.example
+LICENSE  README  CHANGELOG  Makefile  Dockerfile  .dockerignore
+```
+
+A docs-only or config-only commit goes straight through. You do not
+hand-mark these commits -- the file extensions decide.
+
+### Code commits run the gate
+
+If any staged file is outside the carve-out, the `pre-commit` hook runs,
+in order:
+
+1. **Receipt check** -- `code-forge verify --quiet`. A code commit with no
+   completed review is blocked with `receipt verification failed`; run
+   `code-forge review` first to produce the receipts.
+2. **Staged-diff scan** -- rejects non-ASCII characters and AI-vocabulary
+   introduced in the diff.
+3. **Presubmit linters** -- any external linters configured under
+   `presubmit:` in `.code-forge/gate.yaml`, run on the staged diff
+   (fail-closed: a configured-but-missing linter blocks the commit).
+4. **Test gate (R1)** -- the test suite must introduce no new failures
+   versus the baseline.
+
+### The commit message is always checked
+
+The `commit-msg` hook runs for every commit -- including non-code ones,
+because messages must stay clean. It blocks the commit if the message
+contains AI-vocabulary or non-ASCII characters. Non-ASCII detection has
+two modes, set with `non_ascii:` in `.code-forge/gate.yaml`:
+
+- **`ai-smell`** (default): blocks only confusable typographic characters
+  -- em dash (U+2014), en dash (U+2013), smart quotes (U+2018, U+2019,
+  U+201C, U+201D), ellipsis (U+2026), right arrow (U+2192), and
+  non-breaking space (U+00A0). Accented letters, CJK, and emoji pass.
+- **`strict`**: blocks every non-ASCII byte. Opt in with `non_ascii: strict`.
+
+### When a commit is blocked
+
+The hook prints which check failed. Fix the cause -- run a review, install
+the missing linter, or clean the diff or commit message. Do not pass
+`git commit --no-verify`: it skips the hooks entirely and defeats the gate.
+
+For the complete `.code-forge/gate.yaml` schema -- `presubmit:` entries and
+the `non_ascii` mode -- see the [configuration reference](configuration.md).
+
 ## Troubleshooting
 
 ### "code-forge: command not found"
