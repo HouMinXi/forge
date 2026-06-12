@@ -170,7 +170,7 @@ def resolve_forge_path() -> str:
     )
 
 
-# Non-ASCII grep patterns for D-12 two-mode check.
+# Non-ASCII grep patterns for two-mode check (ai-smell and strict).
 # ai-smell: only confusable typographic chars by Unicode codepoint (PCRE \x{HHHH}).
 # Codepoints covered:
 #   U+2014 em dash, U+2013 en dash,
@@ -200,7 +200,7 @@ def _build_non_ascii_pattern(non_ascii_mode: str) -> str:
 
 
 def _build_d12_precommit_block(non_ascii_mode: str) -> str:
-    """Build the D-12 staged-diff non-ASCII + AI-vocab check block.
+    """Build the staged-diff non-ASCII + AI-vocab check block.
 
     Placed after carveout and attestation, before presubmit runner.
     Runs only for code commits (non-code exits at carveout).
@@ -323,7 +323,7 @@ def generate_hook_content(
     Hook execution order:
       1. carveout block  -- non-code commits exit 0 here
       2. attestation     -- code-forge verify --quiet
-      3. D-12 staged-diff check -- non-ASCII + AI-vocab on staged diff
+      3. built-in staged-diff check -- non-ASCII + AI-vocab on staged diff
       4. presubmit runner -- user-configured linters (fail-closed)
       5. chain call      -- existing hook (if chaining)
       6. exec gate-check -- R1 test gate
@@ -423,7 +423,7 @@ def generate_commit_msg_hook_content(
 
     return (
         "#!/bin/sh\n"
-        "# code-forge commit-msg D-12 check (installed by code-forge install-hooks)\n"
+        "# code-forge commit-msg non-ASCII + AI-vocab check (installed by code-forge install-hooks)\n"
         "_MSG_FILE=\"$1\"\n"
         "_NON_ASCII=$(grep -P '%s' \"$_MSG_FILE\" | head -5)\n" % pattern
         + "if [ -n \"$_NON_ASCII\" ]; then\n"
@@ -519,7 +519,7 @@ def run_install_hooks(
             # No gate.yaml is valid: no presubmit entries, default non_ascii mode
             pass
         except ValueError as e:
-            # Malformed presubmit config: fail-closed (D-09).
+            # Malformed presubmit config: fail-closed.
             # Silently proceeding would generate a hook that omits configured
             # linters, which is worse than blocking install.
             print(
