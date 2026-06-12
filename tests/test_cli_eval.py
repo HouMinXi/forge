@@ -125,6 +125,7 @@ class TestRunEval:
             summary = EvalSummary(
                 total=1, caught=1, missed=0, correct_pass=0,
                 false_positive=0, skipped=0, results=[result],
+                advisory_caught=0, advisory_missed=0,
             )
             mock_summary.return_value = summary
 
@@ -151,6 +152,7 @@ class TestRunEval:
         summary = EvalSummary(
             total=1, caught=1, missed=0, correct_pass=0,
             false_positive=0, skipped=0, results=[result],
+            advisory_caught=0, advisory_missed=0,
         )
 
         with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
@@ -180,6 +182,7 @@ class TestRunEval:
         summary = EvalSummary(
             total=1, caught=1, missed=0, correct_pass=0,
             false_positive=0, skipped=0, results=[result],
+            advisory_caught=0, advisory_missed=0,
         )
 
         with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
