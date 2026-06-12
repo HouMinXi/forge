@@ -144,6 +144,17 @@ echo $FORGE_BACKEND
 code-forge review --version
 ```
 
+## Committing with code-forge hooks installed
+
+If you installed the code-forge Git hooks (`code-forge install-hooks`),
+they run on every commit -- PyCharm's commit dialog shells out to `git`,
+so the hooks fire there too, with no IDE bypass. Non-code commits skip
+review by file extension; code commits run receipts, linters, and the
+test gate; and every commit message is checked for non-ASCII and
+AI-vocabulary. See the VS Code guide's
+[commit section](setup-vscode.md#committing-with-code-forge-hooks-installed)
+for the full behavior and how to respond when a commit is blocked.
+
 ## Troubleshooting
 
 ### "code-forge: command not found" in Run Configuration
