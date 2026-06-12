@@ -92,7 +92,189 @@ def load_gate_config(
         if not isinstance(test["source_patterns"], list):
             raise ValueError("'test.source_patterns' must be a list if present")
 
+    # Validate optional non_ascii field (top-level)
+    if "non_ascii" in data:
+        if data["non_ascii"] not in ("ai-smell", "strict"):
+            raise ValueError(
+                "non_ascii must be 'ai-smell' or 'strict', got: %r"
+                % data["non_ascii"]
+            )
+
+    # Validate optional presubmit section
+    if "presubmit" in data:
+        if not isinstance(data["presubmit"], list):
+            raise ValueError(
+                "gate.yaml 'presubmit' must be a list, got: %s"
+                % type(data["presubmit"]).__name__
+            )
+        for idx, entry in enumerate(data["presubmit"]):
+            try:
+                validate_presubmit_entry(entry)
+            except ValueError as e:
+                raise ValueError(
+                    "presubmit[%d]: %s" % (idx, e)
+                ) from e
+
     return data
+
+
+def fnmatch_to_grep(glob: str) -> str:
+    """Convert a shell glob pattern to a POSIX ERE pattern for grep -E.
+
+    Uses a custom converter -- does NOT use fnmatch.translate() which
+    produces Python-only constructs incompatible with grep -E.
+
+    Conversion rules:
+        *  -> .*
+        ?  -> .
+        .  -> \\.
+        all other chars pass through unchanged
+
+    The result is anchored: ^<converted>$
+
+    Args:
+        glob: shell glob pattern (e.g. "*.py", "test_*.py")
+
+    Returns:
+        POSIX ERE string suitable for grep -E (e.g. "^.*\\.py$")
+    """
+    result = []
+    for ch in glob:
+        if ch == "*":
+            result.append(".*")
+        elif ch == "?":
+            result.append(".")
+        elif ch == ".":
+            result.append("\\.")
+        else:
+            result.append(ch)
+    return "^" + "".join(result) + "$"
+
+
+def validate_presubmit_command(command: list[str]) -> None:
+    """Validate a presubmit linter command for shell injection safety.
+
+    Checks each element for SHELL_METACHARACTERS. Does NOT check
+    KNOWN_RUNNERS -- presubmit commands are user-supplied external
+    tools and must not be restricted to the test-runner allowlist.
+
+    Args:
+        command: presubmit command list
+
+    Raises:
+        ValueError: if any element contains a shell metacharacter
+    """
+    if not isinstance(command, list):
+        raise ValueError("presubmit command must be a list")
+    if not command:
+        raise ValueError("presubmit command cannot be empty")
+    for arg in command:
+        if not isinstance(arg, str):
+            raise ValueError("presubmit command elements must be strings")
+        for char in SHELL_METACHARACTERS:
+            if char in arg:
+                raise ValueError(
+                    "Shell metacharacter %r not allowed in presubmit command"
+                    % char
+                )
+
+
+def validate_presubmit_entry(entry: dict) -> None:
+    """Validate a single presubmit entry from gate.yaml.
+
+    Schema:
+        command:      list[str] -- REQUIRED. Linter command.
+                      Each element checked against SHELL_METACHARACTERS.
+        applies_to:   str       -- REQUIRED. Glob pattern.
+                      Must NOT contain single-quote or double-quote.
+        on:           str       -- REQUIRED. One of "diff" or "patch".
+                      "message" is rejected (not yet implemented).
+        when_exists:  str       -- OPTIONAL. Activation path.
+                      Must NOT contain single-quote or double-quote.
+
+    Stores "applies_to_grep" in entry (POSIX ERE form of applies_to)
+    for direct shell use.
+
+    Args:
+        entry: dict representing one presubmit list element
+
+    Raises:
+        ValueError: if required fields are missing or values are invalid
+    """
+    if not isinstance(entry, dict):
+        raise ValueError("each presubmit entry must be a mapping")
+
+    # command: required, list, no shell metacharacters
+    if "command" not in entry:
+        raise ValueError(
+            "presubmit entry missing required field 'command'"
+        )
+    if not isinstance(entry["command"], list):
+        raise ValueError(
+            "presubmit entry 'command' must be a list, got: %s"
+            % type(entry["command"]).__name__
+        )
+    validate_presubmit_command(entry["command"])
+
+    # applies_to: required, string, no quotes (breaks generated shell quoting)
+    if "applies_to" not in entry:
+        raise ValueError(
+            "presubmit entry missing required field 'applies_to'"
+        )
+    if not isinstance(entry["applies_to"], str):
+        raise ValueError(
+            "presubmit entry 'applies_to' must be a string"
+        )
+    if "'" in entry["applies_to"]:
+        raise ValueError(
+            "presubmit entry 'applies_to' must not contain single-quote"
+        )
+    if '"' in entry["applies_to"]:
+        raise ValueError(
+            "presubmit entry 'applies_to' must not contain double-quote"
+        )
+    # Store the grep-compatible ERE for direct shell use
+    entry["applies_to_grep"] = fnmatch_to_grep(entry["applies_to"])
+
+    # on: required, "diff" or "patch" only.
+    # YAML 1.1 coerces bare `on:` to boolean True; normalize it to the string
+    # "on" so users can write `on: diff` without quoting the key.
+    on_key = "on" if "on" in entry else (True if True in entry else None)
+    if on_key is None:
+        raise ValueError(
+            "presubmit entry missing required field 'on'"
+        )
+    on_value = entry[on_key]
+    # Normalize: store as string key for callers
+    if on_key is True:
+        entry["on"] = on_value
+        del entry[True]
+    if on_value == "message":
+        raise ValueError(
+            "presubmit entry 'on: message' not yet supported -- would "
+            "silently never execute; use diff or patch"
+        )
+    if on_value not in ("diff", "patch"):
+        raise ValueError(
+            "presubmit entry 'on' must be 'diff' or 'patch', got: %r"
+            % on_value
+        )
+
+    # when_exists: optional, string, no quotes
+    if "when_exists" in entry:
+        we = entry["when_exists"]
+        if not isinstance(we, str):
+            raise ValueError(
+                "presubmit entry 'when_exists' must be a string"
+            )
+        if "'" in we:
+            raise ValueError(
+                "presubmit entry 'when_exists' must not contain single-quote"
+            )
+        if '"' in we:
+            raise ValueError(
+                "presubmit entry 'when_exists' must not contain double-quote"
+            )
 
 
 def validate_command_safety(command: list[str]) -> None:
