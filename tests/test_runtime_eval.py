@@ -24,7 +24,6 @@ import pytest
 
 from code_forge.eval.corpus import CorpusEntry, load_corpus
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -37,12 +36,12 @@ def _entry(
     diff_file: str = "diffs/test.diff",
     expected_advisory: list[str] | None = None,
 ) -> CorpusEntry:
-    kwargs: dict[str, Any] = dict(
-        name=name,
-        diff_file=diff_file,
-        expected_verdict=expected_verdict,
-        axis_tags=tags or ["RUNTIME"],
-    )
+    kwargs: dict[str, Any] = {
+        "name": name,
+        "diff_file": diff_file,
+        "expected_verdict": expected_verdict,
+        "axis_tags": tags or ["RUNTIME"],
+    }
     if expected_advisory is not None:
         kwargs["expected_advisory"] = expected_advisory
     return CorpusEntry(**kwargs)
@@ -255,8 +254,9 @@ class TestEvalSummaryAdvisoryFields:
     """EvalSummary has advisory_caught and advisory_missed counters."""
 
     def test_advisory_caught_field_exists(self) -> None:
-        from code_forge.eval.scorer import EvalSummary
         import dataclasses
+
+        from code_forge.eval.scorer import EvalSummary
         fields = {f.name for f in dataclasses.fields(EvalSummary)}
         assert "advisory_caught" in fields
         assert "advisory_missed" in fields
@@ -345,7 +345,6 @@ class TestRunnerAdvisoryScoring:
         mock_run.side_effect = side_effect
 
         # Patch _run_single to also write advisory-findings.json in temp dir
-        orig_run_single = runner_mod._run_single
         written_dirs: list[str] = []
 
         def patched_run_single(entry, diff_path, temp_dir, backend_name,
@@ -582,7 +581,7 @@ class TestComputeSummaryAdvisoryScoring:
 
     def test_non_runtime_entry_unaffected(self) -> None:
         """TRUST entry (HOLD expected) uses verdict-match, not advisory scoring."""
-        from code_forge.eval.scorer import compute_summary, EvalResult
+        from code_forge.eval.scorer import EvalResult, compute_summary
         entry = CorpusEntry(
             name="gate-yaml-rce",
             diff_file="diffs/gate-yaml-rce.diff",
@@ -608,7 +607,7 @@ class TestComputeSummaryAdvisoryScoring:
 
     def test_dual_axis_entry_verdict_match_gates_caught(self) -> None:
         """ttl_class (RUNTIME+FIXVAL, HOLD): verdict-match determines caught, not advisory."""
-        from code_forge.eval.scorer import compute_summary, EvalResult
+        from code_forge.eval.scorer import EvalResult, compute_summary
         entry = CorpusEntry(
             name="ttl_class",
             diff_file="diffs/ttl_class.diff",

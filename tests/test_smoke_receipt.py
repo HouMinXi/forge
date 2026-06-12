@@ -15,12 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
-
-import pytest
 
 from code_forge.source import compute_source_hash
-
 
 # ---------------------------------------------------------------------------
 # write_smoke_receipt
@@ -314,7 +310,7 @@ class TestReadSmokeReceipts:
         assert result == []
 
     def test_reads_single_receipt(self, tmp_path):
-        from code_forge.runtime import write_smoke_receipt, read_smoke_receipts
+        from code_forge.runtime import read_smoke_receipts, write_smoke_receipt
 
         receipts_dir = tmp_path / "receipts"
         write_smoke_receipt(
@@ -332,7 +328,7 @@ class TestReadSmokeReceipts:
         assert result[0]["surface"] == "nftables"
 
     def test_reads_multiple_receipts(self, tmp_path):
-        from code_forge.runtime import write_smoke_receipt, read_smoke_receipts
+        from code_forge.runtime import read_smoke_receipts, write_smoke_receipt
 
         receipts_dir = tmp_path / "receipts"
         diff = "diff --git a/f b/f\n+x"
@@ -362,7 +358,7 @@ class TestReadSmokeReceipts:
         assert "systemd" in surfaces
 
     def test_returns_list_of_dicts(self, tmp_path):
-        from code_forge.runtime import write_smoke_receipt, read_smoke_receipts
+        from code_forge.runtime import read_smoke_receipts, write_smoke_receipt
 
         receipts_dir = tmp_path / "receipts"
         write_smoke_receipt(
@@ -411,7 +407,7 @@ class TestReadSmokeReceipts:
 
     def test_round_trip_write_then_read(self, tmp_path):
         """Data written by write_smoke_receipt is readable by read_smoke_receipts."""
-        from code_forge.runtime import write_smoke_receipt, read_smoke_receipts
+        from code_forge.runtime import read_smoke_receipts, write_smoke_receipt
 
         receipts_dir = tmp_path / "receipts"
         diff = "diff --git a/rules.sh b/rules.sh\n+nft add"
