@@ -345,6 +345,54 @@ class TestRuntimeRunnerMalformedJSON:
 
         assert len(runner.infra_errors) > 0
 
+    def test_list_wrapped_single_dict_parsed(self, tmp_path):
+        """mimo-pro returns [{...}] -- single-element list must be unwrapped."""
+        from code_forge.runtime import RuntimeRunner
+
+        response = MagicMock()
+        response.content = [{"surfaces": ["nftables", "systemd"], "findings": []}]
+
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
+
+        skipped = [f for f in result if f.id == "runtime-skipped"]
+        assert len(skipped) == 0, "single-element list must not produce SKIPPED"
+        summary = [f for f in result if f.id == "runtime-smoke-summary"]
+        assert len(summary) == 1
+        assert "nftables" in summary[0].description or "systemd" in summary[0].description
+
+    def test_multi_element_list_returns_skipped(self, tmp_path):
+        """Multi-element list is ambiguous -- must still produce SKIPPED."""
+        from code_forge.runtime import RuntimeRunner
+
+        response = MagicMock()
+        response.content = [
+            {"surfaces": ["nftables"], "findings": []},
+            {"surfaces": ["systemd"], "findings": []},
+        ]
+
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
+
+        skipped = [f for f in result if f.id == "runtime-skipped"]
+        assert len(skipped) == 1
+
+    def test_empty_list_returns_skipped(self, tmp_path):
+        """Empty list is malformed -- must produce SKIPPED."""
+        from code_forge.runtime import RuntimeRunner
+
+        response = MagicMock()
+        response.content = []
+
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
+
+        skipped = [f for f in result if f.id == "runtime-skipped"]
+        assert len(skipped) == 1
+
 
 # ---------------------------------------------------------------------------
 # run() reads smoke receipts and computes UNVERIFIED (D-07/D-08/D-11)

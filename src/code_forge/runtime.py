@@ -189,13 +189,24 @@ def _parse_llm_response(
 ) -> tuple[list[str], list[dict]]:
     """Parse LLM response content into (surfaces, findings).
 
-    Accepts dict or JSON string. Raises ValueError/KeyError/JSONDecodeError
-    on malformed input so callers can map to a SKIPPED finding.
+    Accepts dict, JSON string, or a single-element list wrapping a dict.
+    Single-element lists are unwrapped to handle LLMs (e.g. mimo-pro) that
+    wrap the JSON object in an array.
+    Raises ValueError/KeyError/JSONDecodeError on malformed input so callers
+    can map to a SKIPPED finding.
     """
     if isinstance(content, dict):
         parsed = content
     elif isinstance(content, str):
         parsed = json.loads(content)
+    elif (
+        isinstance(content, list)
+        and len(content) == 1
+        and isinstance(content[0], dict)
+    ):
+        # Unwrap single-element list: some LLMs wrap the JSON object in an
+        # array (e.g. mimo-pro returns [{...}] instead of {...}).
+        parsed = content[0]
     else:
         raise ValueError(
             "unexpected LLM content type: %s" % type(content).__name__
