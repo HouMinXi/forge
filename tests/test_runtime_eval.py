@@ -1,4 +1,4 @@
-"""Tests for RUNTIME advisory eval axis (Plan 20-03).
+"""Tests for RUNTIME advisory eval axis.
 
 Covers:
 - CorpusEntry.expected_advisory field (extension + backward compat)
@@ -48,7 +48,7 @@ def _entry(
 
 
 # ===========================================================================
-# Task 1: CorpusEntry.expected_advisory field
+# CorpusEntry.expected_advisory field
 # ===========================================================================
 
 
@@ -146,7 +146,7 @@ class TestLoadCorpusExpectedAdvisory:
 
 
 # ===========================================================================
-# Task 1: advisory_caught() helper
+# advisory_caught() helper
 # ===========================================================================
 
 
@@ -196,7 +196,7 @@ class TestAdvisoryCaught:
 
 
 # ===========================================================================
-# Task 2: EvalResult.advisory_caught_count field
+# EvalResult.advisory_caught_count field
 # ===========================================================================
 
 
@@ -246,7 +246,7 @@ class TestEvalResultAdvisoryCaughtCount:
 
 
 # ===========================================================================
-# Task 2: EvalSummary.advisory_caught / advisory_missed fields
+# EvalSummary.advisory_caught / advisory_missed fields
 # ===========================================================================
 
 
@@ -263,7 +263,7 @@ class TestEvalSummaryAdvisoryFields:
 
 
 # ===========================================================================
-# Task 2: RuntimeAxisHook
+# RuntimeAxisHook
 # ===========================================================================
 
 
@@ -305,7 +305,7 @@ class TestRuntimeAxisHook:
 
 
 # ===========================================================================
-# Task 2: Runner per-run loop reads advisory-findings.json
+# Runner per-run loop reads advisory-findings.json
 # ===========================================================================
 
 
@@ -519,7 +519,7 @@ class TestRunnerAdvisoryScoring:
 
 
 # ===========================================================================
-# Task 2: compute_summary uses advisory_caught_count for pure-RUNTIME entries
+# compute_summary uses advisory_caught_count for pure-RUNTIME entries
 # ===========================================================================
 
 
@@ -630,7 +630,7 @@ class TestComputeSummaryAdvisoryScoring:
 
 
 # ===========================================================================
-# Task 2: corpus.yaml E1-E6 verification
+# corpus.yaml E1-E6 verification
 # ===========================================================================
 
 

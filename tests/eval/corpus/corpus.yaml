@@ -1,9 +1,9 @@
 # Eval corpus manifest (EVAL-01 SC1).
 # Each entry is a real bug that forge should detect.
 # Format per D-07: name, diff_file (relative), expected_verdict, axis_tags.
-# Plan 20-03 D-06: E1-E6 expected_verdict corrected to PASS (RUNTIME is advisory,
+# E1-E6 expected_verdict is PASS (RUNTIME is advisory,
 # cannot block; verified per-entry -- these diffs trigger no blocking axis).
-# Plan 20-03 D-12: expected_advisory keyword lists (wide-but-fair, case-insensitive
+# expected_advisory keyword lists (wide-but-fair, case-insensitive
 # substring matching).
 entries:
   - name: gate-yaml-rce

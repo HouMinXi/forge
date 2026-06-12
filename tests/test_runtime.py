@@ -1,4 +1,4 @@
-"""TDD tests for RuntimeRunner advisory axis (Plan 20-01, RED phase).
+"""Tests for RuntimeRunner advisory axis.
 
 Covers:
 - AxisRunner Protocol conformance (is_advisory=True, returns list[AdvisoryFinding])

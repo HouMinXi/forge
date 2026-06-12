@@ -1,4 +1,4 @@
-"""TDD tests for smoke receipt write/read infrastructure (Plan 20-01, RED phase).
+"""Tests for smoke receipt write/read infrastructure.
 
 Covers:
 - write_smoke_receipt creates JSON with required fields
