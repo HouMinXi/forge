@@ -6,7 +6,9 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from code_forge.git import validate_diff_spec, run_git_diff
+from pathlib import Path
+
+from code_forge.git import validate_diff_spec, run_git_diff, git_blame
 
 
 class TestValidateDiffSpec:
@@ -215,9 +217,6 @@ class TestRunGitDiff:
 
 
 # ---- git_blame tests (Phase 21-01) ----
-
-from code_forge.git import git_blame
-from pathlib import Path
 
 
 class TestGitBlame:
