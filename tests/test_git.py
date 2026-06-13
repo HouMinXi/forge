@@ -225,7 +225,7 @@ class TestGitBlame:
 
     # Fixture: single-commit porcelain block (one line, full metadata)
     SIMPLE_PORCELAIN = (
-        "abc1234567890abcdef1234567890abcdef123456 1 1 1\n"
+        "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee 1 1 1\n"
         "author Alice\n"
         "author-mail <alice@example.com>\n"
         "author-time 1700000000\n"
@@ -286,7 +286,7 @@ class TestGitBlame:
         result = git_blame("src/foo.py", Path("/repo"))
         assert result == {
             1: {
-                "sha": "abc1234567890abcdef1234567890abcdef123456",
+                "sha": "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee",
                 "author": "Alice",
                 "subject": "fix: null check",
             }
