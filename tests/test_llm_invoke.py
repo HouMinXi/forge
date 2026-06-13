@@ -908,7 +908,7 @@ class TestExtractJsonFromText:
         # Text where first '{' is invalid JSON, second '{' is valid.
         # With max_attempts=1, only the first position is tried -> None.
         text = '{invalid json} then {"ok": true}'
-        result_limited = _extract_json_from_text(text, _max_attempts=1)
+        result_limited = _extract_json_from_text(text, max_attempts=1)
         assert result_limited is None  # first attempt fails, no more tries
         # Default (>=2 attempts) finds the valid JSON at the second position.
         result_default = _extract_json_from_text(text)
