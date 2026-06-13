@@ -32,7 +32,7 @@ _DIFF = """\
 diff --git a/foo.py b/foo.py
 --- a/foo.py
 +++ b/foo.py
-@@ -4,6 +4,7 @@
+@@ -4,3 +4,4 @@
  unchanged_line_1
  unchanged_line_2
 +new_line_here = True
@@ -236,8 +236,8 @@ class TestRealDefaultL0Runner:
         ruff_config = ToolConfig(
             name="ruff",
             command="ruff",
-            args=["check", "--output-format=json"],
-            output_format="ruff",
+            args=["check", "--output-format=sarif"],
+            output_format="sarif",
             file_patterns=["*.py"],
         )
         registry = {"ruff": ruff_config}
