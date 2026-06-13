@@ -354,6 +354,47 @@ class TestLLMInvoke:
         with pytest.raises(LLMInvokeError, match="unsupported backend type"):
             llm_invoke("prompt", backend=backend)
 
+    def test_api_fallback_extracts_falsify_envelope_with_expected_keys(self):
+        """Falsify regression: api backend fallback path must extract verdict envelope.
+
+        This test exercises _invoke_api -> _extract_json_from_text (the path that hid
+        the regression). The cli backend does NOT call _extract_json_from_text and would
+        give a false green -- api backend is mandatory here per brief requirement.
+
+        Scenario: mimo-pro style response with prose before JSON (json.loads fails on the
+        full string; the fallback extractor runs with expected_keys from the caller).
+        """
+        backend = BackendConfig(
+            name="mimo-pro",
+            type="api",
+            model="mimo-v2.5-pro",
+            format="anthropic",
+            base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
+            api_key_env="MIMO_PRO_API_KEY",
+        )
+        # Prose before JSON forces json.loads to fail -> _extract_json_from_text runs.
+        prose_wrapped = (
+            'Let me verify this finding carefully. '
+            '{"verdict": "DISMISSED", "reasoning": "safe"}'
+        )
+        mock_response = Mock()
+        mock_response.read.return_value = json.dumps({
+            "content": [{"type": "text", "text": prose_wrapped}],
+            "usage": {"input_tokens": 50, "output_tokens": 30},
+        }).encode("utf-8")
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "tp-test"}), \
+             patch("urllib.request.urlopen", return_value=mock_response):
+            result = llm_invoke(
+                "falsify prompt",
+                backend=backend,
+                expected_keys=frozenset({"verdict", "reasoning"}),
+            )
+
+        assert result.content == {"verdict": "DISMISSED", "reasoning": "safe"}
+
 
     def test_cli_omits_model_flag_when_empty(self):
         """When backend.model='' and FORGE_LLM_MODEL unset, --model must NOT appear in cmd."""
@@ -873,6 +914,10 @@ class TestExtractJsonFromText:
         from code_forge.llm_invoke import _extract_json_from_text
         return _extract_json_from_text(text)
 
+    def _extract_with_keys(self, text, keys):
+        from code_forge.llm_invoke import _extract_json_from_text
+        return _extract_json_from_text(text, expected_keys=keys)
+
     def test_plain_json_envelope(self):
         """Dict with a known envelope key is returned."""
         assert self._extract('{"findings": []}') == {"findings": []}
@@ -923,6 +968,31 @@ class TestExtractJsonFromText:
         text = '{"findings": [], "k": "value with \\"quote\\""}'
         result = self._extract(text)
         assert result == {"findings": [], "k": 'value with "quote"'}
+
+    # -- falsify regression reproducer (RED on 652cbd6, GREEN after this fix) --
+
+    def test_falsify_verdict_without_expected_keys_returns_none(self):
+        """F1 safety preserved: verdict envelope is not a review envelope by default.
+
+        Without expected_keys, _REVIEW_ENVELOPE_KEYS is used (findings/code_excerpts/
+        surfaces). "verdict" is not in that set, so the dict is correctly rejected --
+        preserving F1 protection for review-pass callers.
+        """
+        text = 'Let me verify. {"verdict": "DISMISSED", "reasoning": "safe"}'
+        assert self._extract(text) is None
+
+    def test_falsify_verdict_with_expected_keys_extracted(self):
+        """Falsify regression reproducer: verdict envelope extracted when expected_keys set.
+
+        On 652cbd6 (before this fix): returns None because "verdict" not in
+        _REVIEW_ENVELOPE_KEYS.  After fix: passing expected_keys=frozenset({"verdict",
+        "reasoning"}) returns the dict. This is the path RealFalsifier.falsify() uses.
+        """
+        text = 'Let me verify. {"verdict": "DISMISSED", "reasoning": "safe"}'
+        result = self._extract_with_keys(text, frozenset({"verdict", "reasoning"}))
+        assert result == {"verdict": "DISMISSED", "reasoning": "safe"}, (
+            "falsify regression: expected verdict dict, got %r" % (result,)
+        )
 
     # -- F1 reproducer (was RED on HEAD, must be GREEN after fix) --
 
