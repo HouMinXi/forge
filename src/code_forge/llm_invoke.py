@@ -75,15 +75,49 @@ def _resolve_model() -> str:
 
 
 def _strip_fences(text: str) -> str:
-    """Strip markdown fences from LLM response."""
+    """Strip markdown fences from LLM response.
+
+    Stops at the FIRST closing fence so that trailing explanatory text
+    appended by some models (e.g. mimo-pro) is not included in the
+    extracted content.  The old implementation only removed the last
+    line if it was exactly "```", which failed when extra prose followed
+    the closing fence.
+    """
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
+        content_lines = []
+        for line in lines[1:]:  # skip opening ```[lang] line
+            if line.strip() == "```":
+                break  # stop at first closing fence; ignore trailing text
+            content_lines.append(line)
+        text = "\n".join(content_lines).strip()
     return text
+
+
+def _extract_json_from_text(text: str):
+    """Find and return the first balanced JSON object or array in text.
+
+    Fallback for responses that embed JSON without a leading code fence.
+    Returns None if no valid JSON can be extracted.
+    """
+    for start_char in ("{", "["):
+        idx = text.find(start_char)
+        if idx == -1:
+            continue
+        depth = 0
+        end_char = "}" if start_char == "{" else "]"
+        for i, ch in enumerate(text[idx:], idx):
+            if ch == start_char:
+                depth += 1
+            elif ch == end_char:
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[idx: i + 1])
+                    except json.JSONDecodeError:
+                        break
+    return None
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -361,18 +395,23 @@ def _invoke_api(
 
     duration = time.monotonic() - start
 
-    # Strip fences and parse JSON
+    # Strip fences and parse JSON; fall back to embedded-JSON extraction.
     content = _strip_fences(content)
     try:
         parsed_content = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise LLMInvokeError(
-            "API response content is not valid JSON",
-            exit_code=0,
-            stderr="JSONDecodeError: %s\ncontent[:500]: %s"
-            % (exc, content[:500]),
-            duration_s=duration,
-        ) from exc
+        # Some models (e.g. mimo-pro) prepend prose before the JSON or wrap
+        # it in a code fence with trailing text.  Try to locate the first
+        # balanced JSON object/array in the raw text as a fallback.
+        parsed_content = _extract_json_from_text(content)
+        if parsed_content is None:
+            raise LLMInvokeError(
+                "API response content is not valid JSON",
+                exit_code=0,
+                stderr="JSONDecodeError: %s\ncontent[:500]: %s"
+                % (exc, content[:500]),
+                duration_s=duration,
+            ) from exc
 
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
 

@@ -823,3 +823,126 @@ class TestVertexInvoke:
         with patch("code_forge.llm_invoke._invoke_vertex", return_value=mock_result):
             result = _invoke_api("prompt", backend, 30)
         assert result.usage.input_tokens == 1
+
+
+class TestStripFences:
+    def _strip(self, text):
+        from code_forge.llm_invoke import _strip_fences
+        return _strip_fences(text)
+
+    def test_basic_fence(self):
+        assert self._strip('```\n{"k":1}\n```') == '{"k":1}'
+
+    def test_json_lang_specifier(self):
+        assert self._strip('```json\n{"k":1}\n```') == '{"k":1}'
+
+    def test_trailing_text_after_closing_fence(self):
+        text = '```json\n{"findings":[]}\n```\n\nI am ready to review more code.'
+        result = self._strip(text)
+        assert result == '{"findings":[]}'
+        assert "ready to review" not in result
+
+    def test_trailing_text_with_blank_lines(self):
+        text = '```json\n{"ok":true}\n```\n\n\nExtra explanation.'
+        assert self._strip(text) == '{"ok":true}'
+
+    def test_no_fence_passthrough(self):
+        text = '{"key": "value"}'
+        assert self._strip(text) == text
+
+    def test_multiline_json_in_fence(self):
+        text = '```json\n{\n  "findings": [],\n  "code_excerpts": []\n}\n```'
+        assert json.loads(self._strip(text)) == {"findings": [], "code_excerpts": []}
+
+    def test_content_with_backticks_not_confused_as_fence(self):
+        text = '```\n{"desc": "use `x`"}\n```'
+        assert self._strip(text) == '{"desc": "use `x`"}'
+
+
+class TestExtractJsonFromText:
+    def _extract(self, text):
+        from code_forge.llm_invoke import _extract_json_from_text
+        return _extract_json_from_text(text)
+
+    def test_plain_json_object(self):
+        assert self._extract('{"k": 1}') == {"k": 1}
+
+    def test_json_with_preamble(self):
+        text = 'Here are my findings:\n\n{"findings": [], "code_excerpts": []}'
+        assert self._extract(text) == {"findings": [], "code_excerpts": []}
+
+    def test_json_with_postamble(self):
+        text = '{"ok": true}\n\nLet me know if you need more.'
+        assert self._extract(text) == {"ok": True}
+
+    def test_json_array(self):
+        assert self._extract('Results: [1, 2, 3]') == [1, 2, 3]
+
+    def test_nested_json(self):
+        text = 'Output: {"a": {"b": [1, 2]}, "c": 3}'
+        assert self._extract(text) == {"a": {"b": [1, 2]}, "c": 3}
+
+    def test_no_json_returns_none(self):
+        assert self._extract("No JSON here at all.") is None
+
+    def test_empty_string_returns_none(self):
+        assert self._extract("") is None
+
+    def test_broken_json_returns_none(self):
+        assert self._extract('{"findings": [') is None
+
+
+class TestMimoProCompatibility:
+    """Guard: mimo-pro wraps JSON in ```json fence with trailing prose."""
+
+    def _backend(self):
+        return BackendConfig(
+            name="mimo-pro", type="api", model="mimo-v2.5-pro",
+            format="anthropic",
+            base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
+            api_key_env="MIMO_PRO_API_KEY",
+        )
+
+    def _mock_response(self, text_content):
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": [
+                {"type": "text", "text": text_content},
+                {"type": "thinking", "thinking": "...", "signature": ""},
+            ],
+            "usage": {"input_tokens": 4151, "output_tokens": 710},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+        return resp
+
+    def test_fence_with_trailing_text_parses_ok(self):
+        """Core: mimo-pro appends prose after closing ``` -- must still parse."""
+        backend = self._backend()
+        mimo_response = (
+            '```json\n'
+            '{"findings": [], "code_excerpts": [{"file": "a.py", '
+            '"start_line": 1, "end_line": 3, "content": "x=1"}]}\n'
+            '```\n\n'
+            "I'm ready to review more code in the format you specified."
+        )
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "tp-test"}), \
+             patch("urllib.request.urlopen", return_value=self._mock_response(mimo_response)):
+            result = llm_invoke("expert pass prompt", backend=backend)
+        assert result.content["findings"] == []
+        assert result.content["code_excerpts"][0]["file"] == "a.py"
+
+    def test_thinking_block_after_text_is_ignored(self):
+        """Thinking block does not interfere with text block extraction."""
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "tp-test"}), \
+             patch("urllib.request.urlopen", return_value=self._mock_response('{"ok": true}')):
+            result = llm_invoke("prompt", backend=self._backend())
+        assert result.content == {"ok": True}
+
+    def test_fence_without_trailing_text_still_works(self):
+        """Regression: clean ```json{...}``` (no trailing text) still parses ok."""
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "tp-test"}), \
+             patch("urllib.request.urlopen",
+                   return_value=self._mock_response('```json\n{"findings": []}\n```')):
+            result = llm_invoke("prompt", backend=self._backend())
+        assert result.content == {"findings": []}
