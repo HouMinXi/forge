@@ -49,7 +49,12 @@ RUNTIME_LIFECYCLE_QUESTION = (
     "at runtime even if the code is syntactically correct and all "
     "unit tests pass?\n"
     "3. What smoke test would need to exercise each surface to verify "
-    "it actually works after the change?\n\n"
+    "it actually works after the change?\n"
+    "4. Does this change depend on, or run concurrently with, any OTHER stateful "
+    "subsystem (another nftables table, routing rule, lock, daemon, file) NOT in "
+    "this diff? If so: can that subsystem block, drop, or interfere with this "
+    "change's network/file/process operations? Enumerate the flags that gate this "
+    "function and ALL their possible values at call time.\n\n"
     "Return your answer as JSON with exactly these keys:\n"
     '{"surfaces": ["surface1", "surface2"], '
     '"findings": [{"file": "path/to/file", "line": 1, '

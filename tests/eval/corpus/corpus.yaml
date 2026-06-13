@@ -1,7 +1,7 @@
 # Eval corpus manifest (EVAL-01 SC1).
 # Each entry is a real bug that forge should detect.
 # Format per D-07: name, diff_file (relative), expected_verdict, axis_tags.
-# E1-E6 expected_verdict is PASS (RUNTIME is advisory,
+# E1-E7 expected_verdict is PASS (RUNTIME is advisory,
 # cannot block; verified per-entry -- these diffs trigger no blocking axis).
 # expected_advisory keyword lists (wide-but-fair, case-insensitive
 # substring matching).
@@ -46,6 +46,12 @@ entries:
     expected_verdict: PASS
     axis_tags: [RUNTIME]
     expected_advisory: ["reprobe", "blackout", "probe"]
+
+  - name: E7-killswitch-reprobe
+    diff_file: diffs/E7-killswitch-reprobe.diff
+    expected_verdict: PASS
+    axis_tags: [RUNTIME]
+    expected_advisory: ["nftables", "mark", "reprobe", "concurrent"]
 
   - name: BUG-P12-01
     diff_file: diffs/BUG-P12-01.diff
