@@ -873,23 +873,36 @@ class TestExtractJsonFromText:
         from code_forge.llm_invoke import _extract_json_from_text
         return _extract_json_from_text(text)
 
-    def test_plain_json_object(self):
-        assert self._extract('{"k": 1}') == {"k": 1}
+    def test_plain_json_envelope(self):
+        """Dict with a known envelope key is returned."""
+        assert self._extract('{"findings": []}') == {"findings": []}
 
     def test_json_with_preamble(self):
         text = 'Here are my findings:\n\n{"findings": [], "code_excerpts": []}'
         assert self._extract(text) == {"findings": [], "code_excerpts": []}
 
-    def test_json_with_postamble(self):
-        text = '{"ok": true}\n\nLet me know if you need more.'
-        assert self._extract(text) == {"ok": True}
+    def test_envelope_with_postamble(self):
+        """Envelope dict (findings key) with postamble is extracted; trailing prose ignored."""
+        text = '{"findings": []}\n\nLet me know if you need more.'
+        assert self._extract(text) == {"findings": []}
 
-    def test_json_array(self):
-        assert self._extract('Results: [1, 2, 3]') == [1, 2, 3]
+    def test_json_array_returns_none(self):
+        """Bare arrays are not valid forge envelopes -- returns None."""
+        assert self._extract('Results: [1, 2, 3]') is None
 
-    def test_nested_json(self):
-        text = 'Output: {"a": {"b": [1, 2]}, "c": 3}'
-        assert self._extract(text) == {"a": {"b": [1, 2]}, "c": 3}
+    def test_non_envelope_dict_returns_none(self):
+        """Dict without known envelope keys is not a valid envelope."""
+        assert self._extract('{"ok": true}') is None
+
+    def test_nested_envelope_json(self):
+        """Nested dict with envelope key is returned."""
+        text = 'Output: {"findings": [], "meta": {"b": [1, 2]}}'
+        assert self._extract(text) == {"findings": [], "meta": {"b": [1, 2]}}
+
+    def test_surfaces_key_is_valid_envelope(self):
+        """RUNTIME axis uses 'surfaces' key -- must be accepted."""
+        text = 'Done: {"surfaces": ["nftables"], "findings": []}'
+        assert self._extract(text) == {"surfaces": ["nftables"], "findings": []}
 
     def test_no_json_returns_none(self):
         assert self._extract("No JSON here at all.") is None
@@ -900,28 +913,45 @@ class TestExtractJsonFromText:
     def test_broken_json_returns_none(self):
         assert self._extract('{"findings": [') is None
 
-    def test_brace_inside_string_value(self):
-        """Regression P1: '{' inside a string value must not confuse the extractor."""
-        text = 'Result: {"key": "{not a start}"}'
-        assert self._extract(text) == {"key": "{not a start}"}
+    def test_brace_inside_string_in_envelope(self):
+        """'{' inside a string value in an envelope dict must not confuse the extractor."""
+        text = 'Result: {"findings": [], "key": "{not a start}"}'
+        assert self._extract(text) == {"findings": [], "key": "{not a start}"}
 
-    def test_escaped_quotes_in_string(self):
-        """Escaped quotes inside JSON strings are handled correctly."""
-        text = '{"k": "value with \\"quote\\""}'
+    def test_escaped_quotes_in_envelope(self):
+        """Escaped quotes inside envelope JSON strings are handled correctly."""
+        text = '{"findings": [], "k": "value with \\"quote\\""}'
         result = self._extract(text)
-        assert result == {"k": 'value with "quote"'}
+        assert result == {"findings": [], "k": 'value with "quote"'}
 
-    def test_max_attempts_bounds_scan(self):
-        """max_attempts=1 finds JSON only at the very first '{' position."""
-        from code_forge.llm_invoke import _extract_json_from_text
-        # Text where first '{' is invalid JSON, second '{' is valid.
-        # With max_attempts=1, only the first position is tried -> None.
-        text = '{invalid json} then {"ok": true}'
-        result_limited = _extract_json_from_text(text, max_attempts=1)
-        assert result_limited is None  # first attempt fails, no more tries
-        # Default (>=2 attempts) finds the valid JSON at the second position.
-        result_default = _extract_json_from_text(text)
-        assert result_default == {"ok": True}
+    # -- F1 reproducer (was RED on HEAD, must be GREEN after fix) --
+
+    def test_f1_stray_array_before_real_envelope(self):
+        """F1: stray array fragment in prose must NOT be returned; real envelope must be.
+
+        The old implementation returned [1, 2] (first raw_decode-able token).
+        The fix requires a dict with known envelope keys, skipping the array.
+        """
+        text = 'The array [1, 2] looks suspect. {"findings": ["REAL"]}'
+        result = self._extract(text)
+        assert result == {"findings": ["REAL"]}, (
+            f"F1 fail: expected envelope dict, got {result!r}"
+        )
+
+    # -- F2 reproducer (was RED on HEAD, must be GREEN after fix) --
+
+    def test_f2_many_invalid_braces_before_real_envelope(self):
+        """F2: >10 invalid '{' chars before real envelope must not exhaust the scan.
+
+        The old implementation capped at max_attempts=10; 10 '{a' fragments
+        exhausted the cap and returned None, missing the real envelope.
+        The fix removes the cap; raw_decode fails in O(1) for invalid JSON.
+        """
+        text = "{a" * 10 + ' {"findings": ["REAL"]}'
+        result = self._extract(text)
+        assert result == {"findings": ["REAL"]}, (
+            f"F2 fail: expected envelope dict, got {result!r}"
+        )
 
 
 class TestMimoProCompatibility:
