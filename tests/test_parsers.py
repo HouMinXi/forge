@@ -84,8 +84,8 @@ class TestParseRuff:
         assert isinstance(f0, Finding)
         assert f0.rule_id == "F401"
         assert f0.level == "error"
-        # file:///src/app.py -> src/app.py (stripped)
-        assert f0.file == "src/app.py"
+        # file:///src/app.py -> /src/app.py (absolute path preserved)
+        assert f0.file == "/src/app.py"
         assert f0.line == 1
         assert f0.tool_name == "ruff"
         f1 = findings[1]
