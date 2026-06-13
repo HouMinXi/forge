@@ -891,6 +891,17 @@ class TestExtractJsonFromText:
     def test_broken_json_returns_none(self):
         assert self._extract('{"findings": [') is None
 
+    def test_brace_inside_string_value(self):
+        """Regression P1: '{' inside a string value must not confuse the extractor."""
+        text = 'Result: {"key": "{not a start}"}'
+        assert self._extract(text) == {"key": "{not a start}"}
+
+    def test_escaped_quotes_in_string(self):
+        """Regression P1: escaped quotes inside JSON strings are handled correctly."""
+        text = '{"k": "value with \\"quote\\""}'
+        result = self._extract(text)
+        assert result == {"k": 'value with "quote"'}
+
 
 class TestMimoProCompatibility:
     """Guard: mimo-pro wraps JSON in ```json fence with trailing prose."""

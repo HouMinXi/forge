@@ -96,27 +96,23 @@ def _strip_fences(text: str) -> str:
 
 
 def _extract_json_from_text(text: str):
-    """Find and return the first balanced JSON object or array in text.
+    """Find and return the first valid JSON object or array in text.
 
     Fallback for responses that embed JSON without a leading code fence.
+    Uses json.JSONDecoder.raw_decode() which correctly handles string
+    literals, escaped characters, and nested structures -- unlike a naive
+    brace-counting loop that miscounts braces inside string values.
     Returns None if no valid JSON can be extracted.
     """
-    for start_char in ("{", "["):
-        idx = text.find(start_char)
-        if idx == -1:
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch not in ("{", "["):
             continue
-        depth = 0
-        end_char = "}" if start_char == "{" else "]"
-        for i, ch in enumerate(text[idx:], idx):
-            if ch == start_char:
-                depth += 1
-            elif ch == end_char:
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[idx: i + 1])
-                    except json.JSONDecodeError:
-                        break
+        try:
+            obj, _ = decoder.raw_decode(text, i)
+            return obj
+        except json.JSONDecodeError:
+            continue
     return None
 
 
