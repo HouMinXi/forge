@@ -897,10 +897,22 @@ class TestExtractJsonFromText:
         assert self._extract(text) == {"key": "{not a start}"}
 
     def test_escaped_quotes_in_string(self):
-        """Regression P1: escaped quotes inside JSON strings are handled correctly."""
+        """Escaped quotes inside JSON strings are handled correctly."""
         text = '{"k": "value with \\"quote\\""}'
         result = self._extract(text)
         assert result == {"k": 'value with "quote"'}
+
+    def test_max_attempts_bounds_scan(self):
+        """max_attempts=1 finds JSON only at the very first '{' position."""
+        from code_forge.llm_invoke import _extract_json_from_text
+        # Text where first '{' is invalid JSON, second '{' is valid.
+        # With max_attempts=1, only the first position is tried -> None.
+        text = '{invalid json} then {"ok": true}'
+        result_limited = _extract_json_from_text(text, _max_attempts=1)
+        assert result_limited is None  # first attempt fails, no more tries
+        # Default (>=2 attempts) finds the valid JSON at the second position.
+        result_default = _extract_json_from_text(text)
+        assert result_default == {"ok": True}
 
 
 class TestMimoProCompatibility:

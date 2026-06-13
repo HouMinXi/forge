@@ -95,19 +95,28 @@ def _strip_fences(text: str) -> str:
     return text
 
 
-def _extract_json_from_text(text: str):
+def _extract_json_from_text(text: str, _max_attempts: int = 10) -> object:
     """Find and return the first valid JSON object or array in text.
 
     Fallback for responses that embed JSON without a leading code fence.
     Uses json.JSONDecoder.raw_decode() which correctly handles string
     literals, escaped characters, and nested structures -- unlike a naive
     brace-counting loop that miscounts braces inside string values.
+
+    _max_attempts caps the number of raw_decode calls so performance
+    remains O(n) rather than O(n^2) for inputs with many brace characters
+    (e.g. code snippets). LLM responses that reach this fallback typically
+    have the JSON near the start, so 10 attempts is generous in practice.
     Returns None if no valid JSON can be extracted.
     """
     decoder = json.JSONDecoder()
+    attempts = 0
     for i, ch in enumerate(text):
         if ch not in ("{", "["):
             continue
+        if attempts >= _max_attempts:
+            break
+        attempts += 1
         try:
             obj, _ = decoder.raw_decode(text, i)
             return obj
