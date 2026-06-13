@@ -37,9 +37,9 @@ def test_runtime_lifecycle_question_in_skill_md() -> None:
 
     content = skill_md.read_text(encoding="utf-8")
 
-    # The question text is embedded in a code block in SKILL.md.
-    # Strip the {diff_text} placeholder line for matching since SKILL.md
-    # includes it literally in the code block.
+    # The full RUNTIME_LIFECYCLE_QUESTION constant -- including its literal
+    # {diff_text} placeholder -- is embedded verbatim in a SKILL.md code
+    # block, so a plain substring check matches without any stripping.
     assert RUNTIME_LIFECYCLE_QUESTION in content, (
         "RUNTIME_LIFECYCLE_QUESTION not found verbatim in %s\n"
         "D-10 drift detected: runtime.py constant and SKILL.md mirror have diverged.\n"
