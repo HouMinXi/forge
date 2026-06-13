@@ -95,35 +95,41 @@ def _strip_fences(text: str) -> str:
     return text
 
 
-def _extract_json_from_text(text: str, max_attempts: int = 10) -> object:
-    """Find and return the first valid JSON object or array in text.
+def _extract_json_from_text(text: str) -> dict | None:
+    """Find and return the first valid forge-envelope JSON object in text.
 
     Module-private helper called only from _invoke_api() when _strip_fences
     + json.loads fails. Not part of the public API.
 
-    Uses json.JSONDecoder.raw_decode() which correctly handles string
-    literals, escaped characters, and nested structures -- unlike a naive
-    brace-counting loop that miscounts braces inside string values.
+    Only accepts dicts whose keys overlap _ENVELOPE_KEYS (the known forge
+    response shapes: L1 review passes use 'findings'/'code_excerpts'; the
+    RUNTIME axis uses 'surfaces'/'findings'). This prevents returning stray
+    JSON fragments -- arrays, unrelated dicts -- that appear in model prose
+    before the real response envelope (F1 fix).
 
-    max_attempts caps the number of raw_decode calls so performance
-    remains O(n) rather than O(n^2) for inputs with many brace characters
-    (e.g. code snippets). LLM responses that reach this fallback typically
-    have the JSON near the start, so 10 attempts is generous in practice.
-    Returns None if no valid JSON can be extracted.
+    Scans left-to-right for '{' only; all forge envelopes are dicts, never
+    bare arrays.  No attempt cap: raw_decode fails in O(1) for invalid JSON
+    (exits at the first non-JSON character), so the total scan remains
+    O(n) amortised across all '{' positions even when many invalid braces
+    precede the real envelope (F2 fix).
+
+    Returns None if no valid envelope can be extracted.
     """
+    # Keys present in every valid forge response envelope.
+    # Verified against all L1 passes (findings/code_excerpts) and the
+    # RUNTIME axis (surfaces/findings): no forge axis returns a bare array
+    # as its top-level envelope, so scanning only "{" is correct here.
+    _envelope_keys: frozenset[str] = frozenset({"findings", "code_excerpts", "surfaces"})
     decoder = json.JSONDecoder()
-    attempts = 0
     for i, ch in enumerate(text):
-        if ch not in ("{", "["):
+        if ch != "{":
             continue
-        if attempts >= max_attempts:
-            break
-        attempts += 1
         try:
             obj, _ = decoder.raw_decode(text, i)
-            return obj
         except json.JSONDecodeError:
             continue
+        if isinstance(obj, dict) and obj.keys() & _envelope_keys:
+            return obj
     return None
 
 
