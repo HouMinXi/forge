@@ -171,6 +171,34 @@ class TestLLMInvoke:
         assert result.usage.output_tokens == 120
         assert result.content == {"findings": []}
 
+    def test_cli_streaming_event_array_extracts_result(self):
+        """Streaming event-array (current claude CLI): extracts result event content."""
+        events = [
+            {"type": "system", "subtype": "init", "cwd": "/tmp"},
+            {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 4},
+            {"type": "result", "subtype": "success",
+             "result": json.dumps({"surfaces": ["nftables"], "findings": []}),
+             "usage": {"input_tokens": 100, "output_tokens": 50}},
+        ]
+        mock_proc = _make_mock_proc(stdout=json.dumps(events))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt")
+
+        assert result.content == {"surfaces": ["nftables"], "findings": []}
+        assert result.usage.input_tokens == 100
+        assert result.usage.output_tokens == 50
+
+    def test_cli_streaming_array_no_result_event_returns_list(self):
+        """Streaming array with no result event falls back to list content."""
+        events = [{"type": "system"}, {"type": "thinking"}]
+        mock_proc = _make_mock_proc(stdout=json.dumps(events))
+
+        with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+            result = llm_invoke("prompt")
+
+        assert isinstance(result.content, list)
+
     def test_api_dispatch_openai(self):
         """api backend with openai format makes HTTP call and returns LLMResult."""
         backend = BackendConfig(
