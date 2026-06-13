@@ -981,6 +981,8 @@ class StateMachine:
                 runner.source_files = list(
                     self.resolved_review.source_files
                 )
+            if hasattr(runner, "registry"):
+                runner.registry = self.registry
         for runner in self.advisory_runners:
             try:
                 findings = runner.run(diff_text, self.cwd)
