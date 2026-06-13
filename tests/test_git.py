@@ -212,3 +212,143 @@ class TestRunGitDiff:
         )
         with pytest.raises(RuntimeError, match="git diff failed"):
             run_git_diff("HEAD")
+
+
+# ---- git_blame tests (Phase 21-01) ----
+
+from code_forge.git import git_blame
+from pathlib import Path
+
+
+class TestGitBlame:
+    """Tests for git_blame() porcelain parser (D-06: git.py is single owner)."""
+
+    # Fixture: single-commit porcelain block (one line, full metadata)
+    SIMPLE_PORCELAIN = (
+        "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee 1 1 1\n"
+        "author Alice\n"
+        "author-mail <alice@example.com>\n"
+        "author-time 1700000000\n"
+        "author-tz +0000\n"
+        "committer Alice\n"
+        "committer-mail <alice@example.com>\n"
+        "committer-time 1700000000\n"
+        "committer-tz +0000\n"
+        "summary fix: null check\n"
+        "filename src/foo.py\n"
+        "\tprint('hello')\n"
+    )
+
+    # Fixture: two lines with same SHA -- second block has no author/summary
+    DEDUP_PORCELAIN = (
+        "5040f17eaabbccdd0011223344556677aabbccdd 1 1 2\n"
+        "author Bob\n"
+        "author-mail <bob@example.com>\n"
+        "author-time 1700000000\n"
+        "author-tz +0000\n"
+        "committer Bob\n"
+        "committer-mail <bob@example.com>\n"
+        "committer-time 1700000000\n"
+        "committer-tz +0000\n"
+        "summary refactor: extract helper\n"
+        "filename src/bar.py\n"
+        "\tdef helper():\n"
+        "5040f17eaabbccdd0011223344556677aabbccdd 2 2\n"
+        "filename src/bar.py\n"
+        "\t    return 42\n"
+    )
+
+    # Fixture: staged/uncommitted line (SHA = 40 zeros)
+    # The "author Not Committed Yet" line is present (real git always emits it).
+    # The "summary" line is absent (per plan spec: subject defaults to "").
+    STAGED_PORCELAIN = (
+        "0000000000000000000000000000000000000000 1 1 1\n"
+        "author Not Committed Yet\n"
+        "author-mail <not.committed.yet>\n"
+        "author-time 1700000000\n"
+        "author-tz +0000\n"
+        "committer Not Committed Yet\n"
+        "committer-mail <not.committed.yet>\n"
+        "committer-time 1700000000\n"
+        "committer-tz +0000\n"
+        "filename src/baz.py\n"
+        "\tnew_line = True\n"
+    )
+
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
+    def test_git_blame_parses_simple(self, mock_which, mock_run):
+        """Single commit block parsed correctly."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=self.SIMPLE_PORCELAIN,
+        )
+        result = git_blame("src/foo.py", Path("/repo"))
+        assert result == {
+            1: {
+                "sha": "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee",
+                "author": "Alice",
+                "subject": "fix: null check",
+            }
+        }
+
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
+    def test_git_blame_dedup_sha(self, mock_which, mock_run):
+        """Two lines with same SHA -- second block has no author/summary."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=self.DEDUP_PORCELAIN,
+        )
+        result = git_blame("src/bar.py", Path("/repo"))
+        # Both lines must have correct author+subject from sha_cache
+        assert result[1]["author"] == "Bob"
+        assert result[1]["subject"] == "refactor: extract helper"
+        assert result[2]["author"] == "Bob"
+        assert result[2]["subject"] == "refactor: extract helper"
+        assert result[1]["sha"] == "5040f17eaabbccdd0011223344556677aabbccdd"
+        assert result[2]["sha"] == "5040f17eaabbccdd0011223344556677aabbccdd"
+
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
+    def test_git_blame_staged_line(self, mock_which, mock_run):
+        """SHA = 0*40 -> staged entry with sentinel SHA and known author."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=self.STAGED_PORCELAIN,
+        )
+        result = git_blame("src/baz.py", Path("/repo"))
+        assert result[1]["sha"] == "0" * 40
+        assert result[1]["author"] == "Not Committed Yet"
+        # summary line absent -> subject defaults to ""
+        assert result[1]["subject"] == ""
+
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
+    def test_git_blame_returns_empty_on_nonzero(self, mock_which, mock_run):
+        """Non-zero exit (e.g. binary file) -> returns {}."""
+        mock_run.return_value = MagicMock(
+            returncode=128,
+            stdout="",
+            stderr="fatal: no such path",
+        )
+        result = git_blame("binary.so", Path("/repo"))
+        assert result == {}
+
+    @patch("code_forge.git.subprocess.run")
+    @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
+    def test_git_blame_returns_empty_for_missing_file(
+        self, mock_which, mock_run
+    ):
+        """File path that does not exist -> returns {} (non-zero exit)."""
+        mock_run.return_value = MagicMock(
+            returncode=128,
+            stdout="",
+            stderr="fatal: no such path 'nonexistent.py'",
+        )
+        result = git_blame("nonexistent.py", Path("/repo"))
+        assert result == {}
+
+    def test_git_blame_exists(self):
+        """git_blame is a callable in git.py (D-06: single git owner)."""
+        assert callable(git_blame)

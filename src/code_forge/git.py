@@ -2,9 +2,9 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Git subprocess wrapper with diff-spec validation.
 
-This module is THE single owner of git diff subprocess calls in the
-codebase. All other modules call these functions -- they do not call
-git directly. Addresses Consensus #1 (git diff execution unowned).
+This module is THE single owner of git subprocess calls (diff, blame)
+in the codebase. All other modules call these functions -- they do not
+call git directly. Addresses Consensus #1 (git diff execution unowned).
 
 02-03 additions: repo detection, ref validation, pseudo-ref resolution.
 Existing Phase 1 API unchanged. New surface (B1 + H2 fixes):
@@ -349,3 +349,110 @@ def working_tree_diff(
         )
 
     return tracked + "\n".join(untracked_diffs)
+
+
+# Hex characters for SHA validation (not isalnum -- rejects G-Z)
+_HEX_CHARS = frozenset("0123456789abcdef")
+
+
+def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
+    """Parse git blame --porcelain output for file_path.
+
+    Returns {line_number: {"author": str, "sha": str, "subject": str}}.
+    line_number is the final file line number (1-indexed).
+    Returns {} if git blame fails (file absent, binary, untracked, etc.).
+
+    Advisory axis: return {} instead of raising -- failures must degrade
+    gracefully, not crash the review pipeline.
+    """
+    # Advisory axis: return {} instead of raising (unlike other git.py
+    # functions that raise RuntimeError on missing git)
+    if shutil.which("git") is None:
+        return {}
+
+    try:
+        result = subprocess.run(
+            ["git", "blame", "--porcelain", "--", file_path],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return {}
+
+    if result.returncode != 0:
+        return {}
+
+    if not result.stdout:
+        return {}
+
+    blame_map: dict[int, dict] = {}
+    # Cache: sha -> {author, subject} -- populated on first occurrence
+    sha_cache: dict[str, dict] = {}
+
+    current_sha: str = ""
+    current_final_line: int = 0
+    # Track whether we saw "author" in the current block (for sha_cache)
+    current_block_author: str = ""
+    current_block_subject: str = ""
+    current_block_has_author: bool = False
+
+    for raw_line in result.stdout.splitlines():
+        # 1. Tab prefix check FIRST: content line (blamed source code).
+        #    Must be checked before SHA header -- a source line could
+        #    contain a 40-hex string that would be falsely identified.
+        if raw_line.startswith("\t"):
+            entry = sha_cache.get(
+                current_sha,
+                {"sha": current_sha, "author": "unknown", "subject": ""},
+            )
+            blame_map[current_final_line] = {
+                "sha": current_sha,
+                "author": entry.get("author", "unknown"),
+                "subject": entry.get("subject", ""),
+            }
+            continue
+
+        # 2. Guard: skip empty lines
+        parts = raw_line.split()
+        if not parts:
+            continue
+
+        # 3. SHA header: 40 hex chars + orig-line + final-line [+ count]
+        #    boundary/previous lines are non-hex, safely skipped
+        if (
+            len(parts) >= 3
+            and len(parts[0]) == 40
+            and all(c in _HEX_CHARS for c in parts[0].lower())
+        ):
+            current_sha = parts[0]
+            current_final_line = int(parts[2])
+            current_block_author = ""
+            current_block_subject = ""
+            current_block_has_author = False
+            continue
+
+        # Per-commit metadata (only update on FIRST occurrence of SHA)
+        if raw_line.startswith("author ") and current_sha not in sha_cache:
+            current_block_author = raw_line[7:]
+            current_block_has_author = True
+        elif (
+            raw_line.startswith("summary ")
+            and current_sha not in sha_cache
+        ):
+            current_block_subject = raw_line[8:]
+        elif raw_line.startswith("filename "):
+            # filename marks end of header block -- finalize sha_cache
+            # entry IF author was seen (first occurrence of this SHA)
+            if current_block_has_author and current_sha not in sha_cache:
+                sha_cache[current_sha] = {
+                    "sha": current_sha,
+                    "author": current_block_author,
+                    "subject": current_block_subject,
+                }
+
+    return blame_map
