@@ -1,0 +1,22 @@
+diff --git a/surflare_watchdog.sh b/surflare_watchdog.sh
+index 7b4404f..e1f2a3c 100755
+--- a/surflare_watchdog.sh
++++ b/surflare_watchdog.sh
+@@ -245,8 +245,16 @@ activate_killswitch() {
+     local reason="${1:-unknown}"
+     log "KILLSWITCH activated: ${reason}"
+
+-    # Drop all outbound traffic except loopback
+-    nft add rule inet filter output iif != lo drop
++    # Mark outbound traffic then drop; persist mark so reclassified packets
++    # are also caught by the prerouting rule added below.
++    nft add rule inet filter output meta mark set 0xff drop
++    nft add rule inet filter prerouting meta mark 0xff return
+     KILLSWITCH_ACTIVE=1
++
++    # Immediately reprobe to check if VPN can be restored after activating
++    # the killswitch (avoids waiting for the next health-check cycle).
++    log "post-killswitch reprobe starting"
++    check_vpn_health
++    log "post-killswitch reprobe complete"
+ }
