@@ -1492,9 +1492,11 @@ def _run_hold_loop(
         # accumulation (infra_errors, source_files).
         from .taint import TaintRunner
         from .runtime import RuntimeRunner
+        from .legacy import LegacyRunner
 
         _taint_runner = TaintRunner()
         _runtime_runner = RuntimeRunner(backend=backend)
+        _legacy_runner = LegacyRunner()
         sm = StateMachine(
             mode=mode,
             falsifier=falsifier,
@@ -1511,7 +1513,7 @@ def _run_hold_loop(
             coverage_l1_active=coverage_l1_active,
             coverage_exempt_patterns=coverage_exempt_patterns or [],
             clean_round_threshold=clean_round_threshold,
-            advisory_runners=[_taint_runner, _runtime_runner],
+            advisory_runners=[_taint_runner, _runtime_runner, _legacy_runner],
         )
         verdict = sm.run()
         if verdict != Verdict.PENDING:
