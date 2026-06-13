@@ -98,7 +98,9 @@ def _strip_fences(text: str) -> str:
 def _extract_json_from_text(text: str, max_attempts: int = 10) -> object:
     """Find and return the first valid JSON object or array in text.
 
-    Fallback for responses that embed JSON without a leading code fence.
+    Module-private helper called only from llm_invoke() when _strip_fences
+    + json.loads fails. Not part of the public API.
+
     Uses json.JSONDecoder.raw_decode() which correctly handles string
     literals, escaped characters, and nested structures -- unlike a naive
     brace-counting loop that miscounts braces inside string values.
