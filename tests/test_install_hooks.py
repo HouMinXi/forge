@@ -1035,3 +1035,81 @@ class TestBuiltinD12Check:
         content = generate_commit_msg_hook_content(None)
         assert "skipping verify" not in content
         assert "NON_CODE" not in content
+
+
+class TestClaudeWorktreeHook:
+    """Tests for ensure_claude_worktree_hook: writes check_worktree.sh
+    registration into .claude/settings.local.json."""
+
+    def test_creates_settings_when_absent(self, tmp_path):
+        """Creates settings.local.json with check_worktree entry when absent."""
+        from code_forge.install_hooks import ensure_claude_worktree_hook
+        ensure_claude_worktree_hook(tmp_path)
+        settings_path = tmp_path / ".claude" / "settings.local.json"
+        assert settings_path.exists()
+        import json
+        settings = json.loads(settings_path.read_text())
+        pre_tool = settings["hooks"]["PreToolUse"]
+        ew = next(e for e in pre_tool if e["matcher"] == "Edit|Write")
+        commands = [h["command"] for h in ew["hooks"]]
+        assert any("check_worktree.sh" in c for c in commands)
+
+    def test_adds_to_existing_settings(self, tmp_path):
+        """Adds check_worktree.sh to existing settings without clobbering them."""
+        import json
+        settings_path = tmp_path / ".claude" / "settings.local.json"
+        settings_path.parent.mkdir(parents=True)
+        existing = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Edit|Write",
+                        "hooks": [{"type": "command", "command": "/other.sh", "timeout": 15}]
+                    }
+                ]
+            }
+        }
+        settings_path.write_text(json.dumps(existing))
+        from code_forge.install_hooks import ensure_claude_worktree_hook
+        ensure_claude_worktree_hook(tmp_path)
+        settings = json.loads(settings_path.read_text())
+        ew = next(
+            e for e in settings["hooks"]["PreToolUse"]
+            if e["matcher"] == "Edit|Write"
+        )
+        commands = [h["command"] for h in ew["hooks"]]
+        assert any("check_worktree.sh" in c for c in commands)
+        assert "/other.sh" in commands  # existing hook preserved
+
+    def test_idempotent_on_rerun(self, tmp_path):
+        """Running twice does not add duplicate check_worktree entries."""
+        from code_forge.install_hooks import ensure_claude_worktree_hook
+        ensure_claude_worktree_hook(tmp_path)
+        ensure_claude_worktree_hook(tmp_path)
+        import json
+        settings = json.loads(
+            (tmp_path / ".claude" / "settings.local.json").read_text()
+        )
+        ew = next(
+            e for e in settings["hooks"]["PreToolUse"]
+            if e["matcher"] == "Edit|Write"
+        )
+        wt_entries = [h for h in ew["hooks"] if "check_worktree.sh" in h.get("command", "")]
+        assert len(wt_entries) == 1
+
+    def test_run_install_hooks_registers_worktree_hook(self, tmp_path, monkeypatch):
+        """run_install_hooks writes check_worktree entry to settings.local.json."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep
+        )
+        import subprocess as sp
+        sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+        result = run_install_hooks(args=None, env={}, cwd=tmp_path)
+        assert result == EXIT_PASS
+        settings_path = tmp_path / ".claude" / "settings.local.json"
+        assert settings_path.exists()
+        import json
+        settings = json.loads(settings_path.read_text())
+        pre_tool = settings["hooks"]["PreToolUse"]
+        ew = next(e for e in pre_tool if e["matcher"] == "Edit|Write")
+        assert any("check_worktree.sh" in h.get("command", "") for h in ew["hooks"])
