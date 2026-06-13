@@ -42,9 +42,10 @@ def _parse_sarif(
                     artifact = phys.get("artifactLocation", {})
                     region = phys.get("region", {})
                     uri = artifact.get("uri", "")
-                    # Strip file:// prefix
+                    # Strip file:// prefix, preserving absolute path.
+                    # file:///tmp/foo -> /tmp/foo (not tmp/foo).
                     if uri.startswith("file:///"):
-                        uri = uri[len("file:///"):]
+                        uri = uri[len("file://"):]
                     elif uri.startswith("file://"):
                         uri = uri[len("file://"):]
                     start_line = region.get("startLine", 0)
