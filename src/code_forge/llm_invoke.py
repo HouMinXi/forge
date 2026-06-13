@@ -260,6 +260,17 @@ def _invoke_cli(
             duration_s=duration,
         ) from exc
 
+    # Current claude CLI versions emit a streaming event array instead of a
+    # single envelope dict. Find the last result event and treat it as the
+    # envelope so the existing dict-unwrap path below handles it normally.
+    if isinstance(parsed, list):
+        result_events = [
+            e for e in parsed
+            if isinstance(e, dict) and e.get("type") == "result"
+        ]
+        if result_events:
+            parsed = result_events[-1]
+
     # Claude Code CLI -p --output-format json emits a JSON envelope:
     #   {"type": "result", "result": "<model response>", "usage": {...}}
     # When detected, unwrap the inner result and extract token usage.
