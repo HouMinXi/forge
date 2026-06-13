@@ -41,7 +41,11 @@ class RealFalsifier(Falsifier):
             + "Description: " + finding.description + "\n"
         )
         try:
-            result = llm_invoke(prompt, backend=self._backend)
+            result = llm_invoke(
+                prompt,
+                backend=self._backend,
+                expected_keys=frozenset({"verdict", "reasoning"}),
+            )
             response = result.content
         except LLMInvokeError:
             return Disposition.UNCERTAIN

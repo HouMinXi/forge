@@ -61,6 +61,18 @@ DEFAULT_TIMEOUT_S = 120
 # session default model run instead of pinning a specific model (D-26 no-pin contract).
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
+# Default envelope keys accepted by _extract_json_from_text when the caller does not
+# specify expected_keys. Covers all review-pass callers:
+#   factories.py:272   L1 passes            findings / code_excerpts
+#   cli.py:586         _spawn L1 passes     findings / code_excerpts
+#   cli.py:678         test-assertion pass  findings / code_excerpts
+#   runtime.py:320     RUNTIME axis         surfaces / findings
+# NOT covered by this default: falsify_real.py (verdict/reasoning) -- that caller
+# MUST pass expected_keys=frozenset({"verdict", "reasoning"}) explicitly.
+# Adding a new caller that uses different keys: pass expected_keys, then update this
+# comment so the next reviewer sees the full map without re-deriving it.
+_REVIEW_ENVELOPE_KEYS: frozenset[str] = frozenset({"findings", "code_excerpts", "surfaces"})
+
 # Module-level active process tracker for signal handler cleanup. Per D-03.
 _active_proc: Optional[subprocess.Popen] = None
 
@@ -95,17 +107,27 @@ def _strip_fences(text: str) -> str:
     return text
 
 
-def _extract_json_from_text(text: str) -> dict | None:
+def _extract_json_from_text(
+    text: str,
+    expected_keys: frozenset[str] | None = None,
+) -> dict | None:
     """Find and return the first valid forge-envelope JSON object in text.
 
     Module-private helper called only from _invoke_api() when _strip_fences
     + json.loads fails. Not part of the public API.
 
-    Only accepts dicts whose keys overlap _ENVELOPE_KEYS (the known forge
-    response shapes: L1 review passes use 'findings'/'code_excerpts'; the
-    RUNTIME axis uses 'surfaces'/'findings'). This prevents returning stray
-    JSON fragments -- arrays, unrelated dicts -- that appear in model prose
-    before the real response envelope (F1 fix).
+    expected_keys: the set of top-level keys the caller expects in its
+    response envelope. Only dicts whose key set overlaps expected_keys are
+    accepted, preventing stray JSON fragments (arrays, unrelated dicts) that
+    appear in model prose before the real envelope (F1 fix). None uses
+    _REVIEW_ENVELOPE_KEYS (the default for all review-pass callers).
+
+    Callers and their expected_keys (maintain this list when adding new axes):
+      factories.py:272   L1 passes            findings / code_excerpts  (default)
+      cli.py:586         _spawn L1 passes     findings / code_excerpts  (default)
+      cli.py:678         test-assertion pass  findings / code_excerpts  (default)
+      runtime.py:320     RUNTIME axis         surfaces / findings       (default)
+      falsify_real.py:44 falsify              verdict / reasoning       (explicit)
 
     Scans left-to-right for '{' only; all forge envelopes are dicts, never
     bare arrays.  No attempt cap: raw_decode fails in O(1) for invalid JSON
@@ -115,11 +137,7 @@ def _extract_json_from_text(text: str) -> dict | None:
 
     Returns None if no valid envelope can be extracted.
     """
-    # Keys present in every valid forge response envelope.
-    # Verified against all L1 passes (findings/code_excerpts) and the
-    # RUNTIME axis (surfaces/findings): no forge axis returns a bare array
-    # as its top-level envelope, so scanning only "{" is correct here.
-    _envelope_keys: frozenset[str] = frozenset({"findings", "code_excerpts", "surfaces"})
+    keys = expected_keys if expected_keys is not None else _REVIEW_ENVELOPE_KEYS
     decoder = json.JSONDecoder()
     for i, ch in enumerate(text):
         if ch != "{":
@@ -128,7 +146,7 @@ def _extract_json_from_text(text: str) -> dict | None:
             obj, _ = decoder.raw_decode(text, i)
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and obj.keys() & _envelope_keys:
+        if isinstance(obj, dict) and obj.keys() & keys:
             return obj
     return None
 
@@ -189,6 +207,7 @@ def llm_invoke(
     prompt: str,
     backend: Optional[BackendConfig] = None,
     timeout_s: int = DEFAULT_TIMEOUT_S,
+    expected_keys: frozenset[str] | None = None,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
@@ -196,6 +215,12 @@ def llm_invoke(
         prompt: LLM prompt text
         backend: Backend config (defaults to DEFAULT_BACKEND)
         timeout_s: Timeout in seconds
+        expected_keys: Top-level keys expected in the JSON response envelope.
+            Used by _invoke_api's fallback JSON extractor when the model
+            prepends prose before the JSON (e.g. mimo-pro). None uses
+            _REVIEW_ENVELOPE_KEYS (correct for all review-pass callers).
+            Falsify callers must pass frozenset({"verdict", "reasoning"}).
+            Ignored for cli backends (those do not use _extract_json_from_text).
 
     Returns:
         LLMResult with content, usage (tokens), and duration_s
@@ -209,7 +234,7 @@ def llm_invoke(
     if backend.type == "cli":
         return _invoke_cli(prompt, backend, timeout_s)
     elif backend.type == "api":
-        return _invoke_api(prompt, backend, timeout_s)
+        return _invoke_api(prompt, backend, timeout_s, expected_keys=expected_keys)
     else:
         raise LLMInvokeError(
             "unsupported backend type: %r" % backend.type
@@ -350,6 +375,7 @@ def _invoke_api(
     prompt: str,
     backend: BackendConfig,
     timeout_s: int,
+    expected_keys: frozenset[str] | None = None,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
     # Look up API key from environment (not needed for vertex which uses OAuth2)
@@ -416,7 +442,7 @@ def _invoke_api(
         # Some models (e.g. mimo-pro) prepend prose before the JSON or wrap
         # it in a code fence with trailing text.  Try to locate the first
         # balanced JSON object/array in the raw text as a fallback.
-        parsed_content = _extract_json_from_text(content)
+        parsed_content = _extract_json_from_text(content, expected_keys=expected_keys)
         if parsed_content is None:
             raise LLMInvokeError(
                 "API response content is not valid JSON",
