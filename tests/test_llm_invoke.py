@@ -858,6 +858,12 @@ class TestStripFences:
         text = '```\n{"desc": "use `x`"}\n```'
         assert self._strip(text) == '{"desc": "use `x`"}'
 
+    def test_closing_fence_with_trailing_whitespace(self):
+        """line.strip() handles '```  ' (trailing spaces) as a valid closing fence."""
+        # Closing fence has trailing whitespace AND prose follows it.
+        text = '```json\n{"k": 1}\n```   \n\nExtra prose here.'
+        assert self._strip(text) == '{"k": 1}'
+
 
 class TestExtractJsonFromText:
     def _extract(self, text):
