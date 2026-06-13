@@ -443,6 +443,75 @@ def generate_commit_msg_hook_content(
     )
 
 
+def ensure_claude_worktree_hook(cwd: Path) -> None:
+    """Register check_worktree.sh in .claude/settings.local.json.
+
+    Ensures that Claude Code's PreToolUse Edit|Write hook chain includes
+    check_worktree.sh, which blocks direct edits in the main git worktree.
+    Creates .claude/settings.local.json with the minimal required structure
+    when the file does not exist. Idempotent: a second call is a no-op if
+    check_worktree.sh is already registered.
+
+    Writes atomically via a temp file so the settings file is never
+    partially written.
+    """
+    import json
+    import tempfile
+
+    check_wt_path = str(Path.home() / ".claude" / "hooks" / "check_worktree.sh")
+    settings_path = cwd / ".claude" / "settings.local.json"
+
+    if settings_path.exists():
+        try:
+            with open(settings_path, encoding="utf-8") as f:
+                settings = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            settings = {}
+    else:
+        settings = {}
+
+    settings.setdefault("hooks", {})
+    settings["hooks"].setdefault("PreToolUse", [])
+
+    # Find or create the Edit|Write entry
+    edit_write_entry = None
+    for entry in settings["hooks"]["PreToolUse"]:
+        if entry.get("matcher") == "Edit|Write":
+            edit_write_entry = entry
+            break
+    if edit_write_entry is None:
+        edit_write_entry = {"matcher": "Edit|Write", "hooks": []}
+        settings["hooks"]["PreToolUse"].insert(0, edit_write_entry)
+
+    # Idempotency: skip if already registered
+    if any(
+        h.get("command") == check_wt_path
+        for h in edit_write_entry.get("hooks", [])
+    ):
+        return
+
+    # Prepend so it runs before the review-tracker hook
+    edit_write_entry["hooks"].insert(0, {
+        "type": "command",
+        "command": check_wt_path,
+        "timeout": 10,
+    })
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=settings_path.parent, suffix=".json.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=4)
+            f.write("\n")
+        os.replace(tmp, settings_path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def run_install_hooks(
     args=None,
     env: Optional[Mapping[str, str]] = None,
@@ -633,6 +702,23 @@ def run_install_hooks(
             f.write(commit_msg_content)
         os.chmod(commit_msg_path, 0o755)
         info("code-forge: commit-msg hook installed at %s" % commit_msg_path)
+
+        # Register check_worktree.sh in .claude/settings.local.json so Claude
+        # Code's Edit|Write PreToolUse hook chain blocks direct main-tree edits.
+        # Non-fatal: a missing ~/.claude/hooks/check_worktree.sh just means the
+        # hook is not installed in the local Claude config yet -- don't abort.
+        try:
+            ensure_claude_worktree_hook(cwd)
+            info(
+                "code-forge: check_worktree.sh registered in "
+                ".claude/settings.local.json"
+            )
+        except Exception as wt_err:
+            print(
+                "code-forge: warning: could not register check_worktree.sh "
+                "in .claude/settings.local.json: %s" % wt_err,
+                file=stderr,
+            )
 
         return EXIT_PASS
 
