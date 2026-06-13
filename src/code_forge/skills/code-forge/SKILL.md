@@ -945,6 +945,7 @@ Given this diff, identify:
 1. What runtime surfaces does this change affect? (e.g., systemd units, nftables rules, network sockets, subprocess calls, file side effects, cron/timer jobs, kernel modules, firewall rules)
 2. For each surface: what lifecycle or side-effect could break at runtime even if the code is syntactically correct and all unit tests pass?
 3. What smoke test would need to exercise each surface to verify it actually works after the change?
+4. Does this change depend on, or run concurrently with, any OTHER stateful subsystem (another nftables table, routing rule, lock, daemon, file) NOT in this diff? If so: can that subsystem block, drop, or interfere with this change's network/file/process operations? Enumerate the flags that gate this function and ALL their possible values at call time.
 
 Return your answer as JSON with exactly these keys:
 {"surfaces": ["surface1", "surface2"], "findings": [{"file": "path/to/file", "line": 1, "surface": "surface_name", "description": "what could break and why"}]}
@@ -954,6 +955,14 @@ If no runtime surfaces are affected, return: {"surfaces": [], "findings": []}
 Diff:
 {diff_text}
 ```
+
+**Honest caveat (Q4):** Question 4 is NECESSARY, not SUFFICIENT. The reviewer
+can only enumerate cross-subsystem interactions for code that is visible in
+context. On a diff-scoped review the OTHER subsystem's rules may not be present;
+in that case the minimum expected result is an honest advisory note -- "this
+change depends on subsystem X; I could not see its rules" -- which IS the Honest
+Green thesis. Do not interpret a clean Q4 answer as proof that no cross-subsystem
+interference exists.
 
 **Behavior:**
 - Results appear as advisory findings (axis=RUNTIME) -- never blocking, never reset cycle counter (SC4).
