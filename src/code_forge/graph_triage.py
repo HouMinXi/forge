@@ -2,7 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """GraphTriageRunner advisory axis: system-level blast-radius ranking.
 
-Implements REVIEW-SYSTEM-01. Purely deterministic (subprocess + SQLite):
+Purely deterministic (subprocess + SQLite):
 no LLM call, no new pip dependencies.
 
 Dual backend:
@@ -320,7 +320,10 @@ def _build_findings(
         end = entity.get("end_line", 0)
 
         dep_names = ", ".join(
-            str(d.get("entityName", d) if isinstance(d, dict) else d)
+            str(
+                d.get("entityName", d.get("name", d))
+                if isinstance(d, dict) else d
+            )
             for d in deps[:3]
         )
         desc = "%s (impact: %d downstream)" % (name, total)

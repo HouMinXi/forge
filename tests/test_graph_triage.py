@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
-"""Tests for GraphTriageRunner advisory axis (REVIEW-SYSTEM-01).
+"""Tests for GraphTriageRunner advisory axis.
 
 Covers: dual-backend detection (sem preferred, graphdb fallback),
 blast-radius ranking, top-10 output, gate.yaml validation,
