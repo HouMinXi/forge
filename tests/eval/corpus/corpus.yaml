@@ -63,3 +63,9 @@ entries:
     expected_verdict: HOLD
     axis_tags: [RUNTIME, FIXVAL]
     expected_advisory: ["ttl", "class", "header"]
+
+  - name: E8-blast-radius-llm-invoke
+    diff_file: diffs/E8-blast-radius-llm-invoke.diff
+    expected_verdict: PASS
+    axis_tags: [GRAPH-TRIAGE]
+    expected_advisory: ["llm_invoke", "impact", "downstream"]
