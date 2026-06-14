@@ -1403,6 +1403,47 @@ def _run(args, env, cwd: Path) -> Verdict:
         cwd, resolved.git_diff or ""
     )
 
+    # Pre-loop graph triage: build impact context for L1 prompt.
+    # Runs once before the hold loop; findings are NOT added to
+    # advisories (prompt context only). The runner is discarded
+    # after building the context string.
+    _graph_impact_context = ""
+    _pre_graph_findings: list = []
+    try:
+        from .graph_triage import GraphTriageRunner as _PreGT
+        _pre_graph = _PreGT()
+        _pre_graph_findings = _pre_graph.run(
+            resolved.git_diff or "", cwd,
+        )
+        if _pre_graph_findings:
+            _rows = []
+            for _f in _pre_graph_findings:
+                _desc = _f.description
+                # Parse "name (impact: N downstream) -- top dependents: a, b"
+                _parts = _desc.split(" (impact: ", 1)
+                _ename = _parts[0] if _parts else "unknown"
+                _downstream = "0"
+                _deps = ""
+                if len(_parts) > 1:
+                    _rest = _parts[1]
+                    _dp = _rest.split(" downstream)", 1)
+                    _downstream = _dp[0] if _dp else "0"
+                    if len(_dp) > 1 and "-- top dependents: " in _dp[1]:
+                        _deps = _dp[1].split(
+                            "-- top dependents: ", 1
+                        )[1].strip()
+                _rows.append(
+                    "| %s | %s | %s | %s |"
+                    % (_ename, _f.file, _downstream, _deps)
+                )
+            _graph_impact_context = (
+                "| Entity | File | Downstream | Top Dependents |\n"
+                "|--------|------|------------|----------------|\n"
+                + "\n".join(_rows)
+            )
+    except Exception:
+        _pre_graph_findings = []
+
     falsifier = build_falsifier(engine_choice, backend=backend)
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
@@ -1410,6 +1451,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         engine_choice, resolved, backend=backend,
         conventions_digest=_conv_digest_a,
         post_image=_post_image_a,
+        graph_impact_context=_graph_impact_context,
     )
 
     # Coverage gate inputs: L1 examines every changed file only when it
@@ -1446,6 +1488,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 coverage_exempt_patterns=coverage_exempt,
                 clean_round_threshold=_clean_threshold,
                 backend=backend,
+                pre_graph_findings=_pre_graph_findings,
             )
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
@@ -1484,6 +1527,7 @@ def _run_hold_loop(
     coverage_l1_active=True, coverage_exempt_patterns=None,
     clean_round_threshold=3,
     backend=None,
+    pre_graph_findings=None,
     input_fn=input, output_fn=print,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
@@ -1493,9 +1537,12 @@ def _run_hold_loop(
         from .taint import TaintRunner
         from .runtime import RuntimeRunner
         from .legacy import LegacyRunner
+        from .graph_triage import GraphTriageRunner
 
         _taint_runner = TaintRunner()
         _runtime_runner = RuntimeRunner(backend=backend)
+        _graph_triage_runner = GraphTriageRunner()
+        _graph_triage_runner._cached_findings = pre_graph_findings
         _legacy_runner = LegacyRunner()
         sm = StateMachine(
             mode=mode,
@@ -1513,7 +1560,10 @@ def _run_hold_loop(
             coverage_l1_active=coverage_l1_active,
             coverage_exempt_patterns=coverage_exempt_patterns or [],
             clean_round_threshold=clean_round_threshold,
-            advisory_runners=[_taint_runner, _runtime_runner, _legacy_runner],
+            advisory_runners=[
+                _taint_runner, _runtime_runner,
+                _graph_triage_runner, _legacy_runner,
+            ],
         )
         verdict = sm.run()
         if verdict != Verdict.PENDING:
