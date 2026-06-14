@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from code_forge.graph_triage import (
     GraphTriageRunner,
@@ -422,7 +419,7 @@ class TestGraphDBBackend:
 
         runner = GraphTriageRunner()
         diff = _make_diff(["src/foo.py"])
-        result = runner.run(diff, Path("/tmp"))
+        runner.run(diff, Path("/tmp"))
         # Should have attempted sqlite3.connect
         mock_connect.assert_called_once()
 
@@ -452,7 +449,7 @@ class TestGraphDBBackend:
 
         runner = GraphTriageRunner()
         diff = _make_diff(["src/runner.py"])
-        result = runner.run(diff, Path("/tmp"))
+        runner.run(diff, Path("/tmp"))
         # Should have queried with disambiguation
         calls = mock_cursor.execute.call_args_list
         sql_stmts = [str(c) for c in calls]
