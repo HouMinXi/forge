@@ -978,6 +978,81 @@ keyed by diff content-hash. When the diff changes, the receipt is invalidated.
 
 ---
 
+## Daemon State Axis (Advisory, Opt-In)
+
+The DAEMON-STATE advisory axis detects cross-subsystem state conflicts in
+daemon/service code. It is opt-in: requires a `daemon_state` section in
+gate.yaml. Without configuration, it only emits a one-line advisory hint
+when stateful keywords (nft, iptables, ip route, systemctl, firewall-cmd, tc)
+are detected in the diff.
+
+**Inline outlet users:** The axis uses a two-step question flow. Q1 (enumerate
+external state) is asked first. Then the user greps the repo for Q1 output
+keywords. Then Q2+Q3 (find shared readers + describe failure scenario) are
+asked with grep context.
+
+Q1 question (verbatim from daemon_state.py constant):
+
+```
+You are reviewing a code diff for cross-subsystem state conflicts.
+
+Enumerate every piece of external state (nftables marks, routing rules, locks, PID files, shared sockets) this diff creates, modifies, or deletes. For each, list ALL possible values at call time.
+
+Return your answer as JSON with exactly this key:
+{"external_state": ["state item 1", "state item 2"]}
+
+If no external state is affected, return: {"external_state": []}
+
+%(runtime_surfaces)sDiff:
+%(diff_text)s
+```
+
+Q2+Q3 question (verbatim from daemon_state.py constant):
+
+```
+You are reviewing a code diff for cross-subsystem state conflicts.
+
+For each external state item identified:
+Q2: For each external state item above, which OTHER subsystem or function (not in this diff) reads, writes, or depends on that same state? Name the subsystem and the specific operation.
+Q3: For each (state, subsystem) pair with a conflict: describe the concrete failure scenario -- what happens when both subsystems run concurrently and the state values collide or are consumed out of order?
+
+%(static_rules)sGrep context from the repository:
+%(grep_context)s
+
+Return your answer as JSON with exactly this key:
+{"conflicts": [{"subsystem": "name", "mutates": "what", "interferes_with": "what", "scenario": "description"}]}
+
+If no conflicts found, return: {"conflicts": []}
+
+Diff:
+%(diff_text)s
+```
+
+**gate.yaml configuration:**
+
+```yaml
+daemon_state:
+  enabled: true
+  subsystems:
+    - nftables
+    - routing
+  patterns:
+    - "nft "
+    - "ip route"
+  conflicts:
+    - subsystem: nftables
+      mutates: "mark value on output chain"
+      interferes_with: "probe packets that traverse output chain"
+```
+
+**Behavior:**
+- Advisory only (axis=DAEMON-STATE), never blocks verdict, never resets cycle counter.
+- Static conflict rules from gate.yaml are matched first; LLM supplements new findings.
+- Requires explicit opt-in for full analysis (heuristic only without gate.yaml config).
+- Cross-axis data flow: reads RuntimeRunner.last_surfaces when available.
+
+---
+
 # Step 5: R1 Test Gate
 
 ## Purpose

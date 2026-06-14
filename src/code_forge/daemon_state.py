@@ -2,21 +2,19 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """DaemonStateRunner advisory axis: cross-subsystem state-conflict detection.
 
-Implements REVIEW-STATE-01: detects when daemon/service code mutates shared
-external state (nftables marks, routing rules, locks, PID files) that another
-concurrently-active subsystem depends on.
+Detects when daemon/service code mutates shared external state (nftables marks,
+routing rules, locks, PID files) that another concurrently-active subsystem
+depends on.
 
 Three capabilities:
   (a) Heuristic fallback: when no daemon_state in gate.yaml, scans diff for
-      stateful keywords and emits a one-line advisory (D-01f).
+      stateful keywords and emits a one-line advisory.
   (b) Static conflict rules: gate.yaml daemon_state.conflicts triplets
-      matched against diff content (D-02d: static rules first, LLM supplements).
-  (c) Two-step LLM call: Q1 enumerates external state -> grep repo for
-      context -> Q2+Q3 analyze conflicts with grep context (D-03b).
+      matched against diff content (static rules first, LLM supplements).
+  (c) Two-step LLM call: Q1 enumerates external state, grep repo for
+      context, Q2+Q3 analyze conflicts with grep context.
 
-D-01f: Full axis does NOT run without explicit opt-in (daemon_state in gate.yaml).
-D-07: Q1 uses expected_keys=frozenset({"external_state"}).
-D-08: grep subprocess calls use list args, never shell=True.
+Full axis does NOT run without explicit opt-in (daemon_state in gate.yaml).
 """
 from __future__ import annotations
 
@@ -31,7 +29,7 @@ from .llm_invoke import LLMInvokeError, llm_invoke
 
 
 # ---------------------------------------------------------------------------
-# D-01a: Default keyword set (narrow + extensible via gate.yaml patterns)
+# Default keyword set (narrow + extensible via gate.yaml patterns)
 # ---------------------------------------------------------------------------
 
 DEFAULT_DAEMON_KEYWORDS: frozenset[str] = frozenset({
@@ -40,8 +38,8 @@ DEFAULT_DAEMON_KEYWORDS: frozenset[str] = frozenset({
 
 
 # ---------------------------------------------------------------------------
-# D-03a: Exact question wording (locked constants)
-# D-10: SKILL.md carries a verbatim mirror; drift test asserts equality.
+# Exact question wording (locked constants)
+# SKILL.md carries a verbatim mirror; drift test asserts equality.
 # ---------------------------------------------------------------------------
 
 DAEMON_STATE_Q1 = (
@@ -76,7 +74,7 @@ DAEMON_STATE_Q2Q3 = (
     "Diff:\n%(diff_text)s"
 )
 
-# Max bytes of grep output to inject into Q2Q3 prompt (D-04b token budget).
+# Max bytes of grep output to inject into Q2Q3 prompt.
 _MAX_GREP_OUTPUT_BYTES = 50000
 
 
@@ -123,8 +121,8 @@ def _grep_repo(
 ) -> str:
     """Grep repo for keywords, return relevance-ranked context.
 
-    D-08: subprocess.run with list args, no shell=True.
-    D-04b: sort by hit count, take top-K files, extract context.
+    subprocess.run with list args, no shell=True.
+    sort by hit count, take top-K files, extract context.
     """
     if not keywords:
         return ""
@@ -184,8 +182,8 @@ def _match_static_rules(
 ) -> list[AdvisoryFinding]:
     """Check each conflict triplet against diff content.
 
-    D-02a: triplet shape {subsystem, mutates, interferes_with}.
-    D-02b: description formatted as
+    triplet shape {subsystem, mutates, interferes_with}.
+    description formatted as
     "[subsystemA] mutates X; [subsystemB] depends on Y -> conflict scenario".
     """
     findings: list[AdvisoryFinding] = []
@@ -217,7 +215,7 @@ def _match_static_rules(
 
 
 def _build_skipped_finding(reason: str) -> AdvisoryFinding:
-    """Build a SKIPPED AdvisoryFinding for D-04 never-silent-skip."""
+    """Build a SKIPPED AdvisoryFinding."""
     return AdvisoryFinding(
         id="daemon-state-skipped",
         axis="DAEMON-STATE",
@@ -293,8 +291,8 @@ class DaemonStateRunner:
     """Advisory axis: cross-subsystem state-conflict detection.
 
     Satisfies the AxisRunner Protocol (is_advisory=True).
-    D-01f: full axis only runs with explicit gate.yaml opt-in.
-    D-01d: reads RuntimeRunner.last_surfaces for cross-axis data.
+    full axis only runs with explicit gate.yaml opt-in.
+    reads RuntimeRunner.last_surfaces for cross-axis data.
     """
 
     def __init__(self, backend=None) -> None:
@@ -338,7 +336,7 @@ class DaemonStateRunner:
             )
         effective_keywords = DEFAULT_DAEMON_KEYWORDS | frozenset(extra_patterns)
 
-        # D-01f: Unconfigured behavior
+        # Unconfigured behavior
         if config is None:
             if _diff_contains_keywords(diff_text, effective_keywords):
                 return [AdvisoryFinding(
@@ -358,7 +356,7 @@ class DaemonStateRunner:
         if config.get("enabled") is False:
             return []
 
-        # Get runtime surfaces (D-01d cross-axis data)
+        # Get runtime surfaces
         runtime_surfaces: list[str] = []
         if (self._runtime_runner is not None
                 and hasattr(self._runtime_runner, "last_surfaces")
@@ -370,7 +368,7 @@ class DaemonStateRunner:
                 "falling back to heuristic detection"
             )
 
-        # D-02d: Match static conflict rules first
+        # Match static conflict rules first
         static_conflicts = config.get("conflicts", [])
         if not isinstance(static_conflicts, list):
             static_conflicts = []
@@ -385,7 +383,7 @@ class DaemonStateRunner:
                 lines.append("- %s" % sf.description)
             static_rules_text = "\n".join(lines) + "\n\n"
 
-        # D-07: LLM Step 1 -- Q1 enumerate state
+        # LLM Step 1 -- Q1 enumerate state
         runtime_ctx = ""
         if runtime_surfaces:
             runtime_ctx = (
@@ -430,10 +428,10 @@ class DaemonStateRunner:
         # Extract grep keywords from Q1 response
         keywords = _extract_grep_keywords(state_items)
 
-        # D-04a/D-04b: grep repo for keywords
+        # grep repo for keywords
         grep_context = _grep_repo(keywords, repo_root, top_k=5)
 
-        # D-03b: LLM Step 2 -- Q2+Q3 with grep context
+        # LLM Step 2 -- Q2+Q3 with grep context
         q2q3_prompt = DAEMON_STATE_Q2Q3 % {
             "diff_text": diff_text,
             "grep_context": grep_context if grep_context else "(no grep matches)",
@@ -487,5 +485,5 @@ class DaemonStateRunner:
                 attribution="daemon-state/llm",
             ))
 
-        # D-02d: static findings first, then LLM-discovered
+        # static findings first, then LLM-discovered
         return static_findings + llm_findings
