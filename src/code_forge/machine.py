@@ -983,6 +983,13 @@ class StateMachine:
                 )
             if hasattr(runner, "registry"):
                 runner.registry = self.registry
+            if hasattr(runner, "_runtime_runner"):
+                from .runtime import RuntimeRunner as _RuntimeRunner
+
+                for candidate in self.advisory_runners:
+                    if isinstance(candidate, _RuntimeRunner):
+                        runner._runtime_runner = candidate
+                        break
         for runner in self.advisory_runners:
             try:
                 findings = runner.run(diff_text, self.cwd)

@@ -1538,11 +1538,13 @@ def _run_hold_loop(
         from .runtime import RuntimeRunner
         from .legacy import LegacyRunner
         from .graph_triage import GraphTriageRunner
+        from .daemon_state import DaemonStateRunner
 
         _taint_runner = TaintRunner()
         _runtime_runner = RuntimeRunner(backend=backend)
         _graph_triage_runner = GraphTriageRunner()
         _graph_triage_runner._cached_findings = pre_graph_findings
+        _daemon_state_runner = DaemonStateRunner(backend=backend)
         _legacy_runner = LegacyRunner()
         sm = StateMachine(
             mode=mode,
@@ -1562,7 +1564,8 @@ def _run_hold_loop(
             clean_round_threshold=clean_round_threshold,
             advisory_runners=[
                 _taint_runner, _runtime_runner,
-                _graph_triage_runner, _legacy_runner,
+                _graph_triage_runner, _daemon_state_runner,
+                _legacy_runner,
             ],
         )
         verdict = sm.run()
