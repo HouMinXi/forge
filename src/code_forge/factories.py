@@ -203,6 +203,7 @@ def build_l1_provider(
     backend=None,
     conventions_digest: str = "",
     post_image: str = "",
+    graph_impact_context: str = "",
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -212,6 +213,7 @@ def build_l1_provider(
         backend: BackendConfig for llm_invoke, or None for default.
         conventions_digest: compact naming conventions for reviewer context (D11).
         post_image: current content of changed files for excerpt verification (D11).
+        graph_impact_context: blast-radius impact table for reviewer context (D-05a).
     """
     from .llm_invoke import Usage
 
@@ -266,6 +268,11 @@ def build_l1_provider(
                 prompt += (
                     "\n## Conventions Digest\n"
                     + conventions_digest + "\n"
+                )
+            if graph_impact_context:
+                prompt += (
+                    "\n## Blast Radius Context\n"
+                    + graph_impact_context + "\n"
                 )
             prompt += "\nDiff:\n" + diff_text
             try:
