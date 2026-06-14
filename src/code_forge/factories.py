@@ -213,7 +213,7 @@ def build_l1_provider(
         backend: BackendConfig for llm_invoke, or None for default.
         conventions_digest: compact naming conventions for reviewer context (D11).
         post_image: current content of changed files for excerpt verification (D11).
-        graph_impact_context: blast-radius impact table for reviewer context (D-05a).
+        graph_impact_context: blast-radius impact table for reviewer context.
     """
     from .llm_invoke import Usage
 
