@@ -1,0 +1,12 @@
+diff --git a/src/code_forge/llm_invoke.py b/src/code_forge/llm_invoke.py
+index abc1234..def5678 100644
+--- a/src/code_forge/llm_invoke.py
++++ b/src/code_forge/llm_invoke.py
+@@ -206,6 +206,7 @@ def llm_invoke(
+     prompt: str,
+     backend: Optional[BackendConfig] = None,
+     timeout_s: int = DEFAULT_TIMEOUT_S,
++    retry_on_empty: bool = False,
+     expected_keys: frozenset[str] | None = None,
+ ) -> LLMResult:
+     """Invoke LLM via backend (cli subprocess or api HTTP).
