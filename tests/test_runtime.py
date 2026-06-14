@@ -661,3 +661,55 @@ class TestRuntimeRunnerSmokeReceipts:
             "receipt 'nftables_rules' must match LLM 'nftables rules' after normalization"
         )
 
+
+# ---------------------------------------------------------------------------
+# RuntimeRunner.last_surfaces (STATE-01f)
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeRunnerLastSurfaces:
+    """RuntimeRunner stores last_surfaces after run() for cross-axis sharing."""
+
+    def test_last_surfaces_empty_on_init(self):
+        """RuntimeRunner().last_surfaces equals [] on initialization."""
+        from code_forge.runtime import RuntimeRunner
+
+        runner = RuntimeRunner()
+        assert runner.last_surfaces == []
+
+    def test_last_surfaces_stored(self, tmp_path):
+        """After run() with surfaces, last_surfaces equals returned surfaces."""
+        from code_forge.runtime import RuntimeRunner
+
+        response = MagicMock()
+        response.content = {
+            "surfaces": ["nftables rules", "systemd units"],
+            "findings": [],
+        }
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner()
+            runner.run("diff --git a/f b/f\n+change", tmp_path)
+
+        assert runner.last_surfaces == ["nftables rules", "systemd units"]
+
+    def test_last_surfaces_cleared_on_rerun(self, tmp_path):
+        """After two consecutive runs, last_surfaces reflects second run only."""
+        from code_forge.runtime import RuntimeRunner
+
+        response1 = MagicMock()
+        response1.content = {
+            "surfaces": ["nftables rules", "systemd units"],
+            "findings": [],
+        }
+        response2 = MagicMock()
+        response2.content = {
+            "surfaces": ["cron jobs"],
+            "findings": [],
+        }
+        with patch("code_forge.runtime.llm_invoke",
+                   side_effect=[response1, response2]):
+            runner = RuntimeRunner()
+            runner.run("diff --git a/f b/f\n+change1", tmp_path)
+            runner.run("diff --git a/f b/f\n+change2", tmp_path)
+
+        assert runner.last_surfaces == ["cron jobs"]

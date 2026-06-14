@@ -1162,3 +1162,77 @@ graph_triage:
         config = load_gate_config("gate.yaml", fs_open=m)
         assert config["graph_triage"]["enabled"] is True
         assert config["graph_triage"]["future_key"] == "some_value"
+
+
+# --- daemon_state validation (STATE-01g) ---
+
+
+class TestDaemonStateValidation:
+    """gate.yaml daemon_state section validation."""
+
+    def test_daemon_state_valid(self):
+        """Valid daemon_state section passes validation."""
+        from code_forge.gate_check import validate_daemon_state
+
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+daemon_state:
+  enabled: true
+  subsystems: ["nftables", "routing"]
+  patterns: ["flock", "pidfile"]
+  conflicts:
+    - subsystem: "killswitch"
+      mutates: "nft mark"
+      interferes_with: "health check probes"
+  conflicts_file: "conflicts.yaml"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert "daemon_state" in config
+
+    def test_daemon_state_invalid_enabled(self):
+        """daemon_state.enabled not bool raises ValueError."""
+        from code_forge.gate_check import validate_daemon_state
+
+        with pytest.raises(ValueError, match="bool"):
+            validate_daemon_state({"enabled": "yes"})
+
+    def test_daemon_state_invalid_subsystems(self):
+        """daemon_state.subsystems not list raises ValueError."""
+        from code_forge.gate_check import validate_daemon_state
+
+        with pytest.raises(ValueError, match="list"):
+            validate_daemon_state({"subsystems": "nftables"})
+
+    def test_daemon_state_missing_triplet_field(self):
+        """Conflict triplet missing 'mutates' raises ValueError with field name."""
+        from code_forge.gate_check import validate_daemon_state
+
+        with pytest.raises(ValueError, match="mutates"):
+            validate_daemon_state({
+                "conflicts": [
+                    {
+                        "subsystem": "killswitch",
+                        "interferes_with": "health check",
+                        # missing "mutates"
+                    },
+                ],
+            })
+
+    def test_daemon_state_conflicts_file_string(self):
+        """conflicts_file not string raises ValueError."""
+        from code_forge.gate_check import validate_daemon_state
+
+        with pytest.raises(ValueError, match="string"):
+            validate_daemon_state({"conflicts_file": 42})
+
+    def test_daemon_state_absent_ok(self):
+        """gate.yaml without daemon_state section passes validation."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert "daemon_state" not in config
