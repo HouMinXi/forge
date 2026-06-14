@@ -115,7 +115,44 @@ def load_gate_config(
                     "presubmit[%d]: %s" % (idx, e)
                 ) from e
 
+    # Validate optional graph_triage section
+    if "graph_triage" in data:
+        validate_graph_triage(data["graph_triage"])
+
     return data
+
+
+def validate_graph_triage(section: dict) -> None:
+    """Validate the graph_triage section of gate.yaml.
+
+    Schema:
+        enabled:  bool   -- OPTIONAL. Explicit enable/disable.
+        db_path:  str    -- OPTIONAL. Path to graph.db override.
+        Unknown keys are allowed (forward-compatible).
+
+    Args:
+        section: dict from gate.yaml graph_triage key.
+
+    Raises:
+        ValueError: if known fields have wrong types.
+    """
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'graph_triage' must be a mapping, got: %s"
+            % type(section).__name__
+        )
+    if "enabled" in section:
+        if not isinstance(section["enabled"], bool):
+            raise ValueError(
+                "gate.yaml 'graph_triage.enabled' must be a bool, got: %r"
+                % section["enabled"]
+            )
+    if "db_path" in section:
+        if not isinstance(section["db_path"], str):
+            raise ValueError(
+                "gate.yaml 'graph_triage.db_path' must be a string, got: %r"
+                % section["db_path"]
+            )
 
 
 def fnmatch_to_grep(glob: str) -> str:
