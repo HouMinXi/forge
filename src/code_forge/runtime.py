@@ -293,6 +293,7 @@ class RuntimeRunner:
         self.source_files: Optional[list[Path]] = None
         self.infra_errors: list[str] = []
         self._backend = backend
+        self.last_surfaces: list[str] = []
 
     @property
     def is_advisory(self) -> bool:
@@ -334,6 +335,8 @@ class RuntimeRunner:
             reason = "LLM response parse error: %s" % exc
             self.infra_errors.append(reason)
             return [_build_skipped_finding(reason)]
+
+        self.last_surfaces = surfaces or []
 
         receipts_dir = repo_root / ".code-forge" / "smoke-receipts"
         valid_receipts = [
