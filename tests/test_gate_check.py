@@ -1092,3 +1092,73 @@ presubmit:
         """
         pattern = fnmatch_to_grep("test_*.py")
         assert not self._grep_matches(pattern, "src/test_foo.py")
+
+
+# --- graph_triage section validation ---
+
+
+class TestGraphTriageValidation:
+    """Tests for graph_triage section validation in load_gate_config."""
+
+    def test_graph_triage_valid(self):
+        """gate.yaml with valid graph_triage section passes validation."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+graph_triage:
+  enabled: true
+  db_path: "/path/graph.db"
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["graph_triage"]["enabled"] is True
+        assert config["graph_triage"]["db_path"] == "/path/graph.db"
+
+    def test_graph_triage_invalid_enabled(self):
+        """graph_triage.enabled not bool raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+graph_triage:
+  enabled: "yes"
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="graph_triage"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_graph_triage_invalid_db_path(self):
+        """graph_triage.db_path not string raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+graph_triage:
+  db_path: 123
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="graph_triage"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_graph_triage_absent_ok(self):
+        """gate.yaml without graph_triage section passes validation."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert "graph_triage" not in config
+
+    def test_graph_triage_extra_keys_ok(self):
+        """graph_triage section with unknown keys does not raise."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+graph_triage:
+  enabled: true
+  future_key: "some_value"
+  another_key: 42
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["graph_triage"]["enabled"] is True
+        assert config["graph_triage"]["future_key"] == "some_value"
