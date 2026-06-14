@@ -119,6 +119,10 @@ def load_gate_config(
     if "graph_triage" in data:
         validate_graph_triage(data["graph_triage"])
 
+    # Validate optional daemon_state section
+    if "daemon_state" in data:
+        validate_daemon_state(data["daemon_state"])
+
     return data
 
 
@@ -152,6 +156,82 @@ def validate_graph_triage(section: dict) -> None:
             raise ValueError(
                 "gate.yaml 'graph_triage.db_path' must be a string, got: %r"
                 % section["db_path"]
+            )
+
+
+def validate_daemon_state(section: object) -> None:
+    """Validate the daemon_state section of gate.yaml.
+
+    Schema:
+        enabled:         bool         -- OPTIONAL. Explicit enable/disable.
+        subsystems:      list[str]    -- OPTIONAL. State domains to focus on.
+        patterns:        list[str]    -- OPTIONAL. Extra keyword patterns.
+        conflicts:       list[dict]   -- OPTIONAL. Static conflict triplets.
+            Each triplet requires: subsystem (str), mutates (str),
+            interferes_with (str).
+        conflicts_file:  str          -- OPTIONAL. Path to external conflicts YAML.
+
+    Args:
+        section: value from gate.yaml daemon_state key.
+
+    Raises:
+        ValueError: if known fields have wrong types or required sub-fields missing.
+    """
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'daemon_state' must be a mapping, got: %s"
+            % type(section).__name__
+        )
+    if "enabled" in section:
+        if not isinstance(section["enabled"], bool):
+            raise ValueError(
+                "gate.yaml 'daemon_state.enabled' must be a bool, got: %r"
+                % section["enabled"]
+            )
+    if "subsystems" in section:
+        if not isinstance(section["subsystems"], list):
+            raise ValueError(
+                "gate.yaml 'daemon_state.subsystems' must be a list, got: %s"
+                % type(section["subsystems"]).__name__
+            )
+        for s in section["subsystems"]:
+            if not isinstance(s, str):
+                raise ValueError(
+                    "'daemon_state.subsystems' elements must be strings"
+                )
+    if "patterns" in section:
+        if not isinstance(section["patterns"], list):
+            raise ValueError(
+                "gate.yaml 'daemon_state.patterns' must be a list, got: %s"
+                % type(section["patterns"]).__name__
+            )
+    if "conflicts" in section:
+        if not isinstance(section["conflicts"], list):
+            raise ValueError(
+                "gate.yaml 'daemon_state.conflicts' must be a list, got: %s"
+                % type(section["conflicts"]).__name__
+            )
+        for idx, c in enumerate(section["conflicts"]):
+            if not isinstance(c, dict):
+                raise ValueError(
+                    "daemon_state.conflicts[%d] must be a mapping" % idx
+                )
+            for req_key in ("subsystem", "mutates", "interferes_with"):
+                if req_key not in c:
+                    raise ValueError(
+                        "daemon_state.conflicts[%d] missing required '%s'"
+                        % (idx, req_key)
+                    )
+                if not isinstance(c[req_key], str):
+                    raise ValueError(
+                        "daemon_state.conflicts[%d].%s must be a string"
+                        % (idx, req_key)
+                    )
+    if "conflicts_file" in section:
+        if not isinstance(section["conflicts_file"], str):
+            raise ValueError(
+                "gate.yaml 'daemon_state.conflicts_file' must be a string, "
+                "got: %r" % section["conflicts_file"]
             )
 
 

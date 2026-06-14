@@ -128,6 +128,8 @@ def _extract_json_from_text(
       cli.py:678         test-assertion pass  findings / code_excerpts  (default)
       runtime.py:320     RUNTIME axis         surfaces / findings       (default)
       falsify_real.py:44 falsify              verdict / reasoning       (explicit)
+      daemon_state.py Q1:   external_state                              (explicit)
+      daemon_state.py Q2Q3: conflicts                                   (explicit)
 
     Scans left-to-right for '{' only; all forge envelopes are dicts, never
     bare arrays.  No attempt cap: raw_decode fails in O(1) for invalid JSON
