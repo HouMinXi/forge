@@ -2,7 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for DaemonStateRunner advisory axis.
 
-Covers STATE-01a through STATE-01k:
+Covers all DaemonStateRunner behaviors:
 - AxisRunner Protocol conformance (is_advisory=True)
 - Empty diff returns []
 - Heuristic fallback when no gate.yaml daemon_state section
@@ -17,7 +17,7 @@ Covers STATE-01a through STATE-01k:
 - LLM failure -> SKIPPED finding
 - RuntimeRunner.last_surfaces integration
 - Runtime fallback when runner absent
-- Unconfigured: no full axis without opt-in (D-01f)
+- Unconfigured: no full axis without opt-in
 - conflicts_file missing warning
 - Default keyword set verification
 """
@@ -35,7 +35,7 @@ from code_forge.advisory import AdvisoryFinding
 
 
 # ---------------------------------------------------------------------------
-# Protocol conformance (STATE-01a)
+# Protocol conformance
 # ---------------------------------------------------------------------------
 
 
@@ -57,7 +57,7 @@ class TestDaemonStateProtocol:
 
 
 # ---------------------------------------------------------------------------
-# Empty diff (STATE-01b)
+# Empty diff
 # ---------------------------------------------------------------------------
 
 
@@ -80,7 +80,7 @@ class TestDaemonStateEmptyDiff:
 
 
 # ---------------------------------------------------------------------------
-# Heuristic fallback (STATE-01c)
+# Heuristic fallback
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +124,7 @@ class TestDaemonStateHeuristicFallback:
 
 
 # ---------------------------------------------------------------------------
-# Two-step LLM call (STATE-01d)
+# Two-step LLM call
 # ---------------------------------------------------------------------------
 
 
@@ -182,7 +182,7 @@ class TestDaemonStateTwoStepLLM:
 
 
 # ---------------------------------------------------------------------------
-# Static conflict rules (STATE-01e)
+# Static conflict rules
 # ---------------------------------------------------------------------------
 
 
@@ -274,7 +274,7 @@ class TestDaemonStateStaticRules:
 
 
 # ---------------------------------------------------------------------------
-# grep sanitization (STATE-01h)
+# grep sanitization
 # ---------------------------------------------------------------------------
 
 
@@ -326,7 +326,7 @@ class TestDaemonStateGrepSanitization:
 
 
 # ---------------------------------------------------------------------------
-# Q1 empty state (STATE-01d variant)
+# Q1 empty state
 # ---------------------------------------------------------------------------
 
 
@@ -369,7 +369,7 @@ class TestDaemonStateQ1Empty:
 
 
 # ---------------------------------------------------------------------------
-# Q1 malformed response (STATE-01j variant)
+# Q1 malformed response
 # ---------------------------------------------------------------------------
 
 
@@ -409,7 +409,7 @@ class TestDaemonStateQ1Malformed:
 
 
 # ---------------------------------------------------------------------------
-# LLM failure -> SKIPPED (STATE-01j)
+# LLM failure -> SKIPPED
 # ---------------------------------------------------------------------------
 
 
@@ -446,7 +446,7 @@ class TestDaemonStateLLMFailure:
 
 
 # ---------------------------------------------------------------------------
-# RuntimeRunner.last_surfaces integration (STATE-01f cross-axis)
+# RuntimeRunner.last_surfaces integration (cross-axis)
 # ---------------------------------------------------------------------------
 
 
@@ -524,7 +524,7 @@ class TestDaemonStateRuntimeSurfaces:
 
 
 # ---------------------------------------------------------------------------
-# Unconfigured: no full axis without opt-in (D-01f)
+# Unconfigured: no full axis without opt-in
 # ---------------------------------------------------------------------------
 
 
@@ -551,7 +551,7 @@ class TestDaemonStateUnconfigured:
 
 
 # ---------------------------------------------------------------------------
-# conflicts_file missing warning (STATE-01k variant)
+# conflicts_file missing warning
 # ---------------------------------------------------------------------------
 
 
@@ -594,12 +594,12 @@ class TestDaemonStateConflictsFileMissing:
 
 
 # ---------------------------------------------------------------------------
-# Default keyword set (D-01a)
+# Default keyword set
 # ---------------------------------------------------------------------------
 
 
 class TestDaemonStateDefaultKeywords:
-    """Verify default keyword set per D-01a."""
+    """Verify default keyword set."""
 
     def test_default_keywords(self):
         from code_forge.daemon_state import DEFAULT_DAEMON_KEYWORDS

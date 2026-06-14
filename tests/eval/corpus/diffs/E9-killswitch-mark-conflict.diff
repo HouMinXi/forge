@@ -1,0 +1,24 @@
+diff --git a/surflare_watchdog/killswitch.py b/surflare_watchdog/killswitch.py
+index 9cf0856..54541a8 100644
+--- a/surflare_watchdog/killswitch.py
++++ b/surflare_watchdog/killswitch.py
+@@ -17,3 +17,19 @@ def deactivate_killswitch():
+          "handle", "1"],
+         check=True,
+     )
++
++
++def activate_killswitch():
++    """Block all non-VPN egress traffic via nftables mark."""
++    subprocess.run(
++        ["nft", "add", "rule", "inet", "filter", "output",
++         "mark", "set", MARK_BLOCK, "accept"],
++        check=True,
++    )
++    check_vpn_health()
++
++
++def check_vpn_health():
++    """Probe VPN endpoint to confirm connectivity."""
++    subprocess.run(["curl", "-s", "--max-time", "5",
++                     "https://vpn.example.com/health"], check=True)

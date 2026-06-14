@@ -136,6 +136,7 @@ class TestCorpusEntriesApply:
         "BUG-P12-01",
         "ttl_class",
         "E8-blast-radius-llm-invoke",
+        "E9-killswitch-mark-conflict",
     ])
     def test_corpus_entry_applies(self, entry_name: str, tmp_path: Path) -> None:
         """Each corpus diff must git-apply against its base_files seed."""

@@ -282,7 +282,7 @@ class TestEvalKnownSubcommand:
 
 
 class TestCorpusCompleteness:
-    """Verify corpus.yaml contains all 11 required entries."""
+    """Verify corpus.yaml contains all 12 required entries."""
 
     REQUIRED_NAMES = {
         "gate-yaml-rce",
@@ -296,10 +296,11 @@ class TestCorpusCompleteness:
         "BUG-P12-01",
         "ttl_class",
         "E8-blast-radius-llm-invoke",
+        "E9-killswitch-mark-conflict",
     }
 
     def test_corpus_has_all_entries(self):
-        """corpus.yaml must contain all 11 EVAL-01 SC1 entries."""
+        """corpus.yaml must contain all 12 EVAL-01 SC1 entries."""
         from code_forge.eval.corpus import load_corpus
 
         manifest = Path(__file__).parent / "eval" / "corpus" / "corpus.yaml"

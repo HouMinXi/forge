@@ -69,3 +69,9 @@ entries:
     expected_verdict: PASS
     axis_tags: [GRAPH-TRIAGE]
     expected_advisory: ["llm_invoke", "impact", "downstream"]
+
+  - name: E9-killswitch-mark-conflict
+    diff_file: diffs/E9-killswitch-mark-conflict.diff
+    expected_verdict: PASS
+    axis_tags: [DAEMON-STATE]
+    expected_advisory: ["nftables", "mark", "killswitch", "conflict"]
