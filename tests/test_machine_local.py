@@ -382,3 +382,102 @@ class TestInfraFindingSkipsFalsifier:
         assert len(infra_in_state) > 0
         for f in infra_in_state:
             assert f.disposition == Disposition.CONFIRMED
+
+
+# ---------------------------------------------------------------------------
+# Severity-tiered _fixpoint_reached guards
+# ---------------------------------------------------------------------------
+from code_forge.machine import _FixpointResult, _severity_tier  # noqa: E402
+
+
+def _make_sm_fp(tmp_path, git_diff=None):
+    resolved = ResolvedReview(
+        source_files=[Path("test.py")],
+        baseline_content=None,
+        git_diff=git_diff,
+        mode_hint="git",
+    )
+    return StateMachine(
+        resolved_review=resolved,
+        falsifier=StubFalsifier(),
+        source_hash="abc",
+        baseline_spec_repr="empty",
+        cwd=tmp_path,
+        registry={},
+        mode=Mode.LOCAL,
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda f: None,
+        l0_runner=lambda r, f: ([], []),
+        l1_provider=lambda r: [],
+    )
+
+
+def _sf(fp, desc, source="L1"):
+    return StateFinding(
+        id=fp, fingerprint=fp, source=source,
+        disposition=Disposition.CONFIRMED,
+        file="test.py", line_range=[1, 1],
+        description=desc,
+    )
+
+
+def _prime(sm, *fingerprints):
+    """Make fingerprints appear as CONFIRMED in prior round (not new)."""
+    sm._state.round_history = [
+        {"dispositions": {fp: "CONFIRMED" for fp in fingerprints}},
+        {},
+    ]
+
+
+class TestTieredReset:
+    """_fixpoint_reached() returns the correct _FixpointResult for each severity."""
+
+    def test_tiered_reset_p2_no_counter_reset(self, tmp_path):
+        sm = _make_sm_fp(tmp_path)
+        sm._state.findings.append(_sf("fp-p2", "P2: missing docstring"))
+        _prime(sm, "fp-p2")
+        sm._state.consecutive_clean_rounds = 2
+        result = sm._fixpoint_reached()
+        assert result == _FixpointResult.CYCLE_RESTART
+
+    def test_tiered_reset_p0_resets_counter(self, tmp_path):
+        sm = _make_sm_fp(tmp_path)
+        sm._state.findings.append(_sf("fp-p0", "P0: null dereference"))
+        _prime(sm, "fp-p0")
+        result = sm._fixpoint_reached()
+        assert result == _FixpointResult.RESET
+
+    def test_tiered_reset_p3_below_threshold_is_clean(self, tmp_path):
+        # 2 P3 findings, 100 changed lines -> density = 0.02 < 0.15 -> CLEAN
+        added = "\n".join("+line %d" % i for i in range(100))
+        fake_diff = (
+            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
+            "@@ -0,0 +1,100 @@\n" + added
+        )
+        sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
+        sm._state.findings.append(_sf("fp-p3a", "P3: trailing whitespace"))
+        sm._state.findings.append(_sf("fp-p3b", "P3: unused import"))
+        _prime(sm, "fp-p3a", "fp-p3b")
+        assert sm._fixpoint_reached() == _FixpointResult.CLEAN
+
+    def test_tiered_reset_p3_density_exceeds_triggers_restart(self, tmp_path):
+        # 20 P3 findings, 10 changed lines -> density = 2.0 > 0.15 -> CYCLE_RESTART
+        added = "\n".join("+line %d" % i for i in range(10))
+        fake_diff = (
+            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
+            "@@ -0,0 +1,10 @@\n" + added
+        )
+        sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
+        fps = ["fp-p3-%d" % i for i in range(20)]
+        for fp in fps:
+            sm._state.findings.append(_sf(fp, "P3: style issue %d" % int(fp[-1])))
+        _prime(sm, *fps)
+        assert sm._fixpoint_reached() == _FixpointResult.CYCLE_RESTART
+
+    def test_severity_tier_l0_defaults_p1(self):
+        sf = _sf("x", "unprefixed finding", source="L0")
+        assert _severity_tier(sf) == "P1"
+
+    def test_severity_tier_prefix_p2(self):
+        sf = _sf("x", "P2: missing docstring")
+        assert _severity_tier(sf) == "P2"

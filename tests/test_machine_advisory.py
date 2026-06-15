@@ -16,7 +16,7 @@ from code_forge.advisory import AdvisoryFinding, AxisRunner
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
-from code_forge.machine import StateMachine
+from code_forge.machine import StateMachine, _FixpointResult
 from code_forge.state import Mode, Verdict
 
 
@@ -84,7 +84,7 @@ class TestAdvisoryFixpointIsolation:
             attribution="test",
         ))
         # _fixpoint_reached should still return True (no blocking findings)
-        assert sm._fixpoint_reached() is True
+        assert sm._fixpoint_reached() == _FixpointResult.CLEAN
 
 
 class TestAdvisoryRunners:
