@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HouMinXi/forge/blob/main/src/code_forge/gate.schema.json",
+  "title": "code-forge gate.yaml schema",
+  "description": "JSON Schema for .code-forge/gate.yaml configuration files.",
+  "$comment": "Loader-only constraints: (a) at most one entry may set default: true (cross-item, enforced by loader). (b) outlet value 'cli' is a deprecated alias for 'subprocess'; intentionally excluded from this enum because it is not a canonical value. Note: load_gate_config does NOT validate the outlet field (gate_check.py ignores it); alias resolution happens via resolve_outlet (outlet_resolver.py:53 _DEPRECATED_OUTLET_ALIASES) called from the cli runtime path, not from the config loader.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "outlet": {
+      "type": "string",
+      "enum": ["subprocess", "inline", "subagent"],
+      "description": "Review dispatch method. subprocess: spawns a fresh claude subprocess per pass (default). inline: runs review in the current session. subagent: spawns a fresh Agent per pass."
+    },
+    "backends": {
+      "type": "object",
+      "description": "Named review backends, keyed by backend name. Select with FORGE_BACKEND=<name>.",
+      "additionalProperties": {
+        "$ref": "#/$defs/backendEntry"
+      }
+    },
+    "test": {
+      "type": "object",
+      "description": "Test command configuration for the R1 commit gate (code-forge gate-check).",
+      "required": ["command"],
+      "additionalProperties": true,
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1,
+          "description": "Test runner command as a list. First element must be a known runner (pytest, python3, cargo, go, make, npm, npx, node)."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Timeout in seconds for the test run. Default: 120."
+        },
+        "env": {
+          "type": "object",
+          "description": "Extra environment variables to set when running the test command."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working directory for the test command. Default: repo root."
+        },
+        "source_patterns": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of glob patterns. Gate skips if no staged file matches any pattern."
+        }
+      }
+    },
+    "non_ascii": {
+      "type": "string",
+      "enum": ["ai-smell", "strict"],
+      "description": "Non-ASCII detection mode. ai-smell (default): blocks confusable typographic characters only. strict: blocks every non-ASCII byte."
+    },
+    "presubmit": {
+      "type": "array",
+      "description": "External linters run on staged diffs before the test gate.",
+      "items": {
+        "type": "object",
+        "required": ["command", "applies_to", "on"],
+        "additionalProperties": true,
+        "properties": {
+          "command": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "Linter command as a list."
+          },
+          "applies_to": {
+            "type": "string",
+            "description": "Glob pattern for files this entry applies to."
+          },
+          "on": {
+            "type": "string",
+            "enum": ["diff", "patch"],
+            "description": "Input format passed to the linter command."
+          },
+          "when_exists": {
+            "type": "string",
+            "description": "Skip this entry if the specified file does not exist."
+          }
+        }
+      }
+    },
+    "graph_triage": {
+      "type": "object",
+      "description": "code-review-graph integration for impact-aware triage.",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Explicit enable/disable. Omit for auto-detection."
+        },
+        "db_path": {
+          "type": "string",
+          "description": "Override path to the graph.db file."
+        }
+      }
+    },
+    "daemon_state": {
+      "type": "object",
+      "description": "Stateful subsystem conflict detection.",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable or disable daemon_state detection. Omit to disable."
+        },
+        "subsystems": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "State domains to focus on."
+        },
+        "patterns": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Extra keyword patterns for detection."
+        },
+        "conflicts": {
+          "type": "array",
+          "description": "Inline static conflict triplets.",
+          "items": {
+            "type": "object",
+            "required": ["subsystem", "mutates", "interferes_with"],
+            "additionalProperties": true,
+            "properties": {
+              "subsystem": {
+                "type": "string",
+                "description": "The subsystem that owns the state."
+              },
+              "mutates": {
+                "type": "string",
+                "description": "The state artifact that is mutated."
+              },
+              "interferes_with": {
+                "type": "string",
+                "description": "The other subsystem that is interfered with."
+              }
+            }
+          }
+        },
+        "conflicts_file": {
+          "type": "string",
+          "description": "Path to an external YAML file containing conflict triplets."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "backendEntry": {
+      "type": "object",
+      "description": "A named review backend entry.",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["api", "cli"],
+          "description": "Backend type. 'api' for direct HTTP; 'cli' for claude subprocess."
+        },
+        "format": {
+          "type": "string",
+          "enum": ["anthropic", "openai", "vertex"],
+          "description": "API format. Required for type=api. 'anthropic', 'openai', or 'vertex'."
+        },
+        "command": {
+          "type": "string",
+          "description": "CLI binary name or path. For type=cli only. Default: 'claude'."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model ID. Optional for both types. Omit to use session default."
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Output token cap for API calls. Default: 16384."
+        },
+        "base_url": {
+          "type": "string",
+          "description": "API base URL. Required for type=api with format=anthropic or format=openai."
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Name of the environment variable holding the API key. Required for format=anthropic or format=openai. Never put the key value here."
+        },
+        "project_id": {
+          "type": "string",
+          "description": "GCP project ID. Required for format=vertex."
+        },
+        "region": {
+          "type": "string",
+          "description": "GCP region for Vertex AI. Optional; omit for global."
+        },
+        "credentials_path": {
+          "type": "string",
+          "description": "Path to a service account JSON key file. Optional for format=vertex."
+        },
+        "default": {
+          "type": "boolean",
+          "description": "Mark this backend as the config default. At most one entry may set this to true."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"type": {"const": "api"}},
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["format"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "api"},
+              "format": {"enum": ["anthropic", "openai"]}
+            },
+            "required": ["type", "format"]
+          },
+          "then": {
+            "required": ["base_url", "api_key_env"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {"const": "api"},
+              "format": {"const": "vertex"}
+            },
+            "required": ["type", "format"]
+          },
+          "then": {
+            "required": ["project_id"]
+          }
+        }
+      ]
+    }
+  }
+}

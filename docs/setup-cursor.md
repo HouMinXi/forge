@@ -160,6 +160,14 @@ to set it persistently or source your `.env` file.
 
 ## Related Documentation
 
-- [Full configuration reference](configuration.md) -- all env vars and backends.yaml
+- [Full configuration reference](configuration.md) -- all env vars and gate.yaml
 - [VS Code setup](setup-vscode.md) -- for VS Code, including terminal.integrated.env
 - [PyCharm setup](setup-pycharm.md) -- for PyCharm
+
+## See also
+
+- [docs/configuration.md](configuration.md) -- full environment variable and backend reference,
+  including the `gate.yaml` backends block and field tables.
+- The `gate.schema.json` schema file (written by `code-forge init` alongside `gate.yaml`)
+  enables IDE tooling that reads yaml-language-server directives. VS Code and Cursor honor
+  the `$schema` directive automatically.

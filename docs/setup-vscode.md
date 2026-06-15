@@ -146,7 +146,7 @@ by default when running inside Claude Code. To force CLI subprocess mode:
 
 ```bash
 # in the terminal before starting Claude Code
-export FORGE_OUTLET=cli
+export FORGE_OUTLET=subprocess
 ```
 
 Or set it in your VS Code terminal environment:
@@ -154,7 +154,7 @@ Or set it in your VS Code terminal environment:
 ```json
 {
   "terminal.integrated.env.linux": {
-    "FORGE_OUTLET": "cli"
+    "FORGE_OUTLET": "subprocess"
   }
 }
 ```
@@ -283,6 +283,6 @@ VS Code terminals do not reload the shell RC automatically. Either:
 
 ## Related Documentation
 
-- [Full configuration reference](configuration.md) -- all env vars and backends.yaml
+- [Full configuration reference](configuration.md) -- all env vars and gate.yaml
 - [Cursor setup](setup-cursor.md) -- for Cursor editor
 - [PyCharm setup](setup-pycharm.md) -- for PyCharm

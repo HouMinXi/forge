@@ -67,8 +67,8 @@ model (no model pin). Three environment variables control the backend:
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `FORGE_BACKEND` | Select a named backend from `backends.yaml` | session-default |
-| `FORGE_OUTLET` | Force outlet: `cli` or `inline` | auto-detected |
+| `FORGE_BACKEND` | Select a named backend from `gate.yaml` | session-default |
+| `FORGE_OUTLET` | Force outlet: `subprocess` \| `inline` \| `subagent` | auto-detected |
 | `FORGE_LLM_MODEL` | Override model for CLI backends | `claude-sonnet-4-6` |
 
 **Quick examples:**
@@ -80,29 +80,30 @@ code-forge review
 # Pin a specific model for this run
 FORGE_LLM_MODEL=claude-opus-4-5 code-forge review
 
-# Use a named API backend from backends.yaml
+# Use a named API backend from gate.yaml
 FORGE_BACKEND=claude-api code-forge review
 
-# Force inline outlet (no CLI subprocess)
+# Force inline outlet (no subprocess)
 FORGE_OUTLET=inline code-forge review
 ```
 
-**Named backends** (optional) are defined in `~/.config/code-forge/backends.yaml`:
+**Named backends** (optional) are defined in the `backends:` key of
+`.code-forge/gate.yaml` (created by `code-forge init`):
 
 ```yaml
 backends:
-  - name: claude-api
+  claude-api:
     type: api
     format: anthropic
     base_url: https://api.anthropic.com
     api_key_env: ANTHROPIC_API_KEY
     default: true
-  - name: openai
+  openai-compatible:
     type: api
     format: openai
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
-  - name: local-claude
+  local-claude:
     type: cli
     model: claude-opus-4-5
     command: claude

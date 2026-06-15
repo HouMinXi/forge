@@ -198,6 +198,15 @@ If you used Option 1 and the key is now in a `.idea/` file:
 
 ## Related Documentation
 
-- [Full configuration reference](configuration.md) -- all env vars and backends.yaml
+- [Full configuration reference](configuration.md) -- all env vars and gate.yaml
 - [VS Code setup](setup-vscode.md) -- for VS Code
 - [Cursor setup](setup-cursor.md) -- for Cursor
+
+## See also
+
+- [docs/configuration.md](configuration.md) -- full environment variable and backend reference,
+  including the `gate.yaml` backends block and field tables.
+- The `gate.schema.json` schema file (written by `code-forge init` alongside `gate.yaml`)
+  enables IDE tooling that reads yaml-language-server directives. PyCharm ignores the
+  `$schema` directive and requires manual schema registration via
+  Settings -> Languages -> JSON Schema Mappings.
