@@ -40,6 +40,7 @@ from .disposition import (
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
 )
 from .falsify import Falsifier
+from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
 from .hold import check_escalated_frozen
 from .llm_invoke import Usage
 from .parsers.base import Finding, ToolError
@@ -150,7 +151,7 @@ class StateMachine:
     post_round_hook: Optional[Callable[[int], None]] = None
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-    clean_round_threshold: int = 3
+    clean_round_threshold: int = field(default=DEFAULT_CLEAN_ROUND_THRESHOLD)
     advisory_runners: "list[AxisRunner]" = field(default_factory=list)
     _state: State = field(default_factory=State, init=False)
 
