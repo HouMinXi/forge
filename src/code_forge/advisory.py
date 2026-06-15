@@ -11,7 +11,7 @@ TWO FOUNDING PRINCIPLES:
 
 2. AxisRunner.run() intentionally receives ONLY (diff_text, repo_root): no
    prior findings, no other axes' output, no review state. This is the
-   anti-anchoring invariant underpinning D-11's multi-run majority. Each run
+   anti-anchoring invariant underpinning the multi-run majority vote. Each run
    sees the diff fresh, forming independent judgments. Do not widen this
    signature.
 """
@@ -52,8 +52,7 @@ class AxisRunner(Protocol):
 
     The run() signature is intentionally narrow: only diff_text and
     repo_root. No prior findings, no review state, no other axes' output.
-    This prevents anchoring bias when running majority-vote evaluations
-    (D-11).
+    This prevents anchoring bias when running majority-vote evaluations.
     """
 
     @property

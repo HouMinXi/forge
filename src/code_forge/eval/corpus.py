@@ -1,11 +1,11 @@
-"""Eval corpus loader: YAML manifest + CorpusEntry dataclass (D-07).
+"""Eval corpus loader: YAML manifest + CorpusEntry dataclass.
 
 Loads a YAML manifest of self-contained diff files with expected verdicts
 and axis tags. Each entry becomes a CorpusEntry that the runner replays
 through the complete forge pipeline.
 
 Missing diff files at load time do NOT raise -- the CorpusEntry is still
-created. SKIPPED handling happens at run time per D-12.
+created. SKIPPED handling happens at run time
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class CorpusEntry:
         diff_file: path to .diff file, relative to manifest parent.
         expected_verdict: "HOLD" or "PASS" -- what forge should produce.
         axis_tags: which review axes this entry exercises (e.g. TRUST, SEC).
-        expected_advisory: keyword strings for advisory axis scoring (D-06/D-12).
+        expected_advisory: keyword strings for advisory axis scoring.
             RUNTIME entries list keywords that must appear in advisory text for
             the entry to be counted as "caught" by the RUNTIME axis. Empty list
             (default) means no advisory scoring for this entry.
