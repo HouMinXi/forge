@@ -22,6 +22,7 @@ import os
 import sys
 import threading
 import time
+from enum import Enum
 import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -105,6 +106,30 @@ def _default_l0_runner(
                 )
             )
     return state_findings, infra_errors
+
+
+class _FixpointResult(str, Enum):
+    """Return type of _fixpoint_reached: signals CLEAN, full RESET, or CYCLE_RESTART."""
+
+    CLEAN = "CLEAN"
+    RESET = "RESET"
+    CYCLE_RESTART = "CYCLE_RESTART"
+
+
+def _severity_tier(finding: "StateFinding") -> str:  # type: ignore[name-defined]
+    """Return severity tier "P0"/"P1"/"P2"/"P3" for a CONFIRMED StateFinding.
+
+    Parse the description prefix first. Unprefixed L0/L1 findings default
+    to "P1" (infrastructure failures are blocking by nature). All other
+    unprefixed findings default to "P2".
+    """
+    desc = finding.description or ""
+    for prefix in ("P0:", "P1:", "P2:", "P3:"):
+        if desc.startswith(prefix):
+            return prefix[:-1]
+    if finding.source in ("L0", "L1"):
+        return "P1"
+    return "P2"
 
 
 @dataclass
@@ -463,8 +488,17 @@ class StateMachine:
 
             _threshold = self.clean_round_threshold
 
-            if self._fixpoint_reached():
+            _fp = self._fixpoint_reached()
+            if _fp == _FixpointResult.CLEAN:
                 self._state.consecutive_clean_rounds += 1
+            elif _fp == _FixpointResult.CYCLE_RESTART:
+                # P2 or P3-density: do NOT reset counter, do NOT increment.
+                # FALL THROUGH -- no `continue` here (would skip _should_enter_hold).
+                # max_total_rounds provides a hard backstop.
+                self._state.infra_errors.append(
+                    "tiered-reset: P2/P3-density -- restarting cycle %d"
+                    % round_index
+                )
             else:
                 self._state.consecutive_clean_rounds = 0
 
@@ -764,32 +798,47 @@ class StateMachine:
                         "autofixer EXCEPTION on %s" % fp
                     )
 
-    def _fixpoint_reached(self) -> bool:
-        """R1 B3 + R2-2: precise fixpoint (LOCAL only).
+    def _fixpoint_reached(self) -> "_FixpointResult":
+        """Severity-tiered fixpoint for LOCAL mode.
 
-        TRUE iff ALL FOUR conditions hold:
-          (a) zero NEW CONFIRMED this round (new = fingerprint not in
-              prior round's dispositions; round 0 treats prior as empty)
-          (b) zero FIXED->CONFIRMED reversions this round
-          (c) zero unfixed CONFIRMED remain in active findings
-          (d) zero UNCERTAIN remain in active findings
+        Clauses (a) and (b) are safety nets that fire BEFORE severity tiering:
+          (a) Any NEW CONFIRMED finding (not in prior round) -> RESET
+          (b) Any FIXED->CONFIRMED reversion -> RESET
+        Only recurring CONFIRMED findings reach the tier check.
+
+        After (a)/(b):
+          - Zero CONFIRMED + zero UNCERTAIN -> CLEAN
+          - Any UNCERTAIN -> RESET  (clause d, unchanged)
+          - P0 or P1 CONFIRMED -> RESET
+          - P2 CONFIRMED (no P0/P1) -> CYCLE_RESTART
+          - Only P3 CONFIRMED -> density check:
+              distinct_per_file > threshold -> CYCLE_RESTART
+              distinct_per_diff > threshold -> CYCLE_RESTART
+              density > threshold -> CYCLE_RESTART
+              else -> CLEAN (P3 below threshold counts as clean)
         """
+        from .flow_contract import (
+            P3_DENSITY_THRESHOLD,
+            P3_DISTINCT_PER_DIFF_THRESHOLD,
+            P3_DISTINCT_PER_FILE_THRESHOLD,
+        )
+
         history = self._state.round_history
         current_disps = {
             f.fingerprint: f.disposition
             for f in self._state.findings
         }
 
-        # Prior round dispositions (empty set for round 0, R3 LOW4)
+        # Prior round dispositions (empty set for round 0)
         if len(history) >= 2:
             prior_disps = history[-2].get("dispositions", {})
         else:
             prior_disps = {}
 
-        # (a) zero NEW CONFIRMED this round
+        # (a) zero NEW CONFIRMED this round -- any new finding = full reset
         for fp, disp in current_disps.items():
             if disp == Disposition.CONFIRMED and fp not in prior_disps:
-                return False
+                return _FixpointResult.RESET
 
         # (b) zero FIXED->CONFIRMED reversions
         for fp, disp in current_disps.items():
@@ -797,19 +846,66 @@ class StateMachine:
                 disp == Disposition.CONFIRMED
                 and prior_disps.get(fp) == "FIXED"
             ):
-                return False
+                return _FixpointResult.RESET
 
-        # (c) zero unfixed CONFIRMED remain
-        for f in self._state.findings:
-            if f.disposition == Disposition.CONFIRMED:
-                return False
+        confirmed = [
+            f for f in self._state.findings
+            if f.disposition == Disposition.CONFIRMED
+        ]
 
-        # (d) zero UNCERTAIN remain
+        # (d) zero UNCERTAIN remain (unchanged from binary version)
         for f in self._state.findings:
             if f.disposition == Disposition.UNCERTAIN:
-                return False
+                return _FixpointResult.RESET
 
-        return True
+        # (c) zero CONFIRMED -> CLEAN
+        if not confirmed:
+            return _FixpointResult.CLEAN
+
+        # Severity-tiered check on recurring CONFIRMED findings
+        tiers = [_severity_tier(f) for f in confirmed]
+
+        if "P0" in tiers or "P1" in tiers:
+            return _FixpointResult.RESET
+
+        if "P2" in tiers:
+            return _FixpointResult.CYCLE_RESTART
+
+        # Only P3: apply density thresholds
+        changed_lines = 1
+        if self.resolved_review.git_diff:
+            from .diff import count_diff_lines
+            changed_lines = max(1, count_diff_lines(self.resolved_review.git_diff))
+
+        p3_findings = confirmed  # all are P3 at this point
+        total_p3 = len(p3_findings)
+
+        def _rule_type(f: "StateFinding") -> str:
+            desc = f.description or ""
+            if desc.startswith("P3:"):
+                return desc[3:].split("(")[0].strip()
+            return desc[:50].strip()
+
+        from collections import defaultdict
+        by_file: dict = defaultdict(set)
+        all_rules: set = set()
+        for f in p3_findings:
+            rt = _rule_type(f)
+            by_file[f.file].add(rt)
+            all_rules.add(rt)
+
+        distinct_per_file = max(len(rules) for rules in by_file.values()) if by_file else 0
+        distinct_per_diff = len(all_rules)
+        density = total_p3 / changed_lines
+
+        if (
+            distinct_per_file > P3_DISTINCT_PER_FILE_THRESHOLD
+            or distinct_per_diff > P3_DISTINCT_PER_DIFF_THRESHOLD
+            or density > P3_DENSITY_THRESHOLD
+        ):
+            return _FixpointResult.CYCLE_RESTART
+
+        return _FixpointResult.CLEAN
 
     def _should_enter_hold(self) -> bool:
         """GATE-01b: HOLD when UNCERTAIN > 0 AND unfixed CONFIRMED == 0.

@@ -26,7 +26,7 @@ from code_forge.advisory import AdvisoryFinding
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
-from code_forge.machine import StateMachine
+from code_forge.machine import StateMachine, _FixpointResult
 from code_forge.runtime import RuntimeRunner
 from code_forge.state import Mode
 
@@ -158,7 +158,7 @@ class TestRuntimeRunnerAdvisoryPlacement:
 
         # No state findings -> fixpoint is reached
         assert sm._state.findings == []
-        assert sm._fixpoint_reached()
+        assert sm._fixpoint_reached() == _FixpointResult.CLEAN
 
     def test_runtime_runner_run_called_with_diff(self, tmp_path):
         """_run_advisory_axes calls runner.run with diff_text and cwd."""
