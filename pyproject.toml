@@ -37,6 +37,7 @@ dev = [
     # semgrep>=1.100 uses io_uring which fails on systems with low RLIMIT_MEMLOCK.
     # Pin to <1.100 until the upstream io_uring memory issue is resolved.
     "semgrep>=1.0,<1.100",
+    "jsonschema>=4.18",
 ]
 vertex = [
     "google-auth>=2.35.0",
@@ -50,7 +51,7 @@ code-forge = "code_forge.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-code_forge = ["skills/**/*", "skills/**/.gitkeep", "rules/**/*"]
+code_forge = ["skills/**/*", "skills/**/.gitkeep", "rules/**/*", "gate.schema.json"]
 
 [tool.ruff]
 line-length = 105

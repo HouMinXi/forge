@@ -466,7 +466,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument(
         "--force", action="store_true",
-        help="overwrite existing gate.yaml",
+        help="overwrite existing gate.yaml and gate.schema.json",
     )
 
     # --- SMOKE-RUN subcommand: execute a command and write a smoke receipt ---
@@ -1074,6 +1074,7 @@ def main() -> int:
         return _handle_smoke_run(args, cwd=Path.cwd())
 
     elif args.subcommand == 'init':
+        from importlib.resources import files as _pkg_files
         from .init_template import GATE_YAML_TEMPLATE
         gate_dir = Path.cwd() / ".code-forge"
         gate_dir.mkdir(parents=True, exist_ok=True)
@@ -1087,6 +1088,11 @@ def main() -> int:
             return EXIT_CLI_ERROR
         gate_path.write_text(GATE_YAML_TEMPLATE)
         print("Created %s" % gate_path, file=sys.stderr)
+        schema_path = gate_dir / "gate.schema.json"
+        if not schema_path.exists() or args.force:
+            schema_text = _pkg_files('code_forge').joinpath('gate.schema.json').read_text(encoding='utf-8')
+            schema_path.write_text(schema_text)
+            print("Created %s" % schema_path, file=sys.stderr)
         return EXIT_PASS
 
     else:
