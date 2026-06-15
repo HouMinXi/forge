@@ -1,25 +1,25 @@
 # Configuration Reference
 
 code-forge is configured through environment variables and an optional
-`backends.yaml` file. Most users need only environment variables.
+`gate.yaml` file. Most users need only environment variables.
 
 ## Environment Variables
 
 ### FORGE_BACKEND
 
-Selects a named backend defined in `backends.yaml`.
+Selects a named backend defined in the `backends:` key of `.code-forge/gate.yaml`.
 
 - **Default**: `session-default` (uses the `claude` CLI with the active
   session model -- no model pin)
 - **Precedence**: `--backend` CLI flag > `FORGE_BACKEND` env > `default: true`
-  entry in `backends.yaml` > session-default
+  entry in `gate.yaml` > session-default
 
 ```bash
 export FORGE_BACKEND=claude-api    # use a named API backend
 export FORGE_BACKEND=local-claude  # use a named CLI backend
 ```
 
-If the named backend does not exist in `backends.yaml`, code-forge exits
+If the named backend does not exist in `gate.yaml`, code-forge exits
 with an error listing the configured backend names.
 
 Setting `FORGE_BACKEND` to an empty string (`""`) falls through to the
@@ -29,22 +29,25 @@ config-file default or session default -- it does not cause an error.
 
 ### FORGE_OUTLET
 
-Forces the review outlet. Two outlets are available:
+Forces the review outlet. Three outlets are available:
 
-- `cli` -- Outlet A: spawns a `claude` subprocess for each review pass.
+- `subprocess` -- spawns a fresh `claude` subprocess for each review pass.
   Requires the `claude` binary in PATH and an authenticated session.
 - `inline` -- Outlet B: runs the merged review skill inside the current
   AI session. No subprocess, no reachability probe.
+- `subagent` -- spawns a fresh Agent per pass; works inside the current
+  session without a subprocess.
 
 - **Default**: auto-detected based on backend reachability probe.
-  Reachable -> `cli`. Unreachable -> error (FAIL CLOSED, no silent
+  Reachable -> `subprocess`. Unreachable -> error (FAIL CLOSED, no silent
   fallback to inline).
 - **Precedence**: `--outlet` CLI flag > `FORGE_OUTLET` env > `outlet` field
   in `gate.yaml` > reachability probe.
 
 ```bash
-export FORGE_OUTLET=cli      # always use CLI subprocess
-export FORGE_OUTLET=inline   # always use inline (no subprocess)
+export FORGE_OUTLET=subprocess   # always use CLI subprocess
+export FORGE_OUTLET=inline       # always use inline (no subprocess)
+export FORGE_OUTLET=subagent     # always use subagent
 ```
 
 When `FORGE_OUTLET=inline`, code-forge never runs the reachability probe.
@@ -56,7 +59,7 @@ the probe latency.
 ### FORGE_LLM_MODEL
 
 Overrides the model used by CLI backends. Has no effect on API backends
-(which use the model configured in `backends.yaml` or the API default).
+(which use the model configured in `gate.yaml` or the API default).
 
 - **Default**: `claude-sonnet-4-6`
 - **Applies to**: `type: cli` backends only
@@ -67,7 +70,7 @@ export FORGE_LLM_MODEL=claude-sonnet-4-6  # back to default
 ```
 
 Useful when you want to run reviews with a more capable model without
-creating a full `backends.yaml` entry.
+creating a full `gate.yaml` backends entry.
 
 ---
 
@@ -93,59 +96,64 @@ Values less than 1 or greater than 120 are rejected with a clear error.
 
 ---
 
-## backends.yaml
+## gate.yaml backends block
 
-`backends.yaml` is an optional configuration file that defines named backends.
-It is located at `~/.config/code-forge/backends.yaml` by default.
+The `backends:` key in `.code-forge/gate.yaml` defines named backends.
+The file is created by `code-forge init` in the project root under
+`.code-forge/gate.yaml`. If the file does not exist, code-forge uses the
+session-default backend (the `claude` CLI with the active session model).
 
-If the file does not exist, code-forge uses the session-default backend
-(the `claude` CLI with the active session model).
+Backends are a **dict** keyed by name -- not a list. The key is the backend
+name used with `FORGE_BACKEND`.
 
 ### File Format
 
 ```yaml
 backends:
-  - name: <backend-name>
+  <backend-name>:
     type: api | cli
     # ... type-specific fields
 ```
 
-The `backends` key is a list. Order matters: the first entry with
-`default: true` is used when `FORGE_BACKEND` is not set and no other
-override applies. If no entry has `default: true`, the first entry is used.
+The first entry with `default: true` is used when `FORGE_BACKEND` is not set
+and no other override applies. If no entry has `default: true`, the
+session-default backend is used.
 
 ### API Backend Fields
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | yes | Unique identifier used by `FORGE_BACKEND` |
 | `type` | yes | Must be `"api"` |
-| `format` | yes | API format: `"anthropic"` or `"openai"` |
-| `base_url` | yes | API base URL (including version path for OpenAI) |
-| `api_key_env` | yes | Name of the env var that holds the API key |
+| `format` | yes | API format: `"anthropic"`, `"openai"`, or `"vertex"` |
+| `base_url` | yes (anthropic/openai) | API base URL (including version path for OpenAI) |
+| `api_key_env` | yes (anthropic/openai) | Name of the env var that holds the API key |
+| `project_id` | yes (vertex) | GCP project ID |
+| `region` | no (vertex) | GCP region (default: global) |
+| `credentials_path` | no (vertex) | Path to service account JSON key file |
 | `model` | no | Model ID (leave empty to use API default) |
+| `max_tokens` | no | Output token cap (default: 16384) |
 | `default` | no | If `true`, use this backend when no override is set |
 
-**Security note**: Never put an API key directly in `backends.yaml`. Use
+**Security note**: Never put an API key directly in `gate.yaml`. Use
 `api_key_env` to specify the name of an environment variable, and set
 the actual key in your shell or secrets manager. code-forge rejects any
-`backends.yaml` entry that contains an `api_key` field.
+backend entry that contains an `api_key` field.
 
 ### CLI Backend Fields
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | yes | Unique identifier used by `FORGE_BACKEND` |
 | `type` | yes | Must be `"cli"` |
 | `model` | no | Model to pass to the CLI (empty = session default) |
 | `command` | no | CLI binary name or path (default: `"claude"`) |
+| `max_tokens` | no | Output token cap (default: 16384) |
 | `default` | no | If `true`, use this backend when no override is set |
 
 ### Example: Anthropic API
 
 ```yaml
 backends:
-  - name: claude-api
+  claude-api:
     type: api
     format: anthropic
     base_url: https://api.anthropic.com
@@ -164,7 +172,7 @@ export ANTHROPIC_API_KEY=sk-ant-api03-XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 ```yaml
 backends:
-  - name: openai
+  openai-compatible:
     type: api
     format: openai
     base_url: https://api.openai.com/v1
@@ -179,7 +187,7 @@ export OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 ```yaml
 backends:
-  - name: local-claude
+  local-claude:
     type: cli
     model: claude-opus-4-5
     command: claude
@@ -191,20 +199,20 @@ No API key needed -- uses your existing `claude auth` session.
 
 ```yaml
 backends:
-  - name: claude-api
+  claude-api:
     type: api
     format: anthropic
     base_url: https://api.anthropic.com
     api_key_env: ANTHROPIC_API_KEY
     default: true
 
-  - name: openai
+  openai-compatible:
     type: api
     format: openai
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
 
-  - name: local-claude
+  local-claude:
     type: cli
     model: claude-opus-4-5
     command: claude
@@ -212,8 +220,16 @@ backends:
 
 With this config:
 - Default: `claude-api` (API call with Anthropic key)
-- `FORGE_BACKEND=openai`: use OpenAI API
+- `FORGE_BACKEND=openai-compatible`: use OpenAI API
 - `FORGE_BACKEND=local-claude`: use local claude CLI with Opus
+
+### gate.schema.json
+
+`code-forge init` writes `gate.schema.json` alongside `gate.yaml` in the
+`.code-forge/` directory. The schema file enables IDE tooling that reads
+yaml-language-server directives. VS Code and Cursor honor the `$schema`
+directive automatically; PyCharm ignores it and requires manual schema
+registration via Settings -> Languages -> JSON Schema Mappings.
 
 ---
 
