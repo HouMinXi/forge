@@ -39,12 +39,19 @@ def run_outlet_c(
     falsifier: "Falsifier | None" = None,
     max_total_rounds: int = 20,
     clean_round_threshold: int = 3,
+    registry: "dict | None" = None,
+    backend: "object | None" = None,
+    advisory_runners: "list | None" = None,
+    engine: str = "auto",
 ) -> Verdict:
     """Run Outlet C through StateMachine with reviewer excerpt passthrough."""
+    if registry is None:
+        registry = {}
+    if advisory_runners is None:
+        advisory_runners = []
     if falsifier is None:
         from .factories import build_falsifier
-        # No backend passed -- thread one through run_outlet_c before Outlet C goes live.
-        falsifier = build_falsifier("auto")
+        falsifier = build_falsifier(engine, backend=backend)
 
     def _l1_provider() -> tuple[list[StateFinding], list[dict], Usage, float]:
         findings: list[StateFinding] = []
@@ -91,11 +98,9 @@ def run_outlet_c(
         source_hash=source_hash,
         baseline_spec_repr="outlet-c",
         cwd=cwd,
-        registry={},
-        l0_runner=lambda reg, files: ([], []),
+        registry=registry,
         l1_provider=_l1_provider,
-        l2_runner=lambda df, bc: ([], []),
-        e2e_runner=lambda dt, rr: ([], []),
+        advisory_runners=advisory_runners,
         max_total_rounds=max_total_rounds,
         clean_round_threshold=clean_round_threshold,
     )

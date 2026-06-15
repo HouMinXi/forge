@@ -1355,17 +1355,35 @@ def _run(args, env, cwd: Path) -> Verdict:
     # are now in scope at this point in the flow.
     if outlet == "subagent":
         from .outlet_c import run_outlet_c
+        from .taint import TaintRunner
+        from .runtime import RuntimeRunner
+        from .legacy import LegacyRunner
+        from .graph_triage import GraphTriageRunner
+        from .daemon_state import DaemonStateRunner
 
         _post_image, _conv_digest = _assemble_post_image(
             cwd, resolved.git_diff or ""
         )
         _subagent_spawn = _make_subagent_spawn(backend, _conv_digest, _post_image)
+        _c_taint = TaintRunner()
+        _c_runtime = RuntimeRunner(backend=backend)
+        _c_graph = GraphTriageRunner()
+        # Do NOT set _c_graph._cached_findings here.
+        # The pre-fetched graph findings variable is defined later in _run,
+        # after this block's early return -- it is not in scope here.
+        # GraphTriageRunner fetches fresh findings on its advisory pass.
+        _c_daemon = DaemonStateRunner(backend=backend)
+        _c_legacy = LegacyRunner()
         verdict = run_outlet_c(
             resolved_review=resolved,
             source_hash=source_hash,
             cwd=cwd,
             spawn_fn=_subagent_spawn,
             clean_round_threshold=_clean_threshold,
+            registry=registry,
+            backend=backend,
+            engine=engine_choice,
+            advisory_runners=[_c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy],
         )
         # Test-assertion review gate (D14/SC4): advisory findings to stderr.
         # D8 exception: not recorded in receipts (see _run_test_assertion_review).

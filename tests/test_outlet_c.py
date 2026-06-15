@@ -524,3 +524,74 @@ class TestOutletCInfraSourceTagging:
         for f in infra:
             assert f.disposition.value == "CONFIRMED"
             assert "schema-fail" in f.fingerprint
+
+
+# ---------------------------------------------------------------------------
+# Phase 24.1-02: real legs wiring tests
+# ---------------------------------------------------------------------------
+
+class TestRealLegsWiring:
+    """registry, backend, advisory_runners, engine params passed correctly."""
+
+    def test_outlet_c_registry_passed(self, tmp_path):
+        """StateMachine receives the real registry dict, not {}."""
+        real_registry = {"semgrep": object()}
+        with patch("code_forge.outlet_c.StateMachine") as mock_sm:
+            mock_sm.return_value.run.return_value = Verdict.PASS
+            run_outlet_c(
+                resolved_review=_resolved_with_diff(),
+                source_hash=_source_hash(),
+                cwd=tmp_path,
+                spawn_fn=lambda pn, dt: _valid_reviewer_json(),
+                falsifier=StubFalsifier(),
+                registry=real_registry,
+            )
+        _, kwargs = mock_sm.call_args
+        assert kwargs["registry"] is real_registry
+
+    def test_outlet_c_advisory_runners_passed(self, tmp_path):
+        """StateMachine receives the advisory_runners list."""
+        mock_runner = object()
+        with patch("code_forge.outlet_c.StateMachine") as mock_sm:
+            mock_sm.return_value.run.return_value = Verdict.PASS
+            run_outlet_c(
+                resolved_review=_resolved_with_diff(),
+                source_hash=_source_hash(),
+                cwd=tmp_path,
+                spawn_fn=lambda pn, dt: _valid_reviewer_json(),
+                falsifier=StubFalsifier(),
+                advisory_runners=[mock_runner],
+            )
+        _, kwargs = mock_sm.call_args
+        assert kwargs["advisory_runners"] == [mock_runner]
+
+    def test_outlet_c_falsifier_gets_backend(self, tmp_path):
+        """When falsifier=None, build_falsifier is called with backend=backend."""
+        mock_backend = object()
+        with patch("code_forge.outlet_c.StateMachine") as mock_sm, \
+             patch("code_forge.factories.build_falsifier") as mock_bf:
+            mock_sm.return_value.run.return_value = Verdict.PASS
+            mock_bf.return_value = StubFalsifier()
+            run_outlet_c(
+                resolved_review=_resolved_with_diff(),
+                source_hash=_source_hash(),
+                cwd=tmp_path,
+                spawn_fn=lambda pn, dt: _valid_reviewer_json(),
+                falsifier=None,
+                backend=mock_backend,
+            )
+        mock_bf.assert_called_once()
+        _, kw = mock_bf.call_args
+        assert kw.get("backend") is mock_backend
+
+    def test_outlet_c_backward_compat_no_registry(self, tmp_path):
+        """Calling without registry param raises no TypeError."""
+        result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=tmp_path,
+            spawn_fn=lambda pn, dt: _valid_reviewer_json(),
+            falsifier=StubFalsifier(),
+            max_total_rounds=4,
+        )
+        assert result == Verdict.PASS
