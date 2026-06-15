@@ -8,6 +8,7 @@ __version__ = "2.0.0a1"
 from .exit_codes import (
     EXIT_BUSY,
     EXIT_CLI_ERROR,
+    EXIT_DELEGATED,
     EXIT_ESCALATED,
     EXIT_FAIL,
     EXIT_PASS,

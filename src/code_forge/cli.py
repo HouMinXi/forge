@@ -1195,8 +1195,12 @@ def _run(args, env, cwd: Path) -> Verdict:
         reachability_fn=_reachability,
     )
     if outlet == "inline":
-        # SKILL.md owns the review pipeline; CLI exits early
-        return Verdict.PASS
+        # D4 honesty floor: inline does not run the StateMachine gate.
+        # Declare DELEGATED so callers can distinguish from a real PASS.
+        sys.stderr.write(
+            "code-forge: DELEGATED -- review delegated to session + external R1; exit 5\n"
+        )
+        return Verdict.DELEGATED
 
     # Step 6: backend resolution (moved above subagent dispatch so backend
     # is available to the C-leg spawn_fn closure -- M-R2-07).
