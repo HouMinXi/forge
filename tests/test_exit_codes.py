@@ -7,6 +7,7 @@ import pytest
 from code_forge.exit_codes import (
     EXIT_BUSY,
     EXIT_CLI_ERROR,
+    EXIT_DELEGATED,
     EXIT_ESCALATED,
     EXIT_FAIL,
     EXIT_PASS,
@@ -19,12 +20,12 @@ class TestExitCodeConstants:
     """Verify EXIT_* constants are correct and distinct."""
 
     def test_all_constants_distinct(self):
-        """SC-4: all 5 EXIT_* constants are int 0-4 distinct."""
+        """SC-4: all 6 EXIT_* constants are int 0-5 distinct."""
         values = [EXIT_PASS, EXIT_FAIL, EXIT_CLI_ERROR, EXIT_BUSY,
-                  EXIT_ESCALATED]
+                  EXIT_ESCALATED, EXIT_DELEGATED]
         assert all(isinstance(v, int) for v in values)
-        assert len(set(values)) == 5
-        assert set(values) == {0, 1, 2, 3, 4}
+        assert len(set(values)) == 6
+        assert set(values) == {0, 1, 2, 3, 4, 5}
 
     def test_constant_values(self):
         """Constants match REQUIREMENTS spec literal."""
@@ -33,6 +34,7 @@ class TestExitCodeConstants:
         assert EXIT_CLI_ERROR == 2
         assert EXIT_BUSY == 3
         assert EXIT_ESCALATED == 4
+        assert EXIT_DELEGATED == 5
 
 
 class TestVerdictToExit:
@@ -56,6 +58,27 @@ class TestVerdictToExit:
             verdict_to_exit(Verdict.PENDING)
 
 
+class TestDelegatedVerdict:
+    """Verdict.DELEGATED exit code tests (Phase 24.1-01)."""
+
+    def test_verdict_delegated_exit_code(self):
+        """verdict_to_exit(Verdict.DELEGATED) == 5."""
+        assert verdict_to_exit(Verdict.DELEGATED) == 5
+
+    def test_exit_delegated_constant(self):
+        """EXIT_DELEGATED constant equals 5."""
+        assert EXIT_DELEGATED == 5
+
+    def test_pass_exit_unchanged(self):
+        """Regression: PASS still maps to 0."""
+        assert verdict_to_exit(Verdict.PASS) == 0
+
+    def test_pending_still_raises(self):
+        """Regression: PENDING still raises ValueError."""
+        with pytest.raises(ValueError, match="PENDING"):
+            verdict_to_exit(Verdict.PENDING)
+
+
 class TestInitReExport:
     """Verify __init__.py re-exports EXIT_* constants (H5, R3-L3)."""
 
@@ -64,6 +87,7 @@ class TestInitReExport:
         from code_forge import (
             EXIT_BUSY,
             EXIT_CLI_ERROR,
+            EXIT_DELEGATED,
             EXIT_ESCALATED,
             EXIT_FAIL,
             EXIT_PASS,
@@ -71,6 +95,7 @@ class TestInitReExport:
         from code_forge.exit_codes import (
             EXIT_BUSY as EC_BUSY,
             EXIT_CLI_ERROR as EC_CLI,
+            EXIT_DELEGATED as EC_DEL,
             EXIT_ESCALATED as EC_ESC,
             EXIT_FAIL as EC_FAIL,
             EXIT_PASS as EC_PASS,
@@ -80,3 +105,4 @@ class TestInitReExport:
         assert EXIT_CLI_ERROR == EC_CLI
         assert EXIT_BUSY == EC_BUSY
         assert EXIT_ESCALATED == EC_ESC
+        assert EXIT_DELEGATED == EC_DEL

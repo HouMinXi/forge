@@ -32,6 +32,7 @@ class Verdict(str, Enum):
     FAIL = "FAIL"
     ESCALATED = "ESCALATED"
     PENDING = "PENDING"
+    DELEGATED = "DELEGATED"
 
 
 @dataclass
