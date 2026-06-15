@@ -190,14 +190,14 @@ def load_backend_configs(
 ) -> List[BackendConfig]:
     """Parse already-loaded config mapping into BackendConfig list.
 
-    Expects backends as a dict with backend names as keys (D-11):
+    Expects backends as a dict with backend names as keys:
       backends:
         mimo:
           type: api
           ...
 
     Returns [] for None / empty / missing backends key.
-    Raises CliError on invalid schema or multiple default: true entries (D-03).
+    Raises CliError on invalid schema or multiple default: true entries.
     """
     if data is None:
         return []
@@ -217,7 +217,7 @@ def load_backend_configs(
             )
         entry["name"] = name
         configs.append(_parse_backend_entry(entry))
-    # D-03: multiple default: true entries raise CliError
+    # multiple default: true entries raise CliError
     defaults = [c for c in configs if c.default]
     if len(defaults) > 1:
         names = ", ".join(c.name for c in defaults)

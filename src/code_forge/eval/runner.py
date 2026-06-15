@@ -1,19 +1,18 @@
-"""Eval pipeline replay runner: per-entry subprocess invocation (D-19).
+"""Eval pipeline replay runner: per-entry subprocess invocation.
 
 Each corpus entry runs through the COMPLETE forge pipeline via subprocess.
 Each run is an independent subprocess invocation with fresh context (separate
 temp dir, no shared LLM conversation) to preserve statistical independence
-for D-11's 2-of-3 majority.
+for 2-of-3 majority voting.
 
-Run count is axis-dependent (D-11):
+Run count is axis-dependent:
   - Deterministic axes (TRUST, SEC, FIXVAL): default runs=1
   - LLM-reviewed axes (RUNTIME, LEGACY, INTENT): default runs=3
 
-AxisHook is an INTERNAL registration seam for the 5 scheduled axes (D-13,
-carry-forward 3). It is NOT a public SPI -- no entry_points, no importlib,
+AxisHook is an INTERNAL registration seam for the 5 scheduled axes. It is NOT a public SPI -- no entry_points, no importlib,
 no config-driven plugin discovery.
 
-Advisory scoring (D-06/D-12):
+Advisory scoring:
   - After each _run_single call, BEFORE temp dir cleanup, reads
     advisory-findings.json from the temp dir.
   - Concatenates description text of findings whose id != "runtime-smoke-summary"
@@ -41,7 +40,7 @@ from code_forge.eval.scorer import EvalResult, advisory_caught
 from code_forge.trust import record_trust
 
 
-# -- Axis-dependent run counts (D-11) -----------------------------------------
+# -- Axis-dependent run counts -----------------------------------------
 
 DETERMINISTIC_TAGS: frozenset[str] = frozenset({"TRUST", "SEC", "FIXVAL"})
 """Axis tags that produce deterministic results -- default to 1 run."""
@@ -50,7 +49,7 @@ _DEFAULT_LLM_RUNS = 3
 """Default run count for LLM-reviewed axes (RUNTIME, LEGACY, INTENT)."""
 
 
-# -- Axis hook seam (D-13, carry-forward 3) ------------------------------------
+# -- Axis hook seam ------------------------------------
 
 
 class AxisHook:
@@ -110,7 +109,7 @@ register_axis_hook(FixvalAxisHook())
 
 
 class RuntimeAxisHook(AxisHook):
-    """RUNTIME eval axis hook: advisory content-match scoring (D-06/D-12).
+    """RUNTIME eval axis hook: advisory content-match scoring.
 
     pre_review: no-op (no per-entry setup needed for RUNTIME advisory).
 
@@ -212,7 +211,7 @@ def _is_infra_failure(stderr: str) -> bool:
 
 
 def _default_runs(entry: CorpusEntry) -> int:
-    """Determine default run count from axis tags (D-11).
+    """Determine default run count from axis tags.
 
     If any tag is in DETERMINISTIC_TAGS, default to 1 run.
     Otherwise (LLM-reviewed), default to 3 runs.
@@ -277,9 +276,9 @@ def replay_entry(
 
     Each run creates an isolated temp directory with a fresh git repo,
     applies the diff, and invokes code-forge review. Run count is
-    axis-dependent per D-11 unless overridden with ``runs``.
+    axis-dependent unless overridden with ``runs``.
 
-    Advisory scoring (D-06/D-12): for entries with expected_advisory, reads
+    Advisory scoring: for entries with expected_advisory, reads
     advisory-findings.json from the temp dir BEFORE cleanup, concatenates
     descriptions (excluding runtime-smoke-summary), and calls advisory_caught()
     per-run. The per-run advisory hit count is stored in advisory_caught_count
@@ -338,7 +337,7 @@ def replay_entry(
                     hook.post_review(entry, eval_result)
                 return eval_result
 
-            # Advisory scoring: read advisory-findings.json BEFORE cleanup (D-06).
+            # Advisory scoring: read advisory-findings.json BEFORE cleanup.
             # Only score if entry has expected_advisory keywords.
             if entry.expected_advisory:
                 findings = _read_advisory_findings(temp_dir)
@@ -351,7 +350,7 @@ def replay_entry(
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # Determine actual verdict (D-11 majority vote for multi-run)
+    # Determine actual verdict (majority vote for multi-run)
     threshold = math.ceil(num_runs / 2) if num_runs > 1 else 1
     if caught_count >= threshold:
         actual_verdict = "HOLD"

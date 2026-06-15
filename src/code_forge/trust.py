@@ -1,11 +1,11 @@
-"""Trust gate for repo-supplied gate.yaml backends (SEC-01).
+"""Trust gate for repo-supplied gate.yaml backends.
 
 Implements a direnv-style allow/deny model: the user explicitly trusts
 each repo's gate.yaml before its backends are used. Trust is stored in
 ~/.config/code-forge/trusted.json (honoring XDG_CONFIG_HOME), keyed by
 the realpath of gate.yaml. A repo cannot carry its own trust record.
 
-The hash covers ONLY the backends block (D-03), not the entire file.
+The hash covers ONLY the backends block, not the entire file.
 Changes to outlet/test/detect sections do not require re-trusting.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 
-# -- Dangerous fields (D-05) -----------------------------------------------
+# -- Dangerous fields -----------------------------------------------
 
 DANGEROUS_FIELDS: frozenset[str] = frozenset({
     "base_url",          # controls where credentials are sent (CWE-522)
@@ -129,7 +129,7 @@ def revoke_trust(gate_yaml_path: Path) -> None:
     """Remove the trust record for gate.yaml (no-op if not trusted).
 
     Operates on the trusted.json entry keyed by the current gate.yaml
-    realpath. There is NO in-repo trust file to read or delete (D-04).
+    realpath. There is NO in-repo trust file to read or delete.
     """
     store = _load_trust_store()
     key = str(gate_yaml_path.resolve())

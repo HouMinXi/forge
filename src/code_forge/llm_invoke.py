@@ -58,7 +58,7 @@ class LLMInvokeError(Exception):
 DEFAULT_TIMEOUT_S = 120
 # DEFAULT_MODEL is kept for backward-compat (external importers). It is no longer
 # used as the fallback inside _resolve_model(); omitting --model when unset lets the
-# session default model run instead of pinning a specific model (D-26 no-pin contract).
+# session default model run instead of pinning a specific model.
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Default envelope keys accepted by _extract_json_from_text when the caller does not
@@ -73,10 +73,10 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 # comment so the next reviewer sees the full map without re-deriving it.
 _REVIEW_ENVELOPE_KEYS: frozenset[str] = frozenset({"findings", "code_excerpts", "surfaces"})
 
-# Module-level active process tracker for signal handler cleanup. Per D-03.
+# Module-level active process tracker for signal handler cleanup.
 _active_proc: Optional[subprocess.Popen] = None
 
-# Signal handler state. Per D-03.
+# Signal handler state.
 _original_sigint: Any = None
 _original_sigterm: Any = None
 _handlers_installed = False
@@ -154,7 +154,7 @@ def _extract_json_from_text(
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
-    """Kill process group with SIGTERM escalation. Per D-04."""
+    """Kill process group with SIGTERM escalation."""
     import signal as _signal
     try:
         os.killpg(proc.pid, _signal.SIGTERM)
@@ -167,7 +167,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 
 def _install_signal_handlers() -> None:
-    """Install chained signal handlers for subprocess cleanup. Per D-03.
+    """Install chained signal handlers for subprocess cleanup.
 
     Copies lock.py chain pattern: save previous handler, call it after cleanup.
     Idempotent: does nothing if handlers already installed.
@@ -201,7 +201,7 @@ def _install_signal_handlers() -> None:
     _handlers_installed = True
 
 
-# Install at module load time so cleanup is always active. Per D-03.
+# Install at module load time so cleanup is always active.
 _install_signal_handlers()
 
 
@@ -248,7 +248,7 @@ def _invoke_cli(
     backend: BackendConfig,
     timeout_s: int,
 ) -> LLMResult:
-    """Invoke LLM via cli subprocess. Returns LLMResult with Usage(0,0) per D-07."""
+    """Invoke LLM via cli subprocess. Returns LLMResult with Usage(0,0)"""
     # Resolve binary: use backend.command if set, else default to "claude"
     binary_name = backend.command or "claude"
     binary = shutil.which(binary_name)
@@ -284,7 +284,7 @@ def _invoke_cli(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=True,  # Unix: creates new session (setsid) per D-02
+            start_new_session=True,  # Unix: creates new session (setsid)
         )
     except OSError as exc:
         duration = time.monotonic() - start
@@ -578,7 +578,7 @@ def _invoke_vertex(
     """Vertex AI rawPredict API call. Returns (content_str, usage_dict).
 
     Uses OAuth2 Bearer token (google-auth). Requires code-review-forge[vertex].
-    Wire protocol per D-13:
+    Wire protocol:
       - anthropic_version in body (not header)
       - model in URL (not body)
       - Bearer token auth (not x-api-key)

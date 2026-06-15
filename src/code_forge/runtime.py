@@ -7,16 +7,16 @@ forge's verdict honest by declaring what it did NOT verify at runtime.
 
 Three concrete forms:
   (a) write_smoke_receipt / read_smoke_receipts: machine-verifiable receipts
-      keyed by diff content-hash (D-01/D-07).
-  (b) RuntimeRunner: advisory axis making one fixed LLM call (D-04/D-05)
+      keyed by diff content-hash.
+  (b) RuntimeRunner: advisory axis making one fixed LLM call
       to enumerate runtime surfaces and lifecycle/side-effect risks.
-  (c) RUNTIME_LIFECYCLE_QUESTION: canonical fixed question constant (D-05/D-10),
+  (c) RUNTIME_LIFECYCLE_QUESTION: canonical fixed question constant,
       exported so SKILL.md mirror can be drift-tested.
 
-D-04: RUNTIME axis is ALWAYS-ON (no gate.yaml opt-out). LLM failure records
+RUNTIME axis is ALWAYS-ON (no gate.yaml opt-out). LLM failure records
       SKIPPED with reason -- never silent. Advisory never blocks verdict.
-D-08: Default state is UNVERIFIED (fail-closed). No receipt = UNVERIFIED.
-D-11: Per-surface NOT VERIFIED = (LLM-enumerated) minus (receipt-declared),
+Default state is UNVERIFIED (fail-closed). No receipt = UNVERIFIED.
+Per-surface NOT VERIFIED = (LLM-enumerated) minus (receipt-declared),
       using case-insensitive substring containment (either direction).
 """
 from __future__ import annotations
@@ -32,10 +32,10 @@ from .llm_invoke import LLMInvokeError, llm_invoke
 from .source import compute_source_hash
 
 # ---------------------------------------------------------------------------
-# D-05 canonical lifecycle question constant
+# canonical lifecycle question constant
 # Must contain: {diff_text} placeholder, runtime surfaces, lifecycle/side-effect
 # risks, smoke test needs, JSON response with "surfaces" and "findings" keys.
-# D-10: SKILL.md carries a verbatim mirror; drift test asserts equality.
+# SKILL.md carries a verbatim mirror; drift test asserts equality.
 # ---------------------------------------------------------------------------
 
 RUNTIME_LIFECYCLE_QUESTION = (
@@ -66,7 +66,7 @@ RUNTIME_LIFECYCLE_QUESTION = (
 
 
 # ---------------------------------------------------------------------------
-# Smoke receipt write/read  (D-01/D-07)
+# Smoke receipt write/read
 # ---------------------------------------------------------------------------
 
 
@@ -82,8 +82,8 @@ def write_smoke_receipt(
     """Write a smoke-test receipt keyed by diff content-hash.
 
     Uses atomic tmp+replace pattern (receipt.py model) to prevent partial files.
-    D-01: machine-verifiable receipt only -- no executor self-report.
-    D-07: receipt keyed by diff content-hash (invalidated when diff changes).
+    machine-verifiable receipt only -- no executor self-report.
+    receipt keyed by diff content-hash (invalidated when diff changes).
 
     Args:
         receipts_dir: directory to write receipts into (created if absent).
@@ -137,7 +137,7 @@ def read_smoke_receipts(receipts_dir: Path) -> list[dict]:
     """Read all smoke receipts from a directory.
 
     Only reads files matching smoke-receipt-*.json pattern.
-    D-07: receipt files must be named smoke-receipt-{surface}.json.
+    receipt files must be named smoke-receipt-{surface}.json.
 
     Args:
         receipts_dir: directory to read receipts from.
@@ -167,7 +167,7 @@ def read_smoke_receipts(receipts_dir: Path) -> list[dict]:
 
 
 def _surface_matches(llm_surface: str, receipt_surface: str) -> bool:
-    """Case-insensitive substring containment match (D-11, either direction).
+    """Case-insensitive substring containment match (either direction).
 
     Normalizes hyphens and underscores to spaces before comparing so that
     a receipt written with --surface "nftables-rules" matches the LLM surface
@@ -182,7 +182,7 @@ def _surface_matches(llm_surface: str, receipt_surface: str) -> bool:
 
 
 def _build_skipped_finding(reason: str) -> AdvisoryFinding:
-    """Build a SKIPPED AdvisoryFinding for D-04 never-silent-skip."""
+    """Build a SKIPPED AdvisoryFinding (never-silent-skip)."""
     return AdvisoryFinding(
         id="runtime-skipped",
         axis="RUNTIME",
@@ -285,8 +285,8 @@ class RuntimeRunner:
     """Advisory axis: lifecycle/side-effect review + smoke evidence.
 
     Satisfies the AxisRunner Protocol (is_advisory=True).
-    D-04: always-on, no gate.yaml opt-out.
-    D-04: LLM failure -> SKIPPED finding with reason, never silent.
+    always-on, no gate.yaml opt-out.
+    LLM failure -> SKIPPED finding with reason, never silent.
     """
 
     def __init__(self, backend=None) -> None:
