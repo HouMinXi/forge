@@ -96,10 +96,10 @@ def _emit_ci_output(
 def _load_gate_backends(gate_yaml_path: Path) -> list:
     """Load backend configs from gate.yaml, or return [] if absent.
 
-    Trust guard (SEC-01): refuses to return backend configs for untrusted
+    Trust guard: refuses to return backend configs for untrusted
     repos. When gate.yaml exists but its backends block hash does not match
     the stored trust record in ~/.config/code-forge/trusted.json, returns []
-    and prints a warning to stderr (D-06). The user must run
+    and prints a warning to stderr. The user must run
     ``code-forge trust`` to explicitly authorize the backends.
 
     Raises:
@@ -120,7 +120,7 @@ def _load_gate_backends(gate_yaml_path: Path) -> list:
     if gd is None or not isinstance(gd, dict):
         return []
 
-    # Trust guard (SEC-01 / D-06): check trust before loading backends.
+    # Trust guard: check trust before loading backends.
     from .trust import is_trusted
     if not is_trusted(gate_yaml_path, gd):
         print(
@@ -477,7 +477,7 @@ def _build_parser() -> argparse.ArgumentParser:
             'Execute a command, capture transcript + exit code, and write '
             'a smoke receipt keyed by diff content-hash. '
             'When no receipt exists for the current diff, the RUNTIME axis '
-            'reports UNVERIFIED. Silence never reads as verified (D-09). '
+            'reports UNVERIFIED. Silence never reads as verified. '
             'Exit codes: passthrough from the executed command.'
         ),
     )
@@ -512,7 +512,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="revoke trust for current repo",
     )
 
-    # --- EVAL subcommand: false-green rate evaluation (D-08) ---
+    # --- EVAL subcommand: false-green rate evaluation ---
     eval_parser = subparsers.add_parser(
         'eval',
         help='evaluate false-green rate on bug corpus',
@@ -683,7 +683,7 @@ def _run_test_assertion_review(
 
 
 def _handle_smoke_run(args, cwd: Path) -> int:
-    """Handle ``code-forge smoke-run`` subcommand (D-07).
+    """Handle ``code-forge smoke-run`` subcommand.
 
     Executes the user-supplied command, captures stdout+stderr, writes a
     smoke receipt keyed by the current diff content-hash. Exits with the
@@ -798,7 +798,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
 
 
 def _run_eval(args) -> int:
-    """Handle ``code-forge eval`` subcommand (D-08).
+    """Handle ``code-forge eval`` subcommand.
 
     Loads the corpus manifest, replays each entry through the pipeline,
     computes summary, prints table to stderr, optionally writes JSON.
@@ -878,7 +878,7 @@ def _run_eval(args) -> int:
 
 
 def _run_trust(args, cwd: Path) -> int:
-    """Handle ``code-forge trust`` subcommand (D-04).
+    """Handle ``code-forge trust`` subcommand.
 
     Bare trust: mark current repo's gate.yaml as trusted.
     --status: show trust state for current repo.
@@ -932,7 +932,7 @@ def _run_trust(args, cwd: Path) -> int:
         )
         return EXIT_PASS
 
-    # Bare trust: display dangerous fields (D-05), then record trust.
+    # Bare trust: display dangerous fields, then record trust.
     dangers = find_dangerous_fields(gd)
     if dangers:
         print("Dangerous fields found:", file=sys.stderr)
@@ -1221,7 +1221,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             max_tokens=16384,
         )
     else:
-        # T1: Load gate.yaml backends block (D-16 lightweight loader)
+        # Load gate.yaml backends block
         _gate_yaml_path_b = cwd / ".code-forge" / "gate.yaml"
         try:
             with open(_gate_yaml_path_b, "r", encoding="utf-8") as _f:
@@ -1508,7 +1508,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                     ),
                 )
     except LLMInvokeError as exc:
-        # T4: D-04/D-14 boundary: re-wrap LLMInvokeError as CliError
+        # re-wrap LLMInvokeError as CliError
         raise CliError(
             "backend %s: %s" % (backend.name, exc)
         ) from exc

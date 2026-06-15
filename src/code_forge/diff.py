@@ -162,7 +162,7 @@ def parse_diff_hunks(
 
     Binary, rename-only, and mode-change files (zero hunks) are returned
     in exempt_files. Verify check 5 treats these as explicitly exempt --
-    not silent fall-through (per CONTEXT.md boundary-hunk decision).
+    not silent fall-through (explicit boundary-hunk decision).
     """
     if not diff_text or not diff_text.strip():
         return ({}, [])

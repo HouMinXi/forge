@@ -2,7 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Terminal output formatting, cargo-check style.
 
-Plain text output per D-05. Shows delta findings prominently,
+Plain text output Shows delta findings prominently,
 pre-existing violation count for context, tool versions for
 reproducibility.
 

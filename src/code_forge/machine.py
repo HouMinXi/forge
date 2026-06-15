@@ -176,7 +176,7 @@ class StateMachine:
             raise ValueError("unknown mode: %s" % self.mode)
 
         # Advisory axes run once after convergence, regardless of verdict
-        # (D-16). Covers PASS, HOLD/PENDING, ESCALATED.
+        #. Covers PASS, HOLD/PENDING, ESCALATED.
         self._run_advisory_axes()
         self._serialize_advisories()
         self._display_advisories()
@@ -967,7 +967,7 @@ class StateMachine:
         return ""
 
     def _run_advisory_axes(self) -> None:
-        """Post-convergence dispatch point for advisory axes (D-16).
+        """Post-convergence dispatch point for advisory axes.
 
         Iterates self.advisory_runners, calls runner.run() on each,
         and extends self._advisories with results. Advisory findings
@@ -1003,7 +1003,7 @@ class StateMachine:
                 self._state.infra_errors.extend(runner.infra_errors)
 
     def _serialize_advisories(self) -> None:
-        """Write advisory findings to advisory-findings.json (D-15).
+        """Write advisory findings to advisory-findings.json.
 
         Separate file from review-state.json. Uses tmp+replace atomic
         pattern matching state.py convention.
@@ -1021,16 +1021,16 @@ class StateMachine:
         tmp_path.replace(out_path)
 
     def _display_smoke_status(self) -> None:
-        """Print the RUNTIME smoke status block to stderr (D-09: always prints).
+        """Print the RUNTIME smoke status block to stderr.
 
         Precondition: only called when a RuntimeRunner is in advisory_runners.
 
-        Three cases (D-09/F4 graceful handling):
+        Three cases:
           (a) runtime-smoke-summary finding: display verified/unverified counts.
           (b) runtime-skipped finding: print UNVERIFIED (axis skipped: reason).
           (c) neither: print "smoke: no runtime surfaces detected" fallback.
 
-        Always prints -- silence never reads as verified (D-09).
+        Always prints -- silence never reads as verified.
         Called BEFORE the early-return guard in _display_advisories so an
         empty _advisories list does not suppress the smoke status.
         """
@@ -1068,16 +1068,16 @@ class StateMachine:
         print("smoke: no runtime surfaces detected", file=sys.stderr)
 
     def _display_advisories(self) -> None:
-        """Display advisory findings on stderr after separator (D-17).
+        """Display advisory findings on stderr after separator.
 
-        Smoke status is always printed first (D-09) when a RuntimeRunner is
+        Smoke status is always printed first when a RuntimeRunner is
         present, before the early-return guard. The generic advisory loop
         skips runtime-smoke-summary and runtime-skipped findings to avoid
         double-printing.
 
         Each generic finding formatted as: [AXIS] file:line_range - description
         """
-        # D-09: smoke status ALWAYS prints when RuntimeRunner is present,
+        # smoke status ALWAYS prints when RuntimeRunner is present,
         # even when _advisories is empty (before early-return guard).
         self._display_smoke_status()
 

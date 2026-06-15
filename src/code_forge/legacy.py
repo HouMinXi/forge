@@ -6,7 +6,7 @@ Detects pre-existing L0 issues in files the diff touches, annotates each
 with git-blame attribution, and classifies each as "intended" (SATD /
 commit signal) or "unintended". Advisory only -- never blocks convergence.
 
-Follows TaintRunner / RuntimeRunner structural model (D-05).
+Follows TaintRunner / RuntimeRunner structural model.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ SATD_KEYWORDS = frozenset({
 })
 
 # ---------------------------------------------------------------------------
-# Commit-message intent signals (substring match, ~55% precision per D-03)
+# Commit-message intent signals (substring match, ~55% precision)
 # ---------------------------------------------------------------------------
 INTENT_SIGNALS = frozenset({
     "workaround", "hack", "temp", "fixme", "known-issue",
@@ -54,7 +54,7 @@ def _classify_intent(
     """Classify a pre-existing finding as intended or unintended.
 
     Checks commit message for intent signals, then surrounding source
-    lines (+/-3) for SATD keywords. ~55% precision is accepted (D-03).
+    lines (+/-3) for SATD keywords. ~55% precision is accepted.
 
     Args:
         commit_subject: first line of the blame commit message.
@@ -166,7 +166,7 @@ class LegacyRunner:
             abs_key = str(repo_root / rel_path)
             changed_lines_norm[abs_key] = line_set
 
-        # Step 9: manual line-intersection (D-02, replaces filter_delta).
+        # Step 9: manual line-intersection (replaces filter_delta).
         changed_files_set = set(changed_lines_norm.keys())
         delta_ids: set[str] = set()
         for sf in l0_findings:
@@ -249,11 +249,11 @@ class LegacyRunner:
                 blame_entry.get("subject", ""), source_lines, line_no
             )
 
-            # Build finding ID (D-05).
+            # Build finding ID.
             rule_hint = sf.description[:16].replace(" ", "_")
             finding_id = "legacy:%s:%d:%s" % (blame_key, line_no, rule_hint)
 
-            # Build description (D-07).
+            # Build description.
             description = "[pre-existing] %s [intent: %s]" % (
                 sf.description or "",
                 intent,

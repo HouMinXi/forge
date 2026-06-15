@@ -1,4 +1,4 @@
-"""Eval scorer: false-green rate computation + output formatting (D-10).
+"""Eval scorer: false-green rate computation + output formatting.
 
 Computes four-quadrant classification of eval results:
   - caught: expected HOLD, actually flagged (true positive)
@@ -6,14 +6,14 @@ Computes four-quadrant classification of eval results:
   - correct_pass: expected PASS, actual PASS (true negative)
   - false_positive: expected PASS, actual HOLD (over-block)
 
-Advisory axis scoring (D-06/D-12):
+Advisory axis scoring:
   - advisory_caught: pure-RUNTIME entries (expected_verdict=PASS + expected_advisory
     non-empty) where advisory_caught_count >= majority threshold
   - advisory_missed: pure-RUNTIME entries where advisory_caught_count < threshold
   - advisory_caught_count on EvalResult is SEPARATE from caught_count; it never
     affects actual_verdict computation (prevents eval result corruption)
 
-SKIPPED entries are excluded from the caught+missed denominator (D-12).
+SKIPPED entries are excluded from the caught+missed denominator.
 Output uses raw counts ("Caught: 7/9"), never ratios (carry-forward 2).
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ from code_forge.eval.corpus import CorpusEntry
 
 
 def advisory_caught(advisory_text: str, keywords: list[str]) -> bool:
-    """Case-insensitive keyword substring match against advisory text (D-12).
+    """Case-insensitive keyword substring match against advisory text.
 
     Returns True if any keyword (lowercased) is a substring of advisory_text
     (lowercased). Any single keyword hit is sufficient; ALL keywords need not
@@ -121,9 +121,9 @@ def _is_pure_runtime_advisory(result: EvalResult) -> bool:
 def compute_summary(results: list[EvalResult]) -> EvalSummary:
     """Compute four-quadrant classification from eval results.
 
-    SKIPPED entries are excluded from the caught+missed denominator (D-12).
+    SKIPPED entries are excluded from the caught+missed denominator.
     Verdict-match classification uses expected_verdict and actual_verdict/caught_count.
-    Advisory classification uses advisory_caught_count for pure-RUNTIME entries (D-06).
+    Advisory classification uses advisory_caught_count for pure-RUNTIME entries.
 
     Args:
         results: list of EvalResult from replay_entry calls.
@@ -188,7 +188,7 @@ def format_table(summary: EvalSummary) -> str:
     """Format eval summary as a human-readable ASCII table for stderr.
 
     Uses raw counts "Caught: 7/9", never ratios (carry-forward 2).
-    Skip rate shown beside catch count (D-12).
+    Skip rate shown beside catch count.
     Advisory counts shown when non-zero.
 
     Args:
