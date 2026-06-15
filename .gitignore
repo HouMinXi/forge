@@ -45,3 +45,4 @@ dogfood/
 
 # code-forge runtime receipts (local artifacts, not tracked)
 .code-forge/
+.worktrees/
