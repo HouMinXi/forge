@@ -55,7 +55,26 @@ class LLMInvokeError(Exception):
         self.duration_s = duration_s
 
 
-DEFAULT_TIMEOUT_S = 120
+DEFAULT_TIMEOUT_S = 120  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
+
+
+def _default_timeout_s() -> int:
+    """Resolve the LLM-invocation timeout in seconds, honoring FORGE_LLM_TIMEOUT_S.
+
+    Resolved per call (not frozen at import) so the override takes effect even
+    when the env var is set after import (test fixtures, embedding code). A
+    missing, non-integer, or non-positive value falls back to DEFAULT_TIMEOUT_S.
+    """
+    raw = os.environ.get("FORGE_LLM_TIMEOUT_S")
+    if raw is None:
+        return DEFAULT_TIMEOUT_S
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_TIMEOUT_S
+    return value if value > 0 else DEFAULT_TIMEOUT_S
+
+
 # DEFAULT_MODEL is kept for backward-compat (external importers). It is no longer
 # used as the fallback inside _resolve_model(); omitting --model when unset lets the
 # session default model run instead of pinning a specific model.
@@ -208,7 +227,7 @@ _install_signal_handlers()
 def llm_invoke(
     prompt: str,
     backend: Optional[BackendConfig] = None,
-    timeout_s: int = DEFAULT_TIMEOUT_S,
+    timeout_s: Optional[int] = None,
     expected_keys: frozenset[str] | None = None,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
@@ -216,7 +235,9 @@ def llm_invoke(
     Args:
         prompt: LLM prompt text
         backend: Backend config (defaults to DEFAULT_BACKEND)
-        timeout_s: Timeout in seconds
+        timeout_s: Timeout in seconds. None (default) or a non-positive value
+            resolves FORGE_LLM_TIMEOUT_S at call time, falling back to
+            DEFAULT_TIMEOUT_S.
         expected_keys: Top-level keys expected in the JSON response envelope.
             Used by _invoke_api's fallback JSON extractor when the model
             prepends prose before the JSON (e.g. mimo-pro). None uses
@@ -232,6 +253,8 @@ def llm_invoke(
     """
     if backend is None:
         backend = DEFAULT_BACKEND
+    if timeout_s is None or timeout_s <= 0:
+        timeout_s = _default_timeout_s()
 
     if backend.type == "cli":
         return _invoke_cli(prompt, backend, timeout_s)
