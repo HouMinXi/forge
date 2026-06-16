@@ -56,7 +56,7 @@ Code Change
      |  Three-cycle static review (cycle_counter state machine)
      |        Each cycle = Pass 1 + Pass 2 + Pass 3
      |        P0/P1 -> fix -> counter = 0 -> restart all
-     |        P2 -> fix -> restart current cycle
+     |        P2 -> fix -> counter = 0 -> restart from Cycle 1, Pass 1
      |        P3 -> accumulate (density check -> P2 escalation)
      |        Clean -> auto-continue (no user prompt)
      |        3 consecutive clean cycles -> proceed
@@ -269,10 +269,10 @@ loop:
       goto loop
     
     else if any P2 finding (no P0/P1):
-      [CYCLE RESTART] fix P2 findings, restart current cycle (TRUST-07)
-      report: "[forge] P2 found -- restarting current cycle"
-      do NOT reset cycle_counter to 0
-      restart current cycle from Pass 1
+      [CYCLE RESTART] fix P2 findings, reset cycle_counter to 0, restart from Cycle 1 (TRUST-07)
+      report: "[forge] P2 found -- restarting from Cycle 1"
+      reset cycle_counter to 0
+      restart from Cycle 1, Pass 1
     
     else if only P3 findings:
       [ACCUMULATE with density-based escalation] (TRUST-07 + P3-THRESHOLD-RESEARCH)
@@ -308,7 +308,7 @@ loop:
       goto loop
 ```
 
-**Critical change from current behavior:** The current state machine resets cycle_counter on ANY finding. The new state machine only resets on P0/P1. P2 restarts the current cycle without resetting the counter. P3 uses density-based escalation with deduplication: per-file >5, per-diff >10, or density >0.15/line triggers P2-equivalent restart. Based on P3-THRESHOLD-RESEARCH.md (Google Tricorder, BitsAI-CR, Broken Windows theory, ESLint --max-warnings). Canonical threshold values: src/code_forge/flow_contract.py (drift-guarded by tests/test_flow_contract_drift.py).
+**Critical change from current behavior:** The prior state machine reset cycle_counter on ANY finding. The new state machine resets on P0/P1 and P2 (both reset the counter to 0 and restart from Cycle 1, Pass 1); only low-density P3 accumulates without a reset. P3 uses density-based escalation with deduplication: per-file >5, per-diff >10, or density >0.15/line triggers P2-equivalent restart. Based on P3-THRESHOLD-RESEARCH.md (Google Tricorder, BitsAI-CR, Broken Windows theory, ESLint --max-warnings). Canonical threshold values: src/code_forge/flow_contract.py (drift-guarded by tests/test_flow_contract_drift.py).
 
 ## Adaptive Cycle Count (Relief Mechanism)
 
@@ -706,7 +706,7 @@ Diff-only review cannot catch cross-function inconsistencies. Pass 3 must grep t
 Finding handling depends on severity (see Severity-Gated Cycle Reset above):
 
 - **P0/P1 findings**: Fix ALL findings immediately. cycle_counter = 0. Restart from Cycle 1, Pass 1.
-- **P2 findings**: Fix P2 findings. Restart current cycle from Pass 1. Do NOT reset cycle_counter.
+- **P2 findings**: Fix P2 findings. Reset cycle_counter to 0. Restart from Cycle 1, Pass 1.
 - **P3 findings**: Record but do not fix immediately. Accumulate and continue to next pass.
   - Deduplicate by rule type, then check density thresholds:
   - Per-file >5 distinct rule violations: P2-equivalent restart
@@ -729,7 +729,7 @@ The `check_review_tracker.sh` hook tracks state. After 3 rounds where findings p
 - **Entry**: Step 0 passed
 - **Exit**: 3 consecutive cycles where ALL 3 passes report zero findings (minimum 9 passes total)
 - **On P0/P1**: fix -> counter = 0 -> restart from Cycle 1
-- **On P2**: fix -> restart current cycle
+- **On P2**: fix -> reset cycle_counter to 0 -> restart from Cycle 1, Pass 1
 - **On P3 only**: accumulate (density check -> P2 escalation if thresholds exceeded)
 
 ---
@@ -1492,7 +1492,7 @@ AI-attribution checks. Steps 5-7 (R1/R2/R3) are also skipped for these types:
 
 These are built into the pipeline and must be followed:
 
-1. **Severity-Gated Cycle Reset (TRUST-07)**: P0/P1 findings reset counter to 0 and restart from Cycle 1 Pass 1. P2 findings restart the current cycle without resetting the counter. P3 findings accumulate with density-based escalation: deduplicate by rule type, then check per-file >5, per-diff >10, density >0.15/line -- any trigger causes P2-equivalent restart. Below threshold: accumulate silently, report count, continue. This replaces the previous unconditional reset behavior, reducing wasted passes by an estimated 60%+ while maintaining quality for critical issues.
+1. **Severity-Gated Cycle Reset (TRUST-07)**: P0/P1 findings reset counter to 0 and restart from Cycle 1 Pass 1. P2 findings reset cycle_counter to 0 and restart from Cycle 1 Pass 1. P3 findings accumulate with density-based escalation: deduplicate by rule type, then check per-file >5, per-diff >10, density >0.15/line -- any trigger causes P2-equivalent restart. Below threshold: accumulate silently, report count, continue. This replaces the previous unconditional reset behavior, reducing wasted passes by an estimated 60%+ while maintaining quality for critical issues.
 
 2. **Hard Stop After 3 Rounds With Findings**: hook blocks all Edit/Write. Forces human intervention. Prevents infinite fix-break loops.
 
@@ -1601,7 +1601,7 @@ When `/forge` is invoked:
       backend (cross-Pacific models measured at 113s/pass).
 
    d. **After each cycle of 3 passes**: Merge findings. Apply the same severity-gated
-      state machine as Outlet B: P0/P1 = full counter reset, P2 = cycle restart,
+      state machine as Outlet B: P0/P1 = full counter reset, P2 = counter reset + restart from Cycle 1,
       P3 = accumulate (density check -> P2 escalation), clean = increment counter.
 
    e. **Fresh context guarantee**: Each Agent invocation is a separate subagent with
@@ -1613,7 +1613,7 @@ When `/forge` is invoked:
    (commit readiness report).
 
 4. **Initialize cycle_counter = 0**
-5. **Run cycles**: execute Pass 1, Pass 2, Pass 3 sequentially by Loading their pass files from passes/. Apply severity-gated state machine: P0/P1 = full reset, P2 = cycle restart, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
+5. **Run cycles**: execute Pass 1, Pass 2, Pass 3 sequentially by Loading their pass files from passes/. Apply severity-gated state machine: P0/P1 = full reset, P2 = full reset + restart from Cycle 1, P3 = accumulate (density check -> P2 escalation), clean = auto-continue. Persist all findings to .forge/findings.json with validation.
 5.5. **Run Step 3a**: anti-AI audit on all changed files. If findings: fix, re-run Step 3a only (do NOT reset cycle_counter). Clean Step 3a: proceed to Step 3.5.
 6. **After 3 clean cycles + clean Step 3a**: run Step 3.5 if findings were ever fixed during the process.
 7. **Run Step 4**: execute smoke test (inlined below). Full pipeline restart on any FAIL.
@@ -1623,11 +1623,11 @@ When `/forge` is invoked:
 
 ## Outlet Behavior: A vs B
 
-Outlet A (CLI) and Outlet B (Inline) are **NOT behaviorally identical** in how they handle the convergence counter:
+Outlet A (CLI), Outlet B (Inline), and Outlet C (Subagent) share the same severity-gated convergence model (machine.py was upgraded from the prior binary model in the tiered-reset wave). They differ in WHERE the counter is owned and HOW passes are isolated -- not in the reset rules:
 
-- **Outlet A (CLI)**: Uses machine.py's binary reset model. ANY confirmed finding (regardless of severity) resets consecutive_clean_rounds to zero. This is the existing machine.py behavior shipped as-is.
+- **Outlet A (CLI)**: Python (machine.py) owns the cycle counter deterministically -- maximum mechanical enforcement. Severity-gated reset: P0/P1/P2 reset consecutive_clean_rounds to 0; low-density P3 accumulates without a reset (per the density thresholds).
 
-- **Outlet B (Inline)**: Uses the TRUST-07 severity-gated model defined in this SKILL.md. P0/P1 findings trigger a full counter reset. P2 findings restart the current cycle without resetting the counter. P3 findings accumulate and only escalate to P2 via density check.
+- **Outlet B (Inline)**: Uses the TRUST-07 severity-gated model defined in this SKILL.md. P0/P1 findings trigger a full counter reset. P2 findings reset cycle_counter to 0 and restart from Cycle 1 Pass 1. P3 findings accumulate and only escalate to P2 via density check.
 
 - **Outlet C (Subagent)**: Uses the same severity-gated model as Outlet B (this SKILL.md's state machine). The key difference from Outlet B: each review pass runs in a FRESH context (separate Agent), so cross-pass contamination is structurally impossible. Outlet B runs all 3 passes in ONE shared context where the model can (consciously or not) echo prior pass findings. Outlet C provides Outlet A's isolation guarantee with Outlet B's cost model (no API key, no subprocess cold-start).
 

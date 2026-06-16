@@ -432,7 +432,7 @@ def _prime(sm, *fingerprints):
 class TestTieredReset:
     """_fixpoint_reached() returns the correct _FixpointResult for each severity."""
 
-    def test_tiered_reset_p2_no_counter_reset(self, tmp_path):
+    def test_tiered_reset_p2_returns_cycle_restart(self, tmp_path):
         sm = _make_sm_fp(tmp_path)
         sm._state.findings.append(_sf("fp-p2", "P2: missing docstring"))
         _prime(sm, "fp-p2")
@@ -460,17 +460,60 @@ class TestTieredReset:
         _prime(sm, "fp-p3a", "fp-p3b")
         assert sm._fixpoint_reached() == _FixpointResult.CLEAN
 
-    def test_tiered_reset_p3_density_exceeds_triggers_restart(self, tmp_path):
-        # 20 P3 findings, 10 changed lines -> density = 2.0 > 0.15 -> CYCLE_RESTART
+    def test_p3_distinct_per_file_exceeds_triggers_restart(self, tmp_path):
+        # 6 P3 findings in ONE file, each a different rule type -> distinct_per_file=6 > 5
+        # density kept low (6 findings / 1000 lines = 0.006), distinct_per_diff=6 <= 10
+        added = "\n".join("+line %d" % i for i in range(1000))
+        fake_diff = (
+            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
+            "@@ -0,0 +1,1000 @@\n" + added
+        )
+        sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
+        rules = ["missing-docstring", "trailing-whitespace", "unused-import",
+                 "line-too-long", "bare-except", "bad-indentation"]
+        fps = ["fp-f-%d" % i for i in range(6)]
+        for fp, rule in zip(fps, rules):
+            sm._state.findings.append(_sf(fp, "P3: %s" % rule))
+        _prime(sm, *fps)
+        assert sm._fixpoint_reached() == _FixpointResult.CYCLE_RESTART
+
+    def test_p3_distinct_per_diff_exceeds_triggers_restart(self, tmp_path):
+        # 12 P3 findings across 3 files, 12 distinct rule types -> distinct_per_diff=12 > 10
+        # Each file gets 4 rule types -> distinct_per_file=4 <= 5 (only diff threshold fires)
+        # density = 12/1000 = 0.012 <= 0.15
+        added = "\n".join("+line %d" % i for i in range(1000))
+        fake_diff = (
+            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
+            "@@ -0,0 +1,1000 @@\n" + added
+        )
+        sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
+        files = ["a.py", "b.py", "c.py"]
+        fps = ["fp-d-%d" % i for i in range(12)]
+        rules = ["rule-%d" % i for i in range(12)]
+        for i, (fp, rule) in enumerate(zip(fps, rules)):
+            fname = files[i % 3]  # 4 findings per file, each a distinct rule type
+            sf = StateFinding(
+                id=fp, fingerprint=fp, source="L1",
+                disposition=Disposition.CONFIRMED,
+                file=fname, line_range=[1, 1],
+                description="P3: %s" % rule,
+            )
+            sm._state.findings.append(sf)
+        _prime(sm, *fps)
+        assert sm._fixpoint_reached() == _FixpointResult.CYCLE_RESTART
+
+    def test_p3_density_exceeds_triggers_restart(self, tmp_path):
+        # 3 P3 findings, same rule type, 10 changed lines -> density=0.3 > 0.15
+        # distinct_per_file=1 <= 5, distinct_per_diff=1 <= 10 -- only density fires
         added = "\n".join("+line %d" % i for i in range(10))
         fake_diff = (
             "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
             "@@ -0,0 +1,10 @@\n" + added
         )
         sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
-        fps = ["fp-p3-%d" % i for i in range(20)]
+        fps = ["fp-dens-%d" % i for i in range(3)]
         for fp in fps:
-            sm._state.findings.append(_sf(fp, "P3: style issue %d" % int(fp[-1])))
+            sm._state.findings.append(_sf(fp, "P3: trailing whitespace"))
         _prime(sm, *fps)
         assert sm._fixpoint_reached() == _FixpointResult.CYCLE_RESTART
 
@@ -481,3 +524,46 @@ class TestTieredReset:
     def test_severity_tier_prefix_p2(self):
         sf = _sf("x", "P2: missing docstring")
         assert _severity_tier(sf) == "P2"
+
+
+class TestPersistentP2NoPass:
+    """run()-level guard: a persistent unfixed P2 must never converge to PASS."""
+
+    def test_recurring_p2_prevents_convergence(self, tmp_path):
+        """A P2 that is never fixed recurs every round and must block PASS."""
+        p2 = StateFinding(
+            id="p2-sticky",
+            fingerprint="p2-sticky",
+            source="L0",
+            disposition=Disposition.CONFIRMED,
+            file="test.py",
+            line_range=[1, 1],
+            description="P2: never-fixed recurring issue",
+        )
+
+        class NoChangeAutoFixer(StubAutoFixer):
+            def fix(self, finding, mode_hint):
+                return FixOutcome.NO_CHANGE
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=NoChangeAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda r, f: ([p2], []),
+            max_total_rounds=6,
+            max_fix_attempts=100,
+            clean_round_threshold=3,
+        )
+        verdict = machine.run()
+        assert verdict != Verdict.PASS, (
+            "machine must not converge while a recurring P2 is present"
+        )
+        assert machine._state.consecutive_clean_rounds == 0, (
+            "CYCLE_RESTART must reset consecutive_clean_rounds to 0"
+        )
