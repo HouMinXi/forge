@@ -116,7 +116,7 @@ class _FixpointResult(str, Enum):
     CYCLE_RESTART = "CYCLE_RESTART"
 
 
-def _severity_tier(finding: "StateFinding") -> str:  # type: ignore[name-defined]
+def _severity_tier(finding: StateFinding) -> str:
     """Return severity tier "P0"/"P1"/"P2"/"P3" for a CONFIRMED StateFinding.
 
     Parse the description prefix first. Unprefixed L0/L1 findings default
@@ -492,9 +492,13 @@ class StateMachine:
             if _fp == _FixpointResult.CLEAN:
                 self._state.consecutive_clean_rounds += 1
             elif _fp == _FixpointResult.CYCLE_RESTART:
-                # P2 or P3-density: do NOT reset counter, do NOT increment.
-                # FALL THROUGH -- no `continue` here (would skip _should_enter_hold).
-                # max_total_rounds provides a hard backstop.
+                # P2 / P3-density restart. The counter is already 0 here: clause (a)
+                # zeroes it on any finding's first (NEW) appearance, and a finding cannot
+                # reach CYCLE_RESTART without first being NEW, so no clean rounds can have
+                # accumulated. This reset is therefore redundant, kept explicit to match
+                # the SKILL.md "P2 resets to cycle 1" contract and stay correct if clause
+                # (a) ever changes. FALL THROUGH (no `continue`) so _should_enter_hold() runs.
+                self._state.consecutive_clean_rounds = 0
                 self._state.infra_errors.append(
                     "tiered-reset: P2/P3-density -- restarting cycle %d"
                     % round_index
@@ -807,11 +811,11 @@ class StateMachine:
         Only recurring CONFIRMED findings reach the tier check.
 
         After (a)/(b):
-          - Zero CONFIRMED + zero UNCERTAIN -> CLEAN
           - Any UNCERTAIN -> RESET  (clause d, unchanged)
+          - Zero CONFIRMED -> CLEAN
           - P0 or P1 CONFIRMED -> RESET
-          - P2 CONFIRMED (no P0/P1) -> CYCLE_RESTART
-          - Only P3 CONFIRMED -> density check:
+          - P2 CONFIRMED (no P0/P1) -> CYCLE_RESTART (resets clean-round counter)
+          - Only P3 CONFIRMED -> density check (skipped when no git_diff):
               distinct_per_file > threshold -> CYCLE_RESTART
               distinct_per_diff > threshold -> CYCLE_RESTART
               density > threshold -> CYCLE_RESTART
@@ -872,15 +876,10 @@ class StateMachine:
             return _FixpointResult.CYCLE_RESTART
 
         # Only P3: apply density thresholds
-        changed_lines = 1
-        if self.resolved_review.git_diff:
-            from .diff import count_diff_lines
-            changed_lines = max(1, count_diff_lines(self.resolved_review.git_diff))
-
         p3_findings = confirmed  # all are P3 at this point
         total_p3 = len(p3_findings)
 
-        def _rule_type(f: "StateFinding") -> str:
+        def _rule_type(f: StateFinding) -> str:
             desc = f.description or ""
             if desc.startswith("P3:"):
                 return desc[3:].split("(")[0].strip()
@@ -896,14 +895,20 @@ class StateMachine:
 
         distinct_per_file = max(len(rules) for rules in by_file.values()) if by_file else 0
         distinct_per_diff = len(all_rules)
-        density = total_p3 / changed_lines
 
         if (
             distinct_per_file > P3_DISTINCT_PER_FILE_THRESHOLD
             or distinct_per_diff > P3_DISTINCT_PER_DIFF_THRESHOLD
-            or density > P3_DENSITY_THRESHOLD
         ):
             return _FixpointResult.CYCLE_RESTART
+
+        # Density check only when diff is available -- no diff means no meaningful
+        # line count, so we skip rather than falling back to a misleading denominator.
+        if self.resolved_review.git_diff:
+            from .diff import count_diff_lines
+            changed_lines = max(1, count_diff_lines(self.resolved_review.git_diff))
+            if total_p3 / changed_lines > P3_DENSITY_THRESHOLD:
+                return _FixpointResult.CYCLE_RESTART
 
         return _FixpointResult.CLEAN
 
