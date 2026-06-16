@@ -96,6 +96,26 @@ Values less than 1 or greater than 120 are rejected with a clear error.
 
 ---
 
+### FORGE_LLM_TIMEOUT_S
+
+Sets the timeout (in seconds) for each LLM invocation during review.
+
+- **Default**: `120` seconds
+- **Precedence**: explicit `timeout_s` argument > `FORGE_LLM_TIMEOUT_S` env > `120`
+- **Resolved per call** (not frozen at import), so the override takes effect
+  even when the env var is set after the process starts.
+
+```bash
+export FORGE_LLM_TIMEOUT_S=300   # cross-region or reasoning backends
+```
+
+An unset, malformed, or non-positive value falls back to `120`. Raise this when
+a healthy backend call is aborted mid-flight by the default 120s ceiling (slow
+cross-region APIs, reasoning models). Distinct from `FORGE_AUTH_TIMEOUT`, which
+bounds the zero-cost reachability probe, not the review inference call.
+
+---
+
 ## gate.yaml backends block
 
 The `backends:` key in `.code-forge/gate.yaml` defines named backends.
