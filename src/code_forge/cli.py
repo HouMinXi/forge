@@ -1103,6 +1103,28 @@ def main() -> int:
         return EXIT_CLI_ERROR
 
 
+def _load_gate_siblings(gate_yaml_path: Path) -> tuple:
+    """Load siblings section from gate.yaml for cross-repo dispatch.
+
+    Returns (gate_raw_dict, siblings_list_or_None).  FileNotFoundError
+    and non-dict yaml are handled gracefully (no siblings).
+    """
+    import yaml as _y
+
+    try:
+        raw = _y.safe_load(gate_yaml_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}, None
+        return raw, raw.get("siblings")
+    except FileNotFoundError:
+        return {}, None
+    except _y.YAMLError:
+        # Malformed yaml: fall through to single-repo.  The main
+        # gate.yaml load (backend resolution) will surface the parse
+        # error with full context via CliError.
+        return {}, None
+
+
 def _run(args, env, cwd: Path) -> Verdict:
     """Main pipeline body. Returns Verdict."""
     warn = (lambda msg: None) if args.quiet else (
@@ -1494,6 +1516,56 @@ def _run(args, env, cwd: Path) -> Verdict:
         coverage_exempt = load_coverage_exempt_patterns(cwd)
     except CoverageConfigError as exc:
         raise CliError(str(exc))
+
+    # Cross-repo dispatch: if gate.yaml has a non-empty siblings section,
+    # dispatch to run_cross_repo before acquiring the lock.  Single-repo
+    # (no siblings) falls through to _run_hold_loop unchanged.
+    # NOTE: this reads gate.yaml independently from the backend-resolution
+    # load at line ~1249 because gate_data is scoped inside the has_inline
+    # else-block and may not exist when the user passed --backend-url/etc.
+    _gate_raw, _gate_siblings = _load_gate_siblings(gate_yaml_path)
+    if _gate_siblings is not None and not _gate_siblings:
+        warn("gate.yaml has empty siblings: [] section; "
+             "falling through to single-repo review")
+    if _gate_siblings:
+        from .baseline import GitRefBaseline
+        from .cross_repo import run_cross_repo
+        from .gate_check import validate_siblings
+
+        if not isinstance(baseline_spec, GitRefBaseline):
+            raise CliError(
+                "cross-repo review requires a git ref baseline, "
+                "got %s" % type(baseline_spec).__name__
+            )
+        if (isinstance(head_spec, GitRefBaseline)
+                and head_spec.ref in ("WORKING", "INDEX")):
+            raise CliError(
+                "cross-repo review requires committed refs, "
+                "not %s" % head_spec.ref
+            )
+        validate_siblings(
+            _gate_siblings,
+            gate_yaml_dir=gate_yaml_path.parent,
+        )
+        # Build primary_ref from raw git ref variables (baseline_spec.ref
+        # and head_spec.ref), not baseline_repr which is the serialized
+        # form ("git:HEAD") unusable as a ref range.
+        _head_ref = head_spec.ref if head_spec is not None else "HEAD"
+        _primary_ref = "%s..%s" % (baseline_spec.ref, _head_ref)
+        _cross_verdict = run_cross_repo(
+            primary_path=cwd,
+            primary_ref=_primary_ref,
+            primary_label="primary",
+            siblings=_gate_siblings,
+            gate_config=_gate_raw if isinstance(_gate_raw, dict) else {},
+            mode=mode,
+            engine_choice=engine_choice,
+            backend=backend,
+            max_rounds=max_rounds,
+            max_fix_attempts=max_fix,
+            clean_round_threshold=_clean_threshold,
+        )
+        return _cross_verdict
 
     # Step 7: lock + run
     try:
