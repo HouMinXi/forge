@@ -491,3 +491,272 @@ def test_loader_only_outlet_cli_alias() -> None:
     assert result == "subprocess"
 
     assert _loader_accepts(VALID_YAML_WITH_TEST + "\noutlet: cli\n") is True
+
+
+# ===========================================================================
+# SIBLINGS CORPUS -- cross-repo review config
+# ===========================================================================
+
+
+def test_valid_siblings_minimal() -> None:
+    """Minimal siblings: one entry with repo + ref only, no label."""
+    doc = {
+        "siblings": [
+            {"repo": "../sibling", "ref": "main..feature"}
+        ]
+    }
+    _schema_validate(doc)
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../sibling\n"
+        "    ref: main..feature\n"
+    )
+    assert _loader_accepts(yaml_text) is True
+
+
+def test_valid_siblings_with_label() -> None:
+    """Siblings entry with explicit label passes both schema and loader."""
+    doc = {
+        "siblings": [
+            {"repo": "../plugin", "ref": "main..feature-x", "label": "plugin"}
+        ]
+    }
+    _schema_validate(doc)
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../plugin\n"
+        "    ref: main..feature-x\n"
+        "    label: plugin\n"
+    )
+    assert _loader_accepts(yaml_text) is True
+
+
+def test_valid_siblings_multiple() -> None:
+    """Two siblings with distinct labels both pass."""
+    doc = {
+        "siblings": [
+            {"repo": "../alpha", "ref": "main..feat-a", "label": "alpha"},
+            {"repo": "../beta", "ref": "main..feat-b", "label": "beta"},
+        ]
+    }
+    _schema_validate(doc)
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../alpha\n"
+        "    ref: main..feat-a\n"
+        "    label: alpha\n"
+        "  - repo: ../beta\n"
+        "    ref: main..feat-b\n"
+        "    label: beta\n"
+    )
+    assert _loader_accepts(yaml_text) is True
+
+
+def test_invalid_siblings_duplicate_label() -> None:
+    """Two siblings defaulting to the same label (same repo basename) rejected."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../sibling\n"
+        "    ref: main..feat-a\n"
+        "  - repo: ../../sibling\n"
+        "    ref: main..feat-b\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_invalid_siblings_reserved_primary_label() -> None:
+    """Explicit label 'primary' is reserved and rejected."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../sibling\n"
+        "    ref: main..feature\n"
+        "    label: primary\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_invalid_siblings_remote_https() -> None:
+    """Remote repo URL (https) rejected in v1 (local paths only)."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: https://github.com/x/y\n"
+        "    ref: main..feature\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_invalid_siblings_remote_git_at() -> None:
+    """Remote repo URL (git@) rejected in v1."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: 'git@github.com:x/y'\n"
+        "    ref: main..feature\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_invalid_siblings_missing_ref() -> None:
+    """Sibling entry without ref: is rejected."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../sibling\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_invalid_siblings_bad_ref_format() -> None:
+    """ref with three dots (main...feature) is rejected."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../sibling\n"
+        "    ref: main...feature\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_invalid_siblings_not_a_list() -> None:
+    """siblings: as a dict (not a list) is rejected."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  repo: ../sibling\n"
+        "  ref: main..feature\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_invalid_siblings_label_special_chars() -> None:
+    """Label with spaces or slashes is rejected."""
+    yaml_text = (
+        VALID_YAML_WITH_TEST
+        + "\nsiblings:\n"
+        "  - repo: ../sibling\n"
+        "    ref: main..feature\n"
+        "    label: 'bad label/here'\n"
+    )
+    assert _loader_accepts(yaml_text) is False
+
+
+def test_schema_siblings_extra_property() -> None:
+    """Unknown field in sibling item rejected by schema (additionalProperties: false)."""
+    doc = {
+        "siblings": [
+            {
+                "repo": "../sibling",
+                "ref": "main..feature",
+                "unknown_field": "oops",
+            }
+        ]
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validate(doc)
+
+
+def test_invalid_siblings_symlink_escape(tmp_path: pathlib.Path) -> None:
+    """Absolute repo path outside project root rejected by symlink guard."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "/etc/passwd", "ref": "main..feature"}]
+    with pytest.raises(ValueError, match="traverses outside"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_invalid_siblings_symlink_escape_abs(tmp_path: pathlib.Path) -> None:
+    """Another absolute out-of-bounds path rejected by symlink guard."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "/usr/bin/env", "ref": "main..feature"}]
+    with pytest.raises(ValueError, match="traverses outside"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_valid_siblings_sibling_repo_accepted(tmp_path: pathlib.Path) -> None:
+    """repo: ../forge-plugin resolves within project parent and passes."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "../forge-plugin", "ref": "main..feature"}]
+    validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_invalid_siblings_label_defaulting_reserved(
+    tmp_path: pathlib.Path,
+) -> None:
+    """repo basename defaults to 'primary' which is reserved -- rejected."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    primary_dir = tmp_path.parent / "primary"
+    siblings = [{"repo": str(primary_dir), "ref": "main..feature"}]
+    with pytest.raises(ValueError, match="reserved"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_invalid_siblings_empty_repo(tmp_path: pathlib.Path) -> None:
+    """Empty string repo is rejected at the repo-required guard, not downstream."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "", "ref": "main..feature"}]
+    with pytest.raises(ValueError, match="repo.*required"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_invalid_siblings_empty_ref_baseline(tmp_path: pathlib.Path) -> None:
+    """ref with empty baseline (..head) rejected at the ref-format guard."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "../sibling", "ref": "..feature"}]
+    with pytest.raises(ValueError, match="baseline[.][.]head"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_invalid_siblings_empty_ref_head(tmp_path: pathlib.Path) -> None:
+    """ref with empty head (baseline..) rejected at the ref-format guard."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "../sibling", "ref": "main.."}]
+    with pytest.raises(ValueError, match="baseline[.][.]head"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_invalid_siblings_ref_dash_start(tmp_path: pathlib.Path) -> None:
+    """ref baseline starting with dash rejected by _validate_ref_part."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "../sibling", "ref": "-malicious..feature"}]
+    with pytest.raises(ValueError, match="must not start with"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+def test_invalid_siblings_ref_shell_chars(tmp_path: pathlib.Path) -> None:
+    """ref containing shell metacharacters rejected by _validate_ref_part."""
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    siblings = [{"repo": "../sibling", "ref": "main; rm -rf /..feature"}]
+    with pytest.raises(ValueError, match="invalid characters"):
+        validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)

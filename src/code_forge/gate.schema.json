@@ -101,6 +101,29 @@
         }
       }
     },
+    "siblings": {
+      "type": "array",
+      "description": "Cross-repo sibling repositories for joint review. Each entry specifies a local repo path and a ref range.",
+      "items": {
+        "type": "object",
+        "required": ["repo", "ref"],
+        "additionalProperties": false,
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Path to the sibling repository (local only in v1; no remote URLs)."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Git ref range in baseline..head format (e.g. main..feature-x)."
+          },
+          "label": {
+            "type": "string",
+            "description": "Label for this sibling in review output. Defaults to basename of repo path."
+          }
+        }
+      }
+    },
     "daemon_state": {
       "type": "object",
       "description": "Stateful subsystem conflict detection.",

@@ -14,6 +14,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -122,6 +123,13 @@ def load_gate_config(
     # Validate optional daemon_state section
     if "daemon_state" in data:
         validate_daemon_state(data["daemon_state"])
+
+    # Validate optional siblings section (cross-repo review)
+    if "siblings" in data:
+        validate_siblings(
+            data["siblings"],
+            gate_yaml_dir=Path(str(config_path)).parent,
+        )
 
     return data
 
@@ -233,6 +241,149 @@ def validate_daemon_state(section: object) -> None:
                 "gate.yaml 'daemon_state.conflicts_file' must be a string, "
                 "got: %r" % section["conflicts_file"]
             )
+
+
+_REF_COMPONENT_RE = re.compile(r"[A-Za-z0-9._/@-]+\Z")
+
+
+def _validate_ref_part(part_name: str, part_val: str, context: str) -> None:
+    """Validate a single git ref component for character safety.
+
+    Rejects leading dash (option injection), leading dot (ambiguous ref),
+    and any character outside the git-safe set [A-Za-z0-9._/@-].
+
+    Args:
+        part_name: "baseline" or "head" (for error messages).
+        part_val: the ref string to validate.
+        context: error message prefix (e.g. "siblings[0]:" or "ref_spec").
+
+    Raises:
+        ValueError: on invalid characters or leading dash/dot.
+    """
+    if part_val.startswith("-") or part_val.startswith("."):
+        raise ValueError(
+            "%s ref %s must not start with '-' or '.'" % (context, part_name)
+        )
+    if not _REF_COMPONENT_RE.match(part_val):
+        raise ValueError(
+            "%s ref %s contains invalid characters" % (context, part_name)
+        )
+
+
+def validate_siblings(
+    siblings: object,
+    gate_yaml_dir: Path,
+    primary_language: str | None = None,
+) -> None:
+    """Validate the siblings section of gate.yaml.
+
+    Checks structural integrity (types, required fields), ref format,
+    remote URL rejection (v1 local-only), path traversal via symlink
+    guard, label character constraints, reserved-label rejection, and
+    label uniqueness after defaulting.
+
+    Args:
+        siblings: value from gate.yaml siblings key (expected list).
+        gate_yaml_dir: directory containing gate.yaml (used to resolve
+            relative repo paths; gate_root = gate_yaml_dir.parent).
+        primary_language: if provided, reject siblings whose detected
+            language differs (same-stack constraint). Pass None to skip.
+
+    Raises:
+        ValueError: on any validation failure.
+    """
+    if not isinstance(siblings, list):
+        raise ValueError("siblings: must be a list")
+
+    from .conventions_resolver import _symlink_guard_passes
+
+    gate_root = gate_yaml_dir.parent
+    seen_labels: set[str] = set()
+
+    for idx, entry in enumerate(siblings):
+        if not isinstance(entry, dict):
+            raise ValueError("siblings[%d]: must be a mapping" % idx)
+
+        # Required fields (must be non-empty strings)
+        repo_val = entry.get("repo")
+        if not isinstance(repo_val, str) or not repo_val:
+            raise ValueError("siblings[%d]: 'repo' is required" % idx)
+        ref_val = entry.get("ref")
+        if not isinstance(ref_val, str) or not ref_val:
+            raise ValueError("siblings[%d]: 'ref' is required" % idx)
+
+        ref = ref_val
+        # ref must contain exactly one ".." separator (not "...")
+        if ".." not in ref or "..." in ref:
+            raise ValueError(
+                "siblings[%d]: ref must be 'baseline..head', got %r"
+                % (idx, ref)
+            )
+        base_part, head_part = ref.split("..", 1)
+        if not base_part or not head_part:
+            raise ValueError(
+                "siblings[%d]: ref must be 'baseline..head', got %r"
+                % (idx, ref)
+            )
+        _validate_ref_part("baseline", base_part, "siblings[%d]:" % idx)
+        _validate_ref_part("head", head_part, "siblings[%d]:" % idx)
+
+        repo_str = repo_val
+
+        # Reject remote URLs (v1 supports local paths only)
+        if repo_str.startswith("https://") or repo_str.startswith("git@"):
+            raise ValueError(
+                "siblings[%d]: remote URLs not supported in v1; "
+                "use a local path" % idx
+            )
+
+        # Symlink guard: resolve relative to project root
+        raw_path = Path(repo_str)
+        if raw_path.is_absolute():
+            resolved = raw_path.resolve()
+        else:
+            resolved = (gate_root / repo_str).resolve()
+        if not _symlink_guard_passes(resolved, gate_root):
+            raise ValueError(
+                "siblings[%d]: repo path traverses outside project" % idx
+            )
+
+        # Label: explicit or defaulted from repo basename
+        label = entry.get("label") or os.path.basename(
+            repo_str.rstrip("/")
+        )
+
+        # Label character validation
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", label):
+            raise ValueError(
+                "siblings[%d]: label must be alphanumeric/hyphen/"
+                "underscore only" % idx
+            )
+
+        # Reserved label
+        if label == "primary":
+            raise ValueError(
+                "siblings: label 'primary' is reserved"
+            )
+
+        # Uniqueness
+        if label in seen_labels:
+            raise ValueError(
+                "siblings: duplicate label '%s'" % label
+            )
+        seen_labels.add(label)
+
+        # Same-stack language check (skipped when primary_language is None)
+        if primary_language is not None:
+            from .detect import detect_toolchain
+
+            result = detect_toolchain(resolved)
+            if result.language != primary_language:
+                raise ValueError(
+                    "siblings[%d]: sibling detected as '%s' but "
+                    "primary is '%s'; same-stack only for v1"
+                    % (idx, result.language, primary_language)
+                )
 
 
 def fnmatch_to_grep(glob: str) -> str:
