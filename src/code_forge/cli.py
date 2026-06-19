@@ -1106,23 +1106,81 @@ def main() -> int:
 def _load_gate_siblings(gate_yaml_path: Path) -> tuple:
     """Load siblings section from gate.yaml for cross-repo dispatch.
 
-    Returns (gate_raw_dict, siblings_list_or_None).  FileNotFoundError
-    and non-dict yaml are handled gracefully (no siblings).
+    Returns (gate_raw_dict, siblings_list_or_None).  A missing or empty
+    gate.yaml yields no siblings.  Malformed yaml or a non-mapping gate.yaml
+    fails CLOSED (CliError): for inline backends this is the ONLY gate.yaml
+    parse, so silently dropping a bad file could hide intended siblings and
+    run single-repo without the user knowing (D-06 fail-closed).
     """
     import yaml as _y
 
     try:
-        raw = _y.safe_load(gate_yaml_path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return {}, None
-        return raw, raw.get("siblings")
+        text = gate_yaml_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}, None
-    except _y.YAMLError:
-        # Malformed yaml: fall through to single-repo.  The main
-        # gate.yaml load (backend resolution) will surface the parse
-        # error with full context via CliError.
+    try:
+        raw = _y.safe_load(text)
+    except _y.YAMLError as exc:
+        raise CliError("malformed gate.yaml at %s: %s" % (gate_yaml_path, exc))
+    if raw is None:
         return {}, None
+    if not isinstance(raw, dict):
+        raise CliError(
+            "gate.yaml must be a mapping, got %s" % type(raw).__name__
+        )
+    return raw, raw.get("siblings")
+
+
+def _cross_repo_verdict_or_none(
+    *, gate_yaml_path: Path, cwd: Path, baseline_spec, head_spec,
+    mode, engine_choice, backend, max_rounds: Optional[int],
+    max_fix: Optional[int], _clean_threshold: int, warn: Callable
+) -> Optional[Verdict]:
+    """Decide and execute cross-repo dispatch, or return None to fall through."""
+    _gate_raw, _gate_siblings = _load_gate_siblings(gate_yaml_path)
+    if _gate_siblings is not None and not _gate_siblings:
+        warn("gate.yaml has empty siblings: [] section; "
+             "falling through to single-repo review")
+    if _gate_siblings:
+        from .baseline import GitRefBaseline
+        from .cross_repo import run_cross_repo
+        from .gate_check import validate_siblings
+
+        if not isinstance(baseline_spec, GitRefBaseline):
+            raise CliError(
+                "cross-repo review requires a git ref baseline, "
+                "got %s" % type(baseline_spec).__name__
+            )
+        if (isinstance(head_spec, GitRefBaseline)
+                and head_spec.ref in ("WORKING", "INDEX")):
+            raise CliError(
+                "cross-repo review requires committed refs, "
+                "not %s" % head_spec.ref
+            )
+        validate_siblings(
+            _gate_siblings,
+            gate_yaml_dir=gate_yaml_path.parent,
+        )
+        # Build primary_ref from raw git ref variables (baseline_spec.ref
+        # and head_spec.ref), not baseline_repr which is the serialized
+        # form ("git:HEAD") unusable as a ref range.
+        _head_ref = head_spec.ref if head_spec is not None else "HEAD"
+        _primary_ref = "%s..%s" % (baseline_spec.ref, _head_ref)
+        _cross_verdict = run_cross_repo(
+            primary_path=cwd,
+            primary_ref=_primary_ref,
+            primary_label="primary",
+            siblings=_gate_siblings,
+            gate_config=_gate_raw if isinstance(_gate_raw, dict) else {},
+            mode=mode,
+            engine_choice=engine_choice,
+            backend=backend,
+            max_rounds=max_rounds,
+            max_fix_attempts=max_fix,
+            clean_round_threshold=_clean_threshold,
+        )
+        return _cross_verdict
+    return None
 
 
 def _run(args, env, cwd: Path) -> Verdict:
@@ -1523,49 +1581,21 @@ def _run(args, env, cwd: Path) -> Verdict:
     # NOTE: this reads gate.yaml independently from the backend-resolution
     # load at line ~1249 because gate_data is scoped inside the has_inline
     # else-block and may not exist when the user passed --backend-url/etc.
-    _gate_raw, _gate_siblings = _load_gate_siblings(gate_yaml_path)
-    if _gate_siblings is not None and not _gate_siblings:
-        warn("gate.yaml has empty siblings: [] section; "
-             "falling through to single-repo review")
-    if _gate_siblings:
-        from .baseline import GitRefBaseline
-        from .cross_repo import run_cross_repo
-        from .gate_check import validate_siblings
-
-        if not isinstance(baseline_spec, GitRefBaseline):
-            raise CliError(
-                "cross-repo review requires a git ref baseline, "
-                "got %s" % type(baseline_spec).__name__
-            )
-        if (isinstance(head_spec, GitRefBaseline)
-                and head_spec.ref in ("WORKING", "INDEX")):
-            raise CliError(
-                "cross-repo review requires committed refs, "
-                "not %s" % head_spec.ref
-            )
-        validate_siblings(
-            _gate_siblings,
-            gate_yaml_dir=gate_yaml_path.parent,
-        )
-        # Build primary_ref from raw git ref variables (baseline_spec.ref
-        # and head_spec.ref), not baseline_repr which is the serialized
-        # form ("git:HEAD") unusable as a ref range.
-        _head_ref = head_spec.ref if head_spec is not None else "HEAD"
-        _primary_ref = "%s..%s" % (baseline_spec.ref, _head_ref)
-        _cross_verdict = run_cross_repo(
-            primary_path=cwd,
-            primary_ref=_primary_ref,
-            primary_label="primary",
-            siblings=_gate_siblings,
-            gate_config=_gate_raw if isinstance(_gate_raw, dict) else {},
-            mode=mode,
-            engine_choice=engine_choice,
-            backend=backend,
-            max_rounds=max_rounds,
-            max_fix_attempts=max_fix,
-            clean_round_threshold=_clean_threshold,
-        )
-        return _cross_verdict
+    _cv = _cross_repo_verdict_or_none(
+        gate_yaml_path=gate_yaml_path,
+        cwd=cwd,
+        baseline_spec=baseline_spec,
+        head_spec=head_spec,
+        mode=mode,
+        engine_choice=engine_choice,
+        backend=backend,
+        max_rounds=max_rounds,
+        max_fix=max_fix,
+        _clean_threshold=_clean_threshold,
+        warn=warn,
+    )
+    if _cv is not None:
+        return _cv
 
     # Step 7: lock + run
     try:

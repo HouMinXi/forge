@@ -562,11 +562,10 @@ def test_sibling_crash_is_advisory(
 def test_single_repo_zero_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No-siblings gate.yaml falls through to _run_hold_loop, not run_cross_repo.
+    """No-siblings gate.yaml returns falsy siblings from _load_gate_siblings.
 
     Part A: load_gate_config on a no-siblings config -> siblings absent.
-    Part B: mock both paths; drive dispatch with no siblings; assert
-    _run_hold_loop WAS called and run_cross_repo was NOT.
+    Part B: _load_gate_siblings returns falsy siblings.
     """
     from code_forge.cli import _load_gate_siblings
     from code_forge.gate_check import load_gate_config
@@ -603,3 +602,71 @@ def test_remote_url_rejected() -> None:
     siblings = [{"repo": "https://github.com/x/y", "ref": "main..feature"}]
     with pytest.raises(ValueError, match="remote"):
         validate_siblings(siblings, gate_yaml_dir=Path("/tmp"))
+
+
+def test_malformed_gate_yaml_fails_closed(tmp_path: Path) -> None:
+    """A malformed or non-mapping gate.yaml raises CliError instead of hiding siblings."""
+    from code_forge.cli import _load_gate_siblings
+    from code_forge.errors import CliError
+
+    gate_yaml = tmp_path / "gate.yaml"
+    # Malformed YAML (unterminated flow sequence that looks like it has siblings)
+    gate_yaml.write_text("siblings: [\n")
+    with pytest.raises(CliError, match="malformed gate.yaml"):
+        _load_gate_siblings(gate_yaml)
+
+    # Non-dict YAML (bare string)
+    gate_yaml.write_text("just a bare string")
+    with pytest.raises(CliError, match="gate.yaml must be a mapping"):
+        _load_gate_siblings(gate_yaml)
+
+    # Missing file -> ({}, None)
+    gate_yaml.unlink()
+    assert _load_gate_siblings(gate_yaml) == ({}, None)
+
+
+def test_dispatch_verdict_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_cross_repo_verdict_or_none handles both sibling and no-sibling paths."""
+    from code_forge.cli import _cross_repo_verdict_or_none
+    from code_forge.state import Verdict
+
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir(parents=True)
+    gate_yaml = gate_dir / "gate.yaml"
+
+    # Mock run_cross_repo
+    def mock_run_cross_repo(*args, **kwargs):
+        return Verdict.PASS
+
+    monkeypatch.setattr("code_forge.cross_repo.run_cross_repo", mock_run_cross_repo)
+
+    from code_forge.baseline import GitRefBaseline
+    
+    baseline_spec = GitRefBaseline("main")
+    head_spec = GitRefBaseline("feature")
+
+    def mock_warn(msg):
+        pass
+
+    # No siblings -> returns None
+    gate_yaml.write_text("test:\n  command: [pytest, -q]\n")
+    res = _cross_repo_verdict_or_none(
+        gate_yaml_path=gate_yaml, cwd=tmp_path, baseline_spec=baseline_spec,
+        head_spec=head_spec, mode=None, engine_choice=None, backend=None,
+        max_rounds=1, max_fix=1, _clean_threshold=1, warn=mock_warn
+    )
+    assert res is None
+
+    # With siblings -> calls run_cross_repo -> returns Verdict.PASS
+    gate_yaml.write_text(
+        "test:\n  command: [pytest, -q]\n"
+        "siblings:\n"
+        f"  - repo: {tmp_path}\n"
+        "    ref: main..feature\n"
+    )
+    res = _cross_repo_verdict_or_none(
+        gate_yaml_path=gate_yaml, cwd=tmp_path, baseline_spec=baseline_spec,
+        head_spec=head_spec, mode=None, engine_choice=None, backend=None,
+        max_rounds=1, max_fix=1, _clean_threshold=1, warn=mock_warn
+    )
+    assert res == Verdict.PASS
