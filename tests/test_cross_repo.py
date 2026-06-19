@@ -500,19 +500,30 @@ def test_sibling_crash_is_advisory(
         prepend=os.pathsep,
     )
 
-    call_count = {"n": 0}
+    class _CrashOnSibling:
+        """Primary returns PASS; any non-primary raises.
 
-    class _CrashOnSecond:
+        Determinism: __init__ records the label, run() branches on it.
+        Thread scheduling order (which __init__ runs first) does NOT
+        affect which run() crashes, because the decision depends solely
+        on the label value, not on call sequence.  Coupled to
+        run_cross_repo._thread_fn (baseline_spec_repr=label).
+        """
+
         def __init__(self, **kwargs):
-            pass
+            label = kwargs.get("baseline_spec_repr")
+            assert label is not None, (
+                "StateMachine did not receive baseline_spec_repr; "
+                "cross_repo.py contract may have changed"
+            )
+            self._is_primary = label == "primary"
 
         def run(self):
-            call_count["n"] += 1
-            if call_count["n"] > 1:
+            if not self._is_primary:
                 raise RuntimeError("sibling boom")
             return Verdict.PASS
 
-    monkeypatch.setattr("code_forge.machine.StateMachine", _CrashOnSecond)
+    monkeypatch.setattr("code_forge.machine.StateMachine", _CrashOnSibling)
 
     sib = tmp_path / "sibling"
     sib.mkdir()
@@ -670,3 +681,371 @@ def test_dispatch_verdict_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         max_rounds=1, max_fix=1, _clean_threshold=1, warn=mock_warn
     )
     assert res == Verdict.PASS
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: two-repo cross-repo flow
+#
+# Mock strategy:
+#   Tests that need to control per-repo verdicts (primary PASS / sibling
+#   FAIL) replace StateMachine with a mock that identifies itself via the
+#   baseline_spec_repr kwarg (run_cross_repo._thread_fn).  This is an intentional
+#   coupling to the production contract -- if the kwarg is renamed or
+#   removed, the assert in each mock __init__ will surface it as a loud
+#   failure.
+#
+#   Tests that verify receipts or end-to-end PASS run the REAL
+#   StateMachine with engine_choice="stub" (no network, no LLM).
+#
+# Threading:
+#   pytest runs test functions sequentially (single thread).  The threads
+#   inside run_cross_repo are internal to that call and join before it
+#   returns.  No cross-test concurrency exists.
+#
+# GIT_CEILING_DIRECTORIES:
+#   Prepended (via monkeypatch) with tmp_path.parent by _make_repo,
+#   consistent with the git_repo fixture above.  Duplicate prepends
+#   when _make_repo is called twice with the same base are harmless
+#   (git tolerates repeated paths).  monkeypatch restores the original
+#   at teardown.
+# ---------------------------------------------------------------------------
+
+
+def _make_repo(
+    base: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    filename: str = "main.py",
+    content_v1: str = "x = 1\n",
+    content_v2: str = "x = 2\n",
+) -> Path:
+    """Create a real git repo with main + feature branch under base/name.
+
+    GIT_CEILING_DIRECTORIES is prepended with base.parent (same strategy
+    as the git_repo fixture) to prevent git from escaping into a real
+    repo.  monkeypatch restores the original value at test teardown.
+    """
+    monkeypatch.setenv(
+        "GIT_CEILING_DIRECTORIES",
+        str(base.parent),
+        prepend=os.pathsep,
+    )
+    repo = base / name
+    repo.mkdir(parents=True, exist_ok=True)
+    run = lambda *cmd: subprocess.run(  # noqa: E731
+        list(cmd), cwd=repo, check=True, capture_output=True, text=True,
+    )
+    run("git", "init", "-b", "main")
+    run("git", "config", "user.email", "test@test.com")
+    run("git", "config", "user.name", "Test")
+    (repo / filename).write_text(content_v1)
+    run("git", "add", filename)
+    run("git", "commit", "-m", "init")
+    run("git", "checkout", "-b", "feature")
+    (repo / filename).write_text(content_v2)
+    run("git", "add", filename)
+    run("git", "commit", "-m", "change")
+    run("git", "checkout", "main")
+    return repo
+
+
+def test_joint_context_contains_both_diffs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two real repos produce a joint context with both repo headings."""
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+    p_diff = get_sibling_diff(primary, "main..feature")
+    s_diff = get_sibling_diff(sibling, "main..feature")
+    ctx = build_cross_repo_context([
+        {"label": "primary", "ref": "main..feature", "diff": p_diff},
+        {"label": "sibling", "ref": "main..feature", "diff": s_diff},
+    ])
+    assert ctx.startswith("Cross-repo review:")
+    assert "## Repo: [primary]" in ctx
+    assert "## Repo: [sibling]" in ctx
+    assert "main.py" in ctx
+    assert "lib.py" in ctx
+
+
+def test_findings_attributed_label(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-repo diff blocks contain only their own diff text."""
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+    p_diff = get_sibling_diff(primary, "main..feature")
+    s_diff = get_sibling_diff(sibling, "main..feature")
+    ctx = build_cross_repo_context([
+        {"label": "primary", "ref": "main..feature", "diff": p_diff},
+        {"label": "sibling", "ref": "main..feature", "diff": s_diff},
+    ])
+    header = ctx.splitlines()[0]
+    assert "primary" in header and "sibling" in header
+    primary_start = ctx.index("## Repo: [primary]")
+    sibling_start = ctx.index("## Repo: [sibling]")
+    primary_section = ctx[primary_start:sibling_start]
+    sibling_section = ctx[sibling_start:]
+    assert "main.py" in primary_section
+    assert "lib.py" not in primary_section, "cross-contamination: sibling diff in primary"
+    assert "lib.py" in sibling_section
+    assert "main.py" not in sibling_section, "cross-contamination: primary diff in sibling"
+
+
+def test_run_cross_repo_stub_primary_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_cross_repo() with stub engine on two real repos returns PASS."""
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert result == Verdict.PASS
+
+
+def test_run_cross_repo_primary_determines_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Primary PASS + sibling FAIL yields joint PASS with advisory warning.
+
+    Mock replaces StateMachine: the real stub engine always returns PASS
+    for both repos, but this test needs a controlled FAIL from the sibling
+    to verify the primary-authoritative merge rule.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+
+    class _PrimaryPassSiblingFail:
+        """Coupled to run_cross_repo._thread_fn (baseline_spec_repr=label)."""
+
+        def __init__(self, **kwargs):
+            label = kwargs.get("baseline_spec_repr")
+            assert label is not None, (
+                "StateMachine did not receive baseline_spec_repr; "
+                "cross_repo.py contract may have changed"
+            )
+            self._is_primary = label == "primary"
+
+        def run(self):
+            return Verdict.PASS if self._is_primary else Verdict.FAIL
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", _PrimaryPassSiblingFail)
+
+    messages = []
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+        output_fn=messages.append,
+    )
+    assert result == Verdict.PASS
+    # run_cross_repo emits a "[cross-repo] WARNING: sibling(s) ...
+    # have findings" message when a sibling verdict is FAIL/ESCALATED.
+    assert len(messages) > 0, "expected advisory output but got none"
+    assert any(
+        "[cross-repo] WARNING" in m and "findings" in m
+        for m in messages
+    )
+
+
+def test_l0_runs_on_each_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source files handed to StateMachine are non-empty absolute paths for
+    both repos, proving per-repo source derivation is correct.
+
+    Mock replaces StateMachine to capture source_files: the stub engine
+    with a minimal gate_config has no L0 tool registry, so it cannot
+    detect planted defects in this test environment.  The weaker assertion
+    on source_files proves L0 inputs are correctly plumbed and would run
+    if tools were configured.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+
+    captured = {}
+
+    class _CaptureSM:
+        """Coupled to run_cross_repo._thread_fn (resolved_review, baseline_spec_repr)."""
+
+        def __init__(self, **kwargs):
+            label = kwargs.get("baseline_spec_repr")
+            assert label is not None, (
+                "StateMachine did not receive baseline_spec_repr; "
+                "run_cross_repo contract may have changed"
+            )
+            resolved = kwargs.get("resolved_review")
+            assert resolved is not None, (
+                "%s: resolved_review was None; "
+                "run_cross_repo should always construct one" % label
+            )
+            assert hasattr(resolved, "source_files"), (
+                "%s: resolved_review has no source_files attr; "
+                "ResolvedReview contract may have changed" % label
+            )
+            captured[label] = list(resolved.source_files)
+
+        def run(self):
+            return Verdict.PASS
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", _CaptureSM)
+
+    run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert "primary" in captured
+    assert "sibling" in captured
+    for label, files in captured.items():
+        assert len(files) > 0, "%s got empty source_files" % label
+        for f in files:
+            assert f.is_absolute(), "%s: %s is not absolute" % (label, f)
+
+
+def test_receipt_naming_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-repo receipts (primary AND sibling) are label-prefixed in primary .code-forge/.
+
+    Verifies both label prefixes because run_cross_repo copies ALL per-repo
+    receipts into the primary's .code-forge/ directory.  Runs with real
+    StateMachine + stub engine; the stub produces receipts because
+    write_receipts runs at the end of each round regardless of findings.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert result == Verdict.PASS
+    # Glob pattern matches run_cross_repo receipt-copy convention:
+    #   dst = primary_receipts_dest / ("%s-%s" % (label, r.name))
+    # where r.name = "receipt-c{N}p{M}.json" (from write_receipts).
+    # This coupling is intentional: the test verifies the naming.
+    receipts_dir = primary / ".code-forge"
+    primary_receipts = sorted(receipts_dir.glob("primary-receipt-c*.json"))
+    sibling_receipts = sorted(receipts_dir.glob("sibling-receipt-c*.json"))
+    assert len(primary_receipts) > 0, "no primary-labeled receipts found"
+    assert len(sibling_receipts) > 0, "no sibling-labeled receipts found"
+
+
+def test_invalid_sibling_ref_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bad sibling ref raises BaselineResolutionError (fail-closed).
+
+    Uses two separate repos (unlike the unit-level test_invalid_ref_fail_closed
+    which reuses a single repo).  The ref passes character-set validation but
+    fails at git resolution, proving the fail-closed path through
+    run_cross_repo end-to-end.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+    with pytest.raises(BaselineResolutionError):
+        run_cross_repo(
+            primary_path=primary,
+            primary_ref="main..feature",
+            primary_label="primary",
+            siblings=[{
+                "repo": str(sibling),
+                "ref": "main..no-such-branch",
+                "label": "bad-sib",
+            }],
+            gate_config={"test": {"command": ["echo", "ok"]}},
+            mode=Mode.LOCAL,
+            engine_choice="stub",
+            backend=None,
+            max_rounds=3,
+            max_fix_attempts=1,
+            clean_round_threshold=1,
+        )
