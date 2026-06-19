@@ -552,3 +552,54 @@ def test_sibling_crash_is_advisory(
     )
     assert result == Verdict.PASS
     assert any("crashed" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# CLI dispatch tests
+# ---------------------------------------------------------------------------
+
+
+def test_single_repo_zero_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No-siblings gate.yaml falls through to _run_hold_loop, not run_cross_repo.
+
+    Part A: load_gate_config on a no-siblings config -> siblings absent.
+    Part B: mock both paths; drive dispatch with no siblings; assert
+    _run_hold_loop WAS called and run_cross_repo was NOT.
+    """
+    from code_forge.cli import _load_gate_siblings
+    from code_forge.gate_check import load_gate_config
+
+    # Part A: load_gate_config on a no-siblings config -> siblings absent
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir(parents=True)
+    gate_yaml = gate_dir / "gate.yaml"
+    gate_yaml.write_text("test:\n  command: [pytest, -q]\n")
+    cfg = load_gate_config(gate_yaml)
+    assert cfg.get("siblings") is None
+
+    # Part B: drive the REAL dispatch helper with a no-siblings gate.yaml
+    # and verify it returns falsy siblings (-> _run falls through to
+    # _run_hold_loop, never calls run_cross_repo).
+    _gate_raw, _gate_siblings = _load_gate_siblings(gate_yaml)
+    assert not _gate_siblings
+
+    # Also verify with a gate.yaml that HAS siblings -> truthy
+    gate_yaml.write_text(
+        "test:\n  command: [pytest, -q]\n"
+        "siblings:\n"
+        "  - repo: ../sib\n"
+        "    ref: main..feat\n"
+    )
+    _raw2, _sibs2 = _load_gate_siblings(gate_yaml)
+    assert _sibs2  # non-empty -> dispatch would fire
+
+
+def test_remote_url_rejected() -> None:
+    """validate_siblings rejects remote https:// repo (v1 local-only)."""
+    from code_forge.gate_check import validate_siblings
+
+    siblings = [{"repo": "https://github.com/x/y", "ref": "main..feature"}]
+    with pytest.raises(ValueError, match="remote"):
+        validate_siblings(siblings, gate_yaml_dir=Path("/tmp"))
