@@ -21,6 +21,7 @@ from .runner import capture_tool_version
 from .sarif import build_sarif_log, format_summary
 
 if TYPE_CHECKING:
+    from .backend import BackendConfig
     from .registry import ToolConfig
 from .baseline import (
     EmptyBaseline,
@@ -627,7 +628,7 @@ def _assemble_post_image(cwd: Path, diff_text: str) -> tuple[str, str]:
 
 def _run_test_assertion_review(
     diff_text: str,
-    backend: Optional["BackendConfig"] = None,
+    backend: Optional[BackendConfig] = None,
 ) -> list:
     """SC4: test-assertion review by independent reviewer.
 

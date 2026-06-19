@@ -56,5 +56,5 @@ class TestCliInit:
             sys.exit(main())
         gate_path = tmp_path / ".code-forge" / "gate.yaml"
         data = yaml.safe_load(gate_path.read_text())
-        assert "backends" in data
-        assert set(data["backends"]) == {"mimo", "deepseek", "kimi", "glm", "minimax"}
+        assert "outlet" in data
+        assert data["outlet"] == "subprocess"
