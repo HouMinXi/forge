@@ -246,3 +246,309 @@ def test_ref_validation_consistent(
 
     with pytest.raises(ValueError):
         get_sibling_diff(git_repo, bad_ref)
+
+
+# ---------------------------------------------------------------------------
+# Thread isolation and orchestrator tests
+# ---------------------------------------------------------------------------
+
+
+def test_thread_isolation() -> None:
+    """make_per_repo_cwd() returns distinct paths; writes do not collide."""
+    import shutil
+
+    p1 = make_per_repo_cwd("repo")
+    p2 = make_per_repo_cwd("repo")
+    try:
+        assert p1 != p2
+        (p1 / ".code-forge" / "mutation-result.json").write_text("A")
+        (p2 / ".code-forge" / "mutation-result.json").write_text("B")
+        assert (p1 / ".code-forge" / "mutation-result.json").read_text() == "A"
+        assert (p2 / ".code-forge" / "mutation-result.json").read_text() == "B"
+    finally:
+        shutil.rmtree(p1, ignore_errors=True)
+        shutil.rmtree(p2, ignore_errors=True)
+
+
+def test_same_stack_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """validate_siblings() rejects sibling with different language when primary_language set."""
+    from code_forge.detect import DetectionResult
+    from code_forge.gate_check import validate_siblings
+
+    gate_yaml_dir = tmp_path / ".code-forge"
+    gate_yaml_dir.mkdir()
+    sibling_dir = tmp_path / "sibling"
+    sibling_dir.mkdir()
+
+    monkeypatch.setattr(
+        "code_forge.detect.detect_toolchain",
+        lambda path: DetectionResult(detected=[], missing=[], language="shell"),
+    )
+    siblings = [{"repo": str(sibling_dir), "ref": "main..feature"}]
+    with pytest.raises(ValueError, match="same-stack"):
+        validate_siblings(
+            siblings, gate_yaml_dir=gate_yaml_dir, primary_language="python",
+        )
+
+
+def test_invalid_ref_fail_closed(
+    tmp_path: Path,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_cross_repo() propagates BaselineResolutionError on bad sibling ref."""
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode
+
+    monkeypatch.setenv(
+        "GIT_CEILING_DIRECTORIES",
+        str(tmp_path.parent),
+        prepend=os.pathsep,
+    )
+    with pytest.raises(BaselineResolutionError):
+        run_cross_repo(
+            primary_path=git_repo,
+            primary_ref="main..feature",
+            primary_label="primary",
+            siblings=[{
+                "repo": str(git_repo),
+                "ref": "main..nonexistent-xyz",
+                "label": "bad-sib",
+            }],
+            gate_config={"test": {"command": ["pytest", "-q"]}},
+            mode=Mode.LOCAL,
+            engine_choice="stub",
+            backend=None,
+            max_rounds=1,
+            max_fix_attempts=1,
+            clean_round_threshold=1,
+        )
+
+
+def test_thread_exception_propagates(
+    tmp_path: Path,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Thread-internal exception propagates to caller (not swallowed)."""
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode
+
+    monkeypatch.setenv(
+        "GIT_CEILING_DIRECTORIES",
+        str(tmp_path.parent),
+        prepend=os.pathsep,
+    )
+
+    class _BoomMachine:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self):
+            raise RuntimeError("boom from thread")
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", _BoomMachine)
+
+    with pytest.raises(RuntimeError, match="boom from thread"):
+        run_cross_repo(
+            primary_path=git_repo,
+            primary_ref="main..feature",
+            primary_label="primary",
+            siblings=[],
+            gate_config={"test": {"command": ["pytest", "-q"]}},
+            mode=Mode.LOCAL,
+            engine_choice="stub",
+            backend=None,
+            max_rounds=1,
+            max_fix_attempts=1,
+            clean_round_threshold=1,
+        )
+
+
+def test_pending_escalates_to_fail(
+    tmp_path: Path,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Primary PENDING is escalated to FAIL in cross-repo mode."""
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    monkeypatch.setenv(
+        "GIT_CEILING_DIRECTORIES",
+        str(tmp_path.parent),
+        prepend=os.pathsep,
+    )
+
+    class _PendingMachine:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self):
+            return Verdict.PENDING
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", _PendingMachine)
+
+    messages = []
+    result = run_cross_repo(
+        primary_path=git_repo,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[],
+        gate_config={"test": {"command": ["pytest", "-q"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=1,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+        output_fn=messages.append,
+    )
+    assert result == Verdict.FAIL
+    assert any("PENDING" in m for m in messages)
+
+
+def test_validate_base_matches_dispatch(tmp_path: Path) -> None:
+    """run_cross_repo uses the same containment base as dispatch-level validation.
+
+    An absolute path outside the project root must be rejected by
+    run_cross_repo's own validate_siblings call (narrow base:
+    gate_root = primary_path), proving self-authoritative path safety.
+    """
+    from code_forge.gate_check import validate_siblings
+
+    project = tmp_path / "project"
+    project.mkdir()
+    code_forge_dir = project / ".code-forge"
+    code_forge_dir.mkdir()
+
+    out_of_bounds = "/etc/passwd"
+    siblings_abs = [{"repo": out_of_bounds, "ref": "main..feature"}]
+    # Narrow base: gate_yaml_dir = .code-forge/, gate_root = project
+    with pytest.raises(ValueError, match="traverses outside"):
+        validate_siblings(siblings_abs, gate_yaml_dir=code_forge_dir)
+
+
+def test_run_cross_repo_uses_narrow_base(
+    tmp_path: Path,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_cross_repo passes gate_yaml_dir = primary_path / '.code-forge'
+    (narrow base, gate_root = primary_path), not primary_path itself
+    (wide base, gate_root = primary_path.parent)."""
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode
+
+    monkeypatch.setenv(
+        "GIT_CEILING_DIRECTORIES",
+        str(tmp_path.parent),
+        prepend=os.pathsep,
+    )
+
+    captured = {}
+    real_vs = __import__(
+        "code_forge.gate_check", fromlist=["validate_siblings"]
+    ).validate_siblings
+
+    def _spy(siblings, gate_yaml_dir, primary_language=None):
+        captured["gate_yaml_dir"] = gate_yaml_dir
+        return real_vs(siblings, gate_yaml_dir, primary_language)
+
+    monkeypatch.setattr("code_forge.gate_check.validate_siblings", _spy)
+
+    class _PassMachine:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self):
+            from code_forge.state import Verdict
+            return Verdict.PASS
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", _PassMachine)
+
+    run_cross_repo(
+        primary_path=git_repo,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[],
+        gate_config={"test": {"command": ["pytest", "-q"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=1,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert captured["gate_yaml_dir"] == git_repo / ".code-forge"
+
+
+def test_sibling_crash_is_advisory(
+    tmp_path: Path,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sibling thread crash does not abort the joint review."""
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    monkeypatch.setenv(
+        "GIT_CEILING_DIRECTORIES",
+        str(tmp_path.parent),
+        prepend=os.pathsep,
+    )
+
+    call_count = {"n": 0}
+
+    class _CrashOnSecond:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self):
+            call_count["n"] += 1
+            if call_count["n"] > 1:
+                raise RuntimeError("sibling boom")
+            return Verdict.PASS
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", _CrashOnSecond)
+
+    sib = tmp_path / "sibling"
+    sib.mkdir()
+    run = lambda *cmd: subprocess.run(  # noqa: E731
+        list(cmd), cwd=sib, check=True, capture_output=True, text=True,
+    )
+    run("git", "init", "-b", "main")
+    run("git", "config", "user.email", "t@t.com")
+    run("git", "config", "user.name", "T")
+    (sib / "f.py").write_text("y = 1\n")
+    run("git", "add", "f.py")
+    run("git", "commit", "-m", "init")
+    run("git", "checkout", "-b", "feature")
+    (sib / "f.py").write_text("y = 2\n")
+    run("git", "add", "f.py")
+    run("git", "commit", "-m", "change")
+    run("git", "checkout", "main")
+
+    messages = []
+    result = run_cross_repo(
+        primary_path=git_repo,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sib),
+            "ref": "main..feature",
+            "label": "sib",
+        }],
+        gate_config={"test": {"command": ["pytest", "-q"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=1,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+        output_fn=messages.append,
+    )
+    assert result == Verdict.PASS
+    assert any("crashed" in m for m in messages)
