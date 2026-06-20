@@ -1049,3 +1049,136 @@ def test_invalid_sibling_ref_fails_closed(
             max_fix_attempts=1,
             clean_round_threshold=1,
         )
+
+
+def test_primary_receives_joint_diff_as_l1_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Primary thread gets the joint cross-repo diff for L1 review; siblings do not.
+
+    run_cross_repo builds two ResolvedReview objects for the primary: one
+    with the per-repo diff (for L0/coverage) and one with the joint context
+    (for L1).  Only the primary calls build_l1_provider; siblings use a no-op
+    lambda.  This spy verifies that fork is live and passes the right content.
+
+    Spy replaces code_forge.factories.build_l1_provider before run_cross_repo
+    is called.  The function-level import inside run_cross_repo picks up the
+    spy at call time, so the closure captures it.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.llm_invoke import Usage
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+
+    spy_calls = []
+
+    def _spy_build_l1_provider(engine_choice_arg, resolved, **kwargs):
+        spy_calls.append(resolved.git_diff)
+        return lambda: ([], [], Usage(), 0.0)
+
+    monkeypatch.setattr(
+        "code_forge.factories.build_l1_provider",
+        _spy_build_l1_provider,
+    )
+
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert result == Verdict.PASS
+    # build_l1_provider must be called exactly once (primary thread only).
+    assert len(spy_calls) == 1, (
+        "expected build_l1_provider called once (primary only), "
+        "got %d calls" % len(spy_calls)
+    )
+    joint_diff = spy_calls[0]
+    assert joint_diff is not None, "l1 diff was None; joint context not passed"
+    assert joint_diff.startswith("Cross-repo review:"), (
+        "l1 diff does not start with joint-context header"
+    )
+    assert "## Repo: [primary]" in joint_diff
+    assert "## Repo: [sibling]" in joint_diff
+
+
+def test_sibling_escalated_verdict_triggers_advisory_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sibling with an ESCALATED verdict triggers the advisory warning.
+
+    The warning path checks for FAIL and ESCALATED together.  This test
+    covers the ESCALATED branch specifically, which is not exercised by
+    the existing FAIL variant.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+
+    class _PrimaryPassSiblingEscalated:
+        """Primary returns PASS; sibling returns ESCALATED.
+
+        Coupled to run_cross_repo._thread_fn (baseline_spec_repr=label).
+        """
+
+        def __init__(self, **kwargs):
+            label = kwargs.get("baseline_spec_repr")
+            assert label is not None, (
+                "StateMachine did not receive baseline_spec_repr; "
+                "run_cross_repo contract may have changed"
+            )
+            self._is_primary = label == "primary"
+
+        def run(self):
+            return Verdict.PASS if self._is_primary else Verdict.ESCALATED
+
+    monkeypatch.setattr(
+        "code_forge.machine.StateMachine", _PrimaryPassSiblingEscalated,
+    )
+
+    messages = []
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+        output_fn=messages.append,
+    )
+    assert result == Verdict.PASS
+    assert len(messages) > 0, "expected advisory output but got none"
+    assert any(
+        "[cross-repo] WARNING" in m and "findings" in m
+        for m in messages
+    )
