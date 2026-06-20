@@ -32,7 +32,9 @@ config-file default or session default -- it does not cause an error.
 Forces the review outlet. Three outlets are available:
 
 - `subprocess` -- spawns a fresh `claude` subprocess for each review pass.
-  Requires the `claude` binary in PATH and an authenticated session.
+  Requires the `claude` binary in PATH and an authenticated session
+  (or a `command` override in gate.yaml -- see "Third-Party API Proxies"
+  below).
 - `inline` -- Outlet B: runs the merged review skill inside the current
   AI session. No subprocess, no reachability probe.
 - `subagent` -- spawns a fresh Agent per pass; works inside the current
@@ -53,6 +55,16 @@ export FORGE_OUTLET=subagent     # always use subagent
 When `FORGE_OUTLET=inline`, code-forge never runs the reachability probe.
 This is useful when you know the backend is available and want to skip
 the probe latency.
+
+> **"Implicit claude -p is disabled" warning**: This warning fires only
+> when no backend is explicitly configured and code-forge would fall back
+> to the implicit `claude` CLI default. The implicit fallback is disabled
+> because it nests a subprocess and bills the main Anthropic account.
+> Setting `command: claude` (or a proxy binary path) in a gate.yaml
+> `backends` entry is an explicit configuration and does NOT trigger the
+> warning. If you see this warning, either add a `backends` section to
+> gate.yaml, or set `FORGE_OUTLET=inline` to run review inside the
+> current session.
 
 ---
 
@@ -114,6 +126,12 @@ a healthy backend call is aborted mid-flight by the default 120s ceiling (slow
 cross-region APIs, reasoning models). Distinct from `FORGE_AUTH_TIMEOUT`, which
 bounds the zero-cost reachability probe, not the review inference call.
 
+> **Update note**: `FORGE_LLM_TIMEOUT_S` requires forge v2.4 or later. If
+> you are running an older installation, update via
+> `pip install --upgrade code-forge` or reinstall from source. On older
+> builds, the per-call timeout is hardcoded to 120 seconds and cannot be
+> overridden.
+
 ---
 
 ## gate.yaml backends block
@@ -145,7 +163,7 @@ session-default backend is used.
 |---|---|---|
 | `type` | yes | Must be `"api"` |
 | `format` | yes | API format: `"anthropic"`, `"openai"`, or `"vertex"` |
-| `base_url` | yes (anthropic/openai) | API base URL (including version path for OpenAI) |
+| `base_url` | yes (anthropic/openai) | API base URL (see format-specific notes below) |
 | `api_key_env` | yes (anthropic/openai) | Name of the env var that holds the API key |
 | `project_id` | yes (vertex) | GCP project ID |
 | `region` | no (vertex) | GCP region (default: global) |
@@ -159,6 +177,21 @@ session-default backend is used.
 the actual key in your shell or secrets manager. code-forge rejects any
 backend entry that contains an `api_key` field.
 
+**base_url format differences**: The `format` field determines how
+code-forge constructs the request URL from `base_url`:
+
+- `format: anthropic` -- code-forge appends `/v1/messages` to the
+  configured `base_url`. For example, if `base_url` is
+  `https://proxy.example.com/anthropic`, the actual request goes to
+  `https://proxy.example.com/anthropic/v1/messages`. Do NOT include
+  `/v1/messages` in `base_url` for anthropic-format backends.
+- `format: openai` -- code-forge appends `/chat/completions` to
+  `base_url`. Include the version path but NOT the endpoint
+  (e.g. `https://api.openai.com/v1`, not
+  `https://api.openai.com/v1/chat/completions`).
+- `format: vertex` -- `base_url` is not used; the URL is constructed
+  from `project_id` and `region`.
+
 ### CLI Backend Fields
 
 | Field | Required | Description |
@@ -168,6 +201,48 @@ backend entry that contains an `api_key` field.
 | `command` | no | CLI binary name or path (default: `"claude"`) |
 | `max_tokens` | no | Output token cap (default: 16384) |
 | `default` | no | If `true`, use this backend when no override is set |
+
+### Third-Party API Proxies
+
+code-forge supports third-party LLM providers and proxy services through
+two patterns:
+
+**CLI outlet with a proxy binary** (`type: cli`): Replace the default
+`claude` binary with a proxy that accepts the same stdin/stdout contract.
+Set `command` to the path of your proxy binary:
+
+```yaml
+backends:
+  my-proxy:
+    type: cli
+    command: /usr/local/bin/my-llm-proxy
+```
+
+The proxy binary must accept the same arguments and produce the same
+output format as `claude -p`. No API key is needed in gate.yaml -- the
+proxy handles its own authentication.
+
+**API outlet with a proxy URL** (`type: api`): Point `base_url` at a
+proxy server that implements the OpenAI or Anthropic API format:
+
+```yaml
+backends:
+  proxy-api:
+    type: api
+    format: openai
+    base_url: https://my-proxy.example.com/v1
+    api_key_env: MY_PROXY_API_KEY
+```
+
+The proxy must return responses in the format specified by `format`.
+Authentication is handled via `api_key_env` -- the env var holds whatever
+token or key your proxy expects.
+
+> **Note**: The "authenticated session" mentioned in the `subprocess`
+> outlet description refers to the default `claude` CLI using the user's
+> own Anthropic account. Third-party proxies use their own authentication
+> via `api_key_env` (for API outlets) or internal credentials (for CLI
+> proxy binaries).
 
 ### Example: Anthropic API
 
@@ -307,6 +382,57 @@ Or use the CLI flag for a one-off:
 ```bash
 code-forge review --auth-timeout 60
 ```
+
+---
+
+## Model Selection
+
+code-forge's review pipeline sends multiple LLM prompts per review run.
+Each of the 3 review passes (qodo, expert, adversarial) sends the full
+diff plus review context to the backend, and the pipeline runs multiple
+rounds until convergence. A typical review run produces 9 or more LLM
+calls, each containing the full diff.
+
+Reasoning models (claude-opus-4-5, claude-sonnet-4-6 with extended
+thinking, mimo-pro, deepseek-reasoner) add substantial thinking overhead
+per call. Multiplied across 9+ passes, this overhead dominates total
+review time and cost.
+
+**Recommendation**: Use a fast non-reasoning model as the primary review
+backend. Reserve reasoning models for single-pass deep analysis or
+targeted falsification of specific findings.
+
+| Category | Models | Multi-pass review | Single-pass analysis |
+|---|---|---|---|
+| Fast (recommended for review) | haiku, mimo, deepseek-chat, glm-4 | Good | Adequate |
+| Balanced | claude-sonnet-4-6, gpt-4o | Acceptable | Good |
+| Reasoning (use sparingly) | claude-opus-4-5, mimo-pro, deepseek-reasoner | Slow and expensive | Best depth |
+
+For cross-region backends (e.g. CN-hosted APIs accessed from outside
+China), also raise `FORGE_LLM_TIMEOUT_S` to account for network latency
+(300-600 seconds is typical).
+
+---
+
+## Backend Troubleshooting
+
+Common backend errors and their solutions:
+
+| Symptom | Likely Cause | Fix |
+|---|---|---|
+| L1 pass always times out | Backend too slow or unreachable | Raise `FORGE_LLM_TIMEOUT_S` (e.g. 300 for cross-region) or switch to a faster model |
+| "unexpected response structure" | Backend returned non-JSON or truncated response | Check `max_tokens` setting in gate.yaml -- ensure it is at least 16384. Reasoning models need higher limits |
+| "Implicit \`claude -p\` is disabled" | No backend configured; implicit fallback refused | Add a `backends` section to gate.yaml, or set `FORGE_OUTLET=inline` |
+| "LLM subprocess failed" | CLI binary not found or crashed | Verify the `command` path exists and is executable (`which claude` or `which <proxy>`) |
+| "schema validation failed" | Backend returned valid JSON but wrong structure | Verify the backend supports the API format specified by `format` in gate.yaml |
+| "lock busy" | Another code-forge process is running on this project | Wait for it to finish, or check for stuck processes (`ps aux \| grep code-forge`) |
+| Exit code 6 (TIMEOUT) | 5 consecutive L1 timeouts tripped the circuit breaker | The backend cannot keep up. Reduce diff size, raise `FORGE_LLM_TIMEOUT_S`, or switch to a faster (non-reasoning) backend |
+
+Exit code 6 is distinct from exit code 1 (review found unfixed issues).
+The circuit breaker trips after 5 consecutive L1 timeouts to prevent
+the review from running indefinitely on an unreachable or overloaded
+backend. The counter resets on any successful L1 call, so transient
+single-request timeouts do not trip the breaker.
 
 ---
 
