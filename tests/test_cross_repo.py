@@ -1182,3 +1182,60 @@ def test_sibling_escalated_verdict_triggers_advisory_warning(
         "[cross-repo] WARNING" in m and "findings" in m
         for m in messages
     )
+
+
+# ---------------------------------------------------------------------------
+# Grouped verdict output (format_cross_repo_output)
+# ---------------------------------------------------------------------------
+
+
+def test_grouped_verdict_output() -> None:
+    """Findings appear under their repo's section header in declaration order."""
+    from code_forge.cross_repo import format_cross_repo_output
+
+    captured = []
+    per_repo_findings = {
+        "primary": [{"file": "src/a.py", "line": 1, "description": "bug"}],
+        "plugin": [{"file": "src/b.py", "line": 2, "description": "issue"}],
+    }
+    format_cross_repo_output(
+        per_repo_findings, ["primary", "plugin"], output_fn=captured.append,
+    )
+    assert captured[0] == "=== [primary] ==="
+    assert captured[1] == "[primary] src/a.py:1 -- bug"
+    assert captured[2] == "=== [plugin] ==="
+    assert captured[3] == "[plugin] src/b.py:2 -- issue"
+
+
+def test_finding_attribution_no_cross_contamination() -> None:
+    """A finding prefixed [plugin] appears only under the plugin section."""
+    from code_forge.cross_repo import format_cross_repo_output
+
+    captured = []
+    per_repo_findings = {
+        "primary": [{"file": "src/a.py", "line": 1, "description": "primary-bug"}],
+        "plugin": [{"file": "src/b.py", "line": 2, "description": "plugin-issue"}],
+    }
+    format_cross_repo_output(
+        per_repo_findings, ["primary", "plugin"], output_fn=captured.append,
+    )
+    plugin_header_idx = captured.index("=== [plugin] ===")
+    primary_section = captured[1:plugin_header_idx]
+    plugin_section = captured[plugin_header_idx + 1:]
+    assert not any("[plugin]" in line for line in primary_section), (
+        "plugin finding leaked into primary section"
+    )
+    assert any("[plugin] src/b.py" in line for line in plugin_section)
+
+
+def test_empty_per_repo_findings_graceful() -> None:
+    """Empty findings dict emits headers only, no body lines, no exception."""
+    from code_forge.cross_repo import format_cross_repo_output
+
+    captured = []
+    format_cross_repo_output(
+        {}, ["primary", "sibling"], output_fn=captured.append,
+    )
+    assert "=== [primary] ===" in captured
+    assert "=== [sibling] ===" in captured
+    assert len(captured) == 2

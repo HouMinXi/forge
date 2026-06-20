@@ -396,5 +396,33 @@ def run_cross_repo(
                 findings.extend(data.get("findings", []))
             per_repo_findings[label] = findings
 
-    # -- Step 9: return joint verdict --
+    # -- Step 9: grouped output (after receipts are fully collected) --
+    ordered_labels = [primary_label] + [
+        s.get("label") or os.path.basename(s["repo"].rstrip("/"))
+        for s in siblings
+    ]
+    format_cross_repo_output(per_repo_findings, ordered_labels, output_fn)
+
+    # -- Step 10: return joint verdict --
     return primary_verdict
+
+
+def format_cross_repo_output(
+    per_repo_findings: dict,
+    ordered_labels: list,
+    output_fn=print,
+) -> None:
+    """Emit grouped verdict output: findings under their repo's section header.
+
+    Each label in ordered_labels gets a === [label] === header.  Findings
+    from per_repo_findings[label] appear under that header in
+    [label] file:line -- description format.  A label with no findings
+    still gets its header (no body lines, no exception).
+    """
+    for label in ordered_labels:
+        output_fn("=== [%s] ===" % label)
+        for finding in per_repo_findings.get(label, []):
+            file_ref = finding.get("file", "?")
+            line_ref = finding.get("line", 0)
+            desc = finding.get("description", "")
+            output_fn("[%s] %s:%s -- %s" % (label, file_ref, line_ref, desc))
