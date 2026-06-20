@@ -42,11 +42,9 @@ class TestParserDefaults:
         assert args.baseline is None
         assert args.head is None
         assert args.registry == ".code-forge/tools.yaml"
-        assert args.state_dir is None
         assert args.max_total_rounds is None
         assert args.max_fix_attempts is None
         assert args.quiet is False
-        assert args.staged is False
         assert args.paths == []
 
 
@@ -64,11 +62,9 @@ class TestParserAllFlags:
             "--baseline", "abc123",
             "--head", "WORKING",
             "--registry", "custom.yaml",
-            "--state-dir", "/tmp/state",
             "--max-total-rounds", "50",
             "--max-fix-attempts", "10",
             "--quiet",
-            "--staged",
             "a.py", "b.py",
         ])
         assert args.subcommand == "review"
@@ -78,11 +74,9 @@ class TestParserAllFlags:
         assert args.baseline == "abc123"
         assert args.head == "WORKING"
         assert args.registry == "custom.yaml"
-        assert args.state_dir == "/tmp/state"
         assert args.max_total_rounds == 50
         assert args.max_fix_attempts == 10
         assert args.quiet is True
-        assert args.staged is True
         assert args.paths == ["a.py", "b.py"]
 
     def test_review_flags_preserved(self):
@@ -267,7 +261,7 @@ class TestOutletAndCommittedFlags:
         from code_forge.errors import CliError
         import argparse
         args = argparse.Namespace(
-            committed=True, baseline="HEAD~2", head=None, staged=False
+            committed=True, baseline="HEAD~2", head=None,
         )
         with pytest.raises(CliError, match="--committed cannot be combined with --baseline"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -278,20 +272,9 @@ class TestOutletAndCommittedFlags:
         from code_forge.errors import CliError
         import argparse
         args = argparse.Namespace(
-            committed=True, baseline=None, head="HEAD", staged=False
+            committed=True, baseline=None, head="HEAD",
         )
         with pytest.raises(CliError, match="--committed cannot be combined with --head"):
-            _build_baseline_specs(args, cwd=tmp_path)
-
-    def test_committed_rejects_staged_at_runtime(self, tmp_path):
-        """--committed + --staged raises CliError."""
-        from code_forge.cli import _build_baseline_specs
-        from code_forge.errors import CliError
-        import argparse
-        args = argparse.Namespace(
-            committed=True, baseline=None, head=None, staged=True
-        )
-        with pytest.raises(CliError, match="--committed and --staged are mutually exclusive"):
             _build_baseline_specs(args, cwd=tmp_path)
 
 
@@ -314,7 +297,7 @@ class TestWholeFileFlag:
         import argparse
         args = argparse.Namespace(
             whole_file=["some/file.py"], baseline=None,
-            head=None, committed=False, staged=False, paths=[],
+            head=None, committed=False, paths=[],
         )
         baseline, head = _build_baseline_specs(args, cwd=tmp_path)
         assert isinstance(baseline, EmptyBaseline)
@@ -331,7 +314,7 @@ class TestWholeFileFlag:
         )
         args = argparse.Namespace(
             whole_file=["some/file.py"], baseline=None,
-            head=None, committed=False, staged=False, paths=[],
+            head=None, committed=False, paths=[],
         )
         baseline, head = _build_baseline_specs(args, cwd=tmp_path)
         assert isinstance(baseline, EmptyBaseline)
@@ -345,7 +328,7 @@ class TestWholeFileFlag:
         import argparse
         args = argparse.Namespace(
             whole_file=["f.py"], baseline="HEAD",
-            head=None, committed=False, staged=False, paths=[],
+            head=None, committed=False, paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --baseline"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -357,7 +340,7 @@ class TestWholeFileFlag:
         import argparse
         args = argparse.Namespace(
             whole_file=["f.py"], baseline=None,
-            head=None, committed=True, staged=False, paths=[],
+            head=None, committed=True, paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --committed"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -369,7 +352,7 @@ class TestWholeFileFlag:
         import argparse
         args = argparse.Namespace(
             whole_file=["f.py"], baseline=None,
-            head="HEAD", committed=False, staged=False, paths=[],
+            head="HEAD", committed=False, paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --head"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -381,20 +364,9 @@ class TestWholeFileFlag:
         import argparse
         args = argparse.Namespace(
             whole_file=["f.py"], baseline=None,
-            head=None, committed=False, staged=False,
-            paths=["other.py"],
+            head=None, committed=False,            paths=["other.py"],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with positional paths"):
             _build_baseline_specs(args, cwd=tmp_path)
 
-    def test_whole_file_rejects_staged(self, tmp_path):
-        """--whole-file + --staged raises CliError."""
-        from code_forge.cli import _build_baseline_specs
-        from code_forge.errors import CliError
-        import argparse
-        args = argparse.Namespace(
-            whole_file=["f.py"], baseline=None,
-            head=None, committed=False, staged=True, paths=[],
-        )
-        with pytest.raises(CliError, match="--whole-file cannot be combined with --staged"):
-            _build_baseline_specs(args, cwd=tmp_path)
+
