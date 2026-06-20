@@ -48,11 +48,13 @@ class LLMInvokeError(Exception):
         exit_code: int = -1,
         stderr: str = "",
         duration_s: float = 0.0,
+        is_timeout: bool = False,
     ):
         super().__init__(message)
         self.exit_code = exit_code
         self.stderr = stderr
         self.duration_s = duration_s
+        self.is_timeout = is_timeout
 
 
 DEFAULT_TIMEOUT_S = 120  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
@@ -329,6 +331,7 @@ def _invoke_cli(
             raise LLMInvokeError(
                 "LLM subprocess timed out after %ds" % timeout_s,
                 exit_code=-1, stderr=str(exc), duration_s=duration,
+                is_timeout=True,
             ) from exc
     finally:
         _active_proc = None
@@ -455,6 +458,7 @@ def _invoke_api(
             "%s backend timed out after %ds" % (backend.format, timeout_s),
             stderr=str(exc),
             duration_s=time.monotonic() - start,
+            is_timeout=True,
         ) from exc
 
     duration = time.monotonic() - start

@@ -41,13 +41,14 @@ from .exit_codes import (
     EXIT_CLI_ERROR,
     EXIT_FAIL,
     EXIT_PASS,
+    EXIT_TIMEOUT,
     verdict_to_exit,
 )
 from .factories import build_autofixer, build_falsifier, build_l1_provider, build_revert_fn
 from .git import is_git_repo
 from .hold import HoldAborted, run_hold_ui
 from .lock import ForgeLock, ForgeLockBusy
-from .machine import StateMachine
+from .machine import StateMachine, TimeoutBreaker
 from .mode_resolver import resolve_mode
 from .registry import load_registry
 from .source import compute_source_hash
@@ -991,6 +992,9 @@ def main() -> int:
         except ForgeLockBusy as exc:
             print("code-forge: %s" % exc, file=sys.stderr)
             return EXIT_BUSY
+        except TimeoutBreaker as exc:
+            print("code-forge: %s" % exc, file=sys.stderr)
+            return EXIT_TIMEOUT
         except Exception as exc:  # noqa: BLE001
             import traceback
             print(
@@ -1538,11 +1542,16 @@ def _run(args, env, cwd: Path) -> Verdict:
     falsifier = build_falsifier(engine_choice, backend=backend)
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
+
+    from .machine import TimeoutCircuitBreaker
+    breaker = TimeoutCircuitBreaker(threshold=5)
+
     l1_provider = build_l1_provider(
         engine_choice, resolved, backend=backend,
         conventions_digest=_conv_digest_a,
         post_image=_post_image_a,
         graph_impact_context=_graph_impact_context,
+        breaker=breaker,
     )
 
     # Coverage gate inputs: L1 examines every changed file only when it

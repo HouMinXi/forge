@@ -567,3 +567,165 @@ class TestPersistentP2NoPass:
         assert machine._state.consecutive_clean_rounds == 0, (
             "CYCLE_RESTART must reset consecutive_clean_rounds to 0"
         )
+
+
+class TestTimeoutCircuitBreaker:
+    def test_breaker_trips_at_threshold(self):
+        from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
+        import pytest
+        breaker = TimeoutCircuitBreaker(threshold=3)
+        breaker.record_timeout()
+        breaker.record_timeout()
+        with pytest.raises(TimeoutBreaker, match="consecutive timeouts.*FORGE_LLM_TIMEOUT_S"):
+            breaker.record_timeout()
+
+    def test_breaker_resets_on_success(self):
+        from code_forge.machine import TimeoutCircuitBreaker
+        breaker = TimeoutCircuitBreaker(threshold=3)
+        breaker.record_timeout()
+        breaker.record_timeout()
+        breaker.record_success()
+        breaker.record_timeout()
+        breaker.record_timeout()
+        assert breaker.count == 2
+
+    def test_other_error_does_not_increment_or_reset(self):
+        from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
+        import pytest
+        breaker = TimeoutCircuitBreaker(threshold=3)
+        breaker.record_timeout()
+        breaker.record_timeout()
+        breaker.record_other_error()
+        assert breaker.count == 2
+        with pytest.raises(TimeoutBreaker):
+            breaker.record_timeout()
+
+    def test_count_property(self):
+        from code_forge.machine import TimeoutCircuitBreaker
+        breaker = TimeoutCircuitBreaker(threshold=3)
+        assert breaker.count == 0
+        breaker.record_timeout()
+        assert breaker.count == 1
+
+
+class TestTimeoutBreakerIntegration:
+    import pytest
+    @pytest.fixture
+    def resolved(self):
+        from code_forge.baseline import ResolvedReview
+        return ResolvedReview(source_files=[], baseline_content=None, git_diff="diff", mode_hint="git")
+
+    def test_breaker_trips_after_consecutive_timeouts(self, resolved, monkeypatch):
+        import pytest
+        from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+        
+        def mock_invoke(*args, **kwargs):
+            raise LLMInvokeError("timed out", is_timeout=True)
+        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
+
+        breaker = TimeoutCircuitBreaker(threshold=5)
+        l1_provider = build_l1_provider("real", resolved, breaker=breaker)
+
+        with pytest.raises(TimeoutBreaker, match="consecutive timeouts"):
+            l1_provider()
+            l1_provider()
+
+    def test_breaker_resets_on_real_success(self, resolved, monkeypatch):
+        from code_forge.machine import TimeoutCircuitBreaker
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+        
+        call_count = 0
+        def mock_invoke(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 5:
+                class MockResult:
+                    content = '{"findings": [], "code_excerpts": [{"file": "f", "content": "c", "start_line": 1, "end_line": 2}]}'
+                    class usage:
+                        input_tokens = 0
+                        output_tokens = 0
+                    duration_s = 0.0
+                return MockResult()
+            raise LLMInvokeError("timed out", is_timeout=True)
+            
+        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
+
+        breaker = TimeoutCircuitBreaker(threshold=5)
+        l1_provider = build_l1_provider("real", resolved, breaker=breaker)
+        
+        l1_provider()
+        assert breaker.count == 3
+        l1_provider()
+        assert breaker.count == 1
+        l1_provider()
+        assert breaker.count == 4
+
+    def test_non_timeout_infra_does_not_increment(self, resolved, monkeypatch):
+        from code_forge.machine import TimeoutCircuitBreaker
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+        
+        def mock_invoke(*args, **kwargs):
+            raise LLMInvokeError("parse error", is_timeout=False)
+            
+        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
+
+        breaker = TimeoutCircuitBreaker(threshold=5)
+        l1_provider = build_l1_provider("real", resolved, breaker=breaker)
+        
+        l1_provider()
+        l1_provider()
+        l1_provider()
+        l1_provider()
+        
+        assert breaker.count == 0
+
+    def test_breaker_message_contains_remediation(self, resolved, monkeypatch):
+        import pytest
+        from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+        
+        def mock_invoke(*args, **kwargs):
+            raise LLMInvokeError("timed out", is_timeout=True)
+            
+        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
+
+        breaker = TimeoutCircuitBreaker(threshold=2)
+        l1_provider = build_l1_provider("real", resolved, breaker=breaker)
+        
+        with pytest.raises(TimeoutBreaker) as excinfo:
+            l1_provider()
+            
+        assert "FORGE_LLM_TIMEOUT_S" in str(excinfo.value)
+        assert "consecutive timeouts" in str(excinfo.value)
+
+    def test_bug_injection_breaker_wiring(self, resolved, monkeypatch):
+        """Proves breaker wiring is causal: breaker=breaker trips, breaker=None does not."""
+        import pytest
+        from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+
+        def mock_invoke(*args, **kwargs):
+            raise LLMInvokeError("timed out", is_timeout=True)
+
+        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
+
+        # Positive: with breaker, trips after threshold
+        breaker = TimeoutCircuitBreaker(threshold=3)
+        provider_with = build_l1_provider("real", resolved, breaker=breaker)
+        with pytest.raises(TimeoutBreaker):
+            for _ in range(10):
+                provider_with()
+
+        # Negative: without breaker, no trip (just INFRA findings)
+        provider_without = build_l1_provider("real", resolved, breaker=None)
+        for _ in range(10):
+            findings, excerpts, usage, cost = provider_without()
+            assert any(
+                f.source == "INFRA" and f.is_timeout for f in findings
+            )

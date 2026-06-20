@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from code_forge import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS
+from code_forge import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS, EXIT_TIMEOUT
 from code_forge.cli import main
 from code_forge.errors import CliError
 
@@ -1250,3 +1250,28 @@ class TestBuildL1ProviderDigestAndPostImage:
         prompt = mock_llm.call_args[0][0]
         assert "Conventions Digest" not in prompt
         assert "Post-Image" not in prompt
+
+
+class TestTimeoutBreakerExitCode:
+    """main() returns EXIT_TIMEOUT when TimeoutBreaker propagates from _run."""
+
+    def test_main_returns_exit_timeout_on_breaker_trip(
+        self, tmp_path, monkeypatch,
+    ):
+        """Breaker trip in _run -> except TimeoutBreaker -> EXIT_TIMEOUT."""
+        from code_forge.machine import TimeoutBreaker
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["code-forge", "--falsification-engine", "stub",
+             "--mode", "ci", "a.py"],
+        )
+        monkeypatch.chdir(str(tmp_path))
+
+        def _raise_breaker(*a, **kw):
+            raise TimeoutBreaker(
+                "backend produced 5 consecutive timeouts (>=5)"
+            )
+
+        monkeypatch.setattr("code_forge.cli._run", _raise_breaker)
+        assert main() == EXIT_TIMEOUT

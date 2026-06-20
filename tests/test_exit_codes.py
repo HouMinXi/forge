@@ -11,6 +11,7 @@ from code_forge.exit_codes import (
     EXIT_ESCALATED,
     EXIT_FAIL,
     EXIT_PASS,
+    EXIT_TIMEOUT,
     verdict_to_exit,
 )
 from code_forge.state import Verdict
@@ -20,12 +21,12 @@ class TestExitCodeConstants:
     """Verify EXIT_* constants are correct and distinct."""
 
     def test_all_constants_distinct(self):
-        """SC-4: all 6 EXIT_* constants are int 0-5 distinct."""
+        """SC-4: all 7 EXIT_* constants are int 0-6 distinct."""
         values = [EXIT_PASS, EXIT_FAIL, EXIT_CLI_ERROR, EXIT_BUSY,
-                  EXIT_ESCALATED, EXIT_DELEGATED]
+                  EXIT_ESCALATED, EXIT_DELEGATED, EXIT_TIMEOUT]
         assert all(isinstance(v, int) for v in values)
-        assert len(set(values)) == 6
-        assert set(values) == {0, 1, 2, 3, 4, 5}
+        assert len(set(values)) == 7
+        assert set(values) == {0, 1, 2, 3, 4, 5, 6}
 
     def test_constant_values(self):
         """Constants match REQUIREMENTS spec literal."""
@@ -35,6 +36,7 @@ class TestExitCodeConstants:
         assert EXIT_BUSY == 3
         assert EXIT_ESCALATED == 4
         assert EXIT_DELEGATED == 5
+        assert EXIT_TIMEOUT == 6
 
 
 class TestVerdictToExit:
@@ -91,6 +93,7 @@ class TestInitReExport:
             EXIT_ESCALATED,
             EXIT_FAIL,
             EXIT_PASS,
+            EXIT_TIMEOUT,
         )
         from code_forge.exit_codes import (
             EXIT_BUSY as EC_BUSY,
@@ -99,6 +102,7 @@ class TestInitReExport:
             EXIT_ESCALATED as EC_ESC,
             EXIT_FAIL as EC_FAIL,
             EXIT_PASS as EC_PASS,
+            EXIT_TIMEOUT as EC_TIMEOUT,
         )
         assert EXIT_PASS == EC_PASS
         assert EXIT_FAIL == EC_FAIL
@@ -106,3 +110,4 @@ class TestInitReExport:
         assert EXIT_BUSY == EC_BUSY
         assert EXIT_ESCALATED == EC_ESC
         assert EXIT_DELEGATED == EC_DEL
+        assert EXIT_TIMEOUT == EC_TIMEOUT
