@@ -288,8 +288,12 @@ def run_cross_repo(
                         git_diff=joint_diff,
                         mode_hint="git",
                     )
+                    from .machine import TimeoutCircuitBreaker
+                    breaker = TimeoutCircuitBreaker(threshold=5)
+
                     l1_provider = build_l1_provider(
                         engine_choice, resolved_for_l1, backend=backend,
+                        breaker=breaker,
                     )
                     from .daemon_state import DaemonStateRunner
                     from .graph_triage import GraphTriageRunner

@@ -12,4 +12,5 @@ from .exit_codes import (
     EXIT_ESCALATED,
     EXIT_FAIL,
     EXIT_PASS,
+    EXIT_TIMEOUT,
 )

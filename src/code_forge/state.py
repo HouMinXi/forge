@@ -54,6 +54,7 @@ class StateFinding:
     error: Optional[str] = None
     anchor: Optional[dict] = None
     evidence_files: Optional[list[str]] = None
+    is_timeout: bool = False
 
 
 @dataclass
@@ -117,6 +118,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
         error=d.get("error"),
         anchor=d.get("anchor"),
         evidence_files=d.get("evidence_files"),
+        is_timeout=d.get("is_timeout", False),
     )
 
 
@@ -228,6 +230,7 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "error": f.error,
         "anchor": f.anchor,
         "evidence_files": f.evidence_files,
+        "is_timeout": f.is_timeout,
     }
     return d
 

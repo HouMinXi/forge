@@ -16,6 +16,7 @@ EXIT_CLI_ERROR = 2
 EXIT_BUSY = 3
 EXIT_ESCALATED = 4
 EXIT_DELEGATED = 5
+EXIT_TIMEOUT = 6
 
 
 def verdict_to_exit(verdict: Verdict) -> int:

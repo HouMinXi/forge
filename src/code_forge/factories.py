@@ -204,6 +204,7 @@ def build_l1_provider(
     conventions_digest: str = "",
     post_image: str = "",
     graph_impact_context: str = "",
+    breaker=None,
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -307,7 +308,13 @@ def build_l1_provider(
                     file="<llm-invoke>",
                     line_range=[0, 0],
                     description="L1 invoke failed: %s" % exc,
+                    is_timeout=exc.is_timeout,
                 ))
+                if breaker is not None:
+                    if exc.is_timeout:
+                        breaker.record_timeout()
+                    else:
+                        breaker.record_other_error()
                 continue
 
             try:
@@ -324,7 +331,12 @@ def build_l1_provider(
                     line_range=[0, 0],
                     description="schema validation failed: %s" % exc,
                 ))
+                if breaker is not None:
+                    breaker.record_other_error()
                 continue
+
+            if breaker is not None:
+                breaker.record_success()
 
             all_excerpts.extend(_collect_excerpts(validated))
 

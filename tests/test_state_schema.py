@@ -266,8 +266,8 @@ class TestStateFindingFieldCount:
     """Guard: field-count assertion catches drift in _finding_from_dict."""
 
     def test_field_count(self):
-        expected = 10  # id, fingerprint, source, disposition, file,
-        # line_range, description, error, anchor, evidence_files
+        expected = 11  # id, fingerprint, source, disposition, file,
+        # line_range, description, error, anchor, evidence_files, is_timeout
         assert len(fields(StateFinding)) == expected
 
 

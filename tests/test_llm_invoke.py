@@ -19,6 +19,16 @@ def _make_mock_proc(returncode=0, stdout="", stderr=""):
     return proc
 
 
+class TestLLMInvokeError:
+    def test_is_timeout_defaults_to_false(self):
+        err = LLMInvokeError("test")
+        assert err.is_timeout is False
+
+    def test_is_timeout_can_be_set_true(self):
+        err = LLMInvokeError("test", is_timeout=True)
+        assert err.is_timeout is True
+
+
 class TestLLMInvoke:
     def test_returns_llm_result_on_success(self):
         mock_proc = _make_mock_proc(stdout=json.dumps({"findings": []}))
@@ -42,8 +52,9 @@ class TestLLMInvoke:
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
              patch("code_forge.llm_invoke._kill_tree"):
-            with pytest.raises(LLMInvokeError, match="timed out"):
+            with pytest.raises(LLMInvokeError, match="timed out") as exc:
                 llm_invoke("prompt", timeout_s=120)
+            assert exc.value.is_timeout is True
 
     def test_raises_on_nonzero_exit(self):
         mock_proc = _make_mock_proc(returncode=1, stderr="error: rate limited")
@@ -328,8 +339,9 @@ class TestLLMInvoke:
         )
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")):
-            with pytest.raises(LLMInvokeError, match="timed out"):
+            with pytest.raises(LLMInvokeError, match="timed out") as exc:
                 llm_invoke("prompt", backend=backend)
+            assert exc.value.is_timeout is True
 
     def test_api_bare_timeout_error_anthropic_raises_llm_invoke_error(self):
         """Regression: bare TimeoutError on anthropic format must not propagate."""
@@ -343,8 +355,9 @@ class TestLLMInvoke:
         )
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")):
-            with pytest.raises(LLMInvokeError, match="timed out"):
+            with pytest.raises(LLMInvokeError, match="timed out") as exc:
                 llm_invoke("prompt", backend=backend)
+            assert exc.value.is_timeout is True
 
     def test_unsupported_backend_type(self):
         """Unsupported backend type raises LLMInvokeError."""
@@ -511,8 +524,9 @@ class TestSubprocessCleanup:
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
              patch("code_forge.llm_invoke._kill_tree", side_effect=mock_kill_tree):
-            with pytest.raises(LLMInvokeError, match="timed out"):
+            with pytest.raises(LLMInvokeError, match="timed out") as exc:
                 llm_invoke("test", timeout_s=1)
+            assert exc.value.is_timeout is True
 
         assert len(kill_called) == 1, "_kill_tree must be called exactly once on timeout"
         assert kill_called[0] is mock_proc

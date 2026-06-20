@@ -59,6 +59,37 @@ from .state import (
 L1Provider = Callable[[], tuple[list[StateFinding], list[dict], Usage, float]]
 
 
+class TimeoutBreaker(Exception):
+    """Raised when consecutive timeout threshold is reached."""
+
+
+class TimeoutCircuitBreaker:
+    """Tracks consecutive timeout errors. Trips when threshold is reached."""
+    def __init__(self, threshold: int = 5):
+        self.threshold = threshold
+        self._consecutive = 0
+
+    def record_timeout(self) -> None:
+        self._consecutive += 1
+        if self._consecutive >= self.threshold:
+            raise TimeoutBreaker(
+                "backend produced %d consecutive timeouts (>=%d); "
+                "review cannot converge. Reduce diff size, raise "
+                "FORGE_LLM_TIMEOUT_S, or switch to a faster backend."
+                % (self._consecutive, self.threshold)
+            )
+
+    def record_success(self) -> None:
+        self._consecutive = 0
+
+    def record_other_error(self) -> None:
+        pass
+
+    @property
+    def count(self) -> int:
+        return self._consecutive
+
+
 def _default_l0_runner(
     registry: dict, files: list[Path]
 ) -> tuple[list[StateFinding], list[str]]:
