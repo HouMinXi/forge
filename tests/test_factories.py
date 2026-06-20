@@ -330,3 +330,284 @@ class TestInfraSourceTagging:
         for f in infra:
             assert f.disposition == Disposition.CONFIRMED
             assert "schema-fail" in f.fingerprint
+
+
+# -- Helpers for coverage guard tests --
+
+_TWO_FILE_DIFF = (
+    "diff --git a/src/a.py b/src/a.py\n"
+    "--- a/src/a.py\n"
+    "+++ b/src/a.py\n"
+    "@@ -1,3 +1,4 @@\n"
+    " line1\n"
+    "+added\n"
+    " line2\n"
+    "diff --git a/src/b.py b/src/b.py\n"
+    "--- a/src/b.py\n"
+    "+++ b/src/b.py\n"
+    "@@ -5,3 +5,4 @@\n"
+    " line5\n"
+    "+added2\n"
+    " line6\n"
+)
+
+_ONE_FILE_DIFF = (
+    "diff --git a/src/a.py b/src/a.py\n"
+    "--- a/src/a.py\n"
+    "+++ b/src/a.py\n"
+    "@@ -1,3 +1,4 @@\n"
+    " line1\n"
+    "+added\n"
+    " line2\n"
+)
+
+
+def _stub_llm_response(findings_json, excerpts_json):
+    """Build a mock llm_invoke return value from JSON dicts."""
+    import json
+    from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+    content = json.dumps({
+        "findings": findings_json,
+        "code_excerpts": excerpts_json,
+    })
+    return LLMResult(
+        content=content,
+        usage=LLMUsage(input_tokens=10, output_tokens=10),
+        duration_s=0.1,
+    )
+
+
+def _make_resolved_with_diff(diff_text):
+    """Create a ResolvedReview with a specific diff_text."""
+    return ResolvedReview(
+        source_files=[Path("src/a.py"), Path("src/b.py")],
+        baseline_content=None,
+        git_diff=diff_text,
+        mode_hint="git",
+    )
+
+
+class TestCoverageGuard:
+    """Coverage guard: detect truncated clean passes."""
+
+    def test_incomplete_coverage_produces_infra_finding(self):
+        """(a) Excerpts cover 1 of 2 files -> INFRA finding."""
+        from code_forge.factories import build_l1_provider
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        resp = _stub_llm_response(
+            findings_json=[],
+            excerpts_json=[
+                {"file": "src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+            ],
+        )
+
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        infra = [
+            f for f in findings
+            if "incomplete-coverage" in f.id
+        ]
+        assert len(infra) >= 1
+        assert infra[0].source == "INFRA"
+        assert infra[0].disposition == Disposition.CONFIRMED
+        assert "src/b.py" in infra[0].description
+
+    def test_full_coverage_no_infra_finding(self):
+        """(b) Excerpts cover all files -> no INFRA finding."""
+        from code_forge.factories import build_l1_provider
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        resp = _stub_llm_response(
+            findings_json=[],
+            excerpts_json=[
+                {"file": "src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+                {"file": "src/b.py", "start_line": 5,
+                 "end_line": 8, "content": "line5\nadded2\nline6"},
+            ],
+        )
+
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        infra = [
+            f for f in findings
+            if "incomplete-coverage" in f.id
+        ]
+        assert len(infra) == 0
+
+    def test_guard_skips_when_findings_present(self):
+        """(c) findings > 0 -> guard does not fire, even with partial coverage."""
+        from code_forge.factories import build_l1_provider
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        resp = _stub_llm_response(
+            findings_json=[
+                {"file": "src/a.py", "line": 2,
+                 "severity": "P1", "description": "bug"},
+            ],
+            excerpts_json=[
+                {"file": "src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+            ],
+        )
+
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        infra = [
+            f for f in findings
+            if "incomplete-coverage" in f.id
+        ]
+        assert len(infra) == 0
+
+    def test_excerpt_suffix_match_for_absolute_paths(self):
+        """(d) Excerpt uses absolute path, basename ambiguous -> suffix match."""
+        from code_forge.factories import build_l1_provider
+
+        # Two changed files share basename "a.py" in different dirs,
+        # so basename fallback is ambiguous (2 matches). The excerpts
+        # use absolute paths that are suffixes of the changed paths.
+        # Only suffix match resolves this correctly.
+        diff = (
+            "diff --git a/src/a.py b/src/a.py\n"
+            "--- a/src/a.py\n"
+            "+++ b/src/a.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            " line1\n"
+            "+added\n"
+            " line2\n"
+            "diff --git a/lib/a.py b/lib/a.py\n"
+            "--- a/lib/a.py\n"
+            "+++ b/lib/a.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            " x\n"
+            "+y\n"
+            " z\n"
+        )
+        resolved = _make_resolved_with_diff(diff)
+        resp = _stub_llm_response(
+            findings_json=[],
+            excerpts_json=[
+                {"file": "/home/user/repo/src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+                {"file": "/home/user/repo/lib/a.py", "start_line": 1,
+                 "end_line": 4, "content": "x\ny\nz"},
+            ],
+        )
+
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        infra = [
+            f for f in findings
+            if "incomplete-coverage" in f.id
+        ]
+        assert len(infra) == 0
+
+    def test_basename_fallback_for_bare_filenames(self):
+        """(e) Excerpt in different dir, same basename -> basename fallback."""
+        from code_forge.factories import build_l1_provider
+
+        # Changed file is "a/foo.py", excerpt says "b/foo.py".
+        # Exact match fails, suffix match fails (neither is a suffix
+        # of the other), but basename fallback matches ("foo.py" ==
+        # "foo.py" and only one such match exists -> unambiguous).
+        diff = (
+            "diff --git a/a/foo.py b/a/foo.py\n"
+            "--- a/a/foo.py\n"
+            "+++ b/a/foo.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            " line1\n"
+            "+added\n"
+            " line2\n"
+        )
+        resolved = _make_resolved_with_diff(diff)
+        resp = _stub_llm_response(
+            findings_json=[],
+            excerpts_json=[
+                {"file": "b/foo.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+            ],
+        )
+
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        infra = [
+            f for f in findings
+            if "incomplete-coverage" in f.id
+        ]
+        assert len(infra) == 0
+
+    def test_deleted_file_not_in_changed_set(self):
+        """(f) Regression: parse_diff_files excludes /dev/null by construction."""
+        from code_forge.verify import parse_diff_files
+
+        diff_with_delete = (
+            "diff --git a/src/a.py b/src/a.py\n"
+            "--- a/src/a.py\n"
+            "+++ b/src/a.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            " line1\n"
+            "+added\n"
+            " line2\n"
+            "diff --git a/src/deleted.py b/src/deleted.py\n"
+            "--- a/src/deleted.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,5 +0,0 @@\n"
+            "-removed1\n"
+            "-removed2\n"
+        )
+        result = parse_diff_files(diff_with_delete)
+        assert "src/a.py" in result
+        assert "/dev/null" not in result
+        assert "src/deleted.py" not in result
+
+    def test_bug_injection_guard_removed(self):
+        """(g) Monkeypatch proves the guard is the mechanism."""
+        from code_forge.factories import build_l1_provider
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        resp = _stub_llm_response(
+            findings_json=[],
+            excerpts_json=[
+                {"file": "src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+            ],
+        )
+
+        # Guard active: INFRA finding produced
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+            provider = build_l1_provider("real", resolved)
+            findings, _, _, _ = provider()
+        infra = [
+            f for f in findings
+            if "incomplete-coverage" in f.id
+        ]
+        assert len(infra) >= 1, "guard must produce INFRA finding"
+
+        # Guard bypassed: monkeypatch parse_diff_files to return empty
+        # (no changed files -> guard has nothing to check -> no INFRA)
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
+            with patch(
+                "code_forge.verify.parse_diff_files",
+                return_value={},
+            ):
+                provider2 = build_l1_provider("real", resolved)
+                findings2, _, _, _ = provider2()
+        infra2 = [
+            f for f in findings2
+            if "incomplete-coverage" in f.id
+        ]
+        assert len(infra2) == 0, (
+            "with guard bypassed, no INFRA finding expected"
+        )
