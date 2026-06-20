@@ -231,11 +231,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="path to tools.yaml (default: .code-forge/tools.yaml)",
     )
     review_parser.add_argument(
-        "--state-dir", default=None,
-        help="DEPRECATED: state directory is hardcoded to "
-             "cwd/.code-forge; value is ignored.",
-    )
-    review_parser.add_argument(
         "--max-total-rounds", type=int, default=None,
         help="LOCAL mode round bound "
              "(default 20 or FORGE_MAX_TOTAL_ROUNDS)",
@@ -250,11 +245,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--quiet", action="store_true",
         help="suppress tool-skipped, version, and deprecation "
              "messages",
-    )
-    review_parser.add_argument(
-        "--staged", action="store_true",
-        help="DEPRECATED v2.1: use --head INDEX "
-             "(mapped internally with warning)",
     )
     review_parser.add_argument(
         "--outlet", choices=["subprocess", "cli", "inline", "subagent"], default=None,
@@ -1332,14 +1322,6 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     # outlet == "subprocess" (Outlet A): fall through to review pipeline
 
-    # R4-M2: --state-dir deprecated; hardcode to cwd/.forge.
-    if (args.state_dir is not None
-            and args.state_dir != ".code-forge"):
-        warn(
-            "warning: --state-dir is deprecated v2.1; v2.0 always "
-            "uses cwd/.code-forge (your value %r is ignored)"
-            % args.state_dir
-        )
     state_dir = cwd / ".code-forge"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / "state.json"
@@ -1966,7 +1948,7 @@ def _resolve_whole_file_specs(args, cwd: Path):
     to their normal logic.
 
     When set, validates all paths are relative and under cwd, enforces
-    mutual-exclusion with --committed/--staged/--baseline/--head, and
+    mutual-exclusion with --committed/--baseline/--head, and
     returns a 3-tuple: (EmptyBaseline(), head_spec, [Path, ...]).
     """
     whole_file = getattr(args, "whole_file", None)
@@ -1976,8 +1958,6 @@ def _resolve_whole_file_specs(args, cwd: Path):
     # Mutual-exclusion: --whole-file conflicts with mode-selection flags
     if getattr(args, "committed", False):
         raise CliError("--whole-file cannot be combined with --committed")
-    if getattr(args, "staged", False):
-        raise CliError("--whole-file cannot be combined with --staged")
     if args.baseline is not None:
         raise CliError("--whole-file cannot be combined with --baseline")
     if args.head is not None:
@@ -2025,12 +2005,6 @@ def _build_baseline_specs(
             raise CliError(
                 "--committed cannot be combined with --head"
             )
-        if args.staged:
-            raise CliError(
-                "--committed and --staged are mutually exclusive "
-                "(--staged is deprecated; use --head INDEX)"
-            )
-
     # Apply --committed mapping
     if args.committed:
         baseline = GitRefBaseline("HEAD~1")
@@ -2050,20 +2024,7 @@ def _build_baseline_specs(
     else:
         baseline = GitRefBaseline(args.baseline)
 
-    # R2-M4: warn ANY time --staged is set.
-    if args.staged:
-        msg = (
-            "warning: --staged is deprecated; use --head INDEX "
-            "(will be removed in v2.1)"
-        )
-        if warn is not None:
-            warn(msg)
-        else:
-            print("code-forge: %s" % msg, file=sys.stderr)
-
-    if args.staged and args.head is None:
-        head = GitRefBaseline("INDEX")
-    elif args.head is None:
+    if args.head is None:
         head = GitRefBaseline("WORKING") if in_git else None
     else:
         head = GitRefBaseline(args.head)
