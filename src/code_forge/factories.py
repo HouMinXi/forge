@@ -7,6 +7,7 @@ declarative and Phase 4 can swap impls without touching the CLI.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -339,6 +340,78 @@ def build_l1_provider(
                 breaker.record_success()
 
             all_excerpts.extend(_collect_excerpts(validated))
+
+            # Coverage guard: when the pass reports zero findings,
+            # verify that excerpts cover every changed file before
+            # accepting it as a genuine clean pass. A truncated
+            # response can parse as valid JSON with findings==[]
+            # and partial excerpts, producing a false-green verdict.
+            if len(validated["findings"]) == 0 and diff_text:
+                from .verify import parse_diff_files
+                changed = set(parse_diff_files(diff_text).keys())
+                covered = {
+                    exc.get("file", "")
+                    for exc in validated.get("code_excerpts", [])
+                }
+                covered.discard("")
+
+                def _normalize(p: str) -> str:
+                    p = p.replace("\\", "/")
+                    if p.startswith("./"):
+                        p = p[2:]
+                    if p.startswith("/"):
+                        p = p.lstrip("/")
+                    return p
+
+                norm_covered = {_normalize(c) for c in covered}
+                uncovered = []
+                for cf in changed:
+                    ncf = _normalize(cf)
+                    # Exact normalized match
+                    if ncf in norm_covered:
+                        continue
+                    # Basename fallback: match only when unambiguous
+                    bn = os.path.basename(ncf)
+                    bn_matches = [
+                        c for c in norm_covered
+                        if os.path.basename(c) == bn
+                    ]
+                    if len(bn_matches) == 1:
+                        continue
+                    # Suffix match: cross-repo absolute paths
+                    matched = False
+                    for nc in norm_covered:
+                        if nc.endswith("/" + ncf) or ncf.endswith("/" + nc):
+                            matched = True
+                            break
+                    if matched:
+                        continue
+                    uncovered.append(cf)
+
+                if uncovered:
+                    desc_files = ", ".join(uncovered[:3])
+                    if len(uncovered) > 3:
+                        desc_files += " (and %d more)" % (
+                            len(uncovered) - 3
+                        )
+                    from .disposition import Disposition
+                    from .state import StateFinding
+                    all_candidates.append(StateFinding(
+                        id="l1-%s-incomplete-coverage" % pass_name,
+                        fingerprint=(
+                            "incomplete-coverage-%s" % pass_name
+                        ),
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<coverage-guard>",
+                        line_range=[0, 0],
+                        description=(
+                            "L1 pass '%s' returned 0 findings but "
+                            "excerpts do not cover: %s"
+                            % (pass_name, desc_files)
+                        ),
+                    ))
+                    continue
 
             for sf in _json_to_state_findings(validated, pass_name):
                 if sf.fingerprint in seen:
