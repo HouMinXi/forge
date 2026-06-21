@@ -529,18 +529,21 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _make_subagent_spawn(backend, conv_digest: str, post_image: str):
+def _make_subagent_spawn(
+    backend, conv_digest: str, post_image: str, contract_spec: str = "",
+):
     """Factory for subagent spawn_fn. Module-level for testability.
 
     Returns a spawn_fn(pass_name, diff_text) -> str that calls llm_invoke
     per pass with a fresh context (no shared session). The prompt contains
-    only the diff, post-image content, conventions digest, and pass role --
-    no implementer session context (D3 / SC1-SC3).
+    only the diff, post-image content, conventions digest, contract spec,
+    and pass role -- no implementer session context (D3 / SC1-SC3).
 
     Args:
         backend: BackendConfig for llm_invoke, or None for default.
         conv_digest: conventions digest string (D11 slot), may be "".
         post_image: post-image content of changed files, may be "".
+        contract_spec: cross-repo contract reference (D-05 slot), may be "".
     """
     _PASS_ROLES = {
         "qodo": "structural code reviewer: correctness and logic errors",
@@ -573,6 +576,11 @@ def _make_subagent_spawn(backend, conv_digest: str, post_image: str):
             prompt += (
                 "\n## Conventions Digest\n"
                 + conv_digest + "\n"
+            )
+        if contract_spec:
+            prompt += (
+                "\n## Contract Reference\n"
+                + contract_spec + "\n"
             )
         prompt += "\nDiff:\n" + diff_text
         result = llm_invoke(prompt, backend=backend)
@@ -880,8 +888,11 @@ def _run_trust(args, cwd: Path) -> int:
     from .trust import (
         find_dangerous_fields,
         record_trust,
+        record_trust_contracts,
         revoke_trust,
+        revoke_trust_contracts,
         trust_status,
+        trust_status_contracts,
     )
 
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
@@ -906,6 +917,8 @@ def _run_trust(args, cwd: Path) -> int:
         )
         return EXIT_CLI_ERROR
 
+    contracts_yaml_path = cwd / ".code-forge" / "contracts.yaml"
+
     if args.status:
         s = trust_status(gate_yaml_path, gd)
         print("Trusted: %s" % s.trusted, file=sys.stderr)
@@ -915,6 +928,26 @@ def _run_trust(args, cwd: Path) -> int:
         )
         print("Current hash: %s" % s.current_hash, file=sys.stderr)
         print("Path: %s" % s.gate_yaml_path, file=sys.stderr)
+        if contracts_yaml_path.is_file():
+            from .contract_loader import resolve_contract_specs
+            resolved_specs = resolve_contract_specs(
+                contracts_yaml_path, cwd,
+            )
+            trust_contents = [
+                (abs_path, content)
+                for _, _, abs_path, content, _ in resolved_specs
+            ]
+            cs = trust_status_contracts(
+                contracts_yaml_path, trust_contents,
+            )
+            print(
+                "Contracts trusted: %s" % cs.trusted, file=sys.stderr,
+            )
+            print(
+                "Contracts hash: %s"
+                % (cs.stored_hash or "(none)"),
+                file=sys.stderr,
+            )
         return EXIT_PASS
 
     if args.revoke:
@@ -922,6 +955,13 @@ def _run_trust(args, cwd: Path) -> int:
         print(
             "Trust revoked for %s" % gate_yaml_path, file=sys.stderr,
         )
+        if contracts_yaml_path.is_file():
+            revoke_trust_contracts(contracts_yaml_path)
+            print(
+                "Contracts trust revoked for %s"
+                % contracts_yaml_path,
+                file=sys.stderr,
+            )
         return EXIT_PASS
 
     # Bare trust: display dangerous fields, then record trust.
@@ -935,6 +975,20 @@ def _run_trust(args, cwd: Path) -> int:
             )
     record_trust(gate_yaml_path, gd)
     print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
+    if contracts_yaml_path.is_file():
+        from .contract_loader import resolve_contract_specs
+        resolved_specs = resolve_contract_specs(
+            contracts_yaml_path, cwd,
+        )
+        trust_contents = [
+            (abs_path, content)
+            for _, _, abs_path, content, _ in resolved_specs
+        ]
+        record_trust_contracts(contracts_yaml_path, trust_contents)
+        print(
+            "Contracts trusted: %s" % contracts_yaml_path,
+            file=sys.stderr,
+        )
     return EXIT_PASS
 
 
@@ -1431,7 +1485,17 @@ def _run(args, env, cwd: Path) -> Verdict:
         _post_image, _conv_digest = _assemble_post_image(
             cwd, resolved.git_diff or ""
         )
-        _subagent_spawn = _make_subagent_spawn(backend, _conv_digest, _post_image)
+        _contracts_yaml_c = cwd / ".code-forge" / "contracts.yaml"
+        _contract_spec_c = ""
+        if _contracts_yaml_c.is_file():
+            from .contract_loader import load_contract_digest
+            _contract_spec_c = load_contract_digest(
+                _contracts_yaml_c, cwd, backend=backend,
+            )
+        _subagent_spawn = _make_subagent_spawn(
+            backend, _conv_digest, _post_image,
+            contract_spec=_contract_spec_c,
+        )
         _c_taint = TaintRunner()
         _c_runtime = RuntimeRunner(backend=backend)
         _c_graph = GraphTriageRunner()
@@ -1498,6 +1562,14 @@ def _run(args, env, cwd: Path) -> Verdict:
         cwd, resolved.git_diff or ""
     )
 
+    _contracts_yaml_a = cwd / ".code-forge" / "contracts.yaml"
+    _contract_spec_a = ""
+    if _contracts_yaml_a.is_file():
+        from .contract_loader import load_contract_digest
+        _contract_spec_a = load_contract_digest(
+            _contracts_yaml_a, cwd, backend=backend,
+        )
+
     # Pre-loop graph triage: build impact context for L1 prompt.
     # Runs once before the hold loop; findings are NOT added to
     # advisories (prompt context only). The runner is discarded
@@ -1551,6 +1623,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         conventions_digest=_conv_digest_a,
         post_image=_post_image_a,
         graph_impact_context=_graph_impact_context,
+        contract_spec=_contract_spec_a,
         breaker=breaker,
     )
 
