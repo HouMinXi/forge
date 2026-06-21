@@ -45,5 +45,6 @@ dogfood/
 
 # code-forge runtime receipts (local artifacts, not tracked)
 .code-forge/
+.code-forge/cache/
 .worktrees/
 REVIEW.md
