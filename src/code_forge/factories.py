@@ -205,6 +205,7 @@ def build_l1_provider(
     conventions_digest: str = "",
     post_image: str = "",
     graph_impact_context: str = "",
+    contract_spec: str = "",
     breaker=None,
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
@@ -216,6 +217,7 @@ def build_l1_provider(
         conventions_digest: compact naming conventions for reviewer context (D11).
         post_image: current content of changed files for excerpt verification (D11).
         graph_impact_context: blast-radius impact table for reviewer context.
+        contract_spec: cross-repo contract reference for reviewer context (D-05).
     """
     from .llm_invoke import Usage
 
@@ -275,6 +277,11 @@ def build_l1_provider(
                 prompt += (
                     "\n## Blast Radius Context\n"
                     + graph_impact_context + "\n"
+                )
+            if contract_spec:
+                prompt += (
+                    "\n## Contract Reference\n"
+                    + contract_spec + "\n"
                 )
             prompt += "\nDiff:\n" + diff_text
             try:
