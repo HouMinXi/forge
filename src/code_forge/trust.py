@@ -176,3 +176,98 @@ def find_dangerous_fields(
             if value is not None and value != "":
                 dangers.append((bname, field_name, str(value)))
     return dangers
+
+
+# -- Contracts trust (spec-content hashing, D-13 amended + DF-1) ----------
+
+
+def hash_contracts_content(
+    contracts_yaml_path: Path,
+    resolved_contents: list[tuple[str, bytes]],
+) -> str:
+    """Hash resolved spec file contents for contracts trust verification.
+
+    Builds a canonical JSON array of [path, sha256(content)] pairs sorted
+    by path, then sha256 of that JSON string. Covers both the resolved
+    paths and the file contents so a post-trust spec edit (path or content)
+    invalidates the trust record.
+
+    Args:
+        contracts_yaml_path: path to the contracts.yaml manifest (for API
+            consistency with is_trusted_contracts; not used in the hash).
+        resolved_contents: list of (resolved_path_str, file_content_bytes)
+            tuples for all specs that were successfully resolved.
+
+    Returns:
+        sha256 hexdigest of the canonical JSON.
+    """
+    pairs = sorted(
+        [path, hashlib.sha256(content).hexdigest()]
+        for path, content in resolved_contents
+    )
+    canonical = json.dumps(pairs, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_trusted_contracts(
+    contracts_yaml_path: Path,
+    resolved_contents: list[tuple[str, bytes]],
+) -> bool:
+    """Check if contracts.yaml's resolved specs match the stored trust hash.
+
+    Uses "contracts_hash" key (not "hash") to avoid collision with
+    gate.yaml trust entries that share the same trust store.
+    """
+    store = _load_trust_store()
+    key = str(contracts_yaml_path.resolve())
+    entry = store.get(key)
+    if entry is None:
+        return False
+    current = hash_contracts_content(contracts_yaml_path, resolved_contents)
+    return entry.get("contracts_hash") == current
+
+
+def record_trust_contracts(
+    contracts_yaml_path: Path,
+    resolved_contents: list[tuple[str, bytes]],
+    config_dir: Optional[Path] = None,
+) -> None:
+    """Record trust for contracts.yaml's current resolved spec contents.
+
+    Args:
+        config_dir: override the trust store directory for test isolation.
+    """
+    store = _load_trust_store(config_dir)
+    key = str(contracts_yaml_path.resolve())
+    current = hash_contracts_content(contracts_yaml_path, resolved_contents)
+    store[key] = {"contracts_hash": current}
+    _save_trust_store(store, config_dir)
+
+
+def revoke_trust_contracts(contracts_yaml_path: Path) -> None:
+    """Remove the trust record for contracts.yaml (no-op if not trusted)."""
+    store = _load_trust_store()
+    key = str(contracts_yaml_path.resolve())
+    store.pop(key, None)
+    _save_trust_store(store)
+
+
+def trust_status_contracts(
+    contracts_yaml_path: Path,
+    resolved_contents: list[tuple[str, bytes]],
+) -> TrustStatus:
+    """Return detailed trust status for contracts.yaml.
+
+    Uses "contracts_hash" field to disambiguate from gate.yaml entries.
+    """
+    store = _load_trust_store()
+    key = str(contracts_yaml_path.resolve())
+    entry = store.get(key)
+    current = hash_contracts_content(contracts_yaml_path, resolved_contents)
+    stored = entry.get("contracts_hash") if entry else None
+    return TrustStatus(
+        trusted=(stored == current) if stored else False,
+        stored_hash=stored,
+        current_hash=current,
+        gate_yaml_path=key,
+    )
