@@ -246,6 +246,15 @@ def run_cross_repo(
     ]
     joint_diff = build_cross_repo_context(repos_data)
 
+    # -- Step 3b: load contract spec for primary repo (D-06 amended) --
+    _contract_spec = ""
+    _contracts_yaml = primary_path / ".code-forge" / "contracts.yaml"
+    if _contracts_yaml.is_file():
+        from .contract_loader import load_contract_digest
+        _contract_spec = load_contract_digest(
+            _contracts_yaml, primary_path, backend=backend,
+        )
+
     # -- Step 4: build per-repo cwds (cleanup via ExitStack) --
     # -- Step 5: launch threads --
     # -- Step 6-9: collect, merge, return --
@@ -294,6 +303,7 @@ def run_cross_repo(
                     l1_provider = build_l1_provider(
                         engine_choice, resolved_for_l1, backend=backend,
                         breaker=breaker,
+                        contract_spec=_contract_spec,
                     )
                     from .daemon_state import DaemonStateRunner
                     from .graph_triage import GraphTriageRunner
