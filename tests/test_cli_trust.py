@@ -239,7 +239,7 @@ class TestHostileGateYaml:
         assert "credentials_path" in field_names
 
     def test_run_review_does_not_re_read_gate_yaml_for_backend_resolution(self):
-        """_run_review must not call load_backend_configs(gate_data) directly.
+        """_run must not call load_backend_configs(gate_data) directly.
 
         Regression guard for SEC-02: _run previously contained a raw
         load_backend_configs(gate_data) call in its else-branch.  When

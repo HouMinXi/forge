@@ -818,7 +818,7 @@ def _run_eval(args) -> int:
     from .eval.scorer import compute_summary, format_table, write_json_report
 
     # Load backend config through the trust guard (same path as review).
-    # Do NOT read gate.yaml raw here -- that bypasses the trust check (SEC-02).
+    # Do NOT read gate.yaml raw here; that bypasses the trust check (SEC-02).
     # _run_eval must not raise CliError (non-review convention); catch it here.
     _gate_path = Path.cwd() / ".code-forge" / "gate.yaml"
     import dataclasses as _dc
