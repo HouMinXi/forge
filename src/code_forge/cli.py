@@ -819,9 +819,17 @@ def _run_eval(args) -> int:
 
     # Load backend config through the trust guard (same path as review).
     # Do NOT read gate.yaml raw here -- that bypasses the trust check (SEC-02).
+    # _run_eval must not raise CliError (non-review convention); catch it here.
     _gate_path = Path.cwd() / ".code-forge" / "gate.yaml"
     import dataclasses as _dc
-    _eval_cfgs = _load_gate_backends(_gate_path)
+    try:
+        _eval_cfgs = _load_gate_backends(_gate_path)
+    except CliError as _exc:
+        print(
+            "Warning: could not load gate.yaml backend config: %s" % _exc,
+            file=sys.stderr,
+        )
+        _eval_cfgs = []
     _backend_config = None
     for _cfg in _eval_cfgs:
         if _cfg.name == args.backend:
