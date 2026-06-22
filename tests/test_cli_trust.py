@@ -241,7 +241,7 @@ class TestHostileGateYaml:
     def test_run_review_does_not_re_read_gate_yaml_for_backend_resolution(self):
         """_run_review must not call load_backend_configs(gate_data) directly.
 
-        Regression guard for SEC-02: _run_review previously contained a raw
+        Regression guard for SEC-02: _run previously contained a raw
         load_backend_configs(gate_data) call in its else-branch.  When
         FORGE_OUTLET=subprocess was set, resolve_outlet returned early (bypassing
         the CliError from empty cfgs), so that unguarded call loaded attacker
@@ -251,10 +251,9 @@ class TestHostileGateYaml:
         Fix: the else-branch uses cfgs from _load_gate_backends (which already
         applied the trust check), never re-reading gate.yaml raw.
 
-        This test checks the source of _run_review to prevent reintroduction.
+        This test checks the source of _run to prevent reintroduction.
         """
         import inspect
-        import re
         import code_forge.cli as cli_mod
 
         source = inspect.getsource(cli_mod._run)
