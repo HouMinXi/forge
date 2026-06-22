@@ -813,34 +813,20 @@ def _run_eval(args) -> int:
         return EXIT_CLI_ERROR
 
     # Lazy imports (cli.py convention)
-    import yaml as _y
     from .eval.corpus import load_corpus
     from .eval.runner import replay_entry
     from .eval.scorer import compute_summary, format_table, write_json_report
 
-    # Read caller's gate.yaml to get real backend config for replay
+    # Load backend config through the trust guard (same path as review).
+    # Do NOT read gate.yaml raw here -- that bypasses the trust check (SEC-02).
     _gate_path = Path.cwd() / ".code-forge" / "gate.yaml"
+    _eval_cfgs = _load_gate_backends(_gate_path)
     _backend_config = None
-    try:
-        _gd = _y.safe_load(_gate_path.read_text(encoding="utf-8"))
-        if isinstance(_gd, dict):
-            _backends = _gd.get("backends", {})
-            if isinstance(_backends, list):
-                for _entry in _backends:
-                    if isinstance(_entry, dict) and _entry.get("name") == args.backend:
-                        _backend_config = dict(_entry)
-                        break
-            elif isinstance(_backends, dict) and args.backend in _backends:
-                _bc = _backends[args.backend]
-                if isinstance(_bc, dict):
-                    _backend_config = dict(_bc)
-    except FileNotFoundError:
-        pass  # no gate.yaml present; eval will use placeholder backend URL
-    except _y.YAMLError as exc:
-        print(
-            "Warning: could not parse gate.yaml backend config: %s" % exc,
-            file=sys.stderr,
-        )
+    for _cfg in _eval_cfgs:
+        if _cfg.name == args.backend:
+            import dataclasses as _dc
+            _backend_config = _dc.asdict(_cfg)
+            break
 
     # Load corpus
     try:
