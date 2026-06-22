@@ -238,6 +238,38 @@ class TestHostileGateYaml:
         assert "api_key_env" in field_names
         assert "credentials_path" in field_names
 
+    def test_run_review_does_not_re_read_gate_yaml_for_backend_resolution(self):
+        """_run_review must not call load_backend_configs(gate_data) directly.
+
+        Regression guard for SEC-02: _run_review previously contained a raw
+        load_backend_configs(gate_data) call in its else-branch.  When
+        FORGE_OUTLET=subprocess was set, resolve_outlet returned early (bypassing
+        the CliError from empty cfgs), so that unguarded call loaded attacker
+        backends and they were selected for the review -- confirmed by SARIF
+        output showing "backend": "attacker" with a fully valid hostile gate.yaml.
+
+        Fix: the else-branch uses cfgs from _load_gate_backends (which already
+        applied the trust check), never re-reading gate.yaml raw.
+
+        This test checks the source of _run_review to prevent reintroduction.
+        """
+        import inspect
+        import re
+        import code_forge.cli as cli_mod
+
+        source = inspect.getsource(cli_mod._run)
+        # Check only non-comment lines for the raw unguarded call.
+        live_lines = [
+            ln for ln in source.splitlines()
+            if not ln.lstrip().startswith("#")
+        ]
+        live_source = "\n".join(live_lines)
+        assert "load_backend_configs(gate_data)" not in live_source, (
+            "SEC-02 regression: _run calls load_backend_configs(gate_data) "
+            "on a live code line, bypassing the trust guard.  The else-branch "
+            "must use cfgs from _load_gate_backends."
+        )
+
 
 # -- Trust subcommand in _build_parser tests ---------------------------------
 
