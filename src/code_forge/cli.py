@@ -1298,8 +1298,9 @@ def _run(args, env, cwd: Path) -> Verdict:
     from .outlet_resolver import resolve_outlet
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
 
-    # Load gate backends once; share with both the zero-config guard and
-    # the reachability closure so they operate on the same config list.
+    # Load gate backends once through the trust guard; reuse cfgs for outlet
+    # resolution, reachability probe, AND backend resolution.  Never re-read
+    # gate.yaml raw after this point -- a second read bypasses the trust check.
     cfgs = _load_gate_backends(gate_yaml_path)
     # has_explicit_backend is True when the user passed --backend <name>
     # or assembled an inline backend via --backend-url/format/key-env/model.
@@ -1334,10 +1335,8 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Step 6: backend resolution (moved above subagent dispatch so backend
     # is available to the C-leg spawn_fn closure -- M-R2-07).
     # has_inline is defined at line ~645, confirmed in scope here.
-    import yaml as _yaml
     from .backend import (
         BackendConfig,
-        load_backend_configs,
         resolve_backend,
     )
     from .llm_invoke import LLMInvokeError
@@ -1354,25 +1353,13 @@ def _run(args, env, cwd: Path) -> Verdict:
             max_tokens=16384,
         )
     else:
-        # Load gate.yaml backends block
-        _gate_yaml_path_b = cwd / ".code-forge" / "gate.yaml"
-        try:
-            with open(_gate_yaml_path_b, "r", encoding="utf-8") as _f:
-                gate_data = _yaml.safe_load(_f)
-        except FileNotFoundError:
-            gate_data = None
-        except _yaml.YAMLError as exc:
-            raise CliError("gate.yaml parse error: %s" % exc) from exc
-
-        if isinstance(gate_data, dict):
-            configs = load_backend_configs(gate_data)
-        else:
-            configs = []
-
+        # Use cfgs from _load_gate_backends above -- trust-guarded, never
+        # re-read gate.yaml raw here.  A raw load_backend_configs(gate_data)
+        # call at this point would bypass the trust check (SEC-02).
         try:
             backend = resolve_backend(
                 env,
-                configs=configs,
+                configs=cfgs,
                 cli_value=getattr(args, 'backend', None),
             )
         except CliError:
