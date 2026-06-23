@@ -456,7 +456,7 @@ class TestFindingShape:
 # ---------------------------------------------------------------------------
 
 class TestSubsystemProximity:
-    """Verify corrected proximity predicate (D-06)."""
+    """Verify corrected proximity predicate (token-set overlap)."""
 
     def test_shared_tokens_positive(self) -> None:
         from code_forge.cross_repo_impact import _subsystem_proximity
