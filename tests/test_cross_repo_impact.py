@@ -14,7 +14,6 @@ tmp_path, so tests never touch ~/.code-review-graph/.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 
