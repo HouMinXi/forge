@@ -34,9 +34,6 @@ _AXIS = "CROSS-REPO-IMPACT"
 _TOP_N: int = 10
 """Max findings emitted (depth-1, capped)."""
 
-_CROSS_REPO_PROXIMITY_FLOOR: float = 0.0
-"""Relaxed threshold: cross-repo findings always surface."""
-
 
 # ---------------------------------------------------------------------------
 # Registry path seam
@@ -158,7 +155,7 @@ def find_cross_repo_callers(
                     (caller_qualified,),
                 )
                 row = cursor.fetchone()
-                caller_file = row[0] if row else ""
+                caller_file = row[0] if row else "<unknown>"
                 caller_line = row[1] if row else None
 
                 results.append({
@@ -236,10 +233,10 @@ class CrossRepoImpactRunner:
             List of AdvisoryFinding from cross-repo caller analysis.
             Empty list on SKIP (with infra_errors populated).
         """
-        self.infra_errors.clear()
-
         if self._cached is not None:
             return self._cached
+
+        self.infra_errors.clear()
 
         if not diff_text or not diff_text.strip():
             return []
@@ -247,7 +244,7 @@ class CrossRepoImpactRunner:
         # Locate primary graph.db via canonical get_db_path.
         from code_review_graph.incremental import get_db_path
         primary_db = get_db_path(repo_root)
-        if not primary_db.exists():
+        if not primary_db.is_file():
             self.infra_errors.append(
                 "cross-repo-impact: primary graph.db not found; "
                 "build code-review-graph"
@@ -255,7 +252,13 @@ class CrossRepoImpactRunner:
             return []
 
         # Resolve changed symbols from the primary db.
-        changed = resolve_changed_symbols(diff_text, str(primary_db))
+        try:
+            changed = resolve_changed_symbols(diff_text, str(primary_db))
+        except (sqlite3.Error, OSError) as exc:
+            self.infra_errors.append(
+                "cross-repo-impact: primary graph.db unreadable: %s" % exc
+            )
+            return []
         if not changed:
             return []
 
@@ -285,7 +288,7 @@ class CrossRepoImpactRunner:
             alias = sib.get("alias") or Path(sib["path"]).name
             sib_db = get_db_path(Path(sib["path"]))
 
-            if not sib_db.exists():
+            if not sib_db.is_file():
                 self.infra_errors.append(
                     "cross-repo-impact: sibling '%s' graph.db missing"
                     % alias
