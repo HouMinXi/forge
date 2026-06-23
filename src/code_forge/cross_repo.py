@@ -305,6 +305,7 @@ def run_cross_repo(
                         breaker=breaker,
                         contract_spec=_contract_spec,
                     )
+                    from .cross_repo_impact import CrossRepoImpactRunner
                     from .daemon_state import DaemonStateRunner
                     from .graph_triage import GraphTriageRunner
                     from .legacy import LegacyRunner
@@ -317,6 +318,7 @@ def run_cross_repo(
                         GraphTriageRunner(),
                         DaemonStateRunner(backend=backend),
                         LegacyRunner(),
+                        CrossRepoImpactRunner(),
                     ]
                 else:
                     # Siblings: no L1 cost, no advisory runners
