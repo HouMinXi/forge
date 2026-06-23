@@ -174,15 +174,14 @@ def find_cross_repo_callers(
 
 
 # ---------------------------------------------------------------------------
-# Subsystem proximity (D-06 corrected predicate)
+# Subsystem proximity
 # ---------------------------------------------------------------------------
 
 def _subsystem_proximity(caller_file: str, changed_file: str) -> float:
     """Compute token-set overlap between two file paths.
 
     Uses Jaccard similarity over all directory path segments (excluding
-    the filename). This is the CORRECTED predicate from D-06: token-set
-    overlap, NOT first-two-segments prefix.
+    the filename). Token-set overlap, NOT first-two-segments prefix.
 
     drivers/net/foo.c vs net/core/bar.c share "net" -> score > 0.
     """
