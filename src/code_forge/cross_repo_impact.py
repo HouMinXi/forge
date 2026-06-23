@@ -189,9 +189,6 @@ def _subsystem_proximity(caller_file: str, changed_file: str) -> float:
         return 0.0
 
     union = caller_parts | changed_parts
-    if not union:
-        return 0.0
-
     intersection = caller_parts & changed_parts
     return len(intersection) / len(union)
 
