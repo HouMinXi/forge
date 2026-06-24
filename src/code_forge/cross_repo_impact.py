@@ -280,6 +280,10 @@ class CrossRepoImpactRunner:
             return []
 
         # Query each sibling for callers of changed symbols.
+        # Prefix for stripping absolute paths to repo-relative.
+        # Tool-built graph.db stores absolute file_path; hand-built
+        # fixtures use relative -- the startswith guard handles both.
+        primary_prefix = str(resolved_root) + os.sep
         hits: list[dict] = []
         for sib in siblings:
             alias = sib.get("alias") or Path(sib["path"]).name
@@ -301,15 +305,23 @@ class CrossRepoImpactRunner:
                 )
                 continue
 
+            sib_prefix = str(Path(sib["path"]).resolve()) + os.sep
             for sym in changed:
                 sym_callers = [
                     c for c in callers if c["symbol"] == sym["name"]
                 ]
                 for c in sym_callers:
+                    cf = c["caller_file"]
+                    if cf.startswith(sib_prefix):
+                        cf = cf[len(sib_prefix):]
+                    cfp = sym["file_path"]
+                    if cfp.startswith(primary_prefix):
+                        cfp = cfp[len(primary_prefix):]
                     hits.append({
                         **c,
+                        "caller_file": cf,
                         "alias": alias,
-                        "changed_file_path": sym["file_path"],
+                        "changed_file_path": cfp,
                     })
 
         # Rank by subsystem proximity (closer = higher rank).
