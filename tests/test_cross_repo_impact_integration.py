@@ -26,6 +26,7 @@ from unittest.mock import patch
 import pytest
 
 from code_forge.advisory import AdvisoryFinding
+from code_forge.cross_repo_impact import CrossRepoImpactRunner
 
 
 # ---------------------------------------------------------------------------
@@ -387,3 +388,91 @@ class TestWiringAssertion:
         assert "CrossRepoImpactRunner" not in sibling_block, (
             "CrossRepoImpactRunner must NOT be in the sibling branch"
         )
+
+
+# ---------------------------------------------------------------------------
+# Absolute-path regression: tool-built graph.db stores absolute file_path
+# ---------------------------------------------------------------------------
+
+class TestAbsolutePathStrip:
+    """Verify the relpath strip handles tool-built absolute file_path.
+
+    code-review-graph stores nodes.file_path as the absolute path on the
+    build machine.  The runner must strip the repo root so that
+    AdvisoryFinding.file is repo-relative ("alias:rel/path") and
+    _subsystem_proximity is not inflated by shared /tmp/... parents.
+    """
+
+    def test_absolute_caller_stripped_to_relpath(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Absolute file_path in sibling nodes -> finding.file is relative."""
+        repo_a = tmp_path / "repo_a"
+        repo_a.mkdir()
+        crg_a = repo_a / ".code-review-graph"
+        crg_a.mkdir()
+        # Primary node uses absolute path (mimics tool output)
+        abs_a = str(repo_a.resolve() / "a_pkg" / "api.py")
+        _make_db(
+            crg_a / "graph.db",
+            nodes=[
+                (1, "function", "shared_api",
+                 abs_a + "::shared_api",
+                 abs_a, 10, 20),
+            ],
+            edges=[],
+        )
+
+        repo_b = tmp_path / "repo_b"
+        repo_b.mkdir()
+        crg_b = repo_b / ".code-review-graph"
+        crg_b.mkdir()
+        # Sibling node uses absolute path (mimics tool output)
+        abs_b = str(repo_b.resolve() / "client_b" / "consumer.py")
+        _make_db(
+            crg_b / "graph.db",
+            nodes=[
+                (1, "function", "use_shared",
+                 abs_b + "::use_shared",
+                 abs_b, 5, 15),
+            ],
+            edges=[
+                ("CALLS", abs_b + "::use_shared", "shared_api"),
+                ("IMPORTS_FROM", abs_b, "api"),
+            ],
+        )
+
+        reg_path = tmp_path / "registry" / "registry.json"
+        _make_registry(reg_path, [
+            {"path": str(repo_a.resolve()), "alias": "repoa"},
+            {"path": str(repo_b.resolve()), "alias": "repob"},
+        ])
+        monkeypatch.setenv("CRG_REGISTRY_PATH", str(reg_path))
+
+        runner = CrossRepoImpactRunner()
+        diff = _sample_diff("a_pkg/api.py")
+        findings = runner.run(diff, repo_a)
+
+        assert len(findings) >= 1, (
+            "Expected cross-repo finding from absolute-path fixture"
+        )
+        f = findings[0]
+
+        # The file field must be repo-relative, not absolute
+        assert f.file == "repob:client_b/consumer.py", (
+            "Expected repo-relative path, got: %s" % f.file
+        )
+        assert "/tmp" not in f.file, (
+            "Absolute path leaked into finding.file: %s" % f.file
+        )
+        assert f.line_range == [5, 5], (
+            "line_range should come from sibling node, got: %s"
+            % f.line_range
+        )
+
+        # Proximity should use relative paths (no inflated Jaccard
+        # from shared /tmp/pytest-xxx/ parent segments)
+        assert "shared_api" in f.description
+        assert len(runner.infra_errors) == 0
