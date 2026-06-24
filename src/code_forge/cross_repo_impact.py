@@ -283,11 +283,9 @@ class CrossRepoImpactRunner:
         # Prefix for stripping absolute paths to repo-relative.
         # Tool-built graph.db stores absolute file_path; hand-built
         # fixtures use relative -- the startswith guard handles both.
-        # Known limitation: if a repo is registered via symlink but
-        # graph.db was built via the realpath (or vice versa),
-        # Path.resolve() may produce a different prefix than what the
-        # db stores, causing startswith to no-op and absolute paths
-        # to leak into findings. This is a v1 documented residual.
+        # When a repo is registered via symlink but graph.db stores
+        # the realpath (or vice versa), the first startswith fails;
+        # the fallback resolves the file path and retries.
         primary_prefix = str(resolved_root) + os.sep
         hits: list[dict] = []
         for sib in siblings:
@@ -315,6 +313,10 @@ class CrossRepoImpactRunner:
                 cfp = sym["file_path"]
                 if cfp.startswith(primary_prefix):
                     cfp = cfp[len(primary_prefix):]
+                elif os.path.isabs(cfp):
+                    resolved = str(Path(cfp).resolve())
+                    if resolved.startswith(primary_prefix):
+                        cfp = resolved[len(primary_prefix):]
                 sym_callers = [
                     c for c in callers if c["symbol"] == sym["name"]
                 ]
@@ -322,6 +324,10 @@ class CrossRepoImpactRunner:
                     cf = c["caller_file"]
                     if cf.startswith(sib_prefix):
                         cf = cf[len(sib_prefix):]
+                    elif os.path.isabs(cf):
+                        resolved = str(Path(cf).resolve())
+                        if resolved.startswith(sib_prefix):
+                            cf = resolved[len(sib_prefix):]
                     hits.append({
                         **c,
                         "caller_file": cf,

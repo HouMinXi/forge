@@ -476,3 +476,91 @@ class TestAbsolutePathStrip:
         # from shared /tmp/pytest-xxx/ parent segments)
         assert "shared_api" in f.description
         assert len(runner.infra_errors) == 0
+
+    def test_symlink_registered_realpath_in_db(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """DB stores symlink-based path, prefix is resolved -> fallback strips.
+
+        Scenario: code-review-graph build ran inside a symlink directory,
+        so nodes.file_path is symlink-based (os.path.abspath does not
+        resolve symlinks). The runner prefix uses Path.resolve() which
+        DOES resolve symlinks, creating a mismatch. The resolve fallback
+        must catch this: resolve the db path, then re-try startswith.
+        """
+        # Real directories (graph.db lives here)
+        real_a = tmp_path / "real_a"
+        real_a.mkdir()
+        crg_a = real_a / ".code-review-graph"
+        crg_a.mkdir()
+
+        real_b = tmp_path / "real_b"
+        real_b.mkdir()
+        crg_b = real_b / ".code-review-graph"
+        crg_b.mkdir()
+
+        # Symlinks (user's working paths)
+        link_a = tmp_path / "link_a"
+        link_a.symlink_to(real_a)
+        link_b = tmp_path / "link_b"
+        link_b.symlink_to(real_b)
+
+        # DB stores SYMLINK-based path (mimics build from symlink dir)
+        symlink_a_file = str(link_a / "pkg" / "api.py")
+        _make_db(
+            crg_a / "graph.db",
+            nodes=[
+                (1, "function", "target_fn",
+                 symlink_a_file + "::target_fn",
+                 symlink_a_file, 10, 20),
+            ],
+            edges=[],
+        )
+
+        symlink_b_file = str(link_b / "client" / "use.py")
+        _make_db(
+            crg_b / "graph.db",
+            nodes=[
+                (1, "function", "call_target",
+                 symlink_b_file + "::call_target",
+                 symlink_b_file, 7, 12),
+            ],
+            edges=[
+                ("CALLS", symlink_b_file + "::call_target", "target_fn"),
+                ("IMPORTS_FROM", symlink_b_file, "api"),
+            ],
+        )
+
+        # Register via REAL paths (user ran 'register' from realpath)
+        # -> prefix = str(Path(real_b).resolve()) + os.sep = real_b/
+        # -> db file_path = link_b/client/use.py (symlink)
+        # -> first startswith FAILS (real != symlink)
+        # -> fallback resolves link_b -> real_b, then matches
+        reg_path = tmp_path / "registry" / "registry.json"
+        _make_registry(reg_path, [
+            {"path": str(real_a), "alias": "repoa"},
+            {"path": str(real_b), "alias": "repob"},
+        ])
+        monkeypatch.setenv("CRG_REGISTRY_PATH", str(reg_path))
+
+        runner = CrossRepoImpactRunner()
+        diff = _sample_diff("pkg/api.py")
+        findings = runner.run(diff, real_a)
+
+        assert len(findings) >= 1, (
+            "Symlink-registered repo must still produce findings"
+        )
+        f = findings[0]
+
+        # Must be repo-relative despite symlink mismatch
+        assert f.file == "repob:client/use.py", (
+            "Expected repo-relative path, got: %s" % f.file
+        )
+        assert "/tmp" not in f.file, (
+            "Absolute path leaked through symlink: %s" % f.file
+        )
+        assert f.line_range == [7, 7]
+        assert "target_fn" in f.description
+        assert len(runner.infra_errors) == 0
