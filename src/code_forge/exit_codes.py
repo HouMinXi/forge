@@ -17,6 +17,7 @@ EXIT_BUSY = 3
 EXIT_ESCALATED = 4
 EXIT_DELEGATED = 5
 EXIT_TIMEOUT = 6
+EXIT_UNRELIABLE = 7
 
 
 def verdict_to_exit(verdict: Verdict) -> int:
@@ -33,6 +34,8 @@ def verdict_to_exit(verdict: Verdict) -> int:
         return EXIT_ESCALATED
     if verdict == Verdict.DELEGATED:
         return EXIT_DELEGATED
+    if verdict == Verdict.UNRELIABLE:
+        return EXIT_UNRELIABLE
     if verdict == Verdict.PENDING:
         raise ValueError(
             "verdict_to_exit called with PENDING; HOLD-resume loop "
