@@ -157,7 +157,9 @@ class TestLoadGateBackendsGuard:
 
         gate_yaml_path = gate_dir / ".code-forge" / "gate.yaml"
         result = _load_gate_backends(gate_yaml_path)
-        assert result == []
+        cfgs, gd = result
+        assert cfgs == []
+        assert gd == {}
 
         captured = capsys.readouterr()
         assert "Untrusted repo backends ignored" in captured.err
@@ -171,20 +173,22 @@ class TestLoadGateBackendsGuard:
         gate_data = yaml.safe_load(gate_yaml_path.read_text())
         record_trust(gate_yaml_path, gate_data)
 
-        result = _load_gate_backends(gate_yaml_path)
-        assert len(result) >= 1
-        assert result[0].name == "test-backend"
+        cfgs, gd = _load_gate_backends(gate_yaml_path)
+        assert len(cfgs) >= 1
+        assert cfgs[0].name == "test-backend"
+        assert isinstance(gd, dict)
 
     def test_missing_gate_yaml_returns_empty(self, tmp_path, trust_home):
-        """Missing gate.yaml returns [] (no warning needed)."""
+        """Missing gate.yaml returns ([], {}) (no warning needed)."""
         from code_forge.cli import _load_gate_backends
 
         gate_yaml_path = tmp_path / ".code-forge" / "gate.yaml"
-        result = _load_gate_backends(gate_yaml_path)
-        assert result == []
+        cfgs, gd = _load_gate_backends(gate_yaml_path)
+        assert cfgs == []
+        assert gd == {}
 
     def test_empty_gate_yaml_returns_empty(self, tmp_path, trust_home):
-        """Empty gate.yaml returns [] without error."""
+        """Empty gate.yaml returns ([], {}) without error."""
         from code_forge.cli import _load_gate_backends
 
         code_forge = tmp_path / ".code-forge"
@@ -192,8 +196,9 @@ class TestLoadGateBackendsGuard:
         gate_yaml_path = code_forge / "gate.yaml"
         gate_yaml_path.write_text("")
 
-        result = _load_gate_backends(gate_yaml_path)
-        assert result == []
+        cfgs, gd = _load_gate_backends(gate_yaml_path)
+        assert cfgs == []
+        assert gd == {}
 
 
 # -- Hostile gate.yaml regression test (SEC-01 SC2) --------------------------
@@ -213,12 +218,13 @@ class TestHostileGateYaml:
         from code_forge.cli import _load_gate_backends
 
         gate_yaml_path = hostile_gate_dir / ".code-forge" / "gate.yaml"
-        result = _load_gate_backends(gate_yaml_path)
+        cfgs, gd = _load_gate_backends(gate_yaml_path)
 
         # Must return empty: no backend configs loaded
-        assert result == [], (
+        assert cfgs == [], (
             "hostile gate.yaml must NOT return backend configs when untrusted"
         )
+        assert gd == {}
 
         captured = capsys.readouterr()
         assert "Untrusted repo backends ignored" in captured.err
