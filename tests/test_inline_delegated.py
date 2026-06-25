@@ -35,7 +35,7 @@ class TestInlineDelegatedVerdict:
         args = _minimal_args()
 
         with patch("code_forge.outlet_resolver.resolve_outlet", return_value="inline"), \
-             patch("code_forge.cli._load_gate_backends", return_value=[]):
+             patch("code_forge.cli._load_gate_backends", return_value=([], {})):
             result = _run(
                 args,
                 env={"FORGE_SKIP_WORKTREE_CHECK": "1"},
@@ -53,7 +53,7 @@ class TestInlineDelegatedVerdict:
         args = _minimal_args()
 
         with patch("code_forge.outlet_resolver.resolve_outlet", return_value="inline"), \
-             patch("code_forge.cli._load_gate_backends", return_value=[]):
+             patch("code_forge.cli._load_gate_backends", return_value=([], {})):
             _run(
                 args,
                 env={"FORGE_SKIP_WORKTREE_CHECK": "1"},
