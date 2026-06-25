@@ -95,13 +95,16 @@ def _emit_ci_output(
         post_emit_hook()
 
 
-def _load_gate_backends(gate_yaml_path: Path) -> list:
-    """Load backend configs from gate.yaml, or return [] if absent.
+def _load_gate_backends(gate_yaml_path: Path) -> tuple[list, dict]:
+    """Load backend configs from gate.yaml.
+
+    Returns (backend_configs, gate_data) where gate_data is the full
+    parsed YAML dict (empty dict if file absent/invalid/untrusted).
 
     Trust guard: refuses to return backend configs for untrusted
     repos. When gate.yaml exists but its backends block hash does not match
-    the stored trust record in ~/.config/code-forge/trusted.json, returns []
-    and prints a warning to stderr. The user must run
+    the stored trust record in ~/.config/code-forge/trusted.json, returns
+    ([], {}) and prints a warning to stderr. The user must run
     ``code-forge trust`` to explicitly authorize the backends.
 
     Raises:
@@ -115,12 +118,12 @@ def _load_gate_backends(gate_yaml_path: Path) -> list:
         with open(gate_yaml_path, "r", encoding="utf-8") as _f:
             gd = _y.safe_load(_f)
     except FileNotFoundError:
-        return []
+        return ([], {})
     except _y.YAMLError as exc:
         raise CliError("gate.yaml parse error: %s" % exc) from exc
 
     if gd is None or not isinstance(gd, dict):
-        return []
+        return ([], {})
 
     # Trust guard: check trust before loading backends.
     from .trust import is_trusted
@@ -130,9 +133,30 @@ def _load_gate_backends(gate_yaml_path: Path) -> list:
             "Run 'code-forge trust' to enable.",
             file=sys.stderr,
         )
-        return []
+        return ([], {})
 
-    return load_backend_configs(gd)
+    return (load_backend_configs(gd), gd)
+
+
+def _load_canary_config(args: argparse.Namespace, gate_data: dict) -> dict | None:
+    """Extract canary opt-in config from CLI flags or gate_data.
+
+    Uses the gate_data dict already loaded and trust-checked by
+    _load_gate_backends -- never re-reads gate.yaml from disk.
+
+    Returns a config dict with keys (enabled, n, threshold_ratio) when
+    opted in, or None when the canary check is not requested.
+    """
+    if getattr(args, "canary", False):
+        return {"enabled": True, "n": 5, "threshold_ratio": 0.6}
+    canary_section = gate_data.get("canary")
+    if isinstance(canary_section, dict) and canary_section.get("enabled") is True:
+        return {
+            "enabled": True,
+            "n": canary_section.get("n", 5),
+            "threshold_ratio": canary_section.get("threshold_ratio", 0.6),
+        }
+    return None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -166,6 +190,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "parse error)\n"
             "  3  BUSY (another code-forge process holds the lock)\n"
             "  4  ESCALATED (non-convergence or human-frozen)\n"
+            "  5  DELEGATED (review delegated to session)\n"
+            "  6  TIMEOUT (backend timeout circuit breaker)\n"
+            "  7  UNRELIABLE (canary miss on inline outlet)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -195,6 +222,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "parse error)\n"
             "  3  BUSY (another code-forge process holds the lock)\n"
             "  4  ESCALATED (non-convergence or human-frozen)\n"
+            "  5  DELEGATED (review delegated to session)\n"
+            "  6  TIMEOUT (backend timeout circuit breaker)\n"
+            "  7  UNRELIABLE (canary miss on inline outlet)\n"
             "\n"
             "Cycle count adapts to diff size: <50 lines = 2 cycles,\n"
             "50-199 = 3 (default), >=200 = 4. Override with\n"
@@ -254,6 +284,10 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--committed", action="store_true",
         help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
+    )
+    review_parser.add_argument(
+        "--canary", action="store_true",
+        help="enable canary laziness check for inline outlet (opt-in)",
     )
 
     # Backend selection flags
@@ -823,7 +857,7 @@ def _run_eval(args) -> int:
     _gate_path = Path.cwd() / ".code-forge" / "gate.yaml"
     import dataclasses as _dc
     try:
-        _eval_cfgs = _load_gate_backends(_gate_path)
+        _eval_cfgs, _ = _load_gate_backends(_gate_path)
     except CliError as _exc:
         print(
             "Warning: could not load gate.yaml backend config: %s" % _exc,
@@ -1295,7 +1329,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Load gate backends once through the trust guard; reuse cfgs for outlet
     # resolution, reachability probe, AND backend resolution.  Never re-read
     # gate.yaml raw after this point -- a second read bypasses the trust check.
-    cfgs = _load_gate_backends(gate_yaml_path)
+    cfgs, gate_data = _load_gate_backends(gate_yaml_path)
     # has_explicit_backend is True when the user passed --backend <name>
     # or assembled an inline backend via --backend-url/format/key-env/model.
     _backend_arg = getattr(args, 'backend', None)
@@ -1319,10 +1353,115 @@ def _run(args, env, cwd: Path) -> Verdict:
         reachability_fn=_reachability,
     )
     if outlet == "inline":
+        canary_config = _load_canary_config(args, gate_data)
+        if canary_config is not None:
+            try:
+                from .canary_gen import run_inline_canary
+                from .backend import resolve_backend
+                from .llm_invoke import llm_invoke as _llm_invoke
+
+                import subprocess as _sp
+                _diff_result = _sp.run(
+                    ["git", "diff", "HEAD"],
+                    capture_output=True, text=True, cwd=str(cwd),
+                )
+                diff_text = _diff_result.stdout if _diff_result.returncode == 0 else ""
+
+                try:
+                    backend = resolve_backend(
+                        env, configs=cfgs,
+                        cli_value=getattr(args, "backend", None),
+                    )
+                except Exception:
+                    backend = None
+
+                n_canaries = canary_config.get("n", 5)
+
+                def _canary_provider(diff_text_arg: str) -> list:
+                    if backend is None:
+                        return []
+                    import json as _json
+                    prompt = (
+                        "You are a code mutation expert. Given this Python diff, "
+                        "generate %d subtle semantic mutations. Each mutation must "
+                        "introduce a real bug (off-by-one, None deref, resource "
+                        "leak, etc.) that requires non-local reasoning to detect. "
+                        "Do NOT include comments explaining the bug.\n"
+                        "Each snippet MUST be <= 5 lines. "
+                        '"line" is the 1-based line number of the bug WITHIN '
+                        "the 'code' snippet (not a file line number).\n"
+                        'Return JSON: {"mutations": [{"file": "...", '
+                        '"line": N, "original": "<unmodified code snippet>", '
+                        '"code": "<mutated code snippet>", '
+                        '"description": "..."}]}\n\n'
+                        "Diff:\n" + diff_text_arg
+                    ) % n_canaries
+                    try:
+                        result = _llm_invoke(prompt, backend=backend)
+                        content = result.content
+                        if isinstance(content, dict):
+                            return content.get("mutations", [])
+                        parsed = _json.loads(str(content))
+                        return parsed.get("mutations", [])
+                    except Exception as exc:
+                        sys.stderr.write(
+                            "code-forge: canary generation failed: %s, "
+                            "falling back to templates\n" % exc
+                        )
+                        return []
+
+                def _review_provider(prompt: str) -> str:
+                    if backend is None:
+                        raise RuntimeError("no backend available for canary review")
+                    import json as _json
+                    result = _llm_invoke(prompt, backend=backend)
+                    return (
+                        _json.dumps(result.content)
+                        if isinstance(result.content, dict)
+                        else str(result.content)
+                    )
+
+                def _source_lookup(filepath: str):
+                    import os
+                    cwd_real = os.path.realpath(str(cwd))
+                    full = os.path.realpath(os.path.join(cwd_real, filepath))
+                    if not full.startswith(cwd_real + os.sep) and full != cwd_real:
+                        return None
+                    try:
+                        os.path.commonpath([cwd_real, full])
+                    except ValueError:
+                        return None
+                    if not os.path.isfile(full):
+                        return None
+                    with open(full, encoding="utf-8", errors="replace") as f:
+                        return f.readlines()
+
+                verdict, real_findings = run_inline_canary(
+                    diff_text=diff_text,
+                    n=canary_config.get("n", 5),
+                    threshold_ratio=canary_config.get("threshold_ratio", 0.6),
+                    canary_provider=_canary_provider,
+                    review_provider=_review_provider,
+                    source_lookup=_source_lookup,
+                )
+                if real_findings:
+                    sys.stderr.write("code-forge: canary-verified findings:\n")
+                    for f in real_findings:
+                        sys.stderr.write("  %s:%s [%s] %s\n" % (
+                            f.get("file", "?"), f.get("line", "?"),
+                            f.get("severity", "?"), f.get("description", "?"),
+                        ))
+                return verdict
+            except Exception as exc:
+                sys.stderr.write(
+                    "code-forge: canary check failed (%s), "
+                    "falling back to DELEGATED\n" % exc
+                )
         # D4 honesty floor: inline does not run the StateMachine gate.
         # Declare DELEGATED so callers can distinguish from a real PASS.
         sys.stderr.write(
-            "code-forge: DELEGATED -- review delegated to session + external R1; exit 5\n"
+            "code-forge: DELEGATED -- review delegated to session"
+            " + external R1; exit 5\n"
         )
         return Verdict.DELEGATED
 
@@ -2278,7 +2417,7 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
     """
     from .outlet_resolver import resolve_outlet
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
-    cfgs = _load_gate_backends(gate_yaml_path)
+    cfgs, _ = _load_gate_backends(gate_yaml_path)
 
     def _reachability():
         from .backend import resolve_backend, probe_backend
