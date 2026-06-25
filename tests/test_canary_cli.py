@@ -136,4 +136,4 @@ class TestInitTemplateCanary:
 
     def test_init_template_canary_block(self):
         assert "# canary:" in GATE_YAML_TEMPLATE
-        assert "# threshold_ratio" in GATE_YAML_TEMPLATE
+        assert "#   threshold_ratio" in GATE_YAML_TEMPLATE

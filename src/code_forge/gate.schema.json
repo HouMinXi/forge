@@ -171,6 +171,31 @@
           "description": "Path to an external YAML file containing conflict triplets."
         }
       }
+    },
+    "canary": {
+      "type": "object",
+      "description": "Opt-in canary laziness check for the inline review outlet.",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Activate the canary check (equivalent to --canary CLI flag)."
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 5,
+          "default": 5,
+          "description": "Number of canary mutations to plant per review."
+        },
+        "threshold_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.6,
+          "description": "Minimum fraction of canaries the reviewer must catch."
+        }
+      }
     }
   },
   "$defs": {
