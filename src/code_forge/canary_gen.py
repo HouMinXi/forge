@@ -191,8 +191,8 @@ def _template_silent_except() -> dict:
     return {
         "file": "parser.py",
         "line": 3,
-        "code": "import json\ndef parse_config(raw):\n    try:\n        return json.loads(raw)\n    except:\n        pass\n    return {}",
-        "original": "import json\ndef parse_config(raw):\n    try:\n        return json.loads(raw)\n    except json.JSONDecodeError:\n        return {}",
+        "code": "import json\ndef parse(raw):\n    try: return json.loads(raw)\n    except: pass\n    return {}",
+        "original": "import json\ndef parse(raw):\n    try: return json.loads(raw)\n    except json.JSONDecodeError: return {}\n    return {}",
         "description": "Bare except swallows all exceptions silently",
     }
 
