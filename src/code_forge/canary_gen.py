@@ -287,7 +287,11 @@ def inject_canaries_into_diff(
         code = mut["code"]
         code_lines = code.split("\n")
         k = len(code_lines)
-        assert k <= 5, "canary snippet exceeds 5 lines (K=%d)" % k
+        if k > 5:
+            raise ValueError(
+                "canary snippet exceeds 5-line limit (K=%d); "
+                "LINE-MATCH invariant requires K <= 5" % k
+            )
 
         hunk_header = "@@ -0,0 +1,%d @@" % k
         plus_lines = "\n".join("+" + line for line in code_lines)
@@ -328,7 +332,7 @@ def dispatch_canary_review(
 
     Uses validate_canary_findings (NOT validate_reviewer_json -- MF2-1).
     The prompt has no author narrative, no prior findings, no conventions
-    digest (anti-anchoring per D-28-05).
+    digest to prevent anchoring bias in the fresh-context review.
     """
     prompt = (
         "You are a code reviewer. Review this diff for bugs, security "
