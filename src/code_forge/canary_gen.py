@@ -112,14 +112,14 @@ def validate_canary_findings(findings: list[dict]) -> list[dict]:
         missing = _REQUIRED_FINDING_KEYS - set(finding.keys())
         if missing:
             print(
-                "canary: dropping finding missing keys %s: %r"
+                "code-forge: canary: dropping finding missing keys %s: %r"
                 % (sorted(missing), finding),
                 file=sys.stderr,
             )
             continue
         if not finding.get("severity"):
             print(
-                "canary: dropping finding with empty severity: %r" % finding,
+                "code-forge: canary: dropping finding with empty severity: %r" % finding,
                 file=sys.stderr,
             )
             continue
@@ -239,8 +239,13 @@ def generate_canaries(
     verified: list[dict] = []
 
     # Try the injected provider first.
+    _required_mut_keys = {"file", "line", "code", "original", "description"}
     if provider is not None:
         for mut in provider(diff_text):
+            if not isinstance(mut, dict) or not _required_mut_keys.issubset(mut):
+                continue
+            if not isinstance(mut["line"], int) or mut["line"] < 1:
+                continue
             if is_non_equivalent(mut.get("original", ""), mut.get("code", "")):
                 verified.append(mut)
             if len(verified) >= n:
@@ -346,7 +351,7 @@ def dispatch_canary_review(
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
-        print("canary: cannot parse reviewer response as JSON", file=sys.stderr)
+        print("code-forge: canary: cannot parse reviewer response as JSON", file=sys.stderr)
         return []
 
     findings = data.get("findings", []) if isinstance(data, dict) else []
@@ -375,7 +380,7 @@ def run_inline_canary(
     """
     result = generate_canaries(diff_text, n, provider=canary_provider)
     if isinstance(result, CanarySkip):
-        print("canary: skipped -- %s" % result.reason, file=sys.stderr)
+        print("code-forge: canary: skipped -- %s" % result.reason, file=sys.stderr)
         return Verdict.DELEGATED, []
 
     modified_diff, manifest = inject_canaries_into_diff(diff_text, result)
@@ -393,7 +398,7 @@ def run_inline_canary(
         if not gate_result.passed:
             missed_ids = ", ".join(gate_result.missed)
             print(
-                "canary: UNRELIABLE -- missed canaries: %s" % missed_ids,
+                "code-forge: canary: UNRELIABLE -- missed canaries: %s" % missed_ids,
                 file=sys.stderr,
             )
             return Verdict.UNRELIABLE, []
@@ -406,7 +411,7 @@ def run_inline_canary(
 
     except Exception as exc:
         print(
-            "canary: dispatch failed: %s, falling back to DELEGATED" % exc,
+            "code-forge: canary: dispatch failed: %s, falling back to DELEGATED" % exc,
             file=sys.stderr,
         )
         return Verdict.DELEGATED, []
