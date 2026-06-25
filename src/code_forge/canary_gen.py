@@ -81,7 +81,7 @@ def is_non_equivalent(original: str, mutated: str) -> bool:
 
     Applies textwrap.dedent() to both inputs before parsing so indented code
     snippets from templates and LLM mutations are not silently rejected with
-    IndentationError (MF2-6). SyntaxError in either side returns False
+    IndentationError. SyntaxError in either side returns False
     (invalid mutation discarded).
     """
     try:
@@ -93,7 +93,7 @@ def is_non_equivalent(original: str, mutated: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Lightweight canary-findings validator (NOT validate_reviewer_json -- MF2-1)
+# Lightweight canary-findings validator (separate from validate_reviewer_json)
 # ---------------------------------------------------------------------------
 
 _REQUIRED_FINDING_KEYS = frozenset({"file", "line", "severity", "description"})
@@ -330,7 +330,7 @@ def dispatch_canary_review(
 ) -> list[dict]:
     """Dispatch a fresh-context review of the modified diff.
 
-    Uses validate_canary_findings (NOT validate_reviewer_json -- MF2-1).
+    Uses validate_canary_findings (separate from validate_reviewer_json).
     The prompt has no author narrative, no prior findings, no conventions
     digest to prevent anchoring bias in the fresh-context review.
     """
