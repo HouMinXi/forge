@@ -297,6 +297,66 @@ export FORGE_LLM_TIMEOUT_S=300   # give a cross-Pacific reasoning backend room
 
 ---
 
+## 11. Canary on the inline outlet / inline outlet 的 canary 检查
+
+The canary is an opt-in objective laziness check for the inline review
+outlet. It answers: did the reviewer actually read the diff, or did it
+rubber-stamp an empty findings list?
+
+canary 是 inline review outlet 的可选懒检查。它回答:reviewer 到底有没有读
+diff,还是橡皮图章式地交了个空 findings?
+
+**How to opt in / 如何启用:**
+
+- CLI flag: `code-forge review --canary`
+- gate.yaml: add a `canary:` block (see
+  [configuration.md](configuration.md#canary-inline-outlet) for full field
+  reference)
+
+With no opt-in, the inline outlet is unchanged -- it returns `DELEGATED`
+(exit 5) exactly as before.
+
+**What happens / 工作流程:**
+
+1. forge generates N (3..5) semantic defects and injects them into an
+   isolated copy of the diff. The real working tree is never mutated and
+   git history is never touched.
+2. A fresh-context review (no author narrative, anti-anchoring) evaluates
+   the modified diff.
+3. forge gates on the catch rate: the reviewer must flag at least
+   `ceil(0.6 * N)` of the planted defects.
+
+**Exit codes / 退出码:**
+
+| Exit | Verdict | Meaning |
+|---|---|---|
+| 5 | `DELEGATED` | default (no canary opt-in), unchanged |
+| 7 | `UNRELIABLE` | canary miss -- reviewer did not catch enough planted defects |
+
+**Key guarantees / 关键保证:**
+
+- Canary findings never appear in user-facing output. The planted defects
+  are stripped before findings are reported.
+- The working tree is never mutated. Planted defects exist only in the
+  isolated review copy.
+- The canary result never alters outlet or model selection.
+
+**Graceful degradation / 优雅降级:**
+
+- If fewer than 2 verified canaries can be generated, the check is skipped
+  with a notice (not a hard failure).
+- If the canary dispatch fails (LLM timeout, network error), the check
+  degrades to `DELEGATED`.
+- Non-Python diffs skip the canary with a notice (Python only for now).
+
+For the gate.yaml `canary:` field reference (types, ranges, defaults), see
+[configuration.md](configuration.md#canary-inline-outlet).
+
+gate.yaml `canary:` 块的字段参考(类型、范围、默认值)见
+[configuration.md](configuration.md#canary-inline-outlet)。
+
+---
+
 ## Related / 相关文档
 
 - [configuration.md](configuration.md) -- exhaustive env var + gate.yaml field reference
