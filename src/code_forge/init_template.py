@@ -100,4 +100,10 @@ outlet: subprocess
 #     - subsystem: networking    # required per triplet
 #       mutates: routing_table   # required per triplet
 #       interferes_with: firewall_rules  # required per triplet
+
+# canary: opt-in reviewer laziness check (plants known-bad mutations).
+# canary:
+#   enabled: true
+#   n: 5                    # canaries to plant (3..5)
+#   threshold_ratio: 0.6   # catch ratio to pass (>0.0..1.0)
 """
