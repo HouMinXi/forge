@@ -436,6 +436,56 @@ single-request timeouts do not trip the breaker.
 
 ---
 
+## Canary (inline outlet)
+
+An opt-in objective laziness check for the inline review outlet. When
+enabled, forge plants semantic defects into an isolated copy of the diff
+and gates on how many the reviewer catches. A rubber-stamp reviewer that
+returns empty findings is detected and flagged UNRELIABLE (exit 7).
+
+### gate.yaml canary: block
+
+Add a `canary:` block to `.code-forge/gate.yaml`:
+
+```yaml
+canary:
+  enabled: true              # bool -- required for opt-in
+  n: 5                       # int, 3..5 -- canaries to plant per review
+  threshold_ratio: 0.6       # float, >0.0..1.0 -- catch ratio to pass
+```
+
+### Field descriptions
+
+| Field | Type | Range | Default | Description |
+|---|---|---|---|---|
+| `enabled` | bool | -- | -- | Activates the canary check. Equivalent to passing `--canary` on the CLI. Required for opt-in. |
+| `n` | int | 3..5 | 5 | Number of canary mutations to plant. |
+| `threshold_ratio` | float | >0.0..1.0 | 0.6 | Minimum fraction of canaries the reviewer must catch. The actual threshold is `ceil(threshold_ratio * n)` (e.g. 0.6 * 5 = 3). A value of 0.0 is rejected because it would produce a threshold of 0, which is meaningless. |
+
+### Behavior
+
+- With no opt-in (no `--canary` flag, no `canary:` block, or
+  `canary.enabled: false`), the inline outlet is unchanged -- it returns
+  `DELEGATED` (exit 5) as before.
+- When fewer than 2 verified canaries can be generated, the check is
+  skipped with a notice (graceful degradation, not a hard failure).
+- If the canary dispatch fails (LLM timeout, network error), the check
+  degrades to `DELEGATED` -- it never crashes the review.
+- The canary result never alters outlet or model selection (D-16).
+- Planted defects are never written to the working tree or git history.
+  They exist only in the isolated review copy passed to the fresh-context
+  reviewer.
+- Currently Python diffs only; non-Python diffs skip the canary with a
+  notice.
+
+### CLI alternative
+
+The `--canary` flag on `code-forge review` achieves the same opt-in with
+default `n=5` and `threshold_ratio=0.6`, without requiring a gate.yaml
+`canary:` block.
+
+---
+
 ## Related Documentation
 
 - [VS Code setup](setup-vscode.md) -- setting env vars in VS Code terminal
