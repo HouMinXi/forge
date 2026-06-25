@@ -28,26 +28,26 @@ class TestCliInit:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_path = gate_dir / "gate.yaml"
-        gate_path.write_text("old")
+        gate_path.write_text("OLD_SENTINEL")
         monkeypatch.setattr(sys, "argv", ["code-forge", "init"])
         with pytest.raises(SystemExit) as exc_info:
             sys.exit(main())
         assert exc_info.value.code == 2
-        assert gate_path.read_text() == "old"
+        assert gate_path.read_text() == "OLD_SENTINEL"
 
     def test_init_force_overwrites(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_path = gate_dir / "gate.yaml"
-        gate_path.write_text("old")
+        gate_path.write_text("OLD_SENTINEL")
         monkeypatch.setattr(sys, "argv", ["code-forge", "init", "--force"])
         with pytest.raises(SystemExit) as exc_info:
             sys.exit(main())
         assert exc_info.value.code == 0
         content = gate_path.read_text()
         assert "backends:" in content
-        assert "old" not in content
+        assert "OLD_SENTINEL" not in content
 
     def test_init_template_valid_yaml(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
