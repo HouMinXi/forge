@@ -131,6 +131,10 @@ def load_gate_config(
             gate_yaml_dir=Path(str(config_path)).parent,
         )
 
+    # Validate optional canary section (reviewer laziness check)
+    if "canary" in data:
+        validate_canary_config(data["canary"])
+
     return data
 
 
@@ -240,6 +244,57 @@ def validate_daemon_state(section: object) -> None:
             raise ValueError(
                 "gate.yaml 'daemon_state.conflicts_file' must be a string, "
                 "got: %r" % section["conflicts_file"]
+            )
+
+
+def validate_canary_config(section: object) -> None:
+    """Validate the canary section of gate.yaml.
+
+    Schema:
+        enabled:          bool          -- OPTIONAL. Activate the canary check.
+        n:                int (3..5)    -- OPTIONAL. Number of canary mutations.
+        threshold_ratio:  float >0..1.0 -- OPTIONAL. Minimum catch ratio.
+        Unknown keys are allowed (forward-compatible).
+
+    Args:
+        section: value from gate.yaml canary key.
+
+    Raises:
+        ValueError: if known fields have wrong types or values out of range.
+    """
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'canary' must be a mapping, got: %s"
+            % type(section).__name__
+        )
+    if "enabled" in section:
+        if not isinstance(section["enabled"], bool):
+            raise ValueError(
+                "gate.yaml 'canary.enabled' must be a bool, got: %r"
+                % section["enabled"]
+            )
+    if "n" in section:
+        if not isinstance(section["n"], int) or isinstance(section["n"], bool):
+            raise ValueError(
+                "gate.yaml 'canary.n' must be an int, got: %r"
+                % section["n"]
+            )
+        if section["n"] < 3 or section["n"] > 5:
+            raise ValueError(
+                "gate.yaml 'canary.n' must be in range 3..5, got: %d"
+                % section["n"]
+            )
+    if "threshold_ratio" in section:
+        val = section["threshold_ratio"]
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
+            raise ValueError(
+                "gate.yaml 'canary.threshold_ratio' must be a number, "
+                "got: %r" % val
+            )
+        if val <= 0.0 or val > 1.0:
+            raise ValueError(
+                "gate.yaml 'canary.threshold_ratio' must be > 0.0 and "
+                "<= 1.0 (must be > 0.0..1.0), got: %s" % val
             )
 
 
