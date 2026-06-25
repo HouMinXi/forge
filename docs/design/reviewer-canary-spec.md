@@ -786,3 +786,81 @@ mentioning canary file."
 
 **Overall:** All 15 checklist items PASS. Spec is complete and ready for
 handoff to a v2.3+ implementation phase.
+
+
+## 12. Phase 28: Inline Outlet Canary (Extends)
+
+Phase 28 extends this specification with an inline outlet variant that uses
+in-place semantic mutation of the real diff (not a synthetic appended file)
+with multi-canary support (N=3..5, gate threshold = ceil(0.6 * N)).
+
+### Relationship to SPEC-01
+
+SPEC-01 (this document, Sections 1-11) designed the canary for Outlet A and
+the StateMachine: a synthetic `_canary_NNN.py` file appended to the diff,
+matched by file-path prefix, single canary per round, affecting
+`consecutive_clean_rounds`. The inline outlet does NOT run the StateMachine
+-- it returns `DELEGATED` before the machine executes -- so SPEC-01's
+mechanism does not reach it.
+
+Phase 28's inline variant is **complementary** to the Outlet-A mechanism, not
+a replacement. It uses file + line-window matching via
+`evaluate_canary_coverage` (M1), is opt-in via `--canary` flag or gate.yaml
+`canary:` block, and coexists with the Outlet-A mechanism without interaction.
+
+### Design anchor fidelity
+
+Phase 28 honors all four locked design anchors from Section 2:
+
+- **D-16 (No model self-assessment):** A canary miss returns UNRELIABLE and
+  never switches the outlet or model. The canary result does not drive
+  selection decisions.
+- **D-25 (Backend-agnostic injection):** Injection operates at the prompt/diff
+  layer above `llm_invoke`. The mechanism is identical for `api` and `cli`
+  backend types -- no backend-specific code.
+- **D-26 (Attention, not strength):** The canary validates that the reviewer
+  read the diff and recognized planted defects. It does not assess model
+  capability or depth. The distinction between attention and strength is
+  preserved.
+- **BOTH-04 (No self-assessment in outlet selection):** Canary results do not
+  feed back into outlet selection. A miss does not trigger an outlet switch.
+  Outlet selection remains governed by explicit override and backend
+  reachability, never by runtime review quality signals.
+
+### Resolution of Section 10 item 7
+
+Section 10 item 7 deferred "Outlet B enforcement mode" pending user feedback
+from Outlet B deployment. Phase 28 resolves this: the inline canary IS the
+opt-in objective laziness check that item 7 anticipated. When a user opts in
+(via `--canary` or gate.yaml `canary:` block), the inline outlet gains an
+enforcement signal -- a rubber-stamp reviewer that returns empty findings is
+detected and flagged UNRELIABLE (exit 7).
+
+### Two-tier injection approach
+
+Phase 28 uses a two-tier injection strategy:
+
+1. **LLM provider (primary):** When a backend is available, the LLM provider
+   performs true in-place semantic mutation of existing diff hunks. This is
+   fully compliant with the Phase 28 design constraint that canary generation
+   uses "in-place SEMANTIC mutation, NOT a synthetic appended file." The
+   mutations are behavior-changing, verified non-equivalent before planting,
+   and lack the local tells (adjacent docstrings naming the violated contract)
+   that make synthetic appended files detectable.
+
+2. **Template fallback (degraded quality):** When no LLM backend is available,
+   a built-in template library (reusing the defect categories from Section 4:
+   hardcoded secret, None dereference, off-by-one, SQL injection, resource
+   leak, silent exception swallowing) produces canaries using appended hunks
+   with generic Python filenames. This is a known quality tradeoff: appended
+   hunks are less realistic and potentially detectable by sophisticated
+   reviewers that recognize synthetic file patterns, but they ensure the
+   canary gate can function without an LLM backend. The template path trades
+   realism for availability.
+
+### New module
+
+Phase 28 introduces `src/code_forge/canary_gen.py`, which handles canary
+generation (via injected provider seam), non-equivalence verification,
+injection into an isolated diff copy, and dispatch orchestration for the
+fresh-context canary review.
