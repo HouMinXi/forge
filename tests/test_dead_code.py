@@ -640,3 +640,30 @@ class TestRealPathSmoke:
         # point of this test is no-crash, not non-empty.
         assert isinstance(result, list)
         assert all(isinstance(lc, LiveCaller) for lc in result)
+
+
+# ---------------------------------------------------------------------------
+# TestNoSqlDuplication (SC#3 -- post-wiring verification)
+# ---------------------------------------------------------------------------
+
+_SRC_DIR = Path(__file__).parents[1] / "src" / "code_forge"
+
+
+class TestNoSqlDuplication:
+    """CALLS+IMPORTS_FROM SQL lives only in dead_code.py, not in callers."""
+
+    def test_cross_repo_impact_has_no_inline_sql(self) -> None:
+        source = (_SRC_DIR / "cross_repo_impact.py").read_text(
+            encoding="utf-8",
+        )
+        assert "c.kind = 'CALLS'" not in source
+
+    def test_graph_triage_has_no_inline_sql(self) -> None:
+        source = (_SRC_DIR / "graph_triage.py").read_text(
+            encoding="utf-8",
+        )
+        assert "c.kind = 'CALLS'" not in source
+
+    def test_dead_code_owns_the_sql(self) -> None:
+        source = (_SRC_DIR / "dead_code.py").read_text(encoding="utf-8")
+        assert "c.kind = 'CALLS'" in source
