@@ -49,7 +49,9 @@ Surveyed 2026-06-26 for code-forge gate-check deployment readiness.
      command: [bash, tests/run_smoke_tests.sh]
      source_patterns: ["*.sh"]
    ```
+   Verify syntax before proceeding:
    ```bash
+   python -c "import yaml; yaml.safe_load(open('.code-forge/gate.yaml'))"
    code-forge baseline
    code-forge install-hooks
    ```

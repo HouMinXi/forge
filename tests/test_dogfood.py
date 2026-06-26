@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from code_forge.install_hooks import (
+    _build_planning_leak_guard,
     generate_hook_content,
     run_install_hooks,
 )
@@ -42,10 +43,18 @@ def _git(args: list[str], cwd: Path, **kwargs) -> subprocess.CompletedProcess:
 
 
 def _init_scratch_repo(root: Path) -> None:
-    """Create a git repo with identity configured."""
+    """Create a git repo with identity configured and hooksPath cleared.
+
+    Explicitly unsets core.hooksPath so the scratch repo does not inherit
+    a custom value from the user's global ~/.gitconfig (which would cause
+    install-hooks to reject installation).  The unset is a no-op when
+    the key does not exist (git config --unset exits 5, ignored by
+    check=False).
+    """
     _git(["init"], root)
     _git(["config", "user.name", "Test"], root)
     _git(["config", "user.email", "test@test.com"], root)
+    _git(["config", "--local", "--unset", "core.hooksPath"], root)
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -197,14 +206,87 @@ class TestDogfood:
             % (result.stdout, result.stderr)
         )
 
+    def test_planning_leak_guard_blocks_staging(
+        self, tmp_path, monkeypatch
+    ):
+        """Planning-leak guard blocks commits that stage .planning/ or CLAUDE.md.
+
+        Exercises the runtime blocking behavior of _build_planning_leak_guard()
+        by installing a hook with the guard enabled, staging forbidden paths,
+        and verifying the commit is rejected with the expected error message.
+        """
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
+
+        _init_scratch_repo(tmp_path)
+        _write_file(tmp_path / "README.md", "# test\n")
+        _git(["add", "."], tmp_path)
+        _git(["commit", "-m", "initial"], tmp_path)
+
+        # Install a minimal hook with only the planning-leak guard.
+        # Attestation and gate-check are omitted to isolate guard behavior.
+        hook_script = (
+            "#!/bin/sh\n"
+            + _build_planning_leak_guard()
+            + "exit 0\n"
+        )
+        hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
+        hook_path.parent.mkdir(parents=True, exist_ok=True)
+        hook_path.write_text(hook_script, encoding="utf-8")
+        hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+
+        # Staging .planning/ should be blocked
+        _write_file(tmp_path / ".planning" / "STATE.md", "leak test\n")
+        _git(["add", "-f", ".planning/STATE.md"], tmp_path)
+        result = _git(["commit", "-m", "leak: planning"], tmp_path)
+        assert result.returncode != 0, (
+            "Commit staging .planning/ should be blocked.\n"
+            "stdout: %s\nstderr: %s" % (result.stdout, result.stderr)
+        )
+        assert "BLOCKED" in result.stderr, (
+            "Error should mention BLOCKED.\nstderr: %s" % result.stderr
+        )
+        assert ".planning/STATE.md" in result.stderr, (
+            "Error should list the offending path.\nstderr: %s" % result.stderr
+        )
+        _git(["reset", "HEAD", ".planning/STATE.md"], tmp_path)
+
+        # Staging CLAUDE.md should also be blocked
+        _write_file(tmp_path / "CLAUDE.md", "leak test\n")
+        _git(["add", "-f", "CLAUDE.md"], tmp_path)
+        result = _git(["commit", "-m", "leak: claude"], tmp_path)
+        assert result.returncode != 0, (
+            "Commit staging CLAUDE.md should be blocked.\n"
+            "stdout: %s\nstderr: %s" % (result.stdout, result.stderr)
+        )
+        assert "CLAUDE.md" in result.stderr, (
+            "Error should list CLAUDE.md.\nstderr: %s" % result.stderr
+        )
+        _git(["reset", "HEAD", "CLAUDE.md"], tmp_path)
+
+        # A normal file should pass through the guard
+        _write_file(tmp_path / "normal.txt", "safe\n")
+        _git(["add", "normal.txt"], tmp_path)
+        result = _git(["commit", "-m", "safe commit"], tmp_path)
+        assert result.returncode == 0, (
+            "Normal commit should pass.\n"
+            "stdout: %s\nstderr: %s" % (result.stdout, result.stderr)
+        )
+
     def test_forge_detection_enables_planning_leak_guard(
         self, tmp_path, monkeypatch
     ):
-        """run_install_hooks auto-detects forge and enables the leak guard.
+        """run_install_hooks auto-detects forge repos via marker file.
 
-        When src/code_forge/__init__.py exists relative to cwd,
-        run_install_hooks passes planning_leak_guard=True, and the
-        generated hook contains the planning-leak guard block.
+        Verifies the DETECTION logic: when src/code_forge/__init__.py
+        exists relative to cwd, run_install_hooks passes
+        planning_leak_guard=True and the generated hook contains the
+        planning-leak guard block. This does NOT install a functional
+        forge package -- it only creates the marker file to trigger
+        detection.
         """
         monkeypatch.setenv(
             "GIT_CEILING_DIRECTORIES",

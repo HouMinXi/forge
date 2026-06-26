@@ -336,21 +336,23 @@ def _build_planning_leak_guard() -> str:
 def _build_review_block(forge_invocation: str) -> str:
     """Build the LLM review block for the pre-commit hook.
 
-    Calls code-forge review on staged changes (HEAD..INDEX).
+    Calls code-forge review on staged changes (HEAD commit vs staged files).
     Gracefully degrades when no backend is configured (exit 2)
     or when the review is delegated to an inline outlet (exit 5).
 
     Args:
         forge_invocation: the forge invocation string (e.g.
-            "/usr/bin/code-forge gate-check"); the trailing
-            " gate-check" suffix is stripped to get the base path.
+            "/usr/bin/code-forge gate-check"); MUST end with
+            " gate-check" -- the suffix is stripped via rsplit to
+            derive the base binary path for the review command.
+            This invariant is maintained by resolve_forge_path().
 
     Returns:
         Shell script fragment for the review invocation.
     """
     base_path = forge_invocation.rsplit(" gate-check", 1)[0]
     return (
-        "# LLM review: full 3-pass via CN backend\n"
+        "# LLM review: up to 2 rounds via CN backend\n"
         "if command -v %s >/dev/null 2>&1; then\n"
         "    FORGE_SKIP_WORKTREE_CHECK=1 %s review \\\n"
         "        --baseline HEAD --head INDEX \\\n"
@@ -733,7 +735,7 @@ def run_install_hooks(
         # Step e.5: detect forge repo for planning-leak guard
         # If src/code_forge/__init__.py exists relative to cwd, this is forge
         # itself and the planning-leak guard should be enabled automatically.
-        is_forge_repo = (cwd / "src" / "code_forge" / "__init__.py").is_file()
+        is_forge_repo: bool = (cwd / "src" / "code_forge" / "__init__.py").is_file()
 
         # Step f: generate pre-commit hook content
         hook_content = generate_hook_content(
