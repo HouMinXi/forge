@@ -23,6 +23,8 @@ from .advisory import AdvisoryFinding
 # Reuse helpers from graph_triage -- never duplicate logic.
 from .graph_triage import _is_unnamed, _parse_diff_files
 
+from .dead_code import _live_callers
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -130,39 +132,13 @@ def find_cross_repo_callers(
             name = sym["name"]
             module_name = sym["module"]
 
-            # CALLS + IMPORTS_FROM disambiguation (same as graph_triage)
-            cursor.execute(
-                "SELECT DISTINCT c.source_qualified FROM edges c "
-                "WHERE c.kind = 'CALLS' AND c.target_qualified = ? "
-                "AND EXISTS ("
-                "  SELECT 1 FROM edges i "
-                "  WHERE i.kind = 'IMPORTS_FROM' "
-                "  AND i.source_qualified LIKE "
-                "    substr(c.source_qualified, 1, "
-                "      instr(c.source_qualified, '::') - 1) || '%%' "
-                "  AND (i.target_qualified LIKE '%%' || ? || '%%' "
-                "       OR i.target_qualified LIKE '%%' || ? || '%%')"
-                ")",
-                (name, module_name, name),
-            )
-            callers = cursor.fetchall()
-
-            for (caller_qualified,) in callers:
-                # Resolve caller file and line from nodes table
-                cursor.execute(
-                    "SELECT file_path, line_start FROM nodes "
-                    "WHERE qualified_name = ?",
-                    (caller_qualified,),
-                )
-                row = cursor.fetchone()
-                caller_file = row[0] if row else "<unknown>"
-                caller_line = row[1] if row else None
-
+            live = _live_callers(cursor, name, module_name)
+            for lc in live:
                 results.append({
                     "symbol": name,
-                    "caller_qualified": caller_qualified,
-                    "caller_file": caller_file,
-                    "caller_line": caller_line,
+                    "caller_qualified": lc.qualified,
+                    "caller_file": lc.file,
+                    "caller_line": lc.line,
                 })
     finally:
         conn.close()
