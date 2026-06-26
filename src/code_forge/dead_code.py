@@ -35,7 +35,6 @@ detector returns ``False`` (live) on any doubt.
 from __future__ import annotations
 
 import ast
-import logging
 import operator
 import re
 import sqlite3
@@ -44,7 +43,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # tree-sitter import -- guarded per D-06 fail-safe
@@ -201,7 +199,7 @@ def _is_dead_c(file_path: str, line: int) -> bool:
     direction per D-06.
     """
     try:
-        with open(file_path, "r", errors="replace") as f:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
     except OSError:
         return False
