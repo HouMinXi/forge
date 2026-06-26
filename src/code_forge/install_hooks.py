@@ -312,27 +312,96 @@ def _build_presubmit_block(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _build_planning_leak_guard() -> str:
+    """Build the planning-leak guard block.
+
+    Blocks staging of .planning/ and CLAUDE.md paths.
+    Placed BEFORE the non-code carveout (these paths must never
+    enter history regardless of commit type).
+    """
+    return (
+        "# planning-leak guard: block .planning/ and CLAUDE.md staging\n"
+        "_LEAK=$(git diff --cached --name-only | "
+        "grep -E '^\\.planning/|(^|/)CLAUDE\\.md$')\n"
+        'if [ -n "$_LEAK" ]; then\n'
+        '    echo "code-forge: BLOCKED: staged paths must never '
+        'enter history:" >&2\n'
+        '    printf \'%s\\n\' "$_LEAK" | sed \'s/^/  /\' >&2\n'
+        '    exit 1\n'
+        'fi\n'
+        '\n'
+    )
+
+
+def _build_review_block(forge_invocation: str) -> str:
+    """Build the LLM review block for the pre-commit hook.
+
+    Calls code-forge review on staged changes (HEAD..INDEX).
+    Gracefully degrades when no backend is configured (exit 2)
+    or when the review is delegated to an inline outlet (exit 5).
+
+    Args:
+        forge_invocation: the forge invocation string (e.g.
+            "/usr/bin/code-forge gate-check"); the trailing
+            " gate-check" suffix is stripped to get the base path.
+
+    Returns:
+        Shell script fragment for the review invocation.
+    """
+    base_path = forge_invocation.rsplit(" gate-check", 1)[0]
+    return (
+        "# LLM review: full 3-pass via CN backend\n"
+        "if command -v %s >/dev/null 2>&1; then\n"
+        "    FORGE_SKIP_WORKTREE_CHECK=1 %s review \\\n"
+        "        --baseline HEAD --head INDEX \\\n"
+        "        --max-total-rounds 2 --quiet || {\n"
+        "        _RC=$?\n"
+        '        if [ "$_RC" -eq 2 ]; then\n'
+        '            echo "code-forge: review skipped'
+        ' (no backend configured)" >&2\n'
+        '        elif [ "$_RC" -eq 5 ]; then\n'
+        '            echo "code-forge: review delegated'
+        ' (inline outlet)" >&2\n'
+        "        else\n"
+        '            echo "code-forge: review FAILED'
+        ' (exit $_RC)" >&2\n'
+        "            exit 1\n"
+        "        fi\n"
+        "    }\n"
+        "else\n"
+        '    echo "code-forge: review: code-forge not found,'
+        ' skipping" >&2\n'
+        "fi\n"
+        "\n"
+    ) % (base_path, base_path)
+
+
 def generate_hook_content(
     forge_invocation: str,
     chain_path: Path | None,
     presubmit_entries: list[dict] | None = None,
     non_ascii_mode: str = "ai-smell",
+    planning_leak_guard: bool = False,
 ) -> str:
     """Generate pre-commit hook shell script content.
 
     Hook execution order:
-      1. carveout block  -- non-code commits exit 0 here
-      2. attestation     -- code-forge verify --quiet
-      3. built-in staged-diff check -- non-ASCII + AI-vocab on staged diff
-      4. presubmit runner -- user-configured linters (fail-closed)
-      5. chain call      -- existing hook (if chaining)
-      6. exec gate-check -- R1 test gate
+      0a. .git jurisdiction check  -- non-git dirs silently skip
+      0b. planning-leak guard      -- optional, blocks .planning/ and CLAUDE.md
+      1.  carveout block           -- non-code commits exit 0 here
+      2.  attestation              -- code-forge verify --quiet
+      3.  built-in staged-diff     -- non-ASCII + AI-vocab on staged diff
+      4.  presubmit runner         -- user-configured linters (fail-closed)
+      5.  LLM review               -- code-forge review (graceful degradation)
+      6.  chain call               -- existing hook (if chaining)
+      7.  exec gate-check          -- R1 test gate
 
     Args:
         forge_invocation: absolute code-forge path + args
         chain_path: Path to existing hook backup, or None
         presubmit_entries: validated presubmit entry dicts from gate.yaml, or None
         non_ascii_mode: "ai-smell" (default) or "strict"
+        planning_leak_guard: if True, emit planning-leak guard before carveout
 
     Returns:
         Shell script content as string
@@ -340,6 +409,18 @@ def generate_hook_content(
     Raises:
         ValueError: if any presubmit entry has an unexpected 'on' value
     """
+    # 0a. .git jurisdiction check -- non-git dirs silently skip
+    git_check_block = (
+        "# .git jurisdiction check: silently skip in non-git directories\n"
+        "git rev-parse --git-dir >/dev/null 2>&1 || exit 0\n"
+        "\n"
+    )
+
+    # 0b. planning-leak guard (optional)
+    leak_guard_block = ""
+    if planning_leak_guard:
+        leak_guard_block = _build_planning_leak_guard()
+
     carveout_block = (
         '# non-code carve-out: skip verify+gate-check for non-code commits\n'
         "NON_CODE="
@@ -371,16 +452,21 @@ def generate_hook_content(
     effective_entries = presubmit_entries if presubmit_entries else []
     presubmit_block = _build_presubmit_block(effective_entries)
 
+    review_block = _build_review_block(forge_invocation)
+
     if chain_path is not None:
         return (
             "#!/bin/sh\n"
             "# code-forge pre-commit gate-check"
             " (installed by code-forge install-hooks)\n"
             "# Chained existing hook: %s\n" % chain_path
+            + git_check_block
+            + leak_guard_block
             + carveout_block
             + attestation_block
             + d12_block
             + presubmit_block
+            + review_block
             + '"%s" "$@" || exit 1\n' % chain_path
             + "exec %s\n" % forge_invocation
         )
@@ -389,10 +475,13 @@ def generate_hook_content(
             "#!/bin/sh\n"
             "# code-forge pre-commit gate-check"
             " (installed by code-forge install-hooks)\n"
+            + git_check_block
+            + leak_guard_block
             + carveout_block
             + attestation_block
             + d12_block
             + presubmit_block
+            + review_block
             + "exec %s\n" % forge_invocation
         )
 
