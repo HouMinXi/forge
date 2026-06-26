@@ -11,6 +11,8 @@ import pytest
 
 from code_forge.exit_codes import EXIT_FAIL, EXIT_PASS
 from code_forge.install_hooks import (
+    _build_planning_leak_guard,
+    _build_review_block,
     check_hooks_path_override,
     generate_hook_content,
     resolve_forge_path,
@@ -1113,3 +1115,121 @@ class TestClaudeWorktreeHook:
         pre_tool = settings["hooks"]["PreToolUse"]
         ew = next(e for e in pre_tool if e["matcher"] == "Edit|Write")
         assert any("check_worktree.sh" in h.get("command", "") for h in ew["hooks"])
+
+
+# ---------------------------------------------------------------------------
+# Planning-leak guard, review block, and hook ordering tests
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningLeakGuard:
+    """Tests for _build_planning_leak_guard() and its integration."""
+
+    def test_planning_leak_guard_block_content(self):
+        """Guard block contains git diff, grep pattern, BLOCKED message, and exit 1."""
+        block = _build_planning_leak_guard()
+        assert "git diff --cached --name-only" in block
+        assert "grep -E" in block
+        assert ".planning/" in block
+        assert "CLAUDE" in block
+        assert "code-forge: BLOCKED" in block
+        assert "exit 1" in block
+
+    def test_planning_leak_guard_disabled_by_default(self):
+        """Default generate_hook_content does NOT include the planning-leak guard."""
+        content = generate_hook_content("code-forge gate-check", None)
+        assert "planning-leak guard" not in content
+
+    def test_planning_leak_guard_enabled(self):
+        """planning_leak_guard=True emits the guard before the carveout."""
+        content = generate_hook_content(
+            "code-forge gate-check", None, planning_leak_guard=True
+        )
+        assert "planning-leak guard" in content
+        assert content.index("planning-leak") < content.index("carve-out")
+
+
+class TestReviewBlock:
+    """Tests for _build_review_block() and its integration."""
+
+    def test_review_block_content(self):
+        """Review block contains env var, review command, flags, and --quiet."""
+        block = _build_review_block("code-forge gate-check")
+        assert "FORGE_SKIP_WORKTREE_CHECK=1" in block
+        assert "code-forge review" in block
+        assert "--baseline HEAD --head INDEX" in block
+        assert "--max-total-rounds 2" in block
+        assert "--quiet" in block
+
+    def test_review_block_command_not_found_skips(self):
+        """When code-forge binary is missing, the review block skips (no exit 1)."""
+        block = _build_review_block("code-forge gate-check")
+        assert "code-forge not found, skipping" in block
+        # The not-found branch must NOT block the commit
+        not_found_idx = block.index("code-forge not found")
+        fi_idx = block.index("fi", not_found_idx)
+        not_found_section = block[not_found_idx:fi_idx]
+        assert "exit 1" not in not_found_section
+
+    def test_review_block_exit_2_degrades_gracefully(self):
+        """Exit 2 (no backend) emits a warning but does NOT block."""
+        block = _build_review_block("code-forge gate-check")
+        assert "review skipped" in block
+        # The exit-2 branch must not contain exit 1
+        eq2_idx = block.index("-eq 2")
+        eq5_idx = block.index("-eq 5")
+        exit2_section = block[eq2_idx:eq5_idx]
+        assert "exit 1" not in exit2_section
+
+    def test_review_block_exit_5_degrades_gracefully(self):
+        """Exit 5 (delegated) emits a warning but does NOT block."""
+        block = _build_review_block("code-forge gate-check")
+        assert "review delegated" in block
+        eq5_idx = block.index("-eq 5")
+        else_idx = block.index("else", eq5_idx)
+        exit5_section = block[eq5_idx:else_idx]
+        assert "exit 1" not in exit5_section
+
+    def test_review_block_other_exit_blocks(self):
+        """Non-0/2/5 exit codes block the commit (exit 1 in else branch)."""
+        block = _build_review_block("code-forge gate-check")
+        assert "review FAILED" in block
+        # The else branch (after exit-5 check) must contain exit 1
+        eq5_idx = block.index("-eq 5")
+        else_idx = block.index("else", eq5_idx)
+        else_section = block[else_idx:]
+        assert "exit 1" in else_section
+
+
+class TestHookExecutionOrder:
+    """Tests for the overall hook execution order."""
+
+    def test_hook_execution_order(self):
+        """Full hook ordering: leak -> carveout -> attestation -> D-12 -> review -> exec."""
+        content = generate_hook_content(
+            "code-forge gate-check", None, planning_leak_guard=True
+        )
+        # Use specific anchors to avoid false matches
+        idx_gitdir = content.index("git rev-parse --git-dir")
+        idx_leak = content.index("planning-leak")
+        idx_carveout = content.index("carve-out")
+        idx_attest = content.index("attestation")
+        idx_nonascii = content.index("non-ASCII")
+        idx_review = content.index("code-forge review")
+        idx_exec = content.index("exec code-forge gate-check")
+
+        assert idx_gitdir < idx_leak < idx_carveout < idx_attest
+        assert idx_attest < idx_nonascii < idx_review < idx_exec
+
+    def test_review_block_in_chained_hook(self):
+        """In a chained hook, review appears before the chain call and gate-check."""
+        content = generate_hook_content(
+            "code-forge gate-check", Path("/backup/pre-commit"),
+            planning_leak_guard=True,
+        )
+        idx_review = content.index("code-forge review")
+        # Find the chain CALL line (quoted path with $@), not the comment header
+        idx_chain = content.index('"/backup/pre-commit" "$@"')
+        idx_exec = content.index("exec code-forge gate-check")
+
+        assert idx_review < idx_chain < idx_exec
