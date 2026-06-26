@@ -45,7 +45,7 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
-# tree-sitter import -- guarded per D-06 fail-safe
+# tree-sitter import -- fail-safe: absent parser treats all lines as live
 # ---------------------------------------------------------------------------
 
 _PYTHON_PARSER = None
@@ -59,7 +59,7 @@ except Exception:  # ImportError, OSError, or build failure
 
 
 # ---------------------------------------------------------------------------
-# LiveCaller frozen dataclass (D-03)
+# LiveCaller frozen dataclass
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ _CMP: dict[bytes, Callable] = {
 def _verinfo_is_dead(cond_text: bytes) -> bool:
     """True iff a SIMPLE sys.version_info guard is False on this interpreter.
 
-    Compound guards (``and`` / ``or``) are fail-safe live per D-06 -- a
+    Compound guards (``and`` / ``or``) are fail-safe live -- a
     blanket flag would wrongly drop live callers.
     """
     if b" and " in cond_text or b" or " in cond_text:
@@ -143,7 +143,7 @@ def _is_dead_python(file_path: str, line: int) -> bool:
     """Return True if *line* is inside a dead-code guard in a Python file.
 
     Uses tree-sitter AST ancestor walk.  Returns False on any error
-    (fail-safe = live per D-06).
+    (fail-safe = live).
     """
     if _PYTHON_PARSER is None:
         return False
@@ -191,12 +191,12 @@ def _is_dead_c(file_path: str, line: int) -> bool:
     """Return True if *line* is inside ``#if 0 ... #endif`` in a C/H file.
 
     Lexical scan walking upward from target line.  Returns False on any
-    error (fail-safe = live per D-06).
+    error (fail-safe = live).
 
     Known limitation: ``#else`` / ``#elif`` branches of ``#if 0`` are
     conservatively treated as live -- the ``#else`` reset at depth==0
     fires before reaching ``#if 0``.  This is the miss-not-noise
-    direction per D-06.
+    direction (miss-not-noise).
     """
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
@@ -224,7 +224,7 @@ def _is_dead_c(file_path: str, line: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Detector dispatch (D-11)
+# Detector dispatch by file extension
 # ---------------------------------------------------------------------------
 
 _DETECTORS: dict[str, Callable[[str, int], bool]] = {}
@@ -266,7 +266,7 @@ def _is_dead_call_site(file_path: str | None, line: int | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# _live_callers: shared SQL + liveness filter (D-02, D-08)
+# _live_callers: shared SQL + liveness filter
 # ---------------------------------------------------------------------------
 
 _CALLERS_SQL = (
