@@ -7,11 +7,11 @@ Covers:
   - C dead-code detection (#if 0)
   - Fail-safe behavior (None, unreadable, unknown extension)
   - _live_callers filtering with hand-built graph.db
-  - Bug-inject proof (SC#2)
-  - tree-sitter-absent fail-safe (D-06)
+  - Bug-inject proof (neutralize filter -> dead callers reappear)
+  - tree-sitter-absent fail-safe
   - else-branch liveness (Python + C)
-  - Honest ceiling documentation (SC#4)
-  - Detector dispatch (D-11)
+  - Honest ceiling documentation
+  - Detector dispatch by extension
   - Real-path smoke (forge golden rule #3)
 """
 from __future__ import annotations
@@ -191,7 +191,7 @@ class TestIsDeadCallSitePython:
     def test_version_guard_always_live(self, tmp_path: Path) -> None:
         """sys.version_info < (3, 99) is True on any realistic Python 3.x.
 
-        FINDING-E regression: a ``<`` version guard must NOT be
+        Regression guard: a ``<`` version guard must NOT be
         blanket-flagged dead.
         """
         f = tmp_path / "vlive.py"
@@ -234,7 +234,7 @@ class TestIsDeadCallSiteC:
         Line 5 is inside #if 1 which is itself inside #if 0, but the
         upward scan hits #if 1 at depth==0 first and returns False
         (live).  This is the documented honest-ceiling limitation
-        (miss-not-noise direction per D-06).
+        (miss-not-noise direction).
         """
         f = tmp_path / "nested.c"
         f.write_text(_C_NESTED_IF0)
@@ -396,7 +396,7 @@ class TestLiveCallers:
 
 
 # ---------------------------------------------------------------------------
-# TestBugInject (SC#2 -- REQUIRED)
+# TestBugInject (neutralize filter -> dead callers reappear)
 # ---------------------------------------------------------------------------
 
 class TestBugInject:
@@ -478,7 +478,7 @@ class TestBugInject:
 
 
 # ---------------------------------------------------------------------------
-# TestTreeSitterAbsent (D-06 import-absent fail-safe)
+# TestTreeSitterAbsent (parser-absent fail-safe)
 # ---------------------------------------------------------------------------
 
 class TestTreeSitterAbsent:
@@ -527,7 +527,7 @@ class TestElseBranchLive:
 
 
 # ---------------------------------------------------------------------------
-# TestHonestCeiling (SC#4)
+# TestHonestCeiling (docstring documents known limitations)
 # ---------------------------------------------------------------------------
 
 class TestHonestCeiling:
@@ -547,7 +547,7 @@ class TestHonestCeiling:
 
 
 # ---------------------------------------------------------------------------
-# TestDetectorDispatch (D-11)
+# TestDetectorDispatch (extension-based dispatch)
 # ---------------------------------------------------------------------------
 
 class TestDetectorDispatch:
@@ -643,7 +643,7 @@ class TestRealPathSmoke:
 
 
 # ---------------------------------------------------------------------------
-# TestNoSqlDuplication (SC#3 -- post-wiring verification)
+# TestNoSqlDuplication (SQL lives only in dead_code.py)
 # ---------------------------------------------------------------------------
 
 _SRC_DIR = Path(__file__).parents[1] / "src" / "code_forge"
