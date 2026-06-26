@@ -730,11 +730,17 @@ def run_install_hooks(
                     )
                 chain_path = backup_path
 
+        # Step e.5: detect forge repo for planning-leak guard
+        # If src/code_forge/__init__.py exists relative to cwd, this is forge
+        # itself and the planning-leak guard should be enabled automatically.
+        is_forge_repo = (cwd / "src" / "code_forge" / "__init__.py").is_file()
+
         # Step f: generate pre-commit hook content
         hook_content = generate_hook_content(
             forge_invocation, chain_path,
             presubmit_entries=presubmit_entries,
             non_ascii_mode=non_ascii_mode,
+            planning_leak_guard=is_forge_repo,
         )
 
         # Step g: write pre-commit hook file
