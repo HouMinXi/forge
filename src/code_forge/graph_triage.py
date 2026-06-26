@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 from .advisory import AdvisoryFinding
+from .dead_code import _live_callers
 
 logger = logging.getLogger(__name__)
 
@@ -256,29 +257,14 @@ def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
                 # Module name for IMPORTS_FROM disambiguation.
                 module_name = Path(file_path).stem
 
-                # Count dependents with IMPORTS_FROM disambiguation.
-                cursor.execute(
-                    "SELECT DISTINCT c.source_qualified FROM edges c "
-                    "WHERE c.kind = 'CALLS' AND c.target_qualified = ? "
-                    "AND EXISTS ("
-                    "  SELECT 1 FROM edges i "
-                    "  WHERE i.kind = 'IMPORTS_FROM' "
-                    "  AND i.source_qualified LIKE "
-                    "    substr(c.source_qualified, 1, "
-                    "      instr(c.source_qualified, '::') - 1) || '%%' "
-                    "  AND (i.target_qualified LIKE '%%' || ? || '%%' "
-                    "       OR i.target_qualified LIKE '%%' || ? || '%%')"
-                    ")",
-                    (name, module_name, name),
-                )
-                dependents = cursor.fetchall()
-                dep_names = [d[0] for d in dependents[:5]]
+                live = _live_callers(cursor, name, module_name)
+                dep_names = [lc.qualified for lc in live[:5]]
 
                 results.append({
                     "name": name,
                     "file": file_path,
                     "qualified_name": qualified_name,
-                    "dependent_count": len(dependents),
+                    "dependent_count": len(live),
                     "top_dependents": dep_names,
                     "start_line": start,
                     "end_line": end,
@@ -390,23 +376,9 @@ def find_entity_dependents(
             )
             cursor = conn.cursor()
             module_name = Path(file_path).stem
-            cursor.execute(
-                "SELECT DISTINCT c.source_qualified FROM edges c "
-                "WHERE c.kind = 'CALLS' AND c.target_qualified = ? "
-                "AND EXISTS ("
-                "  SELECT 1 FROM edges i "
-                "  WHERE i.kind = 'IMPORTS_FROM' "
-                "  AND i.source_qualified LIKE "
-                "    substr(c.source_qualified, 1, "
-                "      instr(c.source_qualified, '::') - 1) || '%%' "
-                "  AND (i.target_qualified LIKE '%%' || ? || '%%' "
-                "       OR i.target_qualified LIKE '%%' || ? || '%%')"
-                ")",
-                (entity_name, module_name, entity_name),
-            )
-            rows = cursor.fetchall()
+            live = _live_callers(cursor, entity_name, module_name)
             conn.close()
-            return [r[0] for r in rows]
+            return [lc.qualified for lc in live]
         except (sqlite3.Error, OSError):
             pass
 
