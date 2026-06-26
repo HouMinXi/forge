@@ -205,6 +205,23 @@ class TestIsDeadCallSitePython:
         # Line 8 is "def live_function():" -- live code
         assert _is_dead_call_site(str(f), 8) is False
 
+    def test_qualified_typing_type_checking(self, tmp_path: Path) -> None:
+        """typing.TYPE_CHECKING (qualified import) is also dead code."""
+        f = tmp_path / "qtc.py"
+        f.write_text(
+            "import typing\n"
+            "\n"
+            "if typing.TYPE_CHECKING:\n"
+            "    from os import path\n"
+            "    x = 1\n"
+            "\n"
+            "print('live')\n"
+        )
+        # Line 4 is inside if typing.TYPE_CHECKING: -> dead
+        assert _is_dead_call_site(str(f), 4) is True
+        # Line 7 is live code outside the guard
+        assert _is_dead_call_site(str(f), 7) is False
+
 
 # ---------------------------------------------------------------------------
 # TestIsDeadCallSiteC
