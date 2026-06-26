@@ -75,7 +75,7 @@ class LiveCaller:
 # Python dead-code detection helpers
 # ---------------------------------------------------------------------------
 
-_DEAD_CONDITIONS = frozenset({b"TYPE_CHECKING", b"False"})
+_DEAD_CONDITIONS = frozenset({b"TYPE_CHECKING", b"typing.TYPE_CHECKING", b"False"})
 
 _VERINFO_RE = re.compile(
     rb"sys\.version_info\s*(<=|>=|==|!=|<|>)\s*(\([^)]*\))",
