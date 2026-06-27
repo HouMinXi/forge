@@ -1256,3 +1256,335 @@ class TestCheckBodyError:
         # Should not raise
         result = _check_body_error(resp, self._make_backend("zhipu"))
         assert result is None
+
+
+# -- Task 2: HTTP classification, body wiring, retry loop, stderr progress ----
+
+
+def _make_api_backend(name="test", fmt="openai"):
+    return BackendConfig(
+        name=name, type="api", model="model", format=fmt,
+        base_url="https://example.com", api_key_env="TEST_KEY",
+    )
+
+
+def _mock_ok_response(content_json='{"findings": []}'):
+    """Build a mock urlopen response for successful API calls."""
+    resp = Mock()
+    if content_json.startswith("{"):
+        # openai format
+        body = json.dumps({
+            "choices": [{"message": {"content": content_json}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        })
+    resp.read.return_value = body.encode("utf-8")
+    resp.__enter__ = Mock(return_value=resp)
+    resp.__exit__ = Mock(return_value=False)
+    return resp
+
+
+class TestHTTPErrorClassification:
+    """HTTP errors from _invoke_openai/_invoke_anthropic carry retryable flag."""
+
+    def test_openai_429_retryable_with_retry_after(self):
+        backend = _make_api_backend()
+        headers = {"Retry-After": "5"}
+        http_error = urllib.error.HTTPError(
+            "https://example.com", 429, "Rate limited", headers, None,
+        )
+        http_error.read = Mock(return_value=b"rate limit exceeded")
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=http_error):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is True
+        assert exc.value.retry_after == 5.0
+
+    def test_openai_402_non_retryable(self):
+        backend = _make_api_backend()
+        http_error = urllib.error.HTTPError(
+            "https://example.com", 402, "Payment required", {}, None,
+        )
+        http_error.read = Mock(return_value=b"balance exhausted")
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=http_error):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is False
+
+    def test_openai_403_non_retryable(self):
+        backend = _make_api_backend()
+        http_error = urllib.error.HTTPError(
+            "https://example.com", 403, "Forbidden", {}, None,
+        )
+        http_error.read = Mock(return_value=b"forbidden")
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=http_error):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is False
+
+    def test_openai_500_retryable(self):
+        backend = _make_api_backend()
+        http_error = urllib.error.HTTPError(
+            "https://example.com", 500, "Server error", {}, None,
+        )
+        http_error.read = Mock(return_value=b"internal error")
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=http_error):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is True
+
+    def test_anthropic_429_retryable(self):
+        backend = _make_api_backend(fmt="anthropic")
+        http_error = urllib.error.HTTPError(
+            "https://example.com", 429, "Rate limited", {}, None,
+        )
+        http_error.read = Mock(return_value=b"rate limit exceeded")
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=http_error):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is True
+
+    def test_anthropic_401_non_retryable(self):
+        backend = _make_api_backend(fmt="anthropic")
+        http_error = urllib.error.HTTPError(
+            "https://example.com", 401, "Unauthorized", {}, None,
+        )
+        http_error.read = Mock(return_value=b"bad key")
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=http_error):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is False
+
+    def test_openai_urlerror_retryable(self):
+        backend = _make_api_backend()
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen",
+                   side_effect=urllib.error.URLError("conn refused")):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is True
+
+
+class TestBodyDetectionWiring:
+    """_check_body_error called in _invoke_openai before content extraction."""
+
+    def test_zhipu_body_error_before_content(self):
+        """Zhipu error.code in body raises before content extraction."""
+        backend = _make_api_backend(name="zhipu")
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "error": {"code": "1113", "message": "balance low"},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is False
+        assert "1113" in str(exc.value)
+
+    def test_minimax_base_resp_before_content(self):
+        """MiniMax base_resp error in body raises before content extraction."""
+        backend = _make_api_backend(name="minimax")
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "base_resp": {"status_code": 1008, "status_msg": "no balance"},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend)
+        assert exc.value.retryable is False
+
+
+class TestRetryLoop:
+    """_invoke_api retry loop with backoff, jitter, Retry-After, stderr."""
+
+    def test_retry_429_then_success(self):
+        """429 twice then success returns LLMResult."""
+        backend = _make_api_backend()
+        http_error = urllib.error.HTTPError(
+            "https://example.com", 429, "Rate limited", {}, None,
+        )
+        http_error.read = Mock(return_value=b"rate limit")
+
+        ok_resp = _mock_ok_response()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                err = urllib.error.HTTPError(
+                    "https://example.com", 429, "Rate limited", {}, None,
+                )
+                err.read = Mock(return_value=b"rate limit")
+                raise err
+            return ok_resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep"):
+            result = llm_invoke("prompt", backend=backend,
+                                max_attempts=5, initial_delay_s=0.01)
+        assert isinstance(result, LLMResult)
+
+    def test_402_no_retry(self):
+        """402 raises immediately without retrying."""
+        backend = _make_api_backend()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            err = urllib.error.HTTPError(
+                "https://example.com", 402, "Payment required", {}, None,
+            )
+            err.read = Mock(return_value=b"balance exhausted")
+            raise err
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep") as mock_sleep:
+            with pytest.raises(LLMInvokeError) as exc:
+                llm_invoke("prompt", backend=backend,
+                            max_attempts=5, initial_delay_s=0.01)
+        assert exc.value.retryable is False
+        assert call_count[0] == 1
+        mock_sleep.assert_not_called()
+
+    def test_exhaustion_raises(self):
+        """After max_attempts exhausted, raises LLMInvokeError."""
+        backend = _make_api_backend()
+
+        def side_effect(*args, **kwargs):
+            err = urllib.error.HTTPError(
+                "https://example.com", 429, "Rate limited", {}, None,
+            )
+            err.read = Mock(return_value=b"rate limit")
+            raise err
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="429"):
+                llm_invoke("prompt", backend=backend,
+                            max_attempts=3, initial_delay_s=0.01)
+
+    def test_stderr_progress(self):
+        """Retry progress printed to stderr."""
+        backend = _make_api_backend()
+        ok_resp = _mock_ok_response()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                err = urllib.error.HTTPError(
+                    "https://example.com", 429, "Rate limited", {}, None,
+                )
+                err.read = Mock(return_value=b"rate limit")
+                raise err
+            return ok_resp
+
+        import io
+        stderr_capture = io.StringIO()
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep"), \
+             patch("sys.stderr", stderr_capture):
+            llm_invoke("prompt", backend=backend,
+                        max_attempts=3, initial_delay_s=0.01)
+        output = stderr_capture.getvalue()
+        assert "code-forge: retrying" in output
+        assert "2/3" in output
+
+    def test_timeout_retried(self):
+        """TimeoutError inside _invoke_api is retried."""
+        backend = _make_api_backend()
+        ok_resp = _mock_ok_response()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise TimeoutError("read timed out")
+            return ok_resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep"):
+            result = llm_invoke("prompt", backend=backend,
+                                max_attempts=3, initial_delay_s=0.01)
+        assert isinstance(result, LLMResult)
+
+    def test_max_attempts_1_no_retry(self):
+        """max_attempts=1 means no retry on 429."""
+        backend = _make_api_backend()
+
+        def side_effect(*args, **kwargs):
+            err = urllib.error.HTTPError(
+                "https://example.com", 429, "Rate limited", {}, None,
+            )
+            err.read = Mock(return_value=b"rate limit")
+            raise err
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep") as mock_sleep:
+            with pytest.raises(LLMInvokeError):
+                llm_invoke("prompt", backend=backend,
+                            max_attempts=1, initial_delay_s=0.01)
+        mock_sleep.assert_not_called()
+
+    def test_retry_after_overrides_computed_delay(self):
+        """Retry-After header value used when larger than computed delay."""
+        backend = _make_api_backend()
+        ok_resp = _mock_ok_response()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                err = urllib.error.HTTPError(
+                    "https://example.com", 429, "Rate limited",
+                    {"Retry-After": "10"}, None,
+                )
+                err.read = Mock(return_value=b"rate limit")
+                raise err
+            return ok_resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep") as mock_sleep:
+            llm_invoke("prompt", backend=backend,
+                        max_attempts=3, initial_delay_s=0.01)
+        # Retry-After=10 should override computed delay (0.01 * 2^0 + jitter)
+        actual_delay = mock_sleep.call_args[0][0]
+        assert actual_delay >= 10.0
+
+    def test_llm_invoke_forwards_retry_kwargs(self):
+        """llm_invoke passes max_attempts and initial_delay_s to _invoke_api."""
+        backend = _make_api_backend()
+        ok_resp = _mock_ok_response()
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=ok_resp):
+            # Should not raise - just verifies kwargs are accepted
+            result = llm_invoke("prompt", backend=backend,
+                                max_attempts=2, initial_delay_s=1.0)
+        assert isinstance(result, LLMResult)
