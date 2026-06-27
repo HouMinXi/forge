@@ -627,9 +627,9 @@ def _invoke_api(
             if not exc.retryable or attempt == max_attempts - 1:
                 raise
             delay = min(
-                initial_delay_s * (2 ** attempt) + random.uniform(0, 0.5),
+                initial_delay_s * (2 ** attempt),
                 MAX_BACKOFF_S,
-            )
+            ) + random.uniform(0, 0.5)
             if exc.retry_after is not None:
                 delay = max(delay, exc.retry_after)
             sys.stderr.write(
