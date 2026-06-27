@@ -299,8 +299,9 @@ class TestLLMInvoke:
         http_error.read = Mock(return_value=b"rate limit exceeded")
 
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
-             patch("urllib.request.urlopen", side_effect=http_error):
-            with pytest.raises(LLMInvokeError, match="HTTP 429"):
+             patch("urllib.request.urlopen", side_effect=http_error), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="429"):
                 llm_invoke("prompt", backend=backend)
 
     def test_api_dispatch_timeout(self):
@@ -316,7 +317,8 @@ class TestLLMInvoke:
         url_error = urllib.error.URLError("timeout")
 
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
-             patch("urllib.request.urlopen", side_effect=url_error):
+             patch("urllib.request.urlopen", side_effect=url_error), \
+             patch("time.sleep"):
             with pytest.raises(LLMInvokeError, match="URLError"):
                 llm_invoke("prompt", backend=backend)
 
@@ -338,7 +340,8 @@ class TestLLMInvoke:
             api_key_env="TEST_KEY",
         )
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
-             patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")):
+             patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")), \
+             patch("time.sleep"):
             with pytest.raises(LLMInvokeError, match="timed out") as exc:
                 llm_invoke("prompt", backend=backend)
             assert exc.value.is_timeout is True
@@ -354,7 +357,8 @@ class TestLLMInvoke:
             api_key_env="TEST_KEY",
         )
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
-             patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")):
+             patch("urllib.request.urlopen", side_effect=TimeoutError("read timed out")), \
+             patch("time.sleep"):
             with pytest.raises(LLMInvokeError, match="timed out") as exc:
                 llm_invoke("prompt", backend=backend)
             assert exc.value.is_timeout is True
