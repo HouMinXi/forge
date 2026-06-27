@@ -613,39 +613,11 @@ class TestCoverageGuard:
         )
 
 
-class TestPassLevelRetry:
-    """Pass-level retry: retryable LLMInvokeError retried once per pass."""
+class TestInvokeFailureHandling:
+    """LLM invoke failure creates INFRA finding and feeds breaker."""
 
-    def test_retryable_first_fail_then_success_no_infra(self):
-        """Retryable error on attempt 0, success on attempt 1: no INFRA."""
-        from code_forge.factories import build_l1_provider
-        from code_forge.llm_invoke import LLMInvokeError
-
-        resolved = _make_resolved("git")
-        good_resp = _stub_llm_response(
-            findings_json=[],
-            excerpts_json=[
-                {"file": "a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
-            ],
-        )
-
-        call_count = [0]
-        def _side_effect(*a, **kw):
-            call_count[0] += 1
-            if call_count[0] % 2 == 1:
-                raise LLMInvokeError("transient", retryable=True)
-            return good_resp
-
-        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_side_effect):
-            provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
-
-        infra = [f for f in findings if f.source == "INFRA"]
-        assert len(infra) == 0, "retry success should produce no INFRA finding"
-
-    def test_non_retryable_creates_infra_immediately(self):
-        """Non-retryable error: INFRA finding immediately, no retry."""
+    def test_invoke_failure_creates_infra(self):
+        """LLMInvokeError produces one INFRA finding per failed pass."""
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
 
@@ -662,53 +634,7 @@ class TestPassLevelRetry:
 
         infra = [f for f in findings if f.source == "INFRA"]
         assert len(infra) == 3, "each of 3 passes should produce INFRA"
-        # non-retryable = exactly 1 call per pass (no retry)
         assert call_count[0] == 3
-
-    def test_retryable_both_attempts_fail_creates_infra(self):
-        """Retryable error on both attempts: INFRA finding after exhaustion."""
-        from code_forge.factories import build_l1_provider
-        from code_forge.llm_invoke import LLMInvokeError
-
-        resolved = _make_resolved("git")
-
-        with patch(
-            "code_forge.llm_invoke.llm_invoke",
-            side_effect=LLMInvokeError("always fails", retryable=True),
-        ):
-            provider = build_l1_provider("real", resolved)
-            findings, _, _, _ = provider()
-
-        infra = [f for f in findings if f.source == "INFRA"]
-        assert len(infra) == 3, "each pass should produce INFRA after retry exhaustion"
-
-    def test_retry_message_on_stderr(self, capsys):
-        """Retryable first failure prints retry message to stderr."""
-        from code_forge.factories import build_l1_provider
-        from code_forge.llm_invoke import LLMInvokeError
-
-        resolved = _make_resolved("git")
-        good_resp = _stub_llm_response(
-            findings_json=[],
-            excerpts_json=[
-                {"file": "a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
-            ],
-        )
-
-        call_count = [0]
-        def _side_effect(*a, **kw):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise LLMInvokeError("transient", retryable=True)
-            return good_resp
-
-        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_side_effect):
-            provider = build_l1_provider("real", resolved)
-            provider()
-
-        captured = capsys.readouterr()
-        assert "retrying" in captured.err.lower()
 
     def test_retry_config_forwarded_to_llm_invoke(self):
         """max_attempts and initial_delay_s forwarded to llm_invoke."""

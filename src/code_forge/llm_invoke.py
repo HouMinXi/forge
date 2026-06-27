@@ -129,6 +129,11 @@ PROVIDER_ERROR_CODES: dict[str, dict[str, str]] = {
 # HTTP status codes classified as retryable.
 RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
+# Cap computed backoff so extreme configs (initial_delay_s=30, max_attempts=10)
+# cannot produce multi-hour sleeps.  Retry-After from the provider is applied
+# as a floor AFTER the cap, so a provider asking for >60s is still honored.
+MAX_BACKOFF_S: float = 60.0
+
 
 def _parse_retry_after(headers: Any) -> float | None:
     """Parse Retry-After header as seconds. Cap at 120s."""
@@ -616,12 +621,15 @@ def _invoke_api(
                     stderr=str(exc),
                     duration_s=time.monotonic() - start,
                     is_timeout=True,
-                    retryable=True,
+                    retryable=False,  # 120s is sufficient evidence
                 ) from exc
         except LLMInvokeError as exc:
             if not exc.retryable or attempt == max_attempts - 1:
                 raise
-            delay = initial_delay_s * (2 ** attempt) + random.uniform(0, 0.5)
+            delay = min(
+                initial_delay_s * (2 ** attempt) + random.uniform(0, 0.5),
+                MAX_BACKOFF_S,
+            )
             if exc.retry_after is not None:
                 delay = max(delay, exc.retry_after)
             sys.stderr.write(

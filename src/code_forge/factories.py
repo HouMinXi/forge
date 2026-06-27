@@ -286,64 +286,50 @@ def build_l1_provider(
                     + contract_spec + "\n"
                 )
             prompt += "\nDiff:\n" + diff_text
-            _pass_succeeded = False
-            for pass_attempt in range(2):
-                try:
-                    result = llm_invoke(
-                        prompt, backend=backend,
-                        max_attempts=max_attempts,
-                        initial_delay_s=initial_delay_s,
-                    )
-                    response = result.content
-                    total_input += result.usage.input_tokens
-                    total_output += result.usage.output_tokens
-                    total_duration += result.duration_s
-                    if (result.usage.input_tokens > 0
-                            or result.usage.output_tokens > 0):
-                        bname = backend.name if backend else "unknown"
-                        sys.stderr.write(
-                            "[%s] %d in / %d out tokens\n"
-                            % (
-                                bname,
-                                result.usage.input_tokens,
-                                result.usage.output_tokens,
-                            )
+            try:
+                result = llm_invoke(
+                    prompt, backend=backend,
+                    max_attempts=max_attempts,
+                    initial_delay_s=initial_delay_s,
+                )
+                response = result.content
+                total_input += result.usage.input_tokens
+                total_output += result.usage.output_tokens
+                total_duration += result.duration_s
+                if (result.usage.input_tokens > 0
+                        or result.usage.output_tokens > 0):
+                    bname = backend.name if backend else "unknown"
+                    sys.stderr.write(
+                        "[%s] %d in / %d out tokens\n"
+                        % (
+                            bname,
+                            result.usage.input_tokens,
+                            result.usage.output_tokens,
                         )
-                    _pass_succeeded = True
-                    break
-                except LLMInvokeError as exc:
-                    if pass_attempt == 0 and exc.retryable:
-                        print(
-                            "code-forge: L1 pass '%s' failed, retrying..."
-                            % pass_name,
-                            file=sys.stderr,
-                        )
-                        continue
-                    print(
-                        "code-forge: L1 pass '%s' failed: %s"
-                        % (pass_name, exc),
-                        file=sys.stderr,
                     )
-                    from .disposition import Disposition
-                    from .state import StateFinding
-                    all_candidates.append(StateFinding(
-                        id="l1-%s-invoke-fail" % pass_name,
-                        fingerprint="invoke-fail-%s" % pass_name,
-                        source="INFRA",
-                        disposition=Disposition.CONFIRMED,
-                        file="<llm-invoke>",
-                        line_range=[0, 0],
-                        description="L1 invoke failed: %s" % exc,
-                        is_timeout=exc.is_timeout,
-                    ))
-                    if breaker is not None:
-                        if exc.is_timeout:
-                            breaker.record_timeout()
-                        else:
-                            breaker.record_other_error()
-                    break
-
-            if not _pass_succeeded:
+            except LLMInvokeError as exc:
+                print(
+                    "code-forge: L1 pass '%s' failed: %s"
+                    % (pass_name, exc),
+                    file=sys.stderr,
+                )
+                from .disposition import Disposition
+                from .state import StateFinding
+                all_candidates.append(StateFinding(
+                    id="l1-%s-invoke-fail" % pass_name,
+                    fingerprint="invoke-fail-%s" % pass_name,
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<llm-invoke>",
+                    line_range=[0, 0],
+                    description="L1 invoke failed: %s" % exc,
+                    is_timeout=exc.is_timeout,
+                ))
+                if breaker is not None:
+                    if exc.is_timeout:
+                        breaker.record_timeout()
+                    else:
+                        breaker.record_other_error()
                 continue
 
             try:
