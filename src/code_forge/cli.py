@@ -1330,6 +1330,13 @@ def _run(args, env, cwd: Path) -> Verdict:
     # resolution, reachability probe, AND backend resolution.  Never re-read
     # gate.yaml raw after this point -- a second read bypasses the trust check.
     cfgs, gate_data = _load_gate_backends(gate_yaml_path)
+    # Validate and extract retry config from gate.yaml (D-31-02).
+    # _load_gate_backends returns the full YAML dict; load_gate_config
+    # (which calls validate_retry_config) is only used by other callers,
+    # so we validate here on the actual review path.
+    from .gate_check import validate_retry_config
+    retry_cfg = gate_data.get("retry", {})
+    validate_retry_config(retry_cfg)
     # has_explicit_backend is True when the user passed --backend <name>
     # or assembled an inline backend via --backend-url/format/key-env/model.
     _backend_arg = getattr(args, 'backend', None)
@@ -1745,6 +1752,8 @@ def _run(args, env, cwd: Path) -> Verdict:
         graph_impact_context=_graph_impact_context,
         contract_spec=_contract_spec_a,
         breaker=breaker,
+        max_attempts=retry_cfg.get("max_attempts", 5),
+        initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
     )
 
     # Coverage gate inputs: L1 examines every changed file only when it
