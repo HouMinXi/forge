@@ -649,13 +649,13 @@ class TestTimeoutBreakerIntegration:
                         output_tokens = 0
                     duration_s = 0.0
                 return MockResult()
-            raise LLMInvokeError("timed out", is_timeout=True)
-            
+            raise LLMInvokeError("timed out", is_timeout=True, retryable=False)
+
         monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
 
         breaker = TimeoutCircuitBreaker(threshold=5)
         l1_provider = build_l1_provider("real", resolved, breaker=breaker)
-        
+
         l1_provider()
         assert breaker.count == 3
         l1_provider()
@@ -669,8 +669,8 @@ class TestTimeoutBreakerIntegration:
         from code_forge.llm_invoke import LLMInvokeError
         
         def mock_invoke(*args, **kwargs):
-            raise LLMInvokeError("parse error", is_timeout=False)
-            
+            raise LLMInvokeError("parse error", is_timeout=False, retryable=False)
+
         monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
 
         breaker = TimeoutCircuitBreaker(threshold=5)
