@@ -1092,3 +1092,167 @@ class TestMimoProCompatibility:
                    return_value=self._mock_response('```json\n{"findings": []}\n```')):
             result = llm_invoke("prompt", backend=self._backend())
         assert result.content == {"findings": []}
+
+
+# -- Task 1: LLMInvokeError retryable/retry_after, provider map, helpers ------
+
+
+class TestLLMInvokeErrorRetryable:
+    """LLMInvokeError gains retryable and retry_after attributes."""
+
+    def test_retryable_defaults_to_true(self):
+        err = LLMInvokeError("test")
+        assert err.retryable is True
+
+    def test_retryable_can_be_set_false(self):
+        err = LLMInvokeError("test", retryable=False)
+        assert err.retryable is False
+
+    def test_retry_after_defaults_to_none(self):
+        err = LLMInvokeError("test")
+        assert err.retry_after is None
+
+    def test_retry_after_can_be_set(self):
+        err = LLMInvokeError("test", retry_after=5.0)
+        assert err.retry_after == 5.0
+
+
+class TestProviderErrorCodes:
+    """PROVIDER_ERROR_CODES module-level dict and RETRYABLE_HTTP_STATUSES."""
+
+    def test_zhipu_1302_retryable(self):
+        from code_forge.llm_invoke import PROVIDER_ERROR_CODES
+        assert PROVIDER_ERROR_CODES["zhipu"]["1302"] == "retryable"
+
+    def test_zhipu_1113_non_retryable(self):
+        from code_forge.llm_invoke import PROVIDER_ERROR_CODES
+        assert PROVIDER_ERROR_CODES["zhipu"]["1113"] == "non-retryable"
+
+    def test_zhipu_1305_retryable(self):
+        from code_forge.llm_invoke import PROVIDER_ERROR_CODES
+        assert PROVIDER_ERROR_CODES["zhipu"]["1305"] == "retryable"
+
+    def test_minimax_1039_non_retryable(self):
+        from code_forge.llm_invoke import PROVIDER_ERROR_CODES
+        assert PROVIDER_ERROR_CODES["minimax"]["1039"] == "non-retryable"
+
+    def test_minimax_1008_non_retryable(self):
+        from code_forge.llm_invoke import PROVIDER_ERROR_CODES
+        assert PROVIDER_ERROR_CODES["minimax"]["1008"] == "non-retryable"
+
+    def test_minimax_1002_retryable(self):
+        from code_forge.llm_invoke import PROVIDER_ERROR_CODES
+        assert PROVIDER_ERROR_CODES["minimax"]["1002"] == "retryable"
+
+    def test_retryable_http_statuses(self):
+        from code_forge.llm_invoke import RETRYABLE_HTTP_STATUSES
+        assert RETRYABLE_HTTP_STATUSES == frozenset({429, 500, 502, 503, 504})
+
+
+class TestParseRetryAfter:
+    """_parse_retry_after header parser."""
+
+    def test_valid_retry_after(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        headers = {"Retry-After": "5"}
+        assert _parse_retry_after(headers) == 5.0
+
+    def test_absent_header_returns_none(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        assert _parse_retry_after({}) is None
+
+    def test_negative_value_returns_none(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        assert _parse_retry_after({"Retry-After": "-1"}) is None
+
+    def test_non_numeric_returns_none(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        assert _parse_retry_after({"Retry-After": "abc"}) is None
+
+    def test_capped_at_120(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        assert _parse_retry_after({"Retry-After": "300"}) == 120.0
+
+
+class TestIsBodyCodeRetryable:
+    """_is_body_code_retryable lookup helper."""
+
+    def test_zhipu_1302_true(self):
+        from code_forge.llm_invoke import _is_body_code_retryable
+        assert _is_body_code_retryable("zhipu", "1302") is True
+
+    def test_zhipu_1113_false(self):
+        from code_forge.llm_invoke import _is_body_code_retryable
+        assert _is_body_code_retryable("zhipu", "1113") is False
+
+    def test_unknown_provider_defaults_true(self):
+        from code_forge.llm_invoke import _is_body_code_retryable
+        assert _is_body_code_retryable("unknown_provider", "9999") is True
+
+    def test_unknown_code_defaults_true(self):
+        from code_forge.llm_invoke import _is_body_code_retryable
+        assert _is_body_code_retryable("zhipu", "9999") is True
+
+    def test_substring_match_zhipu_backend(self):
+        from code_forge.llm_invoke import _is_body_code_retryable
+        assert _is_body_code_retryable("zhipu-cn", "1113") is False
+
+
+class TestFormatErrorMessage:
+    """_format_error_message output format per D-31-08."""
+
+    def test_contains_provider_and_code(self):
+        from code_forge.llm_invoke import _format_error_message
+        msg = _format_error_message("deepseek", 402, "balance exhausted")
+        assert "deepseek" in msg
+        assert "402" in msg
+
+    def test_starts_with_code_forge_prefix(self):
+        from code_forge.llm_invoke import _format_error_message
+        msg = _format_error_message("deepseek", 402, "balance exhausted")
+        assert msg.startswith("code-forge: deepseek backend:")
+
+    def test_contains_actionable_suggestion(self):
+        from code_forge.llm_invoke import _format_error_message
+        msg = _format_error_message("deepseek", 402, "balance exhausted")
+        # Must have non-trivial content after the code
+        parts = msg.split(")")
+        assert len(parts) >= 2
+        suffix = ")".join(parts[1:]).strip()
+        assert len(suffix) > 0
+
+
+class TestCheckBodyError:
+    """_check_body_error detects Zhipu/MiniMax body errors."""
+
+    def _make_backend(self, name):
+        return BackendConfig(name=name, type="api", model="m", format="openai",
+                             base_url="http://x", api_key_env="K")
+
+    def test_zhipu_error_code_raises(self):
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": {"code": "1113", "message": "balance low"}}
+        with pytest.raises(LLMInvokeError) as exc:
+            _check_body_error(resp, self._make_backend("zhipu"))
+        assert exc.value.retryable is False
+
+    def test_zhipu_retryable_code(self):
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": {"code": "1302", "message": "rate limited"}}
+        with pytest.raises(LLMInvokeError) as exc:
+            _check_body_error(resp, self._make_backend("zhipu"))
+        assert exc.value.retryable is True
+
+    def test_minimax_base_resp_raises(self):
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"base_resp": {"status_code": 1008, "status_msg": "no balance"}}
+        with pytest.raises(LLMInvokeError) as exc:
+            _check_body_error(resp, self._make_backend("minimax"))
+        assert exc.value.retryable is False
+
+    def test_no_error_returns_none(self):
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"choices": [{"message": {"content": "ok"}}]}
+        # Should not raise
+        result = _check_body_error(resp, self._make_backend("zhipu"))
+        assert result is None
