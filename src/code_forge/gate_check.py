@@ -135,6 +135,10 @@ def load_gate_config(
     if "canary" in data:
         validate_canary_config(data["canary"])
 
+    # Validate optional retry section (HTTP-level retry for API backends)
+    if "retry" in data:
+        validate_retry_config(data["retry"])
+
     return data
 
 
@@ -295,6 +299,51 @@ def validate_canary_config(section: object) -> None:
             raise ValueError(
                 "gate.yaml 'canary.threshold_ratio' must be > 0.0 and "
                 "<= 1.0 (must be > 0.0..1.0), got: %s" % val
+            )
+
+
+def validate_retry_config(section: object) -> None:
+    """Validate the retry section of gate.yaml.
+
+    Schema:
+        max_attempts:    int (1..10)          -- OPTIONAL. Max API call attempts.
+        initial_delay_s: number (0.1..30)     -- OPTIONAL. Initial retry delay.
+        Unknown keys are allowed (forward-compatible).
+
+    Args:
+        section: value from gate.yaml retry key.
+
+    Raises:
+        ValueError: if known fields have wrong types or values out of range.
+    """
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'retry' must be a mapping, got: %s"
+            % type(section).__name__
+        )
+    if "max_attempts" in section:
+        val = section["max_attempts"]
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise ValueError(
+                "gate.yaml 'retry.max_attempts' must be an int, got: %r"
+                % val
+            )
+        if val < 1 or val > 10:
+            raise ValueError(
+                "gate.yaml 'retry.max_attempts' must be in range 1..10, "
+                "got: %d" % val
+            )
+    if "initial_delay_s" in section:
+        val = section["initial_delay_s"]
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
+            raise ValueError(
+                "gate.yaml 'retry.initial_delay_s' must be a number, "
+                "got: %r" % val
+            )
+        if val < 0.1 or val > 30:
+            raise ValueError(
+                "gate.yaml 'retry.initial_delay_s' must be in range "
+                "0.1..30, got: %s" % val
             )
 
 

@@ -196,6 +196,27 @@
           "description": "Minimum fraction of canaries the reviewer must catch."
         }
       }
+    },
+    "retry": {
+      "type": "object",
+      "description": "HTTP-level retry configuration for API backends. Omit to use defaults (5 attempts, 2s initial delay).",
+      "additionalProperties": true,
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 5,
+          "description": "Maximum number of attempts per API call (including the first)."
+        },
+        "initial_delay_s": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 30,
+          "default": 2,
+          "description": "Initial delay in seconds before first retry. Doubles each attempt."
+        }
+      }
     }
   },
   "$defs": {
