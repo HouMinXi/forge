@@ -669,7 +669,7 @@ class TestTimeoutBreakerIntegration:
         from code_forge.llm_invoke import LLMInvokeError
         
         def mock_invoke(*args, **kwargs):
-            raise LLMInvokeError("parse error", is_timeout=False, retryable=False)
+            raise LLMInvokeError("parse error", is_timeout=False)
 
         monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
 

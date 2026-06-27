@@ -1517,24 +1517,23 @@ class TestRetryLoop:
         assert "code-forge: retrying" in output
         assert "2/3" in output
 
-    def test_timeout_retried(self):
-        """TimeoutError inside _invoke_api is retried."""
+    def test_timeout_not_retried_raises_immediately(self):
+        """TimeoutError is non-retryable -- single attempt, no sleep."""
         backend = _make_api_backend()
-        ok_resp = _mock_ok_response()
         call_count = [0]
 
         def side_effect(*args, **kwargs):
             call_count[0] += 1
-            if call_count[0] == 1:
-                raise TimeoutError("read timed out")
-            return ok_resp
+            raise TimeoutError("read timed out")
 
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("urllib.request.urlopen", side_effect=side_effect), \
-             patch("time.sleep"):
-            result = llm_invoke("prompt", backend=backend,
-                                max_attempts=3, initial_delay_s=0.01)
-        assert isinstance(result, LLMResult)
+             patch("time.sleep") as mock_sleep:
+            with pytest.raises(LLMInvokeError, match="timed out"):
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=3, initial_delay_s=0.01)
+        assert call_count[0] == 1
+        mock_sleep.assert_not_called()
 
     def test_max_attempts_1_no_retry(self):
         """max_attempts=1 means no retry on 429."""
@@ -1592,3 +1591,31 @@ class TestRetryLoop:
             result = llm_invoke("prompt", backend=backend,
                                 max_attempts=2, initial_delay_s=1.0)
         assert isinstance(result, LLMResult)
+
+    def test_backoff_capped_at_max(self):
+        """Computed backoff never exceeds MAX_BACKOFF_S regardless of config."""
+        from code_forge.llm_invoke import MAX_BACKOFF_S
+        backend = _make_api_backend()
+        recorded_delays = []
+
+        def side_effect(*args, **kwargs):
+            err = urllib.error.HTTPError(
+                "https://example.com", 429, "Rate limited", {}, None,
+            )
+            err.read = Mock(return_value=b"rate limit")
+            raise err
+
+        def record_sleep(delay):
+            recorded_delays.append(delay)
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep", side_effect=record_sleep):
+            with pytest.raises(LLMInvokeError):
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=10, initial_delay_s=30.0)
+
+        assert len(recorded_delays) == 9  # 10 attempts, 9 sleeps
+        for delay in recorded_delays:
+            assert delay <= MAX_BACKOFF_S + 0.5  # +0.5 for jitter ceiling
+
