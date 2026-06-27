@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 import urllib.error
@@ -49,12 +51,16 @@ class LLMInvokeError(Exception):
         stderr: str = "",
         duration_s: float = 0.0,
         is_timeout: bool = False,
+        retryable: bool = True,
+        retry_after: float | None = None,
     ):
         super().__init__(message)
         self.exit_code = exit_code
         self.stderr = stderr
         self.duration_s = duration_s
         self.is_timeout = is_timeout
+        self.retryable = retryable
+        self.retry_after = retry_after
 
 
 DEFAULT_TIMEOUT_S = 120  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
@@ -93,6 +99,143 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 # Adding a new caller that uses different keys: pass expected_keys, then update this
 # comment so the next reviewer sees the full map without re-deriving it.
 _REVIEW_ENVELOPE_KEYS: frozenset[str] = frozenset({"findings", "code_excerpts", "surfaces"})
+
+# Provider-specific error code classification.
+# Keys: provider name (BackendConfig.name substring match).
+# Values: dict of body error code (str) -> "retryable" | "non-retryable".
+# Codes not in the map default to retryable (safe: retry unknown, fail-closed
+# after exhaustion).
+PROVIDER_ERROR_CODES: dict[str, dict[str, str]] = {
+    "zhipu": {
+        "1113": "non-retryable",  # insufficient balance
+        "1302": "retryable",      # rate limit
+        "1305": "retryable",      # service overloaded
+        "1308": "non-retryable",  # usage limit per time unit
+        "1309": "non-retryable",  # coding plan expired
+        "1000": "non-retryable",  # auth failed
+        "1001": "non-retryable",  # auth param missing
+    },
+    "minimax": {
+        "1002": "retryable",      # rate limit
+        "1008": "non-retryable",  # insufficient balance
+        "1039": "non-retryable",  # token limit exceeded
+        "1041": "retryable",      # connection limit
+        "2045": "retryable",      # rate growth limit
+        "2049": "non-retryable",  # invalid API key
+        "2056": "non-retryable",  # usage limit exhausted
+    },
+}
+
+# HTTP status codes classified as retryable.
+RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+
+def _parse_retry_after(headers: Any) -> float | None:
+    """Parse Retry-After header as seconds. Cap at 120s."""
+    raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (ValueError, TypeError):
+        return None
+    if value <= 0:
+        return None
+    return min(value, 120.0)
+
+
+def _is_body_code_retryable(provider_name: str, code_str: str) -> bool:
+    """Look up body error code retryability. Default True for unknown."""
+    for key, codes in PROVIDER_ERROR_CODES.items():
+        if key in provider_name:
+            disposition = codes.get(code_str)
+            if disposition is not None:
+                return disposition == "retryable"
+            return True  # unknown code for known provider
+    return True  # unknown provider
+
+
+def _suggestion(provider_name: str, code_str: str) -> str:
+    """Return actionable suggestion for a provider error code."""
+    # Balance/payment codes
+    if code_str in ("1113", "1008"):
+        if "zhipu" in provider_name:
+            return "Top up at open.bigmodel.cn"
+        if "minimax" in provider_name:
+            return "Top up at platform.minimaxi.com"
+    if code_str in ("1302", "1002", "1305", "1041", "2045"):
+        return "Retry after a short wait or reduce request rate"
+    if code_str in ("1000", "1001", "2049"):
+        return "Check API key configuration"
+    if code_str in ("1039",):
+        return "Reduce prompt size or increase token limit"
+    if code_str in ("1308", "1309", "2056"):
+        return "Check usage limits on provider dashboard"
+    return "Check provider status page"
+
+
+def _format_error_message(
+    provider_name: str, http_code: int, body_excerpt: str,
+) -> str:
+    """Format error message per D-31-08."""
+    if http_code == 402:
+        problem = "payment required"
+        tip = "Top up account balance"
+    elif http_code == 403:
+        problem = "forbidden"
+        tip = "Check API key permissions"
+    elif http_code == 401:
+        problem = "unauthorized"
+        tip = "Check API key configuration"
+    elif http_code == 429:
+        problem = "rate limited"
+        tip = "Retry after a short wait"
+    elif http_code >= 500:
+        problem = "server error"
+        tip = "Retry or check provider status page"
+    else:
+        problem = "HTTP error"
+        tip = "Check provider documentation"
+    return "code-forge: %s backend: %s (%d). %s" % (
+        provider_name, problem, http_code, tip,
+    )
+
+
+def _check_body_error(resp_data: dict, backend: "BackendConfig") -> None:
+    """Detect provider-specific errors in response body (HTTP 200 with error).
+
+    Zhipu: {"error": {"code": "1302", "message": "..."}}
+    MiniMax (openai format): {"base_resp": {"status_code": 1008, "status_msg": "..."}}
+    """
+    # Zhipu: error.code (string)
+    error_obj = resp_data.get("error")
+    if isinstance(error_obj, dict) and error_obj.get("code") is not None:
+        code_str = str(error_obj["code"])
+        msg = error_obj.get("message", "")
+        retryable = _is_body_code_retryable(backend.name, code_str)
+        raise LLMInvokeError(
+            "code-forge: %s backend: %s (code %s). %s"
+            % (backend.name, msg, code_str, _suggestion(backend.name, code_str)),
+            exit_code=0,
+            retryable=retryable,
+        )
+
+    # MiniMax openai format: base_resp.status_code (int)
+    base_resp = resp_data.get("base_resp")
+    if isinstance(base_resp, dict):
+        status_code = base_resp.get("status_code", 0)
+        if status_code != 0:
+            code_str = str(status_code)
+            msg = base_resp.get("status_msg", "")
+            retryable = _is_body_code_retryable(backend.name, code_str)
+            raise LLMInvokeError(
+                "code-forge: %s backend: %s (code %s). %s"
+                % (backend.name, msg, code_str, _suggestion(backend.name, code_str)),
+                exit_code=0,
+                retryable=retryable,
+            )
+    return None
+
 
 # Module-level active process tracker for signal handler cleanup.
 _active_proc: Optional[subprocess.Popen] = None
@@ -231,6 +374,8 @@ def llm_invoke(
     backend: Optional[BackendConfig] = None,
     timeout_s: Optional[int] = None,
     expected_keys: frozenset[str] | None = None,
+    max_attempts: int = 5,
+    initial_delay_s: float = 2.0,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
@@ -246,6 +391,8 @@ def llm_invoke(
             _REVIEW_ENVELOPE_KEYS (correct for all review-pass callers).
             Falsify callers must pass frozenset({"verdict", "reasoning"}).
             Ignored for cli backends (those do not use _extract_json_from_text).
+        max_attempts: Maximum retry attempts for API backends (default 5).
+        initial_delay_s: Initial backoff delay in seconds (default 2.0).
 
     Returns:
         LLMResult with content, usage (tokens), and duration_s
@@ -261,7 +408,10 @@ def llm_invoke(
     if backend.type == "cli":
         return _invoke_cli(prompt, backend, timeout_s)
     elif backend.type == "api":
-        return _invoke_api(prompt, backend, timeout_s, expected_keys=expected_keys)
+        return _invoke_api(
+            prompt, backend, timeout_s, expected_keys=expected_keys,
+            max_attempts=max_attempts, initial_delay_s=initial_delay_s,
+        )
     else:
         raise LLMInvokeError(
             "unsupported backend type: %r" % backend.type
@@ -404,6 +554,8 @@ def _invoke_api(
     backend: BackendConfig,
     timeout_s: int,
     expected_keys: frozenset[str] | None = None,
+    max_attempts: int = 5,
+    initial_delay_s: float = 2.0,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
     # Look up API key from environment (not needed for vertex which uses OAuth2)
@@ -422,44 +574,63 @@ def _invoke_api(
 
     start = time.monotonic()
 
-    # socket.timeout is an alias of TimeoutError on all supported interpreters
-    # (project requires Python 3.12+). TimeoutError is an OSError subclass,
-    # NOT a URLError subclass, so _invoke_openai/_invoke_anthropic do not catch
-    # it. Wrap the entire format dispatch so all api formats fail closed: the
-    # bare TimeoutError becomes LLMInvokeError, which factories.py turns into an
-    # INFRA finding + FAIL verdict instead of an unhandled crash. Only
-    # urllib.request.urlopen and google-auth HTTP calls live inside this try
-    # block, so non-network TimeoutError sources are not a concern here.
-    try:
-        if backend.format == "openai":
-            content, usage_data = _invoke_openai(prompt, backend, api_key, timeout_s)
-            usage = Usage(
-                input_tokens=usage_data.get("prompt_tokens", 0),
-                output_tokens=usage_data.get("completion_tokens", 0),
+    # Retry loop with exponential backoff + jitter.
+    # Inner try catches TimeoutError (socket.timeout alias on Python 3.12+).
+    # Outer except catches LLMInvokeError from both the format dispatch and
+    # the converted TimeoutError, applying retry logic.
+    for attempt in range(max_attempts):
+        try:
+            try:
+                if backend.format == "openai":
+                    content, usage_data = _invoke_openai(
+                        prompt, backend, api_key, timeout_s,
+                    )
+                    usage = Usage(
+                        input_tokens=usage_data.get("prompt_tokens", 0),
+                        output_tokens=usage_data.get("completion_tokens", 0),
+                    )
+                elif backend.format == "anthropic":
+                    content, usage_data = _invoke_anthropic(
+                        prompt, backend, api_key, timeout_s,
+                    )
+                    usage = Usage(
+                        input_tokens=usage_data.get("input_tokens", 0),
+                        output_tokens=usage_data.get("output_tokens", 0),
+                    )
+                elif backend.format == "vertex":
+                    content, usage_data = _invoke_vertex(
+                        prompt, backend, timeout_s,
+                    )
+                    usage = Usage(
+                        input_tokens=usage_data.get("input_tokens", 0),
+                        output_tokens=usage_data.get("output_tokens", 0),
+                    )
+                else:
+                    raise LLMInvokeError(
+                        "unsupported api format: %r" % backend.format
+                    )
+            except TimeoutError as exc:
+                raise LLMInvokeError(
+                    "%s backend timed out after %ds"
+                    % (backend.format, timeout_s),
+                    stderr=str(exc),
+                    duration_s=time.monotonic() - start,
+                    is_timeout=True,
+                    retryable=True,
+                ) from exc
+        except LLMInvokeError as exc:
+            if not exc.retryable or attempt == max_attempts - 1:
+                raise
+            delay = initial_delay_s * (2 ** attempt) + random.uniform(0, 0.5)
+            if exc.retry_after is not None:
+                delay = max(delay, exc.retry_after)
+            sys.stderr.write(
+                "code-forge: retrying %s (%d/%d, waiting %.1fs)...\n"
+                % (backend.name, attempt + 2, max_attempts, delay)
             )
-        elif backend.format == "anthropic":
-            content, usage_data = _invoke_anthropic(prompt, backend, api_key, timeout_s)
-            usage = Usage(
-                input_tokens=usage_data.get("input_tokens", 0),
-                output_tokens=usage_data.get("output_tokens", 0),
-            )
-        elif backend.format == "vertex":
-            content, usage_data = _invoke_vertex(prompt, backend, timeout_s)
-            usage = Usage(
-                input_tokens=usage_data.get("input_tokens", 0),
-                output_tokens=usage_data.get("output_tokens", 0),
-            )
-        else:
-            raise LLMInvokeError(
-                "unsupported api format: %r" % backend.format
-            )
-    except TimeoutError as exc:
-        raise LLMInvokeError(
-            "%s backend timed out after %ds" % (backend.format, timeout_s),
-            stderr=str(exc),
-            duration_s=time.monotonic() - start,
-            is_timeout=True,
-        ) from exc
+            time.sleep(delay)
+            continue
+        break  # success
 
     duration = time.monotonic() - start
 
@@ -510,15 +681,24 @@ def _invoke_openai(
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
             resp_data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        body_excerpt = exc.read().decode("utf-8", errors="replace")[:200]
+        body_bytes = exc.read()  # read once (second read returns b"")
+        body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
+        retry_after = _parse_retry_after(exc.headers)
+        retryable = exc.code in RETRYABLE_HTTP_STATUSES
         raise LLMInvokeError(
-            "HTTP %d from %s backend: %s" % (exc.code, backend.format, body_excerpt),
+            _format_error_message(backend.name, exc.code, body_excerpt),
             exit_code=exc.code,
+            retryable=retryable,
+            retry_after=retry_after,
         ) from exc
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
-            "URLError from %s backend: %s" % (backend.format, exc.reason)
+            "URLError from %s backend: %s" % (backend.format, exc.reason),
+            retryable=True,
         ) from exc
+
+    # Body-based error detection: Zhipu error.code, MiniMax base_resp
+    _check_body_error(resp_data, backend)
 
     # Extract content and usage from OpenAI response structure
     try:
@@ -557,14 +737,20 @@ def _invoke_anthropic(
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
             resp_data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        body_excerpt = exc.read().decode("utf-8", errors="replace")[:200]
+        body_bytes = exc.read()
+        body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
+        retry_after = _parse_retry_after(exc.headers)
+        retryable = exc.code in RETRYABLE_HTTP_STATUSES
         raise LLMInvokeError(
-            "HTTP %d from %s backend: %s" % (exc.code, backend.format, body_excerpt),
+            _format_error_message(backend.name, exc.code, body_excerpt),
             exit_code=exc.code,
+            retryable=retryable,
+            retry_after=retry_after,
         ) from exc
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
-            "URLError from %s backend: %s" % (backend.format, exc.reason)
+            "URLError from %s backend: %s" % (backend.format, exc.reason),
+            retryable=True,
         ) from exc
 
     # Extract first text block from Anthropic response.  Some backends
