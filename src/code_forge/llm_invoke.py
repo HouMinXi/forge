@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 import urllib.error
@@ -49,12 +51,16 @@ class LLMInvokeError(Exception):
         stderr: str = "",
         duration_s: float = 0.0,
         is_timeout: bool = False,
+        retryable: bool = True,
+        retry_after: float | None = None,
     ):
         super().__init__(message)
         self.exit_code = exit_code
         self.stderr = stderr
         self.duration_s = duration_s
         self.is_timeout = is_timeout
+        self.retryable = retryable
+        self.retry_after = retry_after
 
 
 DEFAULT_TIMEOUT_S = 120  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
@@ -93,6 +99,143 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 # Adding a new caller that uses different keys: pass expected_keys, then update this
 # comment so the next reviewer sees the full map without re-deriving it.
 _REVIEW_ENVELOPE_KEYS: frozenset[str] = frozenset({"findings", "code_excerpts", "surfaces"})
+
+# Provider-specific error code classification.
+# Keys: provider name (BackendConfig.name substring match).
+# Values: dict of body error code (str) -> "retryable" | "non-retryable".
+# Codes not in the map default to retryable (safe: retry unknown, fail-closed
+# after exhaustion).
+PROVIDER_ERROR_CODES: dict[str, dict[str, str]] = {
+    "zhipu": {
+        "1113": "non-retryable",  # insufficient balance
+        "1302": "retryable",      # rate limit
+        "1305": "retryable",      # service overloaded
+        "1308": "non-retryable",  # usage limit per time unit
+        "1309": "non-retryable",  # coding plan expired
+        "1000": "non-retryable",  # auth failed
+        "1001": "non-retryable",  # auth param missing
+    },
+    "minimax": {
+        "1002": "retryable",      # rate limit
+        "1008": "non-retryable",  # insufficient balance
+        "1039": "non-retryable",  # token limit exceeded
+        "1041": "retryable",      # connection limit
+        "2045": "retryable",      # rate growth limit
+        "2049": "non-retryable",  # invalid API key
+        "2056": "non-retryable",  # usage limit exhausted
+    },
+}
+
+# HTTP status codes classified as retryable.
+RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+
+def _parse_retry_after(headers: Any) -> float | None:
+    """Parse Retry-After header as seconds. Cap at 120s."""
+    raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (ValueError, TypeError):
+        return None
+    if value <= 0:
+        return None
+    return min(value, 120.0)
+
+
+def _is_body_code_retryable(provider_name: str, code_str: str) -> bool:
+    """Look up body error code retryability. Default True for unknown."""
+    for key, codes in PROVIDER_ERROR_CODES.items():
+        if key in provider_name:
+            disposition = codes.get(code_str)
+            if disposition is not None:
+                return disposition == "retryable"
+            return True  # unknown code for known provider
+    return True  # unknown provider
+
+
+def _suggestion(provider_name: str, code_str: str) -> str:
+    """Return actionable suggestion for a provider error code."""
+    # Balance/payment codes
+    if code_str in ("1113", "1008"):
+        if "zhipu" in provider_name:
+            return "Top up at open.bigmodel.cn"
+        if "minimax" in provider_name:
+            return "Top up at platform.minimaxi.com"
+    if code_str in ("1302", "1002", "1305", "1041", "2045"):
+        return "Retry after a short wait or reduce request rate"
+    if code_str in ("1000", "1001", "2049"):
+        return "Check API key configuration"
+    if code_str in ("1039",):
+        return "Reduce prompt size or increase token limit"
+    if code_str in ("1308", "1309", "2056"):
+        return "Check usage limits on provider dashboard"
+    return "Check provider status page"
+
+
+def _format_error_message(
+    provider_name: str, http_code: int, body_excerpt: str,
+) -> str:
+    """Format error message per D-31-08."""
+    if http_code == 402:
+        problem = "payment required"
+        tip = "Top up account balance"
+    elif http_code == 403:
+        problem = "forbidden"
+        tip = "Check API key permissions"
+    elif http_code == 401:
+        problem = "unauthorized"
+        tip = "Check API key configuration"
+    elif http_code == 429:
+        problem = "rate limited"
+        tip = "Retry after a short wait"
+    elif http_code >= 500:
+        problem = "server error"
+        tip = "Retry or check provider status page"
+    else:
+        problem = "HTTP error"
+        tip = "Check provider documentation"
+    return "code-forge: %s backend: %s (%d). %s" % (
+        provider_name, problem, http_code, tip,
+    )
+
+
+def _check_body_error(resp_data: dict, backend: "BackendConfig") -> None:
+    """Detect provider-specific errors in response body (HTTP 200 with error).
+
+    Zhipu: {"error": {"code": "1302", "message": "..."}}
+    MiniMax (openai format): {"base_resp": {"status_code": 1008, "status_msg": "..."}}
+    """
+    # Zhipu: error.code (string)
+    error_obj = resp_data.get("error")
+    if isinstance(error_obj, dict) and error_obj.get("code") is not None:
+        code_str = str(error_obj["code"])
+        msg = error_obj.get("message", "")
+        retryable = _is_body_code_retryable(backend.name, code_str)
+        raise LLMInvokeError(
+            "code-forge: %s backend: %s (code %s). %s"
+            % (backend.name, msg, code_str, _suggestion(backend.name, code_str)),
+            exit_code=0,
+            retryable=retryable,
+        )
+
+    # MiniMax openai format: base_resp.status_code (int)
+    base_resp = resp_data.get("base_resp")
+    if isinstance(base_resp, dict):
+        status_code = base_resp.get("status_code", 0)
+        if status_code != 0:
+            code_str = str(status_code)
+            msg = base_resp.get("status_msg", "")
+            retryable = _is_body_code_retryable(backend.name, code_str)
+            raise LLMInvokeError(
+                "code-forge: %s backend: %s (code %s). %s"
+                % (backend.name, msg, code_str, _suggestion(backend.name, code_str)),
+                exit_code=0,
+                retryable=retryable,
+            )
+    return None
+
 
 # Module-level active process tracker for signal handler cleanup.
 _active_proc: Optional[subprocess.Popen] = None
