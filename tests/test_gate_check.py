@@ -22,6 +22,7 @@ from code_forge.gate_check import (
     translate_exit_code,
     validate_command_safety,
     validate_presubmit_command,
+    validate_retry_config,
 )
 
 
@@ -1236,3 +1237,115 @@ test:
         m = mock_open(read_data=yaml_content)
         config = load_gate_config("gate.yaml", fs_open=m)
         assert "daemon_state" not in config
+
+
+class TestRetryConfig:
+    """Tests for validate_retry_config and load_gate_config retry wiring."""
+
+    def test_valid_full_config(self):
+        """Both fields present and valid passes."""
+        validate_retry_config({"max_attempts": 5, "initial_delay_s": 2})
+
+    def test_valid_min_max_attempts(self):
+        """max_attempts=1 (minimum) passes."""
+        validate_retry_config({"max_attempts": 1})
+
+    def test_valid_max_max_attempts(self):
+        """max_attempts=10 (maximum) passes."""
+        validate_retry_config({"max_attempts": 10})
+
+    def test_valid_min_initial_delay(self):
+        """initial_delay_s=0.1 (minimum) passes."""
+        validate_retry_config({"initial_delay_s": 0.1})
+
+    def test_valid_max_initial_delay(self):
+        """initial_delay_s=30 (maximum) passes."""
+        validate_retry_config({"initial_delay_s": 30})
+
+    def test_valid_empty_dict(self):
+        """Empty dict passes (all fields optional)."""
+        validate_retry_config({})
+
+    def test_max_attempts_below_min(self):
+        """max_attempts=0 raises ValueError."""
+        with pytest.raises(ValueError, match="max_attempts"):
+            validate_retry_config({"max_attempts": 0})
+
+    def test_max_attempts_above_max(self):
+        """max_attempts=11 raises ValueError."""
+        with pytest.raises(ValueError, match="max_attempts"):
+            validate_retry_config({"max_attempts": 11})
+
+    def test_max_attempts_wrong_type(self):
+        """max_attempts='five' raises ValueError."""
+        with pytest.raises(ValueError, match="max_attempts"):
+            validate_retry_config({"max_attempts": "five"})
+
+    def test_max_attempts_bool_rejected(self):
+        """Bool is not int for max_attempts."""
+        with pytest.raises(ValueError, match="max_attempts"):
+            validate_retry_config({"max_attempts": True})
+
+    def test_initial_delay_below_min(self):
+        """initial_delay_s=0 raises ValueError."""
+        with pytest.raises(ValueError, match="initial_delay_s"):
+            validate_retry_config({"initial_delay_s": 0})
+
+    def test_initial_delay_above_max(self):
+        """initial_delay_s=31 raises ValueError."""
+        with pytest.raises(ValueError, match="initial_delay_s"):
+            validate_retry_config({"initial_delay_s": 31})
+
+    def test_initial_delay_wrong_type(self):
+        """initial_delay_s='two' raises ValueError."""
+        with pytest.raises(ValueError, match="initial_delay_s"):
+            validate_retry_config({"initial_delay_s": "two"})
+
+    def test_not_a_dict(self):
+        """Non-dict raises ValueError."""
+        with pytest.raises(ValueError, match="mapping"):
+            validate_retry_config("not a dict")
+
+    def test_load_gate_config_with_retry(self):
+        """load_gate_config calls validate_retry_config when retry present."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+retry:
+  max_attempts: 3
+  initial_delay_s: 1.5
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert config["retry"]["max_attempts"] == 3
+
+    def test_load_gate_config_without_retry(self):
+        """load_gate_config without retry does not raise."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+"""
+        m = mock_open(read_data=yaml_content)
+        config = load_gate_config("gate.yaml", fs_open=m)
+        assert "retry" not in config
+
+    def test_load_gate_config_invalid_retry_rejected(self):
+        """load_gate_config with invalid retry raises ValueError."""
+        yaml_content = """
+test:
+  command: ["python3", "-m", "pytest"]
+retry:
+  max_attempts: 0
+"""
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="max_attempts"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+    def test_initial_delay_bool_rejected(self):
+        """Bool is not a number for initial_delay_s."""
+        with pytest.raises(ValueError, match="initial_delay_s"):
+            validate_retry_config({"initial_delay_s": True})
+
+    def test_initial_delay_int_accepted(self):
+        """Integer value for initial_delay_s is valid (int is a number)."""
+        validate_retry_config({"initial_delay_s": 5})
