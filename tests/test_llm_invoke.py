@@ -1618,4 +1618,7 @@ class TestRetryLoop:
         assert len(recorded_delays) == 9  # 10 attempts, 9 sleeps
         for delay in recorded_delays:
             assert delay <= MAX_BACKOFF_S + 0.5  # +0.5 for jitter ceiling
+        # Jitter is applied after cap, so capped attempts exceed MAX_BACKOFF_S.
+        capped = [d for d in recorded_delays if d > MAX_BACKOFF_S]
+        assert len(capped) > 0, "jitter after cap should produce delays > MAX_BACKOFF_S"
 

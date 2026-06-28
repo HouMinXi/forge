@@ -577,6 +577,9 @@ def _invoke_api(
     else:
         api_key = ""
 
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1, got %d" % max_attempts)
+
     start = time.monotonic()
 
     # Retry loop with exponential backoff + jitter.
