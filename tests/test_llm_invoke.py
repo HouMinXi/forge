@@ -1636,4 +1636,3 @@ class TestRetryLoop:
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}):
             with pytest.raises(ValueError, match="initial_delay_s must be non-negative"):
                 llm_invoke("prompt", backend=backend, initial_delay_s=-1.0)
-
