@@ -1630,3 +1630,10 @@ class TestRetryLoop:
             with pytest.raises(ValueError, match="max_attempts must be >= 1"):
                 llm_invoke("prompt", backend=backend, max_attempts=0)
 
+    def test_negative_initial_delay_raises_value_error(self):
+        """initial_delay_s < 0 raises ValueError before any network call."""
+        backend = _make_api_backend()
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}):
+            with pytest.raises(ValueError, match="initial_delay_s must be non-negative"):
+                llm_invoke("prompt", backend=backend, initial_delay_s=-1.0)
+
