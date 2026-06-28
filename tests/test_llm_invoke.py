@@ -1618,7 +1618,15 @@ class TestRetryLoop:
         assert len(recorded_delays) == 9  # 10 attempts, 9 sleeps
         for delay in recorded_delays:
             assert delay <= MAX_BACKOFF_S + 0.5  # +0.5 for jitter ceiling
-        # Jitter is applied after cap, so capped attempts exceed MAX_BACKOFF_S.
+        # Jitter is added after min(computed, MAX_BACKOFF_S), so delays can
+        # exceed MAX_BACKOFF_S by up to 0.5s.
         capped = [d for d in recorded_delays if d > MAX_BACKOFF_S]
         assert len(capped) > 0, "jitter after cap should produce delays > MAX_BACKOFF_S"
+
+    def test_max_attempts_zero_raises_value_error(self):
+        """max_attempts < 1 raises ValueError before any network call."""
+        backend = _make_api_backend()
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}):
+            with pytest.raises(ValueError, match="max_attempts must be >= 1"):
+                llm_invoke("prompt", backend=backend, max_attempts=0)
 
