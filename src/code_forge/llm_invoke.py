@@ -722,7 +722,8 @@ def _invoke_openai(
         return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
-            "unexpected response structure from %s backend" % backend.format
+            "unexpected response structure from %s backend" % backend.format,
+            retryable=False,
         ) from exc
 
 
@@ -780,7 +781,8 @@ def _invoke_anthropic(
         return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
-            "unexpected response structure from %s backend" % backend.format
+            "unexpected response structure from %s backend" % backend.format,
+            retryable=False,
         ) from exc
 
 
@@ -819,7 +821,8 @@ def _invoke_vertex(
     except ImportError as exc:
         raise LLMInvokeError(
             "Vertex AI format requires google-auth and requests. "
-            "Install: pip install code-review-forge[vertex]"
+            "Install: pip install code-review-forge[vertex]",
+            retryable=False,
         ) from exc
 
     # Resolve credentials
@@ -836,12 +839,14 @@ def _invoke_vertex(
     except (FileNotFoundError, ValueError) as exc:
         raise LLMInvokeError(
             "Failed to load GCP credentials from %s: %s"
-            % (backend.credentials_path, exc)
+            % (backend.credentials_path, exc),
+            retryable=False,
         ) from exc
     except DefaultCredentialsError as exc:
         raise LLMInvokeError(
             "No GCP credentials found. Set GOOGLE_APPLICATION_CREDENTIALS "
-            "or use credentials_path in gate.yaml"
+            "or use credentials_path in gate.yaml",
+            retryable=False,
         ) from exc
 
     # Refresh token
@@ -850,13 +855,15 @@ def _invoke_vertex(
         creds.refresh(auth_req)
     except RefreshError as exc:
         raise LLMInvokeError(
-            "Failed to refresh GCP credentials: %s" % exc
+            "Failed to refresh GCP credentials: %s" % exc,
+            retryable=False,
         ) from exc
 
     if not backend.project_id:
         raise LLMInvokeError(
             "vertex format requires project_id. Configure a vertex backend "
-            "in gate.yaml (see code-forge init)."
+            "in gate.yaml (see code-forge init).",
+            retryable=False,
         )
 
     url = _build_vertex_url(
@@ -899,5 +906,6 @@ def _invoke_vertex(
         return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
-            "unexpected response structure from vertex backend"
+            "unexpected response structure from vertex backend",
+            retryable=False,
         ) from exc
