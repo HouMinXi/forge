@@ -579,6 +579,10 @@ def _invoke_api(
 
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1, got %d" % max_attempts)
+    if initial_delay_s < 0:
+        raise ValueError(
+            "initial_delay_s must be non-negative, got %.2f" % initial_delay_s
+        )
 
     start = time.monotonic()
 
