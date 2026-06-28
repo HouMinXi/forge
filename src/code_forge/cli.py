@@ -289,6 +289,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--canary", action="store_true",
         help="enable canary laziness check for inline outlet (opt-in)",
     )
+    review_parser.add_argument(
+        "--contract", default=None, metavar="FILE",
+        help="path to per-change intent contract (use - for stdin); "
+             "state invariants-to-verify and residual risks, "
+             "NOT 'this code is correct'",
+    )
 
     # Backend selection flags
     review_parser.add_argument(
@@ -1170,6 +1176,11 @@ def main() -> int:
             schema_text = _pkg_files('code_forge').joinpath('gate.schema.json').read_text(encoding='utf-8')
             schema_path.write_text(schema_text)
             print("Created %s" % schema_path, file=sys.stderr)
+        template_path = gate_dir / "contract-template.md"
+        if not template_path.exists() or args.force:
+            from .init_template import CONTRACT_TEMPLATE_MD
+            template_path.write_text(CONTRACT_TEMPLATE_MD)
+            print("Created %s" % template_path, file=sys.stderr)
         return EXIT_PASS
 
     else:
@@ -1260,6 +1271,124 @@ def _cross_repo_verdict_or_none(
     return None
 
 
+def _load_contract_file(path_str: str, warn_fn=None) -> str:
+    """Read and validate a per-change intent contract file.
+
+    Performs file reading and all guards (empty, whitespace-only, binary,
+    oversize, encoding). Does NOT summarize -- backend is not available at
+    call time. Returns raw content string.
+
+    Args:
+        path_str: File path or "-" for stdin.
+        warn_fn: Optional callable for warnings (receives a string).
+
+    Raises:
+        CliError: On empty path, missing file, permission error, encoding
+            error, empty/whitespace-only content, binary content, or
+            oversized content.
+    """
+    if not path_str:
+        raise CliError("contract path is empty")
+
+    if path_str == "-":
+        raw = sys.stdin.buffer.read(65537)
+        if len(raw) > 65536:
+            raise CliError("contract from stdin exceeds 64KB limit")
+        if b"\x00" in raw:
+            raise CliError("contract from stdin appears to be binary")
+        try:
+            content = raw.decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            raise CliError("contract from stdin is not valid UTF-8")
+    else:
+        try:
+            content = Path(path_str).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise CliError("contract file not found: %s" % path_str)
+        except PermissionError:
+            raise CliError("contract file not readable: %s" % path_str)
+        except OSError as exc:
+            raise CliError("contract file error: %s" % exc)
+        except ValueError:
+            raise CliError(
+                "contract file is not valid UTF-8: %s" % path_str
+            )
+
+    if not content.strip():
+        raise CliError("contract file is empty: %s" % path_str)
+    if "\x00" in content:
+        raise CliError(
+            "contract file appears to be binary: %s" % path_str
+        )
+    if len(content.encode("utf-8")) > 65536:
+        raise CliError(
+            "contract file exceeds 64KB limit: %s" % path_str
+        )
+    return content
+
+
+_CONFIRMATION_BIAS_DIRECTIVE = (
+    "\n\nNOTE: The contract above states invariants to verify and "
+    "residual risks. It is NOT a proof of correctness. Assume "
+    "violations exist and look for them."
+)
+
+
+def _merge_contract_spec(
+    yaml_digest: str,
+    file_content: str,
+    backend=None,
+    warn_fn=None,
+) -> str:
+    """Merge contracts.yaml digest with --contract file content.
+
+    Optionally summarizes large file content (>4KB bytes) when backend
+    is available. Appends the confirmation-bias directive when any
+    content is present.
+
+    Args:
+        yaml_digest: Digest from contracts.yaml (may be "").
+        file_content: Raw content from --contract file (may be "").
+        backend: BackendConfig for summarization (None = skip).
+        warn_fn: Optional callable for warnings.
+
+    Returns:
+        Merged contract spec string, or "" if both inputs empty.
+    """
+    merged = ""
+    if yaml_digest:
+        merged = yaml_digest
+    if file_content:
+        effective_content = file_content
+        if len(file_content.encode("utf-8")) > 4096 and backend is not None:
+            try:
+                from .llm_invoke import llm_invoke
+                result = llm_invoke(
+                    "Summarize the following contract to its key "
+                    "invariants and residual risks:\n" + file_content,
+                    backend=backend,
+                )
+                summary = str(result.content)
+                if not summary.strip():
+                    if warn_fn:
+                        warn_fn(
+                            "contract: summarization returned empty, "
+                            "injecting raw content"
+                        )
+                else:
+                    effective_content = summary
+            except Exception:
+                if warn_fn:
+                    warn_fn(
+                        "contract: summarization failed, "
+                        "injecting raw content"
+                    )
+        merged = (merged + "\n\n" if merged else "") + effective_content
+    if merged:
+        merged += _CONFIRMATION_BIAS_DIRECTIVE
+    return merged
+
+
 def _run(args, env, cwd: Path) -> Verdict:
     """Main pipeline body. Returns Verdict."""
     warn = (lambda msg: None) if args.quiet else (
@@ -1337,6 +1466,14 @@ def _run(args, env, cwd: Path) -> Verdict:
     from .gate_check import validate_retry_config
     retry_cfg = gate_data.get("retry", {})
     validate_retry_config(retry_cfg)
+
+    # Early contract file read (D-32-22): validate before backend resolution.
+    _contract_file_content = ""
+    if getattr(args, "contract", None) is not None:
+        _contract_file_content = _load_contract_file(
+            args.contract, warn_fn=warn,
+        )
+
     # has_explicit_backend is True when the user passed --backend <name>
     # or assembled an inline backend via --backend-url/format/key-env/model.
     _backend_arg = getattr(args, 'backend', None)
@@ -1613,12 +1750,16 @@ def _run(args, env, cwd: Path) -> Verdict:
             cwd, resolved.git_diff or ""
         )
         _contracts_yaml_c = cwd / ".code-forge" / "contracts.yaml"
-        _contract_spec_c = ""
+        _yaml_digest_c = ""
         if _contracts_yaml_c.is_file():
             from .contract_loader import load_contract_digest
-            _contract_spec_c = load_contract_digest(
+            _yaml_digest_c = load_contract_digest(
                 _contracts_yaml_c, cwd, backend=backend,
             )
+        _contract_spec_c = _merge_contract_spec(
+            _yaml_digest_c, _contract_file_content,
+            backend=backend, warn_fn=warn,
+        )
         _subagent_spawn = _make_subagent_spawn(
             backend, _conv_digest, _post_image,
             contract_spec=_contract_spec_c,
@@ -1690,12 +1831,16 @@ def _run(args, env, cwd: Path) -> Verdict:
     )
 
     _contracts_yaml_a = cwd / ".code-forge" / "contracts.yaml"
-    _contract_spec_a = ""
+    _yaml_digest_a = ""
     if _contracts_yaml_a.is_file():
         from .contract_loader import load_contract_digest
-        _contract_spec_a = load_contract_digest(
+        _yaml_digest_a = load_contract_digest(
             _contracts_yaml_a, cwd, backend=backend,
         )
+    _contract_spec_a = _merge_contract_spec(
+        _yaml_digest_a, _contract_file_content,
+        backend=backend, warn_fn=warn,
+    )
 
     # Pre-loop graph triage: build impact context for L1 prompt.
     # Runs once before the hold loop; findings are NOT added to

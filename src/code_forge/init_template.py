@@ -107,3 +107,21 @@ outlet: subprocess
 #   n: 5                    # canaries to plant (3..5)
 #   threshold_ratio: 0.6   # catch ratio to pass (>0.0..1.0)
 """
+
+CONTRACT_TEMPLATE_MD = """\
+# Per-Change Intent Contract
+
+## Invariants
+
+<!-- What must remain true after this change? -->
+<!-- Example: normalize() must preserve input ordering -->
+
+## Residual Risks
+
+<!-- What could still go wrong despite the change looking correct? -->
+<!-- Example: concurrent callers may see stale cache entries -->
+
+## Change Scope
+
+<!-- What does this change do and what does it NOT do? -->
+"""
