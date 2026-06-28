@@ -1301,7 +1301,7 @@ class TestHTTPErrorClassification:
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("urllib.request.urlopen", side_effect=http_error):
             with pytest.raises(LLMInvokeError) as exc:
-                llm_invoke("prompt", backend=backend)
+                llm_invoke("prompt", backend=backend, max_attempts=1)
         assert exc.value.retryable is True
         assert exc.value.retry_after == 5.0
 
@@ -1341,7 +1341,7 @@ class TestHTTPErrorClassification:
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("urllib.request.urlopen", side_effect=http_error):
             with pytest.raises(LLMInvokeError) as exc:
-                llm_invoke("prompt", backend=backend)
+                llm_invoke("prompt", backend=backend, max_attempts=1)
         assert exc.value.retryable is True
 
     def test_anthropic_429_retryable(self):
@@ -1354,7 +1354,7 @@ class TestHTTPErrorClassification:
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("urllib.request.urlopen", side_effect=http_error):
             with pytest.raises(LLMInvokeError) as exc:
-                llm_invoke("prompt", backend=backend)
+                llm_invoke("prompt", backend=backend, max_attempts=1)
         assert exc.value.retryable is True
 
     def test_anthropic_401_non_retryable(self):
@@ -1376,7 +1376,7 @@ class TestHTTPErrorClassification:
              patch("urllib.request.urlopen",
                    side_effect=urllib.error.URLError("conn refused")):
             with pytest.raises(LLMInvokeError) as exc:
-                llm_invoke("prompt", backend=backend)
+                llm_invoke("prompt", backend=backend, max_attempts=1)
         assert exc.value.retryable is True
 
 
