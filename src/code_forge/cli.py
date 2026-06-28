@@ -1291,7 +1291,10 @@ def _load_contract_file(path_str: str, warn_fn=None) -> str:
         raise CliError("contract path is empty")
 
     if path_str == "-":
-        raw = sys.stdin.buffer.read(65537)
+        try:
+            raw = sys.stdin.buffer.read(65537)
+        except (OSError, ValueError):
+            raise CliError("contract: cannot read from stdin")
         if len(raw) > 65536:
             raise CliError("contract from stdin exceeds 64KB limit")
         if b"\x00" in raw:

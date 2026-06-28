@@ -142,6 +142,14 @@ class TestLoadContractStdin:
             with pytest.raises(CliError, match="is empty"):
                 _load_contract_file("-")
 
+    def test_stdin_closed(self):
+        """Closed stdin raises CliError, not bare ValueError."""
+        closed_buf = io.BytesIO(b"")
+        closed_buf.close()
+        with patch.object(sys, "stdin", new=SimpleNamespace(buffer=closed_buf)):
+            with pytest.raises(CliError, match="cannot read from stdin"):
+                _load_contract_file("-")
+
 
 # ---------------------------------------------------------------------------
 # _merge_contract_spec
