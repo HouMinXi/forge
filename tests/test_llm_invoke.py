@@ -1636,3 +1636,172 @@ class TestRetryLoop:
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}):
             with pytest.raises(ValueError, match="initial_delay_s must be non-negative"):
                 llm_invoke("prompt", backend=backend, initial_delay_s=-1.0)
+
+
+# -- Wave 3: _apply_params body mapping tests -------------------------
+
+from code_forge.llm_invoke import _apply_params
+
+
+def _cfg(**kw):
+    """Shortcut to build a BackendConfig with provider fields."""
+    defaults = dict(
+        name="t", type="api", model="m", format="openai",
+        base_url="http://x", api_key_env="K",
+    )
+    defaults.update(kw)
+    return BackendConfig(**defaults)
+
+
+class TestApplyParams:
+    """Unit tests for _apply_params shared helper."""
+
+    def test_unconfigured_openai_temperature_zero(self):
+        body = {"model": "m", "messages": []}
+        _apply_params(body, _cfg(), outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True,
+                      default_temperature=0.0)
+        assert body["temperature"] == 0
+
+    def test_unconfigured_anthropic_no_temperature(self):
+        body = {"model": "m", "messages": []}
+        _apply_params(body, _cfg(), outcap_key="max_tokens",
+                      allow_thinking=True, allow_effort=False)
+        assert "temperature" not in body
+
+    def test_configured_temperature(self):
+        body = {"model": "m", "messages": []}
+        _apply_params(body, _cfg(temperature=0.7),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True,
+                      default_temperature=0.0)
+        assert body["temperature"] == 0.7
+
+    def test_temperature_sentinel_uses_format_default(self):
+        """Sentinel -1 falls to default_temperature (openai=0.0)."""
+        body = {"model": "m", "messages": []}
+        _apply_params(body, _cfg(temperature=-1.0),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True,
+                      default_temperature=0.0)
+        assert body["temperature"] == 0.0
+
+    def test_temperature_omitted_when_both_negative(self):
+        """Both sentinel and default -1 -> no temperature key."""
+        body = {"model": "m", "messages": []}
+        _apply_params(body, _cfg(temperature=-1.0),
+                      outcap_key="max_tokens",
+                      allow_thinking=True, allow_effort=False)
+        assert "temperature" not in body
+
+    def test_single_cap_key_openai_default(self):
+        body = {}
+        _apply_params(body, _cfg(max_completion_tokens=32768),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["max_completion_tokens"] == 32768
+        assert "max_tokens" not in body
+
+    def test_single_cap_key_deepseek_outcap(self):
+        body = {}
+        _apply_params(body, _cfg(outcap_key="max_tokens", max_tokens=32768),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["max_tokens"] == 32768
+        assert "max_completion_tokens" not in body
+
+    def test_cap_fallback_to_max_tokens(self):
+        body = {}
+        _apply_params(body, _cfg(max_completion_tokens=0, max_tokens=8192),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["max_completion_tokens"] == 8192
+
+    def test_thinking_type_enabled_with_budget(self):
+        body = {}
+        _apply_params(body, _cfg(thinking_type="enabled",
+                                 thinking_budget=16000),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["thinking"] == {"type": "enabled",
+                                    "budget_tokens": 16000}
+
+    def test_thinking_type_without_budget(self):
+        body = {}
+        _apply_params(body, _cfg(thinking_type="enabled"),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["thinking"] == {"type": "enabled"}
+
+    def test_no_thinking_when_type_empty(self):
+        body = {}
+        _apply_params(body, _cfg(),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert "thinking" not in body
+
+    def test_effort_openai_top_level(self):
+        body = {}
+        _apply_params(body, _cfg(reasoning_effort="high"),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["reasoning_effort"] == "high"
+        assert "output_config" not in body
+
+    def test_effort_vertex_nested(self):
+        body = {}
+        _apply_params(body, _cfg(reasoning_effort="high"),
+                      outcap_key="max_tokens",
+                      allow_thinking=True,
+                      allow_effort="output_config")
+        assert body["output_config"] == {"effort": "high"}
+        assert "reasoning_effort" not in body
+
+    def test_effort_anthropic_skipped(self):
+        body = {}
+        _apply_params(body, _cfg(reasoning_effort="high"),
+                      outcap_key="max_tokens",
+                      allow_thinking=True, allow_effort=False)
+        assert "reasoning_effort" not in body
+        assert "output_config" not in body
+
+    def test_stream_true(self):
+        body = {}
+        _apply_params(body, _cfg(stream=True),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["stream"] is True
+
+    def test_params_passthrough(self):
+        body = {}
+        _apply_params(body, _cfg(params={"top_p": 0.9}),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["top_p"] == 0.9
+
+
+class TestPerBackendTimeout:
+    """Per-backend timeout_s overrides caller default."""
+
+    def test_backend_timeout_overrides_caller(self):
+        backend = _cfg(timeout_s=1800)
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}):
+            with patch("code_forge.llm_invoke._invoke_api") as m:
+                m.return_value = Mock(content="{}", usage={},
+                                     duration_s=1.0)
+                llm_invoke("p", backend=backend, timeout_s=120)
+                _, kwargs = m.call_args
+                assert kwargs.get("timeout_s", m.call_args[0][2]) == 1800
+
+    def test_backend_timeout_zero_uses_default(self):
+        backend = _cfg(timeout_s=0)
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}):
+            with patch("code_forge.llm_invoke._invoke_api") as m:
+                m.return_value = Mock(content="{}", usage={},
+                                     duration_s=1.0)
+                llm_invoke("p", backend=backend)
+                _, kwargs = m.call_args
+                called_timeout = kwargs.get(
+                    "timeout_s", m.call_args[0][2]
+                )
+                assert called_timeout > 0

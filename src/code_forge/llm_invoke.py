@@ -66,6 +66,59 @@ class LLMInvokeError(Exception):
 DEFAULT_TIMEOUT_S = 120  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
 
 
+def _apply_params(
+    body: dict,
+    backend: "BackendConfig",
+    *,
+    outcap_key: str,
+    allow_thinking: bool,
+    allow_effort,  # False | True | "output_config"
+    default_temperature: float = -1.0,
+) -> None:
+    """Apply typed config fields and generic params to a request body.
+
+    default_temperature: format-specific fallback when backend.temperature
+    is -1 (sentinel = not configured).  openai callers pass 0.0 for
+    backward compat; anthropic/vertex pass -1.0 (omit).
+    """
+    # Output cap: exactly one key, never both
+    resolved_key = backend.outcap_key or outcap_key
+    cap = backend.max_completion_tokens or backend.max_tokens
+    body[resolved_key] = cap
+
+    # Thinking block
+    if allow_thinking and backend.thinking_type:
+        th = {"type": backend.thinking_type}
+        if backend.thinking_budget > 0:
+            th["budget_tokens"] = backend.thinking_budget
+        body["thinking"] = th
+
+    # Reasoning effort
+    if allow_effort and backend.reasoning_effort:
+        if allow_effort == "output_config":
+            body.setdefault("output_config", {})["effort"] = (
+                backend.reasoning_effort
+            )
+        else:
+            body["reasoning_effort"] = backend.reasoning_effort
+
+    # Temperature: configured > format default > omit
+    effective_temp = (
+        backend.temperature if backend.temperature >= 0
+        else default_temperature
+    )
+    if effective_temp >= 0:
+        body["temperature"] = effective_temp
+
+    # Stream flag
+    if backend.stream:
+        body["stream"] = True
+
+    # Generic params passthrough (protected keys blocked at parse time)
+    for k, v in (backend.params or {}).items():
+        body[k] = v
+
+
 def _default_timeout_s() -> int:
     """Resolve the LLM-invocation timeout in seconds, honoring FORGE_LLM_TIMEOUT_S.
 
@@ -407,7 +460,11 @@ def llm_invoke(
     """
     if backend is None:
         backend = DEFAULT_BACKEND
-    if timeout_s is None or timeout_s <= 0:
+    # Per-backend timeout overrides caller default (reasoning models need
+    # longer timeouts than the caller's generic default)
+    if backend.timeout_s > 0:
+        timeout_s = backend.timeout_s
+    elif timeout_s is None or timeout_s <= 0:
         timeout_s = _default_timeout_s()
 
     if backend.type == "cli":
@@ -685,9 +742,14 @@ def _invoke_openai(
     body = {
         "model": backend.model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0,
-        "max_tokens": backend.max_tokens,
     }
+    _apply_params(
+        body, backend,
+        outcap_key="max_completion_tokens",
+        allow_thinking=True,
+        allow_effort=True,
+        default_temperature=0.0,
+    )
 
     try:
         req = urllib.request.Request(
@@ -742,9 +804,14 @@ def _invoke_anthropic(
     }
     body = {
         "model": backend.model,
-        "max_tokens": backend.max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
+    _apply_params(
+        body, backend,
+        outcap_key="max_tokens",
+        allow_thinking=True,
+        allow_effort=False,
+    )
 
     try:
         req = urllib.request.Request(
@@ -875,9 +942,14 @@ def _invoke_vertex(
     }
     body = {
         "anthropic_version": "vertex-2023-10-16",
-        "max_tokens": backend.max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
+    _apply_params(
+        body, backend,
+        outcap_key="max_tokens",
+        allow_thinking=True,
+        allow_effort="output_config",
+    )
 
     try:
         req = urllib.request.Request(
