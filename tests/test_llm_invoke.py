@@ -1891,3 +1891,74 @@ class TestReadSSE:
                 raise CliError(
                     "streaming not supported for %s format" % backend.format
                 )
+
+
+# -- Wave 5: CLI backend env tests ------------------------------------
+
+
+class TestCliEnv:
+    """Verify Popen env= respects env_unset and env_set."""
+
+    def _cli_backend(self, **kw):
+        return BackendConfig(
+            name="local", type="cli", model="m", command="echo",
+            **kw,
+        )
+
+    @patch("shutil.which", return_value="/usr/bin/echo")
+    @patch("subprocess.Popen")
+    def test_no_env_popen_env_none(self, mock_popen, _):
+        """No env fields -> Popen env=None (inherits parent env)."""
+        mock_proc = Mock()
+        mock_proc.communicate.return_value = ('{"result": "ok"}', "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+        backend = self._cli_backend()
+        from code_forge.llm_invoke import _invoke_cli
+        _invoke_cli("test", backend, 120)
+        _, kwargs = mock_popen.call_args
+        assert kwargs.get("env") is None
+
+    @patch("shutil.which", return_value="/usr/bin/echo")
+    @patch("subprocess.Popen")
+    def test_env_unset_removes_key(self, mock_popen, _):
+        """env_unset removes the named key from child env."""
+        mock_proc = Mock()
+        mock_proc.communicate.return_value = ('{"result": "ok"}', "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+        backend = self._cli_backend(env_unset=("SECRET_KEY",))
+        with patch.dict(os.environ, {"SECRET_KEY": "s3cr3t", "PATH": "/bin"}):
+            from code_forge.llm_invoke import _invoke_cli
+            _invoke_cli("test", backend, 120)
+        _, kwargs = mock_popen.call_args
+        child_env = kwargs["env"]
+        assert isinstance(child_env, dict)
+        assert "SECRET_KEY" not in child_env
+        assert "PATH" in child_env
+
+    @patch("shutil.which", return_value="/usr/bin/echo")
+    @patch("subprocess.Popen")
+    def test_env_set_adds_key(self, mock_popen, _):
+        """env_set adds the named key=value to child env."""
+        mock_proc = Mock()
+        mock_proc.communicate.return_value = ('{"result": "ok"}', "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+        backend = self._cli_backend(env_set=(("MY_VAR", "hello"),))
+        from code_forge.llm_invoke import _invoke_cli
+        _invoke_cli("test", backend, 120)
+        _, kwargs = mock_popen.call_args
+        assert kwargs["env"]["MY_VAR"] == "hello"
+
+    @patch("shutil.which", return_value="/usr/bin/echo")
+    @patch("subprocess.Popen")
+    def test_env_unset_absent_var_no_crash(self, mock_popen, _):
+        """Unsetting a var not in env -> silently skipped."""
+        mock_proc = Mock()
+        mock_proc.communicate.return_value = ('{"result": "ok"}', "")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+        backend = self._cli_backend(env_unset=("NONEXISTENT",))
+        from code_forge.llm_invoke import _invoke_cli
+        _invoke_cli("test", backend, 120)
