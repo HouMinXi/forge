@@ -68,6 +68,21 @@ def _cli_entry(**overrides):
     return base
 
 
+def _vertex_entry(**overrides):
+    """Build a minimal valid vertex (api/OAuth) backend entry.
+
+    Vertex backends carry no api_key_env; auth is OAuth2/ADC.
+    """
+    base = {
+        "type": "api",
+        "format": "vertex",
+        "project_id": "my-gcp-project",
+        "model": "claude-sonnet-4-6",
+    }
+    base.update(overrides)
+    return base
+
+
 def _as_api_backends(entry=None, name="deepseek"):
     """Wrap an api entry in the D-11 dict-schema backends mapping."""
     if entry is None:
@@ -617,6 +632,121 @@ class TestProbeApi:
         )
         assert result.ok is False
         assert "DEEPSEEK_API_KEY" in result.error
+
+
+class TestProbeVertex:
+    """probe_backend for vertex (api/OAuth) backend: no api_key_env, no network.
+
+    Mirrors _invoke_vertex credential resolution -- explicit service-account
+    file, GOOGLE_APPLICATION_CREDENTIALS, or a gcloud application-default file.
+    """
+
+    def test_probe_vertex_credentials_path_present(self, tmp_path):
+        """credentials_path points at an existing file -> ok=True."""
+        sa = tmp_path / "sa.json"
+        sa.write_text("{}")
+        cfg = load_backend_configs(
+            _as_api_backends(
+                _vertex_entry(credentials_path=str(sa)), name="vertex-claude"
+            )
+        )[0]
+        result = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+
+    def test_probe_vertex_credentials_path_missing(self, tmp_path):
+        """credentials_path set but file absent -> ok=False, error names path."""
+        missing = tmp_path / "nope.json"
+        cfg = load_backend_configs(
+            _as_api_backends(
+                _vertex_entry(credentials_path=str(missing)),
+                name="vertex-claude",
+            )
+        )[0]
+        result = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "nope.json" in result.error
+
+    def test_probe_vertex_adc_env(self, tmp_path):
+        """No credentials_path; GOOGLE_APPLICATION_CREDENTIALS set -> ok=True."""
+        cfg = load_backend_configs(
+            _as_api_backends(_vertex_entry(), name="vertex-claude")
+        )[0]
+        result = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={"GOOGLE_APPLICATION_CREDENTIALS": "/tmp/adc.json"},
+            cache_dir=tmp_path, time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+
+    def test_probe_vertex_gcloud_adc_file(self, tmp_path, monkeypatch):
+        """No path/env, gcloud application-default file present -> ok=True."""
+        fake_home = tmp_path / "home"
+        gcloud_dir = fake_home / ".config" / "gcloud"
+        gcloud_dir.mkdir(parents=True)
+        (gcloud_dir / "application_default_credentials.json").write_text("{}")
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+        cfg = load_backend_configs(
+            _as_api_backends(_vertex_entry(), name="vertex-claude")
+        )[0]
+        result = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+
+    def test_probe_vertex_no_credentials(self, tmp_path, monkeypatch):
+        """No path, no env, no gcloud file -> ok=False, error names GCP creds."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "empty-home")
+        cfg = load_backend_configs(
+            _as_api_backends(_vertex_entry(), name="vertex-claude")
+        )[0]
+        result = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "GCP credentials" in result.error
+
+    def test_probe_vertex_result_cached(self, tmp_path):
+        """Successful vertex probe is cached; 2nd call within TTL reuses it."""
+        sa = tmp_path / "sa.json"
+        sa.write_text("{}")
+        cfg = load_backend_configs(
+            _as_api_backends(
+                _vertex_entry(credentials_path=str(sa)), name="vertex-claude"
+            )
+        )[0]
+        first = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+        )
+        sa.unlink()  # an uncached re-probe would now return ok=False
+        second = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={}, cache_dir=tmp_path, time_fn=lambda: 1100.0,
+        )
+        assert first.ok is True
+        assert second.ok is True  # proves the cached ok result was reused
+
+    def test_probe_vertex_empty_credentials_path_falls_through(self, tmp_path):
+        """credentials_path='' is falsy -> falls through to ADC, matching invoke."""
+        cfg = load_backend_configs(
+            _as_api_backends(
+                _vertex_entry(credentials_path=""), name="vertex-claude"
+            )
+        )[0]
+        result = probe_backend(
+            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            env={"GOOGLE_APPLICATION_CREDENTIALS": "/tmp/adc.json"},
+            cache_dir=tmp_path, time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
 
 
 # =====================================================================

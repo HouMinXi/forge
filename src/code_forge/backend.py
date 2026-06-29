@@ -437,10 +437,37 @@ def _probe_api(
     backend: BackendConfig,
     env: Mapping[str, str],
 ) -> ProbeResult:
-    """Check that the configured api_key_env is present.
+    """Check that the configured backend credential is resolvable.
 
-    No subprocess, no network call.
+    No subprocess, no network call. openai/anthropic backends check
+    api_key_env presence; vertex backends authenticate via OAuth2/ADC (no
+    api_key_env), so they probe for resolvable GCP credentials instead,
+    mirroring _invoke_vertex's resolution order.
     """
+    if backend.format == "vertex":
+        if backend.credentials_path:
+            if Path(backend.credentials_path).is_file():
+                return ProbeResult(ok=True)
+            return ProbeResult(
+                ok=False,
+                error="backend %r (vertex): credentials_path %r not found"
+                % (backend.name, backend.credentials_path),
+            )
+        # Presence-only, like the api_key_env check: validity is invoke's
+        # job and the probe must stay no-network. credentials_path gets the
+        # stronger is_file() check because it is forge-owned config.
+        if env.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            return ProbeResult(ok=True)
+        adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+        if adc.is_file():
+            return ProbeResult(ok=True)
+        return ProbeResult(
+            ok=False,
+            error="backend %r (vertex): no GCP credentials. Set "
+            "credentials_path, GOOGLE_APPLICATION_CREDENTIALS, or run "
+            "'gcloud auth application-default login'." % backend.name,
+        )
+
     key_name = backend.api_key_env
     if not key_name:
         return ProbeResult(
