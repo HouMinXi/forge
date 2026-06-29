@@ -422,6 +422,30 @@ async def test_forge_gate_check_with_baseline():
 
 
 @pytest.mark.asyncio
+async def test_forge_gate_check_timeout_returns_job_ref():
+    mock_task = MagicMock(spec=asyncio.Task)
+    mock_proc = MagicMock()
+
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=(mock_task, mock_proc),
+        ),
+        patch(
+            "code_forge.mcp_server.start_job", return_value="test-job-id"
+        ) as mock_start,
+    ):
+        result = await forge_gate_check()
+        assert isinstance(result, CallToolResult)
+        assert result.structuredContent["job_id"] == "test-job-id"
+        assert result.structuredContent["status"] == "running"
+        mock_start.assert_called_once_with(mock_task, mock_proc)
+
+
+@pytest.mark.asyncio
 async def test_forge_init_no_preflight():
     with (
         patch("code_forge.mcp_server._check_backend") as mock_check,
