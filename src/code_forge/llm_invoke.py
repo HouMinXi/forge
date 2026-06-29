@@ -74,16 +74,31 @@ def _apply_params(
     allow_thinking: bool,
     allow_effort,  # False | True | "output_config"
     default_temperature: float = -1.0,
+    field_selects_key: bool = False,
 ) -> None:
     """Apply typed config fields and generic params to a request body.
 
     default_temperature: format-specific fallback when backend.temperature
     is -1 (sentinel = not configured).  openai callers pass 0.0 for
     backward compat; anthropic/vertex pass -1.0 (omit).
+
+    field_selects_key: when True (openai), the populated field chooses the
+    wire key (max_completion_tokens field set -> "max_completion_tokens" key;
+    only max_tokens field set -> "max_tokens" key).  When False
+    (anthropic/vertex), the outcap_key pin is used unconditionally.
+    backend.outcap_key always wins as an explicit override in either mode.
     """
-    # Output cap: exactly one key, never both
-    resolved_key = backend.outcap_key or outcap_key
+    # Output cap: exactly one key, never both.
+    # Priority: backend.outcap_key > field-derived (openai) > outcap_key pin
     cap = backend.max_completion_tokens or backend.max_tokens
+    if backend.outcap_key:
+        resolved_key = backend.outcap_key
+    elif field_selects_key and backend.max_completion_tokens > 0:
+        resolved_key = "max_completion_tokens"
+    elif field_selects_key:
+        resolved_key = "max_tokens"
+    else:
+        resolved_key = outcap_key
     body[resolved_key] = cap
 
     # Thinking block
@@ -818,6 +833,7 @@ def _invoke_openai(
         allow_thinking=True,
         allow_effort=True,
         default_temperature=0.0,
+        field_selects_key=True,
     )
 
     try:
