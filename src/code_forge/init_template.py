@@ -68,6 +68,80 @@ outlet: subprocess
 #     credentials_path: /path/to/sa-key.json  # optional: service account JSON path
 #     model: claude-sonnet-4-6
 #     max_tokens: 16384
+#     reasoning_effort: high      # optional: nested as output_config.effort for vertex
+#     thinking_type: adaptive     # optional: anthropic thinking control
+#
+#   # --- Provider-aware reasoning model examples ---
+#   # max_completion_tokens: unified output cap value (new field)
+#   # max_tokens: legacy output cap (fallback when max_completion_tokens is 0)
+#   # outcap_key: wire key name sent to the provider (empty = format default)
+#   #   openai default: max_completion_tokens; anthropic/vertex default: max_tokens
+#   #   DeepSeek/GLM only accept max_tokens -> set outcap_key: max_tokens
+#
+#   deepseek-r1:
+#     type: api
+#     format: openai
+#     base_url: https://api.deepseek.com/v1
+#     api_key_env: DEEPSEEK_API_KEY
+#     model: deepseek-reasoner
+#     max_completion_tokens: 32768
+#     outcap_key: max_tokens       # DeepSeek only accepts max_tokens
+#     thinking_type: enabled
+#     reasoning_effort: high
+#     stream: true
+#     timeout_s: 1800
+#
+#   mimo-pro:
+#     type: api
+#     format: openai
+#     base_url: https://api.xiaomimimo.com/v1
+#     api_key_env: MIMO_API_KEY
+#     model: MiMo-VL-Pro
+#     max_completion_tokens: 65536
+#     thinking_type: enabled        # set explicitly if API requires
+#     stream: true
+#     timeout_s: 1800
+#
+#   kimi-k2:
+#     type: api
+#     format: openai
+#     base_url: https://api.moonshot.cn/v1
+#     api_key_env: KIMI_API_KEY
+#     model: kimi-k2-0711
+#     max_completion_tokens: 32768
+#
+#   minimax-m3:
+#     type: api
+#     format: anthropic             # MiniMax M3 speaks anthropic format
+#     base_url: https://api.minimax.io
+#     api_key_env: MINIMAX_API_KEY
+#     model: minimax-m3
+#     max_tokens: 16384
+#     thinking_type: adaptive       # omit risks empty response on M3
+#     timeout_s: 1800
+#
+#   glm-5:
+#     type: api
+#     format: openai
+#     base_url: https://open.bigmodel.cn/api/paas/v4
+#     api_key_env: GLM_API_KEY
+#     model: glm-5-plus
+#     max_completion_tokens: 32768
+#     outcap_key: max_tokens       # GLM only accepts max_tokens
+#     thinking_type: enabled        # required for reasoning_effort on GLM
+#     reasoning_effort: max
+#     stream: true
+#     timeout_s: 1800
+#
+#   # --- CLI backend with env overrides ---
+#   cli-with-env:
+#     type: cli
+#     command: claude
+#     model: claude-sonnet-4-6
+#     env:
+#       unset: [ANTHROPIC_BASE_URL]  # remove proxy override from child
+#       set:
+#         ANTHROPIC_API_KEY_SOURCE: gate-yaml
 
 # test: test command run by code-forge gate-check (R1 commit gate).
 # Without this section, gate-check exits with an error.
