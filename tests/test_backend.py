@@ -1267,3 +1267,260 @@ class TestBackendConfigProviderFields:
         assert DEFAULT_BACKEND.max_completion_tokens == 0
         assert DEFAULT_BACKEND.params is None
         assert DEFAULT_BACKEND.env_unset == ()
+
+
+# -- Wave 2: parse validation for new fields --------------------------
+
+VALID_THINKING_TYPES = {"enabled", "adaptive", "disabled"}
+
+PROTECTED_KEYS = {
+    "model", "messages", "stream", "anthropic_version",
+    "temperature", "thinking", "reasoning_effort",
+    "max_completion_tokens", "max_tokens",
+}
+
+
+class TestParseProviderFields:
+    """Parse validation for ADR-0005 typed fields on api backends."""
+
+    def _api_entry(self, **kw):
+        base = {
+            "name": "ds", "type": "api", "format": "openai",
+            "model": "deepseek-r1", "base_url": "http://x",
+            "api_key_env": "K",
+        }
+        base.update(kw)
+        return base
+
+    def _vertex_entry(self, **kw):
+        base = {
+            "name": "v", "type": "api", "format": "vertex",
+            "model": "claude-4", "project_id": "proj-1",
+        }
+        base.update(kw)
+        return base
+
+    # -- typed fields parsed correctly --
+
+    def test_temperature_stored(self):
+        cfg = _parse_backend_entry(self._api_entry(temperature=0.7))
+        assert cfg.temperature == 0.7
+
+    def test_temperature_absent_sentinel(self):
+        cfg = _parse_backend_entry(self._api_entry())
+        assert cfg.temperature == -1.0
+
+    def test_max_completion_tokens_stored(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(max_completion_tokens=32768)
+        )
+        assert cfg.max_completion_tokens == 32768
+
+    def test_thinking_type_stored(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(thinking_type="enabled")
+        )
+        assert cfg.thinking_type == "enabled"
+
+    def test_thinking_type_invalid_rejected(self):
+        with pytest.raises(CliError, match="thinking_type"):
+            _parse_backend_entry(
+                self._api_entry(thinking_type="bogus")
+            )
+
+    def test_thinking_budget_stored(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(thinking_budget=16000)
+        )
+        assert cfg.thinking_budget == 16000
+
+    def test_reasoning_effort_stored(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(reasoning_effort="high")
+        )
+        assert cfg.reasoning_effort == "high"
+
+    def test_stream_stored(self):
+        cfg = _parse_backend_entry(self._api_entry(stream=True))
+        assert cfg.stream is True
+
+    def test_timeout_s_stored(self):
+        cfg = _parse_backend_entry(self._api_entry(timeout_s=1800))
+        assert cfg.timeout_s == 1800
+
+    # -- outcap_key validation --
+
+    def test_outcap_key_max_tokens(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(outcap_key="max_tokens")
+        )
+        assert cfg.outcap_key == "max_tokens"
+
+    def test_outcap_key_max_completion_tokens(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(outcap_key="max_completion_tokens")
+        )
+        assert cfg.outcap_key == "max_completion_tokens"
+
+    def test_outcap_key_empty_uses_default(self):
+        cfg = _parse_backend_entry(self._api_entry())
+        assert cfg.outcap_key == ""
+
+    def test_outcap_key_null_treated_as_empty(self):
+        cfg = _parse_backend_entry(self._api_entry(outcap_key=None))
+        assert cfg.outcap_key == ""
+
+    def test_outcap_key_invalid_rejected(self):
+        with pytest.raises(CliError, match="outcap_key"):
+            _parse_backend_entry(
+                self._api_entry(outcap_key="bad_key")
+            )
+
+    # -- cap validation --
+
+    def test_both_caps_zero_rejected(self):
+        with pytest.raises(CliError, match="output token cap"):
+            _parse_backend_entry(
+                self._api_entry(
+                    max_completion_tokens=0, max_tokens=0,
+                )
+            )
+
+    def test_cap_one_positive_accepted(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(max_completion_tokens=0, max_tokens=8192)
+        )
+        assert cfg.max_tokens == 8192
+
+    # -- params: protected key rejection --
+
+    def test_params_benign_key_stored(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(params={"top_p": 0.9})
+        )
+        assert cfg.params == {"top_p": 0.9}
+
+    def test_params_nested_stored_verbatim(self):
+        rf = {"type": "json_object"}
+        cfg = _parse_backend_entry(
+            self._api_entry(params={"response_format": rf})
+        )
+        assert cfg.params["response_format"] == rf
+
+    def test_params_protected_key_rejected(self):
+        for key in PROTECTED_KEYS:
+            with pytest.raises(CliError, match=key):
+                _parse_backend_entry(
+                    self._api_entry(params={key: "x"})
+                )
+
+    # -- env rejection on api/vertex --
+
+    def test_env_on_api_rejected(self):
+        with pytest.raises(CliError, match="env"):
+            _parse_backend_entry(
+                self._api_entry(env={"unset": ["FOO"]})
+            )
+
+    def test_env_on_vertex_rejected(self):
+        with pytest.raises(CliError, match="env"):
+            _parse_backend_entry(
+                self._vertex_entry(env={"unset": ["FOO"]})
+            )
+
+    def test_env_unset_toplevel_on_api_rejected(self):
+        with pytest.raises(CliError, match="env_unset"):
+            _parse_backend_entry(
+                self._api_entry(env_unset=["FOO"])
+            )
+
+    def test_env_set_toplevel_on_vertex_rejected(self):
+        with pytest.raises(CliError, match="env_set"):
+            _parse_backend_entry(
+                self._vertex_entry(env_set={"X": "1"})
+            )
+
+    # -- vertex also gets typed fields --
+
+    def test_vertex_typed_fields(self):
+        cfg = _parse_backend_entry(
+            self._vertex_entry(
+                temperature=0.5, thinking_type="adaptive",
+                reasoning_effort="high", timeout_s=600,
+            )
+        )
+        assert cfg.temperature == 0.5
+        assert cfg.thinking_type == "adaptive"
+        assert cfg.reasoning_effort == "high"
+        assert cfg.timeout_s == 600
+
+
+class TestParseCliEnvFields:
+    """Parse validation for ADR-0004 env fields on cli backends."""
+
+    def _cli_entry(self, **kw):
+        base = {
+            "name": "local", "type": "cli", "model": "m",
+            "command": "claude",
+        }
+        base.update(kw)
+        return base
+
+    # -- 0005 fields rejected on cli --
+
+    def test_0005_fields_on_cli_rejected(self):
+        reject_fields = [
+            ("temperature", 0.5), ("max_completion_tokens", 1000),
+            ("thinking_type", "enabled"), ("thinking_budget", 1000),
+            ("reasoning_effort", "high"), ("stream", True),
+            ("outcap_key", "max_tokens"), ("params", {"a": 1}),
+        ]
+        for field_name, val in reject_fields:
+            with pytest.raises(CliError, match=field_name):
+                _parse_backend_entry(
+                    self._cli_entry(**{field_name: val})
+                )
+
+    # -- env parsing --
+
+    def test_env_absent_defaults(self):
+        cfg = _parse_backend_entry(self._cli_entry())
+        assert cfg.env_unset == ()
+        assert cfg.env_set == ()
+
+    def test_env_unset_parsed(self):
+        cfg = _parse_backend_entry(
+            self._cli_entry(env={"unset": ["A", "B"]})
+        )
+        assert cfg.env_unset == ("A", "B")
+
+    def test_env_set_parsed(self):
+        cfg = _parse_backend_entry(
+            self._cli_entry(env={"set": {"X": "1"}})
+        )
+        assert cfg.env_set == (("X", "1"),)
+
+    def test_env_set_value_coerced_to_str(self):
+        cfg = _parse_backend_entry(
+            self._cli_entry(env={"set": {"PORT": 8080}})
+        )
+        assert cfg.env_set == (("PORT", "8080"),)
+
+    def test_env_both_populated(self):
+        cfg = _parse_backend_entry(
+            self._cli_entry(
+                env={"unset": ["OLD"], "set": {"NEW": "val"}}
+            )
+        )
+        assert cfg.env_unset == ("OLD",)
+        assert cfg.env_set == (("NEW", "val"),)
+
+    def test_env_not_dict_rejected(self):
+        with pytest.raises(CliError, match="env"):
+            _parse_backend_entry(self._cli_entry(env="bad"))
+
+    def test_env_unknown_key_rejected(self):
+        with pytest.raises(CliError, match="unknown"):
+            _parse_backend_entry(
+                self._cli_entry(env={"unset": [], "bogus": 1})
+            )

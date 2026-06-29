@@ -36,6 +36,23 @@ from .errors import CliError
 
 VALID_BACKEND_TYPES = {"api", "cli"}
 VALID_API_FORMATS = {"openai", "anthropic", "vertex"}
+VALID_THINKING_TYPES = {"enabled", "adaptive", "disabled"}
+VALID_OUTCAP_KEYS = {"max_tokens", "max_completion_tokens"}
+
+# Keys managed by typed BackendConfig fields or protocol structure.
+# Users must not override these through the generic params dict.
+PROTECTED_PARAM_KEYS = frozenset({
+    "model", "messages", "stream", "anthropic_version",
+    "temperature", "thinking", "reasoning_effort",
+    "max_completion_tokens", "max_tokens",
+})
+
+# ADR-0005 fields that only make sense on api backends
+_API_ONLY_FIELDS = (
+    "temperature", "max_completion_tokens", "thinking_type",
+    "thinking_budget", "reasoning_effort", "stream",
+    "outcap_key", "params",
+)
 
 DEFAULT_AUTH_TIMEOUT = 20          # generous cap
 MAX_REASONABLE_AUTH_TIMEOUT = 120  # sanity bound
@@ -110,6 +127,115 @@ DEFAULT_BACKEND = BackendConfig(
 # -- Config parsing ---------------------------------------------------
 
 
+def _parse_provider_fields(entry: dict, name: str) -> dict:
+    """Extract and validate provider-aware fields from an api entry.
+
+    Returns kwargs dict for BackendConfig construction.
+    """
+    kw: dict = {}
+
+    # Typed sampling/reasoning fields
+    kw["temperature"] = entry.get("temperature", -1.0)
+    kw["max_completion_tokens"] = entry.get("max_completion_tokens", 0)
+    kw["thinking_budget"] = entry.get("thinking_budget", 0)
+    kw["reasoning_effort"] = entry.get("reasoning_effort", "")
+    kw["stream"] = bool(entry.get("stream", False))
+    kw["timeout_s"] = entry.get("timeout_s", 0)
+
+    # thinking_type enum
+    tt = entry.get("thinking_type", "")
+    if tt and tt not in VALID_THINKING_TYPES:
+        raise CliError(
+            "backend %r: invalid thinking_type %r (expected: %s)"
+            % (name, tt, "|".join(sorted(VALID_THINKING_TYPES)))
+        )
+    kw["thinking_type"] = tt
+
+    # outcap_key enum
+    ock = entry.get("outcap_key") or ""
+    if ock and ock not in VALID_OUTCAP_KEYS:
+        raise CliError(
+            "backend %r: invalid outcap_key %r (expected: %s or empty)"
+            % (name, ock, "|".join(sorted(VALID_OUTCAP_KEYS)))
+        )
+    kw["outcap_key"] = ock
+
+    # Cap validation: at least one positive
+    max_tokens = entry.get("max_tokens", 16384)
+    mct = kw["max_completion_tokens"]
+    if mct <= 0 and max_tokens <= 0:
+        raise CliError(
+            "backend %r: output token cap must be positive "
+            "(max_completion_tokens and max_tokens are both zero)"
+            % name
+        )
+
+    # params: reject protected keys
+    params = entry.get("params")
+    if params is not None:
+        for pk in PROTECTED_PARAM_KEYS:
+            if pk in params:
+                raise CliError(
+                    "backend %r: params must not contain protected "
+                    "key %r (use the dedicated config field instead)"
+                    % (name, pk)
+                )
+    kw["params"] = params
+
+    # Reject cli-only env fields on api/vertex
+    if "env" in entry:
+        raise CliError(
+            "backend %r: 'env' field is only valid on cli backends"
+            % name
+        )
+    if "env_unset" in entry:
+        raise CliError(
+            "backend %r: 'env_unset' is an internal field name, "
+            "not a config key (use env: {unset: [...]})" % name
+        )
+    if "env_set" in entry:
+        raise CliError(
+            "backend %r: 'env_set' is an internal field name, "
+            "not a config key (use env: {set: {...}})" % name
+        )
+
+    return kw
+
+
+def _parse_cli_env(entry: dict, name: str) -> dict:
+    """Extract and validate env fields from a cli entry.
+
+    Returns kwargs dict with env_unset and env_set.
+    """
+    env = entry.get("env")
+    if env is None:
+        return {"env_unset": (), "env_set": ()}
+
+    if not isinstance(env, dict):
+        raise CliError(
+            "backend %r: 'env' must be a dict, got %s"
+            % (name, type(env).__name__)
+        )
+
+    allowed = {"unset", "set"}
+    unknown = set(env.keys()) - allowed
+    if unknown:
+        raise CliError(
+            "backend %r: unknown key(s) in env: %s"
+            % (name, ", ".join(sorted(unknown)))
+        )
+
+    unset_list = env.get("unset") or []
+    set_dict = env.get("set") or {}
+
+    return {
+        "env_unset": tuple(unset_list),
+        "env_set": tuple(sorted(
+            (k, str(v)) for k, v in set_dict.items()
+        )),
+    }
+
+
 def _parse_backend_entry(entry: dict) -> BackendConfig:
     """Parse and validate a single backend config entry."""
     name = entry.get("name", "<unnamed>")
@@ -145,6 +271,10 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
                 "backend %r (api): invalid format %r (expected: %s)"
                 % (name, fmt, "|".join(sorted(VALID_API_FORMATS)))
             )
+
+        # Provider-aware fields (shared by all api formats)
+        pf = _parse_provider_fields(entry, name)
+
         if fmt == "vertex":
             project_id = entry.get("project_id")
             if not project_id:
@@ -160,6 +290,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
                 default=is_default, max_tokens=max_tokens,
                 project_id=project_id, region=region,
                 credentials_path=credentials_path,
+                **pf,
             )
 
         base_url = entry.get("base_url")
@@ -175,29 +306,29 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
                 % name
             )
         return BackendConfig(
-            name=name,
-            type=btype,
-            model=model,
-            format=fmt,
-            base_url=base_url,
-            api_key_env=api_key_env,
-            command="",
-            default=is_default,
-            max_tokens=max_tokens,
+            name=name, type=btype, model=model, format=fmt,
+            base_url=base_url, api_key_env=api_key_env, command="",
+            default=is_default, max_tokens=max_tokens,
+            **pf,
         )
 
     # type == "cli"
+    # Reject api-only fields
+    for af in _API_ONLY_FIELDS:
+        if af in entry:
+            raise CliError(
+                "backend %r (cli): field %r is only valid on "
+                "api backends" % (name, af)
+            )
+
+    env_kw = _parse_cli_env(entry, name)
+
     command = entry.get("command", "")
     return BackendConfig(
-        name=name,
-        type=btype,
-        model=model,
-        format=None,
-        base_url=None,
-        api_key_env=None,
-        command=command,
-        default=is_default,
-        max_tokens=max_tokens,
+        name=name, type=btype, model=model,
+        format=None, base_url=None, api_key_env=None,
+        command=command, default=is_default, max_tokens=max_tokens,
+        **env_kw,
     )
 
 
