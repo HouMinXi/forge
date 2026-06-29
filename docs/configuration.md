@@ -238,6 +238,11 @@ The proxy must return responses in the format specified by `format`.
 Authentication is handled via `api_key_env` -- the env var holds whatever
 token or key your proxy expects.
 
+This covers hosted routers such as OpenRouter, Together, or a self-hosted
+LiteLLM / one-api gateway: point `base_url` at the router, set `format` to
+the API it speaks (`openai` for OpenRouter), and put the router's key in
+`api_key_env`. See the OpenRouter example below.
+
 > **Note**: The "authenticated session" mentioned in the `subprocess`
 > outlet description refers to the default `claude` CLI using the user's
 > own Anthropic account. Third-party proxies use their own authentication
@@ -277,6 +282,32 @@ backends:
 ```bash
 export OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
+
+### Example: OpenRouter (or any OpenAI-compatible router)
+
+OpenRouter speaks the OpenAI API, so it is a plain `format: openai` backend
+with the router's URL and a prefixed model id. The same shape works for
+Together, DeepInfra, or a self-hosted LiteLLM / one-api gateway -- only the
+`base_url`, `model`, and `api_key_env` change.
+
+```yaml
+backends:
+  openrouter:
+    type: api
+    format: openai
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    model: anthropic/claude-sonnet-4.6
+    default: true
+```
+
+```bash
+export OPENROUTER_API_KEY=YOUR_API_KEY_HERE
+```
+
+code-forge sends only `Authorization: Bearer <key>` and `Content-Type`; it
+does not send OpenRouter's optional `HTTP-Referer` / `X-Title` ranking
+headers, which are not required for reviews.
 
 ### Example: Local Claude CLI (pinned model)
 

@@ -52,6 +52,14 @@ outlet: subprocess
 #     model: gpt-4o
 #     max_tokens: 8192
 #
+#   openrouter:                   # any OpenAI-compatible router/proxy works
+#     type: api
+#     format: openai              # OpenRouter speaks the OpenAI API
+#     base_url: https://openrouter.ai/api/v1
+#     api_key_env: OPENROUTER_API_KEY
+#     model: anthropic/claude-sonnet-4.6   # use the router's prefixed model id
+#     max_tokens: 16384
+#
 #   vertex-claude:
 #     type: api                   # vertex is type: api, NOT type: cli
 #     format: vertex              # required for Vertex AI backends
