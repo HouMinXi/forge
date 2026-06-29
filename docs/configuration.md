@@ -319,7 +319,47 @@ backends:
     command: claude
 ```
 
-No API key needed -- uses your existing `claude auth` session.
+No API key needed -- this uses your existing `claude auth` session, so it is
+also the simplest way to review with an account-authenticated model (a
+subscription / Pro login rather than an API key).
+
+If you normally drive `claude` through a shell wrapper that scrubs the
+environment to pin a specific account (for example a function that `unset`s
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` / `CLAUDE_CODE_USE_VERTEX` before
+exec), two things matter: point `command` at the `claude` **binary** (a shell
+function or alias is not resolvable by `which`), and start the code-forge / MCP
+process with the same scrubbed environment -- the spawned `claude` inherits
+code-forge's environment, so a stray `ANTHROPIC_BASE_URL` would send it to the
+wrong endpoint.
+
+### Example: Account-authenticated tools via a local bridge
+
+Some assistants log in with OAuth / a subscription session rather than an API
+key, and their CLIs do not speak code-forge's CLI contract
+(`-p <prompt> --output-format json`), so they cannot be a `type: cli` backend
+directly. The portable way to review with them is a local bridge: run a small
+proxy that holds the tool's authenticated session and exposes an OpenAI- or
+Anthropic-compatible endpoint on `localhost`. code-forge then consumes it as an
+ordinary API backend -- the same shape as the OpenRouter example, just pointed
+at the bridge:
+
+```yaml
+backends:
+  via-bridge:
+    type: api
+    format: openai           # or anthropic -- whichever the bridge speaks
+    base_url: http://localhost:8080/v1
+    api_key_env: BRIDGE_KEY   # most bridges ignore the key; set any value
+    model: <the model id the bridge exposes>
+```
+
+```bash
+export BRIDGE_KEY=unused
+```
+
+You provide and run the bridge process; code-forge does not ship one. From
+code-forge's side it is a plain HTTP backend, so no special support is needed --
+if the bridge speaks the OpenAI or Anthropic API, it works.
 
 ### Example: Multi-Backend Setup
 
