@@ -119,6 +119,65 @@ def _apply_params(
         body[k] = v
 
 
+def _read_sse(response) -> dict:
+    """Read OpenAI SSE stream, assemble into a single response dict.
+
+    Drops reasoning_content (thinking output) -- forge review needs the
+    final verdict, not the chain of thought.  Error-only chunks (no
+    choices key) are returned as-is for _check_body_error.
+    """
+    content_parts: list[str] = []
+    model = ""
+    finish_reason = ""
+    usage: dict = {}
+    last_error: dict | None = None
+
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line or not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            break
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        # Error-only chunk (no choices key)
+        if "error" in chunk and "choices" not in chunk:
+            last_error = chunk
+            continue
+
+        if not model:
+            model = chunk.get("model", "")
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        for choice in chunk.get("choices", []):
+            delta = choice.get("delta", {})
+            if delta.get("content"):
+                content_parts.append(delta["content"])
+            # reasoning_content intentionally dropped
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+
+    # If only errors were received, return for _check_body_error
+    if last_error and not content_parts:
+        return last_error
+
+    return {
+        "model": model,
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "".join(content_parts),
+            },
+            "finish_reason": finish_reason,
+        }],
+        "usage": usage,
+    }
+
+
 def _default_timeout_s() -> int:
     """Resolve the LLM-invocation timeout in seconds, honoring FORGE_LLM_TIMEOUT_S.
 
@@ -756,7 +815,10 @@ def _invoke_openai(
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
-            resp_data = json.loads(response.read().decode("utf-8"))
+            if backend.stream:
+                resp_data = _read_sse(response)
+            else:
+                resp_data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body_bytes = exc.read()  # read once (second read returns b"")
         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
@@ -796,6 +858,11 @@ def _invoke_anthropic(
     timeout_s: int,
 ) -> tuple[str, dict]:
     """Anthropic-format API call. Returns (content_str, usage_dict)."""
+    if backend.stream:
+        raise CliError(
+            "backend %r: streaming not supported for %s format; "
+            "use format: openai" % (backend.name, backend.format)
+        )
     url = backend.base_url + "/v1/messages"
     headers = {
         "x-api-key": api_key,
@@ -880,6 +947,11 @@ def _invoke_vertex(
       - model in URL (not body)
       - Bearer token auth (not x-api-key)
     """
+    if backend.stream:
+        raise CliError(
+            "backend %r: streaming not supported for %s format; "
+            "use format: openai" % (backend.name, backend.format)
+        )
     try:
         from google.oauth2 import service_account
         import google.auth
