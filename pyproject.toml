@@ -43,9 +43,13 @@ vertex = [
     "google-auth>=2.35.0",
     "requests>=2.20.0",
 ]
+mcp = [
+    "mcp>=1.27,<2",
+]
 
 [project.scripts]
 code-forge = "code_forge.cli:main"
+code-forge-mcp = "code_forge.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
