@@ -72,11 +72,12 @@ outlet: subprocess
 #     thinking_type: adaptive     # optional: anthropic thinking control
 #
 #   # --- Provider-aware reasoning model examples ---
-#   # max_completion_tokens: unified output cap value (new field)
-#   # max_tokens: legacy output cap (fallback when max_completion_tokens is 0)
-#   # outcap_key: wire key name sent to the provider (empty = format default)
-#   #   openai default: max_completion_tokens; anthropic/vertex default: max_tokens
-#   #   DeepSeek/GLM only accept max_tokens -> set outcap_key: max_tokens
+#   # Output cap: set the field that matches your provider's wire key.
+#   #   max_completion_tokens: for OpenAI o-series, Kimi, MiMo (wire key auto-derived)
+#   #   max_tokens: for DeepSeek, GLM, and legacy providers (wire key auto-derived)
+#   # On openai format, forge sends whichever field you set -- one key, zero config.
+#   # On anthropic/vertex format, the wire key is always max_tokens regardless.
+#   # outcap_key: optional explicit override (rarely needed)
 #
 #   deepseek-r1:
 #     type: api
@@ -84,8 +85,7 @@ outlet: subprocess
 #     base_url: https://api.deepseek.com/v1
 #     api_key_env: DEEPSEEK_API_KEY
 #     model: deepseek-reasoner
-#     max_completion_tokens: 32768
-#     outcap_key: max_tokens       # DeepSeek only accepts max_tokens
+#     max_tokens: 32768             # sets max_tokens field -> wire key is max_tokens
 #     thinking_type: enabled
 #     reasoning_effort: high
 #     stream: true
@@ -126,12 +126,12 @@ outlet: subprocess
 #     base_url: https://open.bigmodel.cn/api/paas/v4
 #     api_key_env: GLM_API_KEY
 #     model: glm-5-plus
-#     max_completion_tokens: 32768
-#     outcap_key: max_tokens       # GLM only accepts max_tokens
+#     max_tokens: 32768             # sets max_tokens field -> wire key is max_tokens
 #     thinking_type: enabled        # required for reasoning_effort on GLM
 #     reasoning_effort: max
 #     stream: true
 #     timeout_s: 1800
+#     # outcap_key: max_tokens     # optional explicit override (redundant here)
 #
 #   # --- CLI backend with env overrides ---
 #   cli-with-env:

@@ -1710,12 +1710,24 @@ class TestApplyParams:
         assert body["max_tokens"] == 32768
         assert "max_completion_tokens" not in body
 
-    def test_cap_fallback_to_max_tokens(self):
+    def test_cap_fallback_to_max_tokens_field_selects(self):
+        """openai: mct=0 + max_tokens set -> key is max_tokens (field-derived)."""
         body = {}
         _apply_params(body, _cfg(max_completion_tokens=0, max_tokens=8192),
                       outcap_key="max_completion_tokens",
-                      allow_thinking=True, allow_effort=True)
-        assert body["max_completion_tokens"] == 8192
+                      allow_thinking=True, allow_effort=True,
+                      field_selects_key=True)
+        assert body["max_tokens"] == 8192
+        assert "max_completion_tokens" not in body
+
+    def test_anthropic_pin_maps_mct_to_max_tokens(self):
+        """anthropic: mct field set -> value mapped onto max_tokens key."""
+        body = {}
+        _apply_params(body, _cfg(max_completion_tokens=32768),
+                      outcap_key="max_tokens",
+                      allow_thinking=True, allow_effort=False)
+        assert body["max_tokens"] == 32768
+        assert "max_completion_tokens" not in body
 
     def test_thinking_type_enabled_with_budget(self):
         body = {}
