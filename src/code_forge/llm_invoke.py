@@ -573,6 +573,15 @@ def _invoke_cli(
             cmd.extend(["--model", effective_model])
         cmd.extend(["--output-format", "json"])
 
+    # Build child env: unset then set, or None to inherit parent env
+    if backend.env_unset or backend.env_set:
+        child_env = dict(os.environ)
+        for k in backend.env_unset:
+            child_env.pop(k, None)
+        child_env.update(dict(backend.env_set))
+    else:
+        child_env = None
+
     start = time.monotonic()
     try:
         proc = subprocess.Popen(
@@ -581,6 +590,7 @@ def _invoke_cli(
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=True,  # Unix: creates new session (setsid)
+            env=child_env,
         )
     except OSError as exc:
         duration = time.monotonic() - start
