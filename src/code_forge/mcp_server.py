@@ -258,7 +258,15 @@ async def forge_review(
     else:
         # Timeout -- transfer tempfile ownership to job
         inner_task, proc = result  # type: ignore[misc]
-        job_id = start_job(inner_task, proc, tempfile_path=tmp_path)
+        try:
+            job_id = start_job(inner_task, proc, tempfile_path=tmp_path)
+        except Exception:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass
+            raise
         return _make_job_ref(job_id)
 
 
