@@ -32,6 +32,12 @@ pip install code-review-forge
 code-forge install-skill
 ```
 
+For MCP server support (IDE integration):
+
+```bash
+pip install code-review-forge[mcp]
+```
+
 The first command installs the CLI (Python >=3.12). The second copies the
 6 review skills into `~/.claude/skills/`. Then in Claude Code, run the
 full pipeline:
@@ -115,6 +121,54 @@ Editor setup guides:
 - VS Code: [docs/setup-vscode.md](docs/setup-vscode.md)
 - Cursor: [docs/setup-cursor.md](docs/setup-cursor.md)
 - PyCharm: [docs/setup-pycharm.md](docs/setup-pycharm.md)
+
+## MCP server (IDE integration)
+
+`code-forge-mcp` is a local stdio MCP server that exposes forge as tools
+callable from any MCP-capable editor (Claude Code, VS Code Copilot, Cursor,
+PyCharm AI Assistant). Reviews route to the configured CN backend -- the
+calling model never reviews its own code.
+
+| Tool | Purpose |
+|------|---------|
+| `forge_review` | Review the current git diff (inline if fast, job_id if slow) |
+| `forge_gate_check` | Pre-commit gate on staged changes |
+| `forge_resolve_outlet` | Show which backend forge will use (read-only) |
+| `forge_job_status` | Poll a long-running review by job_id |
+| `forge_init` | Create `.code-forge/` in the workspace |
+| `forge_trust` | Trust the gate.yaml backends |
+
+**Prerequisite:** a configured backend with its API key in the server
+environment. Without it, `forge_review` fails closed (same as the CLI).
+
+**Claude Code:**
+
+```bash
+claude mcp add forge -- code-forge-mcp
+```
+
+Launch `claude` from the repo root so the server finds `.code-forge/gate.yaml`.
+
+**VS Code** (1.102+, `.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "forge": {
+      "type": "stdio",
+      "command": "code-forge-mcp",
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
+
+**Gotcha:** GUI editors do not inherit your shell environment. Either wrap
+`code-forge-mcp` in a script that exports the API key, or set `env` in the
+server config. See the setup doc for a `pass`-based wrapper example.
+
+**Verify:** call `forge_resolve_outlet` -- it should name a backend, not
+"key not set". Then call `forge_review` on a real diff.
 
 ## The pipeline
 
@@ -212,6 +266,7 @@ passes count.
 - Python 3.12 or newer
 - `jq` for the bash smoke primitives
 - Claude Code or a compatible AI coding assistant for skill invocation
+- `mcp` Python package (optional, for `code-forge-mcp`): `pip install code-review-forge[mcp]`
 
 ## Installation alternatives
 
