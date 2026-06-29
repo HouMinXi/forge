@@ -26,9 +26,9 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Mapping, Optional
+from typing import Callable, List, Mapping, Optional, Tuple
 
 from .errors import CliError
 
@@ -75,6 +75,22 @@ class BackendConfig:
     project_id: Optional[str] = None  # vertex: GCP project ID
     region: Optional[str] = None      # vertex: GCP region (default: global)
     credentials_path: Optional[str] = None  # vertex: service account JSON path
+
+    # Per-provider sampling and reasoning parameters
+    temperature: float = -1.0              # -1 = omit; >=0 = send
+    max_completion_tokens: int = 0         # 0 = fallback to existing max_tokens
+    thinking_type: str = ""                # "enabled"|"adaptive"|"disabled"; ""=omit
+    thinking_budget: int = 0              # >0 = add thinking.budget_tokens
+    reasoning_effort: str = ""             # ""=omit; non-empty = send
+    stream: bool = False                   # true = SSE, reassembled to one response
+    timeout_s: int = 0                     # 0 = use default timeout chain
+    outcap_key: str = ""                   # "" = format default cap key name
+    params: Optional[dict] = field(default=None, compare=False)
+    # compare=False keeps BackendConfig hashable despite the dict
+
+    # CLI backend child-process env overrides
+    env_unset: Tuple[str, ...] = ()        # var names to remove from child env
+    env_set: Tuple[Tuple[str, str], ...] = ()  # (name, value) pairs to set
 
 
 # -- DEFAULT_BACKEND -------------------------------------------------

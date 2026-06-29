@@ -1189,3 +1189,81 @@ class TestVertexBackendParsing:
         }
         with pytest.raises(CliError, match="missing required field 'base_url'"):
             _parse_backend_entry(entry)
+
+
+# -- Wave 1: provider-aware fields + cli env fields -------------------
+
+
+class TestBackendConfigProviderFields:
+    """Verify new BackendConfig fields have correct sentinel defaults."""
+
+    def _minimal_api(self, **kw):
+        return BackendConfig(
+            name="test", type="api", model="m",
+            format="openai", base_url="http://x", api_key_env="K",
+            **kw,
+        )
+
+    def test_temperature_default_sentinel(self):
+        cfg = self._minimal_api()
+        assert cfg.temperature == -1.0
+
+    def test_max_completion_tokens_default_zero(self):
+        cfg = self._minimal_api()
+        assert cfg.max_completion_tokens == 0
+
+    def test_thinking_type_default_empty(self):
+        cfg = self._minimal_api()
+        assert cfg.thinking_type == ""
+
+    def test_thinking_budget_default_zero(self):
+        cfg = self._minimal_api()
+        assert cfg.thinking_budget == 0
+
+    def test_reasoning_effort_default_empty(self):
+        cfg = self._minimal_api()
+        assert cfg.reasoning_effort == ""
+
+    def test_stream_default_false(self):
+        cfg = self._minimal_api()
+        assert cfg.stream is False
+
+    def test_timeout_s_default_zero(self):
+        cfg = self._minimal_api()
+        assert cfg.timeout_s == 0
+
+    def test_outcap_key_default_empty(self):
+        cfg = self._minimal_api()
+        assert cfg.outcap_key == ""
+
+    def test_params_default_none(self):
+        cfg = self._minimal_api()
+        assert cfg.params is None
+
+    def test_env_unset_default_empty_tuple(self):
+        cfg = self._minimal_api()
+        assert cfg.env_unset == ()
+
+    def test_env_set_default_empty_tuple(self):
+        cfg = self._minimal_api()
+        assert cfg.env_set == ()
+
+    def test_hashable_with_params_dict(self):
+        """compare=False on params keeps frozen dataclass hashable."""
+        cfg = self._minimal_api(params={"top_p": 0.9})
+        h = hash(cfg)
+        assert isinstance(h, int)
+
+    def test_hashable_two_configs_differ_only_by_params(self):
+        """Configs differing only by params have equal hash (compare=False)."""
+        a = self._minimal_api(params={"a": 1})
+        b = self._minimal_api(params={"b": 2})
+        assert a == b
+        assert hash(a) == hash(b)
+
+    def test_default_backend_unchanged(self):
+        """DEFAULT_BACKEND constructs without error with new fields at defaults."""
+        assert DEFAULT_BACKEND.temperature == -1.0
+        assert DEFAULT_BACKEND.max_completion_tokens == 0
+        assert DEFAULT_BACKEND.params is None
+        assert DEFAULT_BACKEND.env_unset == ()
