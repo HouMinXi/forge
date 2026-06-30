@@ -75,6 +75,55 @@ backend exists). Launch `claude` from the workspace root so the server finds
 `.code-forge/gate.yaml`. New tools appear after the next session start; verify
 with `/mcp`.
 
+## GitHub Copilot CLI
+
+Shell-launched, so it inherits your PATH and shell environment (unlike the GUI
+editors below) -- the bare wrapper name works:
+
+```bash
+copilot mcp add forge -- code-forge-mcp-pass
+```
+
+Or edit `~/.copilot/mcp-config.json` (user-level; `.copilot/mcp-config.json` in
+a repo root for a single project):
+
+```json
+{
+  "mcpServers": {
+    "forge": {
+      "type": "local",
+      "command": "code-forge-mcp-pass",
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+Root key is `mcpServers` and `type` is `local` (Copilot's name for stdio). Start
+`copilot` from the workspace root so the server finds `.code-forge/gate.yaml`.
+
+## Codex CLI
+
+```bash
+codex mcp add forge -- code-forge-mcp-pass
+```
+
+Or add a table to `~/.codex/config.toml` (user-level; `.codex/config.toml` in a
+trusted project):
+
+```toml
+[mcp_servers.forge]
+command = "code-forge-mcp-pass"
+startup_timeout_sec = 30
+tool_timeout_sec = 900
+```
+
+The table is `[mcp_servers.forge]` -- snake_case `mcp_servers`, NOT `mcpServers`;
+a wrong key is ignored without an error. Raise `tool_timeout_sec`: a full review
+(three passes on a cross-Pacific backend) runs for minutes. forge returns a
+job_id for long runs (poll with `forge_job_status`), but a generous timeout
+keeps the client from giving up first.
+
 ## VS Code (1.102+)
 
 User-level config at `~/.config/Code/User/mcp.json` (applies to every workspace,
