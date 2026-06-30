@@ -632,3 +632,79 @@ async def test_subprocess_receives_workspace_cwd(monkeypatch):
         call_kwargs = mock_exec.call_args[1]
         assert "cwd" in call_kwargs
         assert call_kwargs["cwd"] == str(_WORKSPACE)
+
+
+# -- sampling dispatch tests --
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sampling_success():
+    from code_forge.mcp_server import _dispatch_sampling
+    from code_forge.state import Verdict
+    session_mock = MagicMock()
+
+    with (
+        patch("code_forge.mcp_server._build_review_context") as mock_build_ctx,
+        patch("code_forge.machine.StateMachine") as mock_sm_cls,
+        patch("code_forge.lock.ForgeLock"),
+        patch("code_forge.mcp_server._make_inprocess_result") as mock_make_result,
+    ):
+        resolved_mock = MagicMock()
+        resolved_mock.mode_hint = "git"
+        mock_build_ctx.return_value = (resolved_mock, "hash", "repr")
+        mock_sm_instance = mock_sm_cls.return_value
+        mock_sm_instance.run.return_value = Verdict.PASS
+        mock_make_result.return_value = "fake_result"
+
+        result = await _dispatch_sampling(session_mock, committed=True)
+
+        assert result == "fake_result"
+        mock_sm_instance.run.assert_called_once()
+        mock_make_result.assert_called_once()
+        verdict_arg = mock_make_result.call_args[0][0]
+        assert verdict_arg == Verdict.PASS
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sampling_truncation_fallback():
+    from code_forge.mcp_server import _dispatch_sampling
+    from code_forge.llm_invoke import LLMInvokeError
+    session_mock = MagicMock()
+
+    with (
+        patch("code_forge.mcp_server._build_review_context") as mock_build_ctx,
+        patch("code_forge.machine.StateMachine") as mock_sm_cls,
+        patch("code_forge.lock.ForgeLock"),
+        patch("code_forge.mcp_server._backend_names", ["fake_backend"]),
+        patch("code_forge.mcp_server._run_cli_budgeted", new_callable=AsyncMock, return_value=("fallback_out", 0, 1.0)) as mock_run_cli,
+    ):
+        resolved_mock = MagicMock()
+        resolved_mock.mode_hint = "git"
+        mock_build_ctx.return_value = (resolved_mock, "hash", "repr")
+        mock_sm_instance = mock_sm_cls.return_value
+        mock_sm_instance.run.side_effect = LLMInvokeError("Response truncated")
+
+        result = await _dispatch_sampling(session_mock, committed=True, backend_name="fake_backend")
+
+        mock_run_cli.assert_called_once()
+        cli_args = mock_run_cli.call_args[0]
+        assert "review" in cli_args
+        assert "--backend" in cli_args
+        assert "fake_backend" in cli_args
+        assert "--outlet" in cli_args
+        assert "subprocess" in cli_args
+        assert result.content[0].text == "fallback_out"
+
+
+@pytest.mark.asyncio
+async def test_forge_review_sampling_no_capability():
+    from code_forge.mcp_server import forge_review
+    from mcp.server.fastmcp import Context
+
+    # Context with no sampling capability
+    ctx = MagicMock(spec=Context)
+    ctx.session.client_params.capabilities.sampling = None
+
+    with patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}):
+        with pytest.raises(ToolError, match="Client does not support sampling capability."):
+            await forge_review(ctx=ctx)

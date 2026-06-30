@@ -41,6 +41,7 @@ class LLMResult:
     content: Any
     usage: Usage = Usage()
     duration_s: float = 0.0
+    is_truncated: bool = False
 
 
 class LLMInvokeError(Exception):
@@ -1079,3 +1080,71 @@ def _invoke_vertex(
             "unexpected response structure from vertex backend",
             retryable=False,
         ) from exc
+
+
+async def invoke_sampling(
+    session,
+    prompt: str,
+    system_prompt: str | None = None,
+    max_tokens: int = 16384,
+    temperature: float = 0.0,
+    model_hint: str | None = None,
+) -> LLMResult:
+    from mcp.types import (
+        SamplingMessage, TextContent as MCPTextContent,
+        ModelPreferences, ModelHint, CreateMessageResult,
+        ImageContent, AudioContent,
+    )
+    t0 = time.time()
+    kwargs = {
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if system_prompt:
+        kwargs["system_prompt"] = system_prompt
+    if model_hint:
+        kwargs["model_preferences"] = ModelPreferences(
+            hints=[ModelHint(name=model_hint)],
+            intelligencePriority=0.8,
+        )
+    messages = [SamplingMessage(
+        role="user",
+        content=MCPTextContent(type="text", text=prompt),
+    )]
+    result = await session.create_message(messages, **kwargs)
+    elapsed = time.time() - t0
+
+    # content is Union[TextContent, ImageContent, AudioContent]
+    if isinstance(result.content, MCPTextContent):
+        raw_text = result.content.text
+    else:
+        raw_text = str(result.content)
+
+    # Only maxTokens is true truncation. stopSequence/toolUse are normal completions.
+    # Check truncation BEFORE JSON parse: truncated output is almost always
+    # invalid JSON, and raising "no valid JSON" would bypass the truncation
+    # fallback path in build_sampling_l1_provider (the string check looks
+    # for "truncated" in the exception message).
+    if result.stopReason == "maxTokens":
+        raise LLMInvokeError(
+            "sampling response truncated (stopReason == maxTokens)",
+            duration_s=elapsed,
+        )
+
+    # Parse JSON same as _invoke_api path
+    text = _strip_fences(raw_text)
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        parsed = _extract_json_from_text(raw_text)
+        if parsed is None:
+            raise LLMInvokeError(
+                "sampling response contains no valid JSON",
+                duration_s=elapsed,
+            )
+
+    return LLMResult(
+        content=parsed,
+        usage=Usage(0, 0),
+        duration_s=elapsed,
+    )

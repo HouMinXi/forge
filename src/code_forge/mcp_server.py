@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
@@ -227,6 +227,172 @@ def _validate_backend(backend: str | None) -> None:
         )
 
 
+def _build_review_context(
+    cwd: Path, committed: bool, staged: bool = False,
+) -> tuple["ResolvedReview", str, str]:
+    """Build review context for in-process sampling path.
+
+    Returns (resolved, source_hash, baseline_repr).
+    Equivalent to cli.py:1697-1724 but without argparse args object.
+    """
+    from code_forge.baseline import GitRefBaseline, resolve_baseline, serialize_baseline_spec
+    from code_forge.source import compute_source_hash
+
+    if committed:
+        baseline_spec = GitRefBaseline("HEAD~1")
+        head_spec = GitRefBaseline("HEAD")
+    else:
+        if staged:
+            # INDEX = staged changes only (forge_gate_check path)
+            head_spec = GitRefBaseline("INDEX")
+        else:
+            # WORKING = unstaged working tree changes (forge_review default)
+            # cli.py:2387 defaults to WORKING, not INDEX
+            head_spec = GitRefBaseline("WORKING")
+        baseline_spec = GitRefBaseline("HEAD")
+
+    resolved = resolve_baseline(baseline_spec, head_spec, [], cwd)
+    # Note: cli.py:1716-1723 branches on mode_hint (git vs non-git).
+    # MCP sampling always uses committed/staged (git context), so git_diff
+    # path is correct here. Non-git workspaces would need files= path.
+    source_hash = compute_source_hash(git_diff=resolved.git_diff or "")
+    baseline_repr = serialize_baseline_spec(baseline_spec)
+    return resolved, source_hash, baseline_repr
+
+
+def _make_inprocess_result(
+    verdict: "Verdict", findings_count: int, elapsed: float
+) -> CallToolResult:
+    """Convert in-process Verdict to CallToolResult.
+
+    Maps Verdict enum to exit code: PASS->0, FAIL->1, ESCALATED->3, else->1.
+    """
+    from code_forge.state import Verdict
+    # Reverse of _EXIT_TO_VERDICT (mcp_jobs.py:26-35)
+    exit_map = {
+        Verdict.PASS: 0,
+        Verdict.FAIL: 1,
+        Verdict.ESCALATED: 4,
+        Verdict.PENDING: 3,  # BUSY -- review incomplete, not FAIL
+        Verdict.DELEGATED: 5,
+        Verdict.UNRELIABLE: 7,
+    }
+    exit_code = exit_map.get(verdict, 1)
+    summary = "forge: %s (%d findings, %.1fs)" % (verdict.value, findings_count, elapsed)
+    structured = ForgeResult(
+        verdict=verdict.value,
+        exit_code=exit_code,
+        findings_count=findings_count,
+        duration_s=round(elapsed, 2),
+        output=summary,
+    )
+    return CallToolResult(
+        content=[TextContent(type="text", text=summary)],
+        structuredContent=structured.model_dump(),
+    )
+
+
+async def _dispatch_sampling(
+    session,              # ServerSession
+    committed: bool,
+    backend_name: str | None = None,
+    staged: bool = False,  # True for gate-check (INDEX), False for review (WORKING)
+) -> CallToolResult:
+    """Run forge review in-process via MCP sampling transport.
+
+    Builds review context, constructs StateMachine with sampling l1_provider,
+    runs machine.run() in a worker thread. On truncation, falls back to
+    CLI subprocess if a backend is available.
+    """
+    from code_forge.factories import (
+        build_autofixer,
+        build_e2e_checker,
+        build_falsifier,
+        build_l2_runner,
+        build_revert_fn,
+        build_sampling_l1_provider,
+    )
+    from code_forge.llm_invoke import LLMInvokeError
+    from code_forge.machine import Mode, StateMachine
+
+    resolved, source_hash, baseline_repr = _build_review_context(_WORKSPACE, committed, staged=staged)
+
+    # capture event loop BEFORE dispatching to worker thread
+    loop = asyncio.get_running_loop()
+
+    l1_provider = build_sampling_l1_provider(
+        session=session,
+        loop=loop,
+        resolved=resolved,
+    )
+
+    # ponytail: Phase 1 limitations for sampling path:
+    # - falsifier="stub" (not "auto") to avoid silently calling claude -p
+    # - registry={} -- no L0 tools (semgrep, shellcheck) run in sampling mode
+    # - source_files=[] from paths=[] -- L0 would see no files anyway
+    # Phase 2 wires sampling session into falsifier + populates registry.
+    machine = StateMachine(
+        mode=Mode.CI,
+        falsifier=build_falsifier("stub"),
+        autofixer=build_autofixer(resolved),
+        revert_fn=build_revert_fn(resolved, _WORKSPACE),
+        resolved_review=resolved,
+        source_hash=source_hash,
+        baseline_spec_repr=baseline_repr,
+        cwd=_WORKSPACE,
+        registry={},
+        l1_provider=l1_provider,
+        l2_runner=build_l2_runner(),
+        e2e_runner=build_e2e_checker(),
+    )
+
+    from code_forge.lock import ForgeLock
+    lock_path = _WORKSPACE / ".code-forge" / "code-forge.lock"  # must match cli.py:1653
+
+    # Lock acquisition + machine.run both inside worker thread to avoid
+    # blocking the MCP server event loop on lock contention.
+    def _run_locked():
+        with ForgeLock(lock_path):
+            return machine.run()
+
+    t0 = time.monotonic()
+    try:
+        verdict = await asyncio.to_thread(_run_locked)
+    except LLMInvokeError as exc:
+        # _backend_names: module-level list populated in lifespan() from gate.yaml backends
+        if "truncated" in str(exc) and (backend_name or _backend_names):
+            # truncation fallback to CLI backend
+            # MUST force --outlet subprocess to prevent infinite loop when
+            # gate.yaml has outlet: sampling (subprocess reads gate.yaml too)
+            fallback_backend = backend_name or _backend_names[0]
+            # Fallback only supports "review" command (gate-check parser
+            # doesn't accept --backend/--outlet). If staged (gate-check),
+            # raise clear error instead of broken CLI call.
+            if staged:
+                raise ToolError(
+                    "Sampling truncated during gate-check. "
+                    "Configure an API backend for gate-check fallback."
+                )
+            cli_args = ["review", "--no-color", "--backend", fallback_backend,
+                        "--outlet", "subprocess"]
+            if committed:
+                cli_args.append("--committed")
+            result = await _run_cli_budgeted(*cli_args)
+            if isinstance(result[0], str):
+                stdout, exit_code, elapsed = result
+                return _make_result(stdout, exit_code, elapsed)
+            else:
+                inner_task, proc = result
+                job_id = start_job(inner_task, proc)
+                return _make_job_ref(job_id)
+        else:
+            raise ToolError("Sampling failed: %s" % exc)
+
+    elapsed = time.monotonic() - t0
+    # Findings count is omitted for now (not tracked reliably by StateMachine.run)
+    return _make_inprocess_result(verdict, findings_count=0, elapsed=elapsed)
+
+
 # -- tool handlers --
 
 
@@ -245,8 +411,27 @@ async def forge_review(
     committed: bool = False,
     whole_file: bool = False,
     canary: bool = False,
+    ctx: Context = None,
 ) -> CallToolResult:
     """Run forge review pipeline."""
+    from code_forge.outlet_resolver import load_outlet_from_gate
+    
+    outlet = os.environ.get("FORGE_OUTLET")
+    if not outlet:
+        gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
+        if gate_yaml_path.exists():
+            outlet = load_outlet_from_gate(gate_yaml_path)
+            
+    if outlet == "sampling":
+        if ctx is None or ctx.session.client_params.capabilities.sampling is None:
+            raise ToolError("Client does not support sampling capability.")
+        return await _dispatch_sampling(
+            session=ctx.session,
+            committed=committed,
+            backend_name=backend,
+            staged=False,
+        )
+
     _check_backend()
     _validate_backend(backend)
 
@@ -304,8 +489,27 @@ async def forge_review(
 async def forge_gate_check(
     baseline: str | None = None,
     backend: str | None = None,
+    ctx: Context = None,
 ) -> CallToolResult:
     """Run forge gate-check pipeline."""
+    from code_forge.outlet_resolver import load_outlet_from_gate
+
+    outlet = os.environ.get("FORGE_OUTLET")
+    if not outlet:
+        gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
+        if gate_yaml_path.exists():
+            outlet = load_outlet_from_gate(gate_yaml_path)
+
+    if outlet == "sampling":
+        if ctx is None or ctx.session.client_params.capabilities.sampling is None:
+            raise ToolError("Client does not support sampling capability.")
+        return await _dispatch_sampling(
+            session=ctx.session,
+            committed=False,
+            backend_name=backend,
+            staged=True,
+        )
+
     _check_backend()
     _validate_backend(backend)
 
