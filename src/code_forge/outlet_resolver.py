@@ -47,6 +47,7 @@ VALID_OUTLET_STRINGS = {
     "subprocess": "subprocess",
     "inline": "inline",
     "subagent": "subagent",
+    "sampling": "sampling",
 }
 
 # Deprecated aliases: old_value -> (canonical_value, deprecation_message)

@@ -681,3 +681,75 @@ class TestInvokeFailureHandling:
         for call in mock.call_args_list:
             assert call.kwargs.get("max_attempts") == 5
             assert call.kwargs.get("initial_delay_s") == 2.0
+
+
+class TestBuildSamplingL1Provider:
+    def test_build_sampling_l1_provider_success(self):
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage
+        from unittest.mock import patch, MagicMock
+        import concurrent.futures
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        session = MagicMock()
+        loop = MagicMock()
+
+        good_resp = LLMResult(
+            content={
+                "findings": [],
+                "code_excerpts": [
+                    {"file": "src/a.py", "start_line": 1, "end_line": 4, "content": "line1\nadded\nline2"},
+                    {"file": "src/b.py", "start_line": 5, "end_line": 8, "content": "line5\nadded2\nline6"},
+                ]
+            },
+            usage=Usage(0, 0),
+            duration_s=0.1,
+            is_truncated=False,
+        )
+
+        future = concurrent.futures.Future()
+        future.set_result(good_resp)
+
+        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+            provider = build_sampling_l1_provider(session, loop, resolved)
+            findings, excerpts, usage, duration = provider()
+
+            assert len(findings) == 0
+            assert usage == Usage(0, 0)
+            assert len(excerpts) == 6
+
+    def test_build_sampling_l1_provider_empty_diff(self):
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import Usage
+        
+        resolved = _make_resolved_with_diff("")
+        provider = build_sampling_l1_provider(None, None, resolved)
+        findings, excerpts, usage, duration = provider()
+        assert findings == []
+        assert excerpts == []
+        assert usage == Usage(0, 0)
+        assert duration == 0.0
+
+    def test_build_sampling_l1_provider_truncation_raises(self):
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+        from unittest.mock import patch, MagicMock
+        import concurrent.futures
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        session = MagicMock()
+        loop = MagicMock()
+
+        # invoke_sampling raises LLMInvokeError on truncation before
+        # returning, so the future must propagate the exception.
+        future = concurrent.futures.Future()
+        future.set_exception(LLMInvokeError(
+            "sampling response truncated (stopReason == maxTokens)"
+        ))
+
+        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+            provider = build_sampling_l1_provider(session, loop, resolved)
+            with pytest.raises(LLMInvokeError, match="truncated"):
+                provider()
