@@ -161,6 +161,7 @@ to set it persistently or source your `.env` file.
 ## Related Documentation
 
 - [Full configuration reference](configuration.md) -- all env vars and gate.yaml
+- [Claude Code setup](setup-claude-code.md) -- for Claude Code CLI
 - [VS Code setup](setup-vscode.md) -- for VS Code, including terminal.integrated.env
 - [PyCharm setup](setup-pycharm.md) -- for PyCharm
 
