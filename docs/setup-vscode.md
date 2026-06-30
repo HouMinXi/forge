@@ -284,5 +284,6 @@ VS Code terminals do not reload the shell RC automatically. Either:
 ## Related Documentation
 
 - [Full configuration reference](configuration.md) -- all env vars and gate.yaml
+- [Claude Code setup](setup-claude-code.md) -- for Claude Code CLI
 - [Cursor setup](setup-cursor.md) -- for Cursor editor
 - [PyCharm setup](setup-pycharm.md) -- for PyCharm

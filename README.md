@@ -118,6 +118,7 @@ backends:
 Full reference: [docs/configuration.md](docs/configuration.md)
 
 Editor setup guides:
+- Claude Code: [docs/setup-claude-code.md](docs/setup-claude-code.md)
 - VS Code: [docs/setup-vscode.md](docs/setup-vscode.md)
 - Cursor: [docs/setup-cursor.md](docs/setup-cursor.md)
 - PyCharm: [docs/setup-pycharm.md](docs/setup-pycharm.md)

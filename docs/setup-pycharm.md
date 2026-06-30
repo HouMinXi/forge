@@ -199,6 +199,7 @@ If you used Option 1 and the key is now in a `.idea/` file:
 ## Related Documentation
 
 - [Full configuration reference](configuration.md) -- all env vars and gate.yaml
+- [Claude Code setup](setup-claude-code.md) -- for Claude Code CLI
 - [VS Code setup](setup-vscode.md) -- for VS Code
 - [Cursor setup](setup-cursor.md) -- for Cursor
 
