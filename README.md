@@ -291,6 +291,9 @@ do not set up enforcement. The R1 pre-commit gate -- the un-fakeable layer that
 runs the test suite on every commit and blocks on new failures, regardless of
 what the in-editor review claims -- is a separate, manual step:
 
+For running this gate in CI rather than as a local hook, see
+[docs/setup-ci.md](docs/setup-ci.md).
+
 1. Add a `test:` section to `.code-forge/gate.yaml`. Without it, `gate-check`
    exits with `gate.yaml must have a 'test' section`:
 
