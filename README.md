@@ -166,7 +166,8 @@ Launch `claude` from the repo root so the server finds `.code-forge/gate.yaml`.
 
 **Gotcha:** GUI editors do not inherit your shell environment. Either wrap
 `code-forge-mcp` in a script that exports the API key, or set `env` in the
-server config. See the setup doc for a `pass`-based wrapper example.
+server config. See [docs/setup-mcp.md](docs/setup-mcp.md) for a `pass`-based
+wrapper example and the per-editor MCP configs.
 
 **Verify:** call `forge_resolve_outlet` -- it should name a backend, not
 "key not set". Then call `forge_review` on a real diff.
