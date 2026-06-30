@@ -26,6 +26,9 @@ not silently fall back to self-review. Independence by construction.
   backend, `code-forge trust` run in it, and the backend's API key available
   (see [configuration.md](configuration.md)). Without this the tools still load
   but `forge_review` fails closed.
+- The server auto-detects the workspace by walking up from its cwd to find
+  `.code-forge/gate.yaml`. Override with `FORGE_PROJECT_DIR` env var when the
+  server starts outside any project tree.
 
 ## The key problem, and the wrapper
 
@@ -71,9 +74,15 @@ claude mcp add forge -s user -- code-forge-mcp-pass
 ```
 
 `-s user` makes it available in every project (it fails closed where no trusted
-backend exists). Launch `claude` from the workspace root so the server finds
-`.code-forge/gate.yaml`. New tools appear after the next session start; verify
-with `/mcp`.
+backend exists). The server auto-detects the workspace by walking up from cwd
+to find `.code-forge/gate.yaml` -- no need to launch from the project root.
+New tools appear after the next session start; verify with `/mcp`.
+
+To pin a specific project (e.g. when launching claude from `~/`):
+
+```bash
+FORGE_PROJECT_DIR=~/code/myproject claude
+```
 
 ## GitHub Copilot CLI
 
@@ -99,8 +108,8 @@ a repo root for a single project):
 }
 ```
 
-Root key is `mcpServers` and `type` is `local` (Copilot's name for stdio). Start
-`copilot` from the workspace root so the server finds `.code-forge/gate.yaml`.
+Root key is `mcpServers` and `type` is `local` (Copilot's name for stdio). The
+server auto-detects the workspace via cwd walkup.
 
 ## Codex CLI
 
@@ -134,15 +143,16 @@ never lands in a repo). Use the absolute wrapper path:
   "servers": {
     "forge": {
       "type": "stdio",
-      "command": "/absolute/path/to/code-forge-mcp-pass",
-      "cwd": "${workspaceFolder}"
+      "command": "/absolute/path/to/code-forge-mcp-pass"
     }
   }
 }
 ```
 
 Root key is `servers` and the field is `type: stdio` -- VS Code's own schema,
-different from the `mcpServers` form below.
+different from the `mcpServers` form below. The server auto-detects the
+workspace via cwd walkup (VS Code sets cwd to the workspace folder by default).
+No `"cwd"` field needed unless you want to override.
 
 ## PyCharm (2025.2+)
 
@@ -166,8 +176,9 @@ subscription. There is no documented config file, so use the GUI:
 }
 ```
 
-3. Set Working directory to your project root (so the server finds
-   `.code-forge/gate.yaml`), and Server level to global or project as you prefer.
+3. Working directory can be left at the default (the server walks up from cwd
+   to find `.code-forge/gate.yaml`). Set Server level to global or project as
+   you prefer.
 4. Apply, then fully restart PyCharm -- it reads MCP config only at startup.
 
 Root key here is `mcpServers` (the Claude Desktop form), not VS Code's `servers`.
@@ -218,9 +229,10 @@ and that your secret store is unlocked. GUI editors never see your shell exports
 
 ### `forge_resolve_outlet` says "No review backend configured"
 
-The server's cwd has no `.code-forge/gate.yaml`, or the repo is untrusted. Open
-the editor on the workspace root, run `code-forge trust` there, and (in a
-worktree) symlink gate.yaml as above.
+The server could not find `.code-forge/gate.yaml` by walking up from its cwd,
+or the repo is untrusted. Fix: set `FORGE_PROJECT_DIR` in the MCP server's env
+to the exact project root, run `code-forge trust` there, and (in a worktree)
+symlink gate.yaml as above.
 
 ### `forge_review` exits 2 / "must run inside a linked git worktree"
 
