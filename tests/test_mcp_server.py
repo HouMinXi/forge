@@ -11,11 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from code_forge.mcp_server import (
+    _WORKSPACE,
     _backend_names,
     _check_backend,
     _make_job_ref,
     _make_result,
     _make_simple_result,
+    _resolve_workspace,
     _run_cli_budgeted,
     _run_cli_simple,
     _validate_backend,
@@ -160,6 +162,7 @@ async def test_run_cli_simple_assembles_args():
             "resolve-outlet",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(_WORKSPACE),
         )
         assert stdout == "ok\n"
         assert code == 0
@@ -543,3 +546,89 @@ def test_no_print_in_production_modules():
             assert "print(" not in stripped, (
                 "print() found in %s line %d: %s" % (name, i, stripped)
             )
+
+
+# -- workspace resolution (ADR-0006) --
+
+
+def test_resolve_workspace_env_overrides_walkup(tmp_path, monkeypatch):
+    """FORGE_PROJECT_DIR takes priority over cwd walkup."""
+    # Create a gate.yaml under tmp_path so walkup could find it
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text("backends: {}")
+
+    # Create a different target via env var
+    env_target = tmp_path / "env-project"
+    env_gate = env_target / ".code-forge"
+    env_gate.mkdir(parents=True)
+    (env_gate / "gate.yaml").write_text("backends: {}")
+
+    monkeypatch.setenv("FORGE_PROJECT_DIR", str(env_target))
+    monkeypatch.chdir(tmp_path)
+    result = _resolve_workspace()
+    assert result == env_target.resolve()
+
+
+def test_resolve_workspace_walkup_finds_ancestor(tmp_path, monkeypatch):
+    """Walk up from a subdirectory to find .code-forge/gate.yaml."""
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text("backends: {}")
+    sub = tmp_path / "src" / "pkg"
+    sub.mkdir(parents=True)
+
+    monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
+    monkeypatch.chdir(sub)
+    result = _resolve_workspace()
+    assert result == tmp_path.resolve()
+
+
+def test_resolve_workspace_no_marker_returns_cwd(tmp_path, monkeypatch):
+    """No .code-forge anywhere: fall through to cwd as-is."""
+    monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    result = _resolve_workspace()
+    assert result == tmp_path.resolve()
+
+
+def test_resolve_workspace_empty_env_falls_through(tmp_path, monkeypatch):
+    """Empty or whitespace FORGE_PROJECT_DIR is treated as unset."""
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text("backends: {}")
+
+    monkeypatch.setenv("FORGE_PROJECT_DIR", "   ")
+    monkeypatch.chdir(tmp_path)
+    result = _resolve_workspace()
+    assert result == tmp_path.resolve()
+
+
+def test_resolve_workspace_env_expanduser(tmp_path, monkeypatch):
+    """FORGE_PROJECT_DIR with ~ is expanded."""
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text("backends: {}")
+
+    monkeypatch.setenv("HOME", str(tmp_path.parent))
+    rel = "~/" + tmp_path.name
+    monkeypatch.setenv("FORGE_PROJECT_DIR", rel)
+    result = _resolve_workspace()
+    assert result == tmp_path.resolve()
+
+
+@pytest.mark.asyncio
+async def test_subprocess_receives_workspace_cwd(monkeypatch):
+    """Subprocess exec calls include cwd=_WORKSPACE."""
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"ok\n", b""))
+    mock_proc.returncode = 0
+    with patch(
+        "code_forge.mcp_server.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+        return_value=mock_proc,
+    ) as mock_exec:
+        await _run_cli_simple("review")
+        call_kwargs = mock_exec.call_args[1]
+        assert "cwd" in call_kwargs
+        assert call_kwargs["cwd"] == str(_WORKSPACE)

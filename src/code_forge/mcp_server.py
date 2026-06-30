@@ -6,9 +6,10 @@ Six tools: forge_review, forge_gate_check, forge_init, forge_trust,
 forge_resolve_outlet, forge_job_status. Runs as a local subprocess
 of the IDE via stdio transport.
 
-The server expects cwd = workspace root (the directory containing
-.code-forge/). Each tool invokes the CLI via asyncio subprocess --
-zero changes to cli.py.
+Workspace resolution (ADR-0006): the server locates the project root
+via FORGE_PROJECT_DIR env var, then by walking up from cwd to find
+.code-forge/gate.yaml, then falls back to cwd as-is. The resolved
+root is passed as cwd to all CLI subprocesses; cli.py is unchanged.
 """
 from __future__ import annotations
 
@@ -33,6 +34,28 @@ from code_forge.mcp_jobs import (
     start_job,
 )
 
+# -- workspace resolution (ADR-0006) --
+
+
+def _resolve_workspace() -> Path:
+    """Forge workspace root: explicit env, else walk up from cwd.
+
+    Priority: FORGE_PROJECT_DIR > nearest ancestor with
+    .code-forge/gate.yaml > cwd as-is (lets _check_backend emit the
+    clear error).
+    """
+    env = os.environ.get("FORGE_PROJECT_DIR", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    start = Path.cwd().resolve()
+    for d in (start, *start.parents):
+        if (d / ".code-forge" / "gate.yaml").is_file():
+            return d
+    return start
+
+
+_WORKSPACE: Path = _resolve_workspace()
+
 # Module-level state populated by lifespan startup.
 _backend_names: list[str] = []
 
@@ -42,16 +65,16 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     """Load backend names at startup, clean up subprocesses on shutdown."""
     global _backend_names  # noqa: PLW0603
 
-    gate_yaml_path = Path.cwd() / ".code-forge" / "gate.yaml"
     from code_forge import cli
 
     try:
+        gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
         _, gate_data = cli._load_gate_backends(gate_yaml_path)
         _backend_names = list(gate_data.get("backends", {}).keys())
     except Exception:
         _backend_names = []
 
-    yield {"backend_names": _backend_names, "gate_yaml_path": gate_yaml_path}
+    yield {"backend_names": _backend_names}
 
     await cleanup_all()
 
@@ -59,8 +82,9 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 mcp = FastMCP(
     "code-forge-mcp",
     instructions=(
-        "Forge code review tools. The server expects cwd = workspace root "
-        "(the directory containing .code-forge/). "
+        "Forge code review tools. The server auto-detects the project "
+        "root by walking up from cwd to find .code-forge/gate.yaml, or "
+        "via the FORGE_PROJECT_DIR env var. "
         "Use forge_review to review git diffs, "
         "forge_gate_check for pre-commit gating, forge_resolve_outlet to "
         "diagnose backend configuration."
@@ -78,7 +102,7 @@ def _check_backend() -> None:
     Checks gate.yaml existence then loads via _load_gate_backends.
     Does NOT call resolve_outlet (avoids HTTP probe latency).
     """
-    gate_yaml_path = Path.cwd() / ".code-forge" / "gate.yaml"
+    gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
     if not gate_yaml_path.exists():
         raise ToolError(
             "gate.yaml not found at %s. Run 'code-forge init'." % gate_yaml_path
@@ -107,6 +131,7 @@ async def _run_cli_simple(*args: str) -> tuple[str, str, int]:
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        cwd=str(_WORKSPACE),
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
     return (
@@ -130,6 +155,7 @@ async def _run_cli_budgeted(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        cwd=str(_WORKSPACE),
     )
     start = time.monotonic()
     inner_task = asyncio.create_task(proc.communicate())
