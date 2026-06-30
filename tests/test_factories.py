@@ -731,6 +731,31 @@ class TestBuildSamplingL1Provider:
         assert usage == Usage(0, 0)
         assert duration == 0.0
 
+    def test_build_sampling_l1_provider_timeout_cancels_future(self):
+        from code_forge.factories import build_sampling_l1_provider
+        from unittest.mock import patch, MagicMock
+        import concurrent.futures
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        session = MagicMock()
+        loop = MagicMock()
+
+        future = MagicMock(spec=concurrent.futures.Future)
+        future.result.side_effect = concurrent.futures.TimeoutError()
+
+        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+            provider = build_sampling_l1_provider(session, loop, resolved)
+            result = provider()
+
+        # Each L1 pass (qodo/expert/adversarial) times out and cancels
+        assert future.cancel.call_count == 3
+        # Provider returns (findings, advisories, usage, duration) tuple, not raise
+        assert isinstance(result, tuple)
+        findings = result[0]
+        assert len(findings) == 3
+        assert all("invoke-fail" in f.id for f in findings)
+
     def test_build_sampling_l1_provider_truncation_raises(self):
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
