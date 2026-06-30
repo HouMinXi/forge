@@ -1974,3 +1974,96 @@ class TestCliEnv:
         backend = self._cli_backend(env_unset=("NONEXISTENT",))
         from code_forge.llm_invoke import _invoke_cli
         _invoke_cli("test", backend, 120)
+
+
+@pytest.mark.asyncio
+class TestInvokeSampling:
+    async def test_invoke_sampling_success(self):
+        from code_forge.llm_invoke import invoke_sampling, LLMResult, Usage
+        from mcp.types import CreateMessageResult, TextContent, SamplingMessage
+        from unittest.mock import AsyncMock, MagicMock
+        
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text='{"findings": [], "code_excerpts": []}'),
+            model="test-model",
+            stopReason="endTurn",
+        )
+        
+        res = await invoke_sampling(session, prompt="test prompt")
+        assert res.is_truncated is False
+        assert res.usage == Usage(0, 0)
+        assert res.content == {"findings": [], "code_excerpts": []}
+
+    async def test_invoke_sampling_truncation_raises(self):
+        from code_forge.llm_invoke import invoke_sampling, LLMInvokeError
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text='{"findings": []}'),
+            model="test-model",
+            stopReason="maxTokens",
+        )
+
+        with pytest.raises(LLMInvokeError, match="truncated"):
+            await invoke_sampling(session, prompt="test prompt")
+
+    async def test_invoke_sampling_json_parse_fallback(self):
+        from code_forge.llm_invoke import invoke_sampling
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+        
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text='Here is the review: ```json\n{"findings": []}\n```'),
+            model="test-model",
+            stopReason="endTurn",
+        )
+        
+        res = await invoke_sampling(session, prompt="test prompt")
+        assert res.content == {"findings": []}
+
+    async def test_invoke_sampling_non_text_content(self):
+        from code_forge.llm_invoke import invoke_sampling, LLMInvokeError
+        from mcp.types import CreateMessageResult, ImageContent
+        from unittest.mock import AsyncMock, MagicMock
+        
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=ImageContent(type="image", data="base64==", mimeType="image/png"),
+            model="test-model",
+            stopReason="endTurn",
+        )
+        
+        with pytest.raises(LLMInvokeError, match="sampling response contains no valid JSON"):
+            await invoke_sampling(session, prompt="test prompt")
+
+    async def test_invoke_sampling_model_hint(self):
+        from code_forge.llm_invoke import invoke_sampling
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+        
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text='{"findings": []}'),
+            model="test-model",
+            stopReason="endTurn",
+        )
+        
+        await invoke_sampling(session, prompt="test prompt", model_hint="claude-sonnet")
+        kwargs = session.create_message.call_args[1]
+        assert "model_preferences" in kwargs
+        hints = kwargs["model_preferences"].hints
+        assert any(hint.name == "claude-sonnet" for hint in hints)

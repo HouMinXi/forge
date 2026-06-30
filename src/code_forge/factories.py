@@ -435,3 +435,207 @@ def build_l1_provider(
         return (all_candidates, all_excerpts, Usage(total_input, total_output), total_duration)
 
     return _provider
+
+
+def build_sampling_l1_provider(
+    session,                        # ServerSession (no type annotation)
+    loop,                           # asyncio event loop from get_running_loop()
+    resolved: "ResolvedReview",
+    conventions_digest: str = "",
+    post_image: str = "",
+    graph_impact_context: str = "",
+    contract_spec: str = "",
+) -> "Callable":
+    """Build L1 provider that dispatches via MCP sampling.
+
+    Like build_l1_provider but calls invoke_sampling instead of llm_invoke.
+    The returned closure is sync (L1Provider type). It bridges to async via
+    asyncio.run_coroutine_threadsafe using the captured event loop reference.
+
+    Args:
+        session: MCP ServerSession with create_message capability.
+        loop: The MCP server's asyncio event loop, captured via
+            asyncio.get_running_loop() in the async handler BEFORE
+            dispatching to asyncio.to_thread.
+        resolved: Resolved review with git_diff.
+        (remaining args same as build_l1_provider)
+    """
+    from .llm_invoke import LLMInvokeError, Usage, invoke_sampling
+    from .reviewer_json import (
+        _collect_excerpts,
+        _json_to_state_findings,
+        validate_reviewer_json,
+    )
+
+    def _provider() -> tuple:
+        diff_text = resolved.git_diff or ""
+        if not diff_text:
+            return ([], [], Usage(), 0.0)
+
+        pass_configs = [
+            ("qodo", "structural code reviewer: correctness and logic errors"),
+            ("expert", "senior engineer: SOLID, architecture, security"),
+            ("adversarial", "adversarial QE: assume bugs exist"),
+        ]
+
+        all_candidates = []
+        all_excerpts = []
+        seen = set()
+        total_duration = 0.0
+
+        for pass_name, role in pass_configs:
+            prompt = (
+                "You are a " + role + ". Review this diff.\n"
+                'Return JSON: {"findings": [{"file": "...", "line": N, '
+                '"severity": "P0"|"P1"|"P2"|"P3", '
+                '"description": "..."}], '
+                '"code_excerpts": [{"file": "...", "start_line": N, '
+                '"end_line": M, "content": "..."}]}\n'
+                "Each diff hunk MUST have at least one code_excerpt.\n"
+                "Even if findings is empty, provide code_excerpts "
+                "covering each changed hunk.\n"
+                "code_excerpts content must be actual source code lines, "
+                "not diff format -- no +/- prefixes, no @@ headers.\n"
+            )
+            if post_image:
+                prompt += "\n## Post-Image (current file content)\n" + post_image + "\n"
+            if conventions_digest:
+                prompt += "\n## Conventions Digest\n" + conventions_digest + "\n"
+            if graph_impact_context:
+                prompt += "\n## Blast Radius Context\n" + graph_impact_context + "\n"
+            if contract_spec:
+                prompt += "\n## Contract Reference\n" + contract_spec + "\n"
+            prompt += "\nDiff:\n" + diff_text
+
+            try:
+                import sys as _sys
+                import asyncio as _aio
+                from .disposition import Disposition
+                from .state import StateFinding
+                coro = invoke_sampling(session, prompt, max_tokens=16384, temperature=0.0)
+                future = _aio.run_coroutine_threadsafe(coro, loop)
+                result = future.result(timeout=300)  # 5 min hard ceiling
+                total_duration += result.duration_s
+                # invoke_sampling raises LLMInvokeError on truncation
+                # (stopReason == maxTokens) before returning, so
+                # result.is_truncated is always False here.
+                response = result.content
+            except LLMInvokeError as exc:
+                if "truncated" in str(exc):
+                    raise  # only re-raise truncation; JSON errors become INFRA findings
+                print("code-forge: L1 sampling pass '%s' LLM error: %s" % (pass_name, exc), file=_sys.stderr)
+                all_candidates.append(StateFinding(
+                    id="l1-%s-invoke-fail" % pass_name,
+                    fingerprint="invoke-fail-%s" % pass_name,
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<llm-invoke>",
+                    line_range=[0, 0],
+                    description="L1 sampling invoke failed: %s" % exc,
+                ))
+                continue
+            except Exception as exc:
+                import sys as _sys
+                from .disposition import Disposition
+                from .state import StateFinding
+                # Cancel the coroutine on timeout to avoid resource leak
+                future.cancel()
+                print(
+                    "code-forge: L1 sampling pass '%s' failed: %s" % (pass_name, exc),
+                    file=_sys.stderr,
+                )
+                all_candidates.append(StateFinding(
+                    id="l1-%s-invoke-fail" % pass_name,
+                    fingerprint="invoke-fail-%s" % pass_name,
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<llm-invoke>",
+                    line_range=[0, 0],
+                    description="L1 sampling invoke failed: %s" % exc,
+                ))
+                continue
+
+            try:
+                validated = validate_reviewer_json(response)
+            except ValueError as exc:
+                from .disposition import Disposition
+                from .state import StateFinding
+                all_candidates.append(StateFinding(
+                    id="l1-%s-schema-fail" % pass_name,
+                    fingerprint="schema-fail-%s" % pass_name,
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<schema-validation>",
+                    line_range=[0, 0],
+                    description="schema validation failed: %s" % exc,
+                ))
+                continue
+
+            all_excerpts.extend(_collect_excerpts(validated))
+
+            # Coverage guard (same as build_l1_provider)
+            if len(validated["findings"]) == 0 and diff_text:
+                import os
+                from .verify import parse_diff_files
+                changed = set(parse_diff_files(diff_text).keys())
+                covered = {
+                    exc_item.get("file", "")
+                    for exc_item in validated.get("code_excerpts", [])
+                }
+                covered.discard("")
+
+                def _normalize(p):
+                    p = p.replace("\\", "/")
+                    if p.startswith("./"):
+                        p = p[2:]
+                    if p.startswith("/"):
+                        p = p.lstrip("/")
+                    return p
+
+                norm_covered = {_normalize(c) for c in covered}
+                uncovered = []
+                for cf in changed:
+                    ncf = _normalize(cf)
+                    if ncf in norm_covered:
+                        continue
+                    bn = os.path.basename(ncf)
+                    bn_matches = [c for c in norm_covered if os.path.basename(c) == bn]
+                    if len(bn_matches) == 1:
+                        continue
+                    matched = any(
+                        nc.endswith("/" + ncf) or ncf.endswith("/" + nc)
+                        for nc in norm_covered
+                    )
+                    if matched:
+                        continue
+                    uncovered.append(cf)
+
+                if uncovered:
+                    desc_files = ", ".join(uncovered[:3])
+                    if len(uncovered) > 3:
+                        desc_files += " (and %d more)" % (len(uncovered) - 3)
+                    from .disposition import Disposition
+                    from .state import StateFinding
+                    all_candidates.append(StateFinding(
+                        id="l1-%s-incomplete-coverage" % pass_name,
+                        fingerprint="incomplete-coverage-%s" % pass_name,
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<coverage-guard>",
+                        line_range=[0, 0],
+                        description=(
+                            "L1 pass '%s' returned 0 findings but "
+                            "excerpts do not cover: %s" % (pass_name, desc_files)
+                        ),
+                    ))
+                    continue
+
+            for sf in _json_to_state_findings(validated, pass_name):
+                if sf.fingerprint in seen:
+                    continue
+                seen.add(sf.fingerprint)
+                all_candidates.append(sf)
+
+        return (all_candidates, all_excerpts, Usage(0, 0), total_duration)
+
+    return _provider

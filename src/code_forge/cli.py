@@ -278,7 +278,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "messages",
     )
     review_parser.add_argument(
-        "--outlet", choices=["subprocess", "cli", "inline", "subagent"], default=None,
+        "--outlet", choices=["subprocess", "cli", "inline", "subagent", "sampling"], default=None,
         help="review outlet (default: auto-detect via backend reachability)",
     )
     review_parser.add_argument(
@@ -1499,6 +1499,10 @@ def _run(args, env, cwd: Path) -> Verdict:
         has_explicit_backend=has_explicit_backend,
         reachability_fn=_reachability,
     )
+    if outlet == "sampling":
+        raise CliError(
+            "outlet 'sampling' is only available within the MCP server context"
+        )
     if outlet == "inline":
         canary_config = _load_canary_config(args, gate_data)
         if canary_config is not None:
