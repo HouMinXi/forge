@@ -21,6 +21,7 @@ build/
 
 # Planning and design docs (internal, not for distribution)
 .planning/
+docs/adr/
 
 # AI assistant config and memory (NEVER commit)
 .claude/
@@ -42,6 +43,9 @@ aicc.conf
 
 # Dogfood verification (local only, never commit)
 dogfood/
+
+# Model eval pilot data (contains surflare internal scripts)
+eval/
 
 # code-forge runtime receipts (local artifacts, not tracked)
 .code-forge/
