@@ -331,6 +331,10 @@ def _build_parser() -> argparse.ArgumentParser:
              "paths must be relative and resolve under the repo root",
     )
     review_parser.add_argument(
+        "--no-color", action="store_true", default=False,
+        help="suppress ANSI color codes in output",
+    )
+    review_parser.add_argument(
         "paths", nargs="*",
         help="files/dirs to review; git mode filters diff, "
              "non-git lists files",
@@ -345,6 +349,18 @@ def _build_parser() -> argparse.ArgumentParser:
     gate_parser.add_argument(
         "--quiet", action="store_true",
         help="suppress warning messages",
+    )
+    gate_parser.add_argument(
+        "--no-color", action="store_true", default=False,
+        help="suppress ANSI color codes in output",
+    )
+    gate_parser.add_argument(
+        "--baseline", type=str, default=None,
+        help="baseline ref for delta comparison",
+    )
+    gate_parser.add_argument(
+        "--backend", default=None, metavar="NAME",
+        help="named backend from gate.yaml backends block",
     )
 
     # --- MUTATION-CHECK subcommand: mutation testing gate ---
