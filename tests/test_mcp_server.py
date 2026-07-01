@@ -32,6 +32,13 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
 
 
+@pytest.fixture(autouse=True)
+def _no_gate_yaml_outlet():
+    """Prevent gate.yaml outlet: sampling from leaking into subprocess tests."""
+    with patch("code_forge.outlet_resolver.load_outlet_from_gate", return_value=None):
+        yield
+
+
 # -- tool registration --
 
 
