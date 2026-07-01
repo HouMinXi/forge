@@ -1115,10 +1115,37 @@ async def invoke_sampling(
     elapsed = time.time() - t0
 
     # content is Union[TextContent, ImageContent, AudioContent]
+    import sys as _sys
+    print("invoke_sampling: result.model=%r stopReason=%r content_type=%s" % (
+        getattr(result, 'model', '?'), getattr(result, 'stopReason', '?'),
+        type(result.content).__name__), file=_sys.stderr)
+    print("invoke_sampling: result.content=%r" % (result.content,), file=_sys.stderr)
     if isinstance(result.content, MCPTextContent):
         raw_text = result.content.text
     else:
         raw_text = str(result.content)
+
+    # Empty response: some MCP clients (e.g. Copilot free tier) advertise
+    # sampling capability but return empty text.
+    result_model = getattr(result, 'model', '') or ''
+    if not raw_text.strip():
+        raise LLMInvokeError(
+            "sampling response is empty (model=%s, stopReason=%s). "
+            "The MCP client may not fully implement createMessage. "
+            "Set outlet: subprocess in gate.yaml and configure an API backend."
+            % (result_model or '?', getattr(result, 'stopReason', '?')),
+            duration_s=elapsed,
+        )
+
+    # copilotcli/auto and similar stub models return syntactically valid
+    # but useless responses. Detect early before wasting JSON parse effort.
+    if result_model.startswith('copilotcli/'):
+        raise LLMInvokeError(
+            "sampling model '%s' is a Copilot CLI stub that cannot "
+            "generate review content. Upgrade to Copilot Pro or set "
+            "outlet: subprocess with an API backend." % result_model,
+            duration_s=elapsed,
+        )
 
     # Only maxTokens is true truncation. stopSequence/toolUse are normal completions.
     # Check truncation BEFORE JSON parse: truncated output is almost always
@@ -1132,12 +1159,15 @@ async def invoke_sampling(
         )
 
     # Parse JSON same as _invoke_api path
+    import sys as _sys
+    print("invoke_sampling: raw_text[:500]=%r" % raw_text[:500], file=_sys.stderr)
     text = _strip_fences(raw_text)
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, TypeError):
         parsed = _extract_json_from_text(raw_text)
         if parsed is None:
+            print("invoke_sampling: JSON extraction failed, full=%r" % raw_text[:1000], file=_sys.stderr)
             raise LLMInvokeError(
                 "sampling response contains no valid JSON",
                 duration_s=elapsed,

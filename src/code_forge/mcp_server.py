@@ -365,8 +365,12 @@ async def _dispatch_sampling(
         verdict = await asyncio.to_thread(_run_locked)
     except LLMInvokeError as exc:
         # _backend_names: module-level list populated in lifespan() from gate.yaml backends
-        if "truncated" in str(exc) and (backend_name or _backend_names):
-            # truncation fallback to CLI backend
+        exc_str = str(exc)
+        _can_fallback = any(k in exc_str for k in (
+            "truncated", "empty", "copilotcli", "no valid JSON",
+        ))
+        if _can_fallback and (backend_name or _backend_names):
+            # sampling failed -- fall back to CLI subprocess backend
             # MUST force --outlet subprocess to prevent infinite loop when
             # gate.yaml has outlet: sampling (subprocess reads gate.yaml too)
             fallback_backend = backend_name or _backend_names[0]
@@ -390,6 +394,11 @@ async def _dispatch_sampling(
                 inner_task, proc = result
                 job_id = start_job(inner_task, proc)
                 return _make_job_ref(job_id)
+        elif _can_fallback:
+            raise ToolError(
+                "Sampling failed: %s. Configure an API backend in "
+                "gate.yaml for automatic fallback." % exc
+            )
         else:
             raise ToolError("Sampling failed: %s" % exc)
 
@@ -426,7 +435,7 @@ async def forge_review(
         gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
         if gate_yaml_path.exists():
             outlet = load_outlet_from_gate(gate_yaml_path)
-            
+
     if outlet == "sampling":
         if ctx is None or ctx.session.client_params.capabilities.sampling is None:
             raise ToolError("Client does not support sampling capability.")

@@ -71,7 +71,17 @@ class ForgeLock:
         self._restore_signal_handlers()
 
     def _install_signal_handlers(self) -> None:
-        """Save + chain previous handler per R1 B1."""
+        """Save + chain previous handler per R1 B1.
+
+        Signal handlers can only be set from the main thread. When running
+        in a worker thread (e.g. MCP sampling via asyncio.to_thread), skip
+        handler installation -- the lock file is still cleaned up by release()
+        in __exit__, just without signal-interrupt protection.
+        """
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            return
+
         def _make_chained_handler(prev):
             def _handler(signum, frame):
                 try:
