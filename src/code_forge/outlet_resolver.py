@@ -76,7 +76,7 @@ def _parse_outlet_string(value: str, source: str) -> str:
         )
         return canonical
     if key not in VALID_OUTLET_STRINGS:
-        raise ValueError(
+        raise CliError(
             "invalid outlet %r from %s (expected: %s)"
             % (value, source, "|".join(sorted(VALID_OUTLET_STRINGS)))
         )
