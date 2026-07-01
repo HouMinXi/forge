@@ -235,6 +235,7 @@ def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
         dependent_count, top_dependents.
     """
     results: list[dict] = []
+    conn = None
     try:
         conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
         cursor = conn.cursor()
@@ -269,10 +270,11 @@ def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
                     "start_line": start,
                     "end_line": end,
                 })
-
-        conn.close()
     except (sqlite3.Error, OSError) as exc:
         logger.warning("graph.db read error: %s", exc)
+    finally:
+        if conn is not None:
+            conn.close()
 
     return results
 
@@ -370,6 +372,7 @@ def find_entity_dependents(
             db_path = env_db
 
     if db_path is not None:
+        conn = None
         try:
             conn = sqlite3.connect(
                 "file:%s?mode=ro" % db_path, uri=True,
@@ -377,10 +380,12 @@ def find_entity_dependents(
             cursor = conn.cursor()
             module_name = Path(file_path).stem
             live = _live_callers(cursor, entity_name, module_name)
-            conn.close()
             return [lc.qualified for lc in live]
         except (sqlite3.Error, OSError):
             pass
+        finally:
+            if conn is not None:
+                conn.close()
 
     return []
 
@@ -490,10 +495,7 @@ class GraphTriageRunner:
                 continue
 
             file_path = entity.get("filePath", "")
-            try:
-                impact = _get_sem_impact(name, file_path, repo_root)
-            except subprocess.TimeoutExpired:
-                impact = {"impact": {"total": 0}, "dependents": []}
+            impact = _get_sem_impact(name, file_path, repo_root)
 
             total = impact.get("impact", {}).get("total", 0)
             if total <= 0:
