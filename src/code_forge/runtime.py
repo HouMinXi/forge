@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -155,8 +156,7 @@ def read_smoke_receipts(receipts_dir: Path) -> list[dict]:
             if isinstance(data, dict):
                 receipts.append(data)
         except (json.JSONDecodeError, OSError):
-            # Silently skip unreadable/malformed files
-            pass
+            logging.warning("skipping malformed smoke receipt: %s", path)
 
     return receipts
 

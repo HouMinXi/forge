@@ -281,14 +281,15 @@ class TestRunTools:
     @patch("code_forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
     @patch("code_forge.runner.run_tool")
     @patch("code_forge.runner.match_tools")
-    def test_returns_3tuple(self, mock_match, mock_run_tool, mock_version):
+    def test_returns_4tuple(self, mock_match, mock_run_tool, mock_version):
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         mock_run_tool.return_value = ('{"output":true}', 0, "")
         registry = {"shellcheck": _make_tool()}
-        results, versions, skipped = run_tools(registry, ["test.sh"])
+        results, versions, skipped, infra = run_tools(registry, ["test.sh"])
         assert isinstance(results, dict)
         assert isinstance(versions, dict)
         assert isinstance(skipped, list)
+        assert isinstance(infra, list)
 
     @patch("code_forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
     @patch("code_forge.runner.run_tool")
@@ -297,7 +298,7 @@ class TestRunTools:
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         mock_run_tool.return_value = ('{"output":true}', 0, "")
         registry = {"shellcheck": _make_tool()}
-        _, versions, _ = run_tools(registry, ["test.sh"])
+        _, versions, _, _ = run_tools(registry, ["test.sh"])
         assert "shellcheck" in versions
         assert versions["shellcheck"] == "shellcheck 0.10.0"
 
@@ -307,7 +308,7 @@ class TestRunTools:
     def test_skips_no_matching_files(self, mock_match, mock_run_tool, mock_ver):
         mock_match.return_value = {"ruff": []}
         registry = {"ruff": _make_tool(name="ruff", command="ruff")}
-        results, _, skipped = run_tools(registry, ["test.sh"])
+        results, _, skipped, _ = run_tools(registry, ["test.sh"])
         assert "ruff" not in results
         assert "ruff" in skipped
         mock_run_tool.assert_not_called()
@@ -320,8 +321,9 @@ class TestRunTools:
     ):
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         registry = {"shellcheck": _make_tool()}
-        _, _, skipped = run_tools(registry, ["test.sh"])
+        _, _, skipped, infra = run_tools(registry, ["test.sh"])
         assert "shellcheck" in skipped
+        assert any("shellcheck" in e for e in infra)
 
     @patch("code_forge.runner.capture_tool_version")
     @patch("code_forge.runner.run_tool")
@@ -377,7 +379,7 @@ class TestRunTools:
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         mock_run_tool.return_value = ("output", 1, "err")
         registry = {"shellcheck": _make_tool()}
-        results, _, _ = run_tools(registry, ["test.sh"])
+        results, _, _, _ = run_tools(registry, ["test.sh"])
         assert "shellcheck" in results
         stdout, rc, stderr = results["shellcheck"]
         assert stdout == "output"
