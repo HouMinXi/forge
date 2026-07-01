@@ -142,12 +142,14 @@ environment; without one, `forge_review` fails closed (same as the CLI).
 ## Commit gate (auto-fire)
 
 ```bash
-code-forge install-hooks    # writes .git/hooks/pre-commit: verify + gate-check
+code-forge install-hooks    # writes .git/hooks/pre-commit and commit-msg
 ```
 
-Code commits run the gate; commits that stage only non-code files (`.md`,
-`.yaml`, `.toml`, `LICENSE`, `README`) skip it automatically -- no `--no-verify`
-needed. If `git config core.hooksPath` is set, `install-hooks` refuses to
+Two hooks are installed: **pre-commit** (runs verify + gate-check on code
+commits) and **commit-msg** (checks commit messages for non-ASCII and
+AI-vocabulary). Code commits run the gate; commits that stage only non-code
+files (`.md`, `.yaml`, `.toml`, `LICENSE`, `README`) skip it automatically --
+no `--no-verify` needed. If `git config core.hooksPath` is set, `install-hooks` refuses to
 overwrite it and prints a two-line manual fallback to add to your existing hook.
 
 ## Troubleshooting

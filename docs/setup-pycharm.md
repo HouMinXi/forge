@@ -141,7 +141,7 @@ Set up a configuration as described in Option 1 and click the green
 ```bash
 echo $FORGE_LLM_MODEL
 echo $FORGE_BACKEND
-code-forge review --version
+code-forge --version
 ```
 
 ## Committing with code-forge hooks installed
