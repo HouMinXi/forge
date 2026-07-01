@@ -74,13 +74,16 @@ def _prompt_one(
     output_fn: Callable[[str], None],
 ) -> None:
     """Inner per-finding prompt loop (reprompts on invalid input)."""
+    lr = finding.line_range
+    start = lr[0] if len(lr) >= 1 else 0
+    end = lr[1] if len(lr) >= 2 else start
     output_fn(
         "  [%s] %s:%d-%d  %s"
         % (
             finding.id,
             finding.file,
-            finding.line_range[0],
-            finding.line_range[1],
+            start,
+            end,
             finding.description,
         )
     )
