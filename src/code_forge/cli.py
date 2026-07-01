@@ -540,6 +540,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help='git diff target for diff-hash keying (default: HEAD)',
     )
     smoke_run_parser.add_argument(
+        '--timeout',
+        type=int,
+        default=300,
+        help='timeout in seconds (default: 300)',
+    )
+    smoke_run_parser.add_argument(
         'command',
         nargs=argparse.REMAINDER,
         help='command to execute (may be preceded by -- separator)',
@@ -804,13 +810,22 @@ def _handle_smoke_run(args, cwd: Path) -> int:
     receipts_dir = repo_root / ".code-forge" / "smoke-receipts"
 
     # Execute the user command (shell=False; user owns the command -- T-20-06)
+    smoke_timeout = getattr(args, "timeout", 300) or 300
     try:
         _result = subprocess.run(
             cmd_args,
             capture_output=True,
             text=False,
             cwd=cwd,
+            timeout=smoke_timeout,
         )
+    except subprocess.TimeoutExpired:
+        print(
+            "code-forge smoke-run: command timed out after %d seconds"
+            % smoke_timeout,
+            file=sys.stderr,
+        )
+        return EXIT_TIMEOUT
     except FileNotFoundError:
         print(
             "code-forge smoke-run: command not found: %s" % cmd_args[0],
