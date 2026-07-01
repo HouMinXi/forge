@@ -103,7 +103,7 @@ def test_get_job_unknown_returns_none():
     assert get_job("nonexistent") is None
 
 
-def test_get_job_pops_completed():
+def test_get_job_idempotent_completed():
     _jobs["j1"] = {
         "status": "completed",
         "result": {"stdout": "ok"},
@@ -112,8 +112,10 @@ def test_get_job_pops_completed():
     entry = get_job("j1")
     assert entry is not None
     assert entry["status"] == "completed"
-    # Second call returns None (was popped)
-    assert get_job("j1") is None
+    # Second call returns same entry (idempotent, MCP-55)
+    second = get_job("j1")
+    assert second is not None
+    assert second["status"] == "completed"
 
 
 def test_get_job_keeps_running():
