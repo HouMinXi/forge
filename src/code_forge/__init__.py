@@ -2,7 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Forge -- 3-state quality gate for code review."""
 
-__version__ = "2.0.0a1"
+__version__ = "2.7.0"
 
 # Exit code constants re-exported from exit_codes module (H5 + R3-L3).
 from .exit_codes import (
