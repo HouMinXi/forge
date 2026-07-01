@@ -158,13 +158,14 @@ def run_tool(
 def run_tools(
     registry: dict[str, ToolConfig],
     files: list[str],
-) -> tuple[dict[str, tuple[str, int, str]], dict[str, str], list[str]]:
+) -> tuple[dict[str, tuple[str, int, str]], dict[str, str], list[str], list[str]]:
     """Execute all matching tools from the registry.
 
-    Returns a 3-tuple:
+    Returns a 4-tuple:
         tool_results: {tool_name: (stdout, returncode, stderr)}
         tool_versions: {tool_name: version_string}
         tools_skipped: [tool_name, ...]
+        infra_errors: [str, ...] -- timeout/OS errors surfaced for diagnostics
 
     Iterates sorted(registry.keys()) for GATE-02 determinism
     (Round 3 item 11).  Calls match_tools once before the per-tool
@@ -175,11 +176,12 @@ def run_tools(
         files: list of changed file paths
 
     Returns:
-        (tool_results, tool_versions, tools_skipped)
+        (tool_results, tool_versions, tools_skipped, infra_errors)
     """
     tool_results: dict[str, tuple[str, int, str]] = {}
     tool_versions: dict[str, str] = {}
     tools_skipped: list[str] = []
+    infra_errors: list[str] = []
 
     # Call match_tools once (Mimo F-04)
     matched = match_tools(registry, files)
@@ -199,7 +201,10 @@ def run_tools(
         result = run_tool(tool_config, matching_files)
         if result is None:
             tools_skipped.append(tool_name)
+            infra_errors.append(
+                "tool %s: timed out or OS error (see log)" % tool_name
+            )
         else:
             tool_results[tool_name] = result
 
-    return (tool_results, tool_versions, tools_skipped)
+    return (tool_results, tool_versions, tools_skipped, infra_errors)

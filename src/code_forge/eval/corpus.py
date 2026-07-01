@@ -67,11 +67,17 @@ def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
 
     entries: list[CorpusEntry] = []
     for raw in raw_entries:
+        verdict = raw.get("expected_verdict")
+        if verdict not in ("HOLD", "PASS"):
+            raise ValueError(
+                "invalid expected_verdict %r in corpus entry %s"
+                % (verdict, raw.get("name", "?"))
+            )
         entries.append(
             CorpusEntry(
                 name=raw["name"],
                 diff_file=raw["diff_file"],
-                expected_verdict=raw["expected_verdict"],
+                expected_verdict=verdict,
                 axis_tags=list(raw.get("axis_tags", [])),
                 expected_advisory=list(raw.get("expected_advisory", [])),
             )
