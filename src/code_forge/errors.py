@@ -29,6 +29,10 @@ class CliError(Exception):
     main() catches and maps to EXIT_CLI_ERROR (exit 2).
     """
 
+    def __init__(self, message: str, *, remediation: str | None = None):
+        super().__init__(message)
+        self.remediation = remediation
+
 
 class ComponentsConfigError(Exception):
     """Raised when .code-forge/components.yaml fails schema validation."""
