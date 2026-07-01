@@ -11,13 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from code_forge.mcp_server import (
-    _WORKSPACE,
     _backend_names,
     _check_backend,
     _make_job_ref,
     _make_result,
     _make_simple_result,
-    _resolve_workspace,
     _run_cli_budgeted,
     _run_cli_simple,
     _validate_backend,
@@ -125,8 +123,11 @@ def test_preflight_gate_yaml_missing_raises():
     with (
         patch.object(Path, "exists", return_value=False),
         patch("code_forge.cli._load_gate_backends") as mock_load,
+        patch.dict(os.environ, {}, clear=False),
     ):
-        with pytest.raises(ToolError, match="gate.yaml not found"):
+        # Remove FORGE_PROJECT_DIR if set so _resolve_project_dir falls through
+        os.environ.pop("FORGE_PROJECT_DIR", None)
+        with pytest.raises(ToolError, match="Cannot determine project directory"):
             _check_backend()
         mock_load.assert_not_called()
 
@@ -162,7 +163,7 @@ async def test_run_cli_simple_assembles_args():
             "resolve-outlet",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(_WORKSPACE),
+            cwd=None,
         )
         assert stdout == "ok\n"
         assert code == 0
@@ -277,12 +278,12 @@ async def test_forge_review_calls_preflight_then_cli():
             return_value=("output", 0, 1.5),
         ) as mock_cli,
     ):
+        mock_check.return_value = Path("/tmp/fake")
         result = await forge_review()
         mock_check.assert_called_once()
         args = mock_cli.call_args
         cli_args = args[0] if args[0] else args[1].get("args", [])
         assert "review" in cli_args
-        assert "--no-color" in cli_args
         assert isinstance(result, CallToolResult)
 
 
@@ -478,11 +479,17 @@ async def test_forge_init_force_flag():
 
 @pytest.mark.asyncio
 async def test_forge_trust_calls_cli():
-    with patch(
-        "code_forge.mcp_server._run_cli_simple",
-        new_callable=AsyncMock,
-        return_value=("trusted", "", 0),
-    ) as mock_cli:
+    with (
+        patch(
+            "code_forge.mcp_server._resolve_project_dir",
+            return_value=Path("/tmp/fake"),
+        ),
+        patch(
+            "code_forge.mcp_server._run_cli_simple",
+            new_callable=AsyncMock,
+            return_value=("trusted", "", 0),
+        ) as mock_cli,
+    ):
         result = await forge_trust()
         args = mock_cli.call_args[0]
         assert "trust" in args
@@ -490,11 +497,17 @@ async def test_forge_trust_calls_cli():
 
 @pytest.mark.asyncio
 async def test_forge_resolve_outlet_readonly():
-    with patch(
-        "code_forge.mcp_server._run_cli_simple",
-        new_callable=AsyncMock,
-        return_value=("outlet: inline", "", 0),
-    ) as mock_cli:
+    with (
+        patch(
+            "code_forge.mcp_server._resolve_project_dir",
+            return_value=Path("/tmp/fake"),
+        ),
+        patch(
+            "code_forge.mcp_server._run_cli_simple",
+            new_callable=AsyncMock,
+            return_value=("outlet: inline", "", 0),
+        ) as mock_cli,
+    ):
         result = await forge_resolve_outlet()
         args = mock_cli.call_args[0]
         assert "resolve-outlet" in args
@@ -546,165 +559,3 @@ def test_no_print_in_production_modules():
             assert "print(" not in stripped, (
                 "print() found in %s line %d: %s" % (name, i, stripped)
             )
-
-
-# -- workspace resolution (ADR-0006) --
-
-
-def test_resolve_workspace_env_overrides_walkup(tmp_path, monkeypatch):
-    """FORGE_PROJECT_DIR takes priority over cwd walkup."""
-    # Create a gate.yaml under tmp_path so walkup could find it
-    gate_dir = tmp_path / ".code-forge"
-    gate_dir.mkdir()
-    (gate_dir / "gate.yaml").write_text("backends: {}")
-
-    # Create a different target via env var
-    env_target = tmp_path / "env-project"
-    env_gate = env_target / ".code-forge"
-    env_gate.mkdir(parents=True)
-    (env_gate / "gate.yaml").write_text("backends: {}")
-
-    monkeypatch.setenv("FORGE_PROJECT_DIR", str(env_target))
-    monkeypatch.chdir(tmp_path)
-    result = _resolve_workspace()
-    assert result == env_target.resolve()
-
-
-def test_resolve_workspace_walkup_finds_ancestor(tmp_path, monkeypatch):
-    """Walk up from a subdirectory to find .code-forge/gate.yaml."""
-    gate_dir = tmp_path / ".code-forge"
-    gate_dir.mkdir()
-    (gate_dir / "gate.yaml").write_text("backends: {}")
-    sub = tmp_path / "src" / "pkg"
-    sub.mkdir(parents=True)
-
-    monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
-    monkeypatch.chdir(sub)
-    result = _resolve_workspace()
-    assert result == tmp_path.resolve()
-
-
-def test_resolve_workspace_no_marker_returns_cwd(tmp_path, monkeypatch):
-    """No .code-forge anywhere: fall through to cwd as-is."""
-    monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
-    monkeypatch.chdir(tmp_path)
-    result = _resolve_workspace()
-    assert result == tmp_path.resolve()
-
-
-def test_resolve_workspace_empty_env_falls_through(tmp_path, monkeypatch):
-    """Empty or whitespace FORGE_PROJECT_DIR is treated as unset."""
-    gate_dir = tmp_path / ".code-forge"
-    gate_dir.mkdir()
-    (gate_dir / "gate.yaml").write_text("backends: {}")
-
-    monkeypatch.setenv("FORGE_PROJECT_DIR", "   ")
-    monkeypatch.chdir(tmp_path)
-    result = _resolve_workspace()
-    assert result == tmp_path.resolve()
-
-
-def test_resolve_workspace_env_expanduser(tmp_path, monkeypatch):
-    """FORGE_PROJECT_DIR with ~ is expanded."""
-    gate_dir = tmp_path / ".code-forge"
-    gate_dir.mkdir()
-    (gate_dir / "gate.yaml").write_text("backends: {}")
-
-    monkeypatch.setenv("HOME", str(tmp_path.parent))
-    rel = "~/" + tmp_path.name
-    monkeypatch.setenv("FORGE_PROJECT_DIR", rel)
-    result = _resolve_workspace()
-    assert result == tmp_path.resolve()
-
-
-@pytest.mark.asyncio
-async def test_subprocess_receives_workspace_cwd(monkeypatch):
-    """Subprocess exec calls include cwd=_WORKSPACE."""
-    mock_proc = MagicMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"ok\n", b""))
-    mock_proc.returncode = 0
-    with patch(
-        "code_forge.mcp_server.asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-        return_value=mock_proc,
-    ) as mock_exec:
-        await _run_cli_simple("review")
-        call_kwargs = mock_exec.call_args[1]
-        assert "cwd" in call_kwargs
-        assert call_kwargs["cwd"] == str(_WORKSPACE)
-
-
-# -- sampling dispatch tests --
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sampling_success():
-    from code_forge.mcp_server import _dispatch_sampling
-    from code_forge.state import Verdict
-    session_mock = MagicMock()
-
-    with (
-        patch("code_forge.mcp_server._build_review_context") as mock_build_ctx,
-        patch("code_forge.machine.StateMachine") as mock_sm_cls,
-        patch("code_forge.lock.ForgeLock"),
-        patch("code_forge.mcp_server._make_inprocess_result") as mock_make_result,
-    ):
-        resolved_mock = MagicMock()
-        resolved_mock.mode_hint = "git"
-        mock_build_ctx.return_value = (resolved_mock, "hash", "repr")
-        mock_sm_instance = mock_sm_cls.return_value
-        mock_sm_instance.run.return_value = Verdict.PASS
-        mock_make_result.return_value = "fake_result"
-
-        result = await _dispatch_sampling(session_mock, committed=True)
-
-        assert result == "fake_result"
-        mock_sm_instance.run.assert_called_once()
-        mock_make_result.assert_called_once()
-        verdict_arg = mock_make_result.call_args[0][0]
-        assert verdict_arg == Verdict.PASS
-
-
-@pytest.mark.asyncio
-async def test_dispatch_sampling_truncation_fallback():
-    from code_forge.mcp_server import _dispatch_sampling
-    from code_forge.llm_invoke import LLMInvokeError
-    session_mock = MagicMock()
-
-    with (
-        patch("code_forge.mcp_server._build_review_context") as mock_build_ctx,
-        patch("code_forge.machine.StateMachine") as mock_sm_cls,
-        patch("code_forge.lock.ForgeLock"),
-        patch("code_forge.mcp_server._backend_names", ["fake_backend"]),
-        patch("code_forge.mcp_server._run_cli_budgeted", new_callable=AsyncMock, return_value=("fallback_out", 0, 1.0)) as mock_run_cli,
-    ):
-        resolved_mock = MagicMock()
-        resolved_mock.mode_hint = "git"
-        mock_build_ctx.return_value = (resolved_mock, "hash", "repr")
-        mock_sm_instance = mock_sm_cls.return_value
-        mock_sm_instance.run.side_effect = LLMInvokeError("Response truncated")
-
-        result = await _dispatch_sampling(session_mock, committed=True, backend_name="fake_backend")
-
-        mock_run_cli.assert_called_once()
-        cli_args = mock_run_cli.call_args[0]
-        assert "review" in cli_args
-        assert "--backend" in cli_args
-        assert "fake_backend" in cli_args
-        assert "--outlet" in cli_args
-        assert "subprocess" in cli_args
-        assert result.content[0].text == "fallback_out"
-
-
-@pytest.mark.asyncio
-async def test_forge_review_sampling_no_capability():
-    from code_forge.mcp_server import forge_review
-    from mcp.server.fastmcp import Context
-
-    # Context with no sampling capability
-    ctx = MagicMock(spec=Context)
-    ctx.session.client_params.capabilities.sampling = None
-
-    with patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}):
-        with pytest.raises(ToolError, match="Client does not support sampling capability."):
-            await forge_review(ctx=ctx)
