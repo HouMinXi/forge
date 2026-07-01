@@ -80,8 +80,8 @@ class TestEnvOverride:
         assert result == "subprocess"
 
     def test_env_whitespace_raises(self):
-        """FORGE_OUTLET='  ' raises ValueError with source attribution."""
-        with pytest.raises(ValueError, match="invalid outlet"):
+        """FORGE_OUTLET='  ' raises CliError with source attribution."""
+        with pytest.raises(CliError, match="invalid outlet"):
             resolve_outlet(
                 env={"FORGE_OUTLET": "  "},
                 gate_yaml_path=None,
@@ -89,8 +89,8 @@ class TestEnvOverride:
             )
 
     def test_env_invalid_raises(self):
-        """FORGE_OUTLET='both' raises ValueError."""
-        with pytest.raises(ValueError, match="invalid outlet"):
+        """FORGE_OUTLET='both' raises CliError."""
+        with pytest.raises(CliError, match="invalid outlet"):
             resolve_outlet(
                 env={"FORGE_OUTLET": "both"},
                 gate_yaml_path=None,
@@ -404,8 +404,8 @@ class TestCliValuePrecedence:
         assert result == "subprocess"
 
     def test_cli_value_invalid_raises(self):
-        """cli_value='invalid' raises ValueError with source attribution."""
-        with pytest.raises(ValueError, match="--outlet flag"):
+        """cli_value='invalid' raises CliError with source attribution."""
+        with pytest.raises(CliError, match="--outlet flag"):
             resolve_outlet(
                 env={},
                 gate_yaml_path=None,
