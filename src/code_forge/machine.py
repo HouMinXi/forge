@@ -301,7 +301,7 @@ class StateMachine:
                                     "CI: mutation PID %d still running, "
                                     "skipping new launch" % pid
                                 )
-                                return
+                                return Verdict.PENDING
                             except ProcessLookupError:
                                 # PID dead, treat as error
                                 from .disposition import Disposition as Disp
@@ -600,7 +600,7 @@ class StateMachine:
                 )
         return l0_findings
 
-    def _run_l1_phase(self) -> list[StateFinding]:
+    def _run_l1_phase(self) -> tuple[list[StateFinding], list[dict]]:
         """STATE-08 L1 detect phase. Runs AFTER L0 autofix in LOCAL mode.
 
         Both modes invoke L1 per LAYER0-07 (SARIF includes L1 candidates).
