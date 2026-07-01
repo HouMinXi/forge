@@ -44,7 +44,7 @@ the new environment.
 
 ```bash
 echo $FORGE_LLM_MODEL
-code-forge review --version
+code-forge --version
 ```
 
 ## Option 2: .env File

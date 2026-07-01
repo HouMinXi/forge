@@ -92,8 +92,7 @@ Sets the timeout (in seconds) for the backend reachability probe.
 
 - **Default**: `20` seconds
 - **Maximum**: `120` seconds
-- **Precedence**: `--auth-timeout` CLI flag > `FORGE_AUTH_TIMEOUT` env >
-  default (20s)
+- **Precedence**: `FORGE_AUTH_TIMEOUT` env > default (20s)
 
 ```bash
 export FORGE_AUTH_TIMEOUT=45   # increase for slow networks
@@ -446,12 +445,6 @@ the `claude` binary is slow to start):
 
 ```bash
 export FORGE_AUTH_TIMEOUT=60   # wait up to 60 seconds
-```
-
-Or use the CLI flag for a one-off:
-
-```bash
-code-forge review --auth-timeout 60
 ```
 
 ---

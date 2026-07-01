@@ -22,10 +22,9 @@ falsifier, and 5 advisory runners (Taint, Runtime, GraphTriage, DaemonState,
 Legacy). Only the L1 transport differs: A uses `llm_invoke` via subprocess;
 C uses `spawn_fn` via subagent.
 
-> **Wave 0 note (current behavior):** As of this commit, Outlet C still runs
-> with stub legs (registry={}, no advisory runners, falsifier without backend).
-> D2 alignment lands in 24.1-02. This section describes the post-D2 target
-> architecture, not current behavior.
+> **Implementation note:** Since Phase 24.1, Outlet C runs with real legs
+> (registry, backend-threaded falsifier, and 5 advisory runners). A and C now
+> share the same `StateMachine` implementation -- only the L1 transport differs.
 
 ## 3. {A, C} <-> B: semantic alignment only
 
@@ -46,6 +45,6 @@ When `--outlet inline` is active, the CLI returns `Verdict.DELEGATED`:
 - Meaning: the CLI did not run the StateMachine gate; review is delegated to
   the calling session plus the external R1 pre-commit test gate.
 
-Exit 5 is distinct from 0 (PASS), 1 (FAIL), 2 (CLI_ERROR), 3 (BUSY), and
-4 (ESCALATED). A caller checking for exit 0 correctly rejects DELEGATED as
-not a confirmed gate result.
+Exit 5 is distinct from 0 (PASS), 1 (FAIL), 2 (CLI_ERROR), 3 (BUSY),
+4 (ESCALATED), 6 (TIMEOUT), and 7 (UNRELIABLE). A caller checking for exit 0
+correctly rejects DELEGATED as not a confirmed gate result.
