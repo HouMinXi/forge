@@ -507,18 +507,7 @@ def build_sampling_l1_provider(
                 prompt += "\n## Contract Reference\n" + contract_spec + "\n"
             prompt += "\nDiff:\n" + diff_text
 
-            # Guard: MCP sampling clients typically have 128K token limit.
-            # ~4 chars/token is a conservative estimate. Raise "truncated"
-            # so the fallback path in _dispatch_sampling kicks in.
             from .llm_invoke import LLMInvokeError
-            _est_tokens = len(prompt) // 4
-            if _est_tokens > 120000:
-                raise LLMInvokeError(
-                    "prompt too large for sampling (est. %dk tokens, "
-                    "limit ~128k). Falling back to subprocess truncated."
-                    % (_est_tokens // 1000),
-                    duration_s=0.0,
-                )
 
             try:
                 import sys as _sys
