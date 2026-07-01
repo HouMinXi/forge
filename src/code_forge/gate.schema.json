@@ -29,7 +29,7 @@
           "type": "array",
           "items": {"type": "string"},
           "minItems": 1,
-          "description": "Test runner command as a list. First element must be a known runner (pytest, python3, cargo, go, make, npm, npx, node)."
+          "description": "Test runner command as a list. First element must be a known runner (pytest, python, python3, cargo, go, make, npm, npx, node)."
         },
         "timeout_seconds": {
           "type": "integer",
