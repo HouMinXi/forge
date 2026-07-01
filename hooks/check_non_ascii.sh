@@ -2,7 +2,7 @@
 # PreToolUse hook: block Write/Edit if content contains non-ASCII.
 # Exit 2 = blocking error (works even in acceptEdits mode).
 
-command -v jq >/dev/null 2>&1 || { echo "check_non_ascii: jq not found, skipping" >&2; exit 0; }
+command -v jq >/dev/null 2>&1 || { echo "check_non_ascii: jq not found, skipping. Install: apt install jq / brew install jq / dnf install jq" >&2; exit 0; }
 
 input=$(cat)
 file_path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null)

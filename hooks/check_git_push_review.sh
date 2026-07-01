@@ -41,7 +41,7 @@ else:
     sys.exit(0)
 
 print('  Run review cycle before git commit:', file=sys.stderr)
-print('    Cycle 1-3: /adversarial-qe -> fix -> /code-review-expert -> fix -> /adversarial-qe', file=sys.stderr)
+print('    Cycle 1-3: /qodo-review + /code-review-expert + /adversarial-qe (3 passes per cycle, 3 cycles min)', file=sys.stderr)
 print('  Then: git commit -m "..."  # post-review-c3', file=sys.stderr)
 sys.exit(2)
 PYEOF

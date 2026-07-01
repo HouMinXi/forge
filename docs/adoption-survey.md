@@ -32,7 +32,7 @@ Surveyed 2026-06-26 for code-forge gate-check deployment readiness.
    ```bash
    cd ~/code/ashare-lab
    code-forge init          # creates .code-forge/gate.yaml
-   code-forge baseline      # generates test_baseline.json
+   code-forge gate-check    # first run records baseline; commit .code-forge/test_baseline.json
    code-forge install-hooks
    ```
 
@@ -52,7 +52,7 @@ Surveyed 2026-06-26 for code-forge gate-check deployment readiness.
    Verify syntax before proceeding:
    ```bash
    python -c "import yaml; yaml.safe_load(open('.code-forge/gate.yaml'))"
-   code-forge baseline
+   code-forge gate-check    # first run records baseline
    code-forge install-hooks
    ```
 
