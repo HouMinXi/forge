@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from code_forge.mcp_server import (
+    _WORKSPACE,
     _backend_names,
     _check_backend,
     _make_job_ref,
@@ -125,9 +126,7 @@ def test_preflight_gate_yaml_missing_raises():
         patch("code_forge.cli._load_gate_backends") as mock_load,
         patch.dict(os.environ, {}, clear=False),
     ):
-        # Remove FORGE_PROJECT_DIR if set so _resolve_project_dir falls through
-        os.environ.pop("FORGE_PROJECT_DIR", None)
-        with pytest.raises(ToolError, match="Cannot determine project directory"):
+        with pytest.raises(ToolError, match="gate.yaml not found"):
             _check_backend()
         mock_load.assert_not_called()
 
@@ -163,7 +162,7 @@ async def test_run_cli_simple_assembles_args():
             "resolve-outlet",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=None,
+            cwd=str(_WORKSPACE),
         )
         assert stdout == "ok\n"
         assert code == 0
@@ -479,17 +478,11 @@ async def test_forge_init_force_flag():
 
 @pytest.mark.asyncio
 async def test_forge_trust_calls_cli():
-    with (
-        patch(
-            "code_forge.mcp_server._resolve_project_dir",
-            return_value=Path("/tmp/fake"),
-        ),
-        patch(
-            "code_forge.mcp_server._run_cli_simple",
-            new_callable=AsyncMock,
-            return_value=("trusted", "", 0),
-        ) as mock_cli,
-    ):
+    with patch(
+        "code_forge.mcp_server._run_cli_simple",
+        new_callable=AsyncMock,
+        return_value=("trusted", "", 0),
+    ) as mock_cli:
         result = await forge_trust()
         args = mock_cli.call_args[0]
         assert "trust" in args
@@ -497,17 +490,11 @@ async def test_forge_trust_calls_cli():
 
 @pytest.mark.asyncio
 async def test_forge_resolve_outlet_readonly():
-    with (
-        patch(
-            "code_forge.mcp_server._resolve_project_dir",
-            return_value=Path("/tmp/fake"),
-        ),
-        patch(
-            "code_forge.mcp_server._run_cli_simple",
-            new_callable=AsyncMock,
-            return_value=("outlet: inline", "", 0),
-        ) as mock_cli,
-    ):
+    with patch(
+        "code_forge.mcp_server._run_cli_simple",
+        new_callable=AsyncMock,
+        return_value=("outlet: inline", "", 0),
+    ) as mock_cli:
         result = await forge_resolve_outlet()
         args = mock_cli.call_args[0]
         assert "resolve-outlet" in args
