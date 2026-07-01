@@ -811,7 +811,11 @@ def compute_baseline_delta(
     new_failures = []
     baseline_results = baseline.get("test_results", {})
 
-    # Simple parser: lines like "FAILED tests/test_foo.py::test_bar"
+    # Limitation: this parser only handles pytest -q output format
+    # ("FAILED test_name" lines). Non-pytest runners (cargo test, go test,
+    # npm test) are not parsed and their failures pass through baseline
+    # delta unchecked. A format field in test config is needed to support
+    # other runners -- deferred to a future phase.
     for line in test_output.split("\n"):
         if line.startswith("FAILED "):
             test_name = line.split()[1] if len(line.split()) > 1 else ""
@@ -846,8 +850,16 @@ def translate_exit_code(test_returncode: int) -> int:
         2, 3 -> 0 (allow - pytest interrupt/internal error)
         4 -> 1 (BLOCK - usage error, misconfigured command)
         5 -> 1 (BLOCK - no tests collected, toothless gate)
+        negative -> 1 (BLOCK - killed by signal)
         timeout or >5 -> 1 (BLOCK)
     """
+    if test_returncode < 0:
+        print(
+            "forge: test runner killed by signal %d (e.g. segfault)"
+            % abs(test_returncode),
+            file=sys.stderr,
+        )
+        return 1  # Block -- process was killed
     if test_returncode == 0:
         return 0  # Pass
     if test_returncode == 1:
@@ -990,6 +1002,10 @@ def run_gate_check(
 
     # Translate exit code
     translated = translate_exit_code(test_returncode)
+
+    # Surface test stderr so users see diagnostics (exit 4/5 especially)
+    if test_result.stderr and test_result.stderr.strip():
+        print(test_result.stderr.rstrip(), file=stderr)
 
     # Special handling for exit 2-3 (warn but allow)
     if test_returncode == 2:

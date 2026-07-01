@@ -191,11 +191,16 @@ def _make_result(stdout: str, exit_code: int, elapsed: float) -> CallToolResult:
     )
 
 
-def _make_simple_result(stdout: str, exit_code: int) -> CallToolResult:
+def _make_simple_result(
+    stdout: str, exit_code: int, stderr: str = "",
+) -> CallToolResult:
     """Build CallToolResult for simple CLI commands (init, trust, etc.)."""
+    text = stdout
+    if stderr.strip():
+        text = stdout + "\n--- stderr ---\n" + stderr
     return CallToolResult(
-        content=[TextContent(type="text", text=stdout)],
-        structuredContent={"exit_code": exit_code, "output": stdout},
+        content=[TextContent(type="text", text=text)],
+        structuredContent={"exit_code": exit_code, "output": text},
     )
 
 
@@ -540,8 +545,8 @@ async def forge_init(force: bool = False) -> CallToolResult:
     cli_args: list[str] = ["init"]
     if force:
         cli_args.append("--force")
-    stdout, _, exit_code = await _run_cli_simple(*cli_args)
-    return _make_simple_result(stdout, exit_code)
+    stdout, stderr, exit_code = await _run_cli_simple(*cli_args)
+    return _make_simple_result(stdout, exit_code, stderr)
 
 
 @mcp.tool(
@@ -551,8 +556,8 @@ async def forge_init(force: bool = False) -> CallToolResult:
 )
 async def forge_trust() -> CallToolResult:
     """Trust forge backends."""
-    stdout, _, exit_code = await _run_cli_simple("trust")
-    return _make_simple_result(stdout, exit_code)
+    stdout, stderr, exit_code = await _run_cli_simple("trust")
+    return _make_simple_result(stdout, exit_code, stderr)
 
 
 @mcp.tool(
@@ -566,8 +571,8 @@ async def forge_trust() -> CallToolResult:
 )
 async def forge_resolve_outlet() -> CallToolResult:
     """Diagnose backend routing."""
-    stdout, _, exit_code = await _run_cli_simple("resolve-outlet")
-    return _make_simple_result(stdout, exit_code)
+    stdout, stderr, exit_code = await _run_cli_simple("resolve-outlet")
+    return _make_simple_result(stdout, exit_code, stderr)
 
 
 @mcp.tool(
