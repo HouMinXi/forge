@@ -3,6 +3,7 @@
 """Shared SARIF 2.1.0 parser for ruff and semgrep (DRY)."""
 
 import json
+import logging
 
 from code_forge.parsers.base import Finding, ToolError
 
@@ -33,11 +34,12 @@ def _parse_sarif(
             message=f"Failed to parse {tool_name} SARIF output",
         )]
 
-    findings = []
-    try:
-        for run in sarif.get("runs", []):
-            for result in run.get("results", []):
-                for location in result.get("locations", []):
+    findings: list[Finding | ToolError] = []
+    bad_items = 0
+    for run in sarif.get("runs", []):
+        for result in run.get("results", []):
+            for location in result.get("locations", []):
+                try:
                     phys = location.get("physicalLocation", {})
                     artifact = phys.get("artifactLocation", {})
                     region = phys.get("region", {})
@@ -65,14 +67,19 @@ def _parse_sarif(
                         ),
                         tool_name=tool_name,
                     ))
-    except (KeyError, TypeError, AttributeError):
+                except (KeyError, TypeError, AttributeError) as exc:
+                    bad_items += 1
+                    logging.warning(
+                        "%s SARIF: skipping malformed item: %s", tool_name, exc
+                    )
+    if not findings and bad_items > 0:
         return [ToolError(
             tool_name=tool_name,
             exit_code=exit_code,
             stderr="",
             message=(
                 f"Failed to parse {tool_name} SARIF output: "
-                "unexpected structure"
+                f"{bad_items} malformed item(s), no valid findings"
             ),
         )]
     return findings

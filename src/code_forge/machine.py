@@ -104,18 +104,21 @@ def _default_l0_runner(
     from .runner import run_tools
 
     file_strs = [str(f) for f in files]
-    tool_results, _versions, _skipped = run_tools(registry, file_strs)
+    tool_results, _versions, _skipped, l0_infra = run_tools(registry, file_strs)
     state_findings: list[StateFinding] = []
-    infra_errors: list[str] = []
+    infra_errors: list[str] = list(l0_infra)
 
     for tool, (stdout, returncode, stderr) in tool_results.items():
         tc = registry[tool]
         items = parse_output(stdout, tc.output_format, tool, returncode)
         for item in items:
             if isinstance(item, ToolError):
-                infra_errors.append(
-                    "L0 ToolError tool=%s msg=%s" % (tool, item.message)
-                )
+                err_msg = "L0 ToolError tool=%s msg=%s" % (tool, item.message)
+                # Attach tool stderr when parser did not capture it
+                tool_stderr = item.stderr or stderr
+                if tool_stderr:
+                    err_msg += " stderr=%s" % tool_stderr.strip()
+                infra_errors.append(err_msg)
                 continue
             f: Finding = item
             fp_raw = "%s:%s:%s:%s" % (tool, f.file, f.line, f.rule_id)
