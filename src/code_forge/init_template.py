@@ -93,13 +93,11 @@ outlet: subprocess
 #
 #   mimo-pro:
 #     type: api
-#     format: openai
-#     base_url: https://api.xiaomimimo.com/v1
-#     api_key_env: MIMO_API_KEY
-#     model: MiMo-VL-Pro
-#     max_completion_tokens: 65536
-#     thinking_type: enabled        # set explicitly if API requires
-#     stream: true
+#     format: anthropic
+#     base_url: https://token-plan-cn.xiaomimimo.com/anthropic
+#     api_key_env: MIMO_PRO_API_KEY
+#     model: mimo-v2.5-pro
+#     max_tokens: 16384
 #     timeout_s: 1800
 #
 #   kimi-k2:
