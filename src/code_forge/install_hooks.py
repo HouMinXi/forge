@@ -717,9 +717,13 @@ def run_install_hooks(
                     print(
                         "code-forge: error: pre-commit.code-forge-backup already "
                         "exists at %s and a non-code-forge hook is at %s. "
-                        "Remove one of them manually, then re-run "
+                        "Remove the existing backup, then re-run "
                         "code-forge install-hooks."
                         % (backup_path, hook_path),
+                        file=stderr,
+                    )
+                    print(
+                        "Hint: rm %s" % backup_path,
                         file=stderr,
                     )
                     return EXIT_FAIL

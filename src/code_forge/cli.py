@@ -2530,15 +2530,26 @@ def _run_install_skill(args, cwd: Path) -> int:
             _warn("invalid skill name: %s" % args.skill)
             return EXIT_CLI_ERROR
         skill_src = src_root / args.skill
+
+        def _show_available() -> None:
+            try:
+                avail = sorted(e.name for e in src_root.iterdir() if e.is_dir())
+            except Exception:
+                avail = []
+            if avail:
+                _warn("available skills: %s" % ", ".join(avail))
+
         # Validate the named skill exists in the bundle
         try:
             # Access __iter__ or check the traversable exists
             skill_files = list(skill_src.iterdir())
             if not skill_files:
                 _warn("skill not found in bundle: %s" % args.skill)
+                _show_available()
                 return EXIT_CLI_ERROR
         except (FileNotFoundError, NotADirectoryError, TypeError):
             _warn("skill not found in bundle: %s" % args.skill)
+            _show_available()
             return EXIT_CLI_ERROR
         skill_names = [args.skill]
     else:
