@@ -2,6 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for STATE-11 file lock (unit-level, a-j)."""
 
+import asyncio
 import os
 import signal
 import subprocess
@@ -172,3 +173,19 @@ class TestSignalChainCallable:
             assert call_log[0] == ("prev", False)
         finally:
             signal.signal(signal.SIGINT, old)
+
+
+@pytest.mark.asyncio
+async def test_forgelock_worker_thread():
+    """TEST-1: ForgeLock in asyncio.to_thread does not crash."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        lock_path = Path(d) / "test.lock"
+
+        def run():
+            with ForgeLock(lock_path):
+                return "ok"
+
+        result = await asyncio.to_thread(run)
+        assert result == "ok"
+        assert not lock_path.exists()

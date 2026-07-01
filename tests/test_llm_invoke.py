@@ -2067,3 +2067,39 @@ class TestInvokeSampling:
         assert "model_preferences" in kwargs
         hints = kwargs["model_preferences"].hints
         assert any(hint.name == "claude-sonnet" for hint in hints)
+
+    async def test_invoke_sampling_empty_response_raises(self):
+        """TEST-2: empty TextContent raises LLMInvokeError with 'empty'."""
+        from code_forge.llm_invoke import invoke_sampling, LLMInvokeError
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text=""),
+            model="copilotcli/auto",
+            stopReason="endTurn",
+        )
+
+        with pytest.raises(LLMInvokeError, match="empty"):
+            await invoke_sampling(session, prompt="test prompt")
+
+    async def test_invoke_sampling_copilotcli_model_raises(self):
+        """TEST-3: copilotcli/* model raises LLMInvokeError."""
+        from code_forge.llm_invoke import invoke_sampling, LLMInvokeError
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text='{"findings": []}'),
+            model="copilotcli/auto",
+            stopReason="endTurn",
+        )
+
+        with pytest.raises(LLMInvokeError, match="copilotcli"):
+            await invoke_sampling(session, prompt="test prompt")

@@ -507,12 +507,32 @@ def build_sampling_l1_provider(
                 prompt += "\n## Contract Reference\n" + contract_spec + "\n"
             prompt += "\nDiff:\n" + diff_text
 
+            # Guard: MCP sampling clients typically have 128K token limit.
+            # ~4 chars/token is a conservative estimate. Raise "truncated"
+            # so the fallback path in _dispatch_sampling kicks in.
+            from .llm_invoke import LLMInvokeError
+            _est_tokens = len(prompt) // 4
+            if _est_tokens > 120000:
+                raise LLMInvokeError(
+                    "prompt too large for sampling (est. %dk tokens, "
+                    "limit ~128k). Falling back to subprocess truncated."
+                    % (_est_tokens // 1000),
+                    duration_s=0.0,
+                )
+
             try:
                 import sys as _sys
                 import asyncio as _aio
                 from .disposition import Disposition
                 from .state import StateFinding
-                coro = invoke_sampling(session, prompt, max_tokens=16384, temperature=0.0)
+                coro = invoke_sampling(
+                    session, prompt, max_tokens=16384, temperature=0.0,
+                    system_prompt=(
+                        "You are a code review tool. Respond with ONLY valid JSON, "
+                        "no markdown fences, no explanatory text. The JSON must have "
+                        'keys "findings" (array) and "code_excerpts" (array).'
+                    ),
+                )
                 future = _aio.run_coroutine_threadsafe(coro, loop)
                 result = future.result(timeout=300)  # 5 min hard ceiling
                 total_duration += result.duration_s
@@ -524,26 +544,12 @@ def build_sampling_l1_provider(
                 if "truncated" in str(exc):
                     raise  # only re-raise truncation; JSON errors become INFRA findings
                 print("code-forge: L1 sampling pass '%s' LLM error: %s" % (pass_name, exc), file=_sys.stderr)
-                all_candidates.append(StateFinding(
-                    id="l1-%s-invoke-fail" % pass_name,
-                    fingerprint="invoke-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<llm-invoke>",
-                    line_range=[0, 0],
-                    description="L1 sampling invoke failed: %s" % exc,
-                ))
-                continue
             except Exception as exc:
-                import sys as _sys
-                from .disposition import Disposition
-                from .state import StateFinding
+                import traceback as _tb
                 # Cancel the coroutine on timeout to avoid resource leak
                 future.cancel()
-                print(
-                    "code-forge: L1 sampling pass '%s' failed: %s" % (pass_name, exc),
-                    file=_sys.stderr,
-                )
+                print("code-forge: L1 sampling pass '%s' UNEXPECTED: %s: %s" % (pass_name, type(exc).__name__, exc), file=_sys.stderr)
+                _tb.print_exc(file=_sys.stderr)
                 all_candidates.append(StateFinding(
                     id="l1-%s-invoke-fail" % pass_name,
                     fingerprint="invoke-fail-%s" % pass_name,
@@ -551,7 +557,7 @@ def build_sampling_l1_provider(
                     disposition=Disposition.CONFIRMED,
                     file="<llm-invoke>",
                     line_range=[0, 0],
-                    description="L1 sampling invoke failed: %s" % exc,
+                    description="L1 sampling invoke failed: %s: %s" % (type(exc).__name__, exc),
                 ))
                 continue
 
