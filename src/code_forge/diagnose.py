@@ -40,7 +40,19 @@ def diagnose_non_convergence(
     Returns: "A" | "B" | "C" | "D"
     """
     # R3 MED2: ANY infra_errors entry -> D (binary trigger).
+    # Append convergence detail so caller's ESCALATED message carries context.
     if infra_errors:
+        secondary = []
+        if _has_fixed_to_confirmed_toggle(round_history):
+            secondary.append("oscillation (A)")
+        if _has_monotonic_new_confirmed(round_history):
+            secondary.append("non-decreasing confirmed (B)")
+        if _has_uncertain_growth(round_history):
+            secondary.append("uncertain accumulation (C)")
+        if secondary:
+            infra_errors.append(
+                "infrastructure errors also present: %s" % ", ".join(secondary)
+            )
         return "D"
     if _has_fixed_to_confirmed_toggle(round_history):
         return "A"
