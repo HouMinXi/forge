@@ -95,17 +95,12 @@ def start_job(
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
-    """Retrieve job state. Pops terminal entries (completed/failed).
+    """Retrieve job state (read-only). TTL eviction handles cleanup.
 
     Returns None for unknown job_id.
     """
     _evict_stale()
-    entry = _jobs.get(job_id)
-    if entry is None:
-        return None
-    if entry["status"] in ("completed", "failed"):
-        return _jobs.pop(job_id)
-    return entry
+    return _jobs.get(job_id)
 
 
 async def cleanup_all() -> None:

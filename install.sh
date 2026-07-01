@@ -13,6 +13,7 @@ echo ""
 
 mkdir -p "${SKILLS_DIR}"
 
+installed=0
 for skill in "${SKILLS[@]}"; do
     src="${FORGE_DIR}/skills/${skill}"
     dst="${SKILLS_DIR}/${skill}"
@@ -26,6 +27,7 @@ for skill in "${SKILLS[@]}"; do
         existing=$(readlink -f "${dst}" 2>/dev/null || echo "?")
         if [ "${existing}" = "${src}" ]; then
             echo "  OK    ${skill} (already linked)"
+            installed=$((installed + 1))
             continue
         fi
         rm "${dst}"
@@ -38,7 +40,13 @@ for skill in "${SKILLS[@]}"; do
 
     ln -s "${src}" "${dst}"
     echo "  LINK  ${skill}"
+    installed=$((installed + 1))
 done
+
+if [ "${installed}" -eq 0 ]; then
+    echo "No skills installed"
+    exit 1
+fi
 
 echo ""
 echo "Skills installed. To set up hooks:"
