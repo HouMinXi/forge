@@ -331,6 +331,10 @@ def _build_parser() -> argparse.ArgumentParser:
              "paths must be relative and resolve under the repo root",
     )
     review_parser.add_argument(
+        "--allow-main", action="store_true", default=False,
+        help="allow review in main worktree (bypass worktree guard)",
+    )
+    review_parser.add_argument(
         "paths", nargs="*",
         help="files/dirs to review; git mode filters diff, "
              "non-git lists files",
@@ -1400,8 +1404,12 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     # Worktree validation (BOTH-03): only if in git repo
     if is_git_repo(cwd):
-        skip_check = env.get("FORGE_SKIP_WORKTREE_CHECK") == "1"
-        if not skip_check:
+        allow_main = (
+            getattr(args, "allow_main", False)
+            or env.get("FORGE_ALLOW_MAIN") == "1"
+            or env.get("FORGE_SKIP_WORKTREE_CHECK") == "1"
+        )
+        if not allow_main:
             try:
                 result_work_tree = subprocess.run(
                     ["git", "rev-parse", "--is-inside-work-tree"],
@@ -1425,12 +1433,19 @@ def _run(args, env, cwd: Path) -> Verdict:
                         raise CliError(
                             "code-forge review must run inside a linked git "
                             "worktree, not the main tree. Create one: "
-                            "git worktree add .worktrees/work <branch>"
+                            "git worktree add .worktrees/work <branch>\n"
+                            "Or bypass with: --allow-main / "
+                            "FORGE_ALLOW_MAIN=1"
                         )
             except subprocess.SubprocessError as exc:
                 raise CliError(
                     "git worktree check failed: %s" % exc
                 ) from exc
+        else:
+            warn(
+                "worktree guard bypassed (--allow-main / "
+                "FORGE_ALLOW_MAIN). Review running in main tree."
+            )
 
 
     # Validate mutual exclusion BEFORE outlet resolution

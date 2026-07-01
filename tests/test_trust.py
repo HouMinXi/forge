@@ -35,8 +35,8 @@ def test_hash_backends_block_deterministic():
     """Same gate_data in different dict orderings produces same hash."""
     from code_forge.trust import hash_backends_block
 
-    data_a = {"backends": {"b": {"type": "api"}, "a": {"type": "cli"}}}
-    data_b = {"backends": {"a": {"type": "cli"}, "b": {"type": "api"}}}
+    data_a = {"backends": {"b": {"base_url": "https://b.com"}, "a": {"base_url": "https://a.com"}}}
+    data_b = {"backends": {"a": {"base_url": "https://a.com"}, "b": {"base_url": "https://b.com"}}}
     assert hash_backends_block(data_a) == hash_backends_block(data_b)
 
 
@@ -60,13 +60,26 @@ def test_hash_backends_block_no_backends_key():
     assert h == h_empty
 
 
-def test_hash_backends_block_changes_on_content():
-    """Different backends produce different hashes."""
+def test_hash_backends_block_changes_on_dangerous_content():
+    """Different dangerous fields produce different hashes."""
     from code_forge.trust import hash_backends_block
 
-    h1 = hash_backends_block({"backends": {"a": {"type": "api"}}})
-    h2 = hash_backends_block({"backends": {"a": {"type": "cli"}}})
+    h1 = hash_backends_block({"backends": {"a": {"base_url": "https://a.com"}}})
+    h2 = hash_backends_block({"backends": {"a": {"base_url": "https://b.com"}}})
     assert h1 != h2
+
+
+def test_hash_backends_block_ignores_benign_fields():
+    """Benign fields (model, temperature) do not affect hash."""
+    from code_forge.trust import hash_backends_block
+
+    base = {"backends": {"a": {"base_url": "https://a.com", "api_key_env": "K"}}}
+    h1 = hash_backends_block(base)
+    with_model = {"backends": {"a": {
+        "base_url": "https://a.com", "api_key_env": "K", "model": "gpt-4",
+    }}}
+    h2 = hash_backends_block(with_model)
+    assert h1 == h2
 
 
 # -- _config_dir -----------------------------------------------------------
@@ -97,7 +110,7 @@ def test_record_and_check_trusted(trust_home, gate_yaml):
     """After record_trust, is_trusted returns True."""
     from code_forge.trust import is_trusted, record_trust
 
-    gate_data = {"backends": {"x": {"type": "api"}}}
+    gate_data = {"backends": {"x": {"base_url": "https://a.com"}}}
     record_trust(gate_yaml, gate_data)
     assert is_trusted(gate_yaml, gate_data) is True
 
@@ -106,17 +119,17 @@ def test_is_trusted_false_no_record(trust_home, gate_yaml):
     """is_trusted returns False when no record exists."""
     from code_forge.trust import is_trusted
 
-    gate_data = {"backends": {"x": {"type": "api"}}}
+    gate_data = {"backends": {"x": {"base_url": "https://a.com"}}}
     assert is_trusted(gate_yaml, gate_data) is False
 
 
 def test_is_trusted_false_after_change(trust_home, gate_yaml):
-    """is_trusted returns False when backends have changed."""
+    """is_trusted returns False when dangerous fields have changed."""
     from code_forge.trust import is_trusted, record_trust
 
-    original = {"backends": {"x": {"type": "api"}}}
+    original = {"backends": {"x": {"base_url": "https://a.com"}}}
     record_trust(gate_yaml, original)
-    modified = {"backends": {"x": {"type": "cli"}}}
+    modified = {"backends": {"x": {"base_url": "https://evil.com"}}}
     assert is_trusted(gate_yaml, modified) is False
 
 
