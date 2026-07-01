@@ -1,252 +1,51 @@
-# MCP Server Setup Guide
+# MCP Server Setup
 
-forge ships a local stdio MCP server, `code-forge-mcp`, that exposes the review
-pipeline as tools any MCP-capable editor can call (Claude Code, VS Code, Cursor,
-PyCharm). This guide sets it up and explains the one reason to prefer MCP over
-the `/code-forge` skill: independence.
+## Configuration
 
-## Why MCP (surface vs substance)
+Set `FORGE_PROJECT_DIR` in your MCP server configuration to point to
+your project root (the directory containing `.code-forge/`). MCP
+processes typically start with `cwd=~`, so this env var is required
+for the server to locate your gate.yaml.
 
-The `/code-forge` skill runs the review inside your current editor session --
-the same model that wrote the diff reviews it (author and reviewer collapse).
-The MCP server is different in substance, not just surface: `forge_review`
-routes the diff to the backend configured in `gate.yaml` and returns that
-backend's verdict. The calling model never reviews its own code. That external
-backend is the whole point -- so the setup below is mostly about making sure the
-server can actually reach one.
-
-If the server has no reachable backend, `forge_review` fails closed -- it does
-not silently fall back to self-review. Independence by construction.
-
-## Prerequisites
-
-- code-forge with the MCP extra: `pip install code-review-forge[mcp]`
-- `code-forge-mcp` on your PATH (`which code-forge-mcp`)
-- A workspace with a trusted backend: `.code-forge/gate.yaml` defining an API
-  backend, `code-forge trust` run in it, and the backend's API key available
-  (see [configuration.md](configuration.md)). Without this the tools still load
-  but `forge_review` fails closed.
-- The server auto-detects the workspace by walking up from its cwd to find
-  `.code-forge/gate.yaml`. Override with `FORGE_PROJECT_DIR` env var when the
-  server starts outside any project tree.
-
-## The key problem, and the wrapper
-
-The server reads the backend API key from its own environment. The CLI
-(`claude` launched from a shell) inherits your exported variables, but **GUI
-editors inherit neither your shell environment nor your PATH** -- so VS Code and
-PyCharm launch the server with no key (review fails closed) and often cannot
-find a command that lives in `~/.local/bin`.
-
-One small launcher solves all of it, and keeps the key out of every config
-file. Example with `pass` (adapt to your secret store and to your backend's
-`api_key_env`):
-
-```bash
-#!/usr/bin/env bash
-# ~/.local/bin/code-forge-mcp-pass
-set -eu
-export PATH="$HOME/.local/bin:$PATH"          # so the server can exec code-forge
-DEEPSEEK_API_KEY="$(pass show path/to/deepseek-key)"
-export DEEPSEEK_API_KEY
-exec code-forge-mcp "$@"
-```
-
-```bash
-chmod +x ~/.local/bin/code-forge-mcp-pass
-```
-
-Rules that save an hour:
-
-- Point every editor at this wrapper, not bare `code-forge-mcp`.
-- In GUI editors (VS Code, PyCharm) reference it by **absolute path** -- the GUI
-  PATH usually does not include `~/.local/bin`.
-- Keep your secret store unlocked (for `pass`, gpg-agent) so the wrapper can
-  decrypt at launch.
-- Never put the raw key in an MCP config file; configs are easy to commit.
-
-## Claude Code
-
-Launched from a shell, so it inherits PATH -- the bare wrapper name is fine:
-
-```bash
-claude mcp add forge -s user -- code-forge-mcp-pass
-```
-
-`-s user` makes it available in every project (it fails closed where no trusted
-backend exists). The server auto-detects the workspace by walking up from cwd
-to find `.code-forge/gate.yaml` -- no need to launch from the project root.
-New tools appear after the next session start; verify with `/mcp`.
-
-To pin a specific project (e.g. when launching claude from `~/`):
-
-```bash
-FORGE_PROJECT_DIR=~/code/myproject claude
-```
-
-## GitHub Copilot CLI
-
-Shell-launched, so it inherits your PATH and shell environment (unlike the GUI
-editors below) -- the bare wrapper name works:
-
-```bash
-copilot mcp add forge -- code-forge-mcp-pass
-```
-
-Or edit `~/.copilot/mcp-config.json` (user-level; `.copilot/mcp-config.json` in
-a repo root for a single project):
+Example `.claude.json` MCP entry:
 
 ```json
 {
   "mcpServers": {
-    "forge": {
-      "type": "local",
-      "command": "code-forge-mcp-pass",
-      "tools": ["*"]
+    "code-forge-mcp": {
+      "command": "code-forge-mcp",
+      "env": {
+        "FORGE_PROJECT_DIR": "/home/user/code/myproject"
+      }
     }
   }
 }
 ```
-
-Root key is `mcpServers` and `type` is `local` (Copilot's name for stdio). The
-server auto-detects the workspace via cwd walkup.
-
-## Codex CLI
-
-```bash
-codex mcp add forge -- code-forge-mcp-pass
-```
-
-Or add a table to `~/.codex/config.toml` (user-level; `.codex/config.toml` in a
-trusted project):
-
-```toml
-[mcp_servers.forge]
-command = "code-forge-mcp-pass"
-startup_timeout_sec = 30
-tool_timeout_sec = 900
-```
-
-The table is `[mcp_servers.forge]` -- snake_case `mcp_servers`, NOT `mcpServers`;
-a wrong key is ignored without an error. Raise `tool_timeout_sec`: a full review
-(three passes on a cross-Pacific backend) runs for minutes. forge returns a
-job_id for long runs (poll with `forge_job_status`), but a generous timeout
-keeps the client from giving up first.
-
-## VS Code (1.102+)
-
-User-level config at `~/.config/Code/User/mcp.json` (applies to every workspace,
-never lands in a repo). Use the absolute wrapper path:
-
-```json
-{
-  "servers": {
-    "forge": {
-      "type": "stdio",
-      "command": "/absolute/path/to/code-forge-mcp-pass"
-    }
-  }
-}
-```
-
-Root key is `servers` and the field is `type: stdio` -- VS Code's own schema,
-different from the `mcpServers` form below. The server auto-detects the
-workspace via cwd walkup (VS Code sets cwd to the workspace folder by default).
-No `"cwd"` field needed unless you want to override.
-
-## PyCharm (2025.2+)
-
-PyCharm has two unrelated MCP panels. You want AI Assistant as an MCP *client*
-(connecting out to forge), NOT "Settings | Tools | MCP Server" (which exposes
-the IDE's own tools to other clients).
-
-Requires the JetBrains AI Assistant plugin and an active JetBrains AI
-subscription. There is no documented config file, so use the GUI:
-
-1. Settings | Tools | AI Assistant | Model Context Protocol (MCP)
-2. Click Add, choose JSON configuration, and paste (absolute wrapper path):
-
-```json
-{
-  "mcpServers": {
-    "forge": {
-      "command": "/absolute/path/to/code-forge-mcp-pass"
-    }
-  }
-}
-```
-
-3. Working directory can be left at the default (the server walks up from cwd
-   to find `.code-forge/gate.yaml`). Set Server level to global or project as
-   you prefer.
-4. Apply, then fully restart PyCharm -- it reads MCP config only at startup.
-
-Root key here is `mcpServers` (the Claude Desktop form), not VS Code's `servers`.
-
-## Verify
-
-In the editor, call `forge_resolve_outlet`. It should name a backend (e.g. a
-`subprocess` outlet on a model), not "key not set" or "No review backend
-configured". From the CLI you can confirm the same resolution:
-
-```bash
-code-forge resolve-outlet      # with the key exported; prints the outlet
-```
-
-Then call `forge_review` on a real diff.
-
-## forge_review needs a linked worktree
-
-`forge_review` runs the same pipeline as `code-forge review`, which refuses to
-run in a main worktree (exit 2, "must run inside a linked git worktree"):
-
-- `forge_resolve_outlet` and `forge_gate_check` work from anywhere.
-- `forge_review` needs the editor opened on a linked worktree:
-  `git worktree add .worktrees/review <branch>`.
-- `.code-forge/gate.yaml` is gitignored, so a fresh worktree lacks it. Symlink
-  the file (only the file) from the main tree:
-  `ln -s ../../../.code-forge/gate.yaml .worktrees/review/.code-forge/gate.yaml`.
-  Trust still holds (it resolves the real path of the main-tree gate.yaml).
-
-## The tools
-
-| Tool | Purpose |
-|------|---------|
-| `forge_review` | Review the current git diff (inline if fast, else a job_id) |
-| `forge_gate_check` | Pre-commit gate on staged changes |
-| `forge_resolve_outlet` | Show which backend forge will use (read-only) |
-| `forge_job_status` | Poll a long-running review by job_id |
-| `forge_init` | Create `.code-forge/` in the workspace |
-| `forge_trust` | Trust the gate.yaml backends |
 
 ## Troubleshooting
 
-### `forge_resolve_outlet` says "key not set"
+### Zombie processes after /mcp reconnect
 
-The server is not getting the key. Confirm the editor points at the wrapper
-(not bare `code-forge-mcp`), that the wrapper path is absolute in GUI editors,
-and that your secret store is unlocked. GUI editors never see your shell exports.
+Claude Code's `/mcp reconnect` spawns a new server process without
+reaping the previous one. After reconnecting, check for stale
+processes:
 
-### `forge_resolve_outlet` says "No review backend configured"
+```bash
+pgrep -f code-forge-mcp
+```
 
-The server could not find `.code-forge/gate.yaml` by walking up from its cwd,
-or the repo is untrusted. Fix: set `FORGE_PROJECT_DIR` in the MCP server's env
-to the exact project root, run `code-forge trust` there, and (in a worktree)
-symlink gate.yaml as above.
+Kill stale ones if found:
 
-### `forge_review` exits 2 / "must run inside a linked git worktree"
+```bash
+pkill -f code-forge-mcp
+```
 
-Expected in a main worktree. Open a linked worktree (above). `forge_gate_check`
-has no such restriction.
+Then reconnect again. This is a client-side behavior that the server
+cannot control.
 
-### Tools do not appear
+### API key not found
 
-MCP config is read at startup. Restart the editor (for PyCharm, fully quit and
-reopen -- no hot reload).
-
-## Related Documentation
-
-- [configuration.md](configuration.md) -- backends, gate.yaml, account-auth, keys
-- [setup-claude-code.md](setup-claude-code.md) -- the skill path (inline review)
-- [setup-vscode.md](setup-vscode.md) / [setup-cursor.md](setup-cursor.md) /
-  [setup-pycharm.md](setup-pycharm.md) -- CLI + skill setup per editor
+Run `forge_resolve_outlet` in the MCP client. The output includes an
+"API key status" section showing which env var each backend expects
+and whether it is currently set. If a key shows "NOT SET", check your
+shell environment or pass/gpg-agent configuration.

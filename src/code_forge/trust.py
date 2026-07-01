@@ -83,11 +83,11 @@ def _save_trust_store(store: dict, config_dir: Optional[Path] = None) -> None:
 # -- Public API -------------------------------------------------------------
 
 
-def hash_backends_block(gate_data: Optional[dict]) -> str:
-    """Return sha256 hex of the canonical JSON of the backends block.
+def _hash_all_backends(gate_data: Optional[dict]) -> str:
+    """Legacy hash: sha256 of the entire backends block (pre-v2.7).
 
-    Canonical form: json.dumps(backends, sort_keys=True, separators=(",",":"))
-    This produces a stable hash regardless of YAML key ordering.
+    Kept for migration: if a stored hash matches this but not the new
+    dangerous-fields-only hash, the trust record is silently upgraded.
     """
     if gate_data is None:
         gate_data = {}
@@ -96,15 +96,61 @@ def hash_backends_block(gate_data: Optional[dict]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def hash_backends_block(gate_data: Optional[dict]) -> str:
+    """Return sha256 hex of only the dangerous fields in each backend.
+
+    Only fields that control credential routing or command execution
+    (DANGEROUS_FIELDS) are included. Model, temperature, max_tokens
+    etc. can change without invalidating trust.
+    """
+    if gate_data is None:
+        gate_data = {}
+    backends = gate_data.get("backends", {})
+    # Extract only dangerous fields per backend, sorted for stability
+    filtered: dict[str, dict[str, str]] = {}
+    if isinstance(backends, dict):
+        for bname, bcfg in sorted(backends.items()):
+            if not isinstance(bcfg, dict):
+                continue
+            dangerous = {
+                k: v for k, v in sorted(bcfg.items())
+                if k in DANGEROUS_FIELDS and v is not None and v != ""
+            }
+            if dangerous:
+                filtered[bname] = dangerous
+    canonical = json.dumps(filtered, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def is_trusted(gate_yaml_path: Path, gate_data: dict) -> bool:
-    """Check if gate.yaml's backends block matches the stored trust hash."""
+    """Check if gate.yaml's backends block matches the stored trust hash.
+
+    Migration: if the stored hash matches the legacy all-fields hash but
+    not the new dangerous-fields-only hash, silently upgrade the record.
+    """
     store = _load_trust_store()
     key = str(gate_yaml_path.resolve())
     entry = store.get(key)
     if entry is None:
         return False
+    stored = entry.get("hash")
     current_hash = hash_backends_block(gate_data)
-    return entry.get("hash") == current_hash
+    if stored == current_hash:
+        return True
+    # Migration: check legacy all-fields hash
+    legacy_hash = _hash_all_backends(gate_data)
+    if stored == legacy_hash:
+        # Silently upgrade to dangerous-fields-only hash
+        entry["hash"] = current_hash
+        _save_trust_store(store)
+        return True
+    import sys
+    print(
+        "code-forge: trust invalidated: credential-related fields changed "
+        "in gate.yaml. Run 'code-forge trust' to re-authorize.",
+        file=sys.stderr,
+    )
+    return False
 
 
 def record_trust(
@@ -144,8 +190,21 @@ def trust_status(gate_yaml_path: Path, gate_data: dict) -> TrustStatus:
     entry = store.get(key)
     current_hash = hash_backends_block(gate_data)
     stored_hash = entry.get("hash") if entry else None
+    trusted = False
+    if stored_hash:
+        if stored_hash == current_hash:
+            trusted = True
+        else:
+            # Check legacy hash for migration
+            legacy = _hash_all_backends(gate_data)
+            if stored_hash == legacy:
+                trusted = True
+                # Silently migrate
+                entry["hash"] = current_hash
+                _save_trust_store(store)
+                stored_hash = current_hash
     return TrustStatus(
-        trusted=(stored_hash == current_hash) if stored_hash else False,
+        trusted=trusted,
         stored_hash=stored_hash,
         current_hash=current_hash,
         gate_yaml_path=key,
