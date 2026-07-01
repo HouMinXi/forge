@@ -6,9 +6,9 @@ Six tools: forge_review, forge_gate_check, forge_init, forge_trust,
 forge_resolve_outlet, forge_job_status. Runs as a local subprocess
 of the IDE via stdio transport.
 
-The server expects cwd = workspace root (the directory containing
-.code-forge/). Each tool invokes the CLI via asyncio subprocess --
-zero changes to cli.py.
+Workspace resolution: FORGE_PROJECT_DIR env var (primary), then cwd.
+MCP processes typically run with cwd=~ so the env var is the reliable
+path to reach nested repos like ~/code/forge.
 """
 from __future__ import annotations
 
@@ -37,21 +37,49 @@ from code_forge.mcp_jobs import (
 _backend_names: list[str] = []
 
 
+def _resolve_project_dir() -> Path:
+    """Resolve the forge project directory.
+
+    Priority: FORGE_PROJECT_DIR env var > cwd.
+    Validates that .code-forge/gate.yaml exists at the resolved path.
+    Raises ToolError with remediation guidance on failure.
+    """
+    env_dir = os.environ.get("FORGE_PROJECT_DIR")
+    if env_dir:
+        project = Path(env_dir)
+        if not (project / ".code-forge" / "gate.yaml").exists():
+            raise ToolError(
+                "FORGE_PROJECT_DIR points to %s but no .code-forge/gate.yaml "
+                "found. Run 'code-forge init' in that directory." % project
+            )
+        return project
+
+    cwd = Path.cwd()
+    if (cwd / ".code-forge" / "gate.yaml").exists():
+        return cwd
+
+    raise ToolError(
+        "Cannot determine project directory. Set FORGE_PROJECT_DIR or run "
+        "the MCP server from a directory containing .code-forge/gate.yaml."
+    )
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     """Load backend names at startup, clean up subprocesses on shutdown."""
     global _backend_names  # noqa: PLW0603
 
-    gate_yaml_path = Path.cwd() / ".code-forge" / "gate.yaml"
-    from code_forge import cli
-
     try:
+        project_dir = _resolve_project_dir()
+        gate_yaml_path = project_dir / ".code-forge" / "gate.yaml"
+        from code_forge import cli
+
         _, gate_data = cli._load_gate_backends(gate_yaml_path)
         _backend_names = list(gate_data.get("backends", {}).keys())
     except Exception:
         _backend_names = []
 
-    yield {"backend_names": _backend_names, "gate_yaml_path": gate_yaml_path}
+    yield {"backend_names": _backend_names}
 
     await cleanup_all()
 
@@ -72,17 +100,15 @@ mcp = FastMCP(
 # -- pre-flight helper --
 
 
-def _check_backend() -> None:
-    """Verify a trusted review backend is configured.
+def _check_backend() -> Path:
+    """Verify a trusted review backend is configured. Returns project dir.
 
-    Checks gate.yaml existence then loads via _load_gate_backends.
-    Does NOT call resolve_outlet (avoids HTTP probe latency).
+    Uses _resolve_project_dir() for workspace resolution, then loads
+    via _load_gate_backends. Does NOT call resolve_outlet (avoids HTTP
+    probe latency).
     """
-    gate_yaml_path = Path.cwd() / ".code-forge" / "gate.yaml"
-    if not gate_yaml_path.exists():
-        raise ToolError(
-            "gate.yaml not found at %s. Run 'code-forge init'." % gate_yaml_path
-        )
+    project_dir = _resolve_project_dir()
+    gate_yaml_path = project_dir / ".code-forge" / "gate.yaml"
     from code_forge import cli
     from code_forge.errors import CliError
 
@@ -95,18 +121,22 @@ def _check_backend() -> None:
             )
     except (CliError, ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
+    return project_dir
 
 
 # -- CLI runner helpers --
 
 
-async def _run_cli_simple(*args: str) -> tuple[str, str, int]:
+async def _run_cli_simple(
+    *args: str, cwd: Path | None = None,
+) -> tuple[str, str, int]:
     """Run a CLI command and return (stdout, stderr, exit_code)."""
     proc = await asyncio.create_subprocess_exec(
         "code-forge",
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        cwd=str(cwd) if cwd else None,
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
     return (
@@ -119,6 +149,7 @@ async def _run_cli_simple(*args: str) -> tuple[str, str, int]:
 async def _run_cli_budgeted(
     *args: str,
     budget: float = 20.0,
+    cwd: Path | None = None,
 ) -> tuple[str, int, float] | tuple[asyncio.Task[Any], asyncio.subprocess.Process]:
     """Run CLI with a time budget. Returns inline result or (task, proc) on timeout.
 
@@ -130,6 +161,7 @@ async def _run_cli_budgeted(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        cwd=str(cwd) if cwd else None,
     )
     start = time.monotonic()
     inner_task = asyncio.create_task(proc.communicate())
@@ -221,10 +253,10 @@ async def forge_review(
     canary: bool = False,
 ) -> CallToolResult:
     """Run forge review pipeline."""
-    _check_backend()
+    project_dir = _check_backend()
     _validate_backend(backend)
 
-    cli_args: list[str] = ["review", "--no-color"]
+    cli_args: list[str] = ["review"]
     if backend:
         cli_args.extend(["--backend", backend])
     if committed:
@@ -244,7 +276,7 @@ async def forge_review(
         tmp_path = tmp.name
         cli_args.extend(["--contract", tmp_path])
 
-    result = await _run_cli_budgeted(*cli_args)
+    result = await _run_cli_budgeted(*cli_args, cwd=project_dir)
 
     if isinstance(result[0], str):
         # Inline completion
@@ -280,16 +312,16 @@ async def forge_gate_check(
     backend: str | None = None,
 ) -> CallToolResult:
     """Run forge gate-check pipeline."""
-    _check_backend()
+    project_dir = _check_backend()
     _validate_backend(backend)
 
-    cli_args: list[str] = ["gate-check", "--no-color"]
+    cli_args: list[str] = ["gate-check"]
     if baseline:
         cli_args.extend(["--baseline", baseline])
     if backend:
         cli_args.extend(["--backend", backend])
 
-    result = await _run_cli_budgeted(*cli_args)
+    result = await _run_cli_budgeted(*cli_args, cwd=project_dir)
 
     if isinstance(result[0], str):
         stdout, exit_code, elapsed = result  # type: ignore[misc]
@@ -310,7 +342,10 @@ async def forge_init(force: bool = False) -> CallToolResult:
     cli_args: list[str] = ["init"]
     if force:
         cli_args.append("--force")
-    stdout, _, exit_code = await _run_cli_simple(*cli_args)
+    # init uses FORGE_PROJECT_DIR if set, else cwd (which is fine for init)
+    env_dir = os.environ.get("FORGE_PROJECT_DIR")
+    cwd = Path(env_dir) if env_dir else None
+    stdout, _, exit_code = await _run_cli_simple(*cli_args, cwd=cwd)
     return _make_simple_result(stdout, exit_code)
 
 
@@ -321,7 +356,8 @@ async def forge_init(force: bool = False) -> CallToolResult:
 )
 async def forge_trust() -> CallToolResult:
     """Trust forge backends."""
-    stdout, _, exit_code = await _run_cli_simple("trust")
+    project_dir = _resolve_project_dir()
+    stdout, _, exit_code = await _run_cli_simple("trust", cwd=project_dir)
     return _make_simple_result(stdout, exit_code)
 
 
@@ -335,8 +371,32 @@ async def forge_trust() -> CallToolResult:
     ),
 )
 async def forge_resolve_outlet() -> CallToolResult:
-    """Diagnose backend routing."""
-    stdout, _, exit_code = await _run_cli_simple("resolve-outlet")
+    """Diagnose backend routing with API key provenance."""
+    project_dir = _resolve_project_dir()
+    stdout, stderr, exit_code = await _run_cli_simple(
+        "resolve-outlet", cwd=project_dir,
+    )
+    # MCP-06: append API key provenance diagnostic
+    diag_lines: list[str] = []
+    gate_yaml_path = project_dir / ".code-forge" / "gate.yaml"
+    if gate_yaml_path.exists():
+        try:
+            from code_forge import cli
+            _, gate_data = cli._load_gate_backends(gate_yaml_path)
+            for bname, bcfg in gate_data.get("backends", {}).items():
+                if not isinstance(bcfg, dict):
+                    continue
+                key_env = bcfg.get("api_key_env")
+                if key_env:
+                    is_set = key_env in os.environ
+                    diag_lines.append(
+                        "  %s: API key: %s (%s)"
+                        % (bname, key_env, "set" if is_set else "NOT SET")
+                    )
+        except Exception:
+            pass
+    if diag_lines:
+        stdout += "\nAPI key status:\n" + "\n".join(diag_lines) + "\n"
     return _make_simple_result(stdout, exit_code)
 
 
