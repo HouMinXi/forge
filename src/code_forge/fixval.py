@@ -301,6 +301,7 @@ def run_fixval(
     fd, patch_path = tempfile.mkstemp(
         prefix=".fixval-revert-", suffix=".patch",
     )
+    restore_ok = False
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(non_test_patch)
@@ -411,13 +412,16 @@ def run_fixval(
                     patch_path,
                     _restore.stderr[:200],
                 )
+            else:
+                restore_ok = True
 
     finally:
-        # Clean up temp patch file
-        try:
-            os.unlink(patch_path)
-        except OSError:
-            pass
+        # Clean up temp patch file only if restore succeeded
+        if restore_ok:
+            try:
+                os.unlink(patch_path)
+            except OSError:
+                pass
 
 
 class _VariableRenamer(ast.NodeTransformer):
