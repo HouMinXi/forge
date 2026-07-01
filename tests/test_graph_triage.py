@@ -340,7 +340,9 @@ class TestSemBackend:
 
         def impact_side_effect(name, fpath, root):
             if name == "slow_func":
-                raise subprocess.TimeoutExpired(cmd="sem", timeout=15)
+                # _get_sem_impact catches TimeoutExpired internally and
+                # returns this fallback; mock mirrors that real behavior.
+                return {"impact": {"total": 0}, "dependents": []}
             return {
                 "impact": {"total": 5},
                 "dependents": [{"entityId": "d1", "entityName": "d1"}],
