@@ -1124,9 +1124,16 @@ def main() -> int:
         from .verify import run_verify, parse_diff_files
         import subprocess
         cwd = Path.cwd()
-        diff_result = subprocess.run(
-            ["git", "diff", "HEAD"], capture_output=True, text=True, cwd=cwd
-        )
+        try:
+            diff_result = subprocess.run(
+                ["git", "diff", "HEAD"], capture_output=True, text=True, cwd=cwd
+            )
+        except FileNotFoundError:
+            print(
+                "code-forge: verify: git not found on PATH",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
         if diff_result.returncode != 0:
             print(
                 "verify: FAIL -- git diff failed: %s" % diff_result.stderr.strip(),
