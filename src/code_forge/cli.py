@@ -120,7 +120,10 @@ def _load_gate_backends(gate_yaml_path: Path) -> tuple[list, dict]:
     except FileNotFoundError:
         return ([], {})
     except _y.YAMLError as exc:
-        raise CliError("gate.yaml parse error: %s" % exc) from exc
+        raise CliError(
+            "gate.yaml parse error: %s" % exc,
+            remediation="Check gate.yaml syntax. Run 'code-forge init --force' to regenerate.",
+        ) from exc
 
     if gd is None or not isinstance(gd, dict):
         return ([], {})
@@ -1107,6 +1110,8 @@ def main() -> int:
             verdict = _run(args, env=os.environ, cwd=Path.cwd())
         except CliError as exc:
             print("code-forge: error: %s" % exc, file=sys.stderr)
+            if exc.remediation:
+                print("Hint: %s" % exc.remediation, file=sys.stderr)
             return EXIT_CLI_ERROR
         except ForgeLockBusy as exc:
             print("code-forge: %s" % exc, file=sys.stderr)
@@ -1198,7 +1203,13 @@ def main() -> int:
         from importlib.resources import files as _pkg_files
         from .init_template import GATE_YAML_TEMPLATE
         gate_dir = Path.cwd() / ".code-forge"
-        gate_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            gate_dir.mkdir(parents=True, exist_ok=True)
+        except (FileExistsError, NotADirectoryError):
+            raise CliError(
+                ".code-forge exists but is not a directory",
+                remediation="Remove the file: rm %s" % gate_dir,
+            )
         gate_path = gate_dir / "gate.yaml"
         if gate_path.exists() and not args.force:
             print(
@@ -1247,7 +1258,10 @@ def _load_gate_siblings(gate_yaml_path: Path) -> tuple:
     try:
         raw = _y.safe_load(text)
     except _y.YAMLError as exc:
-        raise CliError("malformed gate.yaml at %s: %s" % (gate_yaml_path, exc))
+        raise CliError(
+            "malformed gate.yaml at %s: %s" % (gate_yaml_path, exc),
+            remediation="Validate YAML syntax. Run 'code-forge init --force' to regenerate.",
+        )
     if raw is None:
         return {}, None
     if not isinstance(raw, dict):
@@ -1281,7 +1295,8 @@ def _cross_repo_verdict_or_none(
                 and head_spec.ref in ("WORKING", "INDEX")):
             raise CliError(
                 "cross-repo review requires committed refs, "
-                "not %s" % head_spec.ref
+                "not %s" % head_spec.ref,
+                remediation="Commit your changes first, or use --committed to review the last commit.",
             )
         validate_siblings(
             _gate_siblings,
@@ -1326,7 +1341,10 @@ def _load_contract_file(path_str: str, warn_fn=None) -> str:
             oversized content.
     """
     if not path_str:
-        raise CliError("contract path is empty")
+        raise CliError(
+            "contract path is empty",
+            remediation="Pass a file path or pipe content via stdin.",
+        )
 
     if path_str == "-":
         try:
@@ -1705,7 +1723,10 @@ def _run(args, env, cwd: Path) -> Verdict:
         try:
             return load_registry(path)
         except ValueError as exc:
-            raise CliError("registry load failed: %s" % exc) from exc
+            raise CliError(
+                "registry load failed: %s" % exc,
+                remediation="Verify the path exists. Omit --registry to use the default (.code-forge/tools.yaml).",
+            ) from exc
 
     try:
         registry = _safe_load_registry(args.registry)
@@ -1716,7 +1737,8 @@ def _run(args, env, cwd: Path) -> Verdict:
             registry = _safe_load_registry(args.registry)
         else:
             raise CliError(
-                "registry load failed: %s not found" % args.registry
+                "registry load failed: %s not found" % args.registry,
+                remediation="Verify the path exists. Omit --registry to use the default (.code-forge/tools.yaml).",
             )
 
     if registry == {} and is_default_registry:
@@ -1745,7 +1767,10 @@ def _run(args, env, cwd: Path) -> Verdict:
             baseline_spec, head_spec, initial_paths, cwd
         )
     except BaselineResolutionError as exc:
-        raise CliError("baseline resolution failed: %s" % exc)
+        raise CliError(
+            "baseline resolution failed: %s" % exc,
+            remediation="Check that the ref exists: git rev-parse <ref>. Omit --baseline to skip delta.",
+        )
     # Late-phase paths: extract from diff if user passed none.
     if not initial_paths:
         effective_paths = _paths(args, cwd, resolved=resolved)
