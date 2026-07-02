@@ -753,6 +753,55 @@ class TestTruncationDetection:
             assert "findings" in content
 
 
+    def test_vertex_stop_reason_max_tokens(self):
+        from code_forge.llm_invoke import _invoke_vertex, LLMInvokeError
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        resp_data = {
+            "content": [{"type": "text", "text": '{"find'}],
+            "usage": {"input_tokens": 600, "output_tokens": 8192},
+            "stop_reason": "max_tokens",
+        }
+        resp = Mock()
+        resp.read.return_value = json.dumps(resp_data).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                _invoke_vertex("p", backend, timeout_s=10)
+            assert exc_info.value.kind == "truncated"
+            assert "input=600" in str(exc_info.value)
+            assert "output=8192" in str(exc_info.value)
+
+    def test_vertex_stop_reason_end_turn_passes(self):
+        from code_forge.llm_invoke import _invoke_vertex
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        resp_data = {
+            "content": [{"type": "text", "text": '{"findings": []}'}],
+            "usage": {"input_tokens": 100, "output_tokens": 50},
+            "stop_reason": "end_turn",
+        }
+        resp = Mock()
+        resp.read.return_value = json.dumps(resp_data).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", return_value=resp):
+            content, usage = _invoke_vertex("p", backend, timeout_s=10)
+            assert "findings" in content
+
+
+
 class TestVertexBuildUrl:
     """Unit tests for _build_vertex_url."""
 
