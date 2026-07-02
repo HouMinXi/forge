@@ -72,7 +72,8 @@ class LLMInvokeError(Exception):
         self.kind = kind
 
 
-DEFAULT_TIMEOUT_S = 120  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
+DEFAULT_TIMEOUT_S = 1800  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
+_CLI_TIMEOUT_CAP_S = 300  # CLI subprocesses cap; only applies when no explicit timeout is set
 
 
 def _apply_params(
@@ -543,14 +544,24 @@ def llm_invoke(
     """
     if backend is None:
         backend = DEFAULT_BACKEND
-    # Per-backend timeout overrides caller default (reasoning models need
-    # longer timeouts than the caller's generic default)
+    # Timeout resolution priority:
+    #   1. backend.timeout_s > 0  (per-backend gate.yaml override)
+    #   2. caller-supplied timeout_s > 0
+    #   3. FORGE_LLM_TIMEOUT_S env var
+    #   4. DEFAULT_TIMEOUT_S (1800s)
+    #   5. CLI cap: _CLI_TIMEOUT_CAP_S (300s) when timeout came from #3/#4
+    caller_explicit_timeout = timeout_s is not None and timeout_s > 0
     if backend.timeout_s > 0:
         timeout_s = backend.timeout_s
-    elif timeout_s is None or timeout_s <= 0:
+    elif not caller_explicit_timeout:
         timeout_s = _default_timeout_s()
 
     if backend.type == "cli":
+        # CLI subprocesses should not block for the full API default;
+        # cap at _CLI_TIMEOUT_CAP_S unless caller or backend set it.
+        if not caller_explicit_timeout and backend.timeout_s <= 0 \
+                and timeout_s > _CLI_TIMEOUT_CAP_S:
+            timeout_s = _CLI_TIMEOUT_CAP_S
         return _invoke_cli(prompt, backend, timeout_s)
     elif backend.type == "api":
         return _invoke_api(
@@ -580,16 +591,16 @@ def _invoke_cli(
 
     # Large prompt handling: write to temp file for prompts > 1MB
     import tempfile as _tf
-    _prompt_file = None
+    prompt_file = None
     if len(prompt.encode("utf-8")) > 1_000_000:
-        fd, _prompt_file = _tf.mkstemp(suffix=".txt", prefix="forge-llm-")
+        fd, prompt_file = _tf.mkstemp(suffix=".txt", prefix="forge-llm-")
         os.write(fd, prompt.encode("utf-8"))
         os.close(fd)
         model_part = " --model %s" % shlex.quote(effective_model) if effective_model else ""
         cmd = [
             "sh", "-c",
             "%s -p \"$(<%s)\"%s --output-format json"
-            % (shlex.quote(binary), shlex.quote(_prompt_file), model_part),
+            % (shlex.quote(binary), shlex.quote(prompt_file), model_part),
         ]
     else:
         cmd = [binary, "-p", prompt]
@@ -618,8 +629,8 @@ def _invoke_cli(
         )
     except OSError as exc:
         duration = time.monotonic() - start
-        if _prompt_file and os.path.exists(_prompt_file):
-            os.unlink(_prompt_file)
+        if prompt_file and os.path.exists(prompt_file):
+            os.unlink(prompt_file)
         raise LLMInvokeError(
             "LLM subprocess failed: %s" % exc,
             exit_code=-1, stderr=str(exc), duration_s=duration,
@@ -640,8 +651,8 @@ def _invoke_cli(
             ) from exc
     finally:
         _active_proc = None
-        if _prompt_file and os.path.exists(_prompt_file):
-            os.unlink(_prompt_file)
+        if prompt_file and os.path.exists(prompt_file):
+            os.unlink(prompt_file)
 
     duration = time.monotonic() - start
 
@@ -778,7 +789,7 @@ def _invoke_api(
                     stderr=str(exc),
                     duration_s=time.monotonic() - start,
                     is_timeout=True,
-                    retryable=False,  # 120s is sufficient evidence
+                    retryable=False,  # socket timeout is not transient
                 ) from exc
         except LLMInvokeError as exc:
             if not exc.retryable or attempt == max_attempts - 1:
