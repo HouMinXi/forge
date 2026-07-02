@@ -117,13 +117,21 @@ class TestGraphTriageRunnerProtocol:
 class TestDetectBackend:
     """_detect_backend() priority: sem > gate.yaml db_path > auto > env."""
 
+    @patch("code_forge.graph_triage._sem_has_index", return_value=True)
     @patch("code_forge.graph_triage.shutil.which", return_value="/usr/bin/sem")
-    def test_detect_sem_preferred(self, mock_which):
-        """When sem is available, prefer it over graph.db."""
+    def test_detect_sem_preferred(self, mock_which, mock_index):
+        """When sem is available and indexed, prefer it over graph.db."""
         result = _detect_backend(Path("/repo"), {})
         assert result is not None
         assert result[0] == "sem"
         assert result[1] == "/usr/bin/sem"
+
+    @patch("code_forge.graph_triage._sem_has_index", return_value=False)
+    @patch("code_forge.graph_triage.shutil.which", return_value="/usr/bin/sem")
+    def test_detect_sem_no_index_skips(self, mock_which, mock_index):
+        """sem in PATH but no index for this repo -> skip sem, fallback."""
+        result = _detect_backend(Path("/repo"), {})
+        assert result is None
 
     @patch("code_forge.graph_triage.shutil.which", return_value=None)
     def test_detect_graphdb_fallback(self, mock_which, tmp_path):
@@ -340,9 +348,9 @@ class TestSemBackend:
 
         def impact_side_effect(name, fpath, root):
             if name == "slow_func":
-                # _get_sem_impact catches TimeoutExpired internally and
-                # returns this fallback; mock mirrors that real behavior.
-                return {"impact": {"total": 0}, "dependents": []}
+                # _get_sem_impact now marks timeout with _timed_out key,
+                # which trips the circuit breaker in _run_with_sem.
+                return {"impact": {"total": 0}, "dependents": [], "_timed_out": True}
             return {
                 "impact": {"total": 5},
                 "dependents": [{"entityId": "d1", "entityName": "d1"}],
@@ -355,10 +363,9 @@ class TestSemBackend:
             runner = GraphTriageRunner()
             diff = _make_diff(["src/a.py", "src/b.py"])
             result = runner.run(diff, Path("/tmp"))
-            # fast_func should still produce a finding
-            assert len(result) >= 1
-            names = [f.description for f in result]
-            assert any("fast_func" in n for n in names)
+            # Circuit breaker trips on slow_func timeout: entire run
+            # disabled, fast_func never queried.  No findings returned.
+            assert result == []
 
     @patch("code_forge.graph_triage._get_sem_impact")
     @patch("code_forge.graph_triage._run_sem")
