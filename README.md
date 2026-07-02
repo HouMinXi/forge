@@ -141,6 +141,8 @@ calling model never reviews its own code.
 
 **Prerequisite:** a configured backend with its API key in the server
 environment. Without it, `forge_review` fails closed (same as the CLI).
+One server instance serves one project -- for multi-project setups, use
+per-project `FORGE_PROJECT_DIR` entries (see [docs/setup-mcp.md](docs/setup-mcp.md)).
 
 **Claude Code:**
 
