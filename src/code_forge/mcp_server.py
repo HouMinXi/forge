@@ -120,6 +120,21 @@ def _check_backend() -> None:
                 "set FORGE_PROJECT_DIR in the MCP server env)"
                 % (gate_yaml_path, _WORKSPACE)
             )
+        # Early check: key env vars must be present in THIS process.
+        # The subprocess inherits our env, so a key exported after
+        # the MCP server started is invisible here and there.
+        missing = [
+            cfg.api_key_env
+            for cfg in backend_configs
+            if cfg.api_key_env and not os.environ.get(cfg.api_key_env)
+        ]
+        if missing:
+            raise ToolError(
+                "API key env var(s) not set in the MCP server process: "
+                "%s. Set them in the MCP server config env block (or the "
+                "wrapper script), then restart the MCP server."
+                % ", ".join(missing)
+            )
     except (CliError, ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
 
@@ -163,11 +178,16 @@ async def _run_cli_budgeted(
     start = time.monotonic()
     inner_task = asyncio.create_task(proc.communicate())
     try:
-        stdout_bytes, _ = await asyncio.wait_for(
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
             asyncio.shield(inner_task), timeout=budget
         )
         elapsed = time.monotonic() - start
-        return (stdout_bytes.decode(errors="replace"), proc.returncode or 0, elapsed)
+        return (
+            stdout_bytes.decode(errors="replace"),
+            proc.returncode or 0,
+            elapsed,
+            stderr_bytes.decode(errors="replace"),
+        )
     except asyncio.TimeoutError:
         return (inner_task, proc)
     except asyncio.CancelledError:
@@ -179,17 +199,27 @@ async def _run_cli_budgeted(
 # -- result formatting --
 
 
-def _make_result(stdout: str, exit_code: int, elapsed: float) -> CallToolResult:
-    """Build dual-layer CallToolResult for completed review/gate-check."""
+def _make_result(
+    stdout: str, exit_code: int, elapsed: float, stderr: str = "",
+) -> CallToolResult:
+    """Build dual-layer CallToolResult for completed review/gate-check.
+
+    On non-zero exit, stderr is appended to the output so the caller can
+    diagnose the failure.  Previously stderr was discarded, leaving
+    ``{output: ""}`` on CLI_ERROR.
+    """
+    output = stdout
+    if exit_code != 0 and stderr.strip():
+        output = stdout + "\n--- stderr ---\n" + stderr
     structured = ForgeResult(
         verdict=exit_to_verdict(exit_code),
         exit_code=exit_code,
         findings_count=None,
         duration_s=round(elapsed, 2),
-        output=stdout,
+        output=output,
     )
     return CallToolResult(
-        content=[TextContent(type="text", text=stdout)],
+        content=[TextContent(type="text", text=output)],
         structuredContent=structured.model_dump(),
     )
 
@@ -394,8 +424,8 @@ async def _dispatch_sampling(
                 cli_args.append("--committed")
             result = await _run_cli_budgeted(*cli_args)
             if isinstance(result[0], str):
-                stdout, exit_code, elapsed = result
-                return _make_result(stdout, exit_code, elapsed)
+                stdout, exit_code, elapsed, stderr = result
+                return _make_result(stdout, exit_code, elapsed, stderr)
             else:
                 inner_task, proc = result
                 job_id = start_job(inner_task, proc)
@@ -479,13 +509,13 @@ async def forge_review(
 
     if isinstance(result[0], str):
         # Inline completion
-        stdout, exit_code, elapsed = result  # type: ignore[misc]
+        stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
         if tmp_path:
             try:
                 os.unlink(tmp_path)
             except FileNotFoundError:
                 pass
-        return _make_result(stdout, exit_code, elapsed)
+        return _make_result(stdout, exit_code, elapsed, stderr)
     else:
         # Timeout -- transfer tempfile ownership to job
         inner_task, proc = result  # type: ignore[misc]
@@ -542,8 +572,8 @@ async def forge_gate_check(
     result = await _run_cli_budgeted(*cli_args)
 
     if isinstance(result[0], str):
-        stdout, exit_code, elapsed = result  # type: ignore[misc]
-        return _make_result(stdout, exit_code, elapsed)
+        stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
+        return _make_result(stdout, exit_code, elapsed, stderr)
     else:
         inner_task, proc = result  # type: ignore[misc]
         job_id = start_job(inner_task, proc)
@@ -627,12 +657,16 @@ async def forge_job_status(job_id: str) -> CallToolResult:
 
     if status in ("completed", "failed") and entry.get("result"):
         r = entry["result"]
+        output = r.get("stdout", "")
+        stderr = r.get("stderr", "")
+        if r.get("exit_code", 0) != 0 and stderr.strip():
+            output = output + "\n--- stderr ---\n" + stderr
         forge_result = ForgeResult(
             verdict=r.get("verdict", "UNKNOWN(-1)"),
             exit_code=r.get("exit_code", -1),
             findings_count=None,
             duration_s=0.0,
-            output=r.get("stdout", ""),
+            output=output,
         )
 
     ref = ForgeJobRef(

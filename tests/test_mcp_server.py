@@ -97,15 +97,44 @@ def test_preflight_empty_backends_names_workspace():
 
 
 def test_preflight_nonempty_backends_passes():
-    mock_cfg = MagicMock()
+    from code_forge.backend import BackendConfig
+
+    cfg = BackendConfig(
+        name="test", type="api", model="m", format="openai",
+        base_url="http://x", api_key_env="TEST_KEY_123",
+    )
     with (
         patch.object(Path, "exists", return_value=True),
         patch(
             "code_forge.cli._load_gate_backends",
-            return_value=([mock_cfg], {"backends": {"mimo-pro": {}}}),
+            return_value=([cfg], {"backends": {"test": {}}}),
         ),
+        patch.dict("os.environ", {"TEST_KEY_123": "sk-fake"}),
     ):
         _check_backend()  # no exception
+
+
+def test_preflight_missing_api_key_env_raises():
+    """N3: missing API key env must be caught early with actionable message."""
+    from code_forge.backend import BackendConfig
+
+    cfg = BackendConfig(
+        name="mimo-pro", type="api", model="m", format="anthropic",
+        base_url="http://x", api_key_env="MIMO_PRO_API_KEY",
+    )
+    with (
+        patch.object(Path, "exists", return_value=True),
+        patch(
+            "code_forge.cli._load_gate_backends",
+            return_value=([cfg], {}),
+        ),
+        patch.dict("os.environ", {}, clear=False),
+    ):
+        # Ensure the key is NOT set
+        import os
+        os.environ.pop("MIMO_PRO_API_KEY", None)
+        with pytest.raises(ToolError, match="MIMO_PRO_API_KEY"):
+            _check_backend()
 
 
 def test_preflight_catches_cli_error():
@@ -158,13 +187,19 @@ def test_preflight_gate_yaml_missing_raises():
 
 
 def test_preflight_gate_yaml_exists_proceeds():
-    mock_cfg = MagicMock()
+    from code_forge.backend import BackendConfig
+
+    cfg = BackendConfig(
+        name="deepseek", type="api", model="m", format="openai",
+        base_url="http://x", api_key_env="DEEPSEEK_API_KEY",
+    )
     with (
         patch.object(Path, "exists", return_value=True),
         patch(
             "code_forge.cli._load_gate_backends",
-            return_value=([mock_cfg], {"backends": {"deepseek": {}}}),
+            return_value=([cfg], {"backends": {"deepseek": {}}}),
         ),
+        patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-fake"}),
     ):
         _check_backend()  # no exception
 
@@ -206,11 +241,32 @@ async def test_run_cli_budgeted_inline_returns_tuple():
     ):
         result = await _run_cli_budgeted("review", "--no-color", budget=5.0)
         assert isinstance(result, tuple)
-        assert len(result) == 3
-        stdout, exit_code, elapsed = result
+        assert len(result) == 4
+        stdout, exit_code, elapsed, stderr = result
         assert stdout == "findings"
         assert exit_code == 1
         assert isinstance(elapsed, float)
+        assert stderr == ""
+
+
+@pytest.mark.asyncio
+async def test_run_cli_budgeted_captures_stderr():
+    """N1: stderr must be captured, not discarded."""
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(
+        return_value=(b"", b"CliError: no backend configured\n")
+    )
+    mock_proc.returncode = 2
+    with patch(
+        "code_forge.mcp_server.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+        return_value=mock_proc,
+    ):
+        result = await _run_cli_budgeted("review", budget=5.0)
+        stdout, exit_code, elapsed, stderr = result
+        assert stdout == ""
+        assert exit_code == 2
+        assert stderr == "CliError: no backend configured\n"
 
 
 @pytest.mark.asyncio
@@ -282,6 +338,22 @@ def test_make_result_returns_call_tool_result():
     assert result.structuredContent["findings_count"] is None
 
 
+def test_make_result_merges_stderr_on_nonzero_exit():
+    """N1: non-zero exit must surface stderr so the caller can diagnose."""
+    result = _make_result("", 2, 1.0, stderr="CliError: no backend\n")
+    text = result.content[0].text
+    assert "--- stderr ---" in text
+    assert "CliError: no backend" in text
+    assert result.structuredContent["output"] == text
+
+
+def test_make_result_omits_stderr_on_zero_exit():
+    """Zero exit = success; stderr (warnings) should not pollute output."""
+    result = _make_result("all good", 0, 1.0, stderr="deprecation warning\n")
+    assert "stderr" not in result.content[0].text
+    assert result.structuredContent["output"] == "all good"
+
+
 def test_make_simple_result_returns_call_tool_result():
     result = _make_simple_result("ok", 0)
     assert isinstance(result, CallToolResult)
@@ -300,7 +372,7 @@ async def test_forge_review_calls_preflight_then_cli():
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
-            return_value=("output", 0, 1.5),
+            return_value=("output", 0, 1.5, ""),
         ) as mock_cli,
     ):
         mock_check.return_value = Path("/tmp/fake")
@@ -333,7 +405,7 @@ async def test_forge_review_with_valid_backend():
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
-            return_value=("output", 0, 1.0),
+            return_value=("output", 0, 1.0, ""),
         ) as mock_cli,
     ):
         result = await forge_review(backend="mimo-pro")
@@ -353,7 +425,7 @@ async def test_forge_review_with_contract_writes_tempfile():
             if a == "--contract" and i + 1 < len(args):
                 written_path = args[i + 1]
                 break
-        return ("output", 0, 1.0)
+        return ("output", 0, 1.0, "")
 
     with (
         patch("code_forge.mcp_server._check_backend"),
@@ -424,7 +496,7 @@ async def test_forge_gate_check_calls_preflight():
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
-            return_value=("ok", 0, 0.5),
+            return_value=("ok", 0, 0.5, ""),
         ) as mock_cli,
     ):
         result = await forge_gate_check()
@@ -441,7 +513,7 @@ async def test_forge_gate_check_with_baseline():
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
-            return_value=("ok", 0, 0.5),
+            return_value=("ok", 0, 0.5, ""),
         ) as mock_cli,
     ):
         await forge_gate_check(baseline="HEAD~3")
@@ -584,7 +656,7 @@ async def test_dispatch_sampling_recoverable_kind_falls_back(kind):
     with p1, p2, p3, p4, patch(
         "code_forge.mcp_server._run_cli_budgeted",
         new_callable=AsyncMock,
-        return_value=("fallback ran", 0, 1.0),
+        return_value=("fallback ran", 0, 1.0, ""),
     ) as mock_cli:
         result = await _dispatch_sampling(
             session=MagicMock(), committed=False

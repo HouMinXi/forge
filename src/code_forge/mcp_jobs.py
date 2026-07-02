@@ -126,13 +126,13 @@ async def _wait_for_job(job_id: str) -> None:
     if entry is None:
         return
     try:
-        stdout_bytes, _ = await entry["comm_task"]
+        stdout_bytes, stderr_bytes = await entry["comm_task"]
         proc = entry["proc"]
         exit_code = proc.returncode if proc.returncode is not None else -1
         entry["status"] = "completed"
         entry["result"] = {
             "stdout": stdout_bytes.decode(errors="replace"),
-            "stderr": "",
+            "stderr": stderr_bytes.decode(errors="replace"),
             "exit_code": exit_code,
             "verdict": exit_to_verdict(exit_code),
         }
