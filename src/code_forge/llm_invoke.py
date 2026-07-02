@@ -876,14 +876,33 @@ def _invoke_openai(
 
     # Extract content and usage from OpenAI response structure
     try:
-        content = resp_data["choices"][0]["message"]["content"]
+        choice = resp_data["choices"][0]
+        content = choice["message"]["content"]
         usage_data = resp_data.get("usage", {})
-        return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.format,
             retryable=False,
         ) from exc
+
+    # Truncation detection: openai format uses finish_reason == "length"
+    # when the response hit max_tokens / max_completion_tokens.  Same
+    # pattern as the anthropic path (stop_reason == "max_tokens") and
+    # the sampling path (stopReason == "maxTokens") -- all three now
+    # raise kind="truncated" so _dispatch_sampling routes them uniformly.
+    finish = choice.get("finish_reason", "")
+    if finish == "length":
+        in_tok = usage_data.get("prompt_tokens", "?")
+        out_tok = usage_data.get("completion_tokens", "?")
+        raise LLMInvokeError(
+            "%s backend response truncated (finish_reason=length, "
+            "input=%s output=%s, configured max_tokens=%s). "
+            "Increase max_tokens in gate.yaml or reduce diff size."
+            % (backend.name, in_tok, out_tok, backend.max_tokens),
+            kind="truncated",
+        )
+
+    return (content, usage_data)
 
 
 def _invoke_anthropic(
@@ -947,12 +966,31 @@ def _invoke_anthropic(
             raise KeyError("no text block in content")
         content = text_blocks[0]["text"]
         usage_data = resp_data.get("usage", {})
-        return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.format,
             retryable=False,
         ) from exc
+
+    # Truncation detection: anthropic format uses stop_reason == "max_tokens"
+    # when the response hit the output cap.  Thinking tokens (if enabled)
+    # count against max_tokens, so a large diff + thinking can exhaust the
+    # budget before the JSON content is complete.  Detect this before the
+    # caller attempts JSON parsing -- a truncated JSON always fails parse,
+    # and "not valid JSON" hides the real cause from the user.
+    stop = resp_data.get("stop_reason", "")
+    if stop == "max_tokens":
+        in_tok = usage_data.get("input_tokens", "?")
+        out_tok = usage_data.get("output_tokens", "?")
+        raise LLMInvokeError(
+            "%s backend response truncated (stop_reason=max_tokens, "
+            "input=%s output=%s, configured max_tokens=%s). "
+            "Increase max_tokens in gate.yaml or reduce diff size."
+            % (backend.name, in_tok, out_tok, backend.max_tokens),
+            kind="truncated",
+        )
+
+    return (content, usage_data)
 
 
 def _build_vertex_url(project_id: str, region: str = "global", model: str = "") -> str:
@@ -1082,12 +1120,26 @@ def _invoke_vertex(
             raise KeyError("no text block in content")
         content = text_blocks[0]["text"]
         usage_data = resp_data.get("usage", {})
-        return (content, usage_data)
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from vertex backend",
             retryable=False,
         ) from exc
+
+    # Vertex uses anthropic response format: same stop_reason field.
+    stop = resp_data.get("stop_reason", "")
+    if stop == "max_tokens":
+        in_tok = usage_data.get("input_tokens", "?")
+        out_tok = usage_data.get("output_tokens", "?")
+        raise LLMInvokeError(
+            "vertex backend response truncated (stop_reason=max_tokens, "
+            "input=%s output=%s, configured max_tokens=%s). "
+            "Increase max_tokens in gate.yaml or reduce diff size."
+            % (in_tok, out_tok, backend.max_tokens),
+            kind="truncated",
+        )
+
+    return (content, usage_data)
 
 
 async def invoke_sampling(
