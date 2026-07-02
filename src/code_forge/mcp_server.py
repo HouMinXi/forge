@@ -120,23 +120,23 @@ def _check_backend() -> None:
                 "set FORGE_PROJECT_DIR in the MCP server env)"
                 % (gate_yaml_path, _WORKSPACE)
             )
-        # Early check: key env vars must be present in THIS process.
-        # The subprocess inherits our env, so a key exported after
-        # the MCP server started is invisible here and there.
-        missing = [
-            cfg.api_key_env
-            for cfg in backend_configs
-            if cfg.api_key_env and not os.environ.get(cfg.api_key_env)
-        ]
-        if missing:
-            raise ToolError(
-                "API key env var(s) not set in the MCP server process: "
-                "%s. Set them in the MCP server config env block (or the "
-                "wrapper script), then restart the MCP server."
-                % ", ".join(missing)
-            )
     except (CliError, ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
+
+    # Key env check: outside the gate.yaml-parsing try/except so a
+    # future CliError addition to the except clause cannot swallow it.
+    missing = [
+        cfg.api_key_env
+        for cfg in backend_configs
+        if cfg.api_key_env and not os.environ.get(cfg.api_key_env)
+    ]
+    if missing:
+        raise ToolError(
+            "API key env var(s) not set in the MCP server process: "
+            "%s. Set them in the MCP server config env block (or the "
+            "wrapper script), then restart the MCP server."
+            % ", ".join(missing)
+        )
 
 
 # -- CLI runner helpers --
@@ -162,7 +162,7 @@ async def _run_cli_simple(*args: str) -> tuple[str, str, int]:
 async def _run_cli_budgeted(
     *args: str,
     budget: float = 20.0,
-) -> tuple[str, int, float] | tuple[asyncio.Task[Any], asyncio.subprocess.Process]:
+) -> tuple[str, int, float, str] | tuple[asyncio.Task[Any], asyncio.subprocess.Process]:
     """Run CLI with a time budget. Returns inline result or (task, proc) on timeout.
 
     On timeout the inner_task (wrapping proc.communicate()) survives via
