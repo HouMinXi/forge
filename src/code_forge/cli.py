@@ -1723,6 +1723,16 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     # outlet == "subprocess" (Outlet A): fall through to review pipeline
 
+    # Fast-fail: verify the selected backend's API key is available
+    # before entering the review state machine.  Without this, each of
+    # the 3 passes independently discovers the missing key, producing 3
+    # identical INFRA findings instead of one clear error at startup.
+    if backend.format != "vertex" and backend.api_key_env:
+        if not os.environ.get(backend.api_key_env):
+            raise CliError(
+                "API key env var %r is not set" % backend.api_key_env
+            )
+
     state_dir = cwd / ".code-forge"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / "state.json"
