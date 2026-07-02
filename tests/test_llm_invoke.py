@@ -1881,28 +1881,26 @@ class TestReadSSE:
         assert "error" in result
 
     def test_stream_on_anthropic_raises(self):
+        from code_forge.llm_invoke import _invoke_anthropic
+
         backend = BackendConfig(
             name="mm", type="api", model="m", format="anthropic",
             base_url="http://x", api_key_env="K", stream=True,
         )
-        with pytest.raises(CliError, match="streaming"):
-            # The check happens in _invoke_anthropic, simulated here
-            if backend.stream:
-                raise CliError(
-                    "streaming not supported for %s format" % backend.format
-                )
+        # Call the real function: the guard fires before any network I/O.
+        with pytest.raises(CliError, match="streaming not supported"):
+            _invoke_anthropic("p", backend, api_key="k", timeout_s=1)
 
     def test_stream_on_vertex_raises(self):
+        from code_forge.llm_invoke import _invoke_vertex
+
         backend = BackendConfig(
             name="v", type="api", model="m", format="vertex",
             base_url=None, api_key_env=None,
             project_id="p", stream=True,
         )
-        with pytest.raises(CliError, match="streaming"):
-            if backend.stream:
-                raise CliError(
-                    "streaming not supported for %s format" % backend.format
-                )
+        with pytest.raises(CliError, match="streaming not supported"):
+            _invoke_vertex("p", backend, timeout_s=1)
 
 
 # -- Wave 5: CLI backend env tests ------------------------------------

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from .backend import BackendConfig, DEFAULT_BACKEND
+from .errors import CliError
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class LLMInvokeError(Exception):
         is_timeout: bool = False,
         retryable: bool = True,
         retry_after: float | None = None,
+        kind: str = "",
     ):
         super().__init__(message)
         self.exit_code = exit_code
@@ -62,6 +64,12 @@ class LLMInvokeError(Exception):
         self.is_timeout = is_timeout
         self.retryable = retryable
         self.retry_after = retry_after
+        # Machine-readable failure class for dispatch decisions.
+        # invoke_sampling sets one of: "truncated", "empty", "stub_model",
+        # "no_json". Matching on kind (not message text) keeps the MCP
+        # fallback routing immune to message rewording and to model output
+        # that happens to contain a keyword.
+        self.kind = kind
 
 
 DEFAULT_TIMEOUT_S = 120  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
@@ -1115,11 +1123,6 @@ async def invoke_sampling(
     elapsed = time.time() - t0
 
     # content is Union[TextContent, ImageContent, AudioContent]
-    import sys as _sys
-    print("invoke_sampling: result.model=%r stopReason=%r content_type=%s" % (
-        getattr(result, 'model', '?'), getattr(result, 'stopReason', '?'),
-        type(result.content).__name__), file=_sys.stderr)
-    print("invoke_sampling: result.content=%r" % (result.content,), file=_sys.stderr)
     if isinstance(result.content, MCPTextContent):
         raw_text = result.content.text
     else:
@@ -1135,6 +1138,7 @@ async def invoke_sampling(
             "Set outlet: subprocess in gate.yaml and configure an API backend."
             % (result_model or '?', getattr(result, 'stopReason', '?')),
             duration_s=elapsed,
+            kind="empty",
         )
 
     # copilotcli/auto and similar stub models return syntactically valid
@@ -1145,32 +1149,32 @@ async def invoke_sampling(
             "generate review content. Upgrade to Copilot Pro or set "
             "outlet: subprocess with an API backend." % result_model,
             duration_s=elapsed,
+            kind="stub_model",
         )
 
     # Only maxTokens is true truncation. stopSequence/toolUse are normal completions.
     # Check truncation BEFORE JSON parse: truncated output is almost always
-    # invalid JSON, and raising "no valid JSON" would bypass the truncation
-    # fallback path in build_sampling_l1_provider (the string check looks
-    # for "truncated" in the exception message).
+    # invalid JSON, and kind="truncated" (not "no_json") tells
+    # _dispatch_sampling the real failure class.
     if result.stopReason == "maxTokens":
         raise LLMInvokeError(
             "sampling response truncated (stopReason == maxTokens)",
             duration_s=elapsed,
+            kind="truncated",
         )
 
     # Parse JSON same as _invoke_api path
-    import sys as _sys
-    print("invoke_sampling: raw_text[:500]=%r" % raw_text[:500], file=_sys.stderr)
     text = _strip_fences(raw_text)
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, TypeError):
         parsed = _extract_json_from_text(raw_text)
         if parsed is None:
-            print("invoke_sampling: JSON extraction failed, full=%r" % raw_text[:1000], file=_sys.stderr)
             raise LLMInvokeError(
-                "sampling response contains no valid JSON",
+                "sampling response contains no valid JSON "
+                "(first 120 chars: %r)" % raw_text[:120],
                 duration_s=elapsed,
+                kind="no_json",
             )
 
     return LLMResult(

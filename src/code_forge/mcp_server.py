@@ -114,8 +114,11 @@ def _check_backend() -> None:
         backend_configs, _ = cli._load_gate_backends(gate_yaml_path)
         if not backend_configs:
             raise ToolError(
-                "No trusted review backend configured. "
-                "Run 'code-forge trust' then restart the MCP server."
+                "No review backends configured in %s. Add a 'backends:' "
+                "entry there, or set 'outlet: sampling' to review with "
+                "the IDE's own model. (workspace: %s -- wrong project? "
+                "set FORGE_PROJECT_DIR in the MCP server env)"
+                % (gate_yaml_path, _WORKSPACE)
             )
     except (CliError, ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
@@ -306,8 +309,9 @@ async def _dispatch_sampling(
     """Run forge review in-process via MCP sampling transport.
 
     Builds review context, constructs StateMachine with sampling l1_provider,
-    runs machine.run() in a worker thread. On truncation, falls back to
-    CLI subprocess if a backend is available.
+    runs machine.run() in a worker thread. On a recoverable sampling
+    failure (LLMInvokeError.kind in truncated/empty/stub_model/no_json),
+    falls back to CLI subprocess if a backend is available.
     """
     from code_forge.factories import (
         build_autofixer,
@@ -365,10 +369,11 @@ async def _dispatch_sampling(
         verdict = await asyncio.to_thread(_run_locked)
     except LLMInvokeError as exc:
         # _backend_names: module-level list populated in lifespan() from gate.yaml backends
-        exc_str = str(exc)
-        _can_fallback = any(k in exc_str for k in (
-            "truncated", "empty", "copilotcli", "no valid JSON",
-        ))
+        # kind is set by invoke_sampling for the recoverable failure
+        # classes; anything else (unknown kind) is not fallback-eligible.
+        _can_fallback = exc.kind in (
+            "truncated", "empty", "stub_model", "no_json",
+        )
         if _can_fallback and (backend_name or _backend_names):
             # sampling failed -- fall back to CLI subprocess backend
             # MUST force --outlet subprocess to prevent infinite loop when
@@ -379,8 +384,9 @@ async def _dispatch_sampling(
             # raise clear error instead of broken CLI call.
             if staged:
                 raise ToolError(
-                    "Sampling truncated during gate-check. "
-                    "Configure an API backend for gate-check fallback."
+                    "Sampling failed during gate-check (%s). "
+                    "Run gate-check via the CLI with a configured "
+                    "backend instead." % (exc.kind or exc)
                 )
             cli_args = ["review", "--no-color", "--backend", fallback_backend,
                         "--outlet", "subprocess"]
@@ -579,9 +585,27 @@ async def forge_trust() -> CallToolResult:
     ),
 )
 async def forge_resolve_outlet() -> CallToolResult:
-    """Diagnose backend routing."""
+    """Diagnose backend routing.
+
+    Appends the resolved workspace, gate.yaml path, and backend names so
+    a wrong-workspace resolution (e.g. a stale ~/.code-forge shadowing
+    the real project) is visible in the diagnostic itself.
+    """
     stdout, stderr, exit_code = await _run_cli_simple("resolve-outlet")
-    return _make_simple_result(stdout, exit_code, stderr)
+    gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
+    gate_desc = (
+        str(gate_yaml_path)
+        if gate_yaml_path.exists()
+        else "%s (not found)" % gate_yaml_path
+    )
+    context = "workspace: %s\ngate.yaml: %s\nbackends: %s\n" % (
+        _WORKSPACE,
+        gate_desc,
+        ", ".join(_backend_names) if _backend_names else "(none)",
+    )
+    return _make_simple_result(
+        stdout.rstrip("\n") + "\n" + context, exit_code, stderr
+    )
 
 
 @mcp.tool(

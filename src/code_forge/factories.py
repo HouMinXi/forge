@@ -460,12 +460,17 @@ def build_sampling_l1_provider(
         resolved: Resolved review with git_diff.
         (remaining args same as build_l1_provider)
     """
+    import asyncio as _aio
+    import sys as _sys
+
+    from .disposition import Disposition
     from .llm_invoke import LLMInvokeError, Usage, invoke_sampling
     from .reviewer_json import (
         _collect_excerpts,
         _json_to_state_findings,
         validate_reviewer_json,
     )
+    from .state import StateFinding
 
     def _provider() -> tuple:
         diff_text = resolved.git_diff or ""
@@ -507,13 +512,8 @@ def build_sampling_l1_provider(
                 prompt += "\n## Contract Reference\n" + contract_spec + "\n"
             prompt += "\nDiff:\n" + diff_text
 
-            from .llm_invoke import LLMInvokeError
-
+            future = None
             try:
-                import sys as _sys
-                import asyncio as _aio
-                from .disposition import Disposition
-                from .state import StateFinding
                 coro = invoke_sampling(
                     session, prompt, max_tokens=16384, temperature=0.0,
                     system_prompt=(
@@ -529,16 +529,21 @@ def build_sampling_l1_provider(
                 # (stopReason == maxTokens) before returning, so
                 # result.is_truncated is always False here.
                 response = result.content
-            except LLMInvokeError as exc:
-                if "truncated" in str(exc):
-                    raise  # only re-raise truncation; JSON errors become INFRA findings
-                print("code-forge: L1 sampling pass '%s' LLM error: %s" % (pass_name, exc), file=_sys.stderr)
+            except LLMInvokeError:
+                # Propagate every LLM-level failure (truncation, empty
+                # response, stub model, no valid JSON). These repeat on
+                # every pass, so converting them to per-pass INFRA
+                # findings would burn the remaining passes for nothing.
+                # _dispatch_sampling routes them to the subprocess
+                # fallback or a ToolError with remediation.
+                raise
             except Exception as exc:
-                import traceback as _tb
-                # Cancel the coroutine on timeout to avoid resource leak
-                future.cancel()
+                # Cancel the coroutine on timeout to avoid resource leak.
+                # future stays None when run_coroutine_threadsafe itself
+                # failed (e.g. closed loop) -- nothing to cancel then.
+                if future is not None:
+                    future.cancel()
                 print("code-forge: L1 sampling pass '%s' UNEXPECTED: %s: %s" % (pass_name, type(exc).__name__, exc), file=_sys.stderr)
-                _tb.print_exc(file=_sys.stderr)
                 all_candidates.append(StateFinding(
                     id="l1-%s-invoke-fail" % pass_name,
                     fingerprint="invoke-fail-%s" % pass_name,
@@ -553,8 +558,6 @@ def build_sampling_l1_provider(
             try:
                 validated = validate_reviewer_json(response)
             except ValueError as exc:
-                from .disposition import Disposition
-                from .state import StateFinding
                 all_candidates.append(StateFinding(
                     id="l1-%s-schema-fail" % pass_name,
                     fingerprint="schema-fail-%s" % pass_name,
@@ -609,8 +612,6 @@ def build_sampling_l1_provider(
                     desc_files = ", ".join(uncovered[:3])
                     if len(uncovered) > 3:
                         desc_files += " (and %d more)" % (len(uncovered) - 3)
-                    from .disposition import Disposition
-                    from .state import StateFinding
                     all_candidates.append(StateFinding(
                         id="l1-%s-incomplete-coverage" % pass_name,
                         fingerprint="incomplete-coverage-%s" % pass_name,

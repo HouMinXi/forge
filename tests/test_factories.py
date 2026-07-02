@@ -778,3 +778,33 @@ class TestBuildSamplingL1Provider:
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(LLMInvokeError, match="truncated"):
                 provider()
+
+    def test_build_sampling_l1_provider_empty_response_propagates(self):
+        """Non-truncation LLM failures (empty response, stub model, no
+        valid JSON) must propagate to the caller, not be swallowed.
+
+        A non-truncation LLMInvokeError used to be swallowed into a
+        per-pass INFRA finding and the loop continued to the next pass,
+        so the provider returned normally instead of raising -- the MCP
+        layer never saw the failure and could not fall back to a
+        subprocess backend.
+        """
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+        from unittest.mock import patch, MagicMock
+        import concurrent.futures
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        session = MagicMock()
+        loop = MagicMock()
+
+        future = concurrent.futures.Future()
+        future.set_exception(LLMInvokeError(
+            "sampling response is empty (model=?, stopReason=?)"
+        ))
+
+        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+            provider = build_sampling_l1_provider(session, loop, resolved)
+            with pytest.raises(LLMInvokeError, match="empty"):
+                provider()
