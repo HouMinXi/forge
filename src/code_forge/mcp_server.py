@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import logging
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -33,6 +34,8 @@ from code_forge.mcp_jobs import (
     get_job,
     start_job,
 )
+
+log = logging.getLogger(__name__)
 
 # -- workspace resolution (ADR-0006) --
 
@@ -110,6 +113,7 @@ def _check_backend() -> None:
     from code_forge import cli
     from code_forge.errors import CliError
 
+    backend_configs: list = []  # list[BackendConfig] after _load_gate_backends
     try:
         backend_configs, _ = cli._load_gate_backends(gate_yaml_path)
         if not backend_configs:
@@ -123,8 +127,8 @@ def _check_backend() -> None:
     except (CliError, ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
 
-    # Key env check: outside the gate.yaml-parsing try/except so a
-    # future CliError addition to the except clause cannot swallow it.
+    # Key env check: kept outside the try/except above so a future
+    # broad except clause cannot accidentally swallow the ToolError.
     missing = [
         cfg.api_key_env
         for cfg in backend_configs
@@ -159,6 +163,22 @@ async def _run_cli_simple(*args: str) -> tuple[str, str, int]:
     )
 
 
+
+async def _kill_and_reap(
+    proc: asyncio.subprocess.Process,
+    task: asyncio.Task,
+) -> None:
+    """Best-effort subprocess cleanup.  Never raises."""
+    task.cancel()
+    if proc.returncode is not None:
+        return
+    proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except BaseException:
+        log.warning("proc reap timed out after SIGKILL")
+
+
 async def _run_cli_budgeted(
     *args: str,
     budget: float = 20.0,
@@ -191,8 +211,7 @@ async def _run_cli_budgeted(
     except asyncio.TimeoutError:
         return (inner_task, proc)
     except asyncio.CancelledError:
-        proc.kill()
-        inner_task.cancel()
+        await _kill_and_reap(proc, inner_task)
         raise
 
 
@@ -424,10 +443,10 @@ async def _dispatch_sampling(
                 cli_args.append("--committed")
             result = await _run_cli_budgeted(*cli_args)
             if isinstance(result[0], str):
-                stdout, exit_code, elapsed, stderr = result
+                stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
                 return _make_result(stdout, exit_code, elapsed, stderr)
             else:
-                inner_task, proc = result
+                inner_task, proc = result  # type: ignore[misc]
                 job_id = start_job(inner_task, proc)
                 return _make_job_ref(job_id)
         elif _can_fallback:

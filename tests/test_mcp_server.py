@@ -300,9 +300,11 @@ async def test_run_cli_budgeted_timeout_returns_task_and_proc():
 
 @pytest.mark.asyncio
 async def test_run_cli_budgeted_cancelled_kills_proc():
+    """CancelledError triggers _kill_and_reap: kill + cancel task."""
     mock_proc = MagicMock()
     mock_proc.kill = MagicMock()
     mock_proc.returncode = None
+    mock_proc.wait = AsyncMock()
 
     async def _slow():
         await asyncio.sleep(100)
@@ -324,6 +326,21 @@ async def test_run_cli_budgeted_cancelled_kills_proc():
     with pytest.raises(asyncio.CancelledError):
         await task
     mock_proc.kill.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_kill_and_reap_already_exited_skips_kill():
+    """If proc already exited, _kill_and_reap is a no-op."""
+    from code_forge.mcp_server import _kill_and_reap
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0  # already exited
+    mock_proc.kill = MagicMock()
+    mock_task = MagicMock()
+
+    await _kill_and_reap(mock_proc, mock_task)
+    mock_task.cancel.assert_called_once()
+    mock_proc.kill.assert_not_called()
 
 
 # -- result formatting --
