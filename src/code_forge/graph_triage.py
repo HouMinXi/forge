@@ -77,6 +77,30 @@ def _parse_diff_files(diff_text: str) -> list[str]:
 # Backend detection
 # ---------------------------------------------------------------------------
 
+
+def _sem_has_index(sem_path: str, repo_root: Path) -> bool:
+    """Probe whether sem has an index for this repo (short timeout).
+
+    Runs a cheap sem diff with empty input.  If sem has no index it hangs
+    or returns an error; a 3-second timeout catches both.  This prevents
+    the N x 15s hang when sem is in PATH but the repo was never indexed.
+    """
+    try:
+        result = subprocess.run(
+            [sem_path, "diff", "--patch", "--json"],
+            input="",
+            capture_output=True,
+            text=True,
+            timeout=3,
+            cwd=str(repo_root),
+        )
+        # sem exits 0 with empty JSON array when indexed but no changes.
+        # Any non-zero exit or timeout means no usable index.
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def _detect_backend(
     repo_root: Path,
     gate_config: dict,
@@ -102,9 +126,12 @@ def _detect_backend(
     if isinstance(gt_section, dict) and gt_section.get("enabled") is False:
         return None
 
-    # Prefer sem CLI.
+    # Prefer sem CLI -- but only if this repo is actually indexed.
+    # shutil.which alone is not enough: sem in PATH with no index for
+    # this repo causes every _get_sem_impact call to hang for 15s,
+    # multiplied by entity count.
     sem_path = shutil.which("sem")
-    if sem_path is not None:
+    if sem_path is not None and _sem_has_index(sem_path, repo_root):
         return ("sem", sem_path)
 
     # gate.yaml db_path.
@@ -212,7 +239,11 @@ def _get_sem_impact(
         if result.returncode != 0:
             return fallback
         return json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+    except subprocess.TimeoutExpired:
+        # Distinguishable from "indexed but zero impact": the caller
+        # uses _timed_out to trip the circuit breaker.
+        return {**fallback, "_timed_out": True}
+    except (json.JSONDecodeError, OSError):
         return fallback
 
 
@@ -437,13 +468,24 @@ class GraphTriageRunner:
         if not diff_text or not diff_text.strip():
             return []
 
-        # Load gate config.
+        # Load gate config.  Errors must not be silently swallowed --
+        # a ValueError from load_gate_config (e.g. missing required
+        # section) would discard the entire config including
+        # graph_triage.enabled: false, causing the backend auto-detect
+        # to re-enable a subsystem the user explicitly disabled.
         gate_config: dict = {}
         gate_path = repo_root / ".code-forge" / "gate.yaml"
         try:
             from .gate_check import load_gate_config
             gate_config = load_gate_config(gate_path)
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError:
+            gate_config = {}
+        except (ValueError, OSError) as exc:
+            print(
+                "GraphTriageRunner: gate.yaml load failed at %s: %s "
+                "(graph_triage settings ignored)" % (gate_path, exc),
+                file=sys.stderr,
+            )
             gate_config = {}
 
         # Detect backend.
@@ -488,6 +530,10 @@ class GraphTriageRunner:
             return []
 
         # Filter unnamed entities + collect impact.
+        # Circuit breaker: if any entity's impact call TIMES OUT
+        # (_timed_out marker from _get_sem_impact), sem has no usable
+        # index for this repo.  Skip all remaining entities instead of
+        # accumulating N x 15s hangs.
         ranked: list[dict] = []
         for entity in entities:
             name = entity.get("entityName", "")
@@ -496,6 +542,16 @@ class GraphTriageRunner:
 
             file_path = entity.get("filePath", "")
             impact = _get_sem_impact(name, file_path, repo_root)
+
+            if impact.get("_timed_out"):
+                print(
+                    "GraphTriageRunner: sem impact timed out for %r "
+                    "-- disabling for this run (repo may not be indexed)"
+                    % name,
+                    file=sys.stderr,
+                )
+                self._cached_findings = []
+                return []
 
             total = impact.get("impact", {}).get("total", 0)
             if total <= 0:
