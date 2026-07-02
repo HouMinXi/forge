@@ -600,6 +600,7 @@ class TestInlineFlagsMutualExclusion:
         """All 4 inline flags produce a transient BackendConfig used for the call."""
         repo = _setup_git_repo_with_diff(tmp_path)
         captured_backend = {}
+        monkeypatch.setenv("EXAMPLE_API_KEY", "sk-test-fake")
 
         def fake_build_l1_provider(engine, resolved, backend=None, **kwargs):
             captured_backend["backend"] = backend
@@ -654,6 +655,7 @@ class TestLLMInvokeErrorWrapping:
         from code_forge.llm_invoke import LLMInvokeError
 
         repo = _setup_git_repo_with_diff(tmp_path)
+        monkeypatch.setenv("EXAMPLE_API_KEY", "sk-test-fake")
         monkeypatch.setattr(
             sys, "argv",
             [
