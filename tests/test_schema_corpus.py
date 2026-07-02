@@ -475,10 +475,20 @@ def test_invalid_presubmit_missing_required(
 # ===========================================================================
 
 
+def test_outlet_sampling_accepted_by_schema() -> None:
+    """'sampling' is a canonical outlet value (MCP only) -- schema and
+    resolver must both accept it, or the documented gate.yaml config
+    (outlet: sampling) shows editor validation errors."""
+    _schema_validate({"outlet": "sampling"})
+
+    result = resolve_outlet(env={}, cli_value="sampling")
+    assert result == "sampling"
+
+
 def test_loader_only_outlet_cli_alias() -> None:
     """outlet: cli is deprecated alias for subprocess.
 
-    (a) Schema rejects 'cli' (not in enum [subprocess, inline, subagent]).
+    (a) Schema rejects 'cli' (not a canonical enum value).
     (b) resolve_outlet maps 'cli' -> 'subprocess' via the deprecated alias dict.
     (c) load_gate_config ignores the outlet field entirely -- the unknown value
         is silently tolerated (gate_check.py is outlet-agnostic). Assertion (c)
@@ -487,7 +497,14 @@ def test_loader_only_outlet_cli_alias() -> None:
     with pytest.raises(jsonschema.ValidationError):
         _schema_validate({"outlet": "cli"})
 
-    result = resolve_outlet(env={}, cli_value="cli")
+    from code_forge.backend import BackendConfig
+
+    dummy_cfg = BackendConfig(
+        name="stub", type="cli", model="", format="",
+        base_url="", api_key_env="", command="",
+        default=False, max_tokens=0,
+    )
+    result = resolve_outlet(env={}, cli_value="cli", configs=[dummy_cfg])
     assert result == "subprocess"
 
     assert _loader_accepts(VALID_YAML_WITH_TEST + "\noutlet: cli\n") is True

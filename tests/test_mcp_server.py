@@ -73,7 +73,26 @@ def test_preflight_empty_backends_raises_tool_error():
         patch.object(Path, "exists", return_value=True),
         patch("code_forge.cli._load_gate_backends", return_value=([], {})),
     ):
-        with pytest.raises(ToolError, match="No trusted review backend"):
+        with pytest.raises(ToolError, match="No review backends configured in"):
+            _check_backend()
+
+
+def test_preflight_empty_backends_names_workspace():
+    """The zero-backend error must say WHICH gate.yaml/workspace it read,
+    so a wrong-workspace resolution (stale ~/.code-forge) is diagnosable."""
+    import re
+
+    from code_forge import mcp_server
+
+    with (
+        patch.object(Path, "exists", return_value=True),
+        patch("code_forge.cli._load_gate_backends", return_value=([], {})),
+    ):
+        with pytest.raises(ToolError, match="FORGE_PROJECT_DIR"):
+            _check_backend()
+        with pytest.raises(
+            ToolError, match=re.escape(str(mcp_server._WORKSPACE))
+        ):
             _check_backend()
 
 
@@ -505,6 +524,128 @@ async def test_forge_resolve_outlet_readonly():
         result = await forge_resolve_outlet()
         args = mock_cli.call_args[0]
         assert "resolve-outlet" in args
+
+
+@pytest.mark.asyncio
+async def test_forge_resolve_outlet_appends_workspace_context():
+    """Diagnostic output names the workspace, gate.yaml, and backends so a
+    wrong-workspace resolution is visible without further digging."""
+    with patch(
+        "code_forge.mcp_server._run_cli_simple",
+        new_callable=AsyncMock,
+        return_value=("subprocess", "", 0),
+    ):
+        result = await forge_resolve_outlet()
+        text = result.structuredContent["output"]
+        assert "subprocess" in text
+        assert "workspace:" in text
+        assert "gate.yaml:" in text
+        assert "backends:" in text
+
+
+# -- _dispatch_sampling fallback routing (by LLMInvokeError.kind) --
+
+
+def _sampling_dispatch_patches(kind: str, backend_names: list):
+    """Patches to drive _dispatch_sampling into its except-LLMInvokeError
+    branch with a given failure kind, without a real session or machine."""
+    from code_forge.llm_invoke import LLMInvokeError
+
+    resolved = MagicMock(git_diff="diff --git a/f b/f", mode_hint="git")
+    return (
+        patch(
+            "code_forge.mcp_server._build_review_context",
+            return_value=(resolved, "hash", "repr"),
+        ),
+        patch("code_forge.machine.StateMachine", MagicMock()),
+        patch(
+            "code_forge.mcp_server.asyncio.to_thread",
+            new_callable=AsyncMock,
+            side_effect=LLMInvokeError("sampling failed", kind=kind),
+        ),
+        patch.object(
+            __import__("code_forge.mcp_server", fromlist=["x"]),
+            "_backend_names",
+            backend_names,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind", ["truncated", "empty", "stub_model", "no_json"]
+)
+async def test_dispatch_sampling_recoverable_kind_falls_back(kind):
+    """Every recoverable failure kind routes to the subprocess fallback
+    when a backend is configured (was truncation-only before)."""
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, p3, p4 = _sampling_dispatch_patches(kind, ["deepseek"])
+    with p1, p2, p3, p4, patch(
+        "code_forge.mcp_server._run_cli_budgeted",
+        new_callable=AsyncMock,
+        return_value=("fallback ran", 0, 1.0),
+    ) as mock_cli:
+        result = await _dispatch_sampling(
+            session=MagicMock(), committed=False
+        )
+    args = mock_cli.call_args[0]
+    assert "--outlet" in args and "subprocess" in args
+    assert "--backend" in args and "deepseek" in args
+    assert isinstance(result, CallToolResult)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sampling_recoverable_kind_no_backend_remediates():
+    """Recoverable failure with NO backend raises ToolError that names
+    the gate.yaml remediation instead of a bare error."""
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, p3, p4 = _sampling_dispatch_patches("empty", [])
+    with p1, p2, p3, p4:
+        with pytest.raises(ToolError, match="Configure an API backend"):
+            await _dispatch_sampling(session=MagicMock(), committed=False)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sampling_unknown_kind_never_falls_back():
+    """An LLMInvokeError without a recoverable kind must NOT consume the
+    subprocess fallback (kind routing, not message-text matching)."""
+    from code_forge.mcp_server import _dispatch_sampling
+
+    # Message contains the words "empty" and "truncated" -- under the old
+    # substring matching this would have falsely triggered the fallback.
+    from code_forge.llm_invoke import LLMInvokeError
+
+    p1, p2, _, p4 = _sampling_dispatch_patches("", ["deepseek"])
+    p3 = patch(
+        "code_forge.mcp_server.asyncio.to_thread",
+        new_callable=AsyncMock,
+        side_effect=LLMInvokeError(
+            "backend returned an empty truncated response"
+        ),
+    )
+    with p1, p2, p3, p4, patch(
+        "code_forge.mcp_server._run_cli_budgeted",
+        new_callable=AsyncMock,
+    ) as mock_cli:
+        with pytest.raises(ToolError, match="Sampling failed"):
+            await _dispatch_sampling(session=MagicMock(), committed=False)
+    mock_cli.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sampling_staged_gate_check_names_failure_kind():
+    """Gate-check (staged) cannot use the review-only fallback; its error
+    must name the actual failure kind, not claim truncation for all."""
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, p3, p4 = _sampling_dispatch_patches("stub_model", ["deepseek"])
+    with p1, p2, p3, p4:
+        with pytest.raises(ToolError, match="stub_model"):
+            await _dispatch_sampling(
+                session=MagicMock(), committed=False, staged=True
+            )
 
 
 @pytest.mark.asyncio

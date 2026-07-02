@@ -9,8 +9,8 @@
   "properties": {
     "outlet": {
       "type": "string",
-      "enum": ["subprocess", "inline", "subagent"],
-      "description": "Review dispatch method. subprocess: spawns a fresh claude subprocess per pass (default). inline: runs review in the current session. subagent: spawns a fresh Agent per pass."
+      "enum": ["subprocess", "inline", "subagent", "sampling"],
+      "description": "Review dispatch method. subprocess: spawns a fresh subprocess per pass (default; requires a configured backend). inline: runs review in the current session. subagent: spawns a fresh Agent per pass. sampling: MCP only, borrows the IDE client's model."
     },
     "backends": {
       "type": "object",

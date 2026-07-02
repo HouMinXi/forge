@@ -53,6 +53,7 @@ class TestEnvOverride:
         result = resolve_outlet(
             env={"FORGE_OUTLET": "cli"},
             gate_yaml_path=None,
+            configs=[_DUMMY_CFG],
             reachability_fn=_bomb_probe,
         )
         assert result == "subprocess"
@@ -102,6 +103,7 @@ class TestEnvOverride:
         result = resolve_outlet(
             env={"FORGE_OUTLET": "CLI"},
             gate_yaml_path=None,
+            configs=[_DUMMY_CFG],
             reachability_fn=_bomb_probe,
         )
         assert result == "subprocess"
@@ -129,6 +131,7 @@ class TestGateYamlOutlet:
         result = resolve_outlet(
             env={},
             gate_yaml_path=gate,
+            configs=[_DUMMY_CFG],
             reachability_fn=_bomb_probe,
         )
         assert result == "subprocess"
@@ -379,6 +382,7 @@ class TestCliValuePrecedence:
             env={},
             gate_yaml_path=gate,
             cli_value="cli",
+            configs=[_DUMMY_CFG],
             reachability_fn=_bomb_probe,
         )
         assert result == "subprocess"
@@ -399,6 +403,7 @@ class TestCliValuePrecedence:
             env={"FORGE_OUTLET": "cli"},
             gate_yaml_path=None,
             cli_value=None,
+            configs=[_DUMMY_CFG],
             reachability_fn=_ok_probe,
         )
         assert result == "subprocess"
@@ -623,6 +628,7 @@ class TestDeprecatedOutletAlias:
         result = resolve_outlet(
             env={"FORGE_OUTLET": "cli"},
             gate_yaml_path=None,
+            configs=[_DUMMY_CFG],
             reachability_fn=_bomb_probe,
         )
         assert result == "subprocess"
@@ -650,6 +656,7 @@ class TestDeprecatedOutletAlias:
             env={},
             gate_yaml_path=None,
             cli_value="cli",
+            configs=[_DUMMY_CFG],
             reachability_fn=_bomb_probe,
         )
         assert result == "subprocess"
@@ -661,6 +668,7 @@ class TestDeprecatedOutletAlias:
         result = resolve_outlet(
             env={},
             gate_yaml_path=gate,
+            configs=[_DUMMY_CFG],
             reachability_fn=_bomb_probe,
         )
         assert result == "subprocess"
@@ -675,6 +683,68 @@ class TestSamplingOutlet:
     def test_sampling_in_valid_outlets(self):
         from code_forge.outlet_resolver import VALID_OUTLET_STRINGS
         assert "sampling" in VALID_OUTLET_STRINGS
+
+
+class TestSubprocessRequiresBackend:
+    """Explicit 'subprocess' with zero backends fails closed at resolve time.
+
+    Without this, an active 'outlet: subprocess' key (which init used to
+    ship) made resolve-outlet report success while review had no backend
+    to run -- the resolver and the review path disagreed about the same
+    config.
+    """
+
+    def test_gate_yaml_subprocess_no_backend_raises(self, tmp_path):
+        gate = tmp_path / "gate.yaml"
+        gate.write_text("outlet: subprocess\n")
+        with pytest.raises(CliError, match="no review backend is configured"):
+            resolve_outlet(
+                env={},
+                gate_yaml_path=gate,
+                reachability_fn=_bomb_probe,
+            )
+
+    def test_env_subprocess_no_backend_raises(self):
+        with pytest.raises(CliError, match="FORGE_OUTLET env"):
+            resolve_outlet(
+                env={"FORGE_OUTLET": "subprocess"},
+                gate_yaml_path=None,
+                reachability_fn=_bomb_probe,
+            )
+
+    def test_cli_value_subprocess_no_backend_raises(self):
+        with pytest.raises(CliError, match="--outlet flag"):
+            resolve_outlet(
+                env={},
+                gate_yaml_path=None,
+                cli_value="subprocess",
+                reachability_fn=_bomb_probe,
+            )
+
+    def test_gate_yaml_subprocess_with_config_resolves(self, tmp_path):
+        """A configured backend satisfies the guard; no probe on explicit outlet."""
+        gate = tmp_path / "gate.yaml"
+        gate.write_text("outlet: subprocess\n")
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=gate,
+            configs=[_DUMMY_CFG],
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subprocess"
+
+    def test_cli_subprocess_explicit_backend_flags_resolve(self):
+        """One-off --backend-url/--backend-model flags (has_explicit_backend)
+        satisfy the guard even with zero gate.yaml configs."""
+        result = resolve_outlet(
+            env={},
+            gate_yaml_path=None,
+            cli_value="subprocess",
+            configs=[],
+            has_explicit_backend=True,
+            reachability_fn=_bomb_probe,
+        )
+        assert result == "subprocess"
 
     def test_cli_guard_sampling_raises_via_env(self, tmp_path, monkeypatch):
         import os

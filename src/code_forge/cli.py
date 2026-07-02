@@ -1234,6 +1234,12 @@ def main() -> int:
             from .init_template import CONTRACT_TEMPLATE_MD
             template_path.write_text(CONTRACT_TEMPLATE_MD)
             print("Created %s" % template_path, file=sys.stderr)
+        print(
+            "Next: add a backend under 'backends:' in gate.yaml "
+            "(examples inside), then run 'code-forge trust'. "
+            "Review refuses to run until a backend is configured.",
+            file=sys.stderr,
+        )
         return EXIT_PASS
 
     else:
