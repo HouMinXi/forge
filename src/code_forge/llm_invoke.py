@@ -629,8 +629,11 @@ def _invoke_cli(
         )
     except OSError as exc:
         duration = time.monotonic() - start
-        if prompt_file and os.path.exists(prompt_file):
-            os.unlink(prompt_file)
+        if prompt_file:
+            try:
+                os.unlink(prompt_file)
+            except OSError:  # cleanup best-effort; do not mask Popen error
+                pass
         raise LLMInvokeError(
             "LLM subprocess failed: %s" % exc,
             exit_code=-1, stderr=str(exc), duration_s=duration,
@@ -651,8 +654,11 @@ def _invoke_cli(
             ) from exc
     finally:
         _active_proc = None
-        if prompt_file and os.path.exists(prompt_file):
-            os.unlink(prompt_file)
+        if prompt_file:
+            try:
+                os.unlink(prompt_file)
+            except OSError:  # cleanup best-effort; do not mask in-flight error
+                pass
 
     duration = time.monotonic() - start
 
