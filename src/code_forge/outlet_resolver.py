@@ -9,13 +9,14 @@ Resolves which review outlet to use:
   - "subprocess" -> Outlet A (fresh subprocess per pass)
   - "inline"     -> Outlet B (inline merged skill, in-process)
   - "subagent"   -> Outlet C (fresh Agent per pass, no CLI overhead)
+  - "sampling"   -> Outlet D (MCP client's own model, no API key)
 
 Deprecated: "cli" is accepted as an alias for "subprocess" with a
   stderr DeprecationWarning. Will be removed in a future release.
 
 Key invariants:
-  - Outlet B (inline) and Outlet C (subagent) NEVER trigger the
-    reachability probe.
+  - Outlet B (inline), Outlet C (subagent), and Outlet D (sampling)
+    NEVER trigger the reachability probe.
   - Backend unreachable with no explicit override raises CliError
     (FAIL CLOSED) -- never silently degrades to inline.
   - No implicit claude -p fallthrough: when no backend is explicitly
@@ -54,6 +55,41 @@ VALID_OUTLET_STRINGS = {
 _DEPRECATED_OUTLET_ALIASES = {
     "cli": ("subprocess", "outlet 'cli' renamed to 'subprocess'"),
 }
+
+# Shared remediation text for every no-backend refusal.
+_NO_BACKEND_GUIDANCE = (
+    "  1. add a 'backends:' entry to .code-forge/gate.yaml"
+    " (create the file with 'code-forge init' if missing)\n"
+    "  2. --backend-url/--backend-format/--backend-key-env/"
+    "--backend-model (one-off)\n"
+    "  3. FORGE_OUTLET=inline"
+    " (review in THIS session; uses main quota)\n"
+    "Implicit `claude -p` is disabled:"
+    " it nests a subprocess and bills the main account."
+)
+
+
+def _require_backend_for_subprocess(
+    outlet: str,
+    configs: list,
+    has_explicit_backend: bool,
+    source: str,
+) -> str:
+    """Explicit 'subprocess' still requires a configured backend.
+
+    inline and subagent run in-session and sampling is MCP-only, so
+    only subprocess depends on a backend. Without this check an
+    explicit outlet value short-circuits past the zero-config guard
+    and the review falls through to the implicit `claude -p` path
+    the guard exists to block (init templates used to ship an active
+    'outlet: subprocess' key, making this the default failure mode).
+    """
+    if outlet == "subprocess" and not configs and not has_explicit_backend:
+        raise CliError(
+            "outlet 'subprocess' is set (%s) but no review backend is"
+            " configured. Choose one:\n%s" % (source, _NO_BACKEND_GUIDANCE)
+        )
+    return outlet
 
 
 # -- Parsing ---------------------------------------------------------------
@@ -153,9 +189,9 @@ def resolve_outlet(
     Reachable -> "subprocess" (fail-safe Outlet A).
     Unreachable -> CliError (FAIL CLOSED).
 
-    An explicit "inline" or "subagent" (from cli_value, env, or gate.yaml)
-    short-circuits BEFORE any reachability probe -- Outlets B and C NEVER
-    probe.
+    An explicit "inline", "subagent", or "sampling" (from cli_value, env,
+    or gate.yaml) short-circuits BEFORE any reachability probe -- Outlets
+    B, C, and D NEVER probe.
 
     LOCKED: nowhere in this function is model capability
     inspected.  The only signals are the explicit override and the
@@ -174,7 +210,7 @@ def resolve_outlet(
             the configured backend)
 
     Returns:
-        "subprocess", "inline", or "subagent"
+        "subprocess", "inline", "subagent", or "sampling"
 
     Raises:
         ValueError: invalid outlet string from cli_value, env, or gate.yaml
@@ -185,7 +221,10 @@ def resolve_outlet(
 
     # Check cli_value first (highest precedence)
     if cli_value is not None and cli_value != "":
-        return _parse_outlet_string(cli_value, "--outlet flag")
+        return _require_backend_for_subprocess(
+            _parse_outlet_string(cli_value, "--outlet flag"),
+            configs, has_explicit_backend, "--outlet flag",
+        )
 
     # Default probes the session-default CLI backend only.
     # Production callers should inject a reachability_fn that
@@ -198,28 +237,27 @@ def resolve_outlet(
     # Step 1: FORGE_OUTLET env override
     env_value = env.get("FORGE_OUTLET")
     if env_value is not None and env_value != "":
-        return _parse_outlet_string(env_value, "FORGE_OUTLET env")
+        return _require_backend_for_subprocess(
+            _parse_outlet_string(env_value, "FORGE_OUTLET env"),
+            configs, has_explicit_backend, "FORGE_OUTLET env",
+        )
 
     # Step 2: gate.yaml outlet field
     if gate_yaml_path is not None:
         gate_value = load_outlet_from_gate(gate_yaml_path)
         if gate_value is not None:
-            return _parse_outlet_string(str(gate_value), "gate.yaml outlet")
+            return _require_backend_for_subprocess(
+                _parse_outlet_string(str(gate_value), "gate.yaml outlet"),
+                configs, has_explicit_backend, "gate.yaml outlet",
+            )
 
     # Step 3: zero-config guard -- refuse to probe the implicit subprocess
     # when no backend is explicitly configured. This prevents a 120s timeout
     # and billing the main session account.
     if not configs and not has_explicit_backend:
         raise CliError(
-            "No review backend configured. Choose one:\n"
-            "  1. gate.yaml backends (persistent):"
-            " create .code-forge/gate.yaml\n"
-            "  2. --backend-url/--backend-format/--backend-key-env/"
-            "--backend-model (one-off)\n"
-            "  3. FORGE_OUTLET=inline"
-            " (review in THIS session; uses main quota)\n"
-            "Implicit `claude -p` is disabled:"
-            " it nests a subprocess and bills the main account."
+            "No review backend configured. Choose one:\n%s"
+            % _NO_BACKEND_GUIDANCE
         )
 
     # Step 4: backend reachability
