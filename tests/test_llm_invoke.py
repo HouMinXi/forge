@@ -661,6 +661,98 @@ def _vertex_mock_response(content_str: str, usage: dict = None):
     return resp
 
 
+class TestTruncationDetection:
+    """All three API paths raise kind=truncated on output-cap stop signals.
+
+    Covers M1a: anthropic stop_reason=max_tokens, openai finish_reason=length,
+    vertex stop_reason=max_tokens.  The sampling path (stopReason=maxTokens)
+    was already covered in TestInvokeSampling.
+    """
+
+    def test_anthropic_stop_reason_max_tokens(self):
+        from code_forge.llm_invoke import _invoke_anthropic, LLMInvokeError
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": [{"type": "text", "text": '{"findings": ['}],
+            "usage": {"input_tokens": 500, "output_tokens": 16384},
+            "stop_reason": "max_tokens",
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+            assert exc_info.value.kind == "truncated"
+            assert "input=500" in str(exc_info.value)
+            assert "output=16384" in str(exc_info.value)
+
+    def test_anthropic_stop_reason_end_turn_passes(self):
+        from code_forge.llm_invoke import _invoke_anthropic
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": [{"type": "text", "text": '{"findings": []}'}],
+            "usage": {"input_tokens": 500, "output_tokens": 200},
+            "stop_reason": "end_turn",
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            content, usage = _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+            assert "findings" in content
+
+    def test_openai_finish_reason_length(self):
+        from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"find'}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 800, "completion_tokens": 8192},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+            assert exc_info.value.kind == "truncated"
+            assert "finish_reason=length" in str(exc_info.value)
+
+    def test_openai_finish_reason_stop_passes(self):
+        from code_forge.llm_invoke import _invoke_openai
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"findings": []}'}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            content, usage = _invoke_openai("p", backend, api_key="k", timeout_s=10)
+            assert "findings" in content
+
+
 class TestVertexBuildUrl:
     """Unit tests for _build_vertex_url."""
 
