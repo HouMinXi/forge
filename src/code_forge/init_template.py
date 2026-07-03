@@ -115,7 +115,7 @@ outlet: subprocess
 #     format: anthropic             # MiniMax M3 speaks anthropic format
 #     base_url: https://api.minimaxi.com/anthropic  # note: minimaxi (not minimax)
 #     api_key_env: MINIMAX_API_KEY
-#     model: minimax-m3
+#     model: MiniMax-M3
 #     max_tokens: 16384
 #     thinking_type: adaptive       # omit risks empty response on M3
 #     timeout_s: 1800
@@ -125,7 +125,7 @@ outlet: subprocess
 #     format: openai
 #     base_url: https://open.bigmodel.cn/api/paas/v4
 #     api_key_env: GLM_API_KEY
-#     model: glm-5-plus
+#     model: glm-5.2
 #     max_tokens: 32768             # sets max_tokens field -> wire key is max_tokens
 #     thinking_type: enabled        # required for reasoning_effort on GLM
 #     reasoning_effort: max
