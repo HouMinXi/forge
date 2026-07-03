@@ -71,68 +71,8 @@ def _resolve_workspace() -> Path:
 _WORKSPACE: Path = _resolve_workspace()
 
 
-def _user_config_path() -> Path | None:
-    """User-level config: explicit env, XDG path, or legacy fallback.
-
-    Priority: FORGE_CONFIG_DIR > $XDG_CONFIG_HOME/code-forge >
-    ~/.config/code-forge > legacy ~/.code-forge/gate.yaml.
-
-    Returns the path if found, else None.  The legacy path emits a
-    deprecation warning on first load.
-    """
-    # Explicit env override (mirrors TMT_CONFIG_DIR pattern)
-    env = os.environ.get("FORGE_CONFIG_DIR", "").strip()
-    if env:
-        p = Path(env).expanduser().resolve() / "config.yaml"
-        if p.is_file():
-            return p
-        # env set but file absent: warn, do not fall through to XDG
-        log.warning("FORGE_CONFIG_DIR=%s but %s not found", env, p)
-        return None
-    # XDG spec: empty value treated as unset (fall back to ~/.config)
-    xdg_base = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    if not xdg_base:
-        xdg_base = str(Path.home() / ".config")
-    xdg = Path(xdg_base) / "code-forge" / "config.yaml"
-    if xdg.is_file():
-        return xdg
-    legacy = Path.home() / ".code-forge" / "gate.yaml"
-    if legacy.is_file():
-        log.warning(
-            "Reading user-level backends from legacy path %s -- "
-            "move to %s to silence this warning", legacy, xdg
-        )
-        return legacy
-    return None
-
-
-def _load_user_backends() -> dict[str, dict]:
-    """Load backends from user-level config (lenient, no 'test' required).
-
-    Returns a dict of {backend_name: raw_config_dict}, empty on any
-    error (warns, never crashes).
-    """
-    import yaml as _y
-
-    path = _user_config_path()
-    if path is None:
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = _y.safe_load(f)
-    except Exception as exc:
-        log.warning("Cannot read user config %s: %s", path, exc)
-        return {}
-    if not isinstance(data, dict):
-        log.warning("User config %s is not a YAML mapping, ignoring", path)
-        return {}
-    backends = data.get("backends")
-    if backends is None:
-        return {}
-    if not isinstance(backends, dict):
-        log.warning("User config %s 'backends' is not a mapping, ignoring", path)
-        return {}
-    return backends
+# User-level config shared with cli.py via user_config module.
+from code_forge.user_config import load_user_backends, merge_backends  # noqa: E402
 
 
 # Module-level state populated by lifespan startup.
@@ -153,7 +93,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
     from code_forge import cli
 
-    user_backends = _load_user_backends()
+    user_backends = load_user_backends()
     project_backends: dict[str, dict] = {}
     try:
         gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
@@ -163,15 +103,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             project_backends = {}
     except Exception as exc:
         log.warning("Failed to load project gate.yaml: %s", exc)
-    # Project backends first so fallback ([0]) picks a CLI-resolvable
-    # backend, not a user-only one that the CLI cannot parse.
-    # User-only backends append after project backends.
-    merged: dict[str, dict] = {}
-    merged.update(project_backends)
-    for k, v in user_backends.items():
-        if k not in merged:
-            merged[k] = v
-    _backend_names = list(merged.keys())
+    _backend_names = list(merge_backends(project_backends, user_backends).keys())
 
     yield {"backend_names": _backend_names}
 

@@ -689,6 +689,7 @@ class TestTruncationDetection:
             with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
                 _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
             assert exc_info.value.kind == "truncated"
+            assert exc_info.value.retryable is False
             assert "input=500" in str(exc_info.value)
             assert "output=16384" in str(exc_info.value)
 
@@ -731,6 +732,7 @@ class TestTruncationDetection:
             with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
                 _invoke_openai("p", backend, api_key="k", timeout_s=10)
             assert exc_info.value.kind == "truncated"
+            assert exc_info.value.retryable is False
             assert "finish_reason=length" in str(exc_info.value)
 
     def test_openai_finish_reason_stop_passes(self):
@@ -775,6 +777,7 @@ class TestTruncationDetection:
             with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
                 _invoke_vertex("p", backend, timeout_s=10)
             assert exc_info.value.kind == "truncated"
+            assert exc_info.value.retryable is False
             assert "input=600" in str(exc_info.value)
             assert "output=8192" in str(exc_info.value)
 
@@ -2150,8 +2153,9 @@ class TestInvokeSampling:
             stopReason="maxTokens",
         )
 
-        with pytest.raises(LLMInvokeError, match="truncated"):
+        with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
             await invoke_sampling(session, prompt="test prompt")
+        assert exc_info.value.retryable is False
 
     async def test_invoke_sampling_json_parse_fallback(self):
         from code_forge.llm_invoke import invoke_sampling
