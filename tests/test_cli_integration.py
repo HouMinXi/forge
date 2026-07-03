@@ -110,7 +110,7 @@ class TestRegistryMissing:
 
 
 class TestSandboxWarning:
-    """SC-39 R3-1: --sandbox emits warning, no behavior change."""
+    """--sandbox emits warning, no behavior change."""
 
     def test_sandbox_warning_emitted(
         self, tmp_path, monkeypatch, capsys
@@ -141,7 +141,7 @@ class TestSandboxWarning:
         monkeypatch.chdir(str(repo))
         exit_code = main()
         captured = capsys.readouterr()
-        assert "Phase 4 hook; ignored in v2.0" in captured.err
+        assert "not yet implemented; ignored in current version" in captured.err
         assert exit_code == EXIT_PASS
 
 
