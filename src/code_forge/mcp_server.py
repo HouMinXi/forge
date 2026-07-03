@@ -6,10 +6,13 @@ Six tools: forge_review, forge_gate_check, forge_init, forge_trust,
 forge_resolve_outlet, forge_job_status. Runs as a local subprocess
 of the IDE via stdio transport.
 
-Workspace resolution (ADR-0006): the server locates the project root
-via FORGE_PROJECT_DIR env var, then by walking up from cwd to find
-.code-forge/gate.yaml, then falls back to cwd as-is. The resolved
-root is passed as cwd to all CLI subprocesses; cli.py is unchanged.
+Workspace resolution (ADR-0006, ADR-0009): the server locates the
+project root via FORGE_PROJECT_DIR env var, then by walking up from
+cwd to find .code-forge/gate.yaml (skipping $HOME to prevent stale
+markers from acting as walkup magnets), then falls back to cwd as-is.
+User-level backend defaults live at ~/.config/code-forge/config.yaml
+(XDG) and merge under project-level backends.  The resolved root is
+passed as cwd to all CLI subprocesses; cli.py is unchanged.
 """
 from __future__ import annotations
 
@@ -44,14 +47,22 @@ def _resolve_workspace() -> Path:
     """Forge workspace root: explicit env, else walk up from cwd.
 
     Priority: FORGE_PROJECT_DIR > nearest ancestor with
-    .code-forge/gate.yaml > cwd as-is (lets _check_backend emit the
-    clear error).
+    .code-forge/gate.yaml (skipping $HOME) > cwd as-is (lets
+    _check_backend emit the clear error).
+
+    $HOME is skipped because it is a configuration domain, not a
+    project.  A stale .code-forge/ left there by a previous
+    ``forge_init`` would act as a walkup magnet, binding every
+    subdirectory to ~ as the workspace root (ADR-0006, ADR-0009).
     """
     env = os.environ.get("FORGE_PROJECT_DIR", "").strip()
     if env:
         return Path(env).expanduser().resolve()
+    home = Path.home().resolve()
     start = Path.cwd().resolve()
     for d in (start, *start.parents):
+        if d == home:
+            continue
         if (d / ".code-forge" / "gate.yaml").is_file():
             return d
     return start
@@ -59,23 +70,108 @@ def _resolve_workspace() -> Path:
 
 _WORKSPACE: Path = _resolve_workspace()
 
+
+def _user_config_path() -> Path | None:
+    """User-level config: explicit env, XDG path, or legacy fallback.
+
+    Priority: FORGE_CONFIG_DIR > $XDG_CONFIG_HOME/code-forge >
+    ~/.config/code-forge > legacy ~/.code-forge/gate.yaml.
+
+    Returns the path if found, else None.  The legacy path emits a
+    deprecation warning on first load.
+    """
+    # Explicit env override (mirrors TMT_CONFIG_DIR pattern)
+    env = os.environ.get("FORGE_CONFIG_DIR", "").strip()
+    if env:
+        p = Path(env).expanduser().resolve() / "config.yaml"
+        if p.is_file():
+            return p
+        # env set but file absent: warn, do not fall through to XDG
+        log.warning("FORGE_CONFIG_DIR=%s but %s not found", env, p)
+        return None
+    # XDG spec: empty value treated as unset (fall back to ~/.config)
+    xdg_base = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if not xdg_base:
+        xdg_base = str(Path.home() / ".config")
+    xdg = Path(xdg_base) / "code-forge" / "config.yaml"
+    if xdg.is_file():
+        return xdg
+    legacy = Path.home() / ".code-forge" / "gate.yaml"
+    if legacy.is_file():
+        log.warning(
+            "Reading user-level backends from legacy path %s -- "
+            "move to %s to silence this warning", legacy, xdg
+        )
+        return legacy
+    return None
+
+
+def _load_user_backends() -> dict[str, dict]:
+    """Load backends from user-level config (lenient, no 'test' required).
+
+    Returns a dict of {backend_name: raw_config_dict}, empty on any
+    error (warns, never crashes).
+    """
+    import yaml as _y
+
+    path = _user_config_path()
+    if path is None:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = _y.safe_load(f)
+    except Exception as exc:
+        log.warning("Cannot read user config %s: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        log.warning("User config %s is not a YAML mapping, ignoring", path)
+        return {}
+    backends = data.get("backends")
+    if backends is None:
+        return {}
+    if not isinstance(backends, dict):
+        log.warning("User config %s 'backends' is not a mapping, ignoring", path)
+        return {}
+    return backends
+
+
 # Module-level state populated by lifespan startup.
 _backend_names: list[str] = []
 
 
 @asynccontextmanager
 async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
-    """Load backend names at startup, clean up subprocesses on shutdown."""
+    """Load backend names at startup, clean up subprocesses on shutdown.
+
+    Backend merge order: project-level gate.yaml first, then
+    user-level defaults append for names not already defined.
+    Project backends lead so fallback ([0]) picks a CLI-resolvable
+    backend.  Only backend names are tracked here; the actual
+    BackendConfig loading happens per-review in _check_backend.
+    """
     global _backend_names  # noqa: PLW0603
 
     from code_forge import cli
 
+    user_backends = _load_user_backends()
+    project_backends: dict[str, dict] = {}
     try:
         gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
         _, gate_data = cli._load_gate_backends(gate_yaml_path)
-        _backend_names = list(gate_data.get("backends", {}).keys())
-    except Exception:
-        _backend_names = []
+        project_backends = gate_data.get("backends", {})
+        if not isinstance(project_backends, dict):
+            project_backends = {}
+    except Exception as exc:
+        log.warning("Failed to load project gate.yaml: %s", exc)
+    # Project backends first so fallback ([0]) picks a CLI-resolvable
+    # backend, not a user-only one that the CLI cannot parse.
+    # User-only backends append after project backends.
+    merged: dict[str, dict] = {}
+    merged.update(project_backends)
+    for k, v in user_backends.items():
+        if k not in merged:
+            merged[k] = v
+    _backend_names = list(merged.keys())
 
     yield {"backend_names": _backend_names}
 
@@ -86,8 +182,10 @@ mcp = FastMCP(
     "code-forge-mcp",
     instructions=(
         "Forge code review tools. The server auto-detects the project "
-        "root by walking up from cwd to find .code-forge/gate.yaml, or "
-        "via the FORGE_PROJECT_DIR env var. "
+        "root via FORGE_PROJECT_DIR env var, or by walking up from cwd "
+        "to find .code-forge/gate.yaml (skipping $HOME). User-level "
+        "backend defaults in ~/.config/code-forge/config.yaml merge "
+        "under project backends. "
         "Use forge_review to review git diffs, "
         "forge_gate_check for pre-commit gating, forge_resolve_outlet to "
         "diagnose backend configuration."
@@ -605,7 +703,20 @@ async def forge_gate_check(
     annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True),
 )
 async def forge_init(force: bool = False) -> CallToolResult:
-    """Initialize forge configuration."""
+    """Initialize forge configuration.
+
+    Refuses to create project markers at $HOME -- use user-level
+    config at ~/.config/code-forge/config.yaml instead.
+    """
+    if _WORKSPACE.resolve() == Path.home().resolve():
+        raise ToolError(
+            "Refusing to initialize forge at $HOME (%s). "
+            "$HOME is a configuration domain, not a project. "
+            "cd into a project directory, or set FORGE_PROJECT_DIR, "
+            "or write user-level defaults to "
+            "~/.config/code-forge/config.yaml."
+            % _WORKSPACE
+        )
     cli_args: list[str] = ["init"]
     if force:
         cli_args.append("--force")

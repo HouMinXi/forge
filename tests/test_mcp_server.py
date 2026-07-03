@@ -14,11 +14,14 @@ from code_forge.mcp_server import (
     _WORKSPACE,
     _backend_names,
     _check_backend,
+    _load_user_backends,
     _make_job_ref,
     _make_result,
     _make_simple_result,
+    _resolve_workspace,
     _run_cli_budgeted,
     _run_cli_simple,
+    _user_config_path,
     _validate_backend,
     forge_gate_check,
     forge_init,
@@ -783,3 +786,270 @@ def test_no_print_in_production_modules():
             assert "print(" not in stripped, (
                 "print() found in %s line %d: %s" % (name, i, stripped)
             )
+
+
+# -- Workspace resolution + user config tests --
+
+
+class TestResolveWorkspace:
+    """Tests for _resolve_workspace walkup and env override."""
+
+    def test_walkup_from_subdirectory(self, tmp_path):
+        """T1: walkup finds project root from a subdirectory."""
+        root = tmp_path / "project"
+        (root / ".code-forge").mkdir(parents=True)
+        (root / ".code-forge" / "gate.yaml").write_text("test:\n  command: [true]\n")
+        subdir = root / "src" / "deep"
+        subdir.mkdir(parents=True)
+        with patch("code_forge.mcp_server.Path.cwd", return_value=subdir):
+            with patch("code_forge.mcp_server.Path.home", return_value=tmp_path / "fakehome"):
+                result = _resolve_workspace()
+        assert result == root
+
+    def test_env_overrides_walkup(self, tmp_path):
+        """T2: FORGE_PROJECT_DIR takes precedence over walkup."""
+        env_root = tmp_path / "env-project"
+        env_root.mkdir()
+        walkup_root = tmp_path / "walkup-project"
+        (walkup_root / ".code-forge").mkdir(parents=True)
+        (walkup_root / ".code-forge" / "gate.yaml").write_text("test:\n  command: [true]\n")
+        subdir = walkup_root / "src"
+        subdir.mkdir()
+        with patch.dict(os.environ, {"FORGE_PROJECT_DIR": str(env_root)}):
+            with patch("code_forge.mcp_server.Path.cwd", return_value=subdir):
+                result = _resolve_workspace()
+        assert result == env_root.resolve()
+
+    def test_no_marker_falls_through(self, tmp_path):
+        """T3: no .code-forge/gate.yaml anywhere -> returns cwd as-is."""
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        with patch("code_forge.mcp_server.Path.cwd", return_value=bare):
+            with patch("code_forge.mcp_server.Path.home", return_value=tmp_path / "fakehome"):
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("FORGE_PROJECT_DIR", None)
+                    result = _resolve_workspace()
+        assert result == bare
+
+    def test_home_skipped_by_walkup(self, tmp_path):
+        """T4: $HOME with .code-forge/gate.yaml is skipped by walkup."""
+        fake_home = tmp_path / "home"
+        (fake_home / ".code-forge").mkdir(parents=True)
+        (fake_home / ".code-forge" / "gate.yaml").write_text("test:\n  command: [true]\n")
+        subdir = fake_home / "code" / "project"
+        subdir.mkdir(parents=True)
+        with patch("code_forge.mcp_server.Path.cwd", return_value=subdir):
+            with patch("code_forge.mcp_server.Path.home", return_value=fake_home):
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("FORGE_PROJECT_DIR", None)
+                    result = _resolve_workspace()
+        # Must NOT resolve to fake_home; falls through to cwd
+        assert result == subdir
+
+
+class TestUserConfig:
+    """Tests for user-level config loading and backend merge."""
+
+    def test_loader_returns_backends_dict(self, tmp_path):
+        """T5a: _load_user_backends returns backends dict from config."""
+        user_cfg = tmp_path / "config.yaml"
+        user_cfg.write_text(
+            "backends:\n"
+            "  user-back:\n"
+            "    model: user-model\n"
+        )
+        with patch("code_forge.mcp_server._user_config_path", return_value=user_cfg):
+            result = _load_user_backends()
+        assert result == {"user-back": {"model": "user-model"}}
+
+    def test_loader_no_config_returns_empty(self):
+        """T5b-loader: _user_config_path None -> empty dict."""
+        with patch("code_forge.mcp_server._user_config_path", return_value=None):
+            result = _load_user_backends()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_lifespan_merges_project_first_user_appends(self, tmp_path):
+        """T5c: lifespan real execution - project backends first, user appends."""
+        import code_forge.mcp_server as mod
+
+        user_cfg = tmp_path / "config.yaml"
+        user_cfg.write_text(
+            "backends:\n"
+            "  shared:\n"
+            "    model: user-model\n"
+            "  user-only:\n"
+            "    model: only-in-user\n"
+        )
+        project_gate = {
+            "backends": {"shared": {"model": "project-model"}, "proj-only": {"model": "p"}}
+        }
+        with (
+            patch("code_forge.mcp_server._user_config_path", return_value=user_cfg),
+            patch("code_forge.cli._load_gate_backends", return_value=([], project_gate)),
+        ):
+            async with mod.lifespan(mod.mcp):
+                names = list(mod._backend_names)
+        # Project backends come first so fallback [0] is CLI-resolvable.
+        # User-only backends append after all project backends.
+        assert set(names[:2]) == {"shared", "proj-only"}
+        assert names[2] == "user-only"
+
+    def test_lenient_loader_warns_on_backends_non_dict(self, tmp_path, caplog):
+        """T5d: backends: is a list instead of dict -> warns, returns empty."""
+        bad_cfg = tmp_path / "config.yaml"
+        bad_cfg.write_text("backends:\n  - not-a-dict\n")
+        import logging
+        with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
+            with patch("code_forge.mcp_server._user_config_path", return_value=bad_cfg):
+                result = _load_user_backends()
+        assert result == {}
+        assert "not a mapping" in caplog.text.lower()
+
+    def test_lenient_loader_warns_on_malformed(self, tmp_path):
+        """T6: malformed user config warns and returns empty, never crashes."""
+        bad_cfg = tmp_path / "config.yaml"
+        bad_cfg.write_text("not: [a, valid, {config")
+        with patch("code_forge.mcp_server._user_config_path", return_value=bad_cfg):
+            result = _load_user_backends()
+        assert result == {}
+
+    def test_lenient_loader_warns_on_non_mapping(self, tmp_path):
+        """T6b: non-mapping YAML warns and returns empty."""
+        bad_cfg = tmp_path / "config.yaml"
+        bad_cfg.write_text("- just\n- a\n- list\n")
+        with patch("code_forge.mcp_server._user_config_path", return_value=bad_cfg):
+            result = _load_user_backends()
+        assert result == {}
+
+    def test_legacy_path_returns_with_warning(self, tmp_path, caplog):
+        """T5b: legacy ~/.code-forge/gate.yaml found -> returns path + warns."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        legacy = fake_home / ".code-forge" / "gate.yaml"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("backends:\n  old:\n    model: legacy\n")
+        with patch("code_forge.mcp_server.Path.home", return_value=fake_home):
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(fake_home / ".config")}):
+                import logging
+                with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
+                    result = _user_config_path()
+        assert result == legacy
+        assert "legacy" in caplog.text.lower() or "move to" in caplog.text.lower()
+
+
+    def test_forge_config_dir_env_overrides_xdg(self, tmp_path):
+        """T8: FORGE_CONFIG_DIR takes precedence over XDG and legacy."""
+        env_dir = tmp_path / "custom-config"
+        env_dir.mkdir()
+        (env_dir / "config.yaml").write_text(
+            "backends:\n  env-backend:\n    model: from-env\n"
+        )
+        xdg_dir = tmp_path / ".config" / "code-forge"
+        xdg_dir.mkdir(parents=True)
+        (xdg_dir / "config.yaml").write_text(
+            "backends:\n  xdg-backend:\n    model: from-xdg\n"
+        )
+        with patch.dict(os.environ, {
+            "FORGE_CONFIG_DIR": str(env_dir),
+            "XDG_CONFIG_HOME": str(tmp_path / ".config"),
+        }):
+            with patch("code_forge.mcp_server.Path.home", return_value=tmp_path):
+                result = _user_config_path()
+        assert result == env_dir / "config.yaml"
+        with patch("code_forge.mcp_server._user_config_path", return_value=result):
+            backends = _load_user_backends()
+        assert "env-backend" in backends
+        assert "xdg-backend" not in backends
+
+
+    def test_forge_config_dir_env_absent_file(self, tmp_path, caplog):
+        """T9: FORGE_CONFIG_DIR set but config.yaml absent -> None + warning."""
+        empty_dir = tmp_path / "no-config"
+        empty_dir.mkdir()
+        with patch.dict(os.environ, {"FORGE_CONFIG_DIR": str(empty_dir)}):
+            import logging
+            with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
+                result = _user_config_path()
+        assert result is None
+        assert "not found" in caplog.text.lower()
+
+    def test_xdg_config_home_empty_string_treated_as_unset(self, tmp_path):
+        """T10: XDG_CONFIG_HOME='' falls back to ~/.config per XDG spec."""
+        fake_home = tmp_path / "home"
+        default_xdg = fake_home / ".config" / "code-forge"
+        default_xdg.mkdir(parents=True)
+        (default_xdg / "config.yaml").write_text(
+            "backends:\n  default:\n    model: from-default\n"
+        )
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": ""}, clear=False):
+            os.environ.pop("FORGE_CONFIG_DIR", None)
+            with patch("code_forge.mcp_server.Path.home", return_value=fake_home):
+                result = _user_config_path()
+        assert result == default_xdg / "config.yaml"
+
+
+    def test_user_config_path_none_when_no_config_anywhere(self, tmp_path):
+        """G1a: no XDG, no legacy, no env -> _user_config_path returns None."""
+        fake_home = tmp_path / "empty_home"
+        fake_home.mkdir()
+        with (
+            patch("code_forge.mcp_server.Path.home", return_value=fake_home),
+            patch.dict(os.environ, {"XDG_CONFIG_HOME": str(fake_home / ".config")}, clear=False),
+        ):
+            os.environ.pop("FORGE_CONFIG_DIR", None)
+            result = _user_config_path()
+        assert result is None
+
+    def test_loader_no_backends_key_returns_empty(self, tmp_path):
+        """G1b: config.yaml exists but has no backends: key -> empty dict."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("outlet: sampling\n")
+        with patch("code_forge.mcp_server._user_config_path", return_value=cfg):
+            result = _load_user_backends()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_lifespan_project_backends_non_dict_ignored(self, tmp_path):
+        """G1c: project gate.yaml backends: is a list -> reset to empty."""
+        import code_forge.mcp_server as mod
+
+        project_gate = {"backends": ["not", "a", "dict"]}
+        with (
+            patch("code_forge.mcp_server._load_user_backends", return_value={}),
+            patch("code_forge.cli._load_gate_backends", return_value=([], project_gate)),
+        ):
+            async with mod.lifespan(mod.mcp):
+                names = list(mod._backend_names)
+        assert names == []
+
+    @pytest.mark.asyncio
+    async def test_lifespan_project_load_error_falls_back_to_user(self, tmp_path):
+        """G1d: project gate.yaml load throws -> warn, user backends still advertised."""
+        import code_forge.mcp_server as mod
+
+        with (
+            patch(
+                "code_forge.mcp_server._load_user_backends",
+                return_value={"user-back": {"model": "u"}},
+            ),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                side_effect=OSError("permission denied"),
+            ),
+        ):
+            async with mod.lifespan(mod.mcp):
+                names = list(mod._backend_names)
+        assert names == ["user-back"]
+
+
+class TestForgeInitHomeGuard:
+    """forge_init refuses $HOME as workspace root."""
+
+    @pytest.mark.asyncio
+    async def test_forge_init_refuses_home(self):
+        """T7: forge_init at $HOME raises ToolError."""
+        home = Path.home().resolve()
+        with patch("code_forge.mcp_server._WORKSPACE", home):
+            with pytest.raises(ToolError, match="Refusing to initialize forge at"):
+                await forge_init()
