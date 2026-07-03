@@ -284,7 +284,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument(
         "--sandbox", action="store_true",
         help="enable sandbox for autofixer "
-             "(Phase 4 hook; v2.0 no-op + warning)",
+             "(not yet implemented; currently a no-op + warning)",
     )
     review_parser.add_argument(
         "--baseline", default=None,
@@ -561,6 +561,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="overwrite existing gate.yaml and gate.schema.json",
     )
 
+    # --- SETUP-MCP subcommand: one-command MCP onboarding ---
+    setup_mcp_parser = subparsers.add_parser(
+        'setup-mcp',
+        help='configure forge for MCP review (writes config + trusts)',
+    )
+    setup_mcp_parser.add_argument(
+        "--backend", action="append", dest="backends", default=[],
+        help="backend preset name (repeatable; auto-detects if omitted)",
+    )
+    setup_mcp_parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite existing config files",
+    )
+    setup_mcp_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="print what would be written without writing",
+    )
+
     # --- SMOKE-RUN subcommand: execute a command and write a smoke receipt ---
     smoke_run_parser = subparsers.add_parser(
         'smoke-run',
@@ -643,13 +661,13 @@ def _make_subagent_spawn(
     Returns a spawn_fn(pass_name, diff_text) -> str that calls llm_invoke
     per pass with a fresh context (no shared session). The prompt contains
     only the diff, post-image content, conventions digest, contract spec,
-    and pass role -- no implementer session context (D3 / SC1-SC3).
+    and pass role -- no implementer session context.
 
     Args:
         backend: BackendConfig for llm_invoke, or None for default.
-        conv_digest: conventions digest string (D11 slot), may be "".
+        conv_digest: conventions digest string, may be "".
         post_image: post-image content of changed files, may be "".
-        contract_spec: cross-repo contract reference (D-05 slot), may be "".
+        contract_spec: cross-repo contract reference, may be "".
     """
     _PASS_ROLES = {
         "qodo": "structural code reviewer: correctness and logic errors",
@@ -735,13 +753,13 @@ def _run_test_assertion_review(
     diff_text: str,
     backend: Optional[BackendConfig] = None,
 ) -> list:
-    """SC4: test-assertion review by independent reviewer.
+    """Test-assertion review by independent reviewer.
 
     Fresh llm_invoke, never the impl/test author. Runs BEFORE R1.
     Returns list of advisory findings (do not reset cycle counter).
 
     Advisory-only: findings are printed to stderr but NOT recorded in
-    the receipt system. This is an explicit D8 exception -- the
+    the receipt system. This is intentionally advisory-only -- the
     test-assertion gate is structurally separate from the 3-cycle
     static review. It provides an independent signal for the human
     backstop to act on, not a machine-verified gate. Rationale:
@@ -1127,6 +1145,7 @@ def main() -> int:
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
         'detect', 'resolve-outlet', 'init', 'trust', 'eval', 'smoke-run',
+        'setup-mcp',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -1280,6 +1299,15 @@ def main() -> int:
         )
         return EXIT_PASS
 
+    elif args.subcommand == 'setup-mcp':
+        from .setup_mcp import run_setup_mcp
+        return run_setup_mcp(
+            cwd=Path.cwd(),
+            backend_names=args.backends,
+            force=args.force,
+            dry_run=args.dry_run,
+        )
+
     else:
         print(
             "code-forge: unknown subcommand: %s" % args.subcommand,
@@ -1295,7 +1323,7 @@ def _load_gate_siblings(gate_yaml_path: Path) -> tuple:
     gate.yaml yields no siblings.  Malformed yaml or a non-mapping gate.yaml
     fails CLOSED (CliError): for inline backends this is the ONLY gate.yaml
     parse, so silently dropping a bad file could hide intended siblings and
-    run single-repo without the user knowing (D-06 fail-closed).
+    run single-repo without the user knowing (fail-closed by design).
     """
     import yaml as _y
 
@@ -1573,7 +1601,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     # gate.yaml raw after this point -- a second read bypasses the trust check.
     cfgs, gate_data = _load_gate_backends(gate_yaml_path)
     cfgs = _merge_user_into(cfgs, gate_data)
-    # Validate and extract retry config from gate.yaml (D-31-02).
+    # Validate and extract retry config from gate.yaml.
     # _load_gate_backends returns the full YAML dict; load_gate_config
     # (which calls validate_retry_config) is only used by other callers,
     # so we validate here on the actual review path.
@@ -1581,7 +1609,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     retry_cfg = gate_data.get("retry", {})
     validate_retry_config(retry_cfg)
 
-    # Early contract file read (D-32-22): validate before backend resolution.
+    # Early contract file read: validate before backend resolution.
     _contract_file_content = ""
     if getattr(args, "contract", None) is not None:
         _contract_file_content = _load_contract_file(
@@ -1719,7 +1747,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                     "code-forge: canary check failed (%s), "
                     "falling back to DELEGATED\n" % exc
                 )
-        # D4 honesty floor: inline does not run the StateMachine gate.
+        # Honesty floor: inline does not run the StateMachine gate.
         # Declare DELEGATED so callers can distinguish from a real PASS.
         sys.stderr.write(
             "code-forge: DELEGATED -- review delegated to session"
@@ -1919,7 +1947,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             engine=engine_choice,
             advisory_runners=[_c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy],
         )
-        # Test-assertion review gate (D14/SC4): advisory findings to stderr.
+        # Test-assertion review gate: advisory findings to stderr.
         # D8 exception: not recorded in receipts (see _run_test_assertion_review).
         if resolved.git_diff:
             _ta_findings = _run_test_assertion_review(
@@ -1957,8 +1985,8 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     if args.sandbox:
         warn(
-            "warning: --sandbox is a Phase 4 hook; "
-            "ignored in v2.0"
+            "warning: --sandbox is not yet implemented; "
+            "ignored in current version"
         )
 
     _post_image_a, _conv_digest_a = _assemble_post_image(
@@ -2111,7 +2139,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             "backend %s: %s" % (backend.name, exc)
         ) from exc
 
-    # Test-assertion review gate (D14/SC4) on subprocess path: runs BEFORE
+    # Test-assertion review gate on subprocess path: runs BEFORE
     # return, advisory-only (D8 exception per _run_test_assertion_review).
     if resolved.git_diff:
         _ta_findings_a = _run_test_assertion_review(
