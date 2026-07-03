@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from . import __version__
 from .runner import capture_tool_version
@@ -54,6 +55,7 @@ from .registry import load_registry
 from .source import compute_source_hash
 from .state import Mode, Verdict, load_state as _load_state
 
+log = logging.getLogger(__name__)
 
 MAX_HOLD_CYCLES = 10
 
@@ -139,6 +141,41 @@ def _load_gate_backends(gate_yaml_path: Path) -> tuple[list, dict]:
         return ([], {})
 
     return (load_backend_configs(gd), gd)
+
+
+def _merge_user_into(
+    cfgs: list["BackendConfig"],
+    gate_data: dict[str, Any],
+) -> list["BackendConfig"]:
+    """Append user-level backends to project configs (project wins by name).
+
+    Uses the shared merge_backends() from user_config for merge semantics
+    (same implementation as MCP server lifespan).  User backends bypass the
+    project trust gate -- they are trusted implicitly like env vars.
+
+    Returns the extended cfgs list (may be the same object).
+    """
+    from .user_config import load_user_backends, merge_backends
+    from .backend import load_backend_configs
+
+    user_raw = load_user_backends()
+    if not user_raw:
+        return cfgs
+    project_raw = gate_data.get("backends", {})
+    if not isinstance(project_raw, dict):
+        project_raw = {}
+    merged_raw = merge_backends(project_raw, user_raw)
+    # Identify user-only entries (names not in project)
+    user_only = {k: v for k, v in merged_raw.items() if k not in project_raw}
+    if not user_only:
+        return cfgs
+    try:
+        extra = load_backend_configs({"backends": user_only})
+    except Exception as exc:
+        log.warning("User backend config error, using project only: %s", exc)
+        return cfgs
+    cfgs.extend(extra)
+    return cfgs
 
 
 def _load_canary_config(args: argparse.Namespace, gate_data: dict) -> dict | None:
@@ -901,7 +938,8 @@ def _run_eval(args) -> int:
     _gate_path = Path.cwd() / ".code-forge" / "gate.yaml"
     import dataclasses as _dc
     try:
-        _eval_cfgs, _ = _load_gate_backends(_gate_path)
+        _eval_cfgs, _eval_gd = _load_gate_backends(_gate_path)
+        _eval_cfgs = _merge_user_into(_eval_cfgs, _eval_gd)
     except CliError as _exc:
         print(
             "Warning: could not load gate.yaml backend config: %s" % _exc,
@@ -1534,6 +1572,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     # resolution, reachability probe, AND backend resolution.  Never re-read
     # gate.yaml raw after this point -- a second read bypasses the trust check.
     cfgs, gate_data = _load_gate_backends(gate_yaml_path)
+    cfgs = _merge_user_into(cfgs, gate_data)
     # Validate and extract retry config from gate.yaml (D-31-02).
     # _load_gate_backends returns the full YAML dict; load_gate_config
     # (which calls validate_retry_config) is only used by other callers,
@@ -2678,7 +2717,8 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
     """
     from .outlet_resolver import resolve_outlet
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
-    cfgs, _ = _load_gate_backends(gate_yaml_path)
+    cfgs, _ro_gd = _load_gate_backends(gate_yaml_path)
+    cfgs = _merge_user_into(cfgs, _ro_gd)
 
     def _reachability():
         from .backend import resolve_backend, probe_backend
