@@ -145,31 +145,47 @@ def _check_backend() -> None:
 
     backend_configs: list = []  # list[BackendConfig] after _load_gate_backends
     try:
-        backend_configs, _ = cli._load_gate_backends(gate_yaml_path)
+        backend_configs, gate_data = cli._load_gate_backends(gate_yaml_path)
+        backend_configs = cli._merge_user_into(backend_configs, gate_data)
         if not backend_configs:
             raise ToolError(
-                "No review backends configured in %s. Add a 'backends:' "
-                "entry there, or set 'outlet: sampling' to review with "
-                "the IDE's own model. (workspace: %s -- wrong project? "
-                "set FORGE_PROJECT_DIR in the MCP server env)"
+                "No review backends configured in %s. Add backends to "
+                "user-level config (~/.config/code-forge/config.yaml) "
+                "or project gate.yaml, or set 'outlet: sampling' to "
+                "review with the IDE's own model. "
+                "(workspace: %s -- wrong project? set "
+                "FORGE_PROJECT_DIR in the MCP server env)"
                 % (gate_yaml_path, _WORKSPACE)
             )
     except (CliError, ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
 
-    # Key env check: kept outside the try/except above so a future
-    # broad except clause cannot accidentally swallow the ToolError.
-    missing = [
-        cfg.api_key_env
-        for cfg in backend_configs
-        if cfg.api_key_env and not os.environ.get(cfg.api_key_env)
+    # Key env check: only block if ZERO backends have valid keys.
+    # With user-level backends, a user may configure 5 but only have
+    # keys for 2 -- blocking all reviews for missing keys on unused
+    # backends is unnecessarily strict.
+    available = [
+        cfg for cfg in backend_configs
+        if not cfg.api_key_env or os.environ.get(cfg.api_key_env)
     ]
-    if missing:
+    missing_pairs = sorted(
+        set(
+            (cfg.name, cfg.api_key_env)
+            for cfg in backend_configs
+            if cfg.api_key_env and not os.environ.get(cfg.api_key_env)
+        )
+    )
+    detail = (", ".join("%s: %s" % (n, k) for n, k in missing_pairs)
+              if missing_pairs else "")
+    if missing_pairs:
+        log.warning("Backends with missing API keys (unavailable): %s",
+                    detail)
+    if not available:
         raise ToolError(
             "API key env var(s) not set in the MCP server process: "
             "%s. Set them in the MCP server config env block (or the "
             "wrapper script), then restart the MCP server."
-            % ", ".join(missing)
+            % detail
         )
 
 
