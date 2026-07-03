@@ -561,6 +561,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="overwrite existing gate.yaml and gate.schema.json",
     )
 
+    # --- SETUP-MCP subcommand: one-command MCP onboarding ---
+    setup_mcp_parser = subparsers.add_parser(
+        'setup-mcp',
+        help='configure forge for MCP review (writes config + trusts)',
+    )
+    setup_mcp_parser.add_argument(
+        "--backend", action="append", dest="backends", default=[],
+        help="backend preset name (repeatable; auto-detects if omitted)",
+    )
+    setup_mcp_parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite existing config files",
+    )
+    setup_mcp_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="print what would be written without writing",
+    )
+
     # --- SMOKE-RUN subcommand: execute a command and write a smoke receipt ---
     smoke_run_parser = subparsers.add_parser(
         'smoke-run',
@@ -1127,6 +1145,7 @@ def main() -> int:
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
         'detect', 'resolve-outlet', 'init', 'trust', 'eval', 'smoke-run',
+        'setup-mcp',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -1279,6 +1298,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return EXIT_PASS
+
+    elif args.subcommand == 'setup-mcp':
+        from .setup_mcp import run_setup_mcp
+        return run_setup_mcp(
+            cwd=Path.cwd(),
+            backend_names=args.backends,
+            force=args.force,
+            dry_run=args.dry_run,
+        )
 
     else:
         print(
