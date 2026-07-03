@@ -19,26 +19,38 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+def user_config_dir() -> Path:
+    """Resolve user-level config directory (shared by reader and writer).
+
+    Priority: FORGE_CONFIG_DIR > $XDG_CONFIG_HOME/code-forge >
+    ~/.config/code-forge.  Returns the directory path (may not exist).
+    """
+    env = os.environ.get("FORGE_CONFIG_DIR", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    xdg_base = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if not xdg_base:
+        xdg_base = str(Path.home() / ".config")
+    return Path(xdg_base).expanduser().resolve() / "code-forge"
+
+
 def user_config_path() -> Path | None:
     """User-level config: explicit env, XDG path, or legacy fallback.
 
-    Priority: FORGE_CONFIG_DIR > $XDG_CONFIG_HOME/code-forge >
-    ~/.config/code-forge > legacy ~/.code-forge/gate.yaml.
+    Uses user_config_dir() for directory resolution, then checks for
+    config.yaml there and at the legacy ~/.code-forge/gate.yaml path.
 
     Returns the path if found, else None.  The legacy path emits a
     deprecation warning on first load.
     """
     env = os.environ.get("FORGE_CONFIG_DIR", "").strip()
     if env:
-        p = Path(env).expanduser().resolve() / "config.yaml"
+        p = user_config_dir() / "config.yaml"
         if p.is_file():
             return p
         log.warning("FORGE_CONFIG_DIR=%s but %s not found", env, p)
         return None
-    xdg_base = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    if not xdg_base:
-        xdg_base = str(Path.home() / ".config")
-    xdg = Path(xdg_base) / "code-forge" / "config.yaml"
+    xdg = user_config_dir() / "config.yaml"
     if xdg.is_file():
         return xdg
     legacy = Path.home() / ".code-forge" / "gate.yaml"

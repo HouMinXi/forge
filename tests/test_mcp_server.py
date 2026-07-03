@@ -77,14 +77,15 @@ def test_preflight_empty_backends_raises_tool_error():
     with (
         patch.object(Path, "exists", return_value=True),
         patch("code_forge.cli._load_gate_backends", return_value=([], {})),
+        patch("code_forge.user_config.load_user_backends", return_value={}),
     ):
         with pytest.raises(ToolError, match="No review backends configured in"):
             _check_backend()
 
 
 def test_preflight_empty_backends_names_workspace():
-    """The zero-backend error must say WHICH gate.yaml/workspace it read,
-    so a wrong-workspace resolution (stale ~/.code-forge) is diagnosable."""
+    """The zero-backend error must say WHICH workspace and gate.yaml it checked,
+    so a wrong-workspace resolution is diagnosable."""
     import re
 
     from code_forge import mcp_server
@@ -92,6 +93,7 @@ def test_preflight_empty_backends_names_workspace():
     with (
         patch.object(Path, "exists", return_value=True),
         patch("code_forge.cli._load_gate_backends", return_value=([], {})),
+        patch("code_forge.user_config.load_user_backends", return_value={}),
     ):
         with pytest.raises(ToolError, match="FORGE_PROJECT_DIR"):
             _check_backend()
@@ -114,6 +116,7 @@ def test_preflight_nonempty_backends_passes():
             "code_forge.cli._load_gate_backends",
             return_value=([cfg], {"backends": {"test": {}}}),
         ),
+        patch("code_forge.user_config.load_user_backends", return_value={}),
         patch.dict("os.environ", {"TEST_KEY_123": "sk-fake"}),
     ):
         _check_backend()  # no exception
@@ -133,6 +136,7 @@ def test_preflight_missing_api_key_env_raises():
             "code_forge.cli._load_gate_backends",
             return_value=([cfg], {}),
         ),
+        patch("code_forge.user_config.load_user_backends", return_value={}),
         patch.dict("os.environ", {}, clear=False),
     ):
         # Ensure the key is NOT set
@@ -140,6 +144,33 @@ def test_preflight_missing_api_key_env_raises():
         os.environ.pop("MIMO_PRO_API_KEY", None)
         with pytest.raises(ToolError, match="MIMO_PRO_API_KEY"):
             _check_backend()
+
+
+def test_preflight_partial_keys_warns_but_passes():
+    """Mixed key availability: one backend has key, one doesn't -> pass."""
+    from code_forge.backend import BackendConfig
+
+    cfg_ok = BackendConfig(
+        name="ok", type="api", model="m", format="openai",
+        base_url="http://x", api_key_env="PARTIAL_OK_KEY",
+    )
+    cfg_nokey = BackendConfig(
+        name="nokey", type="api", model="m", format="anthropic",
+        base_url="http://x", api_key_env="PARTIAL_MISSING_KEY",
+    )
+    env = {"PARTIAL_OK_KEY": "sk-fake", "PARTIAL_MISSING_KEY": ""}
+    with (
+        patch.object(Path, "exists", return_value=True),
+        patch(
+            "code_forge.cli._load_gate_backends",
+            return_value=([cfg_ok, cfg_nokey], {}),
+        ),
+        patch("code_forge.user_config.load_user_backends", return_value={}),
+        patch.dict("os.environ", env, clear=False),
+    ):
+        # Remove via patch.dict-tracked key so it restores on exit.
+        del os.environ["PARTIAL_MISSING_KEY"]
+        _check_backend()  # should pass, not raise
 
 
 def test_preflight_catches_cli_error():
@@ -204,6 +235,7 @@ def test_preflight_gate_yaml_exists_proceeds():
             "code_forge.cli._load_gate_backends",
             return_value=([cfg], {"backends": {"deepseek": {}}}),
         ),
+        patch("code_forge.user_config.load_user_backends", return_value={}),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-fake"}),
     ):
         _check_backend()  # no exception
