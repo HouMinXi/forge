@@ -10,18 +10,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from code_forge.user_config import (
+    load_user_backends,
+    user_config_path,
+)
 from code_forge.mcp_server import (
     _WORKSPACE,
     _backend_names,
     _check_backend,
-    _load_user_backends,
     _make_job_ref,
     _make_result,
     _make_simple_result,
     _resolve_workspace,
     _run_cli_budgeted,
     _run_cli_simple,
-    _user_config_path,
     _validate_backend,
     forge_gate_check,
     forge_init,
@@ -858,14 +860,14 @@ class TestUserConfig:
             "  user-back:\n"
             "    model: user-model\n"
         )
-        with patch("code_forge.mcp_server._user_config_path", return_value=user_cfg):
-            result = _load_user_backends()
+        with patch("code_forge.user_config.user_config_path", return_value=user_cfg):
+            result = load_user_backends()
         assert result == {"user-back": {"model": "user-model"}}
 
     def test_loader_no_config_returns_empty(self):
         """T5b-loader: _user_config_path None -> empty dict."""
-        with patch("code_forge.mcp_server._user_config_path", return_value=None):
-            result = _load_user_backends()
+        with patch("code_forge.user_config.user_config_path", return_value=None):
+            result = load_user_backends()
         assert result == {}
 
     @pytest.mark.asyncio
@@ -885,7 +887,7 @@ class TestUserConfig:
             "backends": {"shared": {"model": "project-model"}, "proj-only": {"model": "p"}}
         }
         with (
-            patch("code_forge.mcp_server._user_config_path", return_value=user_cfg),
+            patch("code_forge.user_config.user_config_path", return_value=user_cfg),
             patch("code_forge.cli._load_gate_backends", return_value=([], project_gate)),
         ):
             async with mod.lifespan(mod.mcp):
@@ -900,9 +902,9 @@ class TestUserConfig:
         bad_cfg = tmp_path / "config.yaml"
         bad_cfg.write_text("backends:\n  - not-a-dict\n")
         import logging
-        with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
-            with patch("code_forge.mcp_server._user_config_path", return_value=bad_cfg):
-                result = _load_user_backends()
+        with caplog.at_level(logging.WARNING, logger="code_forge.user_config"):
+            with patch("code_forge.user_config.user_config_path", return_value=bad_cfg):
+                result = load_user_backends()
         assert result == {}
         assert "not a mapping" in caplog.text.lower()
 
@@ -910,16 +912,16 @@ class TestUserConfig:
         """T6: malformed user config warns and returns empty, never crashes."""
         bad_cfg = tmp_path / "config.yaml"
         bad_cfg.write_text("not: [a, valid, {config")
-        with patch("code_forge.mcp_server._user_config_path", return_value=bad_cfg):
-            result = _load_user_backends()
+        with patch("code_forge.user_config.user_config_path", return_value=bad_cfg):
+            result = load_user_backends()
         assert result == {}
 
     def test_lenient_loader_warns_on_non_mapping(self, tmp_path):
         """T6b: non-mapping YAML warns and returns empty."""
         bad_cfg = tmp_path / "config.yaml"
         bad_cfg.write_text("- just\n- a\n- list\n")
-        with patch("code_forge.mcp_server._user_config_path", return_value=bad_cfg):
-            result = _load_user_backends()
+        with patch("code_forge.user_config.user_config_path", return_value=bad_cfg):
+            result = load_user_backends()
         assert result == {}
 
     def test_legacy_path_returns_with_warning(self, tmp_path, caplog):
@@ -932,8 +934,8 @@ class TestUserConfig:
         with patch("code_forge.mcp_server.Path.home", return_value=fake_home):
             with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(fake_home / ".config")}):
                 import logging
-                with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
-                    result = _user_config_path()
+                with caplog.at_level(logging.WARNING, logger="code_forge.user_config"):
+                    result = user_config_path()
         assert result == legacy
         assert "legacy" in caplog.text.lower() or "move to" in caplog.text.lower()
 
@@ -955,10 +957,10 @@ class TestUserConfig:
             "XDG_CONFIG_HOME": str(tmp_path / ".config"),
         }):
             with patch("code_forge.mcp_server.Path.home", return_value=tmp_path):
-                result = _user_config_path()
+                result = user_config_path()
         assert result == env_dir / "config.yaml"
-        with patch("code_forge.mcp_server._user_config_path", return_value=result):
-            backends = _load_user_backends()
+        with patch("code_forge.user_config.user_config_path", return_value=result):
+            backends = load_user_backends()
         assert "env-backend" in backends
         assert "xdg-backend" not in backends
 
@@ -969,8 +971,8 @@ class TestUserConfig:
         empty_dir.mkdir()
         with patch.dict(os.environ, {"FORGE_CONFIG_DIR": str(empty_dir)}):
             import logging
-            with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
-                result = _user_config_path()
+            with caplog.at_level(logging.WARNING, logger="code_forge.user_config"):
+                result = user_config_path()
         assert result is None
         assert "not found" in caplog.text.lower()
 
@@ -985,7 +987,7 @@ class TestUserConfig:
         with patch.dict(os.environ, {"XDG_CONFIG_HOME": ""}, clear=False):
             os.environ.pop("FORGE_CONFIG_DIR", None)
             with patch("code_forge.mcp_server.Path.home", return_value=fake_home):
-                result = _user_config_path()
+                result = user_config_path()
         assert result == default_xdg / "config.yaml"
 
 
@@ -998,15 +1000,15 @@ class TestUserConfig:
             patch.dict(os.environ, {"XDG_CONFIG_HOME": str(fake_home / ".config")}, clear=False),
         ):
             os.environ.pop("FORGE_CONFIG_DIR", None)
-            result = _user_config_path()
+            result = user_config_path()
         assert result is None
 
     def test_loader_no_backends_key_returns_empty(self, tmp_path):
         """G1b: config.yaml exists but has no backends: key -> empty dict."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text("outlet: sampling\n")
-        with patch("code_forge.mcp_server._user_config_path", return_value=cfg):
-            result = _load_user_backends()
+        with patch("code_forge.user_config.user_config_path", return_value=cfg):
+            result = load_user_backends()
         assert result == {}
 
     @pytest.mark.asyncio
@@ -1016,7 +1018,7 @@ class TestUserConfig:
 
         project_gate = {"backends": ["not", "a", "dict"]}
         with (
-            patch("code_forge.mcp_server._load_user_backends", return_value={}),
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
             patch("code_forge.cli._load_gate_backends", return_value=([], project_gate)),
         ):
             async with mod.lifespan(mod.mcp):
@@ -1030,7 +1032,7 @@ class TestUserConfig:
 
         with (
             patch(
-                "code_forge.mcp_server._load_user_backends",
+                "code_forge.mcp_server.load_user_backends",
                 return_value={"user-back": {"model": "u"}},
             ),
             patch(

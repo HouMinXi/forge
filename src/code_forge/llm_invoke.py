@@ -917,6 +917,7 @@ def _invoke_openai(
             "Increase max_tokens in gate.yaml or reduce diff size."
             % (backend.name, in_tok, out_tok, backend.max_tokens),
             kind="truncated",
+            retryable=False,
         )
 
     return (content, usage_data)
@@ -1005,6 +1006,7 @@ def _invoke_anthropic(
             "Increase max_tokens in gate.yaml or reduce diff size."
             % (backend.name, in_tok, out_tok, backend.max_tokens),
             kind="truncated",
+            retryable=False,
         )
 
     return (content, usage_data)
@@ -1154,6 +1156,7 @@ def _invoke_vertex(
             "Increase max_tokens in gate.yaml or reduce diff size."
             % (in_tok, out_tok, backend.max_tokens),
             kind="truncated",
+            retryable=False,
         )
 
     return (content, usage_data)
@@ -1230,6 +1233,7 @@ async def invoke_sampling(
             "sampling response truncated (stopReason == maxTokens)",
             duration_s=elapsed,
             kind="truncated",
+            retryable=False,
         )
 
     # Parse JSON same as _invoke_api path
