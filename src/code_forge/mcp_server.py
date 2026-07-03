@@ -430,11 +430,9 @@ async def _dispatch_sampling(
         resolved=resolved,
     )
 
-    # ponytail: Phase 1 limitations for sampling path:
-    # - falsifier="stub" (not "auto") to avoid silently calling claude -p
-    # - registry={} -- no L0 tools (semgrep, shellcheck) run in sampling mode
-    # - source_files=[] from paths=[] -- L0 would see no files anyway
-    # Phase 2 wires sampling session into falsifier + populates registry.
+    # ponytail: sampling path uses stubs -- stub falsifier (not "auto",
+    # which would silently call claude -p), empty registry (no L0 tools),
+    # empty source_files. Full wiring deferred until sampling needs it.
     machine = StateMachine(
         mode=Mode.CI,
         falsifier=build_falsifier("stub"),
