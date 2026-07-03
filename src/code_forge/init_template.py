@@ -105,15 +105,15 @@ outlet: subprocess
 #   kimi-k2:
 #     type: api
 #     format: openai
-#     base_url: https://api.moonshot.cn/v1
+#     base_url: https://api.kimi.com/coding/v1    # coding endpoint for review
 #     api_key_env: KIMI_API_KEY
-#     model: kimi-k2-0711
+#     model: K2.7-Code
 #     max_completion_tokens: 32768
 #
 #   minimax-m3:
 #     type: api
 #     format: anthropic             # MiniMax M3 speaks anthropic format
-#     base_url: https://api.minimax.io
+#     base_url: https://api.minimaxi.com/anthropic  # note: minimaxi (not minimax)
 #     api_key_env: MINIMAX_API_KEY
 #     model: minimax-m3
 #     max_tokens: 16384
