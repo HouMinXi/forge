@@ -77,7 +77,20 @@ def _install_pdeathsig() -> None:
     original_ppid = os.getppid()
 
     PR_SET_PDEATHSIG = 1
-    libc_name = ctypes.util.find_library("c") or "libc.so.6"
+    # find_library returns None on musl (no ldconfig); fall back to
+    # glibc soname then the bare "libc.so" symlink musl provides.
+    libc_name = ctypes.util.find_library("c")
+    if libc_name is None:
+        for name in ("libc.so.6", "libc.so"):
+            try:
+                ctypes.CDLL(name, use_errno=True)
+                libc_name = name
+                break
+            except OSError:
+                continue
+        if libc_name is None:
+            log.warning("PR_SET_PDEATHSIG unavailable: cannot find libc")
+            return
     try:
         libc = ctypes.CDLL(libc_name, use_errno=True)
         rc = libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
