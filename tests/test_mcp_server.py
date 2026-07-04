@@ -1111,7 +1111,7 @@ class TestShutdownInfrastructure:
             mod._shutting_down = False
             loop = MagicMock()
             loop.create_task.return_value = MagicMock()
-            with patch.object(mod, "_do_shutdown", return_value=MagicMock()):
+            with patch.object(mod, "_do_shutdown", new=MagicMock(return_value=MagicMock())):
                 mod._schedule_shutdown(15, loop)
             assert mod._shutting_down is True
             loop.create_task.assert_called_once()
