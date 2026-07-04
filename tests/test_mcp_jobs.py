@@ -21,6 +21,7 @@ from code_forge.mcp_jobs import (
     cleanup_all,
     exit_to_verdict,
     get_job,
+    snapshot_tempfile_paths,
     start_job,
 )
 
@@ -263,7 +264,8 @@ def test_evict_stale_removes_old_terminal():
     assert "old_done" not in _jobs
 
 
-def test_evict_stale_kills_old_running_but_keeps_entry():
+def test_evict_stale_leaves_running_entry_untouched():
+    """Running entries survive past TTL -- cleanup_all owns forced death."""
     proc = MagicMock()
     proc.returncode = None
     _jobs["old_run"] = {
@@ -272,6 +274,32 @@ def test_evict_stale_kills_old_running_but_keeps_entry():
         "created_at": time.monotonic() - 7200,
     }
     _evict_stale()
-    proc.kill.assert_called_once()
-    # Entry stays -- _wait_for_job handles status update
+    proc.kill.assert_not_called()
     assert "old_run" in _jobs
+
+
+# -- snapshot_tempfile_paths --
+
+
+def test_snapshot_tempfile_paths_empty():
+    assert snapshot_tempfile_paths() == []
+
+
+def test_snapshot_tempfile_paths_collects_both_keys():
+    _jobs["j1"] = {
+        "tempfile_path": "/tmp/a.md",
+        "stderr_log_path": "/tmp/a.log",
+        "status": "running",
+        "created_at": time.monotonic(),
+    }
+    _jobs["j2"] = {
+        "tempfile_path": None,
+        "stderr_log_path": "/tmp/b.log",
+        "status": "running",
+        "created_at": time.monotonic(),
+    }
+    paths = snapshot_tempfile_paths()
+    assert "/tmp/a.md" in paths
+    assert "/tmp/a.log" in paths
+    assert "/tmp/b.log" in paths
+    assert len(paths) == 3
