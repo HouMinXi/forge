@@ -111,7 +111,7 @@ def test_mark_head_sha_without_base_sha_returns_cli_error(tmp_path):
     silent Phase 44 empty-diff extraction."""
     _git_init(tmp_path)
     result = _run(
-        tmp_path, "ledger", "mark", "fp-x", "FIXED", "--new",
+        tmp_path, "ledger", "mark", "fp-x", "ESCAPED", "--new",
         "--head-sha", "b" * 40,
     )
     assert result.returncode != 0
@@ -121,7 +121,7 @@ def test_mark_head_sha_without_base_sha_returns_cli_error(tmp_path):
 def test_mark_invalid_sha_format_returns_cli_error(tmp_path):
     _git_init(tmp_path)
     result = _run(
-        tmp_path, "ledger", "mark", "fp-x", "FIXED", "--new",
+        tmp_path, "ledger", "mark", "fp-x", "ESCAPED", "--new",
         "--base-sha", "not-a-sha", "--head-sha", "b" * 40,
     )
     assert result.returncode != 0
@@ -146,15 +146,26 @@ def _git_init(path):
 def test_mark_writes_new_row(tmp_path):
     """`code-forge ledger mark --new` writes a row visible to iter_rows."""
     _git_init(tmp_path)
-    rc = _call(tmp_path, "ledger", "mark", "fp-cli-1", "FIXED",
+    rc = _call(tmp_path, "ledger", "mark", "fp-cli-1", "DUPLICATE",
                "--evidence", "manual", "--new")
     assert rc == 0, _run(tmp_path, "ledger", "list").stderr
     rows = list((tmp_path / ".code-forge" / "ledger.jsonl").open())
     assert len(rows) == 1
     data = json.loads(rows[0])
     assert data["fingerprint"] == "fp-cli-1"
-    assert data["terminal_state"] == "FIXED"
+    assert data["terminal_state"] == "DUPLICATE"
     assert data["evidence_class"] == "manual"
+
+
+def test_mark_new_with_fixed_or_disproved_refuses(tmp_path):
+    """--new is reserved for DUPLICATE/ESCAPED. FIXED/DISPROVED must
+    originate from a real review run, not a manual mark."""
+    _git_init(tmp_path)
+    for bad_state in ("FIXED", "DISPROVED"):
+        result = _run(tmp_path, "ledger", "mark", "fp-x", bad_state,
+                      "--new")
+        assert result.returncode != 0
+        assert "--new is reserved for DUPLICATE / ESCAPED" in result.stderr
 
 
 def test_mark_refuses_unknown_fingerprint_without_new(tmp_path):

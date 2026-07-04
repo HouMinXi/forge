@@ -240,3 +240,35 @@ def test_after_fix_rows_write_correctly(tmp_path, monkeypatch):
     rows = list(iter_rows(tmp_path))
     fps = {r.fingerprint for r in rows}
     assert "fp-fixed-1" in fps
+
+
+def test_unit_dedup_skips_already_recorded_pair(tmp_path):
+    """Same (fingerprint, terminal_state) is not appended twice."""
+    _prep_local_state(tmp_path)
+    machine = _build_machine(tmp_path, _resolved_with_shas())
+    machine._state.findings.append(
+        _make_finding("fp-dup", disp=Disposition.FIXED)
+    )
+    assert machine._write_ledger_rows() == 1
+    # Second pass: same finding, same SHAs -> 0 new rows.
+    assert machine._write_ledger_rows() == 0
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    assert rows[0].fingerprint == "fp-dup"
+
+
+def test_unit_dedup_does_not_block_different_state(tmp_path):
+    """A new terminal_state for the same fingerprint DOES write a new row."""
+    _prep_local_state(tmp_path)
+    machine = _build_machine(tmp_path, _resolved_with_shas())
+    machine._state.findings.append(
+        _make_finding("fp-state", disp=Disposition.FIXED)
+    )
+    assert machine._write_ledger_rows() == 1
+    machine._state.findings[0].disposition = Disposition.DISMISSED
+    machine._state.findings[0].error = "reopened-and-dismissed"
+    assert machine._write_ledger_rows() == 1
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 2
+    states = {r.terminal_state for r in rows}
+    assert states == {TerminalState.FIXED, TerminalState.DISPROVED}

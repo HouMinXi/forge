@@ -1066,45 +1066,55 @@ class StateMachine:
         and yield no row. Returns the number of rows written; non-git
         runs (where SHAs are unavailable) yield 0 to satisfy the
         "no placeholder/empty values" invariant.
+
+        Best-effort dedup: if a (fingerprint, terminal_state) pair is
+        already present in the ledger from a prior run (with the same
+        base/head SHAs), we do not append a duplicate. This is a
+        TOCTOU window but the worst case is one extra row per
+        convergence -- still monotonic non-decreasing, still
+        append-only, still auditable.
         """
         base = self.resolved_review.base_sha
         head = self.resolved_review.head_sha
         if base is None or head is None:
             return 0
+        from .ledger import iter_rows
+        existing = {
+            (r.fingerprint, r.terminal_state)
+            for r in iter_rows(self.cwd)
+        }
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = 0
         for f in self._state.findings:
             if f.disposition == Disposition.FIXED:
-                ledger_append(self.cwd, LedgerRow(
-                    fingerprint=f.fingerprint,
-                    repo_root=str(self.cwd),
-                    base_sha=base,
-                    head_sha=head,
-                    file=f.file,
-                    line=f.line_range[0] if f.line_range else 0,
-                    axis_claim="review",
-                    pass_provenance=f.source,
-                    terminal_state=TerminalState.FIXED,
-                    evidence_class="fix_applied",
-                    ts=ts,
-                ))
-                rows += 1
+                state = TerminalState.FIXED
             elif f.disposition == Disposition.DISMISSED:
-                ledger_append(self.cwd, LedgerRow(
-                    fingerprint=f.fingerprint,
-                    repo_root=str(self.cwd),
-                    base_sha=base,
-                    head_sha=head,
-                    file=f.file,
-                    line=f.line_range[0] if f.line_range else 0,
-                    axis_claim="review",
-                    pass_provenance=f.source,
-                    terminal_state=TerminalState.DISPROVED,
-                    evidence_class=f.error or "falsifier_rejected",
-                    ts=ts,
-                ))
-                rows += 1
+                state = TerminalState.DISPROVED
+            else:
+                continue
+            if (f.fingerprint, state) in existing:
+                continue
+            evidence = (
+                "fix_applied"
+                if state == TerminalState.FIXED
+                else (f.error or "falsifier_rejected")
+            )
+            ledger_append(self.cwd, LedgerRow(
+                fingerprint=f.fingerprint,
+                repo_root=str(self.cwd.resolve()),
+                base_sha=base,
+                head_sha=head,
+                file=f.file,
+                line=f.line_range[0] if f.line_range else 0,
+                axis_claim="review",
+                pass_provenance=f.source,
+                terminal_state=state,
+                evidence_class=evidence,
+                ts=ts,
+            ))
+            existing.add((f.fingerprint, state))
+            rows += 1
         return rows
 
     def _get_commit_message(self) -> str:
