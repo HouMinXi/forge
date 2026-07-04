@@ -36,6 +36,7 @@ import logging
 from .autofix import AutoFixer, FixOutcome
 from .baseline import ResolvedReview
 from .diagnose import diagnose_non_convergence
+from .ledger import LedgerRow, TerminalState, append_row as ledger_append
 from .disposition import (
     Disposition,
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
@@ -997,6 +998,7 @@ class StateMachine:
             # Skip is not a block -- proceed to PASS
             self._state.verdict = Verdict.PASS
             self._state.converged = True
+            self._write_ledger_rows()
             self._persist_state()
             return
 
@@ -1016,6 +1018,7 @@ class StateMachine:
             # Cannot run FIXVAL without test command -- proceed to PASS
             self._state.verdict = Verdict.PASS
             self._state.converged = True
+            self._write_ledger_rows()
             self._persist_state()
             return
 
@@ -1038,6 +1041,7 @@ class StateMachine:
                     f.error = result.block_message
             self._state.verdict = Verdict.FAIL
             self._state.converged = False
+            self._write_ledger_rows()
             self._persist_state()
             return
 
@@ -1051,7 +1055,57 @@ class StateMachine:
         # PASS / SKIPPED / WAIVED -- proceed to PASS verdict
         self._state.verdict = Verdict.PASS
         self._state.converged = True
+        self._write_ledger_rows()
         self._persist_state()
+
+    def _write_ledger_rows(self) -> int:
+        """Append terminal-StateFinding rows to .code-forge/ledger.jsonl.
+
+        One row per finding whose disposition is FIXED or DISMISSED.
+        UNCERTAIN and still-open CONFIRMED findings are not terminal
+        and yield no row. Returns the number of rows written; non-git
+        runs (where SHAs are unavailable) yield 0 to satisfy the
+        "no placeholder/empty values" invariant.
+        """
+        base = self.resolved_review.base_sha
+        head = self.resolved_review.head_sha
+        if base is None or head is None:
+            return 0
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = 0
+        for f in self._state.findings:
+            if f.disposition == Disposition.FIXED:
+                ledger_append(self.cwd, LedgerRow(
+                    fingerprint=f.fingerprint,
+                    repo_root=str(self.cwd),
+                    base_sha=base,
+                    head_sha=head,
+                    file=f.file,
+                    line=f.line_range[0] if f.line_range else 0,
+                    axis_claim="review",
+                    pass_provenance=f.source,
+                    terminal_state=TerminalState.FIXED,
+                    evidence_class="fix_applied",
+                    ts=ts,
+                ))
+                rows += 1
+            elif f.disposition == Disposition.DISMISSED:
+                ledger_append(self.cwd, LedgerRow(
+                    fingerprint=f.fingerprint,
+                    repo_root=str(self.cwd),
+                    base_sha=base,
+                    head_sha=head,
+                    file=f.file,
+                    line=f.line_range[0] if f.line_range else 0,
+                    axis_claim="review",
+                    pass_provenance=f.source,
+                    terminal_state=TerminalState.DISPROVED,
+                    evidence_class=f.error or "falsifier_rejected",
+                    ts=ts,
+                ))
+                rows += 1
+        return rows
 
     def _get_commit_message(self) -> str:
         """Read the current commit message (worktree-safe).

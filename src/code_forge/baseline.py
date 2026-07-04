@@ -54,12 +54,19 @@ class ResolvedReview:
     """Concrete review subject + baseline content after resolution.
 
     Consumed by state machine (02-02) and source_hash (STATE-07).
+
+    `base_sha` and `head_sha` are the resolved commit SHAs of the
+    reviewed range in git mode, None otherwise. The state machine
+    hook uses them to write per-finding provenance into the outcome
+    ledger so downstream phases can re-extract the reviewed diff.
     """
 
     source_files: list[Path]
     baseline_content: Optional[dict]
     git_diff: Optional[str]
     mode_hint: str  # "git" | "non-git"
+    base_sha: Optional[str] = None
+    head_sha: Optional[str] = None
 
 
 def resolve_baseline(
@@ -119,15 +126,17 @@ def _resolve_git(
             "baseline cannot be a pseudo-ref (%s); "
             "pseudo-refs are head-only" % baseline_spec.ref
         )
-    resolve_git_ref(baseline_spec.ref, cwd)  # raises if ref unknown
+    base_sha = resolve_git_ref(baseline_spec.ref, cwd)  # raises if ref unknown
 
     head = head_spec if head_spec is not None else GitRefBaseline(WORKING)
     if head.ref == WORKING:
         diff = working_tree_diff(baseline_spec.ref, paths, cwd)
+        head_sha = resolve_git_ref("HEAD", cwd)
     elif head.ref == INDEX:
         diff = cached_diff(baseline_spec.ref, paths, cwd)
+        head_sha = resolve_git_ref("HEAD", cwd)
     else:
-        resolve_git_ref(head.ref, cwd)
+        head_sha = resolve_git_ref(head.ref, cwd)
         diff = git_diff(baseline_spec.ref, head.ref, paths, cwd)
 
     return ResolvedReview(
@@ -135,6 +144,8 @@ def _resolve_git(
         baseline_content=None,
         git_diff=diff,
         mode_hint="git",
+        base_sha=base_sha,
+        head_sha=head_sha,
     )
 
 
@@ -177,16 +188,20 @@ def _resolve_empty(
         empty_tree_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
         if head_spec.ref == WORKING:
             diff = working_tree_diff(empty_tree_sha, paths, cwd)
+            head_sha = resolve_git_ref("HEAD", cwd)
         elif head_spec.ref == INDEX:
             diff = cached_diff(empty_tree_sha, paths, cwd)
+            head_sha = resolve_git_ref("HEAD", cwd)
         else:
-            resolve_git_ref(head_spec.ref, cwd)
+            head_sha = resolve_git_ref(head_spec.ref, cwd)
             diff = git_diff(empty_tree_sha, head_spec.ref, paths, cwd)
         return ResolvedReview(
             source_files=paths,
             baseline_content=None,
             git_diff=diff,
             mode_hint="git",
+            base_sha=empty_tree_sha,
+            head_sha=head_sha,
         )
     mode = "git" if is_git_repo(cwd) else "non-git"
     return ResolvedReview(
