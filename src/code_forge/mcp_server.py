@@ -57,7 +57,7 @@ def _install_pdeathsig() -> None:
 
     Covers the orphan leak where the IDE/session restarts without
     sending SIGTERM or closing the stdio socket.  The delivered
-    SIGTERM is then handled by the lifespan signal handler (38.1)
+    SIGTERM is then handled by the lifespan signal handler
     or, if that has not been installed yet, by the default SIGTERM
     disposition (process terminates -- no cleanup, but no orphan).
 
