@@ -679,16 +679,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="allow unknown fingerprint (for escapes from outside runs)",
     )
     mark_parser.add_argument(
-        "--note", default=None,
-        help="optional free-form note",
-    )
-    mark_parser.add_argument(
         "--base-sha", default=None,
         help="base SHA for escape rows; defaults to current HEAD",
     )
     mark_parser.add_argument(
         "--head-sha", default=None,
-        help="head SHA for escape rows; defaults to current HEAD",
+        help="head SHA for escape rows; defaults to current HEAD (must be provided together with --base-sha for non-HEAD base)",
     )
 
     # ledger list [--json] [--fingerprint FP]
@@ -1215,13 +1211,25 @@ def _run_ledger(args, cwd: Path) -> int:
                 )
                 return EXIT_CLI_ERROR
 
-        # Resolve SHAs: explicit > HEAD
-        base_sha = args.base_sha or ""
-        head_sha = args.head_sha or ""
-        if not base_sha or not head_sha:
+        # Resolve SHAs: both explicit OR neither (defaults to HEAD/HEAD).
+        # Asymmetric --head-sha without --base-sha is rejected to keep
+        # Phase 44 diff extraction meaningful (empty base..head diff).
+        if (args.base_sha is None) != (args.head_sha is None):
+            print(
+                "code-forge ledger mark: --base-sha and --head-sha must "
+                "be provided together (or both omitted to default to "
+                "current HEAD)",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        if args.base_sha is not None and args.head_sha is not None:
+            base_sha = args.base_sha
+            head_sha = args.head_sha
+        else:
             try:
-                head_sha = head_sha or _git_head(cwd)
-                base_sha = base_sha or head_sha
+                head_sha = _git_head(cwd)
+                base_sha = head_sha
             except Exception:  # noqa: BLE001
                 print(
                     "code-forge ledger mark: could not resolve git SHAs; "
@@ -1230,14 +1238,20 @@ def _run_ledger(args, cwd: Path) -> int:
                 )
                 return EXIT_CLI_ERROR
 
-        evidence = args.evidence
-        if args.note:
-            evidence = args.note
+        # Validate SHA format (40-hex).
+        for name, val in (("base-sha", base_sha), ("head-sha", head_sha)):
+            if len(val) != 40 or not all(c in "0123456789abcdef" for c in val):
+                print(
+                    "code-forge ledger mark: %s %r is not a valid 40-hex "
+                    "git SHA" % (name, val),
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         append_row(cwd, LedgerRow(
             fingerprint=args.fingerprint,
-            repo_root=str(cwd),
+            repo_root=str(cwd.resolve()),
             base_sha=base_sha,
             head_sha=head_sha,
             file="",
@@ -1245,7 +1259,7 @@ def _run_ledger(args, cwd: Path) -> int:
             axis_claim="manual",
             pass_provenance="manual",
             terminal_state=state,
-            evidence_class=evidence,
+            evidence_class=args.evidence,
             ts=ts,
         ))
         print(
@@ -1259,7 +1273,6 @@ def _run_ledger(args, cwd: Path) -> int:
         if args.fingerprint:
             rows = [r for r in rows if r.fingerprint == args.fingerprint]
         if args.as_json:
-            import json
             payload = [
                 {
                     **r.__dict__,
@@ -1293,7 +1306,6 @@ def _run_ledger(args, cwd: Path) -> int:
 
 def _git_head(cwd: Path) -> str:
     """Return HEAD sha (raises on failure)."""
-    import subprocess
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=str(cwd),

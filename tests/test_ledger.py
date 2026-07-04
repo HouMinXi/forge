@@ -73,6 +73,35 @@ def test_iter_skips_malformed_line(tmp_path, capsys):
     assert "malformed" in captured.err.lower()
 
 
+def test_iter_skips_schema_invalid_line_with_missing_field(tmp_path, capsys):
+    """A valid JSON line missing required fields is skipped, not crashed."""
+    ledger_path = tmp_path / ".code-forge" / "ledger.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    valid = json.dumps(_make_row(fp="fp-good").__dict__)
+    missing = json.dumps({"fingerprint": "fp-no-fields"})
+    bogus_state = json.dumps(_make_row(fp="fp-bogus-state").__dict__
+                             ).replace('"FIXED"', '"BOGUS_STATE"')
+    ledger_path.write_text(valid + "\n" + missing + "\n" + bogus_state + "\n")
+    rows = list(iter_rows(tmp_path))
+    assert [r.fingerprint for r in rows] == ["fp-good"]
+    captured = capsys.readouterr()
+    assert "schema-invalid" in captured.err.lower()
+
+
+def test_iter_skips_schema_invalid_line_with_null_line(tmp_path, capsys):
+    """A row whose `line` field is null does NOT abort iteration (TypeError)."""
+    ledger_path = tmp_path / ".code-forge" / "ledger.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    valid = json.dumps(_make_row(fp="fp-good").__dict__)
+    null_line = json.dumps(_make_row(fp="fp-null-line").__dict__
+                           ).replace('"line": 42', '"line": null')
+    ledger_path.write_text(valid + "\n" + null_line + "\n")
+    rows = list(iter_rows(tmp_path))
+    assert [r.fingerprint for r in rows] == ["fp-good"]
+    captured = capsys.readouterr()
+    assert "schema-invalid" in captured.err.lower()
+
+
 def test_append_creates_directory_if_missing(tmp_path):
     assert not (tmp_path / ".code-forge").exists()
     append_row(tmp_path, _make_row())
