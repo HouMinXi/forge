@@ -64,18 +64,22 @@ def _install_pdeathsig() -> None:
     Linux-only (prctl PR_SET_PDEATHSIG).  Other platforms are
     unguarded today; document the gap rather than fake a fix.
 
-    Limitation: the ppid==1 startup-race check assumes PID 1 is
-    init, not a subreaper.  Inside a PID namespace (Docker/K8s)
-    ppid==1 is the container init and does not mean orphaned.
-    Acceptable for the MCP server's deployment (direct IDE launch).
+    Landmine 5 (PID namespace): inside Docker/K8s the parent may
+    itself be PID 1.  The startup-race check compares ppid before
+    and after prctl rather than hardcoding ppid==1, so it works
+    regardless of whether PID 1 is init or a container entrypoint.
     """
     if sys.platform != "linux":
         return
     import ctypes
+    import ctypes.util
+
+    original_ppid = os.getppid()
 
     PR_SET_PDEATHSIG = 1
+    libc_name = ctypes.util.find_library("c") or "libc.so.6"
     try:
-        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc = ctypes.CDLL(libc_name, use_errno=True)
         rc = libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
         if rc != 0:
             errno = ctypes.get_errno()
@@ -85,11 +89,15 @@ def _install_pdeathsig() -> None:
     except Exception as exc:
         log.warning("PR_SET_PDEATHSIG unavailable: %s", exc)
 
-    # Startup race: if the parent already died between fork and
-    # prctl, the signal will never arrive.  Check unconditionally
-    # (even if prctl failed) so an already-orphaned server exits.
-    if os.getppid() == 1:
-        log.warning("Parent already dead at startup (ppid=1), exiting")
+    # Startup race: if the parent died between fork and prctl, the
+    # signal will never arrive.  Compare ppid before/after rather
+    # than hardcoding ==1, so this works inside PID namespaces
+    # where the parent may itself be PID 1.
+    if os.getppid() != original_ppid:
+        log.warning(
+            "Parent changed during startup (was %d, now %d), exiting",
+            original_ppid, os.getppid(),
+        )
         os._exit(1)
 
 

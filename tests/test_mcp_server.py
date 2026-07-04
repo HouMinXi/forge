@@ -1180,15 +1180,17 @@ class TestShutdownInfrastructure:
                 mod._install_pdeathsig()
             mock_cdll.assert_not_called()
 
-    def test_install_pdeathsig_exits_on_dead_parent(self):
+    def test_install_pdeathsig_exits_on_parent_change(self):
+        """Parent ppid changed between before/after prctl -> exit."""
         import code_forge.mcp_server as mod
 
         mock_libc = MagicMock()
         mock_libc.prctl.return_value = 0
+        # First call returns 500 (original), second returns 1 (reparented)
         with (
             patch("code_forge.mcp_server.sys") as mock_sys,
             patch("ctypes.CDLL", return_value=mock_libc),
-            patch("code_forge.mcp_server.os.getppid", return_value=1),
+            patch("code_forge.mcp_server.os.getppid", side_effect=[500, 1, 1]),
             patch("code_forge.mcp_server.os._exit") as mock_exit,
         ):
             mock_sys.platform = "linux"
