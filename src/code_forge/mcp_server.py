@@ -675,11 +675,12 @@ async def forge_review(
             job_id = start_job(inner_task, proc, tempfile_path=tmp_path,
                                stderr_log_path=stderr_path)
         except Exception:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except FileNotFoundError:
-                    pass
+            for p in (tmp_path, stderr_path):
+                if p:
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
             raise
         return _make_job_ref(job_id)
 
