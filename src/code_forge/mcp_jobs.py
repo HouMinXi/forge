@@ -16,6 +16,7 @@ import asyncio
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -75,6 +76,7 @@ def start_job(
     comm_task: asyncio.Task[Any],
     proc: asyncio.subprocess.Process,
     tempfile_path: str | None = None,
+    stderr_log_path: str | None = None,
 ) -> str:
     """Register a background job. Returns job_id (UUID4).
 
@@ -89,6 +91,7 @@ def start_job(
         "result": None,
         "created_at": time.monotonic(),
         "tempfile_path": tempfile_path,
+        "stderr_log_path": stderr_log_path,
     }
     asyncio.create_task(_wait_for_job(job_id))
     return job_id
@@ -101,6 +104,17 @@ def get_job(job_id: str) -> dict[str, Any] | None:
     """
     _evict_stale()
     return _jobs.get(job_id)
+
+
+def snapshot_tempfile_paths() -> list[str]:
+    """Return all tempfile paths from job entries for pre-shutdown cleanup."""
+    paths: list[str] = []
+    for entry in _jobs.values():
+        for key in ("tempfile_path", "stderr_log_path"):
+            p = entry.get(key)
+            if p:
+                paths.append(p)
+    return paths
 
 
 async def cleanup_all() -> None:
@@ -125,16 +139,33 @@ async def _wait_for_job(job_id: str) -> None:
     entry = _jobs.get(job_id)
     if entry is None:
         return
+    elapsed = time.monotonic() - entry["created_at"]
     try:
         stdout_bytes, stderr_bytes = await entry["comm_task"]
+        elapsed = time.monotonic() - entry["created_at"]
         proc = entry["proc"]
         exit_code = proc.returncode if proc.returncode is not None else -1
+        # stderr is None when redirected to a file (Python 3.14 verified)
+        if stderr_bytes is None:
+            log_path = entry.get("stderr_log_path")
+            if log_path:
+                try:
+                    stderr_text = Path(log_path).read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    stderr_text = ""
+            else:
+                stderr_text = ""
+        else:
+            stderr_text = stderr_bytes.decode(errors="replace")
         entry["status"] = "completed"
         entry["result"] = {
             "stdout": stdout_bytes.decode(errors="replace"),
-            "stderr": stderr_bytes.decode(errors="replace"),
+            "stderr": stderr_text,
             "exit_code": exit_code,
             "verdict": exit_to_verdict(exit_code),
+            "duration_s": elapsed,
         }
     except BaseException as exc:
         entry["status"] = "failed"
@@ -143,19 +174,26 @@ async def _wait_for_job(job_id: str) -> None:
             "stderr": str(exc),
             "exit_code": -1,
             "verdict": "UNKNOWN(-1)",
+            "duration_s": elapsed,
         }
     finally:
-        tmp = entry.get("tempfile_path")
-        if tmp:
-            try:
-                os.unlink(tmp)
-            except FileNotFoundError:
-                pass
+        for key in ("tempfile_path", "stderr_log_path"):
+            p = entry.get(key)
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
         _evict_stale()
 
 
 def _evict_stale() -> None:
-    """Remove terminal entries past TTL. Kill stale running procs but leave entries."""
+    """Remove terminal entries past TTL; unlink their tempfiles.
+
+    Running entries are left untouched -- their sole forced-death owner
+    is cleanup_all() at server shutdown.  A stuck child stays visible
+    via forge_job_status progress tail until the operator acts.
+    """
     now = time.monotonic()
     to_remove: list[str] = []
     for jid, entry in _jobs.items():
@@ -164,10 +202,14 @@ def _evict_stale() -> None:
             continue
         if entry["status"] in ("completed", "failed"):
             to_remove.append(jid)
-        elif entry["status"] == "running":
-            # Kill but do NOT remove -- _wait_for_job will handle status update
-            proc = entry.get("proc")
-            if proc is not None and proc.returncode is None:
-                proc.kill()
     for jid in to_remove:
-        _jobs.pop(jid, None)
+        entry = _jobs.pop(jid, None)
+        if entry is None:
+            continue
+        for key in ("tempfile_path", "stderr_log_path"):
+            p = entry.get(key)
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass

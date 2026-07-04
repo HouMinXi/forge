@@ -17,8 +17,10 @@ passed as cwd to all CLI subprocesses; cli.py is unchanged.
 from __future__ import annotations
 
 import asyncio
-import os
 import logging
+import os
+import signal
+import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -35,10 +37,56 @@ from code_forge.mcp_jobs import (
     cleanup_all,
     exit_to_verdict,
     get_job,
+    snapshot_tempfile_paths,
     start_job,
 )
 
 log = logging.getLogger(__name__)
+
+# -- signal-driven shutdown for the stdio server --
+# The CLI signal handler (llm_invoke._install_signal_handlers) raises
+# KeyboardInterrupt on SIGTERM, which the asyncio runner swallows.
+# The server installs its own handler via loop.add_signal_handler
+# (last-install-wins), giving it a real exit path through cleanup_all.
+
+_shutting_down = False
+
+
+def _schedule_shutdown(signum: int, loop: asyncio.AbstractEventLoop) -> None:
+    """Schedule graceful shutdown on SIGTERM/SIGINT. Plain def for add_signal_handler."""
+    global _shutting_down  # noqa: PLW0603
+    if _shutting_down:
+        return
+    _shutting_down = True
+    loop.create_task(_do_shutdown(signum))
+
+
+async def _do_shutdown(signum: int) -> None:
+    """Run cleanup, unlink tempfiles, then hard-exit.
+
+    Tempfile paths are snapshotted BEFORE cleanup_all() because it
+    clears _jobs, orphaning entries before _wait_for_job can fire
+    its own finally-block unlink.  The snapshot+unlink here is the
+    backup path; double-unlink is harmless (OSError caught).
+    """
+    paths = snapshot_tempfile_paths()
+    try:
+        await cleanup_all()
+    except Exception:
+        log.exception("cleanup_all failed during shutdown")
+    finally:
+        for p in paths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except OSError:
+            pass
+        os._exit(128 + signum)
+
 
 # -- workspace resolution (ADR-0006) --
 
@@ -104,6 +152,13 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     except Exception as exc:
         log.warning("Failed to load project gate.yaml: %s", exc)
     _backend_names = list(merge_backends(project_backends, user_backends).keys())
+
+    # Install signal handlers that actually terminate the server.
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(
+        signal.SIGTERM, lambda: _schedule_shutdown(signal.SIGTERM, loop))
+    loop.add_signal_handler(
+        signal.SIGINT, lambda: _schedule_shutdown(signal.SIGINT, loop))
 
     yield {"backend_names": _backend_names}
 
@@ -228,35 +283,68 @@ async def _kill_and_reap(
 async def _run_cli_budgeted(
     *args: str,
     budget: float = 20.0,
-) -> tuple[str, int, float, str] | tuple[asyncio.Task[Any], asyncio.subprocess.Process]:
-    """Run CLI with a time budget. Returns inline result or (task, proc) on timeout.
+) -> (
+    tuple[str, int, float, str]
+    | tuple[asyncio.Task[Any], asyncio.subprocess.Process, str]
+):
+    """Run CLI with a time budget.
 
-    On timeout the inner_task (wrapping proc.communicate()) survives via
-    asyncio.shield -- pass it to start_job for background completion.
+    Returns inline 4-tuple or (task, proc, stderr_log_path) on timeout.
+    Child stderr is redirected to a tempfile so forge_job_status can
+    report real-time progress while a background job runs.
     """
-    proc = await asyncio.create_subprocess_exec(
-        "code-forge",
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=str(_WORKSPACE),
+    stderr_fh = tempfile.NamedTemporaryFile(
+        mode="w", prefix="forge-stderr-", suffix=".log", delete=False
     )
+    stderr_log_path = stderr_fh.name
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "code-forge",
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=stderr_fh,
+            cwd=str(_WORKSPACE),
+        )
+    except BaseException:
+        stderr_fh.close()
+        try:
+            os.unlink(stderr_log_path)
+        except OSError:
+            pass
+        raise
+    stderr_fh.close()  # parent fd closed; child owns the file
+
     start = time.monotonic()
     inner_task = asyncio.create_task(proc.communicate())
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+        stdout_bytes, _stderr_none = await asyncio.wait_for(
             asyncio.shield(inner_task), timeout=budget
         )
         elapsed = time.monotonic() - start
+        try:
+            stderr_text = Path(stderr_log_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            stderr_text = ""
+        try:
+            os.unlink(stderr_log_path)
+        except OSError:
+            pass
         return (
             stdout_bytes.decode(errors="replace"),
             proc.returncode or 0,
             elapsed,
-            stderr_bytes.decode(errors="replace"),
+            stderr_text,
         )
     except asyncio.TimeoutError:
-        return (inner_task, proc)
+        return (inner_task, proc, stderr_log_path)
     except asyncio.CancelledError:
+        try:
+            os.unlink(stderr_log_path)
+        except OSError:
+            pass
         await _kill_and_reap(proc, inner_task)
         raise
 
@@ -490,8 +578,9 @@ async def _dispatch_sampling(
                 stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
                 return _make_result(stdout, exit_code, elapsed, stderr)
             else:
-                inner_task, proc = result  # type: ignore[misc]
-                job_id = start_job(inner_task, proc)
+                inner_task, proc, stderr_path = result  # type: ignore[misc]
+                job_id = start_job(inner_task, proc,
+                                   stderr_log_path=stderr_path)
                 return _make_job_ref(job_id)
         elif _can_fallback:
             raise ToolError(
@@ -581,9 +670,10 @@ async def forge_review(
         return _make_result(stdout, exit_code, elapsed, stderr)
     else:
         # Timeout -- transfer tempfile ownership to job
-        inner_task, proc = result  # type: ignore[misc]
+        inner_task, proc, stderr_path = result  # type: ignore[misc]
         try:
-            job_id = start_job(inner_task, proc, tempfile_path=tmp_path)
+            job_id = start_job(inner_task, proc, tempfile_path=tmp_path,
+                               stderr_log_path=stderr_path)
         except Exception:
             if tmp_path:
                 try:
@@ -638,8 +728,9 @@ async def forge_gate_check(
         stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
         return _make_result(stdout, exit_code, elapsed, stderr)
     else:
-        inner_task, proc = result  # type: ignore[misc]
-        job_id = start_job(inner_task, proc)
+        inner_task, proc, stderr_path = result  # type: ignore[misc]
+        job_id = start_job(inner_task, proc,
+                           stderr_log_path=stderr_path)
         return _make_job_ref(job_id)
 
 
@@ -726,7 +817,12 @@ async def forge_job_status(job_id: str) -> CallToolResult:
     """Poll job status."""
     entry = get_job(job_id)
     if entry is None:
-        raise ToolError("Unknown job_id: %s" % job_id)
+        raise ToolError(
+            "Unknown job_id: %s. The server may have restarted since "
+            "this job was issued (each instance tracks only its own jobs). "
+            "Completed reviews leave receipts under .code-forge/ regardless."
+            % job_id
+        )
 
     status = entry["status"]
     forge_result: ForgeResult | None = None
@@ -741,9 +837,27 @@ async def forge_job_status(job_id: str) -> CallToolResult:
             verdict=r.get("verdict", "UNKNOWN(-1)"),
             exit_code=r.get("exit_code", -1),
             findings_count=None,
-            duration_s=0.0,
+            duration_s=r.get("duration_s", 0.0),
             output=output,
         )
+
+    elapsed_text = ""
+    if status == "running":
+        elapsed = time.monotonic() - entry["created_at"]
+        # Read stderr tail for live progress
+        stderr_tail = ""
+        log_path = entry.get("stderr_log_path")
+        if log_path:
+            try:
+                sz = os.path.getsize(log_path)
+                with open(log_path, "rb") as fh:
+                    fh.seek(max(0, sz - 2048))
+                    stderr_tail = fh.read().decode("utf-8", errors="replace")
+            except OSError:
+                pass
+        elapsed_text = " (%.0fs)" % elapsed
+        if stderr_tail.strip():
+            elapsed_text += "\n--- progress ---\n" + stderr_tail.strip()
 
     ref = ForgeJobRef(
         job_id=job_id,
@@ -760,7 +874,7 @@ async def forge_job_status(job_id: str) -> CallToolResult:
             forge_result.exit_code,
         )
     else:
-        text = "Job %s: %s" % (job_id, status)
+        text = "Job %s: %s%s" % (job_id, status, elapsed_text)
 
     return CallToolResult(
         content=[TextContent(type="text", text=text)],

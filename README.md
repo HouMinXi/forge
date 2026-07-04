@@ -174,6 +174,21 @@ wrapper example and the per-editor MCP configs.
 **Verify:** call `forge_resolve_outlet` -- it should name a backend, not
 "key not set". Then call `forge_review` on a real diff.
 
+### Troubleshooting: stale server processes
+
+If old `code-forge-mcp` processes accumulate (visible as high memory or
+multiple PIDs), clean them up manually:
+
+```bash
+pgrep -af code-forge-mcp          # list survivors
+pkill -TERM -f code-forge-mcp     # graceful shutdown
+sleep 3
+pkill -KILL -f code-forge-mcp     # force-kill any that remain
+```
+
+After a server restart, job IDs from the previous instance become invalid.
+Completed reviews leave receipts under `.code-forge/` regardless.
+
 ## The pipeline
 
 ```

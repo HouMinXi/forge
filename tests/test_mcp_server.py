@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -288,22 +290,31 @@ async def test_run_cli_budgeted_inline_returns_tuple():
 
 @pytest.mark.asyncio
 async def test_run_cli_budgeted_captures_stderr():
-    """N1: stderr must be captured, not discarded."""
+    """N1: stderr captured from tempfile, not discarded."""
+    stderr_msg = "CliError: no backend configured\n"
     mock_proc = MagicMock()
-    mock_proc.communicate = AsyncMock(
-        return_value=(b"", b"CliError: no backend configured\n")
-    )
+    # communicate returns (stdout, None) when stderr is a file
+    mock_proc.communicate = AsyncMock(return_value=(b"", None))
     mock_proc.returncode = 2
+
+    real_ntf = tempfile.NamedTemporaryFile
+
+    def _fake_ntf(**kwargs):
+        tf = real_ntf(**kwargs)
+        tf.write(stderr_msg)
+        tf.flush()
+        return tf
+
     with patch(
         "code_forge.mcp_server.asyncio.create_subprocess_exec",
         new_callable=AsyncMock,
         return_value=mock_proc,
-    ):
+    ), patch("code_forge.mcp_server.tempfile.NamedTemporaryFile", side_effect=_fake_ntf):
         result = await _run_cli_budgeted("review", budget=5.0)
         stdout, exit_code, elapsed, stderr = result
         assert stdout == ""
         assert exit_code == 2
-        assert stderr == "CliError: no backend configured\n"
+        assert stderr == stderr_msg
 
 
 @pytest.mark.asyncio
@@ -312,7 +323,7 @@ async def test_run_cli_budgeted_timeout_returns_task_and_proc():
 
     async def _slow_comm():
         await asyncio.sleep(100)
-        return (b"late", b"")
+        return (b"late", None)
 
     mock_proc.communicate = _slow_comm
     mock_proc.returncode = None
@@ -324,14 +335,20 @@ async def test_run_cli_budgeted_timeout_returns_task_and_proc():
     ):
         result = await _run_cli_budgeted("review", budget=0.01)
         assert isinstance(result, tuple)
-        assert len(result) == 2
-        inner_task, proc = result
+        assert len(result) == 3
+        inner_task, proc, stderr_path = result
         assert isinstance(inner_task, asyncio.Task)
         assert proc is mock_proc
+        assert stderr_path.endswith(".log")
         inner_task.cancel()
         try:
             await inner_task
         except (asyncio.CancelledError, Exception):
+            pass
+        # cleanup tempfile
+        try:
+            os.unlink(stderr_path)
+        except OSError:
             pass
 
 
@@ -506,7 +523,7 @@ async def test_forge_review_timeout_returns_job_ref():
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
-            return_value=(mock_task, mock_proc),
+            return_value=(mock_task, mock_proc, "/tmp/fake.log"),
         ),
         patch(
             "code_forge.mcp_server.start_job", return_value="test-job-id"
@@ -530,16 +547,16 @@ async def test_forge_review_timeout_passes_tempfile_to_start_job():
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
-            return_value=(mock_task, mock_proc),
+            return_value=(mock_task, mock_proc, "/tmp/fake-stderr.log"),
         ),
         patch(
             "code_forge.mcp_server.start_job", return_value="test-job-id"
         ) as mock_start,
     ):
         await forge_review(contract="X")
-        # start_job should be called with tempfile_path set
         _, kwargs = mock_start.call_args
         assert kwargs.get("tempfile_path") is not None
+        assert kwargs.get("stderr_log_path") == "/tmp/fake-stderr.log"
 
 
 @pytest.mark.asyncio
@@ -587,7 +604,7 @@ async def test_forge_gate_check_timeout_returns_job_ref():
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
-            return_value=(mock_task, mock_proc),
+            return_value=(mock_task, mock_proc, "/tmp/fake.log"),
         ),
         patch(
             "code_forge.mcp_server.start_job", return_value="test-job-id"
@@ -597,7 +614,9 @@ async def test_forge_gate_check_timeout_returns_job_ref():
         assert isinstance(result, CallToolResult)
         assert result.structuredContent["job_id"] == "test-job-id"
         assert result.structuredContent["status"] == "running"
-        mock_start.assert_called_once_with(mock_task, mock_proc)
+        mock_start.assert_called_once_with(
+            mock_task, mock_proc, stderr_log_path="/tmp/fake.log"
+        )
 
 
 @pytest.mark.asyncio
@@ -792,7 +811,11 @@ async def test_forge_job_status_known_completed():
 async def test_forge_job_status_known_running():
     with patch(
         "code_forge.mcp_server.get_job",
-        return_value={"status": "running", "result": None},
+        return_value={
+            "status": "running",
+            "result": None,
+            "created_at": time.monotonic() - 30.0,
+        },
     ):
         result = await forge_job_status(job_id="abc")
         assert result.structuredContent["status"] == "running"
@@ -801,7 +824,7 @@ async def test_forge_job_status_known_running():
 @pytest.mark.asyncio
 async def test_forge_job_status_unknown_raises():
     with patch("code_forge.mcp_server.get_job", return_value=None):
-        with pytest.raises(ToolError, match="Unknown job_id"):
+        with pytest.raises(ToolError, match="Unknown job_id.*may have restarted"):
             await forge_job_status(job_id="bad")
 
 
@@ -1075,6 +1098,60 @@ class TestUserConfig:
             async with mod.lifespan(mod.mcp):
                 names = list(mod._backend_names)
         assert names == ["user-back"]
+
+
+class TestShutdownInfrastructure:
+    """Tests for signal-driven shutdown (Finding 2 coverage)."""
+
+    def test_schedule_shutdown_sets_flag_and_creates_task(self):
+        import code_forge.mcp_server as mod
+
+        orig = mod._shutting_down
+        try:
+            mod._shutting_down = False
+            loop = MagicMock()
+            mock_task = MagicMock()
+            loop.create_task.return_value = mock_task
+            mod._schedule_shutdown(15, loop)
+            assert mod._shutting_down is True
+            loop.create_task.assert_called_once()
+        finally:
+            mod._shutting_down = orig
+
+    def test_schedule_shutdown_reentrant_noop(self):
+        import code_forge.mcp_server as mod
+
+        orig = mod._shutting_down
+        try:
+            mod._shutting_down = True
+            loop = MagicMock()
+            mod._schedule_shutdown(15, loop)
+            loop.create_task.assert_not_called()
+        finally:
+            mod._shutting_down = orig
+
+    @pytest.mark.asyncio
+    async def test_lifespan_installs_signal_handlers(self):
+        import code_forge.mcp_server as mod
+
+        with (
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {}}),
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+        ):
+            mock_loop = MagicMock()
+            mock_get_loop.return_value = mock_loop
+            async with mod.lifespan(mod.mcp):
+                pass
+            # Verify both SIGTERM and SIGINT handlers were installed
+            calls = mock_loop.add_signal_handler.call_args_list
+            sigs = [c[0][0] for c in calls]
+            import signal
+            assert signal.SIGTERM in sigs
+            assert signal.SIGINT in sigs
 
 
 class TestForgeInitHomeGuard:
