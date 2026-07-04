@@ -1153,6 +1153,98 @@ class TestShutdownInfrastructure:
             assert signal.SIGTERM in sigs
             assert signal.SIGINT in sigs
 
+    def test_install_pdeathsig_calls_prctl_on_linux(self):
+        import code_forge.mcp_server as mod
+
+        mock_libc = MagicMock()
+        mock_libc.prctl.return_value = 0
+        with (
+            patch("code_forge.mcp_server.sys") as mock_sys,
+            patch("ctypes.CDLL", return_value=mock_libc),
+            patch("code_forge.mcp_server.os.getppid", return_value=12345),
+        ):
+            mock_sys.platform = "linux"
+            mod._install_pdeathsig()
+        mock_libc.prctl.assert_called_once()
+        args = mock_libc.prctl.call_args[0]
+        assert args[0] == 1  # PR_SET_PDEATHSIG
+        import signal
+        assert args[1] == signal.SIGTERM
+
+    def test_install_pdeathsig_skips_non_linux(self):
+        import code_forge.mcp_server as mod
+
+        with patch("code_forge.mcp_server.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            with patch("ctypes.CDLL") as mock_cdll:
+                mod._install_pdeathsig()
+            mock_cdll.assert_not_called()
+
+    def test_install_pdeathsig_exits_on_dead_parent(self):
+        import code_forge.mcp_server as mod
+
+        mock_libc = MagicMock()
+        mock_libc.prctl.return_value = 0
+        with (
+            patch("code_forge.mcp_server.sys") as mock_sys,
+            patch("ctypes.CDLL", return_value=mock_libc),
+            patch("code_forge.mcp_server.os.getppid", return_value=1),
+            patch("code_forge.mcp_server.os._exit") as mock_exit,
+        ):
+            mock_sys.platform = "linux"
+            mod._install_pdeathsig()
+        mock_exit.assert_called_once_with(1)
+
+    def test_install_pdeathsig_warns_on_prctl_failure(self, caplog):
+        import code_forge.mcp_server as mod
+        import logging
+
+        mock_libc = MagicMock()
+        mock_libc.prctl.return_value = -1
+        with (
+            patch("code_forge.mcp_server.sys") as mock_sys,
+            patch("ctypes.CDLL", return_value=mock_libc),
+            patch("ctypes.get_errno", return_value=22),
+            patch("code_forge.mcp_server.os.getppid", return_value=12345),
+            caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
+        ):
+            mock_sys.platform = "linux"
+            mod._install_pdeathsig()
+        assert "prctl(PR_SET_PDEATHSIG) failed" in caplog.text
+        assert "errno=22" in caplog.text
+
+    def test_install_pdeathsig_cdll_oserror_warns(self, caplog):
+        import code_forge.mcp_server as mod
+        import logging
+
+        with (
+            patch("code_forge.mcp_server.sys") as mock_sys,
+            patch("ctypes.CDLL", side_effect=OSError("libc not found")),
+            patch("code_forge.mcp_server.os.getppid", return_value=12345),
+            caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
+        ):
+            mock_sys.platform = "linux"
+            mod._install_pdeathsig()
+        assert "PR_SET_PDEATHSIG unavailable" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_lifespan_calls_pdeathsig(self):
+        import code_forge.mcp_server as mod
+
+        with (
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {}}),
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+            patch.object(mod, "_install_pdeathsig") as mock_pdeathsig,
+        ):
+            mock_get_loop.return_value = MagicMock()
+            async with mod.lifespan(mod.mcp):
+                pass
+            mock_pdeathsig.assert_called_once()
+
 
 class TestForgeInitHomeGuard:
     """forge_init refuses $HOME as workspace root."""
