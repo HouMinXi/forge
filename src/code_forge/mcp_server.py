@@ -52,6 +52,47 @@ log = logging.getLogger(__name__)
 _shutting_down = False
 
 
+def _install_pdeathsig() -> None:
+    """Ask the kernel to SIGTERM this process when its parent dies.
+
+    Covers the orphan leak where the IDE/session restarts without
+    sending SIGTERM or closing the stdio socket.  The delivered
+    SIGTERM is then handled by the lifespan signal handler (38.1)
+    or, if that has not been installed yet, by the default SIGTERM
+    disposition (process terminates -- no cleanup, but no orphan).
+
+    Linux-only (prctl PR_SET_PDEATHSIG).  Other platforms are
+    unguarded today; document the gap rather than fake a fix.
+
+    Limitation: the ppid==1 startup-race check assumes PID 1 is
+    init, not a subreaper.  Inside a PID namespace (Docker/K8s)
+    ppid==1 is the container init and does not mean orphaned.
+    Acceptable for the MCP server's deployment (direct IDE launch).
+    """
+    if sys.platform != "linux":
+        return
+    import ctypes
+
+    PR_SET_PDEATHSIG = 1
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        rc = libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+        if rc != 0:
+            errno = ctypes.get_errno()
+            log.warning(
+                "prctl(PR_SET_PDEATHSIG) failed: rc=%d errno=%d", rc, errno
+            )
+    except Exception as exc:
+        log.warning("PR_SET_PDEATHSIG unavailable: %s", exc)
+
+    # Startup race: if the parent already died between fork and
+    # prctl, the signal will never arrive.  Check unconditionally
+    # (even if prctl failed) so an already-orphaned server exits.
+    if os.getppid() == 1:
+        log.warning("Parent already dead at startup (ppid=1), exiting")
+        os._exit(1)
+
+
 def _schedule_shutdown(signum: int, loop: asyncio.AbstractEventLoop) -> None:
     """Schedule graceful shutdown on SIGTERM/SIGINT. Plain def for add_signal_handler."""
     global _shutting_down  # noqa: PLW0603
@@ -138,6 +179,8 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     BackendConfig loading happens per-review in _check_backend.
     """
     global _backend_names  # noqa: PLW0603
+
+    _install_pdeathsig()
 
     from code_forge import cli
 
