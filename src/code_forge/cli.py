@@ -1252,7 +1252,7 @@ def _run_ledger(args, cwd: Path) -> int:
 
         # Validate SHA format (40-hex).
         for name, val in (("base-sha", base_sha), ("head-sha", head_sha)):
-            if len(val) != 40 or not all(c in "0123456789abcdef" for c in val):
+            if len(val) != 40 or not all(c in "0123456789abcdefABCDEF" for c in val):
                 print(
                     "code-forge ledger mark: %s %r is not a valid 40-hex "
                     "git SHA" % (name, val),
