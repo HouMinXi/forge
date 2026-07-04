@@ -64,7 +64,7 @@ def _install_pdeathsig() -> None:
     Linux-only (prctl PR_SET_PDEATHSIG).  Other platforms are
     unguarded today; document the gap rather than fake a fix.
 
-    Landmine 5 (PID namespace): inside Docker/K8s the parent may
+    PID namespace caveat: inside Docker/K8s the parent may
     itself be PID 1.  The startup-race check compares ppid before
     and after prctl rather than hardcoding ppid==1, so it works
     regardless of whether PID 1 is init or a container entrypoint.
