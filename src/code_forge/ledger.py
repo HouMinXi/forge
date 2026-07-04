@@ -111,7 +111,7 @@ def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
                     evidence_class=data["evidence_class"],
                     ts=data["ts"],
                 )
-            except (KeyError, ValueError) as exc:
+            except (KeyError, ValueError, TypeError) as exc:
                 print(
                     "ledger: skipping schema-invalid line %d: %s"
                     % (lineno, exc),
