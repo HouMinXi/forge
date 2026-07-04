@@ -1068,8 +1068,8 @@ class StateMachine:
         "no placeholder/empty values" invariant.
 
         Best-effort dedup: if a (fingerprint, terminal_state) pair is
-        already present in the ledger from a prior run (with the same
-        base/head SHAs), we do not append a duplicate. This is a
+        already present in the ledger from any prior run, we do not
+        append a duplicate row regardless of SHAs. This is a
         TOCTOU window but the worst case is one extra row per
         convergence -- still monotonic non-decreasing, still
         append-only, still auditable.
