@@ -1200,6 +1200,18 @@ def _run_ledger(args, cwd: Path) -> int:
             )
             return EXIT_CLI_ERROR
 
+        # --new is reserved for DUPLICATE / ESCAPED (escapes from outside
+        # a run). FIXED / DISPROVED must originate from the state machine
+        # via _write_ledger_rows, not from a manual mark.
+        if args.is_new and state not in (TerminalState.DUPLICATE, TerminalState.ESCAPED):
+            print(
+                "code-forge ledger mark: --new is reserved for "
+                "DUPLICATE / ESCAPED (escapes from outside runs); "
+                "FIXED / DISPROVED must originate from a real review",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
         # If not --new, fingerprint must already exist in ledger
         if not args.is_new:
             existing = {r.fingerprint for r in iter_rows(cwd)}

@@ -79,8 +79,10 @@ def test_iter_skips_schema_invalid_line_with_missing_field(tmp_path, capsys):
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     valid = json.dumps(_make_row(fp="fp-good").__dict__)
     missing = json.dumps({"fingerprint": "fp-no-fields"})
-    bogus_state = json.dumps(_make_row(fp="fp-bogus-state").__dict__
-                             ).replace('"FIXED"', '"BOGUS_STATE"')
+    good_row = _make_row(fp="fp-bogus-state")
+    bogus_state_row = good_row.__dict__.copy()
+    bogus_state_row["terminal_state"] = "BOGUS_STATE"
+    bogus_state = json.dumps(bogus_state_row)
     ledger_path.write_text(valid + "\n" + missing + "\n" + bogus_state + "\n")
     rows = list(iter_rows(tmp_path))
     assert [r.fingerprint for r in rows] == ["fp-good"]
@@ -93,8 +95,9 @@ def test_iter_skips_schema_invalid_line_with_null_line(tmp_path, capsys):
     ledger_path = tmp_path / ".code-forge" / "ledger.jsonl"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     valid = json.dumps(_make_row(fp="fp-good").__dict__)
-    null_line = json.dumps(_make_row(fp="fp-null-line").__dict__
-                           ).replace('"line": 42', '"line": null')
+    null_line_row = _make_row(fp="fp-null-line").__dict__.copy()
+    null_line_row["line"] = None
+    null_line = json.dumps(null_line_row)
     ledger_path.write_text(valid + "\n" + null_line + "\n")
     rows = list(iter_rows(tmp_path))
     assert [r.fingerprint for r in rows] == ["fp-good"]
