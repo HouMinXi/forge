@@ -17,6 +17,20 @@ def _skip_worktree_check(monkeypatch):
     monkeypatch.setenv("FORGE_SKIP_WORKTREE_CHECK", "1")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_config(monkeypatch):
+    """Prevent user-level backends from leaking into tests.
+
+    Without this, ~/.config/code-forge/config.yaml backends get merged
+    into every test's gate.yaml via _merge_user_into, and their
+    api_key_env requirements cause preflight failures in CI and on
+    machines where the keys are not exported.
+    """
+    monkeypatch.setattr(
+        "code_forge.user_config.load_user_backends", lambda: {}
+    )
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _git_isolation():
     """Block git from discovering the real repo .git via directory walk-up."""
