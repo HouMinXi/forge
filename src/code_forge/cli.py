@@ -650,6 +650,61 @@ def _build_parser() -> argparse.ArgumentParser:
         help="path for JSON results file",
     )
 
+    # --- LEDGER subcommand: view or rule on outcome ledger rows ---
+    ledger_parser = subparsers.add_parser(
+        'ledger',
+        help='view or rule on outcome ledger rows',
+    )
+    ledger_subs = ledger_parser.add_subparsers(dest='ledger_command')
+
+    # ledger mark <fingerprint> <terminal_state> [--evidence "..."] [--new] [--note "..."]
+    mark_parser = ledger_subs.add_parser(
+        'mark',
+        help='append a manual ruling for a fingerprint',
+    )
+    mark_parser.add_argument(
+        "fingerprint",
+        help="finding fingerprint to rule on",
+    )
+    mark_parser.add_argument(
+        "terminal_state",
+        help="terminal state to record (FIXED, DISPROVED, DUPLICATE, ESCAPED)",
+    )
+    mark_parser.add_argument(
+        "--evidence", default="manual",
+        help="evidence_class for the row (default: manual)",
+    )
+    mark_parser.add_argument(
+        "--new", dest="is_new", action="store_true",
+        help="allow unknown fingerprint (for escapes from outside runs)",
+    )
+    mark_parser.add_argument(
+        "--note", default=None,
+        help="optional free-form note",
+    )
+    mark_parser.add_argument(
+        "--base-sha", default=None,
+        help="base SHA for escape rows; defaults to current HEAD",
+    )
+    mark_parser.add_argument(
+        "--head-sha", default=None,
+        help="head SHA for escape rows; defaults to current HEAD",
+    )
+
+    # ledger list [--json] [--fingerprint FP]
+    list_parser = ledger_subs.add_parser(
+        'list',
+        help='list outcome ledger rows',
+    )
+    list_parser.add_argument(
+        "--json", dest="as_json", action="store_true",
+        help="emit JSON instead of TSV",
+    )
+    list_parser.add_argument(
+        "--fingerprint", default=None,
+        help="filter to one fingerprint",
+    )
+
     return parser
 
 
@@ -1120,6 +1175,137 @@ def _run_trust(args, cwd: Path) -> int:
     return EXIT_PASS
 
 
+def _run_ledger(args, cwd: Path) -> int:
+    """Handle ``code-forge ledger {mark,list}`` subcommand.
+
+    Returns EXIT_PASS (0) on success, EXIT_CLI_ERROR (2) on validation
+    failure or I/O error. Non-review subcommand convention (no CliError).
+    """
+    from datetime import datetime, timezone
+    from .ledger import LedgerRow, TerminalState, append_row, iter_rows
+
+    if not args.ledger_command:
+        print(
+            "code-forge ledger: subcommand required (mark | list)",
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+
+    if args.ledger_command == "mark":
+        # Validate terminal_state
+        try:
+            state = TerminalState(args.terminal_state.upper())
+        except ValueError:
+            valid = ", ".join(s.value for s in TerminalState)
+            print(
+                "code-forge ledger mark: terminal_state must be one of: %s"
+                % valid,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        # If not --new, fingerprint must already exist in ledger
+        if not args.is_new:
+            existing = {r.fingerprint for r in iter_rows(cwd)}
+            if args.fingerprint not in existing:
+                print(
+                    "code-forge ledger mark: fingerprint %r not in ledger "
+                    "(pass --new for escapes)" % args.fingerprint,
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+
+        # Resolve SHAs: explicit > HEAD
+        base_sha = args.base_sha or ""
+        head_sha = args.head_sha or ""
+        if not base_sha or not head_sha:
+            try:
+                head_sha = head_sha or _git_head(cwd)
+                base_sha = base_sha or head_sha
+            except Exception:  # noqa: BLE001
+                print(
+                    "code-forge ledger mark: could not resolve git SHAs; "
+                    "pass --base-sha and --head-sha explicitly",
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+
+        evidence = args.evidence
+        if args.note:
+            evidence = args.note
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        append_row(cwd, LedgerRow(
+            fingerprint=args.fingerprint,
+            repo_root=str(cwd),
+            base_sha=base_sha,
+            head_sha=head_sha,
+            file="",
+            line=0,
+            axis_claim="manual",
+            pass_provenance="manual",
+            terminal_state=state,
+            evidence_class=evidence,
+            ts=ts,
+        ))
+        print(
+            "ledger: marked %s as %s" % (args.fingerprint, state.value),
+            file=sys.stderr,
+        )
+        return EXIT_PASS
+
+    if args.ledger_command == "list":
+        rows = list(iter_rows(cwd))
+        if args.fingerprint:
+            rows = [r for r in rows if r.fingerprint == args.fingerprint]
+        if args.as_json:
+            import json
+            payload = [
+                {
+                    **r.__dict__,
+                    "terminal_state": r.terminal_state.value,
+                }
+                for r in rows
+            ]
+            print(json.dumps(payload, indent=2))
+        else:
+            print(
+                "ts\tfingerprint\tterminal_state\t"
+                "evidence_class\tfile:line\tpass_provenance"
+            )
+            for r in rows:
+                print(
+                    "%s\t%s\t%s\t%s\t%s:%d\t%s"
+                    % (
+                        r.ts, r.fingerprint, r.terminal_state.value,
+                        r.evidence_class, r.file, r.line,
+                        r.pass_provenance,
+                    )
+                )
+        return EXIT_PASS
+
+    print(
+        "code-forge ledger: unknown subcommand %r" % args.ledger_command,
+        file=sys.stderr,
+    )
+    return EXIT_CLI_ERROR
+
+
+def _git_head(cwd: Path) -> str:
+    """Return HEAD sha (raises on failure)."""
+    import subprocess
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("git rev-parse HEAD failed: %s" % result.stderr)
+    return result.stdout.strip()
+
+
 def main() -> int:
     """Entry point. Returns exit code (int).
 
@@ -1145,7 +1331,7 @@ def main() -> int:
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
         'detect', 'resolve-outlet', 'init', 'trust', 'eval', 'smoke-run',
-        'setup-mcp',
+        'setup-mcp', 'ledger',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -1256,6 +1442,9 @@ def main() -> int:
 
     elif args.subcommand == 'eval':
         return _run_eval(args)
+
+    elif args.subcommand == 'ledger':
+        return _run_ledger(args, cwd=Path.cwd())
 
     elif args.subcommand == 'smoke-run':
         return _handle_smoke_run(args, cwd=Path.cwd())
