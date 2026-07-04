@@ -7,7 +7,6 @@ Linux-only (PR_SET_PDEATHSIG). Marked as integration tests.
 """
 from __future__ import annotations
 
-import ctypes
 import os
 import signal
 import subprocess
@@ -51,16 +50,9 @@ _PARENT_SCRIPT = textwrap.dedent("""\
 # -- helper: minimal server script that sets PDEATHSIG and sleeps --
 
 _SERVER_SCRIPT = textwrap.dedent("""\
-    import ctypes, os, signal, sys, time
-
-    PR_SET_PDEATHSIG = 1
-    libc = ctypes.CDLL("libc.so.6", use_errno=True)
-    rc = libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
-    if rc != 0:
-        sys.exit(99)
-
-    if os.getppid() == 1:
-        sys.exit(98)
+    import time
+    from code_forge.mcp_server import _install_pdeathsig
+    _install_pdeathsig()
 
     # Block until signal arrives
     while True:
@@ -167,30 +159,36 @@ class TestPdeathsigChildInheritance:
 
         This confirms review-job subprocesses are not killed early by
         an inherited PDEATHSIG when the server is still alive.
+
+        Both PDEATHSIG set and PR_GET check happen in child processes
+        to avoid polluting the pytest process state.
         """
-        child_script = textwrap.dedent("""\
-            import ctypes, sys
-            PR_GET_PDEATHSIG = 2
-            sig = ctypes.c_int(0)
-            libc = ctypes.CDLL("libc.so.6", use_errno=True)
-            rc = libc.prctl(PR_GET_PDEATHSIG, ctypes.byref(sig), 0, 0, 0)
-            print(sig.value)
-        """)
+        # Parent sets PDEATHSIG, then execs a grandchild that checks
+        parent_script = textwrap.dedent("""\
+            import ctypes, ctypes.util, os, signal, subprocess, sys
 
-        libc = ctypes.CDLL("libc.so.6", use_errno=True)
-        old_sig = ctypes.c_int(0)
-        libc.prctl(2, ctypes.byref(old_sig), 0, 0, 0)
+            libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6",
+                               use_errno=True)
+            libc.prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG
 
-        libc.prctl(1, signal.SIGTERM, 0, 0, 0)
-        try:
+            # Exec grandchild that reads its own PDEATHSIG
             result = subprocess.run(
-                [sys.executable, "-c", child_script],
+                [sys.executable, "-c",
+                 "import ctypes, ctypes.util; "
+                 "sig = ctypes.c_int(0); "
+                 "libc = ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6', use_errno=True); "
+                 "libc.prctl(2, ctypes.byref(sig), 0, 0, 0); "
+                 "print(sig.value)"],
                 capture_output=True, text=True, timeout=5,
             )
-            child_pdeathsig = int(result.stdout.strip())
-            assert child_pdeathsig == 0, (
-                "Child inherited PDEATHSIG=%d after exec -- "
-                "review-job subprocesses would be killed early" % child_pdeathsig
-            )
-        finally:
-            libc.prctl(1, old_sig.value, 0, 0, 0)
+            print(result.stdout.strip())
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", parent_script],
+            capture_output=True, text=True, timeout=10,
+        )
+        child_pdeathsig = int(result.stdout.strip())
+        assert child_pdeathsig == 0, (
+            "Child inherited PDEATHSIG=%d after exec -- "
+            "review-job subprocesses would be killed early" % child_pdeathsig
+        )
