@@ -81,6 +81,53 @@ def test_parser_rejects_unknown_terminal_state():
     assert args.terminal_state == "BOGUS"
 
 
+def test_ledger_no_subcommand_returns_cli_error(tmp_path):
+    """Bare `code-forge ledger` (no mark/list) exits non-zero with stderr hint."""
+    result = _run(tmp_path, "ledger")
+    assert result.returncode != 0
+    assert "subcommand required" in result.stderr
+    assert "mark" in result.stderr
+    assert "list" in result.stderr
+
+
+def test_ledger_unknown_subcommand_returns_cli_error(tmp_path):
+    """`code-forge ledger foo` exits non-zero with stderr hint."""
+    result = _run(tmp_path, "ledger", "foo")
+    assert result.returncode != 0
+    assert "invalid choice" in result.stderr
+
+
+def test_mark_invalid_terminal_state_returns_cli_error(tmp_path):
+    _git_init(tmp_path)
+    rc = _call(tmp_path, "ledger", "mark", "fp-x", "BOGUS", "--new")
+    assert rc != 0
+    # stderr is captured by subprocess.call exit code only; rerun for text
+    result = _run(tmp_path, "ledger", "mark", "fp-x", "BOGUS", "--new")
+    assert "terminal_state must be one of" in result.stderr
+
+
+def test_mark_head_sha_without_base_sha_returns_cli_error(tmp_path):
+    """--head-sha without --base-sha (or vice versa) is rejected to avoid
+    silent Phase 44 empty-diff extraction."""
+    _git_init(tmp_path)
+    result = _run(
+        tmp_path, "ledger", "mark", "fp-x", "FIXED", "--new",
+        "--head-sha", "b" * 40,
+    )
+    assert result.returncode != 0
+    assert "--base-sha and --head-sha must be provided together" in result.stderr
+
+
+def test_mark_invalid_sha_format_returns_cli_error(tmp_path):
+    _git_init(tmp_path)
+    result = _run(
+        tmp_path, "ledger", "mark", "fp-x", "FIXED", "--new",
+        "--base-sha", "not-a-sha", "--head-sha", "b" * 40,
+    )
+    assert result.returncode != 0
+    assert "not a valid 40-hex" in result.stderr
+
+
 def _git_init(path):
     """Initialize a git repo at path with one commit so SHA resolution works."""
     import subprocess as sp
