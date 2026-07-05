@@ -85,8 +85,11 @@ def _apply_params(
     allow_effort,  # False | True | "output_config"
     default_temperature: float = -1.0,
     field_selects_key: bool = False,
-) -> None:
+) -> int:
     """Apply typed config fields and generic params to a request body.
+
+    Returns the resolved output cap actually sent to the API (for use in
+    truncation diagnostics).
 
     default_temperature: format-specific fallback when backend.temperature
     is -1 (sentinel = not configured).  openai callers pass 0.0 for
@@ -101,6 +104,8 @@ def _apply_params(
     # Output cap: exactly one key, never both.
     # Priority: backend.outcap_key > field-derived (openai) > outcap_key pin
     cap = backend.max_completion_tokens or backend.max_tokens
+    if backend.output_ceiling > 0:
+        cap = backend.output_ceiling
     if backend.outcap_key:
         resolved_key = backend.outcap_key
     elif field_selects_key and backend.max_completion_tokens > 0:
@@ -142,6 +147,8 @@ def _apply_params(
     # Generic params passthrough (protected keys blocked at parse time)
     for k, v in (backend.params or {}).items():
         body[k] = v
+
+    return cap
 
 
 def _read_sse(response) -> dict:
@@ -853,7 +860,7 @@ def _invoke_openai(
         "model": backend.model,
         "messages": [{"role": "user", "content": prompt}],
     }
-    _apply_params(
+    resolved_cap = _apply_params(
         body, backend,
         outcap_key="max_completion_tokens",
         allow_thinking=True,
@@ -920,9 +927,11 @@ def _invoke_openai(
         out_tok = usage_data.get("completion_tokens", "?")
         raise LLMInvokeError(
             "%s backend response truncated (finish_reason=length, "
-            "input=%s output=%s, configured max_tokens=%s). "
-            "Increase max_tokens in gate.yaml or reduce diff size."
-            % (backend.name, in_tok, out_tok, backend.max_tokens),
+            "input=%s output=%s). Review output truncated: output "
+            "capacity (%d tokens) insufficient for this diff. Raise "
+            "output_ceiling on this backend in gate.yaml or use a "
+            "higher-output model."
+            % (backend.name, in_tok, out_tok, resolved_cap),
             kind="truncated",
             retryable=False,
         )
@@ -952,7 +961,7 @@ def _invoke_anthropic(
         "model": backend.model,
         "messages": [{"role": "user", "content": prompt}],
     }
-    _apply_params(
+    resolved_cap = _apply_params(
         body, backend,
         outcap_key="max_tokens",
         allow_thinking=True,
@@ -1016,9 +1025,11 @@ def _invoke_anthropic(
         out_tok = usage_data.get("output_tokens", "?")
         raise LLMInvokeError(
             "%s backend response truncated (stop_reason=max_tokens, "
-            "input=%s output=%s, configured max_tokens=%s). "
-            "Increase max_tokens in gate.yaml or reduce diff size."
-            % (backend.name, in_tok, out_tok, backend.max_tokens),
+            "input=%s output=%s). Review output truncated: output "
+            "capacity (%d tokens) insufficient for this diff. Raise "
+            "output_ceiling on this backend in gate.yaml or use a "
+            "higher-output model."
+            % (backend.name, in_tok, out_tok, resolved_cap),
             kind="truncated",
             retryable=False,
         )
@@ -1122,7 +1133,7 @@ def _invoke_vertex(
         "anthropic_version": "vertex-2023-10-16",
         "messages": [{"role": "user", "content": prompt}],
     }
-    _apply_params(
+    resolved_cap = _apply_params(
         body, backend,
         outcap_key="max_tokens",
         allow_thinking=True,
@@ -1173,9 +1184,11 @@ def _invoke_vertex(
         out_tok = usage_data.get("output_tokens", "?")
         raise LLMInvokeError(
             "vertex backend response truncated (stop_reason=max_tokens, "
-            "input=%s output=%s, configured max_tokens=%s). "
-            "Increase max_tokens in gate.yaml or reduce diff size."
-            % (in_tok, out_tok, backend.max_tokens),
+            "input=%s output=%s). Review output truncated: output "
+            "capacity (%d tokens) insufficient for this diff. Raise "
+            "output_ceiling on this backend in gate.yaml or use a "
+            "higher-output model."
+            % (in_tok, out_tok, resolved_cap),
             kind="truncated",
             retryable=False,
         )

@@ -44,14 +44,14 @@ VALID_OUTCAP_KEYS = {"max_tokens", "max_completion_tokens"}
 PROTECTED_PARAM_KEYS = frozenset({
     "model", "messages", "stream", "anthropic_version",
     "temperature", "thinking", "reasoning_effort",
-    "max_completion_tokens", "max_tokens",
+    "max_completion_tokens", "max_tokens", "output_ceiling",
 })
 
 # ADR-0005 fields that only make sense on api backends
 _API_ONLY_FIELDS = (
     "temperature", "max_completion_tokens", "thinking_type",
     "thinking_budget", "reasoning_effort", "stream",
-    "outcap_key", "params",
+    "outcap_key", "output_ceiling", "params",
 )
 
 DEFAULT_AUTH_TIMEOUT = 20          # generous cap
@@ -89,6 +89,7 @@ class BackendConfig:
     command: str = ""                  # cli binary name or path
     default: bool = False              # config default marker
     max_tokens: int = 16384            # output token cap for api calls
+    output_ceiling: int = 0            # 0 = use max_tokens; >0 = override cap
     project_id: Optional[str] = None  # vertex: GCP project ID
     region: Optional[str] = None      # vertex: GCP region (default: global)
     credentials_path: Optional[str] = None  # vertex: service account JSON path
@@ -257,6 +258,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
     model = entry.get("model", "")
     is_default = entry.get("default", False)
     max_tokens = entry.get("max_tokens", 16384)
+    output_ceiling = entry.get("output_ceiling", 0)
 
     if btype == "api":
         fmt = entry.get("format")
@@ -288,6 +290,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
                 name=name, type=btype, model=model, format=fmt,
                 base_url=None, api_key_env=None, command="",
                 default=is_default, max_tokens=max_tokens,
+                output_ceiling=output_ceiling,
                 project_id=project_id, region=region,
                 credentials_path=credentials_path,
                 **pf,
@@ -309,6 +312,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
             name=name, type=btype, model=model, format=fmt,
             base_url=base_url, api_key_env=api_key_env, command="",
             default=is_default, max_tokens=max_tokens,
+            output_ceiling=output_ceiling,
             **pf,
         )
 
