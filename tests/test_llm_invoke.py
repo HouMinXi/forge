@@ -693,7 +693,7 @@ class TestTruncationDetection:
             assert exc_info.value.kind == "truncated"
             assert exc_info.value.retryable is False
             assert "input=500" in str(exc_info.value)
-            assert "output=16384" in str(exc_info.value)
+            assert "output capacity" in str(exc_info.value)
 
     def test_anthropic_stop_reason_end_turn_passes(self):
         from code_forge.llm_invoke import _invoke_anthropic
@@ -781,7 +781,7 @@ class TestTruncationDetection:
             assert exc_info.value.kind == "truncated"
             assert exc_info.value.retryable is False
             assert "input=600" in str(exc_info.value)
-            assert "output=8192" in str(exc_info.value)
+            assert "output capacity" in str(exc_info.value)
 
     def test_vertex_stop_reason_end_turn_passes(self):
         from code_forge.llm_invoke import _invoke_vertex
@@ -2359,3 +2359,118 @@ class TestConnectionErrorHandling:
             with pytest.raises(LLMInvokeError, match="connection error") as exc:
                 llm_invoke("prompt", backend=self._vertex_backend())
             assert exc.value.retryable is True
+
+
+class TestOutputCeiling:
+    """output_ceiling overrides max_tokens as the API output cap.
+
+    Direction 1: ceiling overrides default cap in the request body.
+    Direction 2: truncation message names output capacity, not diff size.
+    """
+
+    def test_ceiling_overrides_max_tokens_in_request(self):
+        """When output_ceiling > 0, the API request uses ceiling as cap."""
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="openai",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=16384, output_ceiling=65536,
+        )
+        captured_body = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured_body.update(json.loads(req.data.decode()))
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": '{"findings": []}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            }).encode()
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+            return resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            llm_invoke("prompt", backend=backend)
+
+        # ceiling=65536 overrides max_tokens=16384
+        # openai with max_completion_tokens=0 uses "max_tokens" key
+        assert captured_body["max_tokens"] == 65536
+
+    def test_no_ceiling_uses_max_tokens(self):
+        """When output_ceiling == 0 (default), max_tokens is used."""
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="openai",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=16384, output_ceiling=0,
+        )
+        captured_body = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured_body.update(json.loads(req.data.decode()))
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": '{"findings": []}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            }).encode()
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+            return resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            llm_invoke("prompt", backend=backend)
+
+        assert captured_body["max_tokens"] == 16384
+
+    def test_truncation_message_shows_resolved_cap(self):
+        """Truncation error shows the actual cap, not backend.max_tokens."""
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="openai",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=16384, output_ceiling=65536,
+        )
+        mock_response = Mock()
+        mock_response.read.return_value = json.dumps({
+            "choices": [{
+                "message": {"content": "partial"},
+                "finish_reason": "length",
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 65536},
+        }).encode()
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=mock_response), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc:
+                llm_invoke("prompt", backend=backend)
+            msg = str(exc.value)
+            assert "output capacity (65536 tokens)" in msg
+            assert "reduce diff size" not in msg.lower()
+            assert exc.value.kind == "truncated"
+
+    def test_truncation_message_no_reduce_diff_size_anthropic(self):
+        """Anthropic truncation also uses new message format."""
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="anthropic",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=8192, output_ceiling=0,
+        )
+        mock_response = Mock()
+        mock_response.read.return_value = json.dumps({
+            "content": [{"type": "text", "text": "partial"}],
+            "usage": {"input_tokens": 100, "output_tokens": 8192},
+            "stop_reason": "max_tokens",
+        }).encode()
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=mock_response), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc:
+                llm_invoke("prompt", backend=backend)
+            msg = str(exc.value)
+            assert "output capacity (8192 tokens)" in msg
+            assert "reduce diff size" not in msg.lower()

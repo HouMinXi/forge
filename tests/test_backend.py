@@ -1473,7 +1473,8 @@ class TestParseCliEnvFields:
             ("temperature", 0.5), ("max_completion_tokens", 1000),
             ("thinking_type", "enabled"), ("thinking_budget", 1000),
             ("reasoning_effort", "high"), ("stream", True),
-            ("outcap_key", "max_tokens"), ("params", {"a": 1}),
+            ("outcap_key", "max_tokens"), ("output_ceiling", 65536),
+            ("params", {"a": 1}),
         ]
         for field_name, val in reject_fields:
             with pytest.raises(CliError, match=field_name):

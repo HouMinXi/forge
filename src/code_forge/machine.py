@@ -75,8 +75,8 @@ class TimeoutCircuitBreaker:
         if self._consecutive >= self.threshold:
             raise TimeoutBreaker(
                 "backend produced %d consecutive timeouts (>=%d); "
-                "review cannot converge. Reduce diff size, raise "
-                "FORGE_LLM_TIMEOUT_S, or switch to a faster backend."
+                "review cannot converge. Raise "
+                "FORGE_LLM_TIMEOUT_S or switch to a faster backend."
                 % (self._consecutive, self.threshold)
             )
 
