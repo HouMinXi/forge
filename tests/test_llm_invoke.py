@@ -1,5 +1,7 @@
+import http.client
 import json
 import os
+import ssl
 import subprocess
 import urllib.error
 from unittest.mock import patch, MagicMock, Mock
@@ -2246,3 +2248,114 @@ class TestInvokeSampling:
 
         with pytest.raises(LLMInvokeError, match="copilotcli"):
             await invoke_sampling(session, prompt="test prompt")
+
+
+class TestConnectionErrorHandling:
+    """Connection-level OSError (RemoteDisconnected, SSLError) must be caught
+    and wrapped as retryable LLMInvokeError, not propagate as a raw crash.
+
+    Tests go through invoke() so the retry loop is exercised end-to-end.
+    Each direction is tested on vertex AND openai to prove the fix is
+    cross-backend.
+    """
+
+    # -- helpers --
+
+    @staticmethod
+    def _openai_backend():
+        return BackendConfig(
+            name="test-oai", type="api", model="m", format="openai",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+        )
+
+    @staticmethod
+    def _vertex_backend():
+        return _make_vertex_backend()
+
+    @staticmethod
+    def _vertex_auth_patches():
+        """Context managers that satisfy vertex google-auth without real creds."""
+        mock_creds = MagicMock()
+        mock_creds.token = "fake-token"
+        return (
+            patch(
+                "google.oauth2.service_account.Credentials"
+                ".from_service_account_file",
+                return_value=mock_creds,
+            ),
+            patch("google.auth.default", return_value=(mock_creds, "proj")),
+            patch("google.auth.transport.requests.Request"),
+        )
+
+    # -- Direction 1: RemoteDisconnected -> retryable --
+
+    def test_remote_disconnected_openai_retryable(self):
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen",
+                   side_effect=http.client.RemoteDisconnected(
+                       "Remote end closed connection")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="connection error") as exc:
+                llm_invoke("prompt", backend=self._openai_backend())
+            assert exc.value.retryable is True
+
+    def test_remote_disconnected_vertex_retryable(self):
+        p1, p2, p3 = self._vertex_auth_patches()
+        with p1, p2, p3, \
+             patch("urllib.request.urlopen",
+                   side_effect=http.client.RemoteDisconnected(
+                       "Remote end closed connection")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="connection error") as exc:
+                llm_invoke("prompt", backend=self._vertex_backend())
+            assert exc.value.retryable is True
+
+    # -- Direction 2: TimeoutError regression guard --
+    # TimeoutError IS an OSError subclass. The new except-OSError must NOT
+    # intercept it -- the retry loop's inner except-TimeoutError at line ~791
+    # deliberately converts it to retryable=False. If the guard is missing,
+    # except-OSError swallows TimeoutError and flips retryable to True.
+
+    def test_timeout_error_openai_still_not_retryable(self):
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen",
+                   side_effect=TimeoutError("read timed out")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="timed out") as exc:
+                llm_invoke("prompt", backend=self._openai_backend())
+            assert exc.value.retryable is False
+            assert exc.value.is_timeout is True
+
+    def test_timeout_error_vertex_still_not_retryable(self):
+        p1, p2, p3 = self._vertex_auth_patches()
+        with p1, p2, p3, \
+             patch("urllib.request.urlopen",
+                   side_effect=TimeoutError("read timed out")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="timed out") as exc:
+                llm_invoke("prompt", backend=self._vertex_backend())
+            assert exc.value.retryable is False
+            assert exc.value.is_timeout is True
+
+    # -- Direction 3: SSLError -> retryable --
+    # ssl.SSLError is OSError but NOT ConnectionError. The except-OSError
+    # (not except-ConnectionError) is what catches it.
+
+    def test_ssl_error_openai_retryable(self):
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen",
+                   side_effect=ssl.SSLError(1, "[SSL] decryption failed")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="connection error") as exc:
+                llm_invoke("prompt", backend=self._openai_backend())
+            assert exc.value.retryable is True
+
+    def test_ssl_error_vertex_retryable(self):
+        p1, p2, p3 = self._vertex_auth_patches()
+        with p1, p2, p3, \
+             patch("urllib.request.urlopen",
+                   side_effect=ssl.SSLError(1, "[SSL] decryption failed")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="connection error") as exc:
+                llm_invoke("prompt", backend=self._vertex_backend())
+            assert exc.value.retryable is True

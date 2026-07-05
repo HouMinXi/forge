@@ -887,6 +887,13 @@ def _invoke_openai(
             "URLError from %s backend: %s" % (backend.format, exc.reason),
             retryable=True,
         ) from exc
+    except TimeoutError:
+        raise  # preserve non-retryable timeout handling in retry loop
+    except OSError as exc:
+        raise LLMInvokeError(
+            "connection error from %s backend: %s" % (backend.name, exc),
+            retryable=True,
+        ) from exc
 
     # Body-based error detection: Zhipu error.code, MiniMax base_resp
     _check_body_error(resp_data, backend)
@@ -972,6 +979,13 @@ def _invoke_anthropic(
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
             "URLError from %s backend: %s" % (backend.format, exc.reason),
+            retryable=True,
+        ) from exc
+    except TimeoutError:
+        raise  # preserve non-retryable timeout handling in retry loop
+    except OSError as exc:
+        raise LLMInvokeError(
+            "connection error from %s backend: %s" % (backend.name, exc),
             retryable=True,
         ) from exc
 
@@ -1130,6 +1144,13 @@ def _invoke_vertex(
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
             "URLError from vertex backend: %s" % exc.reason
+        ) from exc
+    except TimeoutError:
+        raise  # preserve non-retryable timeout handling in retry loop
+    except OSError as exc:
+        raise LLMInvokeError(
+            "connection error from %s backend: %s" % (backend.name, exc),
+            retryable=True,
         ) from exc
 
     try:
