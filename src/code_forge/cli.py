@@ -1723,10 +1723,12 @@ def _merge_contract_spec(
     """Merge contracts.yaml digest with --contract file content.
 
     Optionally summarizes large file content (>4KB bytes) when backend
-    is available. Appends the confirmation-bias directive, then any
-    scoped exemptions from a '## Do NOT Flag' section so that the
-    bias directive governs invariants-to-verify while the exemption
-    block follows it (not undercut by it).
+    is available. The summarization threshold applies to the contract
+    body AFTER stripping the '## Do NOT Flag' section, so exempted
+    idioms are never fed to the summarizer. Appends the confirmation-
+    bias directive, then any scoped exemptions so that the directive
+    governs invariants-to-verify while the exemption block follows it
+    (not undercut by it).
 
     Args:
         yaml_digest: Digest from contracts.yaml (may be "").
