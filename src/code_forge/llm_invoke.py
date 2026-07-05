@@ -1154,7 +1154,8 @@ def _invoke_vertex(
         ) from exc
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
-            "URLError from vertex backend: %s" % exc.reason
+            "URLError from vertex backend: %s" % exc.reason,
+            retryable=True,
         ) from exc
     except TimeoutError:
         raise  # preserve non-retryable timeout handling in retry loop

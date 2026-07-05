@@ -2474,3 +2474,24 @@ class TestOutputCeiling:
             msg = str(exc.value)
             assert "output capacity (8192 tokens)" in msg
             assert "reduce diff size" not in msg.lower()
+
+
+class TestVertexURLErrorRetryable:
+    """vertex URLError must be explicitly retryable, matching openai/anthropic."""
+
+    def test_vertex_urlerror_is_retryable(self):
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "fake"
+        url_error = urllib.error.URLError("connection refused")
+        with patch(
+                 "google.oauth2.service_account.Credentials"
+                 ".from_service_account_file",
+                 return_value=mock_creds), \
+             patch("google.auth.default", return_value=(mock_creds, "p")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", side_effect=url_error), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="URLError") as exc:
+                llm_invoke("prompt", backend=backend)
+            assert exc.value.retryable is True
