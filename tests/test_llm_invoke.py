@@ -693,6 +693,7 @@ class TestTruncationDetection:
             assert exc_info.value.kind == "truncated"
             assert exc_info.value.retryable is False
             assert "input=500" in str(exc_info.value)
+            assert "output=16384" in str(exc_info.value)
             assert "output capacity" in str(exc_info.value)
 
     def test_anthropic_stop_reason_end_turn_passes(self):
@@ -781,6 +782,7 @@ class TestTruncationDetection:
             assert exc_info.value.kind == "truncated"
             assert exc_info.value.retryable is False
             assert "input=600" in str(exc_info.value)
+            assert "output=8192" in str(exc_info.value)
             assert "output capacity" in str(exc_info.value)
 
     def test_vertex_stop_reason_end_turn_passes(self):
@@ -2449,6 +2451,62 @@ class TestOutputCeiling:
             assert "output capacity (65536 tokens)" in msg
             assert "reduce diff size" not in msg.lower()
             assert exc.value.kind == "truncated"
+
+    def test_ceiling_overrides_max_completion_tokens(self):
+        """output_ceiling takes priority over max_completion_tokens too."""
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="openai",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=16384, max_completion_tokens=8192,
+            output_ceiling=65536,
+        )
+        captured_body = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured_body.update(json.loads(req.data.decode()))
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": '{"findings": []}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            }).encode()
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+            return resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            llm_invoke("prompt", backend=backend)
+
+        # max_completion_tokens=8192 would be used without ceiling;
+        # ceiling=65536 overrides both
+        assert captured_body["max_completion_tokens"] == 65536
+
+    def test_ceiling_works_on_anthropic_format(self):
+        """output_ceiling overrides cap on anthropic format (max_tokens key)."""
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="anthropic",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=16384, output_ceiling=65536,
+        )
+        captured_body = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured_body.update(json.loads(req.data.decode()))
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "content": [{"type": "text", "text": '{"findings": []}'}],
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+            }).encode()
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+            return resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            llm_invoke("prompt", backend=backend)
+
+        # anthropic uses "max_tokens" key
+        assert captured_body["max_tokens"] == 65536
 
     def test_truncation_message_no_reduce_diff_size_anthropic(self):
         """Anthropic truncation also uses new message format."""
