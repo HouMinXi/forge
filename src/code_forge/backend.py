@@ -258,7 +258,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
     model = entry.get("model", "")
     is_default = entry.get("default", False)
     max_tokens = entry.get("max_tokens", 16384)
-    output_ceiling = entry.get("output_ceiling", 0)
+    output_ceiling = max(0, entry.get("output_ceiling", 0))
 
     if btype == "api":
         fmt = entry.get("format")
