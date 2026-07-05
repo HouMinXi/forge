@@ -1681,6 +1681,38 @@ _CONFIRMATION_BIAS_DIRECTIVE = (
     "violations exist and look for them."
 )
 
+_DO_NOT_FLAG_PREAMBLE = (
+    "\n\nThe following SPECIFIC patterns are author-asserted "
+    "intentional in THIS change; do not raise them as findings. "
+    "This exemption is limited to the exact patterns listed and "
+    "extends to nothing else:"
+)
+
+
+def _split_do_not_flag(content: str) -> tuple:
+    """Split a '## Do NOT Flag' section from contract content.
+
+    Returns (body_without_section, do_not_flag_text). If the heading
+    is absent, do_not_flag_text is "".
+    """
+    lines = content.split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip().lower() == "## do not flag":
+            start = i
+            break
+    if start is None:
+        return content, ""
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if lines[j].startswith("## "):
+            end = j
+            break
+    section_lines = lines[start + 1:end]
+    do_not_flag = "\n".join(section_lines).strip()
+    remaining = lines[:start] + lines[end:]
+    return "\n".join(remaining).strip(), do_not_flag
+
 
 def _merge_contract_spec(
     yaml_digest: str,
@@ -1691,8 +1723,10 @@ def _merge_contract_spec(
     """Merge contracts.yaml digest with --contract file content.
 
     Optionally summarizes large file content (>4KB bytes) when backend
-    is available. Appends the confirmation-bias directive when any
-    content is present.
+    is available. Appends the confirmation-bias directive, then any
+    scoped exemptions from a '## Do NOT Flag' section so that the
+    bias directive governs invariants-to-verify while the exemption
+    block follows it (not undercut by it).
 
     Args:
         yaml_digest: Digest from contracts.yaml (may be "").
@@ -1703,17 +1737,18 @@ def _merge_contract_spec(
     Returns:
         Merged contract spec string, or "" if both inputs empty.
     """
+    do_not_flag = ""
     merged = ""
     if yaml_digest:
         merged = yaml_digest
     if file_content:
-        effective_content = file_content
-        if len(file_content.encode("utf-8")) > 4096 and backend is not None:
+        effective_content, do_not_flag = _split_do_not_flag(file_content)
+        if len(effective_content.encode("utf-8")) > 4096 and backend is not None:
             try:
                 from .llm_invoke import llm_invoke
                 result = llm_invoke(
                     "Summarize the following contract to its key "
-                    "invariants and residual risks:\n" + file_content,
+                    "invariants and residual risks:\n" + effective_content,
                     backend=backend,
                 )
                 summary = str(result.content)
@@ -1734,6 +1769,8 @@ def _merge_contract_spec(
         merged = (merged + "\n\n" if merged else "") + effective_content
     if merged:
         merged += _CONFIRMATION_BIAS_DIRECTIVE
+    if do_not_flag:
+        merged += _DO_NOT_FLAG_PREAMBLE + "\n" + do_not_flag
     return merged
 
 
