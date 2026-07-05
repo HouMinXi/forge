@@ -11,8 +11,10 @@ import pytest
 
 from code_forge.cli import (
     _CONFIRMATION_BIAS_DIRECTIVE,
+    _DO_NOT_FLAG_PREAMBLE,
     _load_contract_file,
     _merge_contract_spec,
+    _split_do_not_flag,
 )
 from code_forge.errors import CliError
 
@@ -245,3 +247,119 @@ class TestMergeContractSpec:
             )
         assert big in result
         assert any("empty" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# _split_do_not_flag
+# ---------------------------------------------------------------------------
+
+
+class TestSplitDoNotFlag:
+    """Extract '## Do NOT Flag' section from contract content."""
+
+    def test_no_section_returns_original(self):
+        body, dnf = _split_do_not_flag("invariant: x must be positive")
+        assert body == "invariant: x must be positive"
+        assert dnf == ""
+
+    def test_section_extracted(self):
+        content = (
+            "## Invariants\ncheck x\n\n"
+            "## Do NOT Flag\n"
+            "- repeated timeout constant is intentional\n"
+            "- sys.argv read at cli.py:10 is the documented entrypoint\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "## Do NOT Flag" not in body
+        assert "## Invariants" in body
+        assert "repeated timeout constant" in dnf
+        assert "sys.argv read" in dnf
+
+    def test_section_between_other_headings(self):
+        content = (
+            "## Before\nstuff\n\n"
+            "## Do NOT Flag\nexempt item\n\n"
+            "## After\nmore stuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "## Before" in body
+        assert "## After" in body
+        assert "exempt item" in dnf
+        assert "## Do NOT Flag" not in body
+
+    def test_empty_section(self):
+        content = "## Do NOT Flag\n\n## Next\ndata\n"
+        body, dnf = _split_do_not_flag(content)
+        assert dnf == ""
+        assert "## Next" in body
+
+
+# ---------------------------------------------------------------------------
+# Do-not-flag integration (bidirectional scoping proof)
+# ---------------------------------------------------------------------------
+
+
+class TestDoNotFlagIntegration:
+    """The exemption must be SCOPED: named idioms exempt, unnamed bugs
+    still governed by the bias directive."""
+
+    _CONTRACT_WITH_EXEMPTION = (
+        "## Invariants\n"
+        "all functions must handle errors\n\n"
+        "## Do NOT Flag\n"
+        "- repeated _exec_timeout_s constant at cli.py:100 and "
+        "cli.py:200 is the intended per-call timeout, not a "
+        "magic-number smell\n"
+        "- sys.argv read at cli.py:10 is the documented entrypoint\n"
+    )
+
+    def test_exemption_placed_after_bias_directive(self):
+        """Named idioms appear AFTER the bias directive so the
+        directive does not trail and undercut them."""
+        result = _merge_contract_spec("", self._CONTRACT_WITH_EXEMPTION)
+        bias_pos = result.find("Assume violations exist")
+        preamble_pos = result.find("SPECIFIC patterns are author-asserted")
+        assert bias_pos > 0, "bias directive missing"
+        assert preamble_pos > 0, "exemption preamble missing"
+        assert preamble_pos > bias_pos, (
+            "exemption must follow the bias directive, not precede it"
+        )
+
+    def test_named_idiom_present_in_exemption(self):
+        """The contract's named idiom appears in the output's
+        exemption block."""
+        result = _merge_contract_spec("", self._CONTRACT_WITH_EXEMPTION)
+        assert "repeated _exec_timeout_s" in result
+        assert "sys.argv read at cli.py:10" in result
+
+    def test_invariants_still_governed_by_bias(self):
+        """Content NOT in the exemption list stays before the bias
+        directive and is governed by it."""
+        result = _merge_contract_spec("", self._CONTRACT_WITH_EXEMPTION)
+        invariant_pos = result.find("all functions must handle errors")
+        bias_pos = result.find("Assume violations exist")
+        assert invariant_pos < bias_pos, (
+            "invariants must precede the bias directive"
+        )
+
+    def test_bug_inject_removing_split_collapses_exemption(self):
+        """Bug-inject: if _split_do_not_flag is neutralized (always
+        returns empty dnf), the exemption block disappears from the
+        output -- proving the feature has teeth."""
+        with patch(
+            "code_forge.cli._split_do_not_flag",
+            return_value=(self._CONTRACT_WITH_EXEMPTION, ""),
+        ):
+            result = _merge_contract_spec(
+                "", self._CONTRACT_WITH_EXEMPTION
+            )
+        assert _DO_NOT_FLAG_PREAMBLE.strip() not in result
+        assert "repeated _exec_timeout_s" in result  # still in body
+
+    def test_no_exemption_section_leaves_bias_only(self):
+        """Contract without '## Do NOT Flag': only the bias directive
+        appears, no exemption preamble."""
+        plain = "## Invariants\ncheck everything\n"
+        result = _merge_contract_spec("", plain)
+        assert "Assume violations exist" in result
+        assert _DO_NOT_FLAG_PREAMBLE.strip() not in result
