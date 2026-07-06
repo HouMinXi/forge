@@ -708,7 +708,7 @@ class TestBuildSamplingL1Provider:
         )
 
         future = concurrent.futures.Future()
-        future.set_result(good_resp)
+        future.set_result([good_resp, good_resp, good_resp])
 
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
              patch("asyncio.run_coroutine_threadsafe", return_value=future):
@@ -746,15 +746,11 @@ class TestBuildSamplingL1Provider:
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
              patch("asyncio.run_coroutine_threadsafe", return_value=future):
             provider = build_sampling_l1_provider(session, loop, resolved)
-            result = provider()
+            with pytest.raises(concurrent.futures.TimeoutError):
+                provider()
 
-        # Each L1 pass (qodo/expert/adversarial) times out and cancels
-        assert future.cancel.call_count == 3
-        # Provider returns (findings, advisories, usage, duration) tuple, not raise
-        assert isinstance(result, tuple)
-        findings = result[0]
-        assert len(findings) == 3
-        assert all("invoke-fail" in f.id for f in findings)
+        # Outer gather timeout cancels the single future
+        assert future.cancel.call_count == 1
 
     def test_build_sampling_l1_provider_truncation_raises(self):
         from code_forge.factories import build_sampling_l1_provider
@@ -808,3 +804,255 @@ class TestBuildSamplingL1Provider:
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(LLMInvokeError, match="empty"):
                 provider()
+
+
+class TestParallelL1:
+    """Parallel execution: determinism, no-lost-work, failure isolation."""
+
+    _EXCERPTS = [
+        {"file": "src/a.py", "start_line": 1, "end_line": 4,
+         "content": "line1\nadded\nline2"},
+        {"file": "src/b.py", "start_line": 5, "end_line": 8,
+         "content": "line5\nadded2\nline6"},
+    ]
+
+    @staticmethod
+    def _api_backend():
+        from code_forge.backend import BackendConfig
+        return BackendConfig(
+            name="test-api", type="api", model="test",
+            format="openai", base_url="http://test")
+
+    def test_cli_backend_stays_serial(self):
+        """CLI backend must not enter ThreadPoolExecutor path."""
+        from code_forge.backend import BackendConfig
+        from code_forge.factories import build_l1_provider
+        from unittest.mock import patch
+
+        cli_backend = BackendConfig(
+            name="test-cli", type="cli", model="test",
+            format=None, base_url=None)
+
+        def mock_invoke(prompt, **kw):
+            if "structural code reviewer" in prompt:
+                line = 1
+            elif "senior engineer" in prompt:
+                line = 2
+            else:
+                line = 3
+            return _stub_llm_response(
+                [{"file": "src/a.py", "line": line, "severity": "P2",
+                  "description": "cli-finding"}], self._EXCERPTS)
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   side_effect=mock_invoke), \
+             patch("concurrent.futures.ThreadPoolExecutor",
+                   side_effect=AssertionError(
+                       "ThreadPoolExecutor must not be used")):
+            provider = build_l1_provider(
+                "auto", resolved, backend=cli_backend)
+            findings, _, _, _ = provider()
+
+        assert len(findings) == 3
+
+    def test_deterministic_fold_order(self):
+        """Direction 1: dedup keeps qodo's version of a shared finding."""
+        from code_forge.factories import build_l1_provider
+        from unittest.mock import patch
+
+        shared = {"file": "src/a.py", "line": 1, "severity": "P2",
+                  "description": "shared issue"}
+
+        def mock_invoke(prompt, **kw):
+            if "structural code reviewer" in prompt:
+                return _stub_llm_response([shared], self._EXCERPTS)
+            elif "senior engineer" in prompt:
+                return _stub_llm_response([shared], self._EXCERPTS)
+            return _stub_llm_response(
+                [{"file": "src/a.py", "line": 3, "severity": "P3",
+                  "description": "unique-adv"}], self._EXCERPTS)
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   side_effect=mock_invoke):
+            provider = build_l1_provider(
+                "auto", resolved, backend=self._api_backend())
+            findings, _, _, _ = provider()
+
+        assert len(findings) == 2
+        shared_f = [f for f in findings if "shared" in f.description]
+        assert len(shared_f) == 1
+        assert shared_f[0].description.startswith("[qodo]")
+
+    def test_no_lost_work(self):
+        """Direction 2: all 3 passes' distinct findings present."""
+        from code_forge.factories import build_l1_provider
+        from unittest.mock import patch
+
+        def mock_invoke(prompt, **kw):
+            if "structural code reviewer" in prompt:
+                return _stub_llm_response(
+                    [{"file": "src/a.py", "line": 1, "severity": "P2",
+                      "description": "from-qodo"}], self._EXCERPTS)
+            elif "senior engineer" in prompt:
+                return _stub_llm_response(
+                    [{"file": "src/a.py", "line": 2, "severity": "P1",
+                      "description": "from-expert"}], self._EXCERPTS)
+            return _stub_llm_response(
+                [{"file": "src/a.py", "line": 3, "severity": "P3",
+                  "description": "from-adversarial"}], self._EXCERPTS)
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   side_effect=mock_invoke):
+            provider = build_l1_provider(
+                "auto", resolved, backend=self._api_backend())
+            findings, _, usage, _ = provider()
+
+        assert len(findings) == 3
+        descs = {f.description for f in findings}
+        assert any("from-qodo" in d for d in descs)
+        assert any("from-expert" in d for d in descs)
+        assert any("from-adversarial" in d for d in descs)
+        assert usage.input_tokens == 30
+
+    def test_failure_isolation_api(self):
+        """Direction 3: one pass fails, other two still produce findings."""
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMInvokeError
+        from unittest.mock import patch, MagicMock
+
+        def mock_invoke(prompt, **kw):
+            if "senior engineer" in prompt:
+                raise LLMInvokeError("expert timeout", is_timeout=True)
+            if "structural code reviewer" in prompt:
+                return _stub_llm_response(
+                    [{"file": "src/a.py", "line": 1, "severity": "P2",
+                      "description": "qodo-finding"}], self._EXCERPTS)
+            return _stub_llm_response(
+                [{"file": "src/a.py", "line": 3, "severity": "P2",
+                  "description": "adv-finding"}], self._EXCERPTS)
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        breaker = MagicMock()
+
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   side_effect=mock_invoke):
+            provider = build_l1_provider(
+                "auto", resolved, backend=self._api_backend(),
+                breaker=breaker)
+            findings, _, _, _ = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) == 1
+        assert "expert" in infra[0].id
+        l1 = [f for f in findings if f.source == "L1"]
+        assert len(l1) == 2
+        breaker.record_timeout.assert_called_once()
+
+    def test_unexpected_exception_isolation_api(self):
+        """Non-LLM exception in one pass does not lose other passes."""
+        from code_forge.factories import build_l1_provider
+        from unittest.mock import patch, MagicMock
+
+        def mock_invoke(prompt, **kw):
+            if "senior engineer" in prompt:
+                raise RuntimeError("unexpected crash")
+            if "structural code reviewer" in prompt:
+                return _stub_llm_response(
+                    [{"file": "src/a.py", "line": 1, "severity": "P2",
+                      "description": "qodo-finding"}], self._EXCERPTS)
+            return _stub_llm_response(
+                [{"file": "src/a.py", "line": 3, "severity": "P2",
+                  "description": "adv-finding"}], self._EXCERPTS)
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        breaker = MagicMock()
+
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   side_effect=mock_invoke):
+            provider = build_l1_provider(
+                "auto", resolved, backend=self._api_backend(),
+                breaker=breaker)
+            findings, _, _, _ = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) == 1
+        assert "expert" in infra[0].id
+        assert "RuntimeError" in infra[0].description
+        l1 = [f for f in findings if f.source == "L1"]
+        assert len(l1) == 2
+        breaker.record_other_error.assert_called_once()
+
+    def test_per_coroutine_timeout_sampling(self):
+        """Per-coroutine timeout produces INFRA finding, others survive."""
+        import asyncio
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage
+        from unittest.mock import patch, MagicMock
+        import concurrent.futures
+
+        def _good(desc):
+            return LLMResult(
+                content={"findings": [
+                    {"file": "src/a.py", "line": 1, "severity": "P2",
+                     "description": desc}],
+                    "code_excerpts": self._EXCERPTS},
+                usage=Usage(0, 0), duration_s=0.1, is_truncated=False)
+
+        # Simulate: pass 0 OK, pass 1 timed out via wait_for, pass 2 OK
+        future = concurrent.futures.Future()
+        future.set_result([
+            _good("qodo-f"),
+            asyncio.TimeoutError("per-coroutine timeout"),
+            _good("adv-f")])
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        with patch("code_forge.llm_invoke.invoke_sampling",
+                   new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe",
+                   return_value=future):
+            provider = build_sampling_l1_provider(
+                MagicMock(), MagicMock(), resolved)
+            findings, _, _, _ = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) == 1
+        assert "expert" in infra[0].id
+        l1 = [f for f in findings if f.source == "L1"]
+        assert len(l1) == 2
+
+    def test_failure_isolation_sampling(self):
+        """Direction 3 (sampling): one exception, others still produce."""
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage
+        from unittest.mock import patch, MagicMock
+        import concurrent.futures
+
+        def _good(desc):
+            return LLMResult(
+                content={"findings": [
+                    {"file": "src/a.py", "line": 1, "severity": "P2",
+                     "description": desc}],
+                    "code_excerpts": self._EXCERPTS},
+                usage=Usage(0, 0), duration_s=0.1, is_truncated=False)
+
+        future = concurrent.futures.Future()
+        future.set_result([
+            _good("qodo-f"), RuntimeError("boom"), _good("adv-f")])
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        with patch("code_forge.llm_invoke.invoke_sampling",
+                   new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe",
+                   return_value=future):
+            provider = build_sampling_l1_provider(
+                MagicMock(), MagicMock(), resolved)
+            findings, _, _, _ = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) == 1
+        assert "expert" in infra[0].id
+        l1 = [f for f in findings if f.source == "L1"]
+        assert len(l1) == 2
