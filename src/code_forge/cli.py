@@ -2708,7 +2708,29 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
             print("  %s" % f.description, file=sys.stderr)
         return EXIT_FAIL
 
-    print("code-forge: e2e-check: PASS", file=sys.stderr)
+    # Advisory (DISMISSED) findings from E2E_CHECK Layer 1: surface them
+    # so the user knows the heuristic fired.  Exit code stays 0 --
+    # advisories never block.
+    advisories = [
+        f for f in findings
+        if f.disposition == Disposition.DISMISSED and f.source == "E2E_CHECK"
+    ]
+    for f in advisories:
+        print(
+            "code-forge: e2e-check: ADVISORY (non-blocking): %s"
+            % f.description,
+            file=sys.stderr,
+        )
+
+    if advisories:
+        print(
+            "code-forge: e2e-check: PASS (%d %s)"
+            % (len(advisories),
+               "advisory" if len(advisories) == 1 else "advisories"),
+            file=sys.stderr,
+        )
+    else:
+        print("code-forge: e2e-check: PASS", file=sys.stderr)
     return EXIT_PASS
 
 
