@@ -152,7 +152,7 @@ async def _do_shutdown(signum: int) -> None:
 
 # -- workspace resolution (ADR-0006) --
 
-from code_forge.workspace import resolve_workspace  # noqa: E402
+from code_forge.workspace import SAMPLING_REMEDIATION, resolve_workspace  # noqa: E402
 
 
 def _resolve_workspace() -> Path:
@@ -774,7 +774,10 @@ async def forge_review(
 
     if outlet == "sampling":
         if ctx is None or ctx.session.client_params.capabilities.sampling is None:
-            raise ToolError("Client does not support sampling capability.")
+            raise ToolError(
+                "Client does not support sampling capability. "
+                + SAMPLING_REMEDIATION
+            )
         return await _dispatch_sampling(
             session=ctx.session,
             committed=committed,
@@ -856,7 +859,10 @@ async def forge_gate_check(
 
     if outlet == "sampling":
         if ctx is None or ctx.session.client_params.capabilities.sampling is None:
-            raise ToolError("Client does not support sampling capability.")
+            raise ToolError(
+                "Client does not support sampling capability. "
+                + SAMPLING_REMEDIATION
+            )
         return await _dispatch_sampling(
             session=ctx.session,
             committed=False,
@@ -940,9 +946,12 @@ async def forge_trust(ctx: Context = None) -> CallToolResult:
 async def forge_resolve_outlet(ctx: Context = None) -> CallToolResult:
     """Diagnose backend routing.
 
-    Appends the resolved workspace, gate.yaml path, and backend names so
-    a wrong-workspace resolution (e.g. a stale ~/.code-forge shadowing
-    the real project) is visible in the diagnostic itself.
+    Appends the resolved workspace, gate.yaml path, backend names, and
+    client capability lines.  When the resolved outlet is "sampling" but
+    the client lacks the capability, a MISCONFIG warning is appended so
+    the user sees the problem in the diagnostic output (the guards in
+    forge_review/forge_gate_check would raise ToolError, but this
+    read-only tool surfaces the mismatch without blocking).
     """
     workspace = await _workspace_for(ctx)
     stdout, stderr, exit_code = await _run_cli_simple(
@@ -959,6 +968,33 @@ async def forge_resolve_outlet(ctx: Context = None) -> CallToolResult:
         gate_desc,
         ", ".join(backend_names) if backend_names else "(none)",
     )
+
+    # -- T1: capability diagnostics --
+    if ctx is not None:
+        caps = ctx.session.client_params.capabilities
+        context += "client sampling: %s\n" % (
+            "yes" if caps.sampling else "NO"
+        )
+        context += "client roots:    %s\n" % (
+            "yes" if caps.roots else "NO"
+        )
+
+        # MISCONFIG: outlet resolved to sampling but client cannot do it.
+        # Read outlet the same way forge_review does (env first, gate.yaml
+        # second) so the diagnostic condition is identical to the guard.
+        from code_forge.outlet_resolver import load_outlet_from_gate
+
+        outlet = os.environ.get("FORGE_OUTLET")
+        if not outlet and gate_yaml_path.exists():
+            outlet = load_outlet_from_gate(gate_yaml_path)
+        if outlet == "sampling" and caps.sampling is None:
+            context += (
+                "MISCONFIG: outlet is 'sampling' but client lacks "
+                "sampling capability. %s\n" % SAMPLING_REMEDIATION
+            )
+    else:
+        context += "client capabilities: unknown (no MCP session)\n"
+
     return _make_simple_result(
         stdout.rstrip("\n") + "\n" + context, exit_code, stderr
     )

@@ -1538,3 +1538,190 @@ class TestActiveFindingsProperty:
         result = StateMachine.active_findings.fget(sm)
         assert len(result) == 1
         assert result[0].id == "f1"
+
+
+# -- T1: capability diagnostics in forge_resolve_outlet --
+
+
+def _mock_ctx(sampling=None, roots=None):
+    """Build a mock MCP context with specified capabilities."""
+    ctx = MagicMock()
+    ctx.session.client_params.capabilities.sampling = sampling
+    ctx.session.client_params.capabilities.roots = roots
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_resolve_outlet_capability_lines_with_sampling():
+    """When ctx has sampling, output shows 'client sampling: yes'."""
+    ctx = _mock_ctx(sampling=MagicMock(), roots=MagicMock())
+    with patch(
+        "code_forge.mcp_server._run_cli_simple",
+        new_callable=AsyncMock,
+        return_value=("subprocess", "", 0),
+    ), patch(
+        "code_forge.mcp_server._workspace_for",
+        new_callable=AsyncMock,
+        return_value=Path("/tmp/fake-ws"),
+    ):
+        result = await forge_resolve_outlet(ctx=ctx)
+        text = result.structuredContent["output"]
+        assert "client sampling: yes" in text
+        assert "client roots:    yes" in text
+        assert "MISCONFIG" not in text
+
+
+@pytest.mark.asyncio
+async def test_resolve_outlet_capability_lines_without_sampling():
+    """When ctx lacks sampling, output shows 'client sampling: NO'."""
+    ctx = _mock_ctx(sampling=None, roots=None)
+    with patch(
+        "code_forge.mcp_server._run_cli_simple",
+        new_callable=AsyncMock,
+        return_value=("subprocess", "", 0),
+    ), patch(
+        "code_forge.mcp_server._workspace_for",
+        new_callable=AsyncMock,
+        return_value=Path("/tmp/fake-ws"),
+    ):
+        result = await forge_resolve_outlet(ctx=ctx)
+        text = result.structuredContent["output"]
+        assert "client sampling: NO" in text
+        assert "client roots:    NO" in text
+
+
+@pytest.mark.asyncio
+async def test_resolve_outlet_no_ctx_shows_unknown():
+    """CLI path (ctx=None) shows 'client capabilities: unknown'."""
+    with patch(
+        "code_forge.mcp_server._run_cli_simple",
+        new_callable=AsyncMock,
+        return_value=("subprocess", "", 0),
+    ):
+        result = await forge_resolve_outlet(ctx=None)
+        text = result.structuredContent["output"]
+        assert "client capabilities: unknown" in text
+
+
+@pytest.mark.asyncio
+async def test_resolve_outlet_misconfig_gate_yaml_sampling():
+    """MISCONFIG when gate.yaml says sampling but client lacks it."""
+    ctx = _mock_ctx(sampling=None, roots=None)
+    ws = Path(tempfile.mkdtemp())
+    gate_dir = ws / ".code-forge"
+    gate_dir.mkdir(parents=True)
+    gate_yaml = gate_dir / "gate.yaml"
+    gate_yaml.write_text("outlet: sampling\n")
+    try:
+        with patch(
+            "code_forge.mcp_server._run_cli_simple",
+            new_callable=AsyncMock,
+            return_value=("sampling", "", 0),
+        ), patch(
+            "code_forge.mcp_server._workspace_for",
+            new_callable=AsyncMock,
+            return_value=ws,
+        ), patch(
+            "code_forge.outlet_resolver.load_outlet_from_gate",
+            return_value="sampling",
+        ):
+            result = await forge_resolve_outlet(ctx=ctx)
+            text = result.structuredContent["output"]
+            assert "MISCONFIG" in text
+            assert "sampling" in text.lower()
+            assert "Switch outlet" in text
+    finally:
+        import shutil
+        shutil.rmtree(ws, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_resolve_outlet_misconfig_env_wins_over_gate(monkeypatch):
+    """Rider: FORGE_OUTLET env takes priority over gate.yaml for MISCONFIG.
+
+    env=sampling + gate=subprocess -> MISCONFIG fires (mirrors guard).
+    """
+    ctx = _mock_ctx(sampling=None, roots=None)
+    monkeypatch.setenv("FORGE_OUTLET", "sampling")
+    ws = Path(tempfile.mkdtemp())
+    gate_dir = ws / ".code-forge"
+    gate_dir.mkdir(parents=True)
+    (gate_dir / "gate.yaml").write_text("outlet: subprocess\n")
+    try:
+        with patch(
+            "code_forge.mcp_server._run_cli_simple",
+            new_callable=AsyncMock,
+            return_value=("sampling", "", 0),
+        ), patch(
+            "code_forge.mcp_server._workspace_for",
+            new_callable=AsyncMock,
+            return_value=ws,
+        ):
+            result = await forge_resolve_outlet(ctx=ctx)
+            text = result.structuredContent["output"]
+            assert "MISCONFIG" in text, (
+                "env=sampling should trigger MISCONFIG even when "
+                "gate.yaml says subprocess"
+            )
+    finally:
+        import shutil
+        shutil.rmtree(ws, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_resolve_outlet_no_misconfig_when_capable():
+    """Bug-inject T1a(ii): client HAS sampling -> no MISCONFIG."""
+    ctx = _mock_ctx(sampling=MagicMock(), roots=None)
+    ws = Path(tempfile.mkdtemp())
+    gate_dir = ws / ".code-forge"
+    gate_dir.mkdir(parents=True)
+    (gate_dir / "gate.yaml").write_text("outlet: sampling\n")
+    try:
+        with patch(
+            "code_forge.mcp_server._run_cli_simple",
+            new_callable=AsyncMock,
+            return_value=("sampling", "", 0),
+        ), patch(
+            "code_forge.mcp_server._workspace_for",
+            new_callable=AsyncMock,
+            return_value=ws,
+        ), patch(
+            "code_forge.outlet_resolver.load_outlet_from_gate",
+            return_value="sampling",
+        ):
+            result = await forge_resolve_outlet(ctx=ctx)
+            text = result.structuredContent["output"]
+            assert "MISCONFIG" not in text
+            assert "client sampling: yes" in text
+    finally:
+        import shutil
+        shutil.rmtree(ws, ignore_errors=True)
+
+
+# -- T1c: guard ToolError includes remediation --
+
+
+@pytest.mark.asyncio
+async def test_review_guard_includes_remediation(monkeypatch):
+    """ToolError from forge_review sampling guard includes remediation."""
+    monkeypatch.setenv("FORGE_OUTLET", "sampling")
+    ctx = _mock_ctx(sampling=None)
+    with patch(
+        "code_forge.mcp_server._workspace_for",
+        new_callable=AsyncMock,
+        return_value=Path("/tmp/fake-ws"),
+    ), pytest.raises(ToolError, match="Switch outlet"):
+        await forge_review(ctx=ctx)
+
+
+@pytest.mark.asyncio
+async def test_gate_check_guard_includes_remediation(monkeypatch):
+    """ToolError from forge_gate_check sampling guard includes remediation."""
+    monkeypatch.setenv("FORGE_OUTLET", "sampling")
+    ctx = _mock_ctx(sampling=None)
+    with patch(
+        "code_forge.mcp_server._workspace_for",
+        new_callable=AsyncMock,
+        return_value=Path("/tmp/fake-ws"),
+    ), pytest.raises(ToolError, match="Switch outlet"):
+        await forge_gate_check(ctx=ctx)
