@@ -205,18 +205,13 @@ class TestCheckBackendMergedView:
             "model": "test",
         }}
 
-        original_workspace = mod._WORKSPACE
-        try:
-            mod._WORKSPACE = tmp_path
-            with (
-                patch("code_forge.user_config.load_user_backends",
-                      return_value=user_raw),
-                patch.dict(os.environ, {"TEST_KEY": "fake-key"}),
-            ):
-                # Should NOT raise
-                mod._check_backend()
-        finally:
-            mod._WORKSPACE = original_workspace
+        with (
+            patch("code_forge.user_config.load_user_backends",
+                  return_value=user_raw),
+            patch.dict(os.environ, {"TEST_KEY": "fake-key"}),
+        ):
+            # Should NOT raise
+            mod._check_backend(tmp_path)
 
     def test_zero_project_zero_user_raises(self, tmp_path):
         """No backends anywhere -> _check_backend raises ToolError."""
@@ -232,15 +227,10 @@ class TestCheckBackendMergedView:
         from code_forge.trust import record_trust
         record_trust(gate_path, gate_data)
 
-        original_workspace = mod._WORKSPACE
-        try:
-            mod._WORKSPACE = tmp_path
-            with patch("code_forge.user_config.load_user_backends",
-                       return_value={}):
-                with pytest.raises(ToolError, match="No review backends"):
-                    mod._check_backend()
-        finally:
-            mod._WORKSPACE = original_workspace
+        with patch("code_forge.user_config.load_user_backends",
+                   return_value={}):
+            with pytest.raises(ToolError, match="No review backends"):
+                mod._check_backend(tmp_path)
 
     def test_project_and_user_backends_both_visible(self, tmp_path):
         """Project has one backend, user has another. Merged set includes both."""
@@ -270,16 +260,11 @@ class TestCheckBackendMergedView:
             "model": "test",
         }}
 
-        original_workspace = mod._WORKSPACE
-        try:
-            mod._WORKSPACE = tmp_path
-            with (
-                patch("code_forge.user_config.load_user_backends",
-                      return_value=user_raw),
-                patch.dict(os.environ, {
-                    "TEST_PROJ_KEY": "k1", "TEST_USER_KEY": "k2",
-                }),
-            ):
-                mod._check_backend()
-        finally:
-            mod._WORKSPACE = original_workspace
+        with (
+            patch("code_forge.user_config.load_user_backends",
+                  return_value=user_raw),
+            patch.dict(os.environ, {
+                "TEST_PROJ_KEY": "k1", "TEST_USER_KEY": "k2",
+            }),
+        ):
+            mod._check_backend(tmp_path)

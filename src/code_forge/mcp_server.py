@@ -178,15 +178,78 @@ def _resolve_workspace() -> Path:
     return start
 
 
-_WORKSPACE: Path = _resolve_workspace()
-
-
 # User-level config shared with cli.py via user_config module.
 from code_forge.user_config import load_user_backends, merge_backends  # noqa: E402
 
 
-# Module-level state populated by lifespan startup.
-_backend_names: list[str] = []
+# -- per-session workspace cache (single-slot, one session per stdio) --
+_cached_session_ref = None   # session object, identity-compared
+_cached_workspace = None     # resolved Path
+
+
+async def _workspace_for(ctx) -> Path:
+    """Resolve workspace from MCP roots, env, or walk-up.
+
+    Priority: cached > MCP roots (prefer root with gate.yaml) >
+    FORGE_PROJECT_DIR > walk-up > cwd.
+    """
+    global _cached_session_ref, _cached_workspace
+
+    if ctx is None:
+        return _resolve_workspace()
+
+    if _cached_session_ref is ctx.session:
+        return _cached_workspace
+
+    # Try MCP roots when the client advertises the capability.
+    if ctx.session.client_params.capabilities.roots:
+        try:
+            result = await ctx.session.list_roots()
+        except Exception as exc:
+            sys.stderr.write(
+                "code-forge: list_roots failed: %s\n" % exc)
+            # Do not cache after RPC failure -- let the next call
+            # retry instead of pinning a wrong workspace.
+            return _resolve_workspace()
+
+        if result.roots:
+            from urllib.parse import unquote, urlparse
+
+            candidates = []
+            for root in result.roots:
+                p = Path(unquote(urlparse(str(root.uri)).path))
+                if (p / ".code-forge" / "gate.yaml").is_file():
+                    _cached_session_ref = ctx.session
+                    _cached_workspace = p
+                    return p
+                candidates.append(p)
+            if candidates:
+                _cached_session_ref = ctx.session
+                _cached_workspace = candidates[0]
+                return candidates[0]
+
+    # No roots capability or empty roots -- cache the static result.
+    ws = _resolve_workspace()
+    _cached_session_ref = ctx.session
+    _cached_workspace = ws
+    return ws
+
+
+def _backend_names_for(workspace: Path) -> list[str]:
+    """Merge project + user backend names for a workspace."""
+    from code_forge import cli
+
+    user_backends = load_user_backends()
+    project_backends: dict[str, dict] = {}
+    try:
+        gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
+        _, gate_data = cli._load_gate_backends(gate_yaml_path)
+        project_backends = gate_data.get("backends", {})
+        if not isinstance(project_backends, dict):
+            project_backends = {}
+    except Exception:
+        pass
+    return list(merge_backends(project_backends, user_backends).keys())
 
 
 @asynccontextmanager
@@ -199,23 +262,10 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     backend.  Only backend names are tracked here; the actual
     BackendConfig loading happens per-review in _check_backend.
     """
-    global _backend_names  # noqa: PLW0603
-
     _install_pdeathsig()
 
-    from code_forge import cli
-
-    user_backends = load_user_backends()
-    project_backends: dict[str, dict] = {}
-    try:
-        gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
-        _, gate_data = cli._load_gate_backends(gate_yaml_path)
-        project_backends = gate_data.get("backends", {})
-        if not isinstance(project_backends, dict):
-            project_backends = {}
-    except Exception as exc:
-        log.warning("Failed to load project gate.yaml: %s", exc)
-    _backend_names = list(merge_backends(project_backends, user_backends).keys())
+    startup_ws = _resolve_workspace()
+    log.info("startup workspace: %s", startup_ws)
 
     # Install signal handlers that actually terminate the server.
     loop = asyncio.get_running_loop()
@@ -224,7 +274,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     loop.add_signal_handler(
         signal.SIGINT, lambda: _schedule_shutdown(signal.SIGINT, loop))
 
-    yield {"backend_names": _backend_names}
+    yield {}
 
     await cleanup_all()
 
@@ -248,13 +298,13 @@ mcp = FastMCP(
 # -- pre-flight helper --
 
 
-def _check_backend() -> None:
+def _check_backend(workspace: Path) -> None:
     """Verify a trusted review backend is configured.
 
     Checks gate.yaml existence then loads via _load_gate_backends.
     Does NOT call resolve_outlet (avoids HTTP probe latency).
     """
-    gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
+    gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
     if not gate_yaml_path.exists():
         raise ToolError(
             "gate.yaml not found at %s. Run 'code-forge init'." % gate_yaml_path
@@ -274,7 +324,7 @@ def _check_backend() -> None:
                 "review with the IDE's own model. "
                 "(workspace: %s -- wrong project? set "
                 "FORGE_PROJECT_DIR in the MCP server env)"
-                % (gate_yaml_path, _WORKSPACE)
+                % (gate_yaml_path, workspace)
             )
     except (CliError, ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
@@ -311,14 +361,14 @@ def _check_backend() -> None:
 # -- CLI runner helpers --
 
 
-async def _run_cli_simple(*args: str) -> tuple[str, str, int]:
+async def _run_cli_simple(*args: str, workspace: Path) -> tuple[str, str, int]:
     """Run a CLI command and return (stdout, stderr, exit_code)."""
     proc = await asyncio.create_subprocess_exec(
         "code-forge",
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=str(_WORKSPACE),
+        cwd=str(workspace),
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
     return (
@@ -346,6 +396,7 @@ async def _kill_and_reap(
 
 async def _run_cli_budgeted(
     *args: str,
+    workspace: Path,
     budget: float = 20.0,
 ) -> (
     tuple[str, int, float, str]
@@ -368,7 +419,7 @@ async def _run_cli_budgeted(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,
-            cwd=str(_WORKSPACE),
+            cwd=str(workspace),
         )
     except BaseException:
         stderr_fh.close()
@@ -473,12 +524,13 @@ def _make_job_ref(job_id: str) -> CallToolResult:
     )
 
 
-def _validate_backend(backend: str | None) -> None:
+def _validate_backend(backend: str | None, workspace: Path) -> None:
     """Raise ToolError if backend name is not in the loaded list."""
-    if backend and _backend_names and backend not in _backend_names:
+    names = _backend_names_for(workspace)
+    if backend and names and backend not in names:
         raise ToolError(
             "Unknown backend '%s'. Available: %s"
-            % (backend, ", ".join(_backend_names))
+            % (backend, ", ".join(names))
         )
 
 
@@ -550,6 +602,7 @@ def _make_inprocess_result(
 async def _dispatch_sampling(
     session,              # ServerSession
     committed: bool,
+    workspace: Path,
     backend_name: str | None = None,
     staged: bool = False,  # True for gate-check (INDEX), False for review (WORKING)
 ) -> CallToolResult:
@@ -571,7 +624,7 @@ async def _dispatch_sampling(
     from code_forge.llm_invoke import LLMInvokeError
     from code_forge.machine import Mode, StateMachine
 
-    resolved, source_hash, baseline_repr = _build_review_context(_WORKSPACE, committed, staged=staged)
+    resolved, source_hash, baseline_repr = _build_review_context(workspace, committed, staged=staged)
 
     # capture event loop BEFORE dispatching to worker thread
     loop = asyncio.get_running_loop()
@@ -589,11 +642,11 @@ async def _dispatch_sampling(
         mode=Mode.CI,
         falsifier=build_falsifier("stub"),
         autofixer=build_autofixer(resolved),
-        revert_fn=build_revert_fn(resolved, _WORKSPACE),
+        revert_fn=build_revert_fn(resolved, workspace),
         resolved_review=resolved,
         source_hash=source_hash,
         baseline_spec_repr=baseline_repr,
-        cwd=_WORKSPACE,
+        cwd=workspace,
         registry={},
         l1_provider=l1_provider,
         l2_runner=build_l2_runner(),
@@ -601,7 +654,7 @@ async def _dispatch_sampling(
     )
 
     from code_forge.lock import ForgeLock
-    lock_path = _WORKSPACE / ".code-forge" / "code-forge.lock"  # must match cli.py:1653
+    lock_path = workspace / ".code-forge" / "code-forge.lock"  # must match cli.py:1653
 
     # Lock acquisition + machine.run both inside worker thread to avoid
     # blocking the MCP server event loop on lock contention.
@@ -613,17 +666,17 @@ async def _dispatch_sampling(
     try:
         verdict = await asyncio.to_thread(_run_locked)
     except LLMInvokeError as exc:
-        # _backend_names: module-level list populated in lifespan() from gate.yaml backends
         # kind is set by invoke_sampling for the recoverable failure
         # classes; anything else (unknown kind) is not fallback-eligible.
         _can_fallback = exc.kind in (
             "truncated", "empty", "stub_model", "no_json",
         )
-        if _can_fallback and (backend_name or _backend_names):
+        backend_names = _backend_names_for(workspace)
+        if _can_fallback and (backend_name or backend_names):
             # sampling failed -- fall back to CLI subprocess backend
             # MUST force --outlet subprocess to prevent infinite loop when
             # gate.yaml has outlet: sampling (subprocess reads gate.yaml too)
-            fallback_backend = backend_name or _backend_names[0]
+            fallback_backend = backend_name or backend_names[0]
             # Fallback only supports "review" command (gate-check parser
             # doesn't accept --backend/--outlet). If staged (gate-check),
             # raise clear error instead of broken CLI call.
@@ -637,7 +690,7 @@ async def _dispatch_sampling(
                         "--outlet", "subprocess"]
             if committed:
                 cli_args.append("--committed")
-            result = await _run_cli_budgeted(*cli_args)
+            result = await _run_cli_budgeted(*cli_args, workspace=workspace)
             if isinstance(result[0], str):
                 stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
                 return _make_result(stdout, exit_code, elapsed, stderr)
@@ -680,11 +733,12 @@ async def forge_review(
     ctx: Context = None,
 ) -> CallToolResult:
     """Run forge review pipeline."""
+    workspace = await _workspace_for(ctx)
     from code_forge.outlet_resolver import load_outlet_from_gate
-    
+
     outlet = os.environ.get("FORGE_OUTLET")
     if not outlet:
-        gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
+        gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
         if gate_yaml_path.exists():
             outlet = load_outlet_from_gate(gate_yaml_path)
 
@@ -694,12 +748,13 @@ async def forge_review(
         return await _dispatch_sampling(
             session=ctx.session,
             committed=committed,
+            workspace=workspace,
             backend_name=backend,
             staged=False,
         )
 
-    _check_backend()
-    _validate_backend(backend)
+    _check_backend(workspace)
+    _validate_backend(backend, workspace)
 
     cli_args: list[str] = ["review", "--no-color"]
     if backend:
@@ -721,7 +776,7 @@ async def forge_review(
         tmp_path = tmp.name
         cli_args.extend(["--contract", tmp_path])
 
-    result = await _run_cli_budgeted(*cli_args)
+    result = await _run_cli_budgeted(*cli_args, workspace=workspace)
 
     if isinstance(result[0], str):
         # Inline completion
@@ -760,11 +815,12 @@ async def forge_gate_check(
     ctx: Context = None,
 ) -> CallToolResult:
     """Run forge gate-check pipeline."""
+    workspace = await _workspace_for(ctx)
     from code_forge.outlet_resolver import load_outlet_from_gate
 
     outlet = os.environ.get("FORGE_OUTLET")
     if not outlet:
-        gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
+        gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
         if gate_yaml_path.exists():
             outlet = load_outlet_from_gate(gate_yaml_path)
 
@@ -774,12 +830,13 @@ async def forge_gate_check(
         return await _dispatch_sampling(
             session=ctx.session,
             committed=False,
+            workspace=workspace,
             backend_name=backend,
             staged=True,
         )
 
-    _check_backend()
-    _validate_backend(backend)
+    _check_backend(workspace)
+    _validate_backend(backend, workspace)
 
     cli_args: list[str] = ["gate-check", "--no-color"]
     if baseline:
@@ -787,7 +844,7 @@ async def forge_gate_check(
     if backend:
         cli_args.extend(["--backend", backend])
 
-    result = await _run_cli_budgeted(*cli_args)
+    result = await _run_cli_budgeted(*cli_args, workspace=workspace)
 
     if isinstance(result[0], str):
         stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
@@ -804,25 +861,27 @@ async def forge_gate_check(
     description="Initialize .code-forge/ directory in the current workspace.",
     annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True),
 )
-async def forge_init(force: bool = False) -> CallToolResult:
+async def forge_init(force: bool = False, ctx: Context = None) -> CallToolResult:
     """Initialize forge configuration.
 
     Refuses to create project markers at $HOME -- use user-level
     config at ~/.config/code-forge/config.yaml instead.
     """
-    if _WORKSPACE.resolve() == Path.home().resolve():
+    workspace = await _workspace_for(ctx)
+    if workspace.resolve() == Path.home().resolve():
         raise ToolError(
             "Refusing to initialize forge at $HOME (%s). "
             "$HOME is a configuration domain, not a project. "
             "cd into a project directory, or set FORGE_PROJECT_DIR, "
             "or write user-level defaults to "
             "~/.config/code-forge/config.yaml."
-            % _WORKSPACE
+            % workspace
         )
     cli_args: list[str] = ["init"]
     if force:
         cli_args.append("--force")
-    stdout, stderr, exit_code = await _run_cli_simple(*cli_args)
+    stdout, stderr, exit_code = await _run_cli_simple(
+        *cli_args, workspace=workspace)
     return _make_simple_result(stdout, exit_code, stderr)
 
 
@@ -831,9 +890,11 @@ async def forge_init(force: bool = False) -> CallToolResult:
     description="Trust the gate.yaml backends in the current workspace.",
     annotations=ToolAnnotations(readOnlyHint=False, idempotentHint=True),
 )
-async def forge_trust() -> CallToolResult:
+async def forge_trust(ctx: Context = None) -> CallToolResult:
     """Trust forge backends."""
-    stdout, stderr, exit_code = await _run_cli_simple("trust")
+    workspace = await _workspace_for(ctx)
+    stdout, stderr, exit_code = await _run_cli_simple(
+        "trust", workspace=workspace)
     return _make_simple_result(stdout, exit_code, stderr)
 
 
@@ -846,24 +907,27 @@ async def forge_trust() -> CallToolResult:
         readOnlyHint=True, destructiveHint=False, idempotentHint=True
     ),
 )
-async def forge_resolve_outlet() -> CallToolResult:
+async def forge_resolve_outlet(ctx: Context = None) -> CallToolResult:
     """Diagnose backend routing.
 
     Appends the resolved workspace, gate.yaml path, and backend names so
     a wrong-workspace resolution (e.g. a stale ~/.code-forge shadowing
     the real project) is visible in the diagnostic itself.
     """
-    stdout, stderr, exit_code = await _run_cli_simple("resolve-outlet")
-    gate_yaml_path = _WORKSPACE / ".code-forge" / "gate.yaml"
+    workspace = await _workspace_for(ctx)
+    stdout, stderr, exit_code = await _run_cli_simple(
+        "resolve-outlet", workspace=workspace)
+    gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
     gate_desc = (
         str(gate_yaml_path)
         if gate_yaml_path.exists()
         else "%s (not found)" % gate_yaml_path
     )
+    backend_names = _backend_names_for(workspace)
     context = "workspace: %s\ngate.yaml: %s\nbackends: %s\n" % (
-        _WORKSPACE,
+        workspace,
         gate_desc,
-        ", ".join(_backend_names) if _backend_names else "(none)",
+        ", ".join(backend_names) if backend_names else "(none)",
     )
     return _make_simple_result(
         stdout.rstrip("\n") + "\n" + context, exit_code, stderr

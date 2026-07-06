@@ -17,8 +17,8 @@ from code_forge.user_config import (
     user_config_path,
 )
 from code_forge.mcp_server import (
-    _WORKSPACE,
-    _backend_names,
+    _resolve_workspace,
+    _backend_names_for,
     _check_backend,
     _make_job_ref,
     _make_result,
@@ -82,7 +82,7 @@ def test_preflight_empty_backends_raises_tool_error():
         patch("code_forge.user_config.load_user_backends", return_value={}),
     ):
         with pytest.raises(ToolError, match="No review backends configured in"):
-            _check_backend()
+            _check_backend(_resolve_workspace())
 
 
 def test_preflight_empty_backends_names_workspace():
@@ -98,11 +98,11 @@ def test_preflight_empty_backends_names_workspace():
         patch("code_forge.user_config.load_user_backends", return_value={}),
     ):
         with pytest.raises(ToolError, match="FORGE_PROJECT_DIR"):
-            _check_backend()
+            _check_backend(_resolve_workspace())
         with pytest.raises(
-            ToolError, match=re.escape(str(mcp_server._WORKSPACE))
+            ToolError, match=re.escape(str(_resolve_workspace()))
         ):
-            _check_backend()
+            _check_backend(_resolve_workspace())
 
 
 def test_preflight_nonempty_backends_passes():
@@ -121,7 +121,7 @@ def test_preflight_nonempty_backends_passes():
         patch("code_forge.user_config.load_user_backends", return_value={}),
         patch.dict("os.environ", {"TEST_KEY_123": "sk-fake"}),
     ):
-        _check_backend()  # no exception
+        _check_backend(_resolve_workspace())  # no exception
 
 
 def test_preflight_missing_api_key_env_raises():
@@ -145,7 +145,7 @@ def test_preflight_missing_api_key_env_raises():
         import os
         os.environ.pop("MIMO_PRO_API_KEY", None)
         with pytest.raises(ToolError, match="MIMO_PRO_API_KEY"):
-            _check_backend()
+            _check_backend(_resolve_workspace())
 
 
 def test_preflight_partial_keys_warns_but_passes():
@@ -172,7 +172,7 @@ def test_preflight_partial_keys_warns_but_passes():
     ):
         # Remove via patch.dict-tracked key so it restores on exit.
         del os.environ["PARTIAL_MISSING_KEY"]
-        _check_backend()  # should pass, not raise
+        _check_backend(_resolve_workspace())  # should pass, not raise
 
 
 def test_preflight_catches_cli_error():
@@ -186,7 +186,7 @@ def test_preflight_catches_cli_error():
         ),
     ):
         with pytest.raises(ToolError):
-            _check_backend()
+            _check_backend(_resolve_workspace())
 
 
 def test_preflight_catches_value_error():
@@ -198,7 +198,7 @@ def test_preflight_catches_value_error():
         ),
     ):
         with pytest.raises(ToolError):
-            _check_backend()
+            _check_backend(_resolve_workspace())
 
 
 def test_preflight_catches_os_error():
@@ -210,7 +210,7 @@ def test_preflight_catches_os_error():
         ),
     ):
         with pytest.raises(ToolError):
-            _check_backend()
+            _check_backend(_resolve_workspace())
 
 
 def test_preflight_gate_yaml_missing_raises():
@@ -220,7 +220,7 @@ def test_preflight_gate_yaml_missing_raises():
         patch.dict(os.environ, {}, clear=False),
     ):
         with pytest.raises(ToolError, match="gate.yaml not found"):
-            _check_backend()
+            _check_backend(_resolve_workspace())
         mock_load.assert_not_called()
 
 
@@ -240,7 +240,7 @@ def test_preflight_gate_yaml_exists_proceeds():
         patch("code_forge.user_config.load_user_backends", return_value={}),
         patch.dict("os.environ", {"DEEPSEEK_API_KEY": "sk-fake"}),
     ):
-        _check_backend()  # no exception
+        _check_backend(_resolve_workspace())  # no exception
 
 
 # -- CLI runners --
@@ -256,13 +256,14 @@ async def test_run_cli_simple_assembles_args():
         new_callable=AsyncMock,
         return_value=mock_proc,
     ) as mock_exec:
-        stdout, stderr, code = await _run_cli_simple("resolve-outlet")
+        stdout, stderr, code = await _run_cli_simple(
+            "resolve-outlet", workspace=_resolve_workspace())
         mock_exec.assert_called_once_with(
             "code-forge",
             "resolve-outlet",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(_WORKSPACE),
+            cwd=str(_resolve_workspace()),
         )
         assert stdout == "ok\n"
         assert code == 0
@@ -278,7 +279,8 @@ async def test_run_cli_budgeted_inline_returns_tuple():
         new_callable=AsyncMock,
         return_value=mock_proc,
     ):
-        result = await _run_cli_budgeted("review", "--no-color", budget=5.0)
+        result = await _run_cli_budgeted(
+            "review", "--no-color", workspace=_resolve_workspace(), budget=5.0)
         assert isinstance(result, tuple)
         assert len(result) == 4
         stdout, exit_code, elapsed, stderr = result
@@ -310,7 +312,8 @@ async def test_run_cli_budgeted_captures_stderr():
         new_callable=AsyncMock,
         return_value=mock_proc,
     ), patch("code_forge.mcp_server.tempfile.NamedTemporaryFile", side_effect=_fake_ntf):
-        result = await _run_cli_budgeted("review", budget=5.0)
+        result = await _run_cli_budgeted(
+            "review", workspace=_resolve_workspace(), budget=5.0)
         stdout, exit_code, elapsed, stderr = result
         assert stdout == ""
         assert exit_code == 2
@@ -333,7 +336,8 @@ async def test_run_cli_budgeted_timeout_returns_task_and_proc():
         new_callable=AsyncMock,
         return_value=mock_proc,
     ):
-        result = await _run_cli_budgeted("review", budget=0.01)
+        result = await _run_cli_budgeted(
+            "review", workspace=_resolve_workspace(), budget=0.01)
         assert isinstance(result, tuple)
         assert len(result) == 3
         inner_task, proc, stderr_path = result
@@ -372,7 +376,8 @@ async def test_run_cli_budgeted_cancelled_kills_proc():
             new_callable=AsyncMock,
             return_value=mock_proc,
         ):
-            return await _run_cli_budgeted("review", budget=100.0)
+            return await _run_cli_budgeted(
+                "review", workspace=_resolve_workspace(), budget=100.0)
 
     task = asyncio.create_task(_run())
     await asyncio.sleep(0.02)
@@ -459,10 +464,10 @@ async def test_forge_review_calls_preflight_then_cli():
 async def test_forge_review_with_backend_param_validates():
     with (
         patch("code_forge.mcp_server._check_backend"),
-        patch(
-            "code_forge.mcp_server._backend_names",
-            ["mimo-pro", "deepseek"],
-        ),
+        patch("code_forge.mcp_server._workspace_for", new_callable=AsyncMock,
+              return_value=Path("/tmp/fake")),
+        patch("code_forge.mcp_server._backend_names_for",
+              return_value=["mimo-pro", "deepseek"]),
     ):
         with pytest.raises(ToolError, match="Unknown backend"):
             await forge_review(backend="invalid-backend")
@@ -472,7 +477,10 @@ async def test_forge_review_with_backend_param_validates():
 async def test_forge_review_with_valid_backend():
     with (
         patch("code_forge.mcp_server._check_backend"),
-        patch("code_forge.mcp_server._backend_names", ["mimo-pro"]),
+        patch("code_forge.mcp_server._workspace_for", new_callable=AsyncMock,
+              return_value=Path("/tmp/fake")),
+        patch("code_forge.mcp_server._backend_names_for",
+              return_value=["mimo-pro"]),
         patch(
             "code_forge.mcp_server._run_cli_budgeted",
             new_callable=AsyncMock,
@@ -708,10 +716,9 @@ def _sampling_dispatch_patches(kind: str, backend_names: list):
             new_callable=AsyncMock,
             side_effect=LLMInvokeError("sampling failed", kind=kind),
         ),
-        patch.object(
-            __import__("code_forge.mcp_server", fromlist=["x"]),
-            "_backend_names",
-            backend_names,
+        patch(
+            "code_forge.mcp_server._backend_names_for",
+            return_value=backend_names,
         ),
     )
 
@@ -732,7 +739,8 @@ async def test_dispatch_sampling_recoverable_kind_falls_back(kind):
         return_value=("fallback ran", 0, 1.0, ""),
     ) as mock_cli:
         result = await _dispatch_sampling(
-            session=MagicMock(), committed=False
+            session=MagicMock(), committed=False,
+            workspace=_resolve_workspace(),
         )
     args = mock_cli.call_args[0]
     assert "--outlet" in args and "subprocess" in args
@@ -749,7 +757,9 @@ async def test_dispatch_sampling_recoverable_kind_no_backend_remediates():
     p1, p2, p3, p4 = _sampling_dispatch_patches("empty", [])
     with p1, p2, p3, p4:
         with pytest.raises(ToolError, match="Configure an API backend"):
-            await _dispatch_sampling(session=MagicMock(), committed=False)
+            await _dispatch_sampling(
+                session=MagicMock(), committed=False,
+                workspace=_resolve_workspace())
 
 
 @pytest.mark.asyncio
@@ -775,7 +785,9 @@ async def test_dispatch_sampling_unknown_kind_never_falls_back():
         new_callable=AsyncMock,
     ) as mock_cli:
         with pytest.raises(ToolError, match="Sampling failed"):
-            await _dispatch_sampling(session=MagicMock(), committed=False)
+            await _dispatch_sampling(
+                session=MagicMock(), committed=False,
+                workspace=_resolve_workspace())
     mock_cli.assert_not_called()
 
 
@@ -789,7 +801,8 @@ async def test_dispatch_sampling_staged_gate_check_names_failure_kind():
     with p1, p2, p3, p4:
         with pytest.raises(ToolError, match="stub_model"):
             await _dispatch_sampling(
-                session=MagicMock(), committed=False, staged=True
+                session=MagicMock(), committed=False,
+                workspace=_resolve_workspace(), staged=True,
             )
 
 
@@ -925,10 +938,9 @@ class TestUserConfig:
             result = load_user_backends()
         assert result == {}
 
-    @pytest.mark.asyncio
-    async def test_lifespan_merges_project_first_user_appends(self, tmp_path):
-        """T5c: lifespan real execution - project backends first, user appends."""
-        import code_forge.mcp_server as mod
+    def test_backend_names_for_merges_project_first_user_appends(self, tmp_path):
+        """T5c: _backend_names_for merges project first, user appends."""
+        from code_forge.mcp_server import _backend_names_for
 
         user_cfg = tmp_path / "config.yaml"
         user_cfg.write_text(
@@ -941,14 +953,15 @@ class TestUserConfig:
         project_gate = {
             "backends": {"shared": {"model": "project-model"}, "proj-only": {"model": "p"}}
         }
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        (gate_dir / "gate.yaml").write_text("backends:\n  shared:\n    model: pm\n")
         with (
             patch("code_forge.user_config.user_config_path", return_value=user_cfg),
             patch("code_forge.cli._load_gate_backends", return_value=([], project_gate)),
         ):
-            async with mod.lifespan(mod.mcp):
-                names = list(mod._backend_names)
+            names = _backend_names_for(tmp_path)
         # Project backends come first so fallback [0] is CLI-resolvable.
-        # User-only backends append after all project backends.
         assert set(names[:2]) == {"shared", "proj-only"}
         assert names[2] == "user-only"
 
@@ -1066,24 +1079,24 @@ class TestUserConfig:
             result = load_user_backends()
         assert result == {}
 
-    @pytest.mark.asyncio
-    async def test_lifespan_project_backends_non_dict_ignored(self, tmp_path):
+    def test_backend_names_for_non_dict_ignored(self, tmp_path):
         """G1c: project gate.yaml backends: is a list -> reset to empty."""
-        import code_forge.mcp_server as mod
+        from code_forge.mcp_server import _backend_names_for
 
         project_gate = {"backends": ["not", "a", "dict"]}
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        (gate_dir / "gate.yaml").write_text("backends: []\n")
         with (
             patch("code_forge.mcp_server.load_user_backends", return_value={}),
             patch("code_forge.cli._load_gate_backends", return_value=([], project_gate)),
         ):
-            async with mod.lifespan(mod.mcp):
-                names = list(mod._backend_names)
+            names = _backend_names_for(tmp_path)
         assert names == []
 
-    @pytest.mark.asyncio
-    async def test_lifespan_project_load_error_falls_back_to_user(self, tmp_path):
-        """G1d: project gate.yaml load throws -> warn, user backends still advertised."""
-        import code_forge.mcp_server as mod
+    def test_backend_names_for_load_error_falls_back_to_user(self, tmp_path):
+        """G1d: project gate.yaml load throws -> user backends still returned."""
+        from code_forge.mcp_server import _backend_names_for
 
         with (
             patch(
@@ -1095,8 +1108,7 @@ class TestUserConfig:
                 side_effect=OSError("permission denied"),
             ),
         ):
-            async with mod.lifespan(mod.mcp):
-                names = list(mod._backend_names)
+            names = _backend_names_for(tmp_path)
         assert names == ["user-back"]
 
 
@@ -1255,6 +1267,165 @@ class TestForgeInitHomeGuard:
     async def test_forge_init_refuses_home(self):
         """T7: forge_init at $HOME raises ToolError."""
         home = Path.home().resolve()
-        with patch("code_forge.mcp_server._WORKSPACE", home):
+        with patch("code_forge.mcp_server._resolve_workspace", return_value=home):
             with pytest.raises(ToolError, match="Refusing to initialize forge at"):
                 await forge_init()
+
+
+class TestWorkspaceFor:
+    """T1 bug-inject tests for _workspace_for resolver."""
+
+    def _make_ctx(self, roots_capable=True, roots_result=None,
+                  list_roots_exc=None):
+        """Build a fake MCP context with controllable roots behavior."""
+        ctx = MagicMock()
+        caps = MagicMock()
+        caps.roots = roots_capable
+        ctx.session.client_params.capabilities = caps
+        if list_roots_exc:
+            ctx.session.list_roots = AsyncMock(side_effect=list_roots_exc)
+        else:
+            ctx.session.list_roots = AsyncMock(return_value=roots_result)
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_roots_with_gate_yaml_wins(self, tmp_path):
+        """T1a: root with gate.yaml becomes workspace, not cwd.
+
+        Bug-inject: if the roots branch is skipped (roots_capable=False),
+        _workspace_for falls back to _resolve_workspace which returns
+        cwd -- the assertion on tmp_path fails, proving roots are
+        honored.
+        """
+        import code_forge.mcp_server as mod
+        from mcp.types import Root
+
+        # Create a project dir with gate.yaml under tmp_path
+        project = tmp_path / "my project"  # space in name
+        gate_dir = project / ".code-forge"
+        gate_dir.mkdir(parents=True)
+        (gate_dir / "gate.yaml").write_text("outlet: subprocess\n")
+
+        root = Root(uri="file://" + str(project).replace(" ", "%20"),
+                    name="test")
+        result = MagicMock()
+        result.roots = [root]
+
+        ctx = self._make_ctx(roots_capable=True, roots_result=result)
+
+        # Clear cache from prior tests
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        ws = await mod._workspace_for(ctx)
+        assert ws == project
+
+    @pytest.mark.asyncio
+    async def test_roots_skipped_falls_back(self, tmp_path):
+        """T1a bug-inject: roots_capable=False -> fallback, not root.
+
+        This is the injected-bug counterpart: when roots are not
+        checked, workspace != the root directory.
+        """
+        import code_forge.mcp_server as mod
+
+        project = tmp_path / "my project"
+        gate_dir = project / ".code-forge"
+        gate_dir.mkdir(parents=True)
+        (gate_dir / "gate.yaml").write_text("outlet: subprocess\n")
+
+        ctx = self._make_ctx(roots_capable=False)
+
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        with patch.object(mod, "_resolve_workspace",
+                          return_value=Path("/fallback")):
+            ws = await mod._workspace_for(ctx)
+        # Proves: without roots, workspace is NOT the project dir
+        assert ws != project
+        assert ws == Path("/fallback")
+
+    @pytest.mark.asyncio
+    async def test_no_roots_capability_uses_fallback(self):
+        """T1b: client without roots -> FORGE_PROJECT_DIR/walk-up."""
+        import code_forge.mcp_server as mod
+
+        ctx = self._make_ctx(roots_capable=False)
+
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        fallback = Path("/some/project")
+        with patch.object(mod, "_resolve_workspace",
+                          return_value=fallback):
+            ws = await mod._workspace_for(ctx)
+        assert ws == fallback
+
+    @pytest.mark.asyncio
+    async def test_ctx_none_uses_resolve_workspace(self):
+        """C-2: ctx=None -> _resolve_workspace() directly."""
+        import code_forge.mcp_server as mod
+
+        fallback = Path("/direct")
+        with patch.object(mod, "_resolve_workspace",
+                          return_value=fallback):
+            ws = await mod._workspace_for(None)
+        assert ws == fallback
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_skips_rpc(self):
+        """Cached session returns workspace without list_roots call."""
+        import code_forge.mcp_server as mod
+
+        ctx = self._make_ctx(roots_capable=True)
+        cached_ws = Path("/cached/project")
+
+        mod._cached_session_ref = ctx.session
+        mod._cached_workspace = cached_ws
+
+        ws = await mod._workspace_for(ctx)
+        assert ws == cached_ws
+        # list_roots was never called
+        ctx.session.list_roots.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rpc_failure_no_cache(self):
+        """C-3: list_roots RPC failure -> no cache, returns fallback."""
+        import code_forge.mcp_server as mod
+
+        ctx = self._make_ctx(roots_capable=True,
+                             list_roots_exc=RuntimeError("gone"))
+
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        fallback = Path("/rpc-fail-fallback")
+        with patch.object(mod, "_resolve_workspace",
+                          return_value=fallback):
+            ws = await mod._workspace_for(ctx)
+        assert ws == fallback
+        # Cache must NOT be set after RPC failure
+        assert mod._cached_session_ref is None
+
+    @pytest.mark.asyncio
+    async def test_first_root_without_gate_yaml(self, tmp_path):
+        """Root without gate.yaml still used as candidate[0]."""
+        import code_forge.mcp_server as mod
+        from mcp.types import Root
+
+        project = tmp_path / "no-gate"
+        project.mkdir()
+        # No gate.yaml here
+
+        root = Root(uri="file://" + str(project), name="test")
+        result = MagicMock()
+        result.roots = [root]
+
+        ctx = self._make_ctx(roots_capable=True, roots_result=result)
+
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        ws = await mod._workspace_for(ctx)
+        assert ws == project
