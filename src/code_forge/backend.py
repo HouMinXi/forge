@@ -86,6 +86,7 @@ class BackendConfig:
     format: Optional[str] = None       # "openai" | "anthropic"
     base_url: Optional[str] = None     # only for api
     api_key_env: Optional[str] = None  # env var NAME only
+    api_key_file: Optional[str] = None  # path to file containing the key
     command: str = ""                  # cli binary name or path
     default: bool = False              # config default marker
     max_tokens: int = 16384            # output token cap for api calls
@@ -286,6 +287,8 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
                 )
             region = entry.get("region", "global")
             credentials_path = entry.get("credentials_path")
+            if credentials_path:
+                credentials_path = os.path.expanduser(credentials_path)
             return BackendConfig(
                 name=name, type=btype, model=model, format=fmt,
                 base_url=None, api_key_env=None, command="",
@@ -303,14 +306,24 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
                 % name
             )
         api_key_env = entry.get("api_key_env")
-        if not api_key_env:
+        api_key_file = entry.get("api_key_file")
+        if api_key_env and api_key_file:
             raise CliError(
-                "backend %r (api): missing required field 'api_key_env'"
+                "backend %r (api): set api_key_env or api_key_file, "
+                "not both" % name
+            )
+        if not api_key_env and not api_key_file:
+            raise CliError(
+                "backend %r (api): missing credential field -- set "
+                "api_key_env (env var name) or api_key_file (path)"
                 % name
             )
+        if api_key_file:
+            api_key_file = os.path.expanduser(api_key_file)
         return BackendConfig(
             name=name, type=btype, model=model, format=fmt,
-            base_url=base_url, api_key_env=api_key_env, command="",
+            base_url=base_url, api_key_env=api_key_env,
+            api_key_file=api_key_file, command="",
             default=is_default, max_tokens=max_tokens,
             output_ceiling=output_ceiling,
             **pf,
@@ -619,11 +632,32 @@ def _probe_api(
             "'gcloud auth application-default login'." % backend.name,
         )
 
+    # File-based credential: check file exists and is not world-readable
+    if backend.api_key_file:
+        p = Path(backend.api_key_file)
+        if not p.is_file():
+            return ProbeResult(
+                ok=False,
+                error="backend %r: api_key_file not found: %s"
+                % (backend.name, backend.api_key_file),
+            )
+        mode = p.stat().st_mode
+        if mode & 0o077:
+            return ProbeResult(
+                ok=False,
+                error="backend %r: api_key_file %s is group/world "
+                "readable (mode %o). chmod 600 it."
+                % (backend.name, backend.api_key_file, mode & 0o777),
+            )
+        return ProbeResult(ok=True)
+
+    # Env-var credential
     key_name = backend.api_key_env
     if not key_name:
         return ProbeResult(
             ok=False,
-            error="backend %r: no api_key_env configured" % backend.name,
+            error="backend %r: no api_key_env or api_key_file "
+            "configured" % backend.name,
         )
     if env.get(key_name):
         return ProbeResult(ok=True)
