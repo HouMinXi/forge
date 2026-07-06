@@ -21,6 +21,7 @@ import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from .backend import BackendConfig, DEFAULT_BACKEND
@@ -737,16 +738,30 @@ def _invoke_api(
     initial_delay_s: float = 2.0,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
-    # Look up API key from environment (not needed for vertex which uses OAuth2)
+    # Look up API key (not needed for vertex which uses OAuth2)
     if backend.format != "vertex":
-        if not backend.api_key_env:
+        if backend.api_key_file:
+            try:
+                api_key = Path(backend.api_key_file).read_text().strip()
+            except OSError as exc:
+                raise LLMInvokeError(
+                    "backend %r: cannot read api_key_file: %s"
+                    % (backend.name, exc)
+                ) from exc
+            if not api_key:
+                raise LLMInvokeError(
+                    "backend %r: api_key_file is empty" % backend.name
+                )
+        elif backend.api_key_env:
+            api_key = os.environ.get(backend.api_key_env, "")
+            if not api_key:
+                raise LLMInvokeError(
+                    "API key env var %r is not set" % backend.api_key_env
+                )
+        else:
             raise LLMInvokeError(
-                "backend %r: api_key_env not configured" % backend.name
-            )
-        api_key = os.environ.get(backend.api_key_env, "")
-        if not api_key:
-            raise LLMInvokeError(
-                "API key env var %r is not set" % backend.api_key_env
+                "backend %r: no api_key_env or api_key_file configured"
+                % backend.name
             )
     else:
         api_key = ""

@@ -285,6 +285,69 @@ class TestLLMInvoke:
         with pytest.raises(LLMInvokeError, match="MISSING_KEY.*not set"):
             llm_invoke("prompt", backend=backend)
 
+    def test_api_dispatch_key_file(self, tmp_path):
+        """T2a: api_key_file reads key from file at invoke time."""
+        kf = tmp_path / "key.txt"
+        kf.write_text("sk-from-file\n")
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="model",
+            format="openai",
+            base_url="https://example.com",
+            api_key_file=str(kf),
+        )
+        mock_response = Mock()
+        mock_response.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }).encode("utf-8")
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            result = llm_invoke("prompt", backend=backend)
+        assert result.content == {"ok": True}
+
+    def test_api_dispatch_key_file_empty(self, tmp_path):
+        """Empty key file raises LLMInvokeError."""
+        kf = tmp_path / "key.txt"
+        kf.write_text("   \n")
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="model",
+            format="openai",
+            base_url="https://example.com",
+            api_key_file=str(kf),
+        )
+        with pytest.raises(LLMInvokeError, match="empty"):
+            llm_invoke("prompt", backend=backend)
+
+    def test_api_dispatch_key_file_missing(self, tmp_path):
+        """Missing key file raises LLMInvokeError."""
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="model",
+            format="openai",
+            base_url="https://example.com",
+            api_key_file=str(tmp_path / "gone.txt"),
+        )
+        with pytest.raises(LLMInvokeError, match="cannot read"):
+            llm_invoke("prompt", backend=backend)
+
+    def test_api_dispatch_no_credential_at_all(self):
+        """Neither api_key_env nor api_key_file -> LLMInvokeError."""
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="model",
+            format="openai",
+            base_url="https://example.com",
+        )
+        with pytest.raises(LLMInvokeError, match="no api_key_env or"):
+            llm_invoke("prompt", backend=backend)
+
     def test_api_dispatch_http_error(self):
         """api backend HTTP error raises LLMInvokeError with status code."""
         backend = BackendConfig(

@@ -247,7 +247,10 @@ def run_setup_mcp(
         )
         print(
             "\nSetup complete. Register the MCP server in your client:\n\n"
-            "  claude mcp add forge %s -- code-forge-mcp\n" % key_envs,
+            "  claude mcp add forge %s -- code-forge-mcp\n\n"
+            "Alternatively, set api_key_file in config.yaml to read the\n"
+            "key from a file (chmod 600) and skip the -e flags:\n\n"
+            "  claude mcp add forge -- code-forge-mcp\n" % key_envs,
             file=sys.stderr,
         )
     elif wrote_gate:
