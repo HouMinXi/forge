@@ -550,6 +550,11 @@ def _build_parser() -> argparse.ArgumentParser:
             'backend is unreachable and no explicit override is set.'
         ),
     )
+    subparsers.add_parser(
+        'doctor',
+        help='Run self-check on workspace, backends, trust, and MCP. '
+             'Exit 0 = all green, 1 = any FAIL or SKIP.',
+    )
 
     # --- INIT subcommand: generate gate.yaml template ---
     init_parser = subparsers.add_parser(
@@ -1355,7 +1360,7 @@ def main() -> int:
         'review', 'gate-check', 'mutation-check', 'e2e-check',
         'install-hooks', 'install-skill', 'verify',
         'detect', 'resolve-outlet', 'init', 'trust', 'eval', 'smoke-run',
-        'setup-mcp', 'ledger',
+        'setup-mcp', 'ledger', 'doctor',
     }
     argv = sys.argv[1:]  # skip program name
 
@@ -1460,6 +1465,10 @@ def main() -> int:
 
     elif args.subcommand == 'resolve-outlet':
         return _run_resolve_outlet(env=os.environ, cwd=Path.cwd())
+
+    elif args.subcommand == 'doctor':
+        from .doctor import run_doctor
+        return run_doctor(cwd=Path.cwd(), env=os.environ)
 
     elif args.subcommand == 'trust':
         return _run_trust(args, cwd=Path.cwd())
