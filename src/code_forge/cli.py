@@ -3058,3 +3058,7 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main())
