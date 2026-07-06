@@ -85,8 +85,8 @@ class TestE2eCheckDispatch:
         result = main()
         assert result == EXIT_PASS
 
-    def test_dispatch_pass_no_uncertain_findings(self, tmp_path, monkeypatch):
-        """e2e-check returns EXIT_PASS when run_e2e_check returns no UNCERTAIN findings."""
+    def test_dispatch_pass_advisory_printed(self, tmp_path, monkeypatch, capsys):
+        """B1: advisory finding is printed and status says PASS (1 advisory)."""
         from code_forge.disposition import Disposition
         from code_forge.state import StateFinding
 
@@ -119,6 +119,166 @@ class TestE2eCheckDispatch:
             )
             result = main()
         assert result == EXIT_PASS
+        err = capsys.readouterr().err
+        assert "ADVISORY (non-blocking): advisory finding" in err
+        assert "PASS (1 advisory)" in err
+
+    def test_dispatch_pass_no_advisory_bare_pass(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """No advisory -> bare PASS without parenthetical count."""
+        diff_file = tmp_path / "test.diff"
+        diff_file.write_text(
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "+def foo(): pass\n",
+            encoding="utf-8",
+        )
+        with patch(
+            "code_forge.e2e_check.run_e2e_check",
+            return_value=([], []),
+        ):
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file),
+                 "--repo-root", str(tmp_path)],
+            )
+            result = main()
+        assert result == EXIT_PASS
+        err = capsys.readouterr().err
+        assert "ADVISORY" not in err
+        assert "PASS" in err
+        assert "advisory)" not in err
+
+    def test_dispatch_advisory_exit_zero(self, tmp_path, monkeypatch):
+        """B2: advisory never flips exit code -- must be exactly 0."""
+        from code_forge.disposition import Disposition
+        from code_forge.state import StateFinding
+
+        diff_file = tmp_path / "test.diff"
+        diff_file.write_text(
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "+def foo(): pass\n",
+            encoding="utf-8",
+        )
+        advisory = StateFinding(
+            id="e2e-layer1",
+            fingerprint="e2e-l1:abc123",
+            source="E2E_CHECK",
+            disposition=Disposition.DISMISSED,
+            file="",
+            line_range=[],
+            description="advisory finding",
+        )
+        with patch(
+            "code_forge.e2e_check.run_e2e_check",
+            return_value=([advisory], []),
+        ):
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file),
+                 "--repo-root", str(tmp_path)],
+            )
+            result = main()
+        assert result == EXIT_PASS
+        assert result == 0
+
+    def test_dispatch_multiple_advisories_plural(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """Pluralization: 2 advisories -> 'PASS (2 advisories)'."""
+        from code_forge.disposition import Disposition
+        from code_forge.state import StateFinding
+
+        diff_file = tmp_path / "test.diff"
+        diff_file.write_text(
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "+def foo(): pass\n",
+            encoding="utf-8",
+        )
+        advisories = [
+            StateFinding(
+                id="e2e-layer1",
+                fingerprint="e2e-l1:aaa",
+                source="E2E_CHECK",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description="advisory one",
+            ),
+            StateFinding(
+                id="e2e-layer1-b",
+                fingerprint="e2e-l1:bbb",
+                source="E2E_CHECK",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description="advisory two",
+            ),
+        ]
+        with patch(
+            "code_forge.e2e_check.run_e2e_check",
+            return_value=(advisories, []),
+        ):
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file),
+                 "--repo-root", str(tmp_path)],
+            )
+            result = main()
+        assert result == EXIT_PASS
+        err = capsys.readouterr().err
+        assert "PASS (2 advisories)" in err
+        assert "advisory one" in err
+        assert "advisory two" in err
+
+    def test_dispatch_non_e2e_dismissed_not_printed(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """Source filter: DISMISSED from non-E2E_CHECK source -> bare PASS."""
+        from code_forge.disposition import Disposition
+        from code_forge.state import StateFinding
+
+        diff_file = tmp_path / "test.diff"
+        diff_file.write_text(
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "+def foo(): pass\n",
+            encoding="utf-8",
+        )
+        non_e2e = StateFinding(
+            id="other",
+            fingerprint="other:abc",
+            source="MUTANT",
+            disposition=Disposition.DISMISSED,
+            file="",
+            line_range=[],
+            description="mutation dismissed",
+        )
+        with patch(
+            "code_forge.e2e_check.run_e2e_check",
+            return_value=([non_e2e], []),
+        ):
+            monkeypatch.setattr(
+                sys, "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file),
+                 "--repo-root", str(tmp_path)],
+            )
+            result = main()
+        assert result == EXIT_PASS
+        err = capsys.readouterr().err
+        assert "ADVISORY" not in err
+        assert "advisory)" not in err
 
     def test_dispatch_fail_uncertain_findings(self, tmp_path, monkeypatch):
         """e2e-check returns EXIT_FAIL when UNCERTAIN findings are present."""
