@@ -1493,6 +1493,23 @@ class TestTruncate:
         assert result == "a..."
         assert len(result) == 4
 
+    def test_limit_zero_returns_empty(self):
+        import code_forge.mcp_server as mod
+        assert mod._truncate("abcdef", 0) == ""
+
+    def test_negative_limit_returns_empty(self):
+        import code_forge.mcp_server as mod
+        assert mod._truncate("abcdef", -1) == ""
+        assert mod._truncate("abcdef", -999) == ""
+
+    def test_limit_one_returns_single_char(self):
+        import code_forge.mcp_server as mod
+        assert mod._truncate("abcdef", 1) == "a"
+
+    def test_text_shorter_than_limit(self):
+        import code_forge.mcp_server as mod
+        assert mod._truncate("ab", 3) == "ab"
+
 
 class TestActiveFindingsProperty:
     """StateMachine.active_findings filters dismissed."""
