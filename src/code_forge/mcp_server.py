@@ -571,7 +571,14 @@ _MAX_FINDINGS_IN_RESULT = 20
 
 
 def _truncate(text: str, limit: int) -> str:
-    """Truncate text with ellipsis marker when it exceeds limit."""
+    """Truncate text with ellipsis marker when it exceeds limit.
+
+    When limit < 4, hard-slices without ellipsis (not enough room
+    for even one char + "...").  Callers using small limits lose the
+    truncation signal; the sole call site uses limit=200.
+    """
+    if limit < 4:
+        return text[:limit]
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
