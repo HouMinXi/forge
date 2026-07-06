@@ -50,6 +50,7 @@ class ForgeResult(BaseModel):
     verdict: str
     exit_code: int
     findings_count: int | None = None  # None = not counted, never 0 as surrogate
+    findings: list[dict] | None = None  # compact finding summaries for MCP
     duration_s: float
     output: str
 

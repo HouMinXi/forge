@@ -567,8 +567,12 @@ def _build_review_context(
     return resolved, source_hash, baseline_repr
 
 
+_MAX_FINDINGS_IN_RESULT = 20
+
+
 def _make_inprocess_result(
-    verdict: "Verdict", findings_count: int, elapsed: float
+    verdict: "Verdict", findings_count: int, elapsed: float,
+    findings: list[dict] | None = None,
 ) -> CallToolResult:
     """Convert in-process Verdict to CallToolResult.
 
@@ -590,6 +594,7 @@ def _make_inprocess_result(
         verdict=verdict.value,
         exit_code=exit_code,
         findings_count=findings_count,
+        findings=findings,
         duration_s=round(elapsed, 2),
         output=summary,
     )
@@ -708,8 +713,32 @@ async def _dispatch_sampling(
             raise ToolError("Sampling failed: %s" % exc)
 
     elapsed = time.monotonic() - t0
-    # Findings count is omitted for now (not tracked reliably by StateMachine.run)
-    return _make_inprocess_result(verdict, findings_count=0, elapsed=elapsed)
+
+    # Extract non-dismissed findings from the machine for the MCP result.
+    active = machine.active_findings
+    compact = [
+        {
+            "file": f.file,
+            "line_range": f.line_range,
+            "source": f.source,
+            "disposition": f.disposition.value,
+            "description": f.description[:200],
+        }
+        for f in active[:_MAX_FINDINGS_IN_RESULT]
+    ]
+    if len(active) > _MAX_FINDINGS_IN_RESULT:
+        compact.append({
+            "file": "",
+            "line_range": [],
+            "source": "OVERFLOW",
+            "disposition": "info",
+            "description": "+%d more, see state.json"
+                           % (len(active) - _MAX_FINDINGS_IN_RESULT),
+        })
+    return _make_inprocess_result(
+        verdict, findings_count=len(active), elapsed=elapsed,
+        findings=compact if compact else None,
+    )
 
 
 # -- tool handlers --
