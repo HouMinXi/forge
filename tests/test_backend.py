@@ -176,11 +176,46 @@ class TestBackendConfigParse:
         with pytest.raises(CliError, match="format"):
             load_backend_configs(_as_api_backends(entry))
 
-    def test_backendconfig_api_missing_api_key_env_raises(self):
+    def test_backendconfig_api_missing_credential_raises(self):
         entry = _api_entry()
         del entry["api_key_env"]
-        with pytest.raises(CliError, match="api_key_env"):
+        with pytest.raises(CliError, match="missing credential field"):
             load_backend_configs(_as_api_backends(entry))
+
+    def test_backendconfig_api_key_file_accepted(self, tmp_path):
+        """api_key_file instead of api_key_env parses successfully."""
+        kf = tmp_path / "key.txt"
+        kf.write_text("sk-test\n")
+        entry = _api_entry()
+        del entry["api_key_env"]
+        entry["api_key_file"] = str(kf)
+        cfgs = load_backend_configs(_as_api_backends(entry))
+        assert cfgs[0].api_key_file == str(kf)
+        assert cfgs[0].api_key_env is None
+
+    def test_backendconfig_api_both_key_fields_rejected(self, tmp_path):
+        """api_key_env + api_key_file together -> CliError."""
+        kf = tmp_path / "key.txt"
+        kf.write_text("sk-test\n")
+        entry = _api_entry(api_key_file=str(kf))
+        with pytest.raises(CliError, match="not both"):
+            load_backend_configs(_as_api_backends(entry))
+
+    def test_backendconfig_expanduser_api_key_file(self):
+        """~/key.txt is expanded at parse time."""
+        entry = _api_entry()
+        del entry["api_key_env"]
+        entry["api_key_file"] = "~/key.txt"
+        cfgs = load_backend_configs(_as_api_backends(entry))
+        assert "~" not in cfgs[0].api_key_file
+
+    def test_backendconfig_expanduser_credentials_path(self):
+        """~/creds.json is expanded at parse time."""
+        entry = _vertex_entry(credentials_path="~/creds.json")
+        cfgs = load_backend_configs(
+            {"backends": {"vtx": entry}}
+        )
+        assert "~" not in cfgs[0].credentials_path
 
     def test_backendconfig_unknown_type_raises(self):
         entry = _api_entry(type="grpc")
@@ -632,6 +667,64 @@ class TestProbeApi:
         )
         assert result.ok is False
         assert "DEEPSEEK_API_KEY" in result.error
+
+
+class TestProbeApiKeyFile:
+    """probe_backend for api backend with api_key_file credential."""
+
+    def _make_cfg(self, tmp_path, mode=0o600):
+        kf = tmp_path / "key.txt"
+        kf.write_text("sk-test\n")
+        kf.chmod(mode)
+        entry = _api_entry()
+        del entry["api_key_env"]
+        entry["api_key_file"] = str(kf)
+        return load_backend_configs(_as_api_backends(entry))[0]
+
+    def test_probe_file_key_ok(self, tmp_path):
+        """T2a: key file exists, 0600 -> ok=True."""
+        cfg = self._make_cfg(tmp_path)
+        result = probe_backend(
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path / "cache",
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is True
+
+    def test_probe_file_key_missing(self, tmp_path):
+        """Key file does not exist -> ok=False."""
+        entry = _api_entry()
+        del entry["api_key_env"]
+        entry["api_key_file"] = str(tmp_path / "gone.txt")
+        cfg = load_backend_configs(_as_api_backends(entry))[0]
+        result = probe_backend(
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path / "cache",
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "not found" in result.error
+
+    def test_probe_file_key_world_readable(self, tmp_path):
+        """T2d: key file 0644 -> refused with mode in error."""
+        cfg = self._make_cfg(tmp_path, mode=0o644)
+        result = probe_backend(
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path / "cache",
+            time_fn=lambda: 1000.0,
+        )
+        assert result.ok is False
+        assert "readable" in result.error
+        assert "644" in result.error
 
 
 class TestProbeVertex:
