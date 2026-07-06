@@ -1482,6 +1482,17 @@ class TestTruncate:
         text = "y" * 200
         assert mod._truncate(text, 200) == text
 
+    def test_small_limit_no_ellipsis(self):
+        import code_forge.mcp_server as mod
+        assert mod._truncate("abcdef", 2) == "ab"
+        assert mod._truncate("abcdef", 3) == "abc"
+
+    def test_limit_four_gets_ellipsis(self):
+        import code_forge.mcp_server as mod
+        result = mod._truncate("abcdef", 4)
+        assert result == "a..."
+        assert len(result) == 4
+
 
 class TestActiveFindingsProperty:
     """StateMachine.active_findings filters dismissed."""
