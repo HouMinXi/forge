@@ -570,6 +570,13 @@ def _build_review_context(
 _MAX_FINDINGS_IN_RESULT = 20
 
 
+def _truncate(text: str, limit: int) -> str:
+    """Truncate text with ellipsis marker when it exceeds limit."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
 def _make_inprocess_result(
     verdict: "Verdict", findings_count: int, elapsed: float,
     findings: list[dict] | None = None,
@@ -722,11 +729,13 @@ async def _dispatch_sampling(
             "line_range": f.line_range,
             "source": f.source,
             "disposition": f.disposition.value,
-            "description": f.description[:200],
+            "description": _truncate(f.description or "", 200),
         }
         for f in active[:_MAX_FINDINGS_IN_RESULT]
     ]
     if len(active) > _MAX_FINDINGS_IN_RESULT:
+        # Synthetic entry -- disposition is not a Disposition enum member
+        # on purpose; consumers should treat source=OVERFLOW as metadata.
         compact.append({
             "file": "",
             "line_range": [],

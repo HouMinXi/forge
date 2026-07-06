@@ -1409,7 +1409,6 @@ class TestWorkspaceFor:
         assert mod._cached_session_ref is None
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_first_root_without_gate_yaml(self, tmp_path):
         """Root without gate.yaml still used as candidate[0]."""
         import code_forge.mcp_server as mod
@@ -1452,7 +1451,7 @@ class TestInprocessResultFindings:
         assert data["findings"] == findings
 
     def test_no_findings_omitted(self):
-        """T3 bug-inject: findings_count=0 + no findings -> None."""
+        """findings_count=0 + no findings -> None."""
         import code_forge.mcp_server as mod
         from code_forge.state import Verdict
 
@@ -1462,3 +1461,52 @@ class TestInprocessResultFindings:
         data = result.structuredContent
         assert data["findings_count"] == 0
         assert data["findings"] is None
+
+
+class TestTruncate:
+    """_truncate helper."""
+
+    def test_short_unchanged(self):
+        import code_forge.mcp_server as mod
+        assert mod._truncate("hello", 200) == "hello"
+
+    def test_long_truncated_with_ellipsis(self):
+        import code_forge.mcp_server as mod
+        text = "x" * 250
+        result = mod._truncate(text, 200)
+        assert len(result) == 200
+        assert result.endswith("...")
+
+    def test_exact_limit_unchanged(self):
+        import code_forge.mcp_server as mod
+        text = "y" * 200
+        assert mod._truncate(text, 200) == text
+
+
+class TestActiveFindingsProperty:
+    """StateMachine.active_findings filters dismissed."""
+
+    def test_dismissed_excluded(self):
+        from code_forge.machine import StateMachine
+        from code_forge.disposition import Disposition
+        from code_forge.state import StateFinding
+        from unittest.mock import MagicMock
+
+        sm = MagicMock(spec=StateMachine)
+        sm._state = MagicMock()
+        sm._state.findings = [
+            StateFinding(
+                id="f1", fingerprint="fp1", source="L1",
+                disposition=Disposition.CONFIRMED,
+                file="a.py", line_range=[1], description="bug",
+            ),
+            StateFinding(
+                id="f2", fingerprint="fp2", source="L1",
+                disposition=Disposition.DISMISSED,
+                file="b.py", line_range=[2], description="false pos",
+            ),
+        ]
+        # Call the real property on the mock
+        result = StateMachine.active_findings.fget(sm)
+        assert len(result) == 1
+        assert result[0].id == "f1"
