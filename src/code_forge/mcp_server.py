@@ -152,30 +152,12 @@ async def _do_shutdown(signum: int) -> None:
 
 # -- workspace resolution (ADR-0006) --
 
+from code_forge.workspace import resolve_workspace  # noqa: E402
+
 
 def _resolve_workspace() -> Path:
-    """Forge workspace root: explicit env, else walk up from cwd.
-
-    Priority: FORGE_PROJECT_DIR > nearest ancestor with
-    .code-forge/gate.yaml (skipping $HOME) > cwd as-is (lets
-    _check_backend emit the clear error).
-
-    $HOME is skipped because it is a configuration domain, not a
-    project.  A stale .code-forge/ left there by a previous
-    ``forge_init`` would act as a walkup magnet, binding every
-    subdirectory to ~ as the workspace root (ADR-0006, ADR-0009).
-    """
-    env = os.environ.get("FORGE_PROJECT_DIR", "").strip()
-    if env:
-        return Path(env).expanduser().resolve()
-    home = Path.home().resolve()
-    start = Path.cwd().resolve()
-    for d in (start, *start.parents):
-        if d == home:
-            continue
-        if (d / ".code-forge" / "gate.yaml").is_file():
-            return d
-    return start
+    """Thin wrapper: delegates to the shared, MCP-free resolver."""
+    return resolve_workspace(Path.cwd(), os.environ)
 
 
 # User-level config shared with cli.py via user_config module.
