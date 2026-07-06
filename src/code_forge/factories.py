@@ -244,14 +244,9 @@ def build_l1_provider(
             ("adversarial", "adversarial QE: assume bugs exist"),
         ]
 
-        all_candidates = []
-        all_excerpts = []
-        seen = set()
-        total_input = 0
-        total_output = 0
-        total_duration = 0.0
-
-        for pass_name, role in pass_configs:
+        # -- Build all prompts before execution -------------------------
+        prompts = []
+        for _pn, role in pass_configs:
             prompt = (
                 "You are a " + role + ". Review this diff.\n"
                 'Return JSON: {"findings": [{"file": "...", "line": N, '
@@ -286,31 +281,68 @@ def build_l1_provider(
                     + contract_spec + "\n"
                 )
             prompt += "\nDiff:\n" + diff_text
-            try:
-                result = llm_invoke(
-                    prompt, backend=backend,
-                    max_attempts=max_attempts,
-                    initial_delay_s=initial_delay_s,
+            prompts.append(prompt)
+
+        # -- Execute passes ---------------------------------------------
+        # CLI backends use a module-global _active_proc that is not
+        # thread-safe; keep serial for those.
+        is_cli = backend is None or backend.type == "cli"
+
+        def _run_pass(idx):
+            pn = pass_configs[idx][0]
+            r = llm_invoke(
+                prompts[idx], backend=backend,
+                max_attempts=max_attempts,
+                initial_delay_s=initial_delay_s,
+            )
+            if (r.usage.input_tokens > 0
+                    or r.usage.output_tokens > 0):
+                bname = backend.name if backend else "unknown"
+                sys.stderr.write(
+                    "[%s:%s] %d in / %d out tokens\n"
+                    % (bname, pn,
+                       r.usage.input_tokens,
+                       r.usage.output_tokens)
                 )
-                response = result.content
-                total_input += result.usage.input_tokens
-                total_output += result.usage.output_tokens
-                total_duration += result.duration_s
-                if (result.usage.input_tokens > 0
-                        or result.usage.output_tokens > 0):
-                    bname = backend.name if backend else "unknown"
-                    sys.stderr.write(
-                        "[%s] %d in / %d out tokens\n"
-                        % (
-                            bname,
-                            result.usage.input_tokens,
-                            result.usage.output_tokens,
-                        )
-                    )
-            except LLMInvokeError as exc:
+            return r
+
+        pass_results = []
+        if is_cli:
+            for i in range(len(pass_configs)):
+                try:
+                    pass_results.append(_run_pass(i))
+                except Exception as exc:
+                    pass_results.append(exc)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(
+                max_workers=len(pass_configs),
+            ) as pool:
+                futures = [
+                    pool.submit(_run_pass, i)
+                    for i in range(len(pass_configs))
+                ]
+                for f in futures:
+                    try:
+                        pass_results.append(f.result())
+                    except Exception as exc:
+                        pass_results.append(exc)
+
+        # -- Fold results in fixed order --------------------------------
+        all_candidates = []
+        all_excerpts = []
+        seen = set()
+        total_input = 0
+        total_output = 0
+        total_duration = 0.0
+
+        for i, (pass_name, _role) in enumerate(pass_configs):
+            pr = pass_results[i]
+
+            if isinstance(pr, LLMInvokeError):
                 print(
                     "code-forge: L1 pass '%s' failed: %s"
-                    % (pass_name, exc),
+                    % (pass_name, pr),
                     file=sys.stderr,
                 )
                 from .disposition import Disposition
@@ -322,15 +354,43 @@ def build_l1_provider(
                     disposition=Disposition.CONFIRMED,
                     file="<llm-invoke>",
                     line_range=[0, 0],
-                    description="L1 invoke failed: %s" % exc,
-                    is_timeout=exc.is_timeout,
+                    description="L1 invoke failed: %s" % pr,
+                    is_timeout=pr.is_timeout,
                 ))
                 if breaker is not None:
-                    if exc.is_timeout:
+                    if pr.is_timeout:
                         breaker.record_timeout()
                     else:
                         breaker.record_other_error()
                 continue
+
+            if isinstance(pr, Exception):
+                print(
+                    "code-forge: L1 pass '%s' UNEXPECTED: %s: %s"
+                    % (pass_name, type(pr).__name__, pr),
+                    file=sys.stderr,
+                )
+                from .disposition import Disposition
+                from .state import StateFinding
+                all_candidates.append(StateFinding(
+                    id="l1-%s-invoke-fail" % pass_name,
+                    fingerprint="invoke-fail-%s" % pass_name,
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<llm-invoke>",
+                    line_range=[0, 0],
+                    description="L1 invoke failed: %s: %s"
+                    % (type(pr).__name__, pr),
+                ))
+                if breaker is not None:
+                    breaker.record_other_error()
+                continue
+
+            result = pr
+            response = result.content
+            total_input += result.usage.input_tokens
+            total_output += result.usage.output_tokens
+            total_duration += result.duration_s
 
             try:
                 validated = validate_reviewer_json(response)
@@ -483,12 +543,9 @@ def build_sampling_l1_provider(
             ("adversarial", "adversarial QE: assume bugs exist"),
         ]
 
-        all_candidates = []
-        all_excerpts = []
-        seen = set()
-        total_duration = 0.0
-
-        for pass_name, role in pass_configs:
+        # -- Build all prompts before execution -------------------------
+        prompts = []
+        for _pn, role in pass_configs:
             prompt = (
                 "You are a " + role + ". Review this diff.\n"
                 'Return JSON: {"findings": [{"file": "...", "line": N, '
@@ -511,39 +568,55 @@ def build_sampling_l1_provider(
             if contract_spec:
                 prompt += "\n## Contract Reference\n" + contract_spec + "\n"
             prompt += "\nDiff:\n" + diff_text
+            prompts.append(prompt)
 
-            future = None
-            try:
-                coro = invoke_sampling(
-                    session, prompt, max_tokens=16384, temperature=0.0,
-                    system_prompt=(
-                        "You are a code review tool. Respond with ONLY valid JSON, "
-                        "no markdown fences, no explanatory text. The JSON must have "
-                        'keys "findings" (array) and "code_excerpts" (array).'
+        # -- Execute passes concurrently via asyncio.gather -------------
+        _system_prompt = (
+            "You are a code review tool. Respond with ONLY valid JSON, "
+            "no markdown fences, no explanatory text. The JSON must have "
+            'keys "findings" (array) and "code_excerpts" (array).'
+        )
+
+        async def _gather():
+            coros = [
+                _aio.wait_for(
+                    invoke_sampling(
+                        session, prompts[i], max_tokens=16384,
+                        temperature=0.0, system_prompt=_system_prompt,
                     ),
+                    timeout=300,
                 )
-                future = _aio.run_coroutine_threadsafe(coro, loop)
-                result = future.result(timeout=300)  # 5 min hard ceiling
-                total_duration += result.duration_s
-                # invoke_sampling raises LLMInvokeError on truncation
-                # (stopReason == maxTokens) before returning, so
-                # result.is_truncated is always False here.
-                response = result.content
-            except LLMInvokeError:
-                # Propagate every LLM-level failure (truncation, empty
-                # response, stub model, no valid JSON). These repeat on
-                # every pass, so converting them to per-pass INFRA
-                # findings would burn the remaining passes for nothing.
-                # _dispatch_sampling routes them to the subprocess
-                # fallback or a ToolError with remediation.
-                raise
-            except Exception as exc:
-                # Cancel the coroutine on timeout to avoid resource leak.
-                # future stays None when run_coroutine_threadsafe itself
-                # failed (e.g. closed loop) -- nothing to cancel then.
-                if future is not None:
-                    future.cancel()
-                print("code-forge: L1 sampling pass '%s' UNEXPECTED: %s: %s" % (pass_name, type(exc).__name__, exc), file=_sys.stderr)
+                for i in range(len(pass_configs))
+            ]
+            return await _aio.gather(*coros, return_exceptions=True)
+
+        # All 3 coroutines submitted; parallel tokens consumed even if
+        # one fails -- accepted trade-off for 3x wall-clock speedup.
+        outer = _aio.run_coroutine_threadsafe(_gather(), loop)
+        try:
+            pass_results = list(outer.result(timeout=330))
+        except Exception:
+            outer.cancel()
+            raise
+
+        # -- Fold results in fixed order --------------------------------
+        all_candidates = []
+        all_excerpts = []
+        seen = set()
+        total_duration = 0.0
+
+        for i, (pass_name, _role) in enumerate(pass_configs):
+            pr = pass_results[i]
+
+            if isinstance(pr, LLMInvokeError):
+                raise pr
+
+            if isinstance(pr, BaseException):
+                print(
+                    "code-forge: L1 sampling pass '%s' UNEXPECTED: "
+                    "%s: %s" % (pass_name, type(pr).__name__, pr),
+                    file=_sys.stderr,
+                )
                 all_candidates.append(StateFinding(
                     id="l1-%s-invoke-fail" % pass_name,
                     fingerprint="invoke-fail-%s" % pass_name,
@@ -551,9 +624,14 @@ def build_sampling_l1_provider(
                     disposition=Disposition.CONFIRMED,
                     file="<llm-invoke>",
                     line_range=[0, 0],
-                    description="L1 sampling invoke failed: %s: %s" % (type(exc).__name__, exc),
+                    description="L1 sampling invoke failed: %s: %s"
+                    % (type(pr).__name__, pr),
                 ))
                 continue
+
+            result = pr
+            total_duration += result.duration_s
+            response = result.content
 
             try:
                 validated = validate_reviewer_json(response)
