@@ -215,6 +215,12 @@ class StateMachine:
     advisory_runners: "list[AxisRunner]" = field(default_factory=list)
     _state: State = field(default_factory=State, init=False)
 
+    @property
+    def active_findings(self) -> list:
+        """Non-dismissed findings (public accessor for MCP layer)."""
+        return [f for f in self._state.findings
+                if f.disposition != Disposition.DISMISSED]
+
     def __post_init__(self) -> None:
         """Initialize per-round cost accumulator (CLI-08 H3)."""
         self._round_input_tokens: int = 0

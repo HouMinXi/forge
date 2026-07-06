@@ -1409,6 +1409,7 @@ class TestWorkspaceFor:
         assert mod._cached_session_ref is None
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_first_root_without_gate_yaml(self, tmp_path):
         """Root without gate.yaml still used as candidate[0]."""
         import code_forge.mcp_server as mod
@@ -1429,3 +1430,35 @@ class TestWorkspaceFor:
 
         ws = await mod._workspace_for(ctx)
         assert ws == project
+
+
+class TestInprocessResultFindings:
+    """T3: _make_inprocess_result returns findings in structuredContent."""
+
+    def test_findings_in_result(self):
+        """Non-empty findings list appears in structured output."""
+        import code_forge.mcp_server as mod
+        from code_forge.state import Verdict
+
+        findings = [{"file": "a.py", "line_range": [1, 5],
+                      "source": "L1", "disposition": "CONFIRMED",
+                      "description": "bug here"}]
+        result = mod._make_inprocess_result(
+            Verdict.FAIL, findings_count=1, elapsed=1.0,
+            findings=findings,
+        )
+        data = result.structuredContent
+        assert data["findings_count"] == 1
+        assert data["findings"] == findings
+
+    def test_no_findings_omitted(self):
+        """T3 bug-inject: findings_count=0 + no findings -> None."""
+        import code_forge.mcp_server as mod
+        from code_forge.state import Verdict
+
+        result = mod._make_inprocess_result(
+            Verdict.PASS, findings_count=0, elapsed=0.5,
+        )
+        data = result.structuredContent
+        assert data["findings_count"] == 0
+        assert data["findings"] is None
