@@ -296,6 +296,8 @@ def test_no_key_leakage(tmp_path, capsys):
           test-backend:
             type: api
             model: test
+            format: openai
+            base_url: https://api.example.com/v1
             api_key_file: %s
     """ % key_file))
 
