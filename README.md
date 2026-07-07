@@ -66,6 +66,127 @@ code-forge install-skill --skill code-forge   # one skill only
 code-forge install-skill --force              # overwrite existing
 ```
 
+## Getting Started
+
+A complete walkthrough from install to your first gated commit.
+
+### 1. Install and initialize
+
+```bash
+pip install code-review-forge
+cd your-repo
+code-forge init
+```
+
+`init` creates `.code-forge/gate.yaml` with commented examples. It does **not**
+configure a backend or a test runner -- both are your responsibility.
+
+### 2. Configure a backend
+
+Open `.code-forge/gate.yaml` and uncomment one backend block. For the Anthropic
+API:
+
+```yaml
+backends:
+  claude-api:
+    type: api
+    format: anthropic
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+    default: true
+```
+
+`api_key_env` is the **name** of an environment variable, not the key itself.
+Set the variable in your shell:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Then trust the configuration (required once per gate.yaml change):
+
+```bash
+code-forge trust
+```
+
+Review **refuses to run** until at least one backend is configured and trusted.
+
+### 3. Run your first review
+
+code-forge requires a git worktree for review isolation. Create one and make a
+change:
+
+```bash
+git worktree add .worktrees/work -b my-feature
+cd .worktrees/work
+# edit some code, then stage it
+git add -A
+code-forge review
+```
+
+The review reads the **staged (index) diff** -- you do not need to commit first.
+
+**Simple single-branch repos:** if worktrees are overkill for your workflow,
+bypass the check:
+
+```bash
+code-forge review --allow-main
+# or permanently:
+FORGE_ALLOW_MAIN=1 code-forge review
+```
+
+### 4. Install the commit gate (optional but recommended)
+
+The commit gate runs `code-forge verify` (receipt tamper check) and
+`code-forge gate-check` (test suite) on every code commit. It requires a
+`test` section in gate.yaml:
+
+```yaml
+test:
+  command: [pytest, -q]
+  timeout_seconds: 900
+```
+
+Then install:
+
+```bash
+code-forge install-hooks
+```
+
+**What this means for your workflow:**
+
+- **Code commits** (`.py`, `.go`, `.rs`, etc.) require a passing review first.
+  The hook runs `code-forge verify` which checks that a full review has been
+  recorded for the staged diff. Without a prior review, the commit is blocked.
+- **Doc/config commits** (`.md`, `.yaml`, `.toml`, `LICENSE`, etc.) skip the
+  gate automatically -- no review or `--no-verify` needed.
+
+**Bootstrapping a new repo:** if you install hooks before running your first
+review, code commits will be blocked. Either run a successful `code-forge review`
+first, or set `FORGE_ALLOW_NO_BACKEND=1` temporarily to bypass the receipt gate
+while you get your backend working.
+
+### 5. Commit with the gate active
+
+```bash
+# 1. Stage your changes
+git add -A
+# 2. Run a review (must pass before committing code)
+code-forge review
+# 3. Commit -- the pre-commit hook verifies the review receipt
+git commit -m "your message"
+```
+
+If the review found issues, fix them and re-run `code-forge review` until it
+passes. The commit gate checks that the staged diff has a clean review receipt.
+
+### 6. Diagnostics
+
+```bash
+code-forge doctor    # check backend reachability, config health
+code-forge verify    # check review receipt status
+```
+
 ## Backend configuration
 
 By default, code-forge uses the `claude` CLI in your PATH with the session
