@@ -808,6 +808,11 @@ def run_install_hooks(
             f.write(commit_msg_content)
         os.chmod(commit_msg_path, 0o755)
         info("code-forge: commit-msg hook installed at %s" % commit_msg_path)
+        info(
+            "code-forge: code commits now require a passing review. "
+            "Run 'code-forge review' on staged changes before your "
+            "first commit."
+        )
 
         # Register check_worktree.sh in .claude/settings.local.json so Claude
         # Code's Edit|Write PreToolUse hook chain blocks direct main-tree edits.
