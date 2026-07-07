@@ -47,10 +47,10 @@ def _make_state_with_finding(
 
 
 class TestHoldAbortedExit:
-    """SC-14: HoldAborted -> exit 0 + state preserved."""
+    """SC-14: HoldAborted -> exit 3 (BUSY) + state preserved."""
 
     def test_hold_aborted_returns_pending(self, tmp_path):
-        """HoldAborted -> Verdict.PENDING (main maps to exit 0)."""
+        """HoldAborted -> Verdict.PENDING (main maps to exit 3/BUSY)."""
         state_path = tmp_path / ".code-forge" / "state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         s = _make_state_with_finding()
