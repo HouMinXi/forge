@@ -1175,21 +1175,37 @@ class TestReviewBlock:
         """Exit 2 (no backend) blocks by default (fail-closed)."""
         block = _build_review_block("code-forge gate-check")
         assert "review skipped" in block
-        eq2_idx = block.index("-eq 2")
-        eq5_idx = block.index("-eq 5")
-        exit2_section = block[eq2_idx:eq5_idx]
-        assert "exit 1" in exit2_section
-        assert "FORGE_ALLOW_NO_BACKEND" in exit2_section
+        lines = block.splitlines()
+        in_eq2 = False
+        eq2_lines = []
+        for line in lines:
+            if "-eq 2" in line:
+                in_eq2 = True
+            elif in_eq2 and ("-eq 5" in line or line.strip() == "else"):
+                break
+            if in_eq2:
+                eq2_lines.append(line)
+        eq2_section = "\n".join(eq2_lines)
+        assert "exit 1" in eq2_section
+        assert "FORGE_ALLOW_NO_BACKEND" in eq2_section
 
     def test_review_block_exit_5_blocks_by_default(self):
         """Exit 5 (delegated) blocks by default (fail-closed)."""
         block = _build_review_block("code-forge gate-check")
         assert "review delegated" in block
-        eq5_idx = block.index("-eq 5")
-        else_idx = block.index("else", eq5_idx)
-        exit5_section = block[eq5_idx:else_idx]
-        assert "exit 1" in exit5_section
-        assert "FORGE_ALLOW_NO_BACKEND" in exit5_section
+        lines = block.splitlines()
+        in_eq5 = False
+        eq5_lines = []
+        for line in lines:
+            if "-eq 5" in line:
+                in_eq5 = True
+            elif in_eq5 and line.strip() == "else":
+                break
+            if in_eq5:
+                eq5_lines.append(line)
+        eq5_section = "\n".join(eq5_lines)
+        assert "exit 1" in eq5_section
+        assert "FORGE_ALLOW_NO_BACKEND" in eq5_section
 
     def test_review_block_other_exit_blocks(self):
         """Non-0/2/5 exit codes block the commit (exit 1 in else branch)."""
