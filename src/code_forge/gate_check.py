@@ -62,7 +62,13 @@ def load_gate_config(
         raise ValueError("Invalid YAML in gate.yaml: %s" % e) from e
 
     if not isinstance(data, dict) or "test" not in data:
-        raise ValueError("gate.yaml must have a 'test' section")
+        raise ValueError(
+            "gate.yaml needs an active 'test' section for the commit gate. "
+            "Add:\n"
+            "  test:\n"
+            "    command: [pytest, -q]   # change to your test runner\n"
+            "    timeout_seconds: 900"
+        )
 
     test = data["test"]
     if not isinstance(test, dict):
