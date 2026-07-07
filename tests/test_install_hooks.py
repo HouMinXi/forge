@@ -1171,24 +1171,25 @@ class TestReviewBlock:
         not_found_section = block[not_found_idx:fi_idx]
         assert "exit 1" not in not_found_section
 
-    def test_review_block_exit_2_degrades_gracefully(self):
-        """Exit 2 (no backend) emits a warning but does NOT block."""
+    def test_review_block_exit_2_blocks_by_default(self):
+        """Exit 2 (no backend) blocks by default (fail-closed)."""
         block = _build_review_block("code-forge gate-check")
         assert "review skipped" in block
-        # The exit-2 branch must not contain exit 1
         eq2_idx = block.index("-eq 2")
         eq5_idx = block.index("-eq 5")
         exit2_section = block[eq2_idx:eq5_idx]
-        assert "exit 1" not in exit2_section
+        assert "exit 1" in exit2_section
+        assert "FORGE_ALLOW_NO_BACKEND" in exit2_section
 
-    def test_review_block_exit_5_degrades_gracefully(self):
-        """Exit 5 (delegated) emits a warning but does NOT block."""
+    def test_review_block_exit_5_blocks_by_default(self):
+        """Exit 5 (delegated) blocks by default (fail-closed)."""
         block = _build_review_block("code-forge gate-check")
         assert "review delegated" in block
         eq5_idx = block.index("-eq 5")
         else_idx = block.index("else", eq5_idx)
         exit5_section = block[eq5_idx:else_idx]
-        assert "exit 1" not in exit5_section
+        assert "exit 1" in exit5_section
+        assert "FORGE_ALLOW_NO_BACKEND" in exit5_section
 
     def test_review_block_other_exit_blocks(self):
         """Non-0/2/5 exit codes block the commit (exit 1 in else branch)."""
