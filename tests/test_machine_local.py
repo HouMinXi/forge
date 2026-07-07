@@ -95,6 +95,44 @@ class TestLocalAutofixSuccess:
         assert machine._state.converged is True
 
 
+class TestInfraSkipsAutofix:
+    """INFRA findings must not enter the autofix loop."""
+
+    def test_infra_finding_skips_autofixer(self, tmp_path):
+        fix_calls = []
+
+        class SpyAutoFixer(StubAutoFixer):
+            def fix(self, finding, mode_hint):
+                fix_calls.append(finding.source)
+                return FixOutcome.NO_CHANGE
+
+        def mock_l0(registry, files):
+            infra = _make_finding(fp="infra-1", disp=Disposition.CONFIRMED)
+            infra.source = "INFRA"
+            infra.file = "<llm-invoke>"
+            code = _make_finding(fp="code-1", disp=Disposition.CONFIRMED)
+            return ([infra, code], [])
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=SpyAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            max_total_rounds=1,
+            max_fix_attempts=1,
+        )
+        machine.run()
+        # INFRA must never reach autofixer; L0 finding should
+        assert "INFRA" not in fix_calls
+        assert "L0" in fix_calls
+
+
 class TestLocalMaxRoundsExhausted:
     """(c) MAX_TOTAL_ROUNDS exhaust -> ESCALATED + diagnosis recorded."""
 
