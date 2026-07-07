@@ -1171,51 +1171,21 @@ class TestReviewBlock:
         not_found_section = block[not_found_idx:fi_idx]
         assert "exit 1" not in not_found_section
 
-    def test_review_block_exit_2_blocks_by_default(self):
-        """Exit 2 (no backend) blocks by default (fail-closed)."""
+    def test_review_block_fail_closed_tokens(self):
+        """Generated hook contains fail-closed tokens (structural check).
+
+        Behavioral coverage is in test_hook_failclosed.py (6 shell-execution
+        tests). This test only verifies the generator emits the expected
+        keywords -- not that the shell logic is correct.
+        """
         block = _build_review_block("code-forge gate-check")
+        assert "-eq 2" in block
+        assert "-eq 5" in block
         assert "review skipped" in block
-        lines = block.splitlines()
-        in_eq2 = False
-        eq2_lines = []
-        for line in lines:
-            if "-eq 2" in line:
-                in_eq2 = True
-            elif in_eq2 and ("-eq 5" in line or line.strip() == "else"):
-                break
-            if in_eq2:
-                eq2_lines.append(line)
-        eq2_section = "\n".join(eq2_lines)
-        assert "exit 1" in eq2_section
-        assert "FORGE_ALLOW_NO_BACKEND" in eq2_section
-
-    def test_review_block_exit_5_blocks_by_default(self):
-        """Exit 5 (delegated) blocks by default (fail-closed)."""
-        block = _build_review_block("code-forge gate-check")
         assert "review delegated" in block
-        lines = block.splitlines()
-        in_eq5 = False
-        eq5_lines = []
-        for line in lines:
-            if "-eq 5" in line:
-                in_eq5 = True
-            elif in_eq5 and line.strip() == "else":
-                break
-            if in_eq5:
-                eq5_lines.append(line)
-        eq5_section = "\n".join(eq5_lines)
-        assert "exit 1" in eq5_section
-        assert "FORGE_ALLOW_NO_BACKEND" in eq5_section
-
-    def test_review_block_other_exit_blocks(self):
-        """Non-0/2/5 exit codes block the commit (exit 1 in else branch)."""
-        block = _build_review_block("code-forge gate-check")
         assert "review FAILED" in block
-        # The else branch (after exit-5 check) must contain exit 1
-        eq5_idx = block.index("-eq 5")
-        else_idx = block.index("else", eq5_idx)
-        else_section = block[else_idx:]
-        assert "exit 1" in else_section
+        assert "FORGE_ALLOW_NO_BACKEND" in block
+        assert block.count("exit 1") >= 3
 
 
 class TestHookExecutionOrder:
