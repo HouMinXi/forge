@@ -115,9 +115,14 @@ def _check_trust(
 
 def _check_backends(
     workspace: Path, gate_data: dict, env: Mapping[str, str],
-) -> tuple[list[tuple[bool, str]], list]:
-    """Return diagnostic lines AND merged BackendConfig list."""
+) -> tuple[list[tuple[bool, str]], list | None]:
+    """Return diagnostic lines AND merged BackendConfig list.
+
+    Returns configs=None on config-validation error (backends exist but
+    are invalid), distinct from configs=[] (no backends at all).
+    """
     from code_forge.backend import load_backend_configs, probe_backend
+    from code_forge.errors import CliError
     from code_forge.user_config import load_user_backends, merge_backends
 
     try:
@@ -125,6 +130,8 @@ def _check_backends(
         user_raw = load_user_backends()
         merged_raw = merge_backends(project_raw, user_raw)
         configs = load_backend_configs({"backends": merged_raw})
+    except CliError as exc:
+        return ([(False, "backend config error: %s" % exc)], None)
     except Exception as exc:
         return ([(False, "backend config error: %s" % exc)], [])
 
@@ -286,7 +293,7 @@ def run_doctor(
                     has_fail = True
 
             has_explicit_outlet = "outlet" in gate_data
-            if configs or has_explicit_outlet:
+            if configs is not None and (configs or has_explicit_outlet):
                 ok_o, msg_o = _check_outlet(
                     workspace, gate_data, env, configs)
                 _line("outlet", msg_o, ok_o)
