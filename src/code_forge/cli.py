@@ -1164,7 +1164,7 @@ def _run_trust(args, cwd: Path) -> int:
     # Bare trust: display dangerous fields, then record trust.
     dangers = find_dangerous_fields(gd)
     if dangers:
-        print("Dangerous fields found:", file=sys.stderr)
+        print("Sensitive fields (review before trusting):", file=sys.stderr)
         for bname, fname, fvalue in dangers:
             print(
                 "  %s.%s = %s" % (bname, fname, fvalue),
