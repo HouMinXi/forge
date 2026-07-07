@@ -806,7 +806,7 @@ class StateMachine:
         for finding in findings:
             # Coverage-gap and gate-mechanism findings skip autofix:
             # they are not code defects the autofix loop can address.
-            if finding.source in ("MUTANT", "E2E_CHECK", "FIXVAL"):
+            if finding.source in ("MUTANT", "E2E_CHECK", "FIXVAL", "INFRA"):
                 continue
             if finding.disposition != Disposition.CONFIRMED:
                 continue
