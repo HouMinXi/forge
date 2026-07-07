@@ -337,8 +337,9 @@ def _build_review_block(forge_invocation: str) -> str:
     """Build the LLM review block for the pre-commit hook.
 
     Calls code-forge review on staged changes (HEAD commit vs staged files).
-    Gracefully degrades when no backend is configured (exit 2)
-    or when the review is delegated to an inline outlet (exit 5).
+    Blocks by default when no backend is configured (exit 2) or when
+    the review is delegated to an inline outlet (exit 5). Set
+    FORGE_ALLOW_NO_BACKEND=1 to allow graceful degradation.
 
     Args:
         forge_invocation: the forge invocation string (e.g.
@@ -361,9 +362,13 @@ def _build_review_block(forge_invocation: str) -> str:
         '        if [ "$_RC" -eq 2 ]; then\n'
         '            echo "code-forge: review skipped'
         ' (no backend configured)" >&2\n'
+        '            if [ "${FORGE_ALLOW_NO_BACKEND:-0}" != "1" ];'
+        " then exit 1; fi\n"
         '        elif [ "$_RC" -eq 5 ]; then\n'
         '            echo "code-forge: review delegated'
         ' (inline outlet)" >&2\n'
+        '            if [ "${FORGE_ALLOW_NO_BACKEND:-0}" != "1" ];'
+        " then exit 1; fi\n"
         "        else\n"
         '            echo "code-forge: review FAILED'
         ' (exit $_RC)" >&2\n'
