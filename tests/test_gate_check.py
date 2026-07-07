@@ -486,8 +486,8 @@ class TestGateCheckIntegration:
             assert "NEW test failures" in stderr.getvalue()
 
     @patch("code_forge.gate_check.subprocess.run")
-    def test_exit_1_no_baseline_allows(self, mock_run):
-        """Test exit 1 + no baseline -> gate allows (bootstrap path)."""
+    def test_exit_1_no_baseline_blocks_by_default(self, mock_run):
+        """Test exit 1 + no baseline -> gate BLOCKS (fail-closed)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
             forge_dir = cwd / ".code-forge"
@@ -499,12 +499,10 @@ class TestGateCheckIntegration:
                 }
             }
             (forge_dir / "gate.yaml").write_text(yaml.dump(config))
-            # No test_baseline.json on disk
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
                     return Mock(returncode=0, stdout="foo.py\n", stderr="")
-                # Test command fails
                 return Mock(
                     returncode=1,
                     stdout="FAILED tests/test_foo.py::test_bar\n",
@@ -517,6 +515,43 @@ class TestGateCheckIntegration:
             stderr = StringIO()
             result = run_gate_check(
                 args=None, env={}, cwd=cwd,
+                stdout=StringIO(), stderr=stderr,
+            )
+            assert result == EXIT_FAIL
+            assert "no baseline established" in stderr.getvalue()
+
+    @patch("code_forge.gate_check.subprocess.run")
+    def test_exit_1_no_baseline_allows_with_opt_in(self, mock_run):
+        """FORGE_ALLOW_NO_BASELINE=1 restores the old allow behavior."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir)
+            forge_dir = cwd / ".code-forge"
+            forge_dir.mkdir()
+
+            config = {
+                "test": {
+                    "command": ["python3", "-m", "pytest"],
+                }
+            }
+            (forge_dir / "gate.yaml").write_text(yaml.dump(config))
+
+            def side_effect(*args, **kwargs):
+                if args[0][0] == "git":
+                    return Mock(returncode=0, stdout="foo.py\n", stderr="")
+                return Mock(
+                    returncode=1,
+                    stdout="FAILED tests/test_foo.py::test_bar\n",
+                    stderr="",
+                )
+
+            mock_run.side_effect = side_effect
+
+            from io import StringIO
+            stderr = StringIO()
+            result = run_gate_check(
+                args=None,
+                env={"FORGE_ALLOW_NO_BASELINE": "1"},
+                cwd=cwd,
                 stdout=StringIO(), stderr=stderr,
             )
             assert result == EXIT_PASS
