@@ -228,10 +228,13 @@ def format_summary(state: State) -> str:
         Disposition.DISMISSED: 0,
         Disposition.FIXED: 0,
     }
+    infra = 0
     for f in state.findings:
         counts[f.disposition] += 1
+        if f.source == "INFRA":
+            infra += 1
     total = len(state.findings)
-    return (
+    line = (
         "code-forge: %s findings=%d confirmed=%d uncertain=%d "
         "dismissed=%d fixed=%d" % (
             state.verdict.value, total,
@@ -241,3 +244,6 @@ def format_summary(state: State) -> str:
             counts[Disposition.FIXED],
         )
     )
+    if infra:
+        line += " infra=%d" % infra
+    return line
