@@ -2133,6 +2133,11 @@ def _run(args, env, cwd: Path) -> Verdict:
                 baseline_spec, head_spec, effective_paths, cwd
             )
 
+    # Empty-diff guard: nothing to review, tell the user explicitly.
+    if not resolved.git_diff and not resolved.source_files:
+        print("code-forge: no changes to review", file=sys.stderr)
+        return Verdict.PASS
+
     # Step 5: source identity (B3: keyword args on mode_hint)
     if resolved.mode_hint == "git":
         source_hash = compute_source_hash(
