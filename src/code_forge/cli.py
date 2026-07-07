@@ -1149,9 +1149,10 @@ def _run_trust(args, cwd: Path) -> int:
         return EXIT_PASS
 
     # Guard: refuse to trust a gate.yaml with no backends configured.
-    backends_raw = gd.get("backends", {})
-    if not backends_raw or all(
-        v is None for v in backends_raw.values()
+    backends_raw = gd.get("backends")
+    if not backends_raw or (
+        isinstance(backends_raw, dict)
+        and all(v is None for v in backends_raw.values())
     ):
         print(
             "No backends configured in this gate.yaml. "
