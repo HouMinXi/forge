@@ -119,7 +119,13 @@ def run_verify(
     # this check. Intended for post-convergence verification only (the last
     # 3 consecutive clean cycles produce the authoritative 9 receipts).
     if len(receipts) < 9:
-        return VerifyResult(False, "missing receipts: %d/9" % len(receipts), 1, cp)
+        msg = "missing receipts: %d/9" % len(receipts)
+        if len(receipts) == 0:
+            msg += (
+                " -- no review receipts found. Run 'code-forge review' "
+                "on your staged changes first"
+            )
+        return VerifyResult(False, msg, 1, cp)
     seen_keys = set()
     for r in receipts:
         key = (r.get("cycle"), r.get("pass"))
