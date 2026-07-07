@@ -1029,9 +1029,18 @@ def run_gate_check(
         )
         if not should_block:
             if baseline is None:
-                warn(
-                    "forge: warning: no baseline; tests failed but allowing commit"
-                )
+                if env.get("FORGE_ALLOW_NO_BASELINE") == "1":
+                    warn(
+                        "forge: warning: no baseline; allowing (opt-in)"
+                    )
+                else:
+                    print(
+                        "forge: no baseline established; blocking commit. "
+                        "Run pytest and save test_baseline.json, or set "
+                        "FORGE_ALLOW_NO_BASELINE=1 to allow.",
+                        file=stderr,
+                    )
+                    return EXIT_FAIL
             else:
                 warn(
                     "forge: all failures are known (in baseline); "
