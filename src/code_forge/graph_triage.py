@@ -480,12 +480,7 @@ class GraphTriageRunner:
             gate_config = load_gate_config(gate_path)
         except FileNotFoundError:
             gate_config = {}
-        except (ValueError, OSError) as exc:
-            print(
-                "GraphTriageRunner: gate.yaml load failed at %s: %s "
-                "(graph_triage settings ignored)" % (gate_path, exc),
-                file=sys.stderr,
-            )
+        except (ValueError, OSError):
             gate_config = {}
 
         # Detect backend.
