@@ -1417,7 +1417,7 @@ def main() -> int:
 
         # B2: PENDING guard before verdict_to_exit.
         if verdict == Verdict.PENDING:
-            return EXIT_PASS
+            return EXIT_BUSY
         return verdict_to_exit(verdict)
 
     elif args.subcommand == 'gate-check':
