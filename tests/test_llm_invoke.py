@@ -2068,16 +2068,20 @@ class TestErrorMessageBackendName:
     """Error messages must contain backend.name, not backend.format."""
 
     def test_timeout_error_contains_backend_name(self):
-        backend = _cfg(name="my-mimo", type="api", format="anthropic")
+        backend = _cfg(name="my-mimo", type="api", format="openai")
         with patch.dict(os.environ, {"K": "sk-test"}):
-            with patch("code_forge.llm_invoke._invoke_api",
-                       side_effect=LLMInvokeError(
-                           "my-mimo backend timed out after 600s",
-                           is_timeout=True, retryable=False)):
+            with patch("code_forge.llm_invoke._invoke_openai",
+                       side_effect=TimeoutError("timed out")):
                 with pytest.raises(LLMInvokeError) as exc_info:
                     llm_invoke("p", backend=backend)
-                assert "my-mimo" in str(exc_info.value)
-                assert "anthropic" not in str(exc_info.value)
+                msg = str(exc_info.value)
+                assert "my-mimo" in msg, (
+                    "timeout error must name the backend, got: %s" % msg
+                )
+                assert "openai" not in msg, (
+                    "timeout error must not contain format name, got: %s"
+                    % msg
+                )
 
 
 # -- Wave 4: SSE streaming tests --------------------------------------
