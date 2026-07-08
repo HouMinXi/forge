@@ -1431,6 +1431,50 @@ class TestWorkspaceFor:
         assert ws == project
 
 
+class TestProjectDirOverride:
+    """project_dir param overrides all other resolution and leaves cache intact."""
+
+    def _make_ctx(self):
+        ctx = MagicMock()
+        caps = MagicMock()
+        caps.roots = False
+        ctx.session.client_params.capabilities = caps
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_project_dir_overrides_cwd_home(self, tmp_path):
+        import code_forge.mcp_server as mod
+
+        project = tmp_path / "real-repo"
+        project.mkdir()
+
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        ctx = self._make_ctx()
+        ws = await mod._workspace_for(ctx, project_dir=str(project))
+        assert ws == project.resolve()
+
+    @pytest.mark.asyncio
+    async def test_project_dir_does_not_corrupt_cache(self, tmp_path):
+        import code_forge.mcp_server as mod
+
+        project = tmp_path / "override"
+        project.mkdir()
+
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        ctx = self._make_ctx()
+        await mod._workspace_for(ctx, project_dir=str(project))
+        assert mod._cached_session_ref is None, (
+            "project_dir must not set the session cache"
+        )
+        assert mod._cached_workspace is None, (
+            "project_dir must not set the workspace cache"
+        )
+
+
 class TestInprocessResultFindings:
     """T3: _make_inprocess_result returns findings in structuredContent."""
 

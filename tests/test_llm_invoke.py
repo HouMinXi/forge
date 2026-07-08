@@ -2030,6 +2030,56 @@ class TestPerBackendTimeout:
                 assert called_timeout > 0
 
 
+class TestApiTimeoutCap:
+    """API backends cap at _API_TIMEOUT_CAP_S when no explicit timeout is set."""
+
+    def test_default_timeout_capped_at_600(self):
+        backend = _cfg(type="api", timeout_s=0)
+        with patch.dict(os.environ, {"K": "sk-test"}):
+            with patch("code_forge.llm_invoke._invoke_api") as m:
+                m.return_value = Mock(content="{}", usage={},
+                                     duration_s=1.0)
+                llm_invoke("p", backend=backend)
+                called_timeout = m.call_args[0][2]
+                assert called_timeout == 600
+
+    def test_explicit_timeout_not_capped(self):
+        backend = _cfg(type="api", timeout_s=0)
+        with patch.dict(os.environ, {"K": "sk-test"}):
+            with patch("code_forge.llm_invoke._invoke_api") as m:
+                m.return_value = Mock(content="{}", usage={},
+                                     duration_s=1.0)
+                llm_invoke("p", backend=backend, timeout_s=1800)
+                called_timeout = m.call_args[0][2]
+                assert called_timeout == 1800
+
+    def test_per_backend_timeout_honored(self):
+        backend = _cfg(type="api", timeout_s=900)
+        with patch.dict(os.environ, {"K": "sk-test"}):
+            with patch("code_forge.llm_invoke._invoke_api") as m:
+                m.return_value = Mock(content="{}", usage={},
+                                     duration_s=1.0)
+                llm_invoke("p", backend=backend)
+                called_timeout = m.call_args[0][2]
+                assert called_timeout == 900
+
+
+class TestErrorMessageBackendName:
+    """Error messages must contain backend.name, not backend.format."""
+
+    def test_timeout_error_contains_backend_name(self):
+        backend = _cfg(name="my-mimo", type="api", format="anthropic")
+        with patch.dict(os.environ, {"K": "sk-test"}):
+            with patch("code_forge.llm_invoke._invoke_api",
+                       side_effect=LLMInvokeError(
+                           "my-mimo backend timed out after 600s",
+                           is_timeout=True, retryable=False)):
+                with pytest.raises(LLMInvokeError) as exc_info:
+                    llm_invoke("p", backend=backend)
+                assert "my-mimo" in str(exc_info.value)
+                assert "anthropic" not in str(exc_info.value)
+
+
 # -- Wave 4: SSE streaming tests --------------------------------------
 
 from code_forge.llm_invoke import _read_sse
