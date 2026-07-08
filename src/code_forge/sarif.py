@@ -59,6 +59,7 @@ def build_sarif_log(
     forge_version: str,
     backend_name: Optional[str] = None,
     backend_model: Optional[str] = None,
+    advisories: list | None = None,
 ) -> dict[str, Any]:
     """Build SARIF 2.1.0 log dict.
 
@@ -86,6 +87,18 @@ def build_sarif_log(
             "passes": state.cost_passes,
             "durationSeconds": round(state.cost_total_duration, 1),
         }
+    if advisories:
+        run.setdefault("properties", {})["advisories"] = [
+            {
+                "id": a.id,
+                "axis": a.axis,
+                "file": a.file,
+                "lineRange": a.line_range,
+                "description": a.description,
+                "attribution": a.attribution,
+            }
+            for a in advisories
+        ]
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
@@ -208,7 +221,7 @@ def _build_properties(finding: StateFinding) -> dict[str, Any]:
     return props
 
 
-def format_summary(state: State) -> str:
+def format_summary(state: State, advisory_count: int = 0) -> str:
     """One-line stderr summary per LAYER0-07.
 
     Format matches regex:
@@ -246,4 +259,6 @@ def format_summary(state: State) -> str:
     )
     if infra:
         line += " infra=%d" % infra
+    if advisory_count:
+        line += " advisory=%d" % advisory_count
     return line
