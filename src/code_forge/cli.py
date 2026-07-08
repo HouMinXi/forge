@@ -60,6 +60,18 @@ log = logging.getLogger(__name__)
 MAX_HOLD_CYCLES = 10
 
 
+def _load_advisories(path: Path) -> list:
+    """Load advisory-findings.json if it exists, else empty list."""
+    if not path.is_file():
+        return []
+    try:
+        from .advisory import AdvisoryFinding
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [AdvisoryFinding(**d) for d in data]
+    except (json.JSONDecodeError, OSError, TypeError, KeyError):
+        return []
+
+
 def _emit_ci_output(
     state_path: Path,
     registry: dict[str, "ToolConfig"],
@@ -87,12 +99,17 @@ def _emit_ci_output(
         name: capture_tool_version(tc.command)
         for name, tc in registry.items()
     }
+    advisories = _load_advisories(state_path.parent / "advisory-findings.json")
     log_dict = build_sarif_log(
         final_state, tool_versions, forge_version=__version__,
         backend_name=backend_name, backend_model=backend_model,
+        advisories=advisories or None,
     )
     print(json.dumps(log_dict), file=sys.stdout)
-    print(format_summary(final_state), file=sys.stderr)
+    print(
+        format_summary(final_state, advisory_count=len(advisories)),
+        file=sys.stderr,
+    )
     if post_emit_hook is not None:
         post_emit_hook()
 
