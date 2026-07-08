@@ -59,12 +59,16 @@ def build_sarif_log(
     forge_version: str,
     backend_name: Optional[str] = None,
     backend_model: Optional[str] = None,
-    advisories: list | None = None,
+    advisories: Optional[list] = None,
 ) -> dict[str, Any]:
     """Build SARIF 2.1.0 log dict.
 
     When backend_name is provided and at least one review pass ran
     (cost_passes > 0), a tokenCost property bag is attached to the run.
+
+    When advisories is non-empty, an "advisories" key is added to the
+    run's properties (not results[], since AdvisoryFinding is a
+    different shape from StateFinding).
     CLI backends pass backend_name=None so tokenCost is omitted.
 
     Raises:
@@ -226,7 +230,7 @@ def format_summary(state: State, advisory_count: int = 0) -> str:
 
     Format matches regex:
       ^code-forge: (PASS|FAIL|ESCALATED) findings=\\d+ confirmed=\\d+
-      uncertain=\\d+ dismissed=\\d+ fixed=\\d+$
+      uncertain=\\d+ dismissed=\\d+ fixed=\\d+( infra=\\d+)?( advisory=\\d+)?$
 
     Verdict.PENDING is rejected (CI never PENDINGs; caller guards).
     """
