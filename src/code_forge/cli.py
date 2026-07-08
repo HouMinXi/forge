@@ -68,7 +68,7 @@ def _load_advisories(path: Path) -> list:
         from .advisory import AdvisoryFinding
         data = json.loads(path.read_text(encoding="utf-8"))
         return [AdvisoryFinding(**d) for d in data]
-    except (json.JSONDecodeError, OSError, TypeError, KeyError):
+    except Exception:
         return []
 
 
