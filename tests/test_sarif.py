@@ -375,6 +375,40 @@ class TestFormatSummaryCounts:
         assert "fixed=1" in summary
 
 
+class TestFormatSummaryInfraCount:
+    """infra=N field in format_summary output."""
+
+    def test_infra_count_shown_when_infra_findings_present(self):
+        findings = [
+            _make_finding(Disposition.CONFIRMED, source="L0"),
+            _make_finding(
+                Disposition.CONFIRMED, source="INFRA",
+                fingerprint="fp-infra-1",
+                file="<llm-invoke>",
+                description="invoke-fail-qodo",
+            ),
+            _make_finding(
+                Disposition.CONFIRMED, source="INFRA",
+                fingerprint="fp-infra-2",
+                file="<llm-invoke>",
+                description="invoke-fail-expert",
+            ),
+        ]
+        state = _make_state(Verdict.FAIL, findings)
+        summary = format_summary(state)
+
+        assert "infra=2" in summary
+        assert "confirmed=3" in summary
+
+    def test_infra_count_absent_when_no_infra(self):
+        findings = [_make_finding(Disposition.CONFIRMED, source="L0")]
+        state = _make_state(Verdict.FAIL, findings)
+        summary = format_summary(state)
+
+        assert "infra=" not in summary
+        assert "confirmed=1" in summary
+
+
 class TestPendingVerdictRaises:
     """(o, o2) PENDING verdict raises ValueError."""
 

@@ -188,6 +188,51 @@ def test_backends_config_error():
     assert "backend config error" in diag[0][1]
 
 
+def test_backends_cli_error_returns_none_sentinel():
+    """CliError (e.g. multiple defaults) returns configs=None, not [].
+
+    configs=None signals "backends exist but are invalid" so run_doctor
+    skips the outlet check. configs=[] means "no backends at all" and
+    still triggers the outlet check. Confusing the two reintroduces the
+    contradictory-diagnosis bug where doctor says both "multiple default
+    backends" and "no backend configured" in the same run.
+    """
+    from code_forge.errors import CliError
+
+    gate_data = {"backends": {"a": {}, "b": {}}}
+    with patch("code_forge.backend.load_backend_configs",
+               side_effect=CliError("multiple default backends: a, b")):
+        with patch("code_forge.user_config.load_user_backends",
+                   return_value={}):
+            with patch("code_forge.user_config.merge_backends",
+                       return_value={"a": {}, "b": {}}):
+                diag, configs = _check_backends(
+                    Path("/ws"), gate_data, {})
+
+    assert configs is None, (
+        "CliError must return configs=None (not []) to skip outlet check"
+    )
+    assert diag[0][0] is False
+    assert "multiple default" in diag[0][1]
+
+
+def test_backends_non_cli_error_returns_empty_list():
+    """Non-CliError exceptions return configs=[] (genuinely no backends)."""
+    gate_data = {"backends": {"a": {}}}
+    with patch("code_forge.backend.load_backend_configs",
+               side_effect=RuntimeError("yaml parse failed")):
+        with patch("code_forge.user_config.load_user_backends",
+                   return_value={}):
+            with patch("code_forge.user_config.merge_backends",
+                       return_value={"a": {}}):
+                diag, configs = _check_backends(
+                    Path("/ws"), gate_data, {})
+
+    assert configs == [], (
+        "Non-CliError must return configs=[] (not None)"
+    )
+
+
 # -- _check_outlet --
 
 
