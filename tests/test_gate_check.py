@@ -67,6 +67,32 @@ test:
             load_gate_config("gate.yaml", fs_open=m)
 
 
+    def test_missing_test_section_error_contains_snippet(self):
+        """Error message includes a pasteable YAML snippet."""
+        yaml_content = "backends:\n  x:\n    type: cli\n"
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="Add:") as exc_info:
+            load_gate_config("gate.yaml", fs_open=m)
+        msg = str(exc_info.value)
+        assert "command:" in msg
+        assert "timeout_seconds:" in msg
+
+    def test_error_snippet_satisfies_load_gate_config(self):
+        """The YAML snippet in the error actually parses and loads."""
+        no_test = "backends:\n  x:\n    type: cli\n"
+        m = mock_open(read_data=no_test)
+        try:
+            load_gate_config("gate.yaml", fs_open=m)
+        except ValueError as e:
+            msg = str(e)
+            snippet = msg.split("Add:\n", 1)[1]
+        full_yaml = no_test + snippet + "\n"
+        m2 = mock_open(read_data=full_yaml)
+        config = load_gate_config("gate.yaml", fs_open=m2)
+        assert "test" in config
+        assert config["test"]["command"] == ["pytest", "-q"]
+
+
 class TestValidateCommandSafety:
     def test_known_runner_accepted(self):
         """Known runners (python3, cargo, go) accepted."""

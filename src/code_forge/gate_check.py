@@ -65,9 +65,9 @@ def load_gate_config(
         raise ValueError(
             "gate.yaml needs an active 'test' section for the commit gate. "
             "Add:\n"
-            "  test:\n"
-            "    command: [pytest, -q]   # change to your test runner\n"
-            "    timeout_seconds: 900"
+            "test:\n"
+            "  command: [pytest, -q]   # change to your test runner\n"
+            "  timeout_seconds: 900"
         )
 
     test = data["test"]
