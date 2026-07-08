@@ -169,13 +169,16 @@ _cached_session_ref = None   # session object, identity-compared
 _cached_workspace = None     # resolved Path
 
 
-async def _workspace_for(ctx) -> Path:
+async def _workspace_for(ctx, project_dir: str | None = None) -> Path:
     """Resolve workspace from MCP roots, env, or walk-up.
 
-    Priority: cached > MCP roots (prefer root with gate.yaml) >
-    FORGE_PROJECT_DIR > walk-up > cwd.
+    Priority: project_dir (explicit per-call) > cached > MCP roots
+    (prefer root with gate.yaml) > FORGE_PROJECT_DIR > walk-up > cwd.
     """
     global _cached_session_ref, _cached_workspace
+
+    if project_dir is not None:
+        return Path(project_dir).expanduser().resolve()
 
     if ctx is None:
         return _resolve_workspace()
@@ -760,10 +763,11 @@ async def forge_review(
     committed: bool = False,
     whole_file: bool = False,
     canary: bool = False,
+    project_dir: str | None = None,
     ctx: Context = None,
 ) -> CallToolResult:
     """Run forge review pipeline."""
-    workspace = await _workspace_for(ctx)
+    workspace = await _workspace_for(ctx, project_dir=project_dir)
     from code_forge.outlet_resolver import load_outlet_from_gate
 
     outlet = os.environ.get("FORGE_OUTLET")
@@ -845,10 +849,11 @@ async def forge_review(
 async def forge_gate_check(
     baseline: str | None = None,
     backend: str | None = None,
+    project_dir: str | None = None,
     ctx: Context = None,
 ) -> CallToolResult:
     """Run forge gate-check pipeline."""
-    workspace = await _workspace_for(ctx)
+    workspace = await _workspace_for(ctx, project_dir=project_dir)
     from code_forge.outlet_resolver import load_outlet_from_gate
 
     outlet = os.environ.get("FORGE_OUTLET")
@@ -897,13 +902,13 @@ async def forge_gate_check(
     description="Initialize .code-forge/ directory in the current workspace.",
     annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True),
 )
-async def forge_init(force: bool = False, ctx: Context = None) -> CallToolResult:
+async def forge_init(force: bool = False, project_dir: str | None = None, ctx: Context = None) -> CallToolResult:
     """Initialize forge configuration.
 
     Refuses to create project markers at $HOME -- use user-level
     config at ~/.config/code-forge/config.yaml instead.
     """
-    workspace = await _workspace_for(ctx)
+    workspace = await _workspace_for(ctx, project_dir=project_dir)
     if workspace.resolve() == Path.home().resolve():
         raise ToolError(
             "Refusing to initialize forge at $HOME (%s). "
@@ -926,9 +931,9 @@ async def forge_init(force: bool = False, ctx: Context = None) -> CallToolResult
     description="Trust the gate.yaml backends in the current workspace.",
     annotations=ToolAnnotations(readOnlyHint=False, idempotentHint=True),
 )
-async def forge_trust(ctx: Context = None) -> CallToolResult:
+async def forge_trust(project_dir: str | None = None, ctx: Context = None) -> CallToolResult:
     """Trust forge backends."""
-    workspace = await _workspace_for(ctx)
+    workspace = await _workspace_for(ctx, project_dir=project_dir)
     stdout, stderr, exit_code = await _run_cli_simple(
         "trust", workspace=workspace)
     return _make_simple_result(stdout, exit_code, stderr)
@@ -943,7 +948,7 @@ async def forge_trust(ctx: Context = None) -> CallToolResult:
         readOnlyHint=True, destructiveHint=False, idempotentHint=True
     ),
 )
-async def forge_resolve_outlet(ctx: Context = None) -> CallToolResult:
+async def forge_resolve_outlet(project_dir: str | None = None, ctx: Context = None) -> CallToolResult:
     """Diagnose backend routing.
 
     Appends the resolved workspace, gate.yaml path, backend names, and
@@ -953,7 +958,7 @@ async def forge_resolve_outlet(ctx: Context = None) -> CallToolResult:
     forge_review/forge_gate_check would raise ToolError, but this
     read-only tool surfaces the mismatch without blocking).
     """
-    workspace = await _workspace_for(ctx)
+    workspace = await _workspace_for(ctx, project_dir=project_dir)
     stdout, stderr, exit_code = await _run_cli_simple(
         "resolve-outlet", workspace=workspace)
     gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
