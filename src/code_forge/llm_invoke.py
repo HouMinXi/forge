@@ -75,6 +75,7 @@ class LLMInvokeError(Exception):
 
 DEFAULT_TIMEOUT_S = 1800  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
 _CLI_TIMEOUT_CAP_S = 300  # CLI subprocesses cap; only applies when no explicit timeout is set
+_API_TIMEOUT_CAP_S = 600  # API backends cap; prevents 30-minute hangs on dead endpoints
 
 
 def _apply_params(
@@ -572,6 +573,9 @@ def llm_invoke(
             timeout_s = _CLI_TIMEOUT_CAP_S
         return _invoke_cli(prompt, backend, timeout_s)
     elif backend.type == "api":
+        if not caller_explicit_timeout and backend.timeout_s <= 0 \
+                and timeout_s > _API_TIMEOUT_CAP_S:
+            timeout_s = _API_TIMEOUT_CAP_S
         return _invoke_api(
             prompt, backend, timeout_s, expected_keys=expected_keys,
             max_attempts=max_attempts, initial_delay_s=initial_delay_s,
@@ -813,7 +817,7 @@ def _invoke_api(
             except TimeoutError as exc:
                 raise LLMInvokeError(
                     "%s backend timed out after %ds"
-                    % (backend.format, timeout_s),
+                    % (backend.name, timeout_s),
                     stderr=str(exc),
                     duration_s=time.monotonic() - start,
                     is_timeout=True,
@@ -906,7 +910,7 @@ def _invoke_openai(
         ) from exc
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
-            "URLError from %s backend: %s" % (backend.format, exc.reason),
+            "URLError from %s backend: %s" % (backend.name, exc.reason),
             retryable=True,
         ) from exc
     except TimeoutError:
@@ -927,7 +931,7 @@ def _invoke_openai(
         usage_data = resp_data.get("usage", {})
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
-            "unexpected response structure from %s backend" % backend.format,
+            "unexpected response structure from %s backend" % backend.name,
             retryable=False,
         ) from exc
 
@@ -1002,7 +1006,7 @@ def _invoke_anthropic(
         ) from exc
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
-            "URLError from %s backend: %s" % (backend.format, exc.reason),
+            "URLError from %s backend: %s" % (backend.name, exc.reason),
             retryable=True,
         ) from exc
     except TimeoutError:
@@ -1024,7 +1028,7 @@ def _invoke_anthropic(
         usage_data = resp_data.get("usage", {})
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
-            "unexpected response structure from %s backend" % backend.format,
+            "unexpected response structure from %s backend" % backend.name,
             retryable=False,
         ) from exc
 
