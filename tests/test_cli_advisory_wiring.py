@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import json
+from io import StringIO
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from code_forge.cli import _load_advisories
+from code_forge.cli import _emit_ci_output, _load_advisories
 from code_forge.sarif import build_sarif_log, format_summary
-from code_forge.state import State, Verdict
+from code_forge.state import State, Verdict, save_state
 
 
 def _write_advisories(directory: Path, advisories: list[dict]) -> Path:
@@ -85,3 +87,31 @@ class TestAdvisorySarifWiring:
         log = build_sarif_log(state, {}, "2.7.0", advisories=None)
         props = log["runs"][0].get("properties", {})
         assert "advisories" not in props
+
+
+class TestAdvisorySeamWiring:
+    """End-to-end: advisory-findings.json -> _emit_ci_output -> SARIF + summary."""
+
+    def test_emit_ci_output_surfaces_advisories(self, tmp_path):
+        forge_dir = tmp_path / ".code-forge"
+        forge_dir.mkdir()
+        state_path = forge_dir / "state.json"
+        save_state(State(verdict=Verdict.PASS), state_path)
+
+        advisories = [_sample_advisory(), _sample_advisory(), _sample_advisory()]
+        _write_advisories(forge_dir, advisories)
+
+        registry = {"sh": MagicMock(command="shellcheck")}
+        stdout, stderr = StringIO(), StringIO()
+
+        with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
+             patch("code_forge.cli.capture_tool_version", return_value="0.1"):
+            _emit_ci_output(state_path, registry)
+
+        sarif = json.loads(stdout.getvalue())
+        props = sarif["runs"][0].get("properties", {})
+        assert "advisories" in props, "advisories must appear in SARIF properties"
+        assert len(props["advisories"]) == 3
+
+        summary = stderr.getvalue()
+        assert "advisory=3" in summary, "summary must include advisory count"
