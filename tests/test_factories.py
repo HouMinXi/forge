@@ -4,6 +4,7 @@
 
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -1056,3 +1057,145 @@ class TestParallelL1:
         assert "expert" in infra[0].id
         l1 = [f for f in findings if f.source == "L1"]
         assert len(l1) == 2
+
+
+class TestDurationWallClock:
+    """38.1-6: parallel paths report wall-clock, not sum of durations."""
+
+    def test_parallel_duration_is_wall_clock(self):
+        """ThreadPoolExecutor path: duration < sum (wall-clock)."""
+        import time as _time
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        backend = SimpleNamespace(type="api", name="test")
+
+        def _slow_invoke(*a, **kw):
+            _time.sleep(0.1)
+            return LLMResult(
+                content=_stub_llm_response([], [
+                    {"file": "src/a.py", "start_line": 1,
+                     "end_line": 4, "content": "line1\nadded\nline2"},
+                ]).content,
+                usage=LLMUsage(input_tokens=10, output_tokens=10),
+                duration_s=0.1,
+            )
+
+        with patch("code_forge.llm_invoke.llm_invoke",
+                    side_effect=_slow_invoke):
+            provider = build_l1_provider("real", resolved,
+                                         backend=backend)
+            _, _, _, duration = provider()
+
+        # 3 passes * 0.1s sleep = 0.3s sum, but wall should be < 0.25s
+        assert duration < 0.25, (
+            "parallel duration should be wall-clock, not sum; "
+            "got %.3f" % duration
+        )
+
+    def test_serial_duration_is_sum(self):
+        """CLI backend (serial): duration is sum of individual passes."""
+        import time as _time
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        backend = SimpleNamespace(type="cli", name="cli")
+
+        def _slow_invoke(*a, **kw):
+            _time.sleep(0.1)
+            return LLMResult(
+                content=_stub_llm_response([], [
+                    {"file": "src/a.py", "start_line": 1,
+                     "end_line": 4, "content": "line1\nadded\nline2"},
+                ]).content,
+                usage=LLMUsage(input_tokens=10, output_tokens=10),
+                duration_s=0.1,
+            )
+
+        with patch("code_forge.llm_invoke.llm_invoke",
+                    side_effect=_slow_invoke):
+            provider = build_l1_provider("real", resolved,
+                                         backend=backend)
+            _, _, _, duration = provider()
+
+        # 3 passes * 0.1s = ~0.3s sum
+        assert duration > 0.28, (
+            "serial duration should be sum; got %.3f" % duration
+        )
+
+    def test_sampling_parallel_duration_is_wall_clock(self):
+        """Sampling asyncio.gather path: wall-clock, not sum."""
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+        from unittest.mock import MagicMock
+        import concurrent.futures
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+
+        good_resp = LLMResult(
+            content={"findings": [], "code_excerpts": [
+                {"file": "src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+            ]},
+            usage=LLMUsage(0, 0),
+            duration_s=0.1,
+        )
+
+        future = concurrent.futures.Future()
+        future.set_result([good_resp, good_resp, good_resp])
+
+        with patch("code_forge.llm_invoke.invoke_sampling",
+                   new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe",
+                   return_value=future):
+            provider = build_sampling_l1_provider(
+                MagicMock(), MagicMock(), resolved)
+            _, _, _, duration = provider()
+
+        # Wall-clock override: duration should be ~0s (mocked),
+        # NOT 0.3s (sum of duration_s values).
+        assert duration < 0.25, (
+            "sampling duration should be wall-clock; got %.3f"
+            % duration
+        )
+
+    def test_failed_pass_duration_counted(self):
+        """LLMInvokeError duration_s is accumulated (serial path)."""
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import (
+            LLMInvokeError, LLMResult, Usage as LLMUsage,
+        )
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        backend = SimpleNamespace(type="cli", name="cli")
+
+        call_count = [0]
+        def _first_fails(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise LLMInvokeError("timeout", is_timeout=True,
+                                     retryable=False)
+            return LLMResult(
+                content=_stub_llm_response([], [
+                    {"file": "src/a.py", "start_line": 1,
+                     "end_line": 4, "content": "line1\nadded\nline2"},
+                ]).content,
+                usage=LLMUsage(input_tokens=10, output_tokens=10),
+                duration_s=0.1,
+            )
+
+        with patch("code_forge.llm_invoke.llm_invoke",
+                    side_effect=_first_fails):
+            provider = build_l1_provider("real", resolved,
+                                         backend=backend)
+            _, _, _, duration = provider()
+
+        # Failed pass has duration_s=0 (LLMInvokeError default),
+        # successful passes contribute 0.1s each (2 passes).
+        # Total should be >= 0.18s (2 * 0.1s from successful passes).
+        assert duration >= 0.18, (
+            "failed pass duration should be counted; got %.3f"
+            % duration
+        )
