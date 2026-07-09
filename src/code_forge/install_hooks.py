@@ -352,44 +352,10 @@ def _build_review_block(forge_invocation: str) -> str:
         Shell script fragment for the review invocation.
     """
     base_path = forge_invocation.rsplit(" gate-check", 1)[0]
-    # Unquote shlex-embedded path for safe use in shell.
-    # shlex.split reverses shlex.quote correctly (handles
-    # paths with spaces, apostrophes, etc.).
-    try:
-        tokens = shlex.split(base_path)
-    except ValueError:
-        tokens = [base_path]
-    # cmd_name: basename of the executable for PATH lookup.
-    cmd_name = os.path.basename(tokens[0])
-    # Detect Python-module invocation (python3 -m code_forge).
-    is_python_module = len(tokens) >= 3 and tokens[1] == "-m"
-    if is_python_module:
-        # Python-module: PATH lookup on interpreter, then
-        # add module args. Unquoted for word splitting.
-        mod_args = " ".join(
-            shlex.quote(t) for t in tokens[2:]
-        )
-        invoke = (
-            '    FORGE_SKIP_WORKTREE_CHECK=1 '
-            '$_FORGE -m %s review \\\n' % mod_args
-        )
-    else:
-        invoke = (
-            '    FORGE_SKIP_WORKTREE_CHECK=1 '
-            '"$_FORGE" review \\\n'
-        )
-    # Fallback: absolute path for off-PATH installs.
-    abs_path = shlex.quote(tokens[0])
-    result = (
+    return (
         "# LLM review: up to 2 rounds via CN backend\n"
-        "_FORGE=$(command -v %s 2>/dev/null)\n"
-        'if [ -z "$_FORGE" ]; then\n'
-        "    _FORGE=%s\n"
-        "fi\n"
-        'if [ -n "$_FORGE" ] && [ -x "$_FORGE" ]; then\n'
-    ) % (cmd_name, abs_path)
-    result += invoke
-    result += (
+        "if command -v %s >/dev/null 2>&1; then\n"
+        "    FORGE_SKIP_WORKTREE_CHECK=1 %s review \\\n"
         "        --baseline HEAD --head INDEX \\\n"
         "        --max-total-rounds 2 --quiet || {\n"
         "        _RC=$?\n"
@@ -414,8 +380,7 @@ def _build_review_block(forge_invocation: str) -> str:
         ' skipping" >&2\n'
         "fi\n"
         "\n"
-    )
-    return result
+    ) % (base_path, base_path)
 
 
 def generate_hook_content(
