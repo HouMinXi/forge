@@ -1743,7 +1743,9 @@ def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
     start = None
     matched_level = 0
     for i, line in enumerate(lines):
-        # CommonMark: heading may have 0-3 leading spaces.
+        # CommonMark: heading may have 0-3 leading spaces (not tabs).
+        if line.startswith("\t"):
+            continue
         leading = len(line) - len(line.lstrip(" "))
         if leading > 3:
             continue

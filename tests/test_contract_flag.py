@@ -456,6 +456,33 @@ class TestSplitDoNotFlag:
         assert dnf == ""
         assert "would be exempt" in body
 
+    def test_3_space_indented_heading_recognized(self):
+        """0-3 space indent is a valid CommonMark heading. Must match
+        as do-not-flag section start."""
+        for indent in ("", " ", "  ", "   "):
+            content = (
+                indent + "## Do NOT Flag\n"
+                "- exempt item\n"
+                "## Next\nstuff\n"
+            )
+            body, dnf = _split_do_not_flag(content)
+            assert "exempt item" in dnf, (
+                "indent %r should be recognized" % indent
+            )
+            assert "## Next" in body
+
+    def test_tab_indented_heading_not_recognized(self):
+        """Tab indent is not a CommonMark heading (requires spaces).
+        Must NOT match as do-not-flag section start."""
+        content = (
+            "\t## Do NOT Flag\n"
+            "- would be exempt\n"
+            "## Invariants\ncheck x\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert dnf == ""
+        assert "would be exempt" in body
+
 
 # ---------------------------------------------------------------------------
 # Do-not-flag integration (bidirectional scoping proof)
