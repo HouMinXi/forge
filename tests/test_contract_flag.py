@@ -431,6 +431,19 @@ class TestSplitDoNotFlag:
         assert "item" in dnf
         assert "## Other Section" in body
 
+    def test_indented_sibling_terminates_section(self):
+        """Indented sibling heading terminates the section (no
+        swallow-to-EOF). CommonMark allows <=3 leading spaces."""
+        content = (
+            "  ## Do NOT Flag\n"
+            "- exempt item\n"
+            "  ## Other Section\n"
+            "more stuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "exempt item" in dnf
+        assert "Other Section" in body
+
 
 # ---------------------------------------------------------------------------
 # Do-not-flag integration (bidirectional scoping proof)
