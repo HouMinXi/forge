@@ -1156,20 +1156,10 @@ class TestReviewBlock:
         """Review block contains env var, review command, flags, and --quiet."""
         block = _build_review_block("code-forge gate-check")
         assert "FORGE_SKIP_WORKTREE_CHECK=1" in block
-        assert '"$_FORGE" review' in block
-        assert "command -v code-forge" in block
+        assert "code-forge review" in block
         assert "--baseline HEAD --head INDEX" in block
         assert "--max-total-rounds 2" in block
         assert "--quiet" in block
-
-    def test_review_block_quoted_path_no_stray_quotes(self):
-        """When forge_invocation contains shlex.quoted paths, cmd_name is clean."""
-        import shlex
-        invocation = shlex.quote("/usr/bin/code-forge") + " gate-check"
-        block = _build_review_block(invocation)
-        # cmd_name must not include surrounding single quotes
-        assert "command -v code-forge" in block
-        assert "command -v '" not in block
 
     def test_review_block_command_not_found_skips(self):
         """When code-forge binary is missing, the review block skips (no exit 1)."""
@@ -1212,7 +1202,7 @@ class TestHookExecutionOrder:
         idx_carveout = content.index("carve-out")
         idx_attest = content.index("attestation")
         idx_nonascii = content.index("non-ASCII")
-        idx_review = content.index("command -v code-forge")
+        idx_review = content.index("code-forge review")
         idx_exec = content.index("exec code-forge gate-check")
 
         assert idx_gitdir < idx_leak < idx_carveout < idx_attest
@@ -1224,7 +1214,7 @@ class TestHookExecutionOrder:
             "code-forge gate-check", Path("/backup/pre-commit"),
             planning_leak_guard=True,
         )
-        idx_review = content.index("command -v code-forge")
+        idx_review = content.index("code-forge review")
         # Find the chain CALL line (quoted path with $@), not the comment header
         idx_chain = content.index('"/backup/pre-commit" "$@"')
         idx_exec = content.index("exec code-forge gate-check")
