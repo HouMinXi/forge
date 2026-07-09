@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -1728,25 +1729,48 @@ _DO_NOT_FLAG_PREAMBLE = (
 )
 
 
-def _split_do_not_flag(content: str) -> tuple:
+def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
     """Split a '## Do NOT Flag' section from contract content.
 
     Returns (body_without_section, do_not_flag_text). If the heading
     is absent, do_not_flag_text is "".
+
+    Accepts fuzzy heading matches: any markdown heading containing
+    "do not flag" (case-insensitive) is recognized. Warns when the
+    heading is not the canonical ``## Do NOT Flag``.
     """
     lines = content.split("\n")
     start = None
+    matched_level = 0
     for i, line in enumerate(lines):
-        if line.strip().lower() == "## do not flag":
-            start = i
-            break
+        stripped = line.strip().lower()
+        if stripped.startswith("#"):
+            after_hashes = stripped.lstrip("#")
+            if (after_hashes and after_hashes[0] == " "
+                    and "do not flag" in stripped):
+                if stripped != "## do not flag" and warn_fn:
+                    warn_fn(
+                        "contract: recognized '%s' as do-not-flag "
+                        "section; canonical heading is "
+                        "'## Do NOT Flag'" % line.strip()
+                    )
+                start = i
+                matched_level = len(stripped) - len(
+                    stripped.lstrip("#")
+                )
+                break
     if start is None:
         return content, ""
     end = len(lines)
     for j in range(start + 1, len(lines)):
-        if lines[j].startswith("## "):
-            end = j
-            break
+        raw_line = lines[j]
+        if raw_line.startswith("#"):
+            after_hashes = raw_line.lstrip("#")
+            if after_hashes and after_hashes[0] == " ":
+                end_level = len(raw_line) - len(after_hashes)
+                if end_level <= matched_level:
+                    end = j
+                    break
     section_lines = lines[start + 1:end]
     do_not_flag = "\n".join(section_lines).strip()
     remaining = lines[:start] + lines[end:]
@@ -1783,7 +1807,9 @@ def _merge_contract_spec(
     if yaml_digest:
         merged = yaml_digest
     if file_content:
-        effective_content, do_not_flag = _split_do_not_flag(file_content)
+        effective_content, do_not_flag = _split_do_not_flag(
+            file_content, warn_fn=warn_fn
+        )
         if len(effective_content.encode("utf-8")) > 4096 and backend is not None:
             try:
                 from .llm_invoke import llm_invoke
@@ -1817,6 +1843,7 @@ def _merge_contract_spec(
 
 def _run(args, env, cwd: Path) -> Verdict:
     """Main pipeline body. Returns Verdict."""
+    _wall_t0 = time.monotonic()
     warn = (lambda msg: None) if args.quiet else (
         lambda msg: print("code-forge: %s" % msg, file=sys.stderr)
     )
@@ -2417,6 +2444,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 clean_round_threshold=_clean_threshold,
                 backend=backend,
                 pre_graph_findings=_pre_graph_findings,
+                wall_t0=_wall_t0,
             )
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
@@ -2457,6 +2485,7 @@ def _run_hold_loop(
     backend=None,
     pre_graph_findings=None,
     input_fn=input, output_fn=print,
+    wall_t0=None,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
     for cycle in range(MAX_HOLD_CYCLES):
@@ -2514,14 +2543,16 @@ def _run_hold_loop(
                     )
                 else:
                     token_str = "tokens: N/A (cli backend)"
-                print(
-                    "code-forge: cost: %s, %d passes, %.1fs" % (
-                        token_str,
-                        final_state.cost_passes,
-                        final_state.cost_total_duration,
-                    ),
-                    file=sys.stderr,
+                cost_line = "code-forge: cost: %s, %d passes, %.1fs" % (
+                    token_str,
+                    final_state.cost_passes,
+                    final_state.cost_total_duration,
                 )
+                if wall_t0 is not None:
+                    cost_line += " (wall: %.1fs)" % (
+                        time.monotonic() - wall_t0
+                    )
+                print(cost_line, file=sys.stderr)
             return verdict
         # M3: load state from disk (public API, not sm._state).
         from .state import load_state
