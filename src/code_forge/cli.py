@@ -1763,11 +1763,16 @@ def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
         return content, ""
     end = len(lines)
     for j in range(start + 1, len(lines)):
-        stripped_end = lines[j].strip()
-        if stripped_end.startswith("#"):
-            after_hashes = stripped_end.lstrip("#")
+        raw_line = lines[j]
+        # CommonMark: heading may have 0-3 leading spaces.
+        leading = len(raw_line) - len(raw_line.lstrip(" "))
+        if leading > 3:
+            continue
+        candidate = raw_line.strip()
+        if candidate.startswith("#"):
+            after_hashes = candidate.lstrip("#")
             if after_hashes and after_hashes[0] == " ":
-                end_level = len(stripped_end) - len(after_hashes)
+                end_level = len(candidate) - len(after_hashes)
                 if end_level <= matched_level:
                     end = j
                     break
