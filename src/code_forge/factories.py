@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -307,6 +308,7 @@ def build_l1_provider(
             return r
 
         pass_results = []
+        _parallel_wall = 0.0
         if is_cli:
             for i in range(len(pass_configs)):
                 try:
@@ -315,6 +317,7 @@ def build_l1_provider(
                     pass_results.append(exc)
         else:
             from concurrent.futures import ThreadPoolExecutor
+            _t0 = time.monotonic()
             with ThreadPoolExecutor(
                 max_workers=len(pass_configs),
             ) as pool:
@@ -327,6 +330,7 @@ def build_l1_provider(
                         pass_results.append(f.result())
                     except Exception as exc:
                         pass_results.append(exc)
+            _parallel_wall = time.monotonic() - _t0
 
         # -- Fold results in fixed order --------------------------------
         all_candidates = []
@@ -362,6 +366,7 @@ def build_l1_provider(
                         breaker.record_timeout()
                     else:
                         breaker.record_other_error()
+                total_duration += pr.duration_s
                 continue
 
             if isinstance(pr, Exception):
@@ -492,6 +497,8 @@ def build_l1_provider(
                     continue
                 seen.add(sf.fingerprint)
                 all_candidates.append(sf)
+        if not is_cli:
+            total_duration = _parallel_wall
         return (all_candidates, all_excerpts, Usage(total_input, total_output), total_duration)
 
     return _provider
@@ -592,12 +599,14 @@ def build_sampling_l1_provider(
 
         # All 3 coroutines submitted; parallel tokens consumed even if
         # one fails -- accepted trade-off for 3x wall-clock speedup.
+        _t0 = time.monotonic()
         outer = _aio.run_coroutine_threadsafe(_gather(), loop)
         try:
             pass_results = list(outer.result(timeout=330))
         except Exception:
             outer.cancel()
             raise
+        _parallel_wall = time.monotonic() - _t0
 
         # -- Fold results in fixed order --------------------------------
         all_candidates = []
@@ -710,6 +719,7 @@ def build_sampling_l1_provider(
                 seen.add(sf.fingerprint)
                 all_candidates.append(sf)
 
+        total_duration = _parallel_wall
         return (all_candidates, all_excerpts, Usage(0, 0), total_duration)
 
     return _provider
