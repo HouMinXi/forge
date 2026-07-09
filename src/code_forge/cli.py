@@ -1763,11 +1763,11 @@ def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
         return content, ""
     end = len(lines)
     for j in range(start + 1, len(lines)):
-        raw_line = lines[j]
-        if raw_line.startswith("#"):
-            after_hashes = raw_line.lstrip("#")
+        stripped_end = lines[j].strip()
+        if stripped_end.startswith("#"):
+            after_hashes = stripped_end.lstrip("#")
             if after_hashes and after_hashes[0] == " ":
-                end_level = len(raw_line) - len(after_hashes)
+                end_level = len(stripped_end) - len(after_hashes)
                 if end_level <= matched_level:
                     end = j
                     break
