@@ -293,6 +293,144 @@ class TestSplitDoNotFlag:
         assert dnf == ""
         assert "## Next" in body
 
+    def test_heading_parenthetical(self):
+        content = (
+            "## Structural decisions (do NOT flag)\n"
+            "- timeout is intentional\n"
+            "## Other\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "timeout is intentional" in dnf
+        assert "## Other" in body
+
+    def test_heading_h3(self):
+        content = (
+            "### Do NOT Flag\n"
+            "- item A\n"
+            "### Other\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "item A" in dnf
+        assert "### Other" in body
+
+    def test_heading_h3_section_end(self):
+        content = (
+            "### Do NOT Flag\n- item\n### Next\nmore\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "item" in dnf
+        assert "### Next" in body
+
+    def test_heading_prefix_text(self):
+        content = (
+            "## Decisions: do not flag\n"
+            "- intentional constant\n"
+            "## Next\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "intentional constant" in dnf
+
+    def test_heading_all_caps(self):
+        content = (
+            "## DO NOT FLAG\n- exempt\n## Next\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "exempt" in dnf
+
+    def test_indented_comment_not_heading(self):
+        """Indented # comment inside section does NOT terminate it."""
+        content = (
+            "## Do NOT Flag\n"
+            "- item\n"
+            "    # this is a code comment, not a heading\n"
+            "- item 2\n"
+            "## Next\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "item" in dnf
+        assert "item 2" in dnf
+        assert "code comment" in dnf
+
+    def test_bare_hashtag_not_heading(self):
+        """#hashtag (no space) inside section does NOT terminate it."""
+        content = (
+            "## Do NOT Flag\n"
+            "- item\n"
+            "#hashtag\n"
+            "- item 2\n"
+            "## Next\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "item 2" in dnf
+        assert "#hashtag" in dnf
+
+    def test_two_matching_headings_first_wins(self):
+        """Greedy first-match: first heading containing 'do not flag'
+        starts the section; second heading ends it."""
+        content = (
+            "## How to do not flag issues\n"
+            "- guidance\n"
+            "## Structural decisions (do NOT flag)\n"
+            "- exempt\n"
+            "## Next\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "guidance" in dnf
+        assert "exempt" not in dnf
+        assert "Structural decisions" in body
+
+    def test_heading_h1(self):
+        """h1 heading splits correctly; h2/h3 do NOT terminate it."""
+        content = (
+            "# Do NOT Flag\n"
+            "- item\n"
+            "## Sub-heading\nmore\n"
+            "### Sub-sub\n"
+            "# Next Top\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "item" in dnf
+        assert "Sub-heading" in dnf
+        assert "Sub-sub" in dnf
+        assert "# Next Top" in body
+
+    def test_do_not_flag_last_section_runs_to_eof(self):
+        """Do-not-flag as last section: runs to EOF, all items captured."""
+        content = (
+            "## Invariants\ncheck x\n\n"
+            "## Do NOT Flag\n"
+            "- item 1\n"
+            "- item 2\n"
+            "- item 3\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "item 1" in dnf
+        assert "item 2" in dnf
+        assert "item 3" in dnf
+        assert "## Invariants" in body
+
+    def test_bare_hash_not_heading_start(self):
+        """## or # alone (no space, no content) does NOT match."""
+        content = (
+            "##\n"
+            "- not a heading\n"
+            "## Next\nstuff"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert dnf == ""
+        assert body == content
+
+    def test_h3_section_terminated_by_h2(self):
+        """h2 heading terminates h3 do-not-flag section (level-aware)."""
+        content = (
+            "### Do NOT Flag\n"
+            "- item\n"
+            "## Other Section\nstuff\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert "item" in dnf
+        assert "## Other Section" in body
+
 
 # ---------------------------------------------------------------------------
 # Do-not-flag integration (bidirectional scoping proof)
@@ -363,3 +501,59 @@ class TestDoNotFlagIntegration:
         result = _merge_contract_spec("", plain)
         assert "Assume violations exist" in result
         assert _DO_NOT_FLAG_PREAMBLE.strip() not in result
+
+    def test_variation_heading_reaches_preamble(self):
+        """Fuzzy heading match: preamble + exempt items in output."""
+        contract = (
+            "## Invariants\ncheck x\n\n"
+            "## Structural decisions (do NOT flag)\n"
+            "- timeout is intentional\n"
+        )
+        result = _merge_contract_spec("", contract)
+        assert _DO_NOT_FLAG_PREAMBLE.strip() in result
+        assert "timeout is intentional" in result
+
+    def test_fuzzy_match_emits_warning(self):
+        """Non-canonical heading triggers warn_fn."""
+        contract = (
+            "## Structural decisions (do NOT flag)\n- item\n"
+        )
+        warnings = []
+        _merge_contract_spec(
+            "", contract, warn_fn=warnings.append
+        )
+        assert any("canonical heading" in w for w in warnings)
+
+    def test_exact_heading_no_warning(self):
+        """Canonical heading does NOT trigger warn_fn."""
+        contract = "## Do NOT Flag\n- item\n"
+        warnings = []
+        _merge_contract_spec(
+            "", contract, warn_fn=warnings.append
+        )
+        assert not any("canonical heading" in w for w in warnings)
+
+    def test_bug_inject_strict_match_misses_variation(self):
+        """Two-level proof: old strict match misses variation heading;
+        new fuzzy match catches it."""
+        content = (
+            "## Structural decisions (do NOT flag)\n"
+            "- timeout is intentional\n"
+            "## Next\nstuff\n"
+        )
+        # Level 1: new fuzzy matcher finds it
+        _, dnf_new = _split_do_not_flag(content)
+        assert dnf_new != "", "fuzzy match must find do-not-flag"
+
+        # Level 1: old strict matcher misses it
+        lines = content.split("\n")
+        dnf_old = ""
+        for i, line in enumerate(lines):
+            if line.strip().lower() == "## do not flag":
+                dnf_old = line
+                break
+        assert dnf_old == "", "strict match must miss variation"
+
+        # Level 2: end-to-end via _merge_contract_spec
+        result = _merge_contract_spec("", content)
+        assert _DO_NOT_FLAG_PREAMBLE.strip() in result
