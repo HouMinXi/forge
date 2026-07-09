@@ -444,6 +444,18 @@ class TestSplitDoNotFlag:
         assert "exempt item" in dnf
         assert "Other Section" in body
 
+    def test_deeply_indented_heading_not_recognized(self):
+        """4+ space indent is a code block, not a heading. Must NOT
+        match as do-not-flag section start."""
+        content = (
+            "    ## Do NOT Flag\n"
+            "- would be exempt\n"
+            "## Invariants\ncheck x\n"
+        )
+        body, dnf = _split_do_not_flag(content)
+        assert dnf == ""
+        assert "would be exempt" in body
+
 
 # ---------------------------------------------------------------------------
 # Do-not-flag integration (bidirectional scoping proof)
