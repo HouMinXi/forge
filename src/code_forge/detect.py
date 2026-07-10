@@ -113,11 +113,25 @@ SHELL_TOOL_REGISTRY: dict[str, dict] = {
     },
 }
 
+# Go tool registry: golangci-lint with SARIF output.
+# Detection is driven by go.mod or *.go file presence.
+GO_TOOL_REGISTRY: dict[str, dict] = {
+    "golangci-lint": {
+        "binary": "golangci-lint",
+        "tools_yaml_entry": {
+            "command": "golangci-lint run --out-format sarif:stdout",
+            "output_format": "sarif",
+            "file_patterns": ["*.go"],
+        },
+    },
+}
+
 
 def _get_tool_meta(tool_name: str) -> Optional[dict]:
     """Look up tool metadata across all registries.
 
-    Checks PYTHON_TOOL_REGISTRY first, then SHELL_TOOL_REGISTRY.
+    Checks PYTHON_TOOL_REGISTRY first, then SHELL_TOOL_REGISTRY,
+    then GO_TOOL_REGISTRY.
 
     Args:
         tool_name: Name of the tool to look up.
@@ -125,7 +139,8 @@ def _get_tool_meta(tool_name: str) -> Optional[dict]:
     Returns:
         Registry entry dict, or None if not found in any registry.
     """
-    for registry in (PYTHON_TOOL_REGISTRY, SHELL_TOOL_REGISTRY):
+    for registry in (PYTHON_TOOL_REGISTRY, SHELL_TOOL_REGISTRY,
+                     GO_TOOL_REGISTRY):
         if tool_name in registry:
             return registry[tool_name]
     return None
@@ -321,6 +336,21 @@ def detect_toolchain(
             which_fn, detected, missing, registry=SHELL_TOOL_REGISTRY,
         )
 
+    # Go detection: check for go.mod or *.go files.
+    has_go = False
+    if (project_root / "go.mod").exists():
+        has_go = True
+    else:
+        go_files = list(project_root.glob("*.go"))
+        if not go_files:
+            go_files = list(project_root.glob("*/*.go"))
+        if go_files:
+            has_go = True
+    if has_go:
+        _scan_path_for_tools(
+            which_fn, detected, missing, registry=GO_TOOL_REGISTRY,
+        )
+
     # De-duplicate: a tool must not be in both lists
     for name in list(detected):
         if name in missing:
@@ -334,9 +364,15 @@ def detect_toolchain(
             "`.code-forge/tools.yaml`."
         )
 
-    # Language: Python takes priority in mixed projects.
-    # "shell" only when no Python indicators are present.
-    language = "python" if has_python else ("shell" if has_shell else "python")
+    # Language priority: Go > Python > Shell in mixed projects.
+    if has_go:
+        language = "go"
+    elif has_python:
+        language = "python"
+    elif has_shell:
+        language = "shell"
+    else:
+        language = "python"
 
     return DetectionResult(
         detected=detected,
@@ -420,7 +456,9 @@ def _merge_and_write(result: DetectionResult, output_path: Path) -> None:
 
     # Merge: keep only user-added entries (not in any registry),
     # then layer detected entries on top.
-    all_registry_names = set(PYTHON_TOOL_REGISTRY) | set(SHELL_TOOL_REGISTRY)
+    all_registry_names = (set(PYTHON_TOOL_REGISTRY)
+                          | set(SHELL_TOOL_REGISTRY)
+                          | set(GO_TOOL_REGISTRY))
     merged = {k: v for k, v in existing_tools.items()
               if k not in all_registry_names}
     merged.update(detected_tools)
@@ -480,7 +518,10 @@ def detect_and_init(
             # Infer language from tool names present in the registry.
             has_shell_tools = any(t in SHELL_TOOL_REGISTRY for t in registry)
             has_python_tools = any(t in PYTHON_TOOL_REGISTRY for t in registry)
-            if has_python_tools or not has_shell_tools:
+            has_go_tools = any(t in GO_TOOL_REGISTRY for t in registry)
+            if has_go_tools:
+                lang = "go"
+            elif has_python_tools or not has_shell_tools:
                 lang = "python"
             else:
                 lang = "shell"
