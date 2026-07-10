@@ -471,6 +471,17 @@ async def test_allow_main_preserves_preexisting_server_env():
         assert os.environ.get("FORGE_ALLOW_MAIN") == "1"
 
 
+@pytest.mark.asyncio
+async def test_empty_env_dict_raises_value_error():
+    """Empty env dict must be rejected -- it would strip PATH and all
+    environment variables, causing the subprocess to fail silently."""
+    with pytest.raises(ValueError, match="non-empty dict"):
+        await _run_cli_budgeted(
+            "review", workspace=_resolve_workspace(), budget=5.0,
+            env={},
+        )
+
+
 # -- result formatting --
 
 
