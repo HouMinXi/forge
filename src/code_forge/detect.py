@@ -152,6 +152,19 @@ JAVA_TOOL_REGISTRY: dict[str, dict] = {
     },
 }
 
+# JS/TS tool registry: ESLint with SARIF output.
+# Detection is driven by package.json or *.js/*.ts/*.jsx/*.tsx files.
+JS_TOOL_REGISTRY: dict[str, dict] = {
+    "eslint": {
+        "binary": "eslint",
+        "tools_yaml_entry": {
+            "command": "eslint --format @microsoft/eslint-formatter-sarif",
+            "output_format": "sarif",
+            "file_patterns": ["*.js", "*.ts", "*.jsx", "*.tsx"],
+        },
+    },
+}
+
 
 # ALL_REGISTRIES: single source of truth for all language registries.
 # Append new registries here in priority order (highest first).
@@ -162,6 +175,7 @@ ALL_REGISTRIES: list[dict[str, dict]] = [
     GO_TOOL_REGISTRY,
     C_CPP_TOOL_REGISTRY,
     JAVA_TOOL_REGISTRY,
+    JS_TOOL_REGISTRY,
 ]
 
 
@@ -173,6 +187,7 @@ REGISTRY_LANG_NAMES: dict[int, str] = {
     id(GO_TOOL_REGISTRY): "go",
     id(C_CPP_TOOL_REGISTRY): "c_cpp",
     id(JAVA_TOOL_REGISTRY): "java",
+    id(JS_TOOL_REGISTRY): "js",
 }
 
 
