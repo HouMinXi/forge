@@ -390,10 +390,32 @@ async def _run_cli_budgeted(
 ):
     """Run CLI with a time budget.
 
+    Args:
+        *args: CLI arguments to pass to code-forge.
+        workspace: Working directory for the subprocess.
+        budget: Maximum wall-clock seconds before timeout.
+        env: Optional environment dict for the subprocess. When None,
+            the child inherits the server process environment. When
+            provided, it completely replaces the child's environment
+            (must include PATH and other essentials). Pass a shallow
+            copy of os.environ with overrides merged in, e.g.
+            ``{**os.environ, "MY_VAR": "1"}``.
+
     Returns inline 4-tuple or (task, proc, stderr_log_path) on timeout.
     Child stderr is redirected to a tempfile so forge_job_status can
     report real-time progress while a background job runs.
+
+    Raises:
+        ValueError: If env is an empty dict (would strip PATH and all
+            environment variables, causing the subprocess to fail
+            silently).
     """
+    if env is not None and not env:
+        raise ValueError(
+            "env must be None (inherit parent) or a non-empty dict; "
+            "an empty dict would strip PATH and all environment "
+            "variables from the subprocess"
+        )
     stderr_fh = tempfile.NamedTemporaryFile(
         mode="w", prefix="forge-stderr-", suffix=".log", delete=False
     )
