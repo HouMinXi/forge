@@ -21,6 +21,8 @@ Tests cover:
   - Shell round-trip: shellcheck entry round-trips through load_registry
 """
 
+import json
+from pathlib import Path
 import yaml
 import pytest
 
@@ -32,6 +34,8 @@ from code_forge.detect import (
     generate_tools_yaml,
 )
 from code_forge.errors import CliError
+from code_forge.parsers._sarif import _parse_sarif
+from code_forge.parsers.base import Finding
 from code_forge.registry import ToolConfig, load_registry
 
 
@@ -728,3 +732,45 @@ class TestGoDetection:
             which_fn=_make_which_fn("golangci-lint", "shellcheck"),
         )
         assert result.language == "go"
+
+
+# -- SARIF hardening (TEST GATE B) --
+
+
+_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sarif"
+
+
+class TestGoSarifTrailingNoise:
+    """golangci-lint appends a text summary after SARIF JSON.
+    raw_decode must parse the first JSON value and ignore the rest."""
+
+    def test_real_fixture_parses_ineffassign_finding(self):
+        """The PM spike fixture (go_real.sarif) contains trailing noise.
+        _parse_sarif must extract the ineffassign finding."""
+        fixture = (_FIXTURES_DIR / "go_real.sarif").read_text()
+        results = _parse_sarif(fixture, tool_name="golangci-lint")
+        assert len(results) == 1
+        f = results[0]
+        assert isinstance(f, Finding)
+        assert f.file == "main.go"
+        assert f.line == 6
+        assert "ineffassign" in f.rule_id
+
+    def test_json_loads_fails_on_trailing_noise(self):
+        """Bug-inject: json.loads raises on trailing noise.
+        This proves raw_decode is necessary, not optional."""
+        fixture = (_FIXTURES_DIR / "go_real.sarif").read_text()
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(fixture)
+
+    def test_go_command_contains_correct_flag(self, tmp_path):
+        """Generated golangci-lint command uses v2 SARIF flag."""
+        (tmp_path / "go.mod").write_text("module example.com/foo\n")
+        result = detect_toolchain(
+            tmp_path, which_fn=_make_which_fn("golangci-lint"),
+        )
+        yaml_path = tmp_path / "tools.yaml"
+        generate_tools_yaml(result, yaml_path)
+        registry = load_registry(str(yaml_path))
+        tc = registry["golangci-lint"]
+        assert "--output.sarif.path=stdout" in tc.command

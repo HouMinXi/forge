@@ -119,7 +119,7 @@ GO_TOOL_REGISTRY: dict[str, dict] = {
     "golangci-lint": {
         "binary": "golangci-lint",
         "tools_yaml_entry": {
-            "command": "golangci-lint run --out-format sarif:stdout",
+            "command": "golangci-lint run --output.sarif.path=stdout",
             "output_format": "sarif",
             "file_patterns": ["*.go"],
         },
