@@ -1889,10 +1889,10 @@ def _run(args, env, cwd: Path) -> Verdict:
                     if git_dir == common_dir:
                         raise CliError(
                             "code-forge review must run inside a linked git "
-                            "worktree, not the main tree. Create one: "
-                            "git worktree add .worktrees/work <branch>\n"
-                            "Or bypass: --allow-main / "
-                            "FORGE_ALLOW_MAIN=1"
+                            "worktree, not the main tree. Create one:\n"
+                            "  git worktree add .worktrees/work <branch>\n"
+                            "If reviewing in a fork/clone or with uncommitted "
+                            "changes, use --allow-main / FORGE_ALLOW_MAIN=1."
                         )
             except subprocess.SubprocessError as exc:
                 raise CliError(

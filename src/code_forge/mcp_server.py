@@ -763,6 +763,7 @@ async def forge_review(
     committed: bool = False,
     whole_file: bool = False,
     canary: bool = False,
+    allow_main: bool = False,
     project_dir: str | None = None,
     ctx: Context = None,
 ) -> CallToolResult:
@@ -813,7 +814,14 @@ async def forge_review(
         tmp_path = tmp.name
         cli_args.extend(["--contract", tmp_path])
 
-    result = await _run_cli_budgeted(*cli_args, workspace=workspace)
+    # Set FORGE_ALLOW_MAIN=1 for this subprocess call if requested.
+    if allow_main:
+        os.environ["FORGE_ALLOW_MAIN"] = "1"
+    try:
+        result = await _run_cli_budgeted(*cli_args, workspace=workspace)
+    finally:
+        if allow_main:
+            os.environ.pop("FORGE_ALLOW_MAIN", None)
 
     if isinstance(result[0], str):
         # Inline completion
