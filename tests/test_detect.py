@@ -670,3 +670,61 @@ class TestShellRoundTrip:
         assert tc.output_format == "shellcheck_json"
         assert isinstance(tc.command, str)
         assert "shellcheck" in tc.command
+
+
+class TestGoDetection:
+    """Go project detection via go.mod and *.go files."""
+
+    def test_go_mod_detected(self, tmp_path):
+        """go.mod triggers Go detection."""
+        (tmp_path / "go.mod").write_text("module example.com/foo\n")
+        result = detect_toolchain(
+            tmp_path, which_fn=_make_which_fn("golangci-lint"),
+        )
+        assert "golangci-lint" in result.detected
+        assert result.language == "go"
+
+    def test_go_files_detected(self, tmp_path):
+        """*.go files trigger Go detection."""
+        (tmp_path / "main.go").write_text("package main\n")
+        result = detect_toolchain(
+            tmp_path, which_fn=_make_which_fn("golangci-lint"),
+        )
+        assert "golangci-lint" in result.detected
+        assert result.language == "go"
+
+    def test_go_missing_linter(self, tmp_path):
+        """Go project without golangci-lint -> missing list."""
+        (tmp_path / "go.mod").write_text("module example.com/foo\n")
+        result = detect_toolchain(
+            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
+        )
+        assert "golangci-lint" in result.missing
+        assert result.language == "go"
+
+    def test_go_tools_yaml_roundtrip(self, tmp_path):
+        """golangci-lint tools.yaml entry round-trips."""
+        (tmp_path / "go.mod").write_text("module example.com/foo\n")
+        result = detect_toolchain(
+            tmp_path, which_fn=_make_which_fn("golangci-lint"),
+        )
+        assert "golangci-lint" in result.detected
+
+        yaml_path = tmp_path / "tools.yaml"
+        generate_tools_yaml(result, yaml_path)
+
+        registry = load_registry(str(yaml_path))
+        assert "golangci-lint" in registry
+        tc = registry["golangci-lint"]
+        assert tc.output_format == "sarif"
+        assert isinstance(tc.command, str)
+
+    def test_go_priority_over_shell(self, tmp_path):
+        """Go takes priority over Shell in mixed projects."""
+        (tmp_path / "go.mod").write_text("module example.com/foo\n")
+        (tmp_path / "script.sh").write_text("#!/bin/bash\necho hi\n")
+        result = detect_toolchain(
+            tmp_path,
+            which_fn=_make_which_fn("golangci-lint", "shellcheck"),
+        )
+        assert result.language == "go"
