@@ -25,7 +25,11 @@ def _parse_sarif(
     if not output.strip():
         return []
     try:
-        sarif = json.loads(output)
+        # Use raw_decode to parse the FIRST JSON value, ignoring
+        # trailing noise (e.g. golangci-lint appends a text summary
+        # after the SARIF JSON).
+        dec = json.JSONDecoder()
+        sarif, _end = dec.raw_decode(output.lstrip())
     except (json.JSONDecodeError, ValueError):
         return [ToolError(
             tool_name=tool_name,
