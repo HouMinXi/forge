@@ -126,6 +126,19 @@ GO_TOOL_REGISTRY: dict[str, dict] = {
     },
 }
 
+# C/C++ tool registry: cppcheck with SARIF output.
+# Detection is driven by Makefile/Kbuild/CMakeLists.txt or *.c/*.cpp files.
+C_CPP_TOOL_REGISTRY: dict[str, dict] = {
+    "cppcheck": {
+        "binary": "cppcheck",
+        "tools_yaml_entry": {
+            "command": "cppcheck --output-format=sarif",
+            "output_format": "sarif",
+            "file_patterns": ["*.c", "*.cpp", "*.hpp", "*.cxx"],
+        },
+    },
+}
+
 
 # ALL_REGISTRIES: single source of truth for all language registries.
 # Append new registries here in priority order (highest first).
@@ -134,6 +147,7 @@ ALL_REGISTRIES: list[dict[str, dict]] = [
     PYTHON_TOOL_REGISTRY,
     SHELL_TOOL_REGISTRY,
     GO_TOOL_REGISTRY,
+    C_CPP_TOOL_REGISTRY,
 ]
 
 
@@ -143,6 +157,7 @@ REGISTRY_LANG_NAMES: dict[int, str] = {
     id(PYTHON_TOOL_REGISTRY): "python",
     id(SHELL_TOOL_REGISTRY): "shell",
     id(GO_TOOL_REGISTRY): "go",
+    id(C_CPP_TOOL_REGISTRY): "c_cpp",
 }
 
 
