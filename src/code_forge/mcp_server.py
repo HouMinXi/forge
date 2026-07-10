@@ -383,6 +383,7 @@ async def _run_cli_budgeted(
     *args: str,
     workspace: Path,
     budget: float = 20.0,
+    env: dict[str, str] | None = None,
 ) -> (
     tuple[str, int, float, str]
     | tuple[asyncio.Task[Any], asyncio.subprocess.Process, str]
@@ -405,6 +406,7 @@ async def _run_cli_budgeted(
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,
             cwd=str(workspace),
+            env=env,
         )
     except BaseException:
         stderr_fh.close()
@@ -814,14 +816,14 @@ async def forge_review(
         tmp_path = tmp.name
         cli_args.extend(["--contract", tmp_path])
 
-    # Set FORGE_ALLOW_MAIN=1 for this subprocess call if requested.
-    if allow_main:
-        os.environ["FORGE_ALLOW_MAIN"] = "1"
-    try:
-        result = await _run_cli_budgeted(*cli_args, workspace=workspace)
-    finally:
-        if allow_main:
-            os.environ.pop("FORGE_ALLOW_MAIN", None)
+    # Build per-call env when allow_main is requested so we never
+    # mutate the server process environment.
+    child_env: dict[str, str] | None = (
+        {**os.environ, "FORGE_ALLOW_MAIN": "1"} if allow_main else None
+    )
+    result = await _run_cli_budgeted(
+        *cli_args, workspace=workspace, env=child_env
+    )
 
     if isinstance(result[0], str):
         # Inline completion
