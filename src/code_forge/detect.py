@@ -127,11 +127,61 @@ GO_TOOL_REGISTRY: dict[str, dict] = {
 }
 
 
+# ALL_REGISTRIES: single source of truth for all language registries.
+# Append new registries here in priority order (highest first).
+# New language = define dict + append to ALL_REGISTRIES (2 lines).
+ALL_REGISTRIES: list[dict[str, dict]] = [
+    PYTHON_TOOL_REGISTRY,
+    SHELL_TOOL_REGISTRY,
+    GO_TOOL_REGISTRY,
+]
+
+
+# REGISTRY_LANG_NAMES: registry id -> language name string.
+# Used by generic detection loop and language inference.
+REGISTRY_LANG_NAMES: dict[int, str] = {
+    id(PYTHON_TOOL_REGISTRY): "python",
+    id(SHELL_TOOL_REGISTRY): "shell",
+    id(GO_TOOL_REGISTRY): "go",
+}
+
+
+# REGISTRY_MARKERS: language name -> marker files.
+# Marker file existence triggers detection for that language.
+REGISTRY_MARKERS: dict[str, list[str]] = {
+    "python": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
+    "shell": [],
+    "go": ["go.mod"],
+    "js": ["package.json"],
+    "cs": [],  # *.csproj is a glob, rely on .cs extension
+    "java": ["pom.xml", "build.gradle"],
+    "c_cpp": ["Makefile", "Kbuild", "CMakeLists.txt"],
+    "ruby": ["Gemfile"],
+    "swift": ["Package.swift"],
+    "php": ["composer.json"],
+}
+
+
+# REGISTRY_EXTENSIONS: language name -> dotted extensions.
+# File extension presence triggers detection for that language.
+REGISTRY_EXTENSIONS: dict[str, list[str]] = {
+    "python": [".py"],
+    "shell": [".sh", ".bash"],
+    "go": [".go"],
+    "js": [".js", ".ts", ".jsx", ".tsx"],
+    "cs": [".cs"],
+    "java": [".java"],
+    "c_cpp": [".c", ".cpp", ".hpp", ".cxx"],
+    "ruby": [".rb"],
+    "swift": [".swift"],
+    "php": [".php"],
+}
+
+
 def _get_tool_meta(tool_name: str) -> Optional[dict]:
     """Look up tool metadata across all registries.
 
-    Checks PYTHON_TOOL_REGISTRY first, then SHELL_TOOL_REGISTRY,
-    then GO_TOOL_REGISTRY.
+    Iterates ALL_REGISTRIES in priority order.
 
     Args:
         tool_name: Name of the tool to look up.
@@ -139,8 +189,7 @@ def _get_tool_meta(tool_name: str) -> Optional[dict]:
     Returns:
         Registry entry dict, or None if not found in any registry.
     """
-    for registry in (PYTHON_TOOL_REGISTRY, SHELL_TOOL_REGISTRY,
-                     GO_TOOL_REGISTRY):
+    for registry in ALL_REGISTRIES:
         if tool_name in registry:
             return registry[tool_name]
     return None
@@ -336,20 +385,28 @@ def detect_toolchain(
             which_fn, detected, missing, registry=SHELL_TOOL_REGISTRY,
         )
 
-    # Go detection: check for go.mod or *.go files.
-    has_go = False
-    if (project_root / "go.mod").exists():
-        has_go = True
-    else:
-        go_files = list(project_root.glob("*.go"))
-        if not go_files:
-            go_files = list(project_root.glob("*/*.go"))
-        if go_files:
-            has_go = True
-    if has_go:
-        _scan_path_for_tools(
-            which_fn, detected, missing, registry=GO_TOOL_REGISTRY,
+    # Generic detection loop for new languages (Go, JS, C#, Java, etc.).
+    # Iterates ALL_REGISTRIES, skipping Python/Shell (already handled).
+    # Priority: first match wins (ALL_REGISTRIES is priority-ordered).
+    primary_lang = None
+    for registry in ALL_REGISTRIES:
+        lang = REGISTRY_LANG_NAMES.get(id(registry))
+        if lang in ("python", "shell"):
+            continue  # already handled above
+        markers = REGISTRY_MARKERS.get(lang, [])
+        extensions = REGISTRY_EXTENSIONS.get(lang, [])
+        has_marker = any((project_root / m).exists() for m in markers)
+        has_files = any(
+            list(project_root.glob(f"*{ext}"))
+            or list(project_root.glob(f"*/*{ext}"))
+            for ext in extensions
         )
+        if has_marker or has_files:
+            _scan_path_for_tools(
+                which_fn, detected, missing, registry=registry,
+            )
+            if primary_lang is None:
+                primary_lang = lang
 
     # De-duplicate: a tool must not be in both lists
     for name in list(detected):
@@ -365,8 +422,9 @@ def detect_toolchain(
         )
 
     # Language priority: Go > Python > Shell in mixed projects.
-    if has_go:
-        language = "go"
+    # New languages tie-break via ALL_REGISTRIES order.
+    if primary_lang is not None:
+        language = primary_lang
     elif has_python:
         language = "python"
     elif has_shell:
@@ -456,9 +514,7 @@ def _merge_and_write(result: DetectionResult, output_path: Path) -> None:
 
     # Merge: keep only user-added entries (not in any registry),
     # then layer detected entries on top.
-    all_registry_names = (set(PYTHON_TOOL_REGISTRY)
-                          | set(SHELL_TOOL_REGISTRY)
-                          | set(GO_TOOL_REGISTRY))
+    all_registry_names = set().union(*(set(r) for r in ALL_REGISTRIES))
     merged = {k: v for k, v in existing_tools.items()
               if k not in all_registry_names}
     merged.update(detected_tools)
@@ -516,15 +572,12 @@ def detect_and_init(
         if registry:
             # Existing non-empty registry -> return without regeneration.
             # Infer language from tool names present in the registry.
-            has_shell_tools = any(t in SHELL_TOOL_REGISTRY for t in registry)
-            has_python_tools = any(t in PYTHON_TOOL_REGISTRY for t in registry)
-            has_go_tools = any(t in GO_TOOL_REGISTRY for t in registry)
-            if has_go_tools:
-                lang = "go"
-            elif has_python_tools or not has_shell_tools:
-                lang = "python"
-            else:
-                lang = "shell"
+            lang = "python"  # default
+            for r in ALL_REGISTRIES:
+                r_lang = REGISTRY_LANG_NAMES.get(id(r))
+                if r_lang and any(t in r for t in registry):
+                    lang = r_lang
+                    break
             return DetectionResult(
                 detected=list(registry.keys()),
                 missing=[],
