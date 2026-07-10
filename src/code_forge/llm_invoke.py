@@ -17,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -153,7 +154,74 @@ def _apply_params(
     return cap
 
 
-def _read_sse(response) -> dict:
+def _read_with_deadline(response, deadline, backend_name):
+    """Read response body, enforcing a total-wall deadline.
+
+    urllib's timeout only bounds per-socket reads.  A server that drips
+    bytes at intervals shorter than timeout_s never triggers the socket
+    timeout, so total wall time is unbounded.  This helper reads the
+    body in a daemon thread and joins with a timeout; if the join
+    expires, the socket is shut down to interrupt the blocking recv(),
+    and a timeout error is raised.
+    """
+    import socket as _socket
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise LLMInvokeError(
+            "%s backend exceeded total read deadline" % backend_name,
+            is_timeout=True,
+            retryable=False,
+        )
+    result = [None]
+    error = [None]
+
+    def _worker():
+        try:
+            result[0] = response.read()
+        except Exception as exc:
+            error[0] = exc
+
+    # Capture the raw socket before starting the read.  shutdown()
+    # wakes the blocked recv immediately without freeing the fd number
+    # (no fd-reuse race, no double-close).
+    sock = None
+    try:
+        sock = response.fp.raw._sock
+    except Exception:
+        pass
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout=remaining)
+    if t.is_alive():
+        # Shutdown the socket to interrupt the blocking recv() in the
+        # worker thread.  shutdown() is a direct syscall that does NOT
+        # touch the BufferedReader lock (so response.close()-blocks
+        # does not apply).  It wakes recv immediately without freeing
+        # the fd number -- no fd-reuse race, no double-close.
+        if sock is not None:
+            try:
+                sock.shutdown(_socket.SHUT_RDWR)
+            except OSError:
+                pass
+        # Suppress EBADF from response.close() in the caller's
+        # with-statement __exit__.
+        try:
+            response.close()
+        except OSError:
+            pass
+        raise LLMInvokeError(
+            "%s backend exceeded total read deadline" % backend_name,
+            is_timeout=True,
+            retryable=False,
+        )
+    if error[0] is not None:
+        raise error[0]
+    return result[0]
+
+
+def _read_sse(response, deadline=None, backend_name="") -> dict:
     """Read OpenAI SSE stream, assemble into a single response dict.
 
     Drops reasoning_content (thinking output) -- forge review needs the
@@ -167,6 +235,12 @@ def _read_sse(response) -> dict:
     last_error: dict | None = None
 
     for raw_line in response:
+        if deadline is not None and time.monotonic() > deadline:
+            raise LLMInvokeError(
+                "%s backend exceeded total read deadline" % backend_name,
+                is_timeout=True,
+                retryable=False,
+            )
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line or not line.startswith("data: "):
             continue
@@ -892,11 +966,18 @@ def _invoke_openai(
         req = urllib.request.Request(
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
+        deadline = time.monotonic() + timeout_s
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
             if backend.stream:
-                resp_data = _read_sse(response)
+                resp_data = _read_sse(
+                    response, deadline=deadline,
+                    backend_name=backend.name,
+                )
             else:
-                resp_data = json.loads(response.read().decode("utf-8"))
+                raw = _read_with_deadline(
+                    response, deadline, backend.name
+                )
+                resp_data = json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body_bytes = exc.read()  # read once (second read returns b"")
         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
@@ -991,8 +1072,10 @@ def _invoke_anthropic(
         req = urllib.request.Request(
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
+        deadline = time.monotonic() + timeout_s
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
-            resp_data = json.loads(response.read().decode("utf-8"))
+            raw = _read_with_deadline(response, deadline, backend.name)
+            resp_data = json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body_bytes = exc.read()
         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
@@ -1163,8 +1246,10 @@ def _invoke_vertex(
         req = urllib.request.Request(
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
+        deadline = time.monotonic() + timeout_s
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
-            resp_data = json.loads(response.read().decode("utf-8"))
+            raw = _read_with_deadline(response, deadline, backend.name)
+            resp_data = json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body_excerpt = exc.read().decode("utf-8", errors="replace")[:200]
         raise LLMInvokeError(
