@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "PMD",
+          "version": "7.14.0",
+          "informationUri": "https://docs.pmd-code.org/latest/",
+          "rules": [
+            {
+              "id": "SystemPrintln",
+              "shortDescription": {
+                "text": "Usage of System.out/err"
+              },
+              "fullDescription": {
+                "text": "\nReferences to System.(out|err).print are usually intended for debugging purposes and can remain in\nthe codebase even in production code. By using a logger one can enable/disable this behaviour at\nwill (and by priority) and avoid clogging the Standard out log.\n        "
+              },
+              "helpUri": "https://docs.pmd-code.org/pmd-doc-7.14.0/pmd_rules_java_bestpractices.html#systemprintln",
+              "help": {
+                "text": "\nReferences to System.(out|err).print are usually intended for debugging purposes and can remain in\nthe codebase even in production code. By using a logger one can enable/disable this behaviour at\nwill (and by priority) and avoid clogging the Standard out log.\n        "
+              },
+              "properties": {
+                "ruleset": "Best Practices",
+                "priority": 2,
+                "tags": [
+                  "Best Practices"
+                ]
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "SystemPrintln",
+          "ruleIndex": 0,
+          "message": {
+            "text": "Usage of System.out/err"
+          },
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///tmp/java_sarif_spike/Main.java"
+                },
+                "region": {
+                  "startLine": 9,
+                  "startColumn": 9,
+                  "endLine": 9,
+                  "endColumn": 15
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolConfigurationNotifications": [],
+          "toolExecutionNotifications": []
+        }
+      ]
+    }
+  ]
+}

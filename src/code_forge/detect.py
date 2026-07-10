@@ -139,6 +139,19 @@ C_CPP_TOOL_REGISTRY: dict[str, dict] = {
     },
 }
 
+# Java tool registry: PMD with SARIF output.
+# Detection is driven by pom.xml/build.gradle or *.java files.
+JAVA_TOOL_REGISTRY: dict[str, dict] = {
+    "pmd": {
+        "binary": "pmd",
+        "tools_yaml_entry": {
+            "command": "pmd check -d . -R category/java/bestpractices.xml -f sarif",
+            "output_format": "sarif",
+            "file_patterns": ["*.java"],
+        },
+    },
+}
+
 
 # ALL_REGISTRIES: single source of truth for all language registries.
 # Append new registries here in priority order (highest first).
@@ -148,6 +161,7 @@ ALL_REGISTRIES: list[dict[str, dict]] = [
     SHELL_TOOL_REGISTRY,
     GO_TOOL_REGISTRY,
     C_CPP_TOOL_REGISTRY,
+    JAVA_TOOL_REGISTRY,
 ]
 
 
@@ -158,6 +172,7 @@ REGISTRY_LANG_NAMES: dict[int, str] = {
     id(SHELL_TOOL_REGISTRY): "shell",
     id(GO_TOOL_REGISTRY): "go",
     id(C_CPP_TOOL_REGISTRY): "c_cpp",
+    id(JAVA_TOOL_REGISTRY): "java",
 }
 
 
