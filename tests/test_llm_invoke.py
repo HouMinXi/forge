@@ -3,6 +3,8 @@ import json
 import os
 import ssl
 import subprocess
+import threading
+import time
 import urllib.error
 from unittest.mock import patch, MagicMock, Mock
 
@@ -2670,3 +2672,209 @@ class TestVertexURLErrorRetryable:
             with pytest.raises(LLMInvokeError, match="URLError") as exc:
                 llm_invoke("prompt", backend=backend)
             assert exc.value.retryable is True
+
+
+class TestReadWithDeadline:
+    """Deadline-aware read helper enforces total wall time."""
+
+    def test_fast_read_succeeds(self):
+        """Normal fast response completes within deadline."""
+        from code_forge.llm_invoke import _read_with_deadline
+        import io
+        data = b'{"choices": [{"message": {"content": "ok"}}]}'
+        response = io.BytesIO(data)
+        deadline = time.monotonic() + 10
+        result = _read_with_deadline(response, deadline, "test")
+        assert result == data
+
+    def test_slow_drip_raises_timeout(self):
+        """Slow read that exceeds deadline triggers timeout."""
+        from code_forge.llm_invoke import _read_with_deadline, LLMInvokeError
+
+        class SlowRead:
+            """Simulates a slow response: blocks past deadline."""
+            def read(self):
+                time.sleep(0.3)
+                return b'{"ok": true}'
+            def close(self):
+                pass
+
+        deadline = time.monotonic() + 0.1
+        with pytest.raises(LLMInvokeError, match="total read deadline"):
+            _read_with_deadline(SlowRead(), deadline, "test")
+
+    def test_deadline_already_expired(self):
+        """Pre-expired deadline (checked before read) raises."""
+        from code_forge.llm_invoke import _read_with_deadline, LLMInvokeError
+        import io
+
+        response = io.BytesIO(b"ok")
+        deadline = time.monotonic() - 1  # already expired
+        with pytest.raises(LLMInvokeError, match="total read deadline"):
+            _read_with_deadline(response, deadline, "test")
+
+    def test_backend_name_in_error(self):
+        """Error message includes backend name."""
+        from code_forge.llm_invoke import _read_with_deadline, LLMInvokeError
+
+        class SlowRead:
+            def read(self):
+                time.sleep(0.3)
+                return b"x"
+            def close(self):
+                pass
+
+        deadline = time.monotonic() + 0.1
+        with pytest.raises(LLMInvokeError, match="my-backend"):
+            _read_with_deadline(SlowRead(), deadline, "my-backend")
+
+
+class TestReadSSEDeadline:
+    """_read_sse enforces total wall deadline per line."""
+
+    def test_fast_sse_succeeds(self):
+        """Normal SSE stream completes within deadline."""
+        from code_forge.llm_invoke import _read_sse
+        lines = [
+            b'data: {"choices":[{"delta":{"content":"hello"}}]}\n',
+            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+            b'"usage":{"prompt_tokens":1,"completion_tokens":1}}\n',
+            b'data: [DONE]\n',
+        ]
+        response = iter(lines)
+        deadline = time.monotonic() + 10
+        result = _read_sse(response, deadline=deadline, backend_name="test")
+        assert "hello" in str(result)
+
+    def test_slow_sse_raises_timeout(self):
+        """Slow SSE stream triggers deadline."""
+        from code_forge.llm_invoke import _read_sse, LLMInvokeError
+
+        def _slow_lines():
+            for i in range(100):
+                time.sleep(0.05)
+                yield b'data: {"choices":[{"delta":{"content":"x"}}]}\n'
+
+        deadline = time.monotonic() + 0.1
+        with pytest.raises(LLMInvokeError, match="total read deadline"):
+            _read_sse(_slow_lines(), deadline=deadline, backend_name="test")
+
+    def test_no_deadline_no_check(self):
+        """When deadline=None, no deadline check (backward compat)."""
+        from code_forge.llm_invoke import _read_sse
+        lines = [
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+            b'data: [DONE]\n',
+        ]
+        result = _read_sse(iter(lines), deadline=None, backend_name="test")
+        assert "ok" in str(result)
+
+
+class TestReadWithDeadlineRealPath:
+    """Real-path tests using actual socket (Golden Rule #3)."""
+
+    def test_real_drip_interrupted_at_deadline(self):
+        """Real drip server: wall bounded + zombie reader exits promptly."""
+        import socket as _socket
+        from code_forge.llm_invoke import (
+            _read_with_deadline, LLMInvokeError,
+        )
+
+        BODY = b'{"ok": true}'
+        DRIP_INTERVAL = 0.3
+        DRIP_CHUNKS = 6  # ~1.8s total
+        TIMEOUT = 0.5
+
+        def _drip_server(port_box, ready):
+            srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            srv.bind(("127.0.0.1", 0))
+            srv.listen(1)
+            port_box.append(srv.getsockname()[1])
+            ready.set()
+            conn, _ = srv.accept()
+            try:
+                req = b""
+                while b"\r\n\r\n" not in req:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    req += chunk
+                headers = (
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Type: application/json\r\n"
+                    b"Content-Length: "
+                    + str(len(BODY)).encode()
+                    + b"\r\nConnection: close\r\n\r\n"
+                )
+                conn.sendall(headers)
+                step = max(1, len(BODY) // DRIP_CHUNKS)
+                for i in range(0, len(BODY), step):
+                    try:
+                        conn.sendall(BODY[i : i + step])
+                    except OSError:
+                        break  # client force-closed
+                    time.sleep(DRIP_INTERVAL)
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                srv.close()
+
+        import urllib.request
+        port_box = []
+        ready = threading.Event()
+        srv_t = threading.Thread(
+            target=_drip_server, args=(port_box, ready), daemon=True
+        )
+        srv_t.start()
+        ready.wait()
+
+        baseline_threads = threading.active_count()
+        url = "http://127.0.0.1:%d/" % port_box[0]
+        req = urllib.request.Request(
+            url,
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+        )
+        deadline = time.monotonic() + TIMEOUT
+        t0 = time.monotonic()
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            with pytest.raises(LLMInvokeError, match="total read"):
+                _read_with_deadline(resp, deadline, "test")
+        elapsed = time.monotonic() - t0
+        # Wall must be ~TIMEOUT, not ~DRIP_CHUNKS * DRIP_INTERVAL
+        assert elapsed < DRIP_CHUNKS * DRIP_INTERVAL * 0.5, (
+            "wall %.2fs should be ~%.1fs, not %.1fs"
+            % (elapsed, TIMEOUT, DRIP_CHUNKS * DRIP_INTERVAL)
+        )
+        # Zombie-death: reader thread must exit promptly after
+        # shutdown wakes recv.  With os.close the zombie lingers
+        # one drip interval+; with shutdown it exits immediately.
+        for _ in range(20):
+            if threading.active_count() <= baseline_threads:
+                break
+            time.sleep(0.05)
+        assert threading.active_count() <= baseline_threads, (
+            "zombie reader thread lingered: %d > %d baseline"
+            % (threading.active_count(), baseline_threads)
+        )
+        srv_t.join(timeout=1)
+
+    def test_sse_backend_name_in_error(self):
+        """_read_sse includes backend_name in timeout error."""
+        from code_forge.llm_invoke import _read_sse, LLMInvokeError
+
+        def _slow_lines():
+            for i in range(100):
+                time.sleep(0.05)
+                yield b'data: {"choices":[{"delta":{"content":"x"}}]}\n'
+
+        deadline = time.monotonic() + 0.1
+        with pytest.raises(LLMInvokeError, match="my-backend"):
+            _read_sse(
+                _slow_lines(),
+                deadline=deadline,
+                backend_name="my-backend",
+            )
