@@ -402,6 +402,75 @@ async def test_kill_and_reap_already_exited_skips_kill():
     mock_proc.kill.assert_not_called()
 
 
+# -- allow_main env threading (BLOCKER 1 fix) --
+
+
+@pytest.mark.asyncio
+async def test_allow_main_true_injects_env_without_polluting_os():
+    """allow_main=True passes FORGE_ALLOW_MAIN=1 to the child process
+    via the env kwarg without mutating os.environ."""
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
+    mock_proc.returncode = 0
+    with (
+        patch(
+            "code_forge.mcp_server.asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=mock_proc,
+        ) as mock_exec,
+        patch.dict(os.environ, {}, clear=False),
+    ):
+        os.environ.pop("FORGE_ALLOW_MAIN", None)
+        await _run_cli_budgeted(
+            "review", workspace=_resolve_workspace(), budget=5.0,
+            env={**os.environ, "FORGE_ALLOW_MAIN": "1"},
+        )
+        call_env = mock_exec.call_args.kwargs.get("env")
+        assert call_env is not None
+        assert call_env["FORGE_ALLOW_MAIN"] == "1"
+        assert "FORGE_ALLOW_MAIN" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_allow_main_false_passes_none_env():
+    """allow_main=False passes env=None (inherits parent env)."""
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
+    mock_proc.returncode = 0
+    with patch(
+        "code_forge.mcp_server.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+        return_value=mock_proc,
+    ) as mock_exec:
+        await _run_cli_budgeted(
+            "review", workspace=_resolve_workspace(), budget=5.0,
+            env=None,
+        )
+        assert mock_exec.call_args.kwargs.get("env") is None
+
+
+@pytest.mark.asyncio
+async def test_allow_main_preserves_preexisting_server_env():
+    """If the server process already has FORGE_ALLOW_MAIN set,
+    an allow_main=True call must not delete it afterward."""
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
+    mock_proc.returncode = 0
+    with (
+        patch(
+            "code_forge.mcp_server.asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=mock_proc,
+        ),
+        patch.dict(os.environ, {"FORGE_ALLOW_MAIN": "1"}, clear=False),
+    ):
+        await _run_cli_budgeted(
+            "review", workspace=_resolve_workspace(), budget=5.0,
+            env={**os.environ, "FORGE_ALLOW_MAIN": "1"},
+        )
+        assert os.environ.get("FORGE_ALLOW_MAIN") == "1"
+
+
 # -- result formatting --
 
 
@@ -458,6 +527,28 @@ async def test_forge_review_calls_preflight_then_cli():
         cli_args = args[0] if args[0] else args[1].get("args", [])
         assert "review" in cli_args
         assert isinstance(result, CallToolResult)
+
+
+@pytest.mark.asyncio
+async def test_forge_review_allow_main_passes_env_to_cli():
+    """Integration: forge_review(allow_main=True) constructs child_env
+    with FORGE_ALLOW_MAIN=1 and passes it to _run_cli_budgeted."""
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.5, ""),
+        ) as mock_cli,
+        patch.dict(os.environ, {}, clear=False),
+    ):
+        os.environ.pop("FORGE_ALLOW_MAIN", None)
+        await forge_review(allow_main=True)
+        call_env = mock_cli.call_args.kwargs.get("env")
+        assert call_env is not None
+        assert call_env["FORGE_ALLOW_MAIN"] == "1"
+        assert "FORGE_ALLOW_MAIN" not in os.environ
 
 
 @pytest.mark.asyncio
