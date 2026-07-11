@@ -304,6 +304,7 @@ class TestParserDispatch:
             "grep_line",
             "flake8",
             "pylint_json",
+            "eslint_json",
         }
         assert set(PARSER_DISPATCH.keys()) == expected
 
