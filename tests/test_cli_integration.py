@@ -69,7 +69,10 @@ class TestGitRepoPassCI:
             cwd=str(repo), capture_output=True, check=True,
         )
         # Modify file to create a diff.
-        (repo / "a.py").write_text("# clean\nx = 1\n")
+        # Module docstring + UPPER_CASE constant keeps pylint happy.
+        (repo / "a.py").write_text(
+            '"""Clean module."""\nX = 1\n'
+        )
 
         monkeypatch.setattr(
             sys, "argv",
