@@ -1267,6 +1267,61 @@ class TestShutdownInfrastructure:
             assert signal.SIGTERM in sigs
             assert signal.SIGINT in sigs
 
+    @pytest.mark.asyncio
+    async def test_lifespan_survives_missing_signal_support(self):
+        """Windows loops raise NotImplementedError; startup must not die.
+
+        Reproduces the gpu-win deployment failure: ProactorEventLoop
+        has no add_signal_handler, and the unguarded call killed the
+        server (and everything downstream of it) at lifespan setup.
+        The lifespan must reach its yield anyway and still run
+        cleanup_all on exit.
+        """
+        import code_forge.mcp_server as mod
+
+        with (
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {}}),
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+            patch("code_forge.mcp_server.cleanup_all") as mock_cleanup,
+        ):
+            mock_loop = MagicMock()
+            mock_loop.add_signal_handler.side_effect = NotImplementedError
+            mock_get_loop.return_value = mock_loop
+            reached_body = False
+            async with mod.lifespan(mod.mcp):
+                reached_body = True
+            assert reached_body
+            mock_cleanup.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_propagates_unexpected_signal_errors(self):
+        """Only NotImplementedError means "unsupported" -- anything else
+        (wrong thread, closed loop) is a real bug and must surface, not
+        be swallowed by the platform fallback.
+        """
+        import code_forge.mcp_server as mod
+
+        with (
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {}}),
+            ),
+            patch("asyncio.get_running_loop") as mock_get_loop,
+            patch("code_forge.mcp_server.cleanup_all") as mock_cleanup,
+        ):
+            mock_loop = MagicMock()
+            mock_loop.add_signal_handler.side_effect = RuntimeError("boom")
+            mock_get_loop.return_value = mock_loop
+            with pytest.raises(RuntimeError, match="boom"):
+                async with mod.lifespan(mod.mcp):
+                    pass
+            mock_cleanup.assert_not_awaited()
+
     def test_install_pdeathsig_calls_prctl_on_linux(self):
         import code_forge.mcp_server as mod
 

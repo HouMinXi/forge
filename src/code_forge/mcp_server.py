@@ -253,11 +253,24 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     log.info("startup workspace: %s", startup_ws)
 
     # Install signal handlers that actually terminate the server.
+    # Windows event loops raise NotImplementedError here: SIGTERM on
+    # Windows is TerminateProcess (no handler can run), and Ctrl+C
+    # reaches asyncio.run as KeyboardInterrupt without our help.
+    # stdio EOF still exits the lifespan, so cleanup_all() runs on
+    # every orderly shutdown; only the kill-without-EOF path loses
+    # cleanup, same gap _install_pdeathsig documents for non-Linux.
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(
-        signal.SIGTERM, lambda: _schedule_shutdown(signal.SIGTERM, loop))
-    loop.add_signal_handler(
-        signal.SIGINT, lambda: _schedule_shutdown(signal.SIGINT, loop))
+    try:
+        loop.add_signal_handler(
+            signal.SIGTERM,
+            lambda: _schedule_shutdown(signal.SIGTERM, loop))
+        loop.add_signal_handler(
+            signal.SIGINT,
+            lambda: _schedule_shutdown(signal.SIGINT, loop))
+    except NotImplementedError:
+        log.info(
+            "loop.add_signal_handler unsupported on this platform; "
+            "relying on stdio EOF for shutdown")
 
     yield {}
 
