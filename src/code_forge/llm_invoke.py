@@ -937,6 +937,28 @@ def _invoke_api(
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
 
 
+def _parse_response_body(raw: bytes, backend_name: str) -> dict:
+    """Parse a raw HTTP 200 response body as JSON.
+
+    Providers can return 200 with a non-JSON body (proxy error page,
+    truncated upstream response).  Wrap the parse failure in
+    LLMInvokeError so retry/circuit-breaker callers that only catch
+    LLMInvokeError see it instead of a raw JSONDecodeError.  Decode
+    with errors="replace" (the error-path convention in this file) so
+    a non-UTF-8 body becomes the same wrapped parse failure instead of
+    an escaping UnicodeDecodeError.
+    """
+    body_text = raw.decode("utf-8", errors="replace")
+    try:
+        return json.loads(body_text)
+    except json.JSONDecodeError as exc:
+        raise LLMInvokeError(
+            "%s backend returned non-JSON response body: %s"
+            % (backend_name, body_text[:200]),
+            retryable=True,
+        ) from exc
+
+
 def _invoke_openai(
     prompt: str,
     backend: BackendConfig,
@@ -977,7 +999,7 @@ def _invoke_openai(
                 raw = _read_with_deadline(
                     response, deadline, backend.name
                 )
-                resp_data = json.loads(raw.decode("utf-8"))
+                resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
         body_bytes = exc.read()  # read once (second read returns b"")
         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
@@ -1075,7 +1097,7 @@ def _invoke_anthropic(
         deadline = time.monotonic() + timeout_s
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
             raw = _read_with_deadline(response, deadline, backend.name)
-            resp_data = json.loads(raw.decode("utf-8"))
+            resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
         body_bytes = exc.read()
         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
@@ -1249,7 +1271,7 @@ def _invoke_vertex(
         deadline = time.monotonic() + timeout_s
         with urllib.request.urlopen(req, timeout=timeout_s) as response:
             raw = _read_with_deadline(response, deadline, backend.name)
-            resp_data = json.loads(raw.decode("utf-8"))
+            resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
         body_excerpt = exc.read().decode("utf-8", errors="replace")[:200]
         raise LLMInvokeError(
