@@ -377,6 +377,13 @@ def test_smoke_all_green(tmp_path, capsys):
             api_key_env: DEMO_API_KEY
         outlet: subprocess
     """))
+    (gate_dir / "tools.yaml").write_text(textwrap.dedent("""\
+        tools:
+          pyver:
+            command: python3
+            output_format: grep_line
+            file_patterns: ["*.py"]
+    """))
     env = {"DEMO_API_KEY": "dummy-key-for-probe"}
 
     with patch("code_forge.doctor._check_handshake",
@@ -391,6 +398,7 @@ def test_smoke_all_green(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "FAIL" not in out
     assert "SKIP" not in out
+    assert "tool-audit:" in out
 
 
 def test_smoke_no_backends(tmp_path, capsys):
