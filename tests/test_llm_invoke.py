@@ -1630,6 +1630,78 @@ class TestBodyDetectionWiring:
         assert exc.value.retryable is False
 
 
+class TestMalformedResponseBody:
+    """A non-JSON HTTP 200 body from the provider must raise LLMInvokeError,
+    not an unwrapped json.JSONDecodeError, so retry/circuit-breaker callers
+    that catch LLMInvokeError actually see the failure.
+    """
+
+    def _garbled_response(self, garbage):
+        resp = Mock()
+        if isinstance(garbage, str):
+            garbage = garbage.encode("utf-8")
+        resp.read.return_value = garbage
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+        return resp
+
+    def test_openai_non_json_body_raises_llm_invoke_error(self):
+        from code_forge.llm_invoke import _invoke_openai
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        resp = self._garbled_response("<html>502 Bad Gateway</html>")
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError) as exc:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+        assert exc.value.retryable is True
+        assert "ds" in str(exc.value)
+        assert "502 Bad Gateway" in str(exc.value)
+
+    def test_anthropic_non_json_body_raises_llm_invoke_error(self):
+        from code_forge.llm_invoke import _invoke_anthropic
+
+        backend = _make_api_backend(name="mimo", fmt="anthropic")
+        resp = self._garbled_response("<html>502 Bad Gateway</html>")
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError) as exc:
+                _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+        assert exc.value.retryable is True
+        assert "mimo" in str(exc.value)
+        assert "502 Bad Gateway" in str(exc.value)
+
+    def test_vertex_non_json_body_raises_llm_invoke_error(self):
+        from code_forge.llm_invoke import _invoke_vertex
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        resp = self._garbled_response("<html>502 Bad Gateway</html>")
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError) as exc:
+                _invoke_vertex("p", backend, timeout_s=10)
+        assert exc.value.retryable is True
+        assert "vtx" in str(exc.value)
+        assert "502 Bad Gateway" in str(exc.value)
+
+    def test_non_utf8_body_raises_llm_invoke_error(self):
+        from code_forge.llm_invoke import _invoke_openai
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        resp = self._garbled_response(b"\xff\xfe\x00garbage")
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError) as exc:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+        assert exc.value.retryable is True
+        assert "ds" in str(exc.value)
+        assert "garbage" in str(exc.value)
+
+
 class TestRetryLoop:
     """_invoke_api retry loop with backoff, jitter, Retry-After, stderr."""
 
