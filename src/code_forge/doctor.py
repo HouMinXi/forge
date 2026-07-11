@@ -1,7 +1,9 @@
 """Self-check command for forge workspace health.
 
 Aggregates existing public functions (no new diagnostic engine).
-Exit 0 = all green, 1 = any FAIL or SKIP.
+Exit 0 = all green, 1 = any FAIL (mandatory checks also fail on
+SKIP; optional rows like the tool audit report SKIP without
+failing the exit code).
 """
 
 from __future__ import annotations
@@ -256,6 +258,66 @@ def _check_registries(home: Path) -> list[tuple[str, str]]:
     return results
 
 
+# -- Tool audit -----------------------------------------------------------
+
+
+def _audit_tools(
+    workspace: Path,
+) -> list[tuple[Optional[bool], str]]:
+    """Verify every registry tool resolves and runs.
+
+    Returns a list of (ok, message) tuples where ok=None means SKIP.
+    Called by run_doctor after workspace resolution succeeds.
+    """
+    from code_forge.registry import load_registry
+    from code_forge.runner import capture_tool_version
+
+    tools_yaml = workspace / ".code-forge" / "tools.yaml"
+    if not tools_yaml.exists():
+        return [(None, "no tools.yaml")]
+
+    try:
+        registry = load_registry(str(tools_yaml))
+    except (OSError, ValueError) as exc:
+        return [(False, "tools.yaml error: %s" % exc)]
+
+    if not registry:
+        return [(None, "no tools configured")]
+
+    try:
+        original_cwd = os.getcwd()
+        os.chdir(workspace)
+    except OSError as exc:
+        return [(False, "audit error: CWD failure: %s" % exc)]
+
+    results: list[tuple[Optional[bool], str]] = []
+    try:
+        for tc in registry.values():
+            try:
+                if tc.working_dir == "cargo_root":
+                    results.append(
+                        (None, "%s: cargo_root" % tc.name))
+                    continue
+                version = capture_tool_version(tc.command)
+                if version == "not_installed":
+                    results.append(
+                        (False, "%s: not_installed" % tc.name))
+                else:
+                    results.append(
+                        (True, "%s: %s" % (tc.name, version)))
+            except Exception as exc:
+                results.append(
+                    (False,
+                     "%s: audit error: %s" % (tc.name, exc)))
+    finally:
+        try:
+            os.chdir(original_cwd)
+        except OSError:
+            pass
+
+    return results
+
+
 # -- Orchestrator ----------------------------------------------------------
 
 
@@ -269,7 +331,8 @@ def run_doctor(
     _line("workspace", msg_ws, ok_ws)
     if not ok_ws:
         has_fail = True
-        for label in ("gate.yaml", "trust", "backend", "outlet"):
+        for label in ("gate.yaml", "trust", "backend", "outlet",
+                       "tool-audit"):
             _line(label, "", None)
     else:
         ok_gy, msg_gy, gate_data = _check_gate_yaml(workspace)
@@ -301,6 +364,13 @@ def run_doctor(
                     has_fail = True
             else:
                 _line("outlet", "", None)
+                has_fail = True
+
+    # Tool audit: verify registry tools resolve
+    if workspace is not None:
+        for ok, msg in _audit_tools(workspace):
+            _line("tool-audit", msg, ok)
+            if ok is False:
                 has_fail = True
 
     # Always run (never short-circuited)
