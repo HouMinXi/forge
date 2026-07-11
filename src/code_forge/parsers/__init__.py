@@ -16,11 +16,11 @@ from code_forge.parsers.non_ascii import parse_non_ascii
 from code_forge.parsers._sarif import _parse_sarif
 from code_forge.parsers.flake8 import parse_flake8
 from code_forge.parsers.pylint import parse_pylint
+from code_forge.parsers.eslint import parse_eslint
 
-# 7 keys map to 8 tools: ruff and semgrep both use output_format="sarif"
+# 8 keys map to 9 tools: ruff and semgrep both use output_format="sarif"
 # in tools.yaml, dispatching to the shared _parse_sarif function.
 # The tool_name parameter distinguishes them in the Finding objects.
-# flake8 uses "flake8" (text parser), pylint uses "pylint_json" (JSON).
 PARSER_DISPATCH: dict = {
     "shellcheck_json": parse_shellcheck,
     "sarif": _parse_sarif,
@@ -29,6 +29,7 @@ PARSER_DISPATCH: dict = {
     "grep_line": parse_non_ascii,
     "flake8": parse_flake8,
     "pylint_json": parse_pylint,
+    "eslint_json": parse_eslint,
 }
 
 

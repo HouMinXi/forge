@@ -32,9 +32,10 @@ logger = logging.getLogger(__name__)
 def _resolve_command(command: str) -> str | None:
     """Resolve a tool command to an executable path.
 
-    First tries shutil.which (PATH-based resolution).  If that fails
-    and the command contains os.sep (e.g. "scripts/checkpatch.pl"),
-    checks whether the path exists and is executable.
+    First tries shutil.which on the binary name (first word of command).
+    If that fails and the command contains os.sep (e.g.
+    "scripts/checkpatch.pl"), checks whether the path exists and is
+    executable.
 
     This addresses DeepSeek's finding: checkpatch.pl is a relative
     path, not on PATH.  shutil.which alone misses it.
@@ -45,14 +46,17 @@ def _resolve_command(command: str) -> str | None:
     Returns:
         Resolved path string, or None if not found.
     """
-    resolved = shutil.which(command)
+    # Extract binary name (first word) for PATH resolution.
+    # "cppcheck -q --output-format=sarif" -> "cppcheck"
+    binary = command.split()[0] if command else command
+    resolved = shutil.which(binary)
     if resolved is not None:
         return resolved
 
     # Try relative path resolution (e.g. scripts/checkpatch.pl)
-    if os.sep in command:
-        if os.path.isfile(command) and os.access(command, os.X_OK):
-            return command
+    if os.sep in binary:
+        if os.path.isfile(binary) and os.access(binary, os.X_OK):
+            return binary
 
     return None
 
@@ -124,9 +128,12 @@ def run_tool(
         )
         return None
 
-    # Build command: [resolved_cmd] + args + files
-    # Exception: cargo_root mode skips file args (clippy operates on crate)
-    cmd = [resolved] + tool_config.args
+    # Build command: [resolved_cmd] + flags + args + files
+    # The command string may contain flags (e.g. "cppcheck -q --output-format=sarif").
+    # _resolve_command returns the binary path; we need to extract flags from
+    # the original command string.
+    cmd_parts = tool_config.command.split()
+    cmd = [resolved] + cmd_parts[1:] + tool_config.args
     if tool_config.working_dir != "cargo_root":
         cmd = cmd + files
 
@@ -138,6 +145,11 @@ def run_tool(
             timeout=tool_config.timeout,
             check=False,
         )
+        # B1: some tools (e.g. cppcheck) emit SARIF on stderr.
+        # output_stream="stderr" swaps the streams so the parser
+        # receives the SARIF content in the stdout position.
+        if tool_config.output_stream == "stderr":
+            return (result.stderr, result.returncode, result.stdout)
         return (result.stdout, result.returncode, result.stderr)
     except subprocess.TimeoutExpired:
         logger.warning(
