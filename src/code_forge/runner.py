@@ -145,7 +145,7 @@ def run_tool(
             timeout=tool_config.timeout,
             check=False,
         )
-        # B1: some tools (e.g. cppcheck) emit SARIF on stderr.
+        # Some tools (e.g. cppcheck) emit SARIF on stderr.
         # output_stream="stderr" swaps the streams so the parser
         # receives the SARIF content in the stdout position.
         if tool_config.output_stream == "stderr":
