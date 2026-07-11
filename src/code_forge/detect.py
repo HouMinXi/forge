@@ -128,38 +128,43 @@ GO_TOOL_REGISTRY: dict[str, dict] = {
 
 # C/C++ tool registry: cppcheck with SARIF output.
 # Detection is driven by Makefile/Kbuild/CMakeLists.txt or *.c/*.cpp files.
+# cppcheck emits SARIF on stderr; -q suppresses progress noise on stdout.
 C_CPP_TOOL_REGISTRY: dict[str, dict] = {
     "cppcheck": {
         "binary": "cppcheck",
         "tools_yaml_entry": {
-            "command": "cppcheck --output-format=sarif",
+            "command": "cppcheck -q --output-format=sarif",
             "output_format": "sarif",
             "file_patterns": ["*.c", "*.cpp", "*.hpp", "*.cxx"],
+            "output_stream": "stderr",
         },
     },
 }
 
 # Java tool registry: PMD with SARIF output.
 # Detection is driven by pom.xml/build.gradle or *.java files.
+# Files are appended by the runner (no -d flag; PMD accepts positional args).
 JAVA_TOOL_REGISTRY: dict[str, dict] = {
     "pmd": {
         "binary": "pmd",
         "tools_yaml_entry": {
-            "command": "pmd check -d . -R category/java/bestpractices.xml -f sarif",
+            "command": "pmd check -R category/java/bestpractices.xml -f sarif",
             "output_format": "sarif",
             "file_patterns": ["*.java"],
         },
     },
 }
 
-# JS/TS tool registry: ESLint with SARIF output.
+# JS/TS tool registry: ESLint with JSON output.
 # Detection is driven by package.json or *.js/*.ts/*.jsx/*.tsx files.
+# Uses --format json (built-in) to avoid third-party SARIF formatter
+# resolution issues. Parsed by parse_eslint (eslint_json dispatch key).
 JS_TOOL_REGISTRY: dict[str, dict] = {
     "eslint": {
         "binary": "eslint",
         "tools_yaml_entry": {
-            "command": "eslint --format @microsoft/eslint-formatter-sarif",
-            "output_format": "sarif",
+            "command": "eslint --format json",
+            "output_format": "eslint_json",
             "file_patterns": ["*.js", "*.ts", "*.jsx", "*.tsx"],
         },
     },

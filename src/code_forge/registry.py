@@ -37,6 +37,7 @@ class ToolConfig:
     exclude_patterns: list[str] = field(default_factory=list)
     working_dir: Optional[str] = None  # e.g. "cargo_root"
     enabled: bool = True        # Round 3 C-4: allows disabling tools
+    output_stream: str = "stdout"  # "stdout" or "stderr"
 
 
 def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
@@ -113,6 +114,7 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
             exclude_patterns=entry.get("exclude_patterns", []),
             working_dir=entry.get("working_dir"),
             enabled=entry.get("enabled", True),
+            output_stream=entry.get("output_stream", "stdout"),
         )
 
         # Filter disabled entries (Round 3 C-4)

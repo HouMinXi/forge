@@ -11,7 +11,7 @@ from code_forge.detect import (
     detect_toolchain,
     generate_tools_yaml,
 )
-from code_forge.parsers._sarif import _parse_sarif
+from code_forge.parsers.eslint import parse_eslint
 from code_forge.parsers.base import Finding
 from code_forge.registry import load_registry
 
@@ -79,7 +79,7 @@ class TestJSDetection:
         registry = load_registry(str(yaml_path))
         assert "eslint" in registry
         tc = registry["eslint"]
-        assert tc.output_format == "sarif"
+        assert tc.output_format == "eslint_json"
         assert isinstance(tc.command, str)
 
 
@@ -89,7 +89,7 @@ class TestJSSarifFixture:
     def test_real_fixture_parses_nounusedvars_finding(self):
         """The spike fixture (js_real.sarif) must parse to Finding."""
         fixture = (_FIXTURES_DIR / "js_real.sarif").read_text()
-        results = _parse_sarif(fixture, tool_name="eslint")
+        results = parse_eslint(fixture, tool_name="eslint")
         assert len(results) >= 1
         f = results[0]
         assert isinstance(f, Finding)
