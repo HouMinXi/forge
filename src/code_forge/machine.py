@@ -112,6 +112,20 @@ def _default_l0_runner(
     for tool, (stdout, returncode, stderr) in tool_results.items():
         tc = registry[tool]
         items = parse_output(stdout, tc.output_format, tool, returncode)
+        # Nonzero exit with empty stdout is a tool crash, not a clean
+        # run. Every real tool that exits nonzero WITH findings produces
+        # non-empty stdout, so this guard cannot eat real findings.
+        if not items and returncode != 0 and not stdout.strip():
+            items = [ToolError(
+                tool_name=tool,
+                exit_code=returncode,
+                stderr=stderr or "",
+                message=(
+                    "Tool exited %d with no output -- "
+                    "likely a crash or configuration error"
+                    % returncode
+                ),
+            )]
         for item in items:
             if isinstance(item, ToolError):
                 err_msg = "L0 ToolError tool=%s msg=%s" % (tool, item.message)
