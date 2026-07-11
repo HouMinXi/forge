@@ -46,9 +46,15 @@ def _resolve_command(command: str) -> str | None:
     Returns:
         Resolved path string, or None if not found.
     """
+    # Guard against whitespace-only commands (e.g. "  " from
+    # tools.yaml passes load_registry validation but .split()
+    # returns []).
+    if not command or not command.strip():
+        return None
+
     # Extract binary name (first word) for PATH resolution.
     # "cppcheck -q --output-format=sarif" -> "cppcheck"
-    binary = command.split()[0] if command else command
+    binary = command.split()[0]
     resolved = shutil.which(binary)
     if resolved is not None:
         return resolved
