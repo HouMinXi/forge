@@ -55,14 +55,12 @@ class TestAcquireDeadPid:
 
     def test_dead_pid_recovers(self, tmp_path):
         lock_path = tmp_path / "code-forge.lock"
-        # Fork a child that exits immediately to get a dead PID
-        pid = os.fork()
-        if pid == 0:
-            os._exit(0)
-        os.waitpid(pid, 0)
-        lock_path.write_text("%d\n" % pid)
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        dead_pid = proc.pid
+        lock_path.write_text("%d\n" % dead_pid, encoding="utf-8")
         acquire_lock(lock_path)
-        content = lock_path.read_text().strip()
+        content = lock_path.read_text(encoding="utf-8").strip()
         assert content == str(os.getpid())
 
 
@@ -124,6 +122,12 @@ class TestRace:
 class TestEperm:
     """(h) EPERM treated as alive -> ForgeLockBusy."""
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX kill(0) EPERM path; the Windows "
+               "ACCESS_DENIED analogue is the ctypes branch "
+               "covered by TestPidAliveWindowsBranch",
+    )
     def test_eperm_raises_busy(self, tmp_path):
         lock_path = tmp_path / "code-forge.lock"
         lock_path.write_text("99999\n")
@@ -264,3 +268,100 @@ class TestPidAlive:
         """Windows branch uses ctypes OpenProcess (skip on Linux)."""
         # This test runs on gpu-win W2; skipped on Linux CI.
         assert _pid_alive(os.getpid()) is True
+
+
+class _FakeCtypes:
+    """Minimal ctypes stub for exercising the Windows _pid_alive branch."""
+
+    c_void_p = type("c_void_p", (), {})
+    c_uint32 = type("c_uint32", (), {})
+    c_int = type("c_int", (), {})
+
+    class _Func:
+        """Callable that supports .restype/.argtypes attribute assignment."""
+        def __init__(self, return_value):
+            self._return_value = return_value
+            self.restype = None
+            self.argtypes = None
+
+        def __call__(self, *args):
+            return self._return_value
+
+    class _FakeDLL:
+        def __init__(self, open_result, wait_result):
+            self._close_calls = []
+            self.OpenProcess = _FakeCtypes._Func(open_result)
+            self.WaitForSingleObject = _FakeCtypes._Func(wait_result)
+            self.CloseHandle = self._make_close()
+
+        def _make_close(self):
+            # Closure captures this _FakeDLL instance so __call__ can
+            # append to _close_calls -- one CloseHandle per DLL instance.
+            dll = self
+
+            class _CloseFunc:
+                def __init__(self):
+                    self.restype = None
+                    self.argtypes = None
+
+                def __call__(self, handle):
+                    dll._close_calls.append(handle)
+
+            return _CloseFunc()
+
+    def __init__(self, open_result=1, wait_result=0, last_error=0):
+        self._open_result = open_result
+        self._wait_result = wait_result
+        self._last_error = last_error
+        self._dll = None
+
+    def WinDLL(self, name, use_last_error=False):
+        self._dll = self._FakeDLL(
+            self._open_result, self._wait_result,
+        )
+        return self._dll
+
+    def get_last_error(self):
+        return self._last_error
+
+
+class TestPidAliveWindowsBranch:
+    """Linux-runnable tests for the Windows ctypes liveness branch."""
+
+    def _run_with_stub(self, monkeypatch, open_result, wait_result, last_error):
+        fake = _FakeCtypes(open_result, wait_result, last_error)
+        monkeypatch.setattr("code_forge.lock.os.name", "nt")
+        monkeypatch.setattr("code_forge.lock.ctypes", fake)
+        return _pid_alive(12345), fake
+
+    def test_openprocess_zero_error87_dead(self, monkeypatch):
+        """OpenProcess -> 0, ERROR_INVALID_PARAMETER (87) -> dead."""
+        result, _ = self._run_with_stub(monkeypatch, 0, 0, 87)
+        assert result is False
+
+    def test_openprocess_zero_error5_alive(self, monkeypatch):
+        """OpenProcess -> 0, ERROR_ACCESS_DENIED (5) -> alive."""
+        result, _ = self._run_with_stub(monkeypatch, 0, 0, 5)
+        assert result is True
+
+    def test_wait_object_0_dead(self, monkeypatch):
+        """handle ok, WAIT_OBJECT_0 (0) -> dead."""
+        result, _ = self._run_with_stub(monkeypatch, 1, 0, 0)
+        assert result is False
+
+    def test_wait_timeout_alive(self, monkeypatch):
+        """handle ok, WAIT_TIMEOUT (0x102) -> alive."""
+        result, _ = self._run_with_stub(monkeypatch, 1, 0x102, 0)
+        assert result is True
+
+    def test_wait_failed_alive(self, monkeypatch):
+        """handle ok, WAIT_FAILED (0xFFFFFFFF) -> alive (fail-safe)."""
+        result, _ = self._run_with_stub(
+            monkeypatch, 1, 0xFFFFFFFF, 0,
+        )
+        assert result is True
+
+    def test_close_handle_called_once(self, monkeypatch):
+        """CloseHandle called exactly once when a handle was returned."""
+        _, fake = self._run_with_stub(monkeypatch, 42, 0, 0)
+        assert fake._dll._close_calls == [42]

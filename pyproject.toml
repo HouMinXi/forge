@@ -33,6 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=1.0",
     "mutmut>=3.3,<4.0",
     # semgrep>=1.100 uses io_uring which fails on systems with low RLIMIT_MEMLOCK.
     # Pin to <1.100 until the upstream io_uring memory issue is resolved.
