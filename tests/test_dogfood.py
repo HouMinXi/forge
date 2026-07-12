@@ -12,6 +12,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -120,7 +121,7 @@ class TestDogfood:
             tmp_path / ".code-forge" / "gate.yaml",
             json.dumps({
                 "test": {
-                    "command": ["python", "-m", "pytest", "-q"],
+                    "command": ["python3", "-m", "pytest", "-q"],
                     "source_patterns": ["*.py"],
                 },
             }),
@@ -143,7 +144,6 @@ class TestDogfood:
         # receipt that doesn't exist in a scratch repo. The test exercises
         # the gate-check path specifically (the end-to-end mechanism that
         # blocks new test failures).
-        import sys
         hook_script = textwrap.dedent("""\
             #!/bin/sh
             # dogfood test hook: gate-check only
