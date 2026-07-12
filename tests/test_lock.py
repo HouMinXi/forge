@@ -12,7 +12,13 @@ from unittest.mock import patch
 
 import pytest
 
-from code_forge.lock import ForgeLock, ForgeLockBusy, acquire_lock
+from code_forge.lock import (
+    ForgeLock,
+    ForgeLockBusy,
+    _handle_existing_lock,
+    _pid_alive,
+    acquire_lock,
+)
 
 
 class TestAcquireFresh:
@@ -189,3 +195,72 @@ async def test_forgelock_worker_thread():
         result = await asyncio.to_thread(run)
         assert result == "ok"
         assert not lock_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# D2: _pid_alive platform-portable liveness check
+# ---------------------------------------------------------------------------
+
+
+class TestPidAlive:
+    """_pid_alive returns True for running, False for dead."""
+
+    def test_current_pid_alive(self):
+        """Our own PID is alive."""
+        assert _pid_alive(os.getpid()) is True
+
+    def test_dead_pid_not_alive(self):
+        """A PID that never existed is dead."""
+        # PID 0 is "swapper" on Linux, never a real user process.
+        # Use a very high PID unlikely to exist.
+        assert _pid_alive(999999999) is False
+
+    def test_sleeper_alive_then_dead(self, tmp_path):
+        """Spawn sleeper -> alive; kill -> dead (real process lifecycle)."""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(300)"],
+        )
+        try:
+            assert _pid_alive(proc.pid) is True
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+        assert _pid_alive(proc.pid) is False
+
+    def test_handle_existing_lock_busy(self, tmp_path):
+        """Sleeper PID in lock -> ForgeLockBusy AND sleeper survives."""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(300)"],
+        )
+        lock_path = tmp_path / "forge.lock"
+        lock_path.write_text(str(proc.pid))
+        try:
+            with pytest.raises(ForgeLockBusy) as exc_info:
+                _handle_existing_lock(lock_path)
+            assert exc_info.value.pid == proc.pid
+            # Sleeper must still be alive (the probe did not kill it)
+            assert proc.poll() is None
+            # Busy must not remove the live owner's lock: deleting it
+            # would let a second forge instance start alongside the
+            # running one.
+            assert lock_path.exists()
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    def test_handle_existing_lock_removes_stale(self, tmp_path):
+        """Dead PID in lock -> lock file removed, no raise."""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import sys; sys.exit(0)"],
+        )
+        proc.wait(timeout=5)
+        lock_path = tmp_path / "forge.lock"
+        lock_path.write_text(str(proc.pid))
+        _handle_existing_lock(lock_path)
+        assert not lock_path.exists()
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows-only")
+    def test_windows_pid_alive_ctypes(self):
+        """Windows branch uses ctypes OpenProcess (skip on Linux)."""
+        # This test runs on gpu-win W2; skipped on Linux CI.
+        assert _pid_alive(os.getpid()) is True

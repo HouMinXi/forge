@@ -3,15 +3,74 @@
 """STATE-11 file lock with PID liveness probing.
 
 Race-safe atomic acquire via O_CREAT|O_EXCL. Stale-PID recovery via
-os.kill(pid, 0) liveness check.
+_pid_alive() liveness check (platform-portable: POSIX kill(2) or
+Windows WaitForSingleObject).
 """
 from __future__ import annotations
 
+import ctypes
 import os
 import signal
 from pathlib import Path
 from types import TracebackType
 from typing import Optional, Type
+
+
+def _pid_alive(pid: int) -> bool:
+    """Check whether a process with *pid* is still running.
+
+    POSIX: os.kill(pid, 0) -- no signal delivered, just probes.
+      ProcessLookupError -> dead; PermissionError -> alive (owned
+      by another user); success -> alive.
+
+    Windows: ctypes OpenProcess + WaitForSingleObject.
+      os.kill(pid, 0) on Windows calls TerminateProcess, which
+      KILLS the target -- never safe as a probe.
+    """
+    if os.name == "nt":
+        # use_last_error=True + ctypes.get_last_error() is the only
+        # reliable error read; ctypes.GetLastError() via plain windll
+        # can return a stale value from unrelated intervening calls.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [
+            ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32,
+        ]
+        kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+        kernel32.WaitForSingleObject.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32,
+        ]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        # PROCESS_QUERY_LIMITED_INFORMATION (0x1000) opens almost any
+        # PID; SYNCHRONIZE (0x00100000) is additionally required by
+        # WaitForSingleObject -- without it the wait fails with
+        # ERROR_ACCESS_DENIED and a live owner would read as dead.
+        h = kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)
+        if not h:
+            # ERROR_INVALID_PARAMETER (87) is the documented "no such
+            # PID" error -> dead.  Anything else (ERROR_ACCESS_DENIED 5,
+            # or an unexpected code) fails safe as alive: wrongly
+            # reporting dead deletes a live process's lock and lets two
+            # forge processes run concurrently, while wrongly reporting
+            # alive only costs a spurious Busy error.
+            return ctypes.get_last_error() != 87
+        try:
+            # WAIT_OBJECT_0 (0) -> the process has exited.  Anything
+            # else fails safe as alive: WAIT_TIMEOUT (0x102) means
+            # still running, and WAIT_FAILED (0xFFFFFFFF) means the
+            # probe itself broke -- treating that as dead would delete
+            # a live owner's lock.
+            return kernel32.WaitForSingleObject(h, 0) != 0
+        finally:
+            kernel32.CloseHandle(h)
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
 
 
 class ForgeLockBusy(Exception):
@@ -62,7 +121,7 @@ class ForgeLock:
     def release(self) -> None:
         if self._held and self.path.exists():
             try:
-                stored = int(self.path.read_text().strip())
+                stored = int(self.path.read_text(encoding="utf-8").strip())
                 if stored == os.getpid():
                     self.path.unlink()
             except (ValueError, FileNotFoundError):
@@ -153,20 +212,16 @@ def acquire_lock(path: Path) -> None:
 def _handle_existing_lock(path: Path) -> None:
     """Read PID; check liveness; remove if dead."""
     try:
-        pid = int(path.read_text().strip())
+        pid = int(path.read_text(encoding="utf-8").strip())
     except (ValueError, FileNotFoundError):
         try:
             path.unlink()
         except FileNotFoundError:
             pass
         return
+    if _pid_alive(pid):
+        raise ForgeLockBusy(pid, path)
     try:
-        os.kill(pid, 0)
-        raise ForgeLockBusy(pid, path)
-    except ProcessLookupError:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-    except PermissionError:
-        raise ForgeLockBusy(pid, path)
+        path.unlink()
+    except FileNotFoundError:
+        pass

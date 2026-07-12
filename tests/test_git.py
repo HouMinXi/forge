@@ -113,6 +113,8 @@ class TestRunGitDiff:
             ["git", "diff", "-U0", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         assert result == "diff --git a/f.py b/f.py\n"
@@ -171,6 +173,8 @@ class TestRunGitDiff:
             ["git", "diff", "-U0", "--staged"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
 
@@ -188,6 +192,8 @@ class TestRunGitDiff:
             ["git", "diff", "-U0", "HEAD", "--name-only"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
 
@@ -214,6 +220,38 @@ class TestRunGitDiff:
         )
         with pytest.raises(RuntimeError, match="git diff failed"):
             run_git_diff("HEAD")
+
+
+class TestRunGitDiffUndecodableBytes:
+    """Decode-class regression (real git, no mocks).
+
+    Child output that is not valid UTF-8 must come back with
+    replacement characters, never raise.  Without an explicit
+    encoding, subprocess decodes with the locale codec and a strict
+    error handler -- the crash class this suite pins shut.
+    """
+
+    def test_diff_survives_non_utf8_bytes(self, tmp_path, monkeypatch):
+        import subprocess as sp
+
+        sp.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        target = tmp_path / "gbk.txt"
+        # CJK content encoded as GBK: high-bit byte sequences that
+        # are NOT valid UTF-8 (\u escapes only, no raw non-ASCII).
+        target.write_bytes("\u4e2d\u6587\u6ce8\u91ca".encode("gbk"))
+        sp.run(["git", "add", "."], cwd=tmp_path, check=True)
+        sp.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+             "commit", "-q", "-m", "seed"],
+            cwd=tmp_path, check=True,
+        )
+        target.write_bytes("\u66f4\u591a\u4e2d\u6587".encode("gbk"))
+        monkeypatch.chdir(tmp_path)
+        out = run_git_diff("HEAD")
+        assert "gbk.txt" in out
+        # errors="replace" turns the undecodable bytes into U+FFFD;
+        # their presence proves the tolerant decode path ran.
+        assert "\ufffd" in out
 
 
 # ---- git_blame tests (Phase 21-01) ----

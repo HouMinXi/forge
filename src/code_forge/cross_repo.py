@@ -141,7 +141,8 @@ def make_per_repo_cwd(
     code_forge_dir.mkdir()
     if gate_config is not None:
         (code_forge_dir / "gate.yaml").write_text(
-            yaml.safe_dump(gate_config, default_flow_style=False)
+            yaml.safe_dump(gate_config, default_flow_style=False),
+            encoding="utf-8"
         )
     return tmp_dir
 
@@ -408,7 +409,7 @@ def run_cross_repo(
             for r in receipts:
                 dst = primary_receipts_dest / ("%s-%s" % (label, r.name))
                 shutil.copy2(r, dst)
-                data = json.loads(r.read_text())
+                data = json.loads(r.read_text(encoding="utf-8"))
                 findings.extend(data.get("findings", []))
             per_repo_findings[label] = findings
 

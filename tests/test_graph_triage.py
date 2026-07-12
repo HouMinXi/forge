@@ -18,6 +18,7 @@ from code_forge.graph_triage import (
     GraphTriageRunner,
     _detect_backend,
     _run_sem,
+    _sem_has_index,
     find_entity_dependents,
 )
 
@@ -174,6 +175,47 @@ class TestDetectBackend:
         """When sem absent and no graph.db found, returns None."""
         result = _detect_backend(tmp_path, {})
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# D1: _sem_has_index file-based probe
+# ---------------------------------------------------------------------------
+
+
+class TestSemHasIndex:
+    """_sem_has_index checks for .semcode.db existence."""
+
+    def test_returns_true_when_db_present(self, tmp_path):
+        """Repo with a .semcode.db file -> indexed."""
+        (tmp_path / ".semcode.db").touch()
+        assert _sem_has_index(tmp_path) is True
+
+    def test_returns_true_when_db_is_directory(self, tmp_path):
+        """sem 0.10.x stores the index as a DIRECTORY of lance tables.
+
+        The real artifact on an indexed repo is a directory, not a
+        file -- an is_file() probe returns False there and the sem
+        backend never activates.  Existence is the correct signal.
+        """
+        db_dir = tmp_path / ".semcode.db"
+        db_dir.mkdir()
+        (db_dir / "functions.lance").mkdir()
+        assert _sem_has_index(tmp_path) is True
+
+    def test_returns_false_when_db_absent(self, tmp_path):
+        """Repo without .semcode.db -> not indexed."""
+        assert _sem_has_index(tmp_path) is False
+
+    def test_returns_true_for_empty_db_dir(self, tmp_path):
+        """An EMPTY .semcode.db directory still counts as indexed.
+
+        Existence -- not content validity -- is the deliberate
+        signal: a present-but-corrupt index is tolerated because
+        _run_sem and _get_sem_impact degrade gracefully on non-zero
+        exit.
+        """
+        (tmp_path / ".semcode.db").mkdir()
+        assert _sem_has_index(tmp_path) is True
 
 
 # ---------------------------------------------------------------------------

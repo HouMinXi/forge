@@ -1132,6 +1132,15 @@ async def forge_job_status(job_id: str) -> CallToolResult:
 
 def main() -> None:
     """Run the MCP server on stdio transport."""
+    # Prevent CJK/emoji in findings from crashing redirected stdio pipes
+    # on Windows (console handles are UTF-16-safe via PEP 528; pipes are
+    # not).  Guarded: sys.stdout can be None (pythonw) or a
+    # non-TextIOWrapper object without reconfigure.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
     mcp.run(transport="stdio")
 
 

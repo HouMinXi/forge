@@ -747,14 +747,14 @@ def get_cross_repo_digest(cwd: Path) -> str:
 def _get_git_commit(repo_path: Path) -> str:
     """Get HEAD commit hash for a repo via git subprocess.
 
-    Uses capture_output=True, text=True, timeout=5, check=False.
+    Uses capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=False.
     Catches TimeoutExpired and FileNotFoundError -> "no-git" fallback.
     """
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
             check=False,
         )
