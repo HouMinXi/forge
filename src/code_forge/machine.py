@@ -318,17 +318,20 @@ class StateMachine:
                     elif status == "running":
                         pid = result_data.get("pid")
                         if pid is not None:
-                            try:
-                                os.kill(pid, 0)
+                            from .lock import _pid_alive
+
+                            if _pid_alive(pid):
                                 # PID alive, skip new launch
                                 self._state.infra_errors.append(
                                     "CI: mutation PID %d still running, "
                                     "skipping new launch" % pid
                                 )
                                 return Verdict.PENDING
-                            except ProcessLookupError:
+                            else:
                                 # PID dead, treat as error
-                                from .disposition import Disposition as Disp
+                                from .disposition import (
+                                    Disposition as Disp,
+                                )
 
                                 finding = StateFinding(
                                     id="MUTATION_SKIPPED",
@@ -1153,7 +1156,7 @@ class StateMachine:
             result = _sp.run(
                 ["git", "rev-parse", "--git-path", "COMMIT_EDITMSG"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=False,
                 cwd=str(self.cwd),
             )
@@ -1173,7 +1176,7 @@ class StateMachine:
             result = _sp.run(
                 ["git", "log", "-1", "--format=%B"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=False,
                 cwd=str(self.cwd),
             )
