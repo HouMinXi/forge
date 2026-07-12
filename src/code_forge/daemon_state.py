@@ -137,7 +137,7 @@ def _grep_repo(
                  "--include=*.py", "--include=*.sh",
                  "--include=*.yaml", "--include=*.yml",
                  keyword.strip(), str(repo_root)],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             for line in result.stdout.splitlines():
                 parts = line.split(":", 2)
@@ -164,7 +164,7 @@ def _grep_repo(
                 result = subprocess.run(
                     ["grep", "-n", "-C", str(context_lines),
                      keyword.strip(), fpath],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                 )
                 if result.stdout.strip():
                     chunk = "--- %s ---\n%s" % (fpath, result.stdout)

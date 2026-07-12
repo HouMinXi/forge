@@ -66,7 +66,7 @@ class StubAutoFixer(AutoFixer):
         self._outcomes: dict[str, FixOutcome] = {}
         self._default = FixOutcome.SUCCESS
         if fixture_path:
-            data = json.loads(fixture_path.read_text())
+            data = json.loads(fixture_path.read_text(encoding="utf-8"))
             self._default = FixOutcome(data.get("default", "SUCCESS"))
             self._outcomes = {
                 fp: FixOutcome(o)

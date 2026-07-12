@@ -86,7 +86,7 @@ def save_snapshot(snapshot: Snapshot, path: Path) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(asdict(snapshot), indent=2))
+    tmp.write_text(json.dumps(asdict(snapshot), indent=2), encoding="utf-8")
     tmp.replace(path)
 
     snapshots = list(path.parent.glob("*.json"))
@@ -110,7 +110,7 @@ def load_snapshot(path: Path) -> Optional[Snapshot]:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise CorruptedSnapshotError(
             "cannot parse %s: %s" % (path, e)

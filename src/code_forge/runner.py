@@ -88,7 +88,7 @@ def capture_tool_version(command: str) -> str:
         result = subprocess.run(
             [resolved, "--version"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
             check=False,
         )
@@ -147,7 +147,7 @@ def run_tool(
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=tool_config.timeout,
             check=False,
         )
