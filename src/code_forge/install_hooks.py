@@ -176,13 +176,16 @@ def resolve_forge_path() -> str:
 #   U+2014 em dash, U+2013 en dash,
 #   U+2018/U+2019 smart single quotes, U+201C/U+201D smart double quotes,
 #   U+2026 ellipsis, U+2192 right arrow, U+00A0 non-breaking space.
-# Portable perl patterns (perl is present on every macOS and Linux).
+# Byte-mode perl patterns (no -CSD; perl matches raw bytes).
 # grep -P (PCRE) is GNU-only; BSD grep rejects it with exit 2.
+# UTF-8 continuation bytes (0x80-0xBF) cannot alias start bytes, so
+# these multi-byte sequences cannot false-positive inside other chars.
 _NON_ASCII_PATTERN_AI_SMELL = (
-    r"[\x{2014}\x{2013}\x{2018}\x{2019}\x{201C}\x{201D}\x{2026}\x{2192}\x{00A0}]"
+    r"\xE2\x80\x94|\xE2\x80\x93|\xE2\x80\x98|\xE2\x80\x99|"
+    r"\xE2\x80\x9C|\xE2\x80\x9D|\xE2\x80\xA6|\xE2\x86\x92|\xC2\xA0"
 )
-# strict: all non-ASCII bytes (TAB 0x09 and CR 0x0D are allowed).
-_NON_ASCII_PATTERN_STRICT = r"[^\t\x20-\x7E\x0D]"
+# strict: all non-ASCII bytes; TAB, LF, CR are allowed.
+_NON_ASCII_PATTERN_STRICT = r"[^\t\x0A\x0D\x20-\x7E]"
 
 # AI-vocab check: 6-word high-signal subset from the full 19-word SKILL.md list.
 # This narrower set is intentional -- the full 19-word list produces false
@@ -213,7 +216,7 @@ def _build_d12_precommit_block(non_ascii_mode: str) -> str:
         "# ai-smell mode blocks confusable typographic chars;"
         " strict mode blocks all non-ASCII\n"
         "_NON_ASCII=$(git diff --cached -U0 | grep '^+' | grep -v '^+++' | \\\n"
-        "    perl -CSD -ne 'print if /%s/' | head -5)\n" % pattern
+        "    perl -ne 'print if /%s/' | head -5)\n" % pattern
         + "if [ -n \"$_NON_ASCII\" ]; then\n"
         "    echo \"code-forge: non-ASCII characters in staged diff:\" >&2\n"
         "    printf '%%s\\n' \"$_NON_ASCII\" >&2\n"
@@ -558,7 +561,7 @@ def generate_commit_msg_hook_content(
         "#!/bin/sh\n"
         "# code-forge commit-msg non-ASCII + AI-vocab check (installed by code-forge install-hooks)\n"
         "_MSG_FILE=\"$1\"\n"
-        "_NON_ASCII=$(perl -CSD -ne 'print if /%s/' \"$_MSG_FILE\" | head -5)\n" % pattern
+        "_NON_ASCII=$(perl -ne 'print if /%s/' \"$_MSG_FILE\" | head -5)\n" % pattern
         + "if [ -n \"$_NON_ASCII\" ]; then\n"
         "    echo \"code-forge: non-ASCII in commit message:\" >&2\n"
         "    printf '%%s\\n' \"$_NON_ASCII\" >&2\n"

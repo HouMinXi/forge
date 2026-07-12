@@ -975,47 +975,48 @@ class TestBuiltinD12Check:
         gate_line = next(i for i, l in enumerate(lines) if "exec code-forge gate-check" in l)
         assert d12_line < gate_line
 
-    def test_ai_smell_mode_em_dash_blocked_real_grep(self):
-        """ai-smell mode: em dash (U+2014) is blocked by real perl."""
-        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
-        import re
-        m = re.search(r"perl -CSD -ne 'print if /([^/]+)/'", content)
+    def _run_perl_pattern(self, mode, data):
+        """Extract perl pattern from generated hook and run it on data."""
+        import re as _re
+        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode=mode)
+        m = _re.search(r"perl -ne 'print if /([^/]+)/'", content)
         assert m is not None, "perl pattern not found in hook"
         pattern = m.group(1)
-        em_dash = "\u2014"
-        r = subprocess.run(
-            ["perl", "-CSD", "-ne", "print if /%s/" % pattern],
-            input=em_dash.encode("utf-8"), capture_output=True,
+        return subprocess.run(
+            ["perl", "-ne", "print if /%s/" % pattern],
+            input=data, capture_output=True,
         )
-        assert r.returncode == 0, "em dash should be blocked in ai-smell mode"
 
-    def test_ai_smell_mode_cjk_passes_real_grep(self):
-        """ai-smell mode: CJK character (U+4E2D) passes through perl."""
-        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
-        import re
-        m = re.search(r"perl -CSD -ne 'print if /([^/]+)/'", content)
-        assert m is not None
-        pattern = m.group(1)
-        cjk = "\u4e2d"
-        r = subprocess.run(
-            ["perl", "-CSD", "-ne", "print if /%s/" % pattern],
-            input=cjk.encode("utf-8"), capture_output=True,
-        )
-        assert r.stdout == b"", "CJK should pass in ai-smell mode (no match)"
+    def test_ai_smell_mode_em_dash_blocked(self):
+        """ai-smell mode: em dash (U+2014) is matched."""
+        em_dash = "text\u2014here\n".encode("utf-8")
+        r = self._run_perl_pattern("ai-smell", em_dash)
+        assert r.stdout != b"", "em dash should be matched in ai-smell mode"
 
-    def test_strict_mode_cjk_blocked_real_grep(self):
-        """strict mode: CJK character (U+4E2D) is blocked by real perl."""
-        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="strict")
-        import re
-        m = re.search(r"perl -CSD -ne 'print if /([^/]+)/'", content)
-        assert m is not None
-        pattern = m.group(1)
-        cjk = "\u4e2d"
-        r = subprocess.run(
-            ["perl", "-CSD", "-ne", "print if /%s/" % pattern],
-            input=cjk.encode("utf-8"), capture_output=True,
-        )
-        assert r.returncode == 0, "CJK should be blocked in strict mode"
+    def test_ai_smell_mode_cjk_passes(self):
+        """ai-smell mode: CJK character (U+4E2D) is NOT matched."""
+        cjk = "\u4e2d\u6587\n".encode("utf-8")
+        r = self._run_perl_pattern("ai-smell", cjk)
+        assert r.stdout == b"", "CJK should pass in ai-smell mode"
+
+    def test_strict_mode_cjk_blocked(self):
+        """strict mode: CJK character (U+4E2D) is matched."""
+        cjk = "\u4e2d\u6587\n".encode("utf-8")
+        r = self._run_perl_pattern("strict", cjk)
+        assert r.stdout != b"", "CJK should be matched in strict mode"
+
+    def test_strict_mode_ascii_lf_not_blocked(self):
+        """strict mode: plain ASCII with LF does NOT match (F-E trap)."""
+        ascii_lf = b"plain ascii line\n"
+        r = self._run_perl_pattern("strict", ascii_lf)
+        assert r.stdout == b"", "ASCII+LF must not match strict pattern"
+
+    def test_strict_mode_gbk_blocked_empty_stderr(self):
+        """strict mode: GBK bytes matched with zero stderr (byte-mode)."""
+        gbk = b"gbk \xd6\xd0 line\n"
+        r = self._run_perl_pattern("strict", gbk)
+        assert r.stdout != b"", "GBK bytes should be matched in strict"
+        assert r.stderr == b"", "byte-mode perl must not produce stderr"
 
     def test_run_install_hooks_installs_commit_msg(self, tmp_path, monkeypatch):
         """run_install_hooks installs BOTH pre-commit AND commit-msg hooks."""

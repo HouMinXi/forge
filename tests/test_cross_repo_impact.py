@@ -17,9 +17,9 @@ import json
 import sqlite3
 from pathlib import Path
 
-pytest.importorskip("code_review_graph")
-
 import pytest
+
+pytest.importorskip("code_review_graph")
 
 from code_forge.advisory import AdvisoryFinding
 
