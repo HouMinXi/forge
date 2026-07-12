@@ -251,7 +251,7 @@ class TaintRunner:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=120,
                 cwd=str(repo_root),
             )

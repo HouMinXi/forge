@@ -58,7 +58,7 @@ def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
 def _load_receipts(rd: Path) -> list[dict]:
     if not rd.exists():
         return []
-    return [json.loads(f.read_text()) for f in sorted(rd.glob("receipt-*.json"))]
+    return [json.loads(f.read_text(encoding="utf-8")) for f in sorted(rd.glob("receipt-*.json"))]
 
 
 def _covered(receipt: dict) -> set[tuple[str, int]]:
@@ -320,7 +320,7 @@ def run_verify(
                             exc["file"], r["cycle"], r["pass"]),
                         5, cp)
                 try:
-                    lines = fp.read_text().splitlines()
+                    lines = fp.read_text(encoding="utf-8").splitlines()
                     actual = "\n".join(lines[exc["start_line"] - 1:exc["end_line"]]) + "\n"
                     claimed = exc["content"]
                     if not claimed.endswith("\n"):
@@ -383,5 +383,5 @@ def write_attestation(cwd: Path, diff_sha256: str) -> Path:
     d = cwd / ".code-forge"
     d.mkdir(parents=True, exist_ok=True)
     p = d / "attestation.json"
-    p.write_text(json.dumps(att, indent=2))
+    p.write_text(json.dumps(att, indent=2), encoding="utf-8")
     return p

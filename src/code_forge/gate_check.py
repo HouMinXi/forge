@@ -945,7 +945,7 @@ def run_gate_check(
         result = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             timeout=5,
         )
@@ -985,7 +985,7 @@ def run_gate_check(
         test_result = subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             env=test_env,
             cwd=str(test_cwd),
             timeout=timeout,
