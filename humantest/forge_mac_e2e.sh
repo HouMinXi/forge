@@ -130,20 +130,20 @@ fi
 
 # ---------------------------------------------------------------------
 banner "S4: unit test suite (takes ~5-10 minutes)"
-# 21 tests in these two classes invoke the external 'claude' CLI binary.
+# 43 tests in these two classes invoke the external 'claude' CLI binary.
 # On machines without it they fail for environmental (not code) reasons,
 # so they are deselected when the binary is absent.
-#   with claude on PATH:    expect 2734 passed, 8 skipped (main branch)
-#   without claude on PATH: expect 2713 passed, 8 skipped
+#   with claude on PATH:    expect 2734 passed, 8 skipped
+#   without claude on PATH: expect 2691 passed, 8 skipped, 43 deselected
 PYTEST_ARGS=""
 if command -v claude >/dev/null 2>&1; then
     echo "claude CLI found on PATH -- running the FULL suite"
 else
-    echo "claude CLI not found -- deselecting the 21 claude-CLI-dependent tests"
+    echo "claude CLI not found -- deselecting 43 claude-CLI-dependent tests"
     PYTEST_ARGS="--deselect tests/test_llm_invoke.py::TestLLMInvoke --deselect tests/test_llm_invoke.py::TestSubprocessCleanup"
 fi
 # shellcheck disable=SC2086  # PYTEST_ARGS is intentionally word-split
-if (cd "$SRC" && "$VENV/bin/python" -B -m pytest tests/ -q $PYTEST_ARGS); then
+if (cd "$SRC" && "$VENV/bin/python" -B -m pytest tests/ -q -rfs $PYTEST_ARGS); then
     record PASS "S4 unit tests"
 else
     record FAIL "S4 unit tests"
