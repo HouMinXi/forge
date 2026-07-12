@@ -179,7 +179,7 @@ def _run_sem(diff_text: str, repo_root: Path) -> list[dict]:
     tmp_path = None
     try:
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".patch", prefix="forge-")
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_f:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8", newline="\n") as tmp_f:
             tmp_f.write(diff_text)
         tmp_fd = None  # fdopen took ownership
 
