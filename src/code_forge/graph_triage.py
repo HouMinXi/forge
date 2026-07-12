@@ -78,27 +78,23 @@ def _parse_diff_files(diff_text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _sem_has_index(sem_path: str, repo_root: Path) -> bool:
-    """Probe whether sem has an index for this repo (short timeout).
+def _sem_has_index(repo_root: Path) -> bool:
+    """Check whether sem has built an index for this repo.
 
-    Runs a cheap sem diff with empty input.  If sem has no index it hangs
-    or returns an error; a 3-second timeout catches both.  This prevents
-    the N x 15s hang when sem is in PATH but the repo was never indexed.
+    sem stores its index at <repo_root>/.semcode.db.  The artifact is
+    a DIRECTORY of lance tables on sem 0.10.x (verified on Linux);
+    other versions may use a single file, so existence -- not
+    file-ness -- is the signal.  Absence means sem would hang or
+    error on every impact query.  A present-but-corrupt index is
+    tolerated here: _run_sem and _get_sem_impact degrade gracefully
+    on non-zero exit.
+
+    Previous implementation ran `sem diff --patch --json` with empty
+    stdin and checked the exit code, but exit code tracks payload
+    validity (empty stdin always returns non-zero) -- not index
+    presence.  The probe was dead on every platform.
     """
-    try:
-        result = subprocess.run(
-            [sem_path, "diff", "--patch", "--json"],
-            input="",
-            capture_output=True,
-            text=True,
-            timeout=3,
-            cwd=str(repo_root),
-        )
-        # sem exits 0 with empty JSON array when indexed but no changes.
-        # Any non-zero exit or timeout means no usable index.
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
-        return False
+    return (repo_root / ".semcode.db").exists()
 
 
 def _detect_backend(
@@ -131,7 +127,7 @@ def _detect_backend(
     # this repo causes every _get_sem_impact call to hang for 15s,
     # multiplied by entity count.
     sem_path = shutil.which("sem")
-    if sem_path is not None and _sem_has_index(sem_path, repo_root):
+    if sem_path is not None and _sem_has_index(repo_root):
         return ("sem", sem_path)
 
     # gate.yaml db_path.
@@ -183,16 +179,16 @@ def _run_sem(diff_text: str, repo_root: Path) -> list[dict]:
     tmp_path = None
     try:
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".patch", prefix="forge-")
-        with os.fdopen(tmp_fd, "w") as tmp_f:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_f:
             tmp_f.write(diff_text)
         tmp_fd = None  # fdopen took ownership
 
-        with open(tmp_path, "r") as stdin_f:
+        with open(tmp_path, "r", encoding="utf-8") as stdin_f:
             result = subprocess.run(
                 ["sem", "diff", "--patch", "--format", "json"],
                 stdin=stdin_f,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 cwd=str(repo_root),
                 timeout=_SEM_DIFF_TIMEOUT_S,
             )
@@ -232,7 +228,7 @@ def _get_sem_impact(
         result = subprocess.run(
             ["sem", "impact", entity_name, "--file", file_path, "--json"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=str(repo_root),
             timeout=_SEM_TIMEOUT_S,
         )
