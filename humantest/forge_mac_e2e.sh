@@ -134,7 +134,7 @@ banner "S4: unit test suite (takes ~5-10 minutes)"
 # On machines without it they fail for environmental (not code) reasons,
 # so they are deselected when the binary is absent.
 #   with claude on PATH:    expect 2734 passed, 8 skipped
-#   without claude on PATH: expect 2691 passed, 8 skipped, 43 deselected
+#   without claude on PATH: expect 2693 passed, 8 skipped, 43 deselected
 PYTEST_ARGS=""
 if command -v claude >/dev/null 2>&1; then
     echo "claude CLI found on PATH -- running the FULL suite"
