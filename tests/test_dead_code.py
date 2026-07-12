@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("code_review_graph")
+
 from code_forge import dead_code
 from code_forge.dead_code import (
     LiveCaller,

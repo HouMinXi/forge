@@ -25,6 +25,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.importorskip("code_review_graph")
+
 from code_forge.advisory import AdvisoryFinding
 from code_forge.cross_repo_impact import CrossRepoImpactRunner
 
