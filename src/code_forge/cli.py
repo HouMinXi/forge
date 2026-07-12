@@ -923,7 +923,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
     try:
         _gr = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, cwd=cwd, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
         )
         if _gr.returncode == 0:
             repo_root = Path(_gr.stdout.strip())
@@ -937,7 +937,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
     try:
         _diff = subprocess.run(
             ["git", "diff", target],
-            capture_output=True, text=True, cwd=repo_root, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=repo_root, check=False,
         )
         diff_text = _diff.stdout if _diff.returncode == 0 else ""
     except Exception:
@@ -1358,7 +1358,7 @@ def _git_head(cwd: Path) -> str:
         ["git", "rev-parse", "HEAD"],
         cwd=str(cwd),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -1383,6 +1383,16 @@ def main() -> int:
       If sys.argv doesn't start with a known subcommand, prepend 'review'
       to route positional args to the review subparser.
     """
+    # Windows pipes are not UTF-16-safe (console handles are via PEP 528;
+    # pipes are not).  Backslashreplace prevents CJK/emoji in findings
+    # from crashing redirected output.  Guarded: sys.stdout can be None
+    # (pythonw) or a non-TextIOWrapper object (embedded hosts, capture
+    # fixtures) that has no reconfigure.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
     parser = _build_parser()
 
     # Backward compat: detect if first arg is a known subcommand
@@ -1469,7 +1479,7 @@ def main() -> int:
         cwd = Path.cwd()
         try:
             diff_result = subprocess.run(
-                ["git", "diff", "HEAD"], capture_output=True, text=True, cwd=cwd
+                ["git", "diff", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd
             )
         except FileNotFoundError:
             print(
@@ -1532,17 +1542,17 @@ def main() -> int:
             )
             print("Use --force to overwrite.", file=sys.stderr)
             return EXIT_CLI_ERROR
-        gate_path.write_text(GATE_YAML_TEMPLATE)
+        gate_path.write_text(GATE_YAML_TEMPLATE, encoding="utf-8")
         print("Created %s" % gate_path, file=sys.stderr)
         schema_path = gate_dir / "gate.schema.json"
         if not schema_path.exists() or args.force:
             schema_text = _pkg_files('code_forge').joinpath('gate.schema.json').read_text(encoding='utf-8')
-            schema_path.write_text(schema_text)
+            schema_path.write_text(schema_text, encoding="utf-8")
             print("Created %s" % schema_path, file=sys.stderr)
         template_path = gate_dir / "contract-template.md"
         if not template_path.exists() or args.force:
             from .init_template import CONTRACT_TEMPLATE_MD
-            template_path.write_text(CONTRACT_TEMPLATE_MD)
+            template_path.write_text(CONTRACT_TEMPLATE_MD, encoding="utf-8")
             print("Created %s" % template_path, file=sys.stderr)
         print(
             "Next: add a backend under 'backends:' in gate.yaml "
@@ -1870,15 +1880,15 @@ def _run(args, env, cwd: Path) -> Verdict:
             try:
                 result_work_tree = subprocess.run(
                     ["git", "rev-parse", "--is-inside-work-tree"],
-                    capture_output=True, text=True, cwd=cwd, check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
                 )
                 result_git_dir = subprocess.run(
                     ["git", "rev-parse", "--git-dir"],
-                    capture_output=True, text=True, cwd=cwd, check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
                 )
                 result_common_dir = subprocess.run(
                     ["git", "rev-parse", "--git-common-dir"],
-                    capture_output=True, text=True, cwd=cwd, check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
                 )
 
                 if result_work_tree.returncode == 0:
@@ -1982,7 +1992,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 import subprocess as _sp
                 _diff_result = _sp.run(
                     ["git", "diff", "HEAD"],
-                    capture_output=True, text=True, cwd=str(cwd),
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(cwd),
                 )
                 diff_text = _diff_result.stdout if _diff_result.returncode == 0 else ""
 
@@ -2643,7 +2653,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
             result = subprocess.run(
                 ["git", "diff", "--name-only", "HEAD"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=False,
                 cwd=str(cwd),
             )
@@ -2749,7 +2759,7 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
             result = subprocess.run(
                 ["git", "diff", "HEAD"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=False,
                 cwd=str(cwd),
             )

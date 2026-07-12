@@ -310,7 +310,7 @@ def run_fixval(
         revert_result = subprocess.run(
             ["git", "apply", "-R", patch_path],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             cwd=repo_root,
         )
@@ -326,7 +326,7 @@ def run_fixval(
                     scoped_cmd,
                     env=run_env,
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     timeout=600,
                     check=False,
                     cwd=repo_root,
@@ -400,7 +400,7 @@ def run_fixval(
             _restore = subprocess.run(
                 ["git", "apply", patch_path],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=False,
                 cwd=repo_root,
             )
@@ -535,7 +535,7 @@ def run_overfit_guard(
                 scoped_cmd,
                 env=run_env,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=600,
                 check=False,
                 cwd=str(cwd),

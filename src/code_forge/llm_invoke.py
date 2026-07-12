@@ -709,7 +709,7 @@ def _invoke_cli(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             start_new_session=True,  # Unix: creates new session (setsid)
             env=child_env,
         )
@@ -820,7 +820,7 @@ def _invoke_api(
     if backend.format != "vertex":
         if backend.api_key_file:
             try:
-                api_key = Path(backend.api_key_file).read_text().strip()
+                api_key = Path(backend.api_key_file).read_text(encoding="utf-8").strip()
             except OSError as exc:
                 raise LLMInvokeError(
                     "backend %r: cannot read api_key_file: %s"

@@ -176,7 +176,7 @@ def _run_baseline_guard(
                 baseline_cmd,
                 env=run_env,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=120,
                 check=False,
                 cwd=repo_root,
@@ -417,7 +417,7 @@ def run_mutation(
             result = subprocess.run(
                 ["mutmut", "run"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=timeout,
                 check=False,
                 env=run_env,
@@ -465,7 +465,7 @@ def run_mutation(
             results_proc = subprocess.run(
                 ["mutmut", "results"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=10,
                 check=False,
                 cwd=repo_root,

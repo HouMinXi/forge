@@ -18,7 +18,7 @@ _SKILL_NAMES = ["qodo-review", "code-review-expert", "adversarial-qe"]
 
 def _read_line(cwd: Path, file: str, line: int) -> str:
     try:
-        lines = (cwd / file).read_text().splitlines()
+        lines = (cwd / file).read_text(encoding="utf-8").splitlines()
         if 0 < line <= len(lines):
             return lines[line - 1].strip()[:80]
     except OSError:
@@ -128,7 +128,7 @@ def write_receipts(
         }
 
         path = receipts_dir / ("receipt-c%dp%d.json" % (cycle, pass_num))
-        path.write_text(json.dumps(receipt, indent=2))
+        path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
         written.append(path)
 
     return written

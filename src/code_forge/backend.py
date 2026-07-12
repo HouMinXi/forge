@@ -507,7 +507,7 @@ def _read_cache(
     """
     try:
         cache_path = cache_dir / CACHE_FILENAME
-        raw = cache_path.read_text()
+        raw = cache_path.read_text(encoding="utf-8")
         data = json.loads(raw)
         if data.get("backend") != backend_name:
             return None
@@ -530,7 +530,7 @@ def _write_cache(
         "ok": True,
         "backend": backend_name,
         "timestamp": time_fn(),
-    }))
+    }), encoding="utf-8")
 
 
 def invalidate_probe_cache(
@@ -692,7 +692,7 @@ def _probe_cli(
         result = run_cmd(
             ["claude", "auth", "status", "--json"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:

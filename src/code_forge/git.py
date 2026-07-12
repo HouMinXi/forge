@@ -110,7 +110,7 @@ def run_git_diff(
     result = subprocess.run(
         cmd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=False,
     )
 
@@ -144,7 +144,7 @@ def is_git_repo(cwd: Path) -> bool:
             ["git", "rev-parse", "--git-dir"],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
         )
         return result.returncode == 0
@@ -164,7 +164,7 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
         ["git", "rev-parse", "--verify", ref + "^{commit}"],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -210,7 +210,7 @@ def git_diff(
         + [str(p) for p in paths]
     )
     result = subprocess.run(
-        cmd, cwd=repo_root, capture_output=True, text=True, check=False
+        cmd, cwd=repo_root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
     )
     if result.returncode not in (0, 1):
         raise BaselineResolutionError(
@@ -241,7 +241,7 @@ def cached_diff(
         + [str(p) for p in paths]
     )
     result = subprocess.run(
-        cmd, cwd=repo_root, capture_output=True, text=True, check=False
+        cmd, cwd=repo_root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
     )
     if result.returncode not in (0, 1):
         raise BaselineResolutionError(
@@ -278,7 +278,7 @@ def working_tree_diff(
         tracked_cmd,
         cwd=repo_root,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=False,
     )
     if tracked_result.returncode not in (0, 1):
@@ -303,7 +303,7 @@ def working_tree_diff(
             ls_cmd,
             cwd=repo_root,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=True,
         ).stdout.splitlines()
         if line.strip()
@@ -325,7 +325,7 @@ def working_tree_diff(
             cmd,
             cwd=repo_root,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
         )
         if result.returncode not in (0, 1):
@@ -375,11 +375,9 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
             ["git", "blame", "--porcelain", "--", file_path],
             cwd=repo_root,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             timeout=60,
-            encoding="utf-8",
-            errors="replace",
         )
     except (subprocess.TimeoutExpired, OSError):
         return {}

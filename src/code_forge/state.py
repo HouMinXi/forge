@@ -134,7 +134,7 @@ def load_state(path: Path) -> Optional[State]:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise CorruptedStateError(
             "cannot parse %s: %s" % (path, e)
@@ -273,5 +273,5 @@ def save_state(state: State, path: Path) -> None:
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(path)

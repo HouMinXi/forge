@@ -41,7 +41,7 @@ def resolve_hooks_dir(
         result = run_cmd(
             ["git", "rev-parse", "--git-path", "hooks"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=True,
             timeout=5,
             cwd=str(cwd),
@@ -64,7 +64,7 @@ def resolve_hooks_dir(
             root_result = run_cmd(
                 ["git", "rev-parse", "--show-toplevel"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=True,
                 timeout=5,
                 cwd=str(cwd),
@@ -96,7 +96,7 @@ def check_hooks_path_override(
         result = run_cmd(
             ["git", "config", "--get", "core.hooksPath"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             timeout=5,
             cwd=str(cwd),
@@ -131,7 +131,7 @@ def resolve_forge_path() -> str:
             result = subprocess.run(
                 [forge_exe, "--version"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=1,
                 check=False,
             )

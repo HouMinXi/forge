@@ -55,7 +55,7 @@ class StubFalsifier(Falsifier):
         self._errors: dict[str, str] = {}
         self._default = Disposition.CONFIRMED
         if fixture_path:
-            data = json.loads(fixture_path.read_text())
+            data = json.loads(fixture_path.read_text(encoding="utf-8"))
             self._default = Disposition(data.get("default", "CONFIRMED"))
             if self._default == Disposition.FIXED:
                 raise ValueError(
