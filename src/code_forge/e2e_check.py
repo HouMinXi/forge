@@ -14,6 +14,7 @@ Uses unidiff directly (diff.py does not expose Hunk.section_header).
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from fnmatch import fnmatch
 from pathlib import Path
@@ -337,9 +338,11 @@ def sorted_pair_hash(a: str, b: str) -> str:
 def find_e2e_artifacts(repo_root: Path, patterns: list[str]) -> set[str]:
     """Return repo-relative POSIX paths matching any e2e pattern.
 
-    Uses pathlib.glob (not fnmatch) because patterns may contain **
-    (recursive glob). Each path is converted via Path.relative_to(repo_root)
-    .as_posix() before insertion -- never mix Path and str in the returned set.
+    Uses stdlib glob.glob (not pathlib.glob) because pathlib on
+    Python <= 3.12 yields only directories for patterns ending in **,
+    while glob.glob(..., recursive=True) returns files on all versions.
+    Each matched path is made relative and converted to forward-slash
+    form before insertion.
 
     Args:
         repo_root: repository root path.
@@ -348,12 +351,18 @@ def find_e2e_artifacts(repo_root: Path, patterns: list[str]) -> set[str]:
     Returns:
         set[str] of repo-relative forward-slash paths.
     """
+    import glob as _glob
+
     artifacts: set[str] = set()
+    root_str = str(repo_root)
     for pattern in patterns:
         try:
-            for p in repo_root.glob(pattern):
-                if p.is_file():
-                    artifacts.add(p.relative_to(repo_root).as_posix())
+            for match in _glob.glob(
+                str(repo_root / pattern), recursive=True,
+            ):
+                if os.path.isfile(match):
+                    rel = os.path.relpath(match, root_str)
+                    artifacts.add(rel.replace(os.sep, "/"))
         except (OSError, ValueError):
             # glob errors (bad pattern, permission) are non-fatal; skip.
             pass
