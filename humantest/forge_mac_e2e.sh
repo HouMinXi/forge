@@ -119,7 +119,7 @@ if "$PYBIN" -m venv "$VENV" \
     && "$VENV/bin/python" -m pip install --quiet --upgrade pip \
     && (cd "$SRC" && "$VENV/bin/python" -m pip install --quiet -e ".[mcp,vertex]") \
     && "$VENV/bin/python" -m pip install --quiet \
-        pytest pytest-asyncio jsonschema code-review-graph; then
+        pytest pytest-asyncio jsonschema ruff code-review-graph; then
     "$VENV/bin/code-forge" --version
     record PASS "S3 install"
 else
