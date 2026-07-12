@@ -976,38 +976,45 @@ class TestBuiltinD12Check:
         assert d12_line < gate_line
 
     def test_ai_smell_mode_em_dash_blocked_real_grep(self):
-        """ai-smell mode: em dash (U+2014) is blocked by real grep."""
+        """ai-smell mode: em dash (U+2014) is blocked by real perl."""
         content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
-        # Extract the grep -P pattern from the generated hook
         import re
-        m = re.search(r"grep -P '([^']+)'", content)
-        assert m is not None, "grep -P pattern not found in hook"
+        m = re.search(r"perl -CSD -ne 'print if /([^/]+)/'", content)
+        assert m is not None, "perl pattern not found in hook"
         pattern = m.group(1)
-        # em dash U+2014 = \xe2\x80\x94 in UTF-8
-        em_dash = "\u2014".encode("utf-8")
-        r = subprocess.run(["grep", "-P", pattern], input=em_dash, capture_output=True)
+        em_dash = "\u2014"
+        r = subprocess.run(
+            ["perl", "-CSD", "-ne", "print if /%s/" % pattern],
+            input=em_dash.encode("utf-8"), capture_output=True,
+        )
         assert r.returncode == 0, "em dash should be blocked in ai-smell mode"
 
     def test_ai_smell_mode_cjk_passes_real_grep(self):
-        """ai-smell mode: CJK character (U+4E2D) passes through grep."""
+        """ai-smell mode: CJK character (U+4E2D) passes through perl."""
         content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
         import re
-        m = re.search(r"grep -P '([^']+)'", content)
+        m = re.search(r"perl -CSD -ne 'print if /([^/]+)/'", content)
         assert m is not None
         pattern = m.group(1)
-        cjk = "\u4e2d".encode("utf-8")
-        r = subprocess.run(["grep", "-P", pattern], input=cjk, capture_output=True)
-        assert r.returncode != 0, "CJK should pass in ai-smell mode (grep returns no match)"
+        cjk = "\u4e2d"
+        r = subprocess.run(
+            ["perl", "-CSD", "-ne", "print if /%s/" % pattern],
+            input=cjk.encode("utf-8"), capture_output=True,
+        )
+        assert r.stdout == b"", "CJK should pass in ai-smell mode (no match)"
 
     def test_strict_mode_cjk_blocked_real_grep(self):
-        """strict mode: CJK character (U+4E2D) is blocked."""
+        """strict mode: CJK character (U+4E2D) is blocked by real perl."""
         content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="strict")
         import re
-        m = re.search(r"grep -P '([^']+)'", content)
+        m = re.search(r"perl -CSD -ne 'print if /([^/]+)/'", content)
         assert m is not None
         pattern = m.group(1)
-        cjk = "\u4e2d".encode("utf-8")
-        r = subprocess.run(["grep", "-P", pattern], input=cjk, capture_output=True)
+        cjk = "\u4e2d"
+        r = subprocess.run(
+            ["perl", "-CSD", "-ne", "print if /%s/" % pattern],
+            input=cjk.encode("utf-8"), capture_output=True,
+        )
         assert r.returncode == 0, "CJK should be blocked in strict mode"
 
     def test_run_install_hooks_installs_commit_msg(self, tmp_path, monkeypatch):
