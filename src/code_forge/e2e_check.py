@@ -344,6 +344,12 @@ def find_e2e_artifacts(repo_root: Path, patterns: list[str]) -> set[str]:
     Each matched path is made relative and converted to forward-slash
     form before insertion.
 
+    glob.glob follows symlinked directories while traversing **
+    (pathlib.Path.glob does not); a match reached only through a
+    symlink that leads outside repo_root is discarded so a stray or
+    planted symlink cannot be counted as e2e coverage for content
+    the repository does not actually contain.
+
     Args:
         repo_root: repository root path.
         patterns:  list of glob patterns (may include **).
@@ -355,14 +361,23 @@ def find_e2e_artifacts(repo_root: Path, patterns: list[str]) -> set[str]:
 
     artifacts: set[str] = set()
     root_str = str(repo_root)
+    root_real = os.path.realpath(root_str)
+    if not root_real.endswith(os.sep):
+        # Avoid a doubled separator when repo_root is already the
+        # filesystem root (os.path.realpath("/") == "/" on POSIX);
+        # a doubled "//" prefix would reject every legitimate match.
+        root_real += os.sep
     for pattern in patterns:
         try:
             for match in _glob.glob(
                 str(repo_root / pattern), recursive=True,
             ):
-                if os.path.isfile(match):
-                    rel = os.path.relpath(match, root_str)
-                    artifacts.add(rel.replace(os.sep, "/"))
+                if not os.path.isfile(match):
+                    continue
+                if not os.path.realpath(match).startswith(root_real):
+                    continue
+                rel = os.path.relpath(match, root_str)
+                artifacts.add(rel.replace(os.sep, "/"))
         except (OSError, ValueError):
             # glob errors (bad pattern, permission) are non-fatal; skip.
             pass
