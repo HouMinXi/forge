@@ -61,7 +61,10 @@ def _make_ci_machine(tmp_path, l0_runner, l1_provider=None,
 class TestL0AutoConfirmed:
     """(a) L0 findings auto-CONFIRMED with correct fingerprint format."""
 
-    def test_l0_confirmed(self, tmp_path):
+    def test_l0_confirmed(self, tmp_path, monkeypatch):
+        # Isolate from the mutmut-presence axis: this test is about
+        # L0 finding auto-CONFIRM, not about whether mutmut is installed.
+        monkeypatch.setattr("shutil.which", lambda cmd: "/fake/mutmut")
         finding = _make_finding(fp="fp-l0")
         machine = _make_ci_machine(
             tmp_path,
@@ -186,7 +189,10 @@ class TestFalsifierErrorCatch:
 class TestToolErrorToInfraErrors:
     """(e) Phase 1 ToolError -> infra_errors, NOT in active findings."""
 
-    def test_tool_error_populates_infra(self, tmp_path):
+    def test_tool_error_populates_infra(self, tmp_path, monkeypatch):
+        # Isolate from the mutmut-presence axis: this test is about
+        # ToolError -> infra_errors mapping, not mutation detection.
+        monkeypatch.setattr("shutil.which", lambda cmd: "/fake/mutmut")
         machine = _make_ci_machine(
             tmp_path,
             l0_runner=lambda r, f: (
