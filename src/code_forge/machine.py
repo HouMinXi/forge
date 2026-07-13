@@ -291,8 +291,8 @@ class StateMachine:
 
         A prior mutation-result.json is consumed on read once terminal
         (done or error); a "running" marker with a live PID is the only
-        case left in place -- a "running" marker whose PID has died is
-        also consumed.
+        case left in place -- a "running" marker whose PID has died, or
+        never had one, is also consumed.
         """
         self._execute_round(round_index=0)
 
@@ -363,6 +363,12 @@ class StateMachine:
                                 )
                                 self._state.findings.append(finding)
                                 self._unlink_mutation_result(result_path)
+                        else:
+                            self._state.infra_errors.append(
+                                "CI: mutation-result.json status=running "
+                                "missing pid field"
+                            )
+                            self._unlink_mutation_result(result_path)
                     elif status == "error":
                         # A crashed mutation run is an infra problem,
                         # not a review result: report it and consume the

@@ -476,6 +476,29 @@ class TestCIMutationResultNotSticky:
         )
         assert not result_path.exists()
 
+    def test_running_status_missing_pid_consumes_result_file(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        _setup_gate_yaml(tmp_path)
+        result_path = tmp_path / ".code-forge" / "mutation-result.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "started_at": 1234567890.0,
+                    "status": "running",
+                    "survivors": [],
+                }
+            )
+        )
+
+        machine = self._machine(tmp_path)
+        assert machine.run() == Verdict.PASS
+        assert any(
+            "missing pid field" in e for e in machine._state.infra_errors
+        )
+        assert not result_path.exists()
+
     def test_non_dict_json_degrades_gracefully(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         _setup_gate_yaml(tmp_path)
