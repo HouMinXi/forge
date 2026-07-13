@@ -203,7 +203,7 @@ def _cleanup_children():
 #
 #
 
-# Install at module load time so cleanup is always active. Per D-03.
+# Install at module load time so cleanup is always active.
 _install_signal_handlers()
 
 
