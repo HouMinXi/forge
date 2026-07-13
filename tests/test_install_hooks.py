@@ -963,16 +963,16 @@ class TestBuiltinD12Check:
         """D-12 block placed after carveout block (non-code commits skip D-12)."""
         content = generate_hook_content("code-forge gate-check", None)
         lines = content.split("\n")
-        carveout_line = next(i for i, l in enumerate(lines) if "skipping verify" in l)
-        d12_line = next(i for i, l in enumerate(lines) if "_NON_ASCII=" in l)
+        carveout_line = next(i for i, line in enumerate(lines) if "skipping verify" in line)
+        d12_line = next(i for i, line in enumerate(lines) if "_NON_ASCII=" in line)
         assert carveout_line < d12_line
 
     def test_d12_block_before_gate_check(self):
         """D-12 block placed before exec gate-check."""
         content = generate_hook_content("code-forge gate-check", None)
         lines = content.split("\n")
-        d12_line = next(i for i, l in enumerate(lines) if "_NON_ASCII=" in l)
-        gate_line = next(i for i, l in enumerate(lines) if "exec code-forge gate-check" in l)
+        d12_line = next(i for i, line in enumerate(lines) if "_NON_ASCII=" in line)
+        gate_line = next(i for i, line in enumerate(lines) if "exec code-forge gate-check" in line)
         assert d12_line < gate_line
 
     def _run_perl_pattern(self, mode, data):
@@ -1022,6 +1022,29 @@ class TestBuiltinD12Check:
         r = self._run_perl_pattern("strict", gbk)
         assert r.stdout != b"", "GBK bytes should be matched in strict"
         assert r.stderr == b"", "byte-mode perl must not produce stderr"
+
+    def test_ai_vocab_printf_prints_flagged_line_for_real(self):
+        """The AI-vocab diagnostic prints the flagged line, not the text "%s".
+
+        The echo/printf fragment for this branch is joined into the
+        hook text with plain string concatenation -- no Python %
+        formatting is ever applied to it -- so its printf format
+        string must already be the single-percent '%s' shell needs.
+        A leftover '%%s' makes shell's own printf treat %% as a
+        literal percent, printing "%s" instead of the flagged line.
+        """
+        content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
+        start = content.index("_AI_VOCAB=$(git diff")
+        end = content.index("fi\n", start) + len("fi\n")
+        fragment = content[start:end].replace(
+            "git diff --cached -U0", "printf '%s\\n' \"$STAGED\""
+        )
+        script = 'STAGED="+X = 1  # we delve deeper"\n' + fragment
+        r = subprocess.run(["sh", "-c", script], capture_output=True)
+        assert r.stderr == (
+            b"code-forge: AI vocabulary detected in staged diff:\n"
+            b"+X = 1  # we delve deeper\n"
+        ), "expected the flagged line on stderr, got %r" % r.stderr
 
     def test_run_install_hooks_installs_commit_msg(self, tmp_path, monkeypatch):
         """run_install_hooks installs BOTH pre-commit AND commit-msg hooks."""

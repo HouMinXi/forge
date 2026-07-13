@@ -229,7 +229,7 @@ def _build_d12_precommit_block(non_ascii_mode: str) -> str:
         "    '%s' | head -5)\n" % _AI_VOCAB_PATTERN
         + "if [ -n \"$_AI_VOCAB\" ]; then\n"
         "    echo \"code-forge: AI vocabulary detected in staged diff:\" >&2\n"
-        "    printf '%%s\\n' \"$_AI_VOCAB\" >&2\n"
+        "    printf '%s\\n' \"$_AI_VOCAB\" >&2\n"
         "    exit 1\n"
         "fi\n"
         "\n"
@@ -571,7 +571,7 @@ def generate_commit_msg_hook_content(
         + "    \"$_MSG_FILE\" | head -5)\n"
         "if [ -n \"$_AI_VOCAB\" ]; then\n"
         "    echo \"code-forge: AI vocabulary in commit message:\" >&2\n"
-        "    printf '%%s\\n' \"$_AI_VOCAB\" >&2\n"
+        "    printf '%s\\n' \"$_AI_VOCAB\" >&2\n"
         "    exit 1\n"
         "fi\n"
         + chain_call
