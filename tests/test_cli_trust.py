@@ -1,13 +1,13 @@
 """Tests for the trust CLI subcommand and _load_gate_backends trust guard.
 
 Covers:
-- code-forge trust (mark trusted, D-04)
-- code-forge trust --status (show trust state, D-04)
-- code-forge trust --revoke (remove entry, D-04)
-- Dangerous field display on stderr (D-05)
+- code-forge trust (mark trusted, )
+- code-forge trust --status (show trust state, )
+- code-forge trust --revoke (remove entry, )
+- Dangerous field display on stderr
 - Hostile gate.yaml regression (SEC-01 SC2)
-- _load_gate_backends returns [] for untrusted repos (D-06)
-- _load_gate_backends returns configs after trust (D-06 positive path)
+- _load_gate_backends returns [] for untrusted repos
+- _load_gate_backends returns configs after trust (positive path)
 - Empty/invalid gate.yaml handling
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ class TestTrustSubcommand:
     """Tests for code-forge trust CLI subcommand."""
 
     def test_trust_marks_repo_trusted(self, gate_dir, trust_home):
-        """code-forge trust records trust in trusted.json (D-01, D-04)."""
+        """code-forge trust records trust in trusted.json."""
         from code_forge.trust import is_trusted
 
         gate_yaml_path = gate_dir / ".code-forge" / "gate.yaml"
@@ -97,7 +97,7 @@ class TestTrustSubcommand:
         assert is_trusted(gate_yaml_path, gate_data)
 
     def test_trust_status_shows_state(self, gate_dir, trust_home):
-        """code-forge trust --status shows trust state (D-04)."""
+        """code-forge trust --status shows trust state."""
         from code_forge.trust import trust_status, record_trust
 
         gate_yaml_path = gate_dir / ".code-forge" / "gate.yaml"
@@ -115,7 +115,7 @@ class TestTrustSubcommand:
         assert status.stored_hash == status.current_hash
 
     def test_trust_revoke_removes_entry(self, gate_dir, trust_home):
-        """code-forge trust --revoke removes entry (D-04, carry-forward 4)."""
+        """code-forge trust --revoke removes entry."""
         from code_forge.trust import (
             is_trusted, record_trust, revoke_trust,
         )
@@ -132,7 +132,7 @@ class TestTrustSubcommand:
     def test_trust_displays_dangerous_fields(
         self, gate_dir, trust_home, capsys,
     ):
-        """code-forge trust displays dangerous fields on stderr (D-05)."""
+        """code-forge trust displays dangerous fields on stderr."""
         from code_forge.trust import find_dangerous_fields
 
         gate_yaml_path = gate_dir / ".code-forge" / "gate.yaml"
@@ -152,7 +152,7 @@ class TestLoadGateBackendsGuard:
     """Tests for trust guard in _load_gate_backends."""
 
     def test_untrusted_returns_empty(self, gate_dir, trust_home, capsys):
-        """Untrusted repo backends ignored -- returns [] (D-06)."""
+        """Untrusted repo backends ignored -- returns []."""
         from code_forge.cli import _load_gate_backends
 
         gate_yaml_path = gate_dir / ".code-forge" / "gate.yaml"

@@ -237,7 +237,7 @@ def find_dangerous_fields(
     return dangers
 
 
-# -- Contracts trust (spec-content hashing, D-13 amended + DF-1) ----------
+# -- Contracts trust (spec-content hashing) ------------------------------
 
 
 def hash_contracts_content(

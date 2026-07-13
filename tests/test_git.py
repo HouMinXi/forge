@@ -258,7 +258,7 @@ class TestRunGitDiffUndecodableBytes:
 
 
 class TestGitBlame:
-    """Tests for git_blame() porcelain parser (D-06: git.py is single owner)."""
+    """Tests for git_blame() porcelain parser (: git.py is single owner)."""
 
     # Fixture: single-commit porcelain block (one line, full metadata)
     SIMPLE_PORCELAIN = (
@@ -387,5 +387,5 @@ class TestGitBlame:
         assert result == {}
 
     def test_git_blame_exists(self):
-        """git_blame is a callable in git.py (D-06: single git owner)."""
+        """git_blame is a callable in git.py (: single git owner)."""
         assert callable(git_blame)

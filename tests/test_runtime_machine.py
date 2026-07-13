@@ -6,13 +6,13 @@ Covers:
 - RUNTIME findings appear in self._advisories (not self._state.findings)
 - _fixpoint_reached() unaffected by RUNTIME advisory presence
 - _display_advisories prints smoke status section unconditionally when
-  RuntimeRunner has run (D-09)
+  RuntimeRunner has run
 - smoke-run subcommand registered in _build_parser with --surface and
   command (REMAINDER) args
 - smoke-run handler executes command, writes receipt, exits with command code
 - advisory JSON serialization includes RUNTIME findings
 - _display_smoke_status handles runtime-smoke-summary, runtime-skipped, and
-  no-summary fallback (D-09 always prints)
+  no-summary fallback (always prints)
 - Generic _display_advisories loop skips runtime-smoke-summary and
   runtime-skipped (DEDUP)
 """
@@ -204,7 +204,7 @@ class TestRuntimeAdvisorySerialize:
 
 
 # ---------------------------------------------------------------------------
-# _display_smoke_status tests (D-09: ALWAYS prints)
+# _display_smoke_status tests (: ALWAYS prints)
 # ---------------------------------------------------------------------------
 
 class TestDisplaySmokeStatus:
@@ -251,7 +251,7 @@ class TestDisplaySmokeStatus:
         assert "UNVERIFIED" in captured.err or "skipped" in captured.err.lower()
 
     def test_smoke_status_no_findings_fallback(self, tmp_path, capsys):
-        """When no summary or skipped finding, prints fallback (D-09 always prints)."""
+        """When no summary or skipped finding, prints fallback (always prints)."""
         sm = _make_sm(tmp_path)
         sm._advisories = []
         runner = MagicMock(spec=RuntimeRunner)

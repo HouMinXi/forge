@@ -402,7 +402,7 @@ def _suggestion(provider_name: str, code_str: str) -> str:
 def _format_error_message(
     provider_name: str, http_code: int, body_excerpt: str,
 ) -> str:
-    """Format error message per D-31-08."""
+    """Format error message."""
     if http_code == 402:
         problem = "payment required"
         tip = "Top up account balance"

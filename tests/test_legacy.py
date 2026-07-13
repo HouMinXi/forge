@@ -259,7 +259,7 @@ class TestPreExistingDetection:
 
     @patch("code_forge.legacy.git_blame")
     def test_attribution_format(self, mock_blame, tmp_path):
-        """Verify D-04 attribution format: 'git-blame: {author} {sha[:8]} {subject}'."""
+        """Verify attribution format: 'git-blame: {author} {sha[:8]} {subject}'."""
         sha_full = "abc12345" + "0" * 32
         mock_blame.return_value = {
             20: {"sha": sha_full, "author": "Alice", "subject": "fix: null"},
@@ -392,7 +392,7 @@ class TestIntentClassification:
 
     @patch("code_forge.legacy.git_blame")
     def test_satd_precision_acknowledged(self, mock_blame, tmp_path):
-        """'xxx_default' in source -> 'xxx' matches -> 'intended' (D-03 tradeoff)."""
+        """'xxx_default' in source -> 'xxx' matches -> 'intended' (tradeoff)."""
         mock_blame.return_value = {
             20: {"sha": SHA_40, "author": "Alice", "subject": "init"},
         }

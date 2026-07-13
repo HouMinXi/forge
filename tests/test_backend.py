@@ -36,7 +36,7 @@ from code_forge.errors import CliError
 
 
 def _api_entry(**overrides):
-    """Build a minimal valid api backend entry (D-11 dict-schema).
+    """Build a minimal valid api backend entry (dict-schema).
 
     Returns an entry dict without the 'name' key; the dict key in
     the backends mapping provides the name (injected by load_backend_configs).
@@ -54,7 +54,7 @@ def _api_entry(**overrides):
 
 
 def _cli_entry(**overrides):
-    """Build a minimal valid cli backend entry (D-11 dict-schema).
+    """Build a minimal valid cli backend entry (dict-schema).
 
     Returns an entry dict without the 'name' key; the dict key in
     the backends mapping provides the name (injected by load_backend_configs).
@@ -84,14 +84,14 @@ def _vertex_entry(**overrides):
 
 
 def _as_api_backends(entry=None, name="deepseek"):
-    """Wrap an api entry in the D-11 dict-schema backends mapping."""
+    """Wrap an api entry in the dict-schema backends mapping."""
     if entry is None:
         entry = _api_entry()
     return {"backends": {name: entry}}
 
 
 def _as_cli_backends(entry=None, name="claude-sub"):
-    """Wrap a cli entry in the D-11 dict-schema backends mapping."""
+    """Wrap a cli entry in the dict-schema backends mapping."""
     if entry is None:
         entry = _cli_entry()
     return {"backends": {name: entry}}
@@ -234,7 +234,7 @@ class TestBackendConfigParse:
         assert load_backend_configs({"backends": {}}) == []
 
     def test_load_backend_configs_list_raises_cli_error(self):
-        """backends as list -> CliError (D-11: dict required)."""
+        """backends as list -> CliError (: dict required)."""
         with pytest.raises(CliError, match="backends must be a dict"):
             load_backend_configs({"backends": [_api_entry()]})
 
@@ -244,7 +244,7 @@ class TestBackendConfigParse:
             load_backend_configs({"backends": {"bad": "not-a-dict"}})
 
     def test_load_backend_configs_multiple_defaults_raises(self):
-        """Two backends with default: true -> CliError (D-03)."""
+        """Two backends with default: true -> CliError."""
         entry1 = _api_entry(default=True)
         entry2 = _api_entry(
             format="anthropic",
@@ -275,13 +275,13 @@ class TestBackendConfigParse:
         assert cfgs[0].max_tokens == 16384
 
     def test_load_backend_configs_max_tokens_override(self):
-        """max_tokens=8192 in entry is honoured (D-05)."""
+        """max_tokens=8192 in entry is honoured."""
         entry = _api_entry(max_tokens=8192)
         cfgs = load_backend_configs(_as_api_backends(entry))
         assert cfgs[0].max_tokens == 8192
 
     def test_load_backend_configs_dict_schema(self):
-        """dict-based backends block parses correctly; name injected from key (D-11)."""
+        """dict-based backends block parses correctly; name injected from key."""
         data = {
             "backends": {
                 "mimo": {
@@ -302,7 +302,7 @@ class TestBackendConfigParse:
         assert cfg.api_key_env == "MIMO_API_KEY"
 
     def test_load_backend_configs_non_dict_raises(self):
-        """Non-dict backends value (list) raises CliError (D-11)."""
+        """Non-dict backends value (list) raises CliError."""
         with pytest.raises(CliError, match="backends must be a dict"):
             load_backend_configs({"backends": [_api_entry()]})
 
@@ -312,7 +312,7 @@ class TestBackendConfigParse:
             load_backend_configs({"backends": {"bad": "not-a-dict"}})
 
     def test_multiple_defaults_raises(self):
-        """Two entries with default=True raises CliError naming both backends (D-03)."""
+        """Two entries with default=True raises CliError naming both backends."""
         entry1 = _api_entry(default=True)
         entry2 = _api_entry(
             format="anthropic",
@@ -326,14 +326,14 @@ class TestBackendConfigParse:
             load_backend_configs(data)
 
     def test_single_default_accepted(self):
-        """Exactly one default=True entry is accepted without error (D-03)."""
+        """Exactly one default=True entry is accepted without error."""
         entry = _api_entry(default=True)
         cfgs = load_backend_configs(_as_api_backends(entry))
         assert len(cfgs) == 1
         assert cfgs[0].default is True
 
     def test_no_default_returns_first(self):
-        """No default=True entry -> resolve_backend returns configs[0] (D-03)."""
+        """No default=True entry -> resolve_backend returns configs[0]."""
         entry1 = _api_entry()
         entry2 = _api_entry(
             format="anthropic",
@@ -1032,7 +1032,7 @@ class TestProbeCache:
     def test_probe_cache_cross_backend_miss(self, tmp_path):
         """Cache in one dir must not satisfy a probe using a different dir.
 
-        Explicit-named cli backends bypass the probe entirely (D-05), so
+        Explicit-named cli backends bypass the probe entirely, so
         they cannot be used to test cache isolation.  Instead, use
         DEFAULT_BACKEND (name="session-default") with two separate cache
         directories to verify cache entries are dir-scoped, not shared.
@@ -1093,7 +1093,7 @@ class TestProbeCache:
 
 
 # =====================================================================
-# Probe bypass for explicitly-configured cli backends (D-05)
+# Probe bypass for explicitly-configured cli backends
 # =====================================================================
 
 

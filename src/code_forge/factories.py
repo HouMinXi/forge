@@ -220,7 +220,7 @@ def build_l1_provider(
         conventions_digest: compact naming conventions for reviewer context (D11).
         post_image: current content of changed files for excerpt verification (D11).
         graph_impact_context: blast-radius impact table for reviewer context.
-        contract_spec: cross-repo contract reference for reviewer context (D-05).
+        contract_spec: cross-repo contract reference for reviewer context.
     """
     from .llm_invoke import Usage
 

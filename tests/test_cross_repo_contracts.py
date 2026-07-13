@@ -114,7 +114,7 @@ class TestSC1EndToEnd:
         """One test exercising the full chain:
         contracts.yaml -> trust -> load_contract_digest -> build_l1_provider
         -> L1 prompt contains '## Contract Reference' with spec content,
-        appearing BEFORE 'Diff:' (D-05 order).
+        appearing BEFORE 'Diff:' (order).
 
         Mocks llm_invoke (NOT build_l1_provider) so the real prompt assembly
         in factories.py executes.
@@ -198,7 +198,7 @@ class TestSC1EndToEnd:
         assert "ovs_flow" in prompt
         assert spec_content.strip() in prompt or "ovs_flow" in prompt
 
-        # D-05: Contract Reference BEFORE Diff:
+        # Contract Reference BEFORE Diff:
         cr_idx = prompt.index("## Contract Reference")
         diff_idx = prompt.index("\nDiff:\n")
         assert cr_idx < diff_idx, (
@@ -304,7 +304,7 @@ class TestSC3NoOptIn:
 
 
 class TestDF2SiblingsNoContract:
-    """D-06 amended: siblings use no-op lambda, never get contract_spec."""
+    """amended: siblings use no-op lambda, never get contract_spec."""
 
     def test_d06_siblings_receive_no_contract_spec(
         self, tmp_path, git_repo, monkeypatch, trust_dir,

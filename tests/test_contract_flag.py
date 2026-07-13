@@ -106,7 +106,7 @@ class TestLoadContractFile:
 
 
 class TestLoadContractStdin:
-    """D-32-16: stdin via sys.stdin.buffer.read(65537)."""
+    """-16: stdin via sys.stdin.buffer.read(65537)."""
 
     def test_stdin_happy(self):
         fake_buf = io.BytesIO(b"## Contract\n- invariant A\n")
@@ -159,7 +159,7 @@ class TestLoadContractStdin:
 
 
 class TestMergeContractSpec:
-    """D-32-21, D-32-23: merge helper, empty-yaml no leading newline,
+    """-21, -23: merge helper, empty-yaml no leading newline,
     confirmation bias directive appended."""
 
     def test_both_empty_returns_empty(self):
@@ -174,7 +174,7 @@ class TestMergeContractSpec:
         assert result == "file-content" + _CONFIRMATION_BIAS_DIRECTIVE
 
     def test_file_only_no_leading_newline(self):
-        """D-32-23: when yaml_digest is empty, no leading '\\n\\n'."""
+        """-23: when yaml_digest is empty, no leading '\\n\\n'."""
         result = _merge_contract_spec("", "file-content")
         assert not result.startswith("\n")
 

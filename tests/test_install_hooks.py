@@ -942,25 +942,25 @@ class TestPresubmitRunner:
 
 
 # ---------------------------------------------------------------------------
-# TestBuiltinD12Check -- D-12 built-in non-ASCII + AI-vocab check
+# TestBuiltinD12Check -- built-in non-ASCII + AI-vocab check
 # ---------------------------------------------------------------------------
 
 class TestBuiltinD12Check:
-    """D-12 built-in staged-diff non-ASCII and AI-vocab checks."""
+    """built-in staged-diff non-ASCII and AI-vocab checks."""
 
     def test_d12_block_present_no_presubmit_entries(self):
-        """D-12 block is always emitted even when presubmit_entries is empty."""
+        """block is always emitted even when presubmit_entries is empty."""
         content = generate_hook_content("code-forge gate-check", None)
         assert "_NON_ASCII=" in content
         assert "_AI_VOCAB=" in content
 
     def test_d12_block_present_none_entries(self):
-        """D-12 block is always emitted when presubmit_entries is None."""
+        """block is always emitted when presubmit_entries is None."""
         content = generate_hook_content("code-forge gate-check", None, presubmit_entries=None)
         assert "_NON_ASCII=" in content
 
     def test_d12_block_after_carveout(self):
-        """D-12 block placed after carveout block (non-code commits skip D-12)."""
+        """block placed after carveout block (non-code commits skip )."""
         content = generate_hook_content("code-forge gate-check", None)
         lines = content.split("\n")
         carveout_line = next(i for i, line in enumerate(lines) if "skipping verify" in line)
@@ -968,7 +968,7 @@ class TestBuiltinD12Check:
         assert carveout_line < d12_line
 
     def test_d12_block_before_gate_check(self):
-        """D-12 block placed before exec gate-check."""
+        """block placed before exec gate-check."""
         content = generate_hook_content("code-forge gate-check", None)
         lines = content.split("\n")
         d12_line = next(i for i, line in enumerate(lines) if "_NON_ASCII=" in line)
@@ -1238,7 +1238,7 @@ class TestHookExecutionOrder:
     """Tests for the overall hook execution order."""
 
     def test_hook_execution_order(self):
-        """Full hook ordering: leak -> carveout -> attestation -> D-12 -> review -> exec."""
+        """Full hook ordering: leak -> carveout -> attestation -> -> review -> exec."""
         content = generate_hook_content(
             "code-forge gate-check", None, planning_leak_guard=True
         )

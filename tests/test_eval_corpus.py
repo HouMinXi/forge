@@ -86,7 +86,7 @@ class TestLoadCorpus:
         assert entries == []
 
     def test_missing_diff_file_still_creates_entry(self, tmp_path: Path) -> None:
-        """Missing diff file at load time: CorpusEntry still created (D-12)."""
+        """Missing diff file at load time: CorpusEntry still created."""
         manifest = tmp_path / "corpus.yaml"
         manifest.write_text(
             "entries:\n"

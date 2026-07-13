@@ -247,7 +247,7 @@ def run_cross_repo(
     ]
     joint_diff = build_cross_repo_context(repos_data)
 
-    # -- Step 3b: load contract spec for primary repo (D-06 amended) --
+    # -- Step 3b: load contract spec for primary repo --
     _contract_spec = ""
     _contracts_yaml = primary_path / ".code-forge" / "contracts.yaml"
     if _contracts_yaml.is_file():

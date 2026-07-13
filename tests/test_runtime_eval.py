@@ -151,7 +151,7 @@ class TestLoadCorpusExpectedAdvisory:
 
 
 class TestAdvisoryCaught:
-    """advisory_caught() performs case-insensitive keyword substring matching (D-12)."""
+    """advisory_caught() performs case-insensitive keyword substring matching."""
 
     def setup_method(self) -> None:
         from code_forge.eval.scorer import advisory_caught
@@ -171,7 +171,7 @@ class TestAdvisoryCaught:
         assert not self.advisory_caught("clean code review", ["nftables"])
 
     def test_case_insensitive_match(self) -> None:
-        """Matching is case-insensitive (D-12)."""
+        """Matching is case-insensitive."""
         assert self.advisory_caught("NFTABLES reload needed", ["nftables"])
 
     def test_empty_text_returns_false(self) -> None:
@@ -684,10 +684,10 @@ class TestCorpusYamlE1E6:
         assert any("reprobe" in kw.lower() or "probe" in kw.lower() for kw in e.expected_advisory)
 
     def test_e1_expected_verdict_is_pass(self) -> None:
-        """E1-E6 expected_verdict corrected to PASS (D-06: RUNTIME is advisory, cannot block)."""
+        """E1-E6 expected_verdict corrected to PASS (: RUNTIME is advisory, cannot block)."""
         e = self._by_name("E1-stale-nftables")
         assert e.expected_verdict == "PASS", (
-            "D-06: RUNTIME axis cannot block; E1 expected_verdict must be PASS"
+            ": RUNTIME axis cannot block; E1 expected_verdict must be PASS"
         )
 
     def test_e2_expected_verdict_is_pass(self) -> None:

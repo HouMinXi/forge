@@ -6,14 +6,14 @@ Covers:
 - run() with empty diff returns []
 - run() calls llm_invoke with RUNTIME_LIFECYCLE_QUESTION.replace(), NOT .format()
 - run() parses structured JSON response: "surfaces" and "findings" keys
-- run() on LLMInvokeError returns SKIPPED AdvisoryFinding (D-04 never-silent-skip)
-- run() on malformed JSON returns SKIPPED AdvisoryFinding (D-04 never-silent-skip)
+- run() on LLMInvokeError returns SKIPPED AdvisoryFinding (never-silent-skip)
+- run() on malformed JSON returns SKIPPED AdvisoryFinding (never-silent-skip)
 - run() reads smoke receipts from repo_root/.code-forge/smoke-receipts/
-- run() with no receipts returns all LLM-enumerated surfaces as UNVERIFIED (D-08)
+- run() with no receipts returns all LLM-enumerated surfaces as UNVERIFIED
 - run() with receipt matching one surface marks it VERIFIED, rest UNVERIFIED
 - run() with receipt whose diff_sha256 mismatches treats it as invalid (Pitfall 3)
 - Per-surface NOT VERIFIED = (LLM-enumerated) minus (receipt-declared),
-  case-insensitive substring containment (D-11)
+  case-insensitive substring containment
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from code_forge.advisory import AdvisoryFinding
 
 
 class TestRuntimeLifecycleQuestion:
-    """RUNTIME_LIFECYCLE_QUESTION constant must satisfy D-05/D-10."""
+    """RUNTIME_LIFECYCLE_QUESTION constant must satisfy /"""
 
     def test_constant_is_exported(self):
         from code_forge.runtime import RUNTIME_LIFECYCLE_QUESTION
@@ -233,12 +233,12 @@ class TestRuntimeRunnerJSONParsing:
 
 
 # ---------------------------------------------------------------------------
-# run() on LLMInvokeError - SKIPPED (D-04 never-silent-skip)
+# run() on LLMInvokeError - SKIPPED (never-silent-skip)
 # ---------------------------------------------------------------------------
 
 
 class TestRuntimeRunnerLLMError:
-    """run() on LLMInvokeError returns SKIPPED AdvisoryFinding (D-04)."""
+    """run() on LLMInvokeError returns SKIPPED AdvisoryFinding."""
 
     def test_llm_error_returns_skipped_finding(self, tmp_path):
         from code_forge.llm_invoke import LLMInvokeError
@@ -282,12 +282,12 @@ class TestRuntimeRunnerLLMError:
 
 
 # ---------------------------------------------------------------------------
-# run() on malformed LLM JSON - SKIPPED (D-04 never-silent-skip)
+# run() on malformed LLM JSON - SKIPPED (never-silent-skip)
 # ---------------------------------------------------------------------------
 
 
 class TestRuntimeRunnerMalformedJSON:
-    """run() on malformed LLM JSON returns SKIPPED AdvisoryFinding (D-04)."""
+    """run() on malformed LLM JSON returns SKIPPED AdvisoryFinding."""
 
     def test_string_content_not_valid_json_returns_skipped(self, tmp_path):
         """LLM returns a string that is not valid JSON."""
@@ -395,7 +395,7 @@ class TestRuntimeRunnerMalformedJSON:
 
 
 # ---------------------------------------------------------------------------
-# run() reads smoke receipts and computes UNVERIFIED (D-07/D-08/D-11)
+# run() reads smoke receipts and computes UNVERIFIED
 # ---------------------------------------------------------------------------
 
 
@@ -427,7 +427,7 @@ class TestRuntimeRunnerSmokeReceipts:
         return path
 
     def test_no_receipts_all_surfaces_unverified(self, tmp_path):
-        """No receipts present -> all LLM-enumerated surfaces UNVERIFIED (D-08)."""
+        """No receipts present -> all LLM-enumerated surfaces UNVERIFIED."""
         from code_forge.runtime import RuntimeRunner
 
         diff = "diff --git a/rules.sh b/rules.sh\n+change"
@@ -528,7 +528,7 @@ class TestRuntimeRunnerSmokeReceipts:
         assert len(summary_findings) == 0
 
     def test_case_insensitive_surface_matching(self, tmp_path):
-        """Surface matching is case-insensitive substring containment (D-11)."""
+        """Surface matching is case-insensitive substring containment."""
         from code_forge.runtime import RuntimeRunner
         from code_forge.source import compute_source_hash
 
@@ -603,7 +603,7 @@ class TestRuntimeRunnerSmokeReceipts:
         assert "runtime-smoke-summary" not in ids, "surfaces=null (->empty) must produce no summary"
 
     def test_one_directional_surface_match_is_verified(self, tmp_path):
-        """Short receipt surface matches longer LLM surface (M2 kill: or not and, D-11)."""
+        """Short receipt surface matches longer LLM surface (M2 kill: or not and, )."""
         from unittest.mock import MagicMock, patch
 
         from code_forge.runtime import RuntimeRunner, write_smoke_receipt
@@ -619,7 +619,7 @@ class TestRuntimeRunnerSmokeReceipts:
         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
         assert summary is not None
         assert "all 1 surfaces verified" in summary.description, (
-            "D-11 either direction: short receipt surface 'nft' must match 'nftables-filter'"
+            "either direction: short receipt surface 'nft' must match 'nftables-filter'"
         )
 
     def test_hyphen_space_equivalence_receipt_matches_llm(self, tmp_path):

@@ -1006,7 +1006,7 @@ class TestVertexInvoke:
         assert "anthropic-version" not in {k.lower() for k in captured_headers}
 
     def test_vertex_returns_real_usage(self, monkeypatch):
-        """Vertex response returns real token usage (D-14)."""
+        """Vertex response returns real token usage."""
         from code_forge.llm_invoke import _invoke_vertex
         backend = _make_vertex_backend()
         mock_creds = MagicMock()
@@ -1416,7 +1416,7 @@ class TestIsBodyCodeRetryable:
 
 
 class TestFormatErrorMessage:
-    """_format_error_message output format per D-31-08."""
+    """_format_error_message output format per -08."""
 
     def test_contains_provider_and_code(self):
         from code_forge.llm_invoke import _format_error_message

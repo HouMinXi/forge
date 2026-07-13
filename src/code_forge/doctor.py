@@ -21,7 +21,7 @@ import yaml
 from code_forge.workspace import SAMPLING_REMEDIATION, resolve_workspace
 
 
-# -- Registry map (D-4) ---------------------------------------------------
+# -- Registry map ---------------------------------------------------------
 
 @dataclass(frozen=True)
 class RegistryEntry:

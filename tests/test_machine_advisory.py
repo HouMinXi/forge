@@ -1,11 +1,11 @@
 """Tests for machine.py advisory wiring.
 
 Covers:
-- StateMachine initializes with empty _advisories list (D-14)
-- Advisory findings do NOT affect _fixpoint_reached (D-14)
+- StateMachine initializes with empty _advisories list
+- Advisory findings do NOT affect _fixpoint_reached
 - _run_advisory_axes dispatch point exists and runs advisory_runners
-- Advisory findings serialize to advisory-findings.json (D-15)
-- Advisory findings display after separator on stderr (D-17)
+- Advisory findings serialize to advisory-findings.json
+- Advisory findings display after separator on stderr
 - advisory_runners injection point on StateMachine dataclass
 """
 from __future__ import annotations
@@ -127,7 +127,7 @@ class TestAdvisoryRunners:
 
 
 class TestAdvisorySerialization:
-    """Advisory findings serialize to advisory-findings.json (D-15)."""
+    """Advisory findings serialize to advisory-findings.json."""
 
     def test_advisory_findings_written_to_file(self, tmp_path):
         import json
@@ -153,7 +153,7 @@ class TestAdvisorySerialization:
 
 
 class TestAdvisoryDisplay:
-    """Advisory findings display after separator on stderr (D-17)."""
+    """Advisory findings display after separator on stderr."""
 
     def test_advisory_display_separator(self, tmp_path, capsys):
         finding = AdvisoryFinding(

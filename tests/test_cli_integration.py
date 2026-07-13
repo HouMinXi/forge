@@ -545,7 +545,7 @@ def _setup_git_repo_with_diff(tmp_path):
 
 
 class TestInlineFlagsMutualExclusion:
-    """D-10: --backend and inline flags are mutually exclusive."""
+    """--backend and inline flags are mutually exclusive."""
 
     def test_inline_flags_mutual_exclusion(self, tmp_path, monkeypatch, capsys):
         """--backend + --backend-url raises CliError (exit 2)."""
@@ -645,14 +645,14 @@ class TestInlineFlagsMutualExclusion:
 
 
 class TestLLMInvokeErrorWrapping:
-    """D-04/D-14: LLMInvokeError re-raised as CliError with backend name."""
+    """/: LLMInvokeError re-raised as CliError with backend name."""
 
     def test_llm_invoke_error_wrapped_as_cli_error(
         self, tmp_path, monkeypatch, capsys
     ):
         """LLMInvokeError from _run_hold_loop is wrapped as CliError with backend name.
 
-        D-04/D-14: The except LLMInvokeError clause in _run re-raises as
+        /: The except LLMInvokeError clause in _run re-raises as
         CliError("backend <name>: <msg>").
         """
         from code_forge.llm_invoke import LLMInvokeError
@@ -707,7 +707,7 @@ class TestLLMInvokeErrorWrapping:
 
 
 class TestMaxTokensInApiCalls:
-    """D-06: backend.max_tokens used in both API call paths."""
+    """backend.max_tokens used in both API call paths."""
 
     def test_max_tokens_anthropic_uses_config(self):
         """_invoke_anthropic puts backend.max_tokens in request body."""
@@ -798,7 +798,7 @@ class TestMaxTokensInApiCalls:
 
 
 class TestRealMimoApiSmoke:
-    """D-12: real API smoke test against mimo (anthropic-format) backend."""
+    """real API smoke test against mimo (anthropic-format) backend."""
 
     @pytest.mark.real_api
     @pytest.mark.skipif(

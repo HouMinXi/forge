@@ -106,7 +106,7 @@ class TestComputeSummary:
         assert s.caught == 0
 
     def test_skipped_excluded_from_denominator(self) -> None:
-        """SKIPPED entries excluded from caught+missed denominator (D-12)."""
+        """SKIPPED entries excluded from caught+missed denominator."""
         results = [
             _result(name="caught", expected="HOLD", actual="HOLD"),
             _result(
@@ -177,7 +177,7 @@ class TestFormatTable:
         assert "77.8" not in table
 
     def test_skip_rate_shown(self) -> None:
-        """Skip rate shown beside catch count (D-12)."""
+        """Skip rate shown beside catch count."""
         results = [
             _result(name="caught", expected="HOLD", actual="HOLD"),
             _result(

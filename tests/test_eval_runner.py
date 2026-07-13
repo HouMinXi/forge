@@ -86,7 +86,7 @@ class TestReplayEntry:
     def test_skipped_on_apply_failure(
         self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
     ) -> None:
-        """Diff apply error = SKIPPED result with reason string (D-12)."""
+        """Diff apply error = SKIPPED result with reason string."""
         call_count = [0]
         def side_effect(cmd, **kwargs):
             call_count[0] += 1
@@ -187,7 +187,7 @@ class TestReplayEntry:
         assert result.runs == 5
 
     def test_missing_diff_file_skipped(self, tmp_path: Path) -> None:
-        """Missing diff file at runtime = SKIPPED (D-12)."""
+        """Missing diff file at runtime = SKIPPED."""
         diff_dir = tmp_path / "corpus"
         diff_dir.mkdir()
 

@@ -5,7 +5,7 @@
 Tests cover:
   - Outlet A (build_l1_provider) contract_spec injection
   - Outlet C (_make_subagent_spawn) contract_spec injection
-  - Prompt section ordering (D-05)
+  - Prompt section ordering
   - No-contracts backward compatibility
   - Trust CLI (record, status, revoke) for contracts.yaml
 """
@@ -166,12 +166,12 @@ class TestNoContractsYaml:
 
 
 # ---------------------------------------------------------------------------
-# Prompt section order (D-05)
+# Prompt section order
 # ---------------------------------------------------------------------------
 
 
 class TestPromptSectionOrder:
-    """D-05 order: Post-Image < Conventions < Blast Radius < Contract < Diff."""
+    """order: Post-Image < Conventions < Blast Radius < Contract < Diff."""
 
     def test_prompt_section_order(self):
         from code_forge.factories import build_l1_provider

@@ -22,7 +22,7 @@ Key invariants:
   - No implicit claude -p fallthrough: when no backend is explicitly
     configured and no FORGE_OUTLET is set, CLI refuses to probe and
     raises CliError with configuration guidance.
-  - No model-capability auto-detection anywhere (LOCKED).
+  - No model-capability auto-detection anywhere.
   - gate.yaml is read via a lightweight reader that does NOT
     require a "test:" section.
 """
@@ -193,7 +193,7 @@ def resolve_outlet(
     or gate.yaml) short-circuits BEFORE any reachability probe -- Outlets
     B, C, and D NEVER probe.
 
-    LOCKED: nowhere in this function is model capability
+    Nowhere in this function is model capability
     inspected.  The only signals are the explicit override and the
     objective reachability of the configured backend.
 
