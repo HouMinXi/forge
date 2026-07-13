@@ -87,13 +87,26 @@ the numbers as reference points.
   with the venv's bin directory deliberately excluded from PATH (matching
   a clean machine), both before the fix (fails identically to the customer
   report) and after (S4 and S6 pass).
-- Still open, found while verifying the above and unrelated to it: S7's
-  mock finding-scenario response is missing the "surfaces" key forge's
-  RUNTIME axis parser expects, which the script's own exit-code check
-  does not currently tolerate. This is a static mock fixture bug (not
-  environment-dependent) that had never been exercised by any full run
-  before now, since the PATH gap above always failed earlier in the
-  same step. Not fixed here; needs its own look.
+- Second S7 root cause, found while verifying the PATH fix above: S6
+  running before S7 in the same demo directory left behind a
+  `.code-forge/mutation-result.json` with `status: "error"` (mutmut is
+  an optional dev dependency this script never installs), which forge's
+  CI mode read back on the *next* review and used to force that next
+  verdict to FAIL regardless of its own findings -- and never deleted,
+  so it kept poisoning every review after it. First suspected the mock
+  response's missing "surfaces" key (a real but separate RUNTIME-axis
+  mock-fidelity gap); a controlled re-test with that key added still
+  failed under a genuinely stripped PATH, which disproved that theory
+  and led to the actual file. Fixed in forge itself (not a script
+  workaround): a crashed/skipped mutation run is now recorded as a
+  DISMISSED finding on the same run, and the result file is always
+  consumed once read, so it can no longer affect a later, unrelated
+  review. Reproduced and verified both ways: before the fix, S6 exit 0
+  then S7 exit 1 with `infra_errors` containing "mutation error: mutmut
+  not installed"; after the fix, S6 exit 0 then S7 exit 0 with no
+  leftover mutation-result.json, confirmed under a genuinely stripped
+  PATH matching a clean machine (not just this dev box, which already
+  has mutmut installed and would have masked the bug).
 - `forge_win_e2e.ps1`: written to mirror the mac flow; PowerShell parser
   not available on the authoring box, so first verification happens on a
   real Windows machine. Run it on an internal Windows box before handing
