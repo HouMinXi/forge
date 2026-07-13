@@ -402,6 +402,31 @@ class TestFindE2eArtifacts:
             "valid pattern after the bad one must still be evaluated"
         )
 
+    def test_symlink_escaping_repo_root_is_excluded(self, tmp_path):
+        """A symlinked directory pointing outside repo_root is not followed.
+
+        glob.glob(..., recursive=True) follows symlinked directories
+        while expanding **, unlike pathlib.Path.glob(). Without a
+        containment check, a symlink inside the repo pointing to an
+        arbitrary external directory would let unrelated files outside
+        the repository count as e2e coverage.
+        """
+        outside = tmp_path.parent / (tmp_path.name + "_outside")
+        outside.mkdir()
+        (outside / "secret.py").write_text("outside content")
+
+        e2e_dir = tmp_path / "tests" / "e2e"
+        e2e_dir.mkdir(parents=True)
+        (e2e_dir / "real.py").write_text("x")
+        (e2e_dir / "linked").symlink_to(outside, target_is_directory=True)
+
+        result = find_e2e_artifacts(tmp_path, ["tests/e2e/**"])
+        assert "tests/e2e/real.py" in result
+        assert not any("linked" in path for path in result), (
+            "a match reached only through a symlink leaving repo_root "
+            "must be excluded"
+        )
+
 
 # ===========================================================================
 # Group E -- check_layer_1
