@@ -20,7 +20,7 @@ virtualenv, runs the unit suite, smokes the CLI, then exercises a real
 3. **S2** `git clone` of the repo (override with `FORGE_REPO_URL` / `FORGE_BRANCH`).
 4. **S3** fresh virtualenv; `pip install -e .[mcp,vertex]` plus test deps
    (`pytest pytest-asyncio jsonschema code-review-graph`).
-5. **S4** full unit suite. If the `claude` CLI binary is absent, the 21
+5. **S4** full unit suite. If the `claude` CLI binary is absent, the 43
    tests that shell out to it are deselected (environmental, not code).
 6. **S5** CLI smoke in a fresh demo repo: `init` (PASS/FAIL), `doctor` and
    `detect` (informational).
@@ -58,8 +58,8 @@ To test an unmerged branch, set `FORGE_BRANCH` before running.
 
 ## Expected numbers (main branch)
 
-- full environment (claude CLI present): `2734 passed, 8 skipped`
-- without claude CLI: `2693 passed, 8 skipped, 43 deselected`
+- full environment (claude CLI present): `2737 passed, 8 skipped`
+- without claude CLI: `2694 passed, 8 skipped, 43 deselected`
 
 These move as tests are added; treat OVERALL PASS/FAIL as the signal and
 the numbers as reference points.
@@ -69,8 +69,8 @@ the numbers as reference points.
 - `forge_mac_e2e.sh`: shellcheck-clean; validated by a full end-to-end run
   on Linux (clone through S7b, OVERALL PASS). First genuine macOS run
   2026-07-12: OVERALL FAIL (4 root causes, all fixed by mac-wave1).
-  Linux py3.12: 2693 passed / 8 skipped / 43 deselected.
-  Linux py3.13: 2693 passed / 8 skipped / 43 deselected.
+  Linux py3.12: 2694 passed / 8 skipped / 43 deselected (2737 / 8 with
+  claude on PATH). Linux py3.13: 2694 passed / 8 skipped / 43 deselected.
   Mac numbers: pending customer re-run.
 - `forge_win_e2e.ps1`: written to mirror the mac flow; PowerShell parser
   not available on the authoring box, so first verification happens on a

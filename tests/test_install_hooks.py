@@ -1006,7 +1006,12 @@ class TestBuiltinD12Check:
         assert r.stdout != b"", "CJK should be matched in strict mode"
 
     def test_strict_mode_ascii_lf_not_blocked(self):
-        """strict mode: plain ASCII with LF does NOT match (F-E trap)."""
+        """strict mode: plain ASCII with a trailing newline does NOT match.
+
+        perl -ne keeps the line's trailing LF in $_ (unlike grep, which
+        strips it); LF must stay in the allowed set or every added diff
+        line -- which always ends in a newline -- would match.
+        """
         ascii_lf = b"plain ascii line\n"
         r = self._run_perl_pattern("strict", ascii_lf)
         assert r.stdout == b"", "ASCII+LF must not match strict pattern"
