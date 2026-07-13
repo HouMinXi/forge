@@ -288,6 +288,11 @@ class StateMachine:
         Per R1 H5: converged=True on PASS only; FAIL exits early so
         converged=False.
         02-02: Added async mutation result check and launch.
+
+        A prior mutation-result.json is consumed on read once terminal
+        (done or error); a "running" marker with a live PID is the only
+        case left in place -- a "running" marker whose PID has died is
+        also consumed.
         """
         self._execute_round(round_index=0)
 
@@ -298,13 +303,24 @@ class StateMachine:
                 with open(result_path, "r", encoding="utf-8") as f:
                     result_data = json.load(f)
 
-                if "status" not in result_data:
+                if not isinstance(result_data, dict):
+                    self._state.infra_errors.append(
+                        "CI: mutation-result.json is not a JSON object"
+                    )
+                    self._unlink_mutation_result(result_path)
+                elif "status" not in result_data:
                     self._state.infra_errors.append(
                         "CI: mutation-result.json missing status field"
                     )
+                    self._unlink_mutation_result(result_path)
                 else:
                     status = result_data["status"]
                     if status == "done":
+                        # Consume the result: a finished run is a
+                        # one-shot measurement, and the relaunch below
+                        # re-measures on the next review instead of
+                        # replaying this verdict forever.
+                        self._unlink_mutation_result(result_path)
                         survivors = result_data.get("survivors", [])
                         if survivors:
                             self._state.verdict = Verdict.FAIL
@@ -346,18 +362,20 @@ class StateMachine:
                                     ),
                                 )
                                 self._state.findings.append(finding)
-                                result_path.unlink()
+                                self._unlink_mutation_result(result_path)
                     elif status == "error":
+                        # A crashed mutation run is an infra problem,
+                        # not a review result: report it and consume the
+                        # file so the verdict stays with the findings,
+                        # matching how a dead mutation PID and a LOCAL
+                        # l2_runner failure already degrade.
                         error_msg = result_data.get(
                             "message", "unknown error"
                         )
-                        self._state.verdict = Verdict.FAIL
-                        self._state.converged = False
                         self._state.infra_errors.append(
                             "CI: mutation error: %s" % error_msg
                         )
-                        self._persist_state()
-                        return Verdict.FAIL
+                        self._unlink_mutation_result(result_path)
             except (json.JSONDecodeError, KeyError, OSError) as e:
                 self._state.infra_errors.append(
                     "CI: failed to read mutation-result.json: %s" % e
@@ -369,6 +387,11 @@ class StateMachine:
         diff_files = [str(f) for f in self._source_files()]
         py_files = [f for f in diff_files if f.endswith(".py")]
 
+        # No Python files or no mutmut means there is nothing to
+        # measure. That is an environment fact, not a mutation result,
+        # so it is recorded as a DISMISSED finding on this same run
+        # (below) rather than a mutation-result.json file a later run
+        # would read back and could get stuck on.
         if py_files and shutil.which("mutmut") is not None:
             try:
                 from .gate_check import load_gate_config
@@ -445,27 +468,40 @@ class StateMachine:
                 )
                 thread.start()
         elif not py_files:
-            # No Python files, write MUTATION_SKIPPED
-            skip_data = {
-                "status": "error",
-                "message": "no Python files in diff",
-            }
-            try:
-                with open(result_path, "w", encoding="utf-8") as f:
-                    json.dump(skip_data, f)
-            except OSError:
-                pass
-        elif shutil.which("mutmut") is None:
-            # mutmut not installed
-            skip_data = {
-                "status": "error",
-                "message": "mutmut not installed",
-            }
-            try:
-                with open(result_path, "w", encoding="utf-8") as f:
-                    json.dump(skip_data, f)
-            except OSError:
-                pass
+            # DISMISSED, not a file write: visible in this same run's
+            # findings/summary instead of silently deferred to a file
+            # only a later run would read (and could get stuck on).
+            self._state.findings.append(
+                StateFinding(
+                    id="MUTATION_SKIPPED",
+                    fingerprint="mutation-no-python",
+                    source="MUTANT",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description=(
+                        "no Python files in diff "
+                        "(mutation is Python-only MVP)"
+                    ),
+                )
+            )
+        else:
+            # py_files is non-empty here (the elif above), so reaching
+            # this branch at all already means shutil.which("mutmut")
+            # was None in the first condition -- no need to re-check it
+            # (and re-checking risks a different answer if PATH changed
+            # between the two calls).
+            self._state.findings.append(
+                StateFinding(
+                    id="MUTATION_SKIPPED",
+                    fingerprint="mutation-unavailable",
+                    source="MUTANT",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description="mutmut not installed (soft dependency)",
+                )
+            )
 
         # Proceed with normal L0+L1 verdict determination.
         # Coverage gaps (files no review layer examined) also FAIL CI:
@@ -1430,6 +1466,20 @@ class StateMachine:
         """Write state.json to cwd/.code-forge/state.json."""
         state_path = self.cwd / ".code-forge" / "state.json"
         save_state(self._state, state_path)
+
+    def _unlink_mutation_result(self, result_path: Path) -> None:
+        """Remove a mutation-result.json this round has consumed.
+
+        Isolated in its own try/except so a delete failure is reported
+        accurately instead of being folded into the caller's broader
+        "failed to read" message.
+        """
+        try:
+            result_path.unlink()
+        except OSError as e:
+            self._state.infra_errors.append(
+                "CI: failed to remove mutation-result.json: %s" % e
+            )
 
     def _source_files(self) -> list[Path]:
         """Return source files from resolved review."""
