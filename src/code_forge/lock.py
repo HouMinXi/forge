@@ -210,15 +210,23 @@ def acquire_lock(path: Path) -> None:
 
 
 def _handle_existing_lock(path: Path) -> None:
-    """Read PID; check liveness; remove if dead."""
+    """Read PID; check liveness; remove if dead.
+
+    ValueError (empty/unparseable file) is treated as "owner alive"
+    -- the most likely cause is a concurrent O_CREAT|O_EXCL that
+    succeeded but whose os.write(pid) hasn't landed yet.  Deleting
+    the file in that window lets both contenders believe they won.
+    """
     try:
         pid = int(path.read_text(encoding="utf-8").strip())
-    except (ValueError, FileNotFoundError):
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+    except FileNotFoundError:
         return
+    except ValueError:
+        # Empty or unparseable lock file -- the owner likely just
+        # created it and hasn't written its PID yet.  Treat as
+        # alive to avoid a race where we unlink the file and both
+        # processes acquire the lock.
+        raise ForgeLockBusy(-1, path)
     if _pid_alive(pid):
         raise ForgeLockBusy(pid, path)
     try:
