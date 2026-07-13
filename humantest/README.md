@@ -66,12 +66,34 @@ the numbers as reference points.
 
 ## Verification status
 
-- `forge_mac_e2e.sh`: shellcheck-clean; validated by a full end-to-end run
-  on Linux (clone through S7b, OVERALL PASS). First genuine macOS run
-  2026-07-12: OVERALL FAIL (4 root causes, all fixed by mac-wave1).
-  Linux py3.12: 2695 passed / 8 skipped / 43 deselected (2738 / 8 with
-  claude on PATH). Linux py3.13: 2695 passed / 8 skipped / 43 deselected.
-  Mac numbers: pending customer re-run.
+- `forge_mac_e2e.sh`: shellcheck-clean. First genuine macOS run 2026-07-12:
+  OVERALL FAIL (4 root causes, all fixed by mac-wave1). Second genuine macOS
+  run 2026-07-13: OVERALL FAIL again, root cause this time was the E2E
+  script itself, not forge -- see below. Linux py3.12: 2695 passed / 8
+  skipped / 43 deselected (2738 / 8 with claude on PATH). Linux py3.13:
+  2695 passed / 8 skipped / 43 deselected. Mac numbers: pending customer
+  re-run.
+- Earlier "validated by a full end-to-end run on Linux, OVERALL PASS" was
+  run on a dev machine that already had ruff/pylint/flake8/pytest installed
+  globally, so it never actually exercised this script's own PATH handling.
+  The script invokes the venv's binaries by absolute path but never puts
+  the venv's bin directory on PATH, so any code that resolves a bare
+  command name via PATH (forge's own toolchain auto-detect, and a unit
+  test's simulated pre-commit hook shelling out to "python3") silently
+  falls through to whatever the OS ships. On a genuinely clean machine
+  that finds nothing, producing the exact "No toolchain detected" /
+  "No module named pytest" failures the customer saw. Fixed by exporting
+  `PATH="$VENV/bin:$PATH"` once, right after S3. Reproduced and verified
+  with the venv's bin directory deliberately excluded from PATH (matching
+  a clean machine), both before the fix (fails identically to the customer
+  report) and after (S4 and S6 pass).
+- Still open, found while verifying the above and unrelated to it: S7's
+  mock finding-scenario response is missing the "surfaces" key forge's
+  RUNTIME axis parser expects, which the script's own exit-code check
+  does not currently tolerate. This is a static mock fixture bug (not
+  environment-dependent) that had never been exercised by any full run
+  before now, since the PATH gap above always failed earlier in the
+  same step. Not fixed here; needs its own look.
 - `forge_win_e2e.ps1`: written to mirror the mac flow; PowerShell parser
   not available on the authoring box, so first verification happens on a
   real Windows machine. Run it on an internal Windows box before handing

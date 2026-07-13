@@ -128,6 +128,15 @@ else
     exit 1
 fi
 
+# Every step below invokes the venv's binaries by absolute path, but that
+# alone does not help code (forge's own toolchain detection, a unit test's
+# simulated git hook) that shells out to a BARE command name like "ruff" or
+# "python3" and depends on PATH to find it. Without the venv's bin directory
+# on PATH, those bare lookups fall through to whatever the OS ships -- which
+# on a fresh machine has no linters and no pytest, so forge reports "No
+# toolchain detected" even though ruff was just installed one step above.
+export PATH="$VENV/bin:$PATH"
+
 # ---------------------------------------------------------------------
 banner "S4: unit test suite (takes ~5-10 minutes)"
 # 43 tests in these two classes invoke the external 'claude' CLI binary.
