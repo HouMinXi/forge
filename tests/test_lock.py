@@ -17,6 +17,7 @@ from code_forge.lock import (
     ForgeLockBusy,
     _handle_existing_lock,
     _pid_alive,
+    _write_all,
     acquire_lock,
 )
 
@@ -38,6 +39,22 @@ class TestAcquireFresh:
         raw = lock_path.read_text()
         assert raw == "%d\n" % os.getpid()
 
+    def test_lock_file_not_group_or_other_accessible(self, tmp_path):
+        """The lock file grants no group/other access.
+
+        No consumer in this codebase reads a forge lock file across a
+        user boundary, so there is no reason to widen permissions --
+        doing so would need a chmod call after the file is created,
+        opening a TOCTOU window between close() and chmod() for no
+        actual benefit. Checking the group/other bits (rather than
+        asserting the exact mode) keeps this test correct under an
+        unusual umask that clears additional owner bits.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        acquire_lock(lock_path)
+        mode = lock_path.stat().st_mode & 0o777
+        assert mode & 0o077 == 0
+
 
 class TestAcquireLivePid:
     """(b) acquire on existing lock with live PID -> ForgeLockBusy."""
@@ -48,6 +65,378 @@ class TestAcquireLivePid:
         with pytest.raises(ForgeLockBusy) as exc_info:
             acquire_lock(lock_path)
         assert exc_info.value.pid == os.getpid()
+
+
+class TestAcquireAtomicLink:
+    """Write-then-link never exposes a transiently-empty lock path."""
+
+    def test_content_written_before_link(self, tmp_path, monkeypatch):
+        """os.link() must only run once the temp file has real content.
+
+        Core invariant of the atomic-link design: a concurrent reader
+        can never observe *path* existing but empty, because linking
+        only happens after the PID is already on disk.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        real_link = os.link
+        seen = {}
+
+        def _spy_link(src, dst):
+            seen["content"] = Path(src).read_text(encoding="utf-8")
+            return real_link(src, dst)
+
+        monkeypatch.setattr(os, "link", _spy_link)
+        acquire_lock(lock_path)
+        assert seen["content"] == "%d\n" % os.getpid()
+
+    def test_write_all_loops_on_partial_write(self, tmp_path, monkeypatch):
+        """_write_all must retry until every byte is written, not just
+        whatever a single os.write() call happened to accept."""
+        data = b"12345\n"
+        chunks_written = []
+        real_write = os.write
+
+        def _short_write(fd, buf):
+            n = min(2, len(buf))
+            chunks_written.append(bytes(buf[:n]))
+            return real_write(fd, bytes(buf[:n]))
+
+        monkeypatch.setattr(os, "write", _short_write)
+        target = tmp_path / "write_all_target"
+        fd = os.open(str(target), os.O_CREAT | os.O_WRONLY, 0o644)
+        try:
+            _write_all(fd, data)
+        finally:
+            os.close(fd)
+        assert target.read_bytes() == data
+        # Confirms the loop actually ran more than once (not a fluke
+        # single call that happened to accept everything).
+        assert len(chunks_written) == 3
+
+    def test_write_all_raises_on_zero_progress_write(
+        self, tmp_path, monkeypatch
+    ):
+        """A zero-byte os.write() return with data still pending must
+        raise, not spin forever -- nothing changes between iterations
+        for a subsequent retry to have any chance of progressing.
+
+        The fake stops returning 0 after a few calls so that a version
+        of _write_all without the guard fails this test cleanly (via
+        pytest.raises' "DID NOT RAISE") instead of hanging the run.
+        """
+        real_write = os.write
+        calls = {"n": 0}
+
+        def _zero_for_a_while(fd, buf):
+            calls["n"] += 1
+            if calls["n"] <= 3:
+                return 0
+            return real_write(fd, buf)
+
+        monkeypatch.setattr(os, "write", _zero_for_a_while)
+        target = tmp_path / "write_all_zero_target"
+        fd = os.open(str(target), os.O_CREAT | os.O_WRONLY, 0o644)
+        try:
+            with pytest.raises(OSError, match="returned 0"):
+                _write_all(fd, b"12345\n")
+        finally:
+            os.close(fd)
+
+    def test_no_leftover_tmp_file_on_success(self, tmp_path):
+        """No .tmp-<pid> file remains after a successful acquire."""
+        lock_path = tmp_path / "code-forge.lock"
+        acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_no_leftover_tmp_file_on_busy(self, tmp_path):
+        """The temp file is also cleaned up when acquisition fails busy."""
+        lock_path = tmp_path / "code-forge.lock"
+        lock_path.write_text("%d\n" % os.getpid())
+        with pytest.raises(ForgeLockBusy):
+            acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_tmp_name_unpredictable_across_calls(self, tmp_path, monkeypatch):
+        """Two acquires (same PID, after releasing) use different temp
+        names.
+
+        A name derived only from path + our own PID would be identical
+        every time and let another user with write access to the same
+        directory pre-plant a symlink at that exact path. mkstemp's
+        random suffix means the name can't be predicted in advance.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        seen_names = []
+        real_link = os.link
+
+        def _spy_link(src, dst):
+            seen_names.append(Path(src).name)
+            return real_link(src, dst)
+
+        monkeypatch.setattr(os, "link", _spy_link)
+        acquire_lock(lock_path)
+        lock_path.unlink()
+        acquire_lock(lock_path)
+        assert len(seen_names) == 2
+        assert seen_names[0] != seen_names[1]
+
+    def test_link_source_gone_raises_clear_oserror(
+        self, tmp_path, monkeypatch
+    ):
+        """If tmp_path itself vanishes before os.link() can run (e.g.
+        something else with write access to the directory removed it),
+        the resulting FileNotFoundError from os.link() must surface as
+        a clear OSError, not an unexplained "no such file"."""
+        lock_path = tmp_path / "code-forge.lock"
+
+        def _source_already_gone(src, dst):
+            raise FileNotFoundError(
+                "simulated: tmp file removed before linking"
+            )
+
+        monkeypatch.setattr(os, "link", _source_already_gone)
+        with pytest.raises(OSError, match="disappeared before"):
+            acquire_lock(lock_path)
+
+    def test_path_removed_right_after_link_raises_clear_oserror(
+        self, tmp_path, monkeypatch
+    ):
+        """If *path* is removed by something else in the instant
+        between os.link() succeeding and our own inode-verification
+        stat(), the resulting FileNotFoundError from os.stat() must
+        surface as a clear OSError, not an unexplained "no such
+        file"."""
+        lock_path = tmp_path / "code-forge.lock"
+        real_link = os.link
+
+        def _link_then_vanish(src, dst):
+            real_link(src, dst)
+            os.unlink(dst)
+
+        monkeypatch.setattr(os, "link", _link_then_vanish)
+        with pytest.raises(OSError, match="disappeared immediately"):
+            acquire_lock(lock_path)
+
+    def test_write_failure_does_not_leak_tmp_file(
+        self, tmp_path, monkeypatch
+    ):
+        """os.write() raising must not leave the temp file behind."""
+        lock_path = tmp_path / "code-forge.lock"
+
+        def _boom_write(fd, data):
+            raise OSError("disk full (injected)")
+
+        monkeypatch.setattr(os, "write", _boom_write)
+        with pytest.raises(OSError):
+            acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_inode_mismatch_after_link_rejected_not_returned_success(
+        self, tmp_path, monkeypatch
+    ):
+        """If the path linked into place does not share the temp
+        file's inode -- e.g. because something replaced the temp file
+        between it being written and being linked -- acquire_lock must
+        not return success. It must remove the bad link and raise.
+
+        Simulates the swap by making the mocked os.link() ignore our
+        real temp file and link an unrelated decoy file into *path*
+        instead, the same observable effect a symlink-swap attack
+        would have (verified separately: a real symlink swap makes
+        os.link() hard-link *path* to the swapped-in file's inode).
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        decoy = tmp_path / "decoy.txt"
+        decoy.write_text("not a pid\n")
+        real_link = os.link
+
+        def _link_to_decoy_instead(src, dst):
+            real_link(str(decoy), dst)
+
+        monkeypatch.setattr(os, "link", _link_to_decoy_instead)
+        with pytest.raises(OSError, match="did not match"):
+            acquire_lock(lock_path)
+        assert not lock_path.exists()
+        # The decoy itself is untouched -- only *path*'s link to it
+        # was removed, not the file the attack pointed at.
+        assert decoy.read_text() == "not a pid\n"
+
+    def test_symlink_swap_after_link_rejected_not_returned_success(
+        self, tmp_path, monkeypatch
+    ):
+        """A genuine hard link to our own temp file must not be
+        confused with a symlink that resolves to the same content.
+
+        Simulates an attacker who, in the instant right after our
+        os.link() succeeds, removes the real hard link at *path* and
+        replaces it with a symlink pointing back at tmp_path (still
+        present at that point). stat() would follow the symlink and
+        see the correct inode, wrongly treating this as a match --
+        confirmed empirically that only lstat() (which inspects the
+        directory entry itself, not what it resolves to) tells the
+        two apart. Without that distinction, acquire_lock would return
+        success while *path* is actually a symlink that goes dangling
+        the moment tmp_path is cleaned up.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        real_link = os.link
+
+        def _link_then_swap_for_symlink(src, dst):
+            real_link(src, dst)
+            os.unlink(dst)
+            os.symlink(src, dst)
+
+        monkeypatch.setattr(os, "link", _link_then_swap_for_symlink)
+        with pytest.raises(OSError, match="did not match"):
+            acquire_lock(lock_path)
+        # The bad symlink must not be left behind masquerading as a
+        # valid lock.
+        assert not lock_path.is_symlink()
+        assert not lock_path.exists()
+
+    def test_inode_mismatch_unlink_race_does_not_mask_tampering_error(
+        self, tmp_path, monkeypatch
+    ):
+        """If *path* is removed by something else between the
+        inode-check stat() and our own cleanup unlink(), that race
+        must not replace the informative tampering OSError with a
+        bare FileNotFoundError from the unlink call itself.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        decoy = tmp_path / "decoy.txt"
+        decoy.write_text("not a pid\n")
+        real_link = os.link
+        real_unlink = os.unlink
+
+        def _link_to_decoy_instead(src, dst):
+            real_link(str(decoy), dst)
+
+        def _unlink_path_already_gone(target):
+            if target == str(lock_path):
+                raise FileNotFoundError(
+                    "simulated: someone else already removed it"
+                )
+            return real_unlink(target)
+
+        monkeypatch.setattr(os, "link", _link_to_decoy_instead)
+        monkeypatch.setattr(os, "unlink", _unlink_path_already_gone)
+        with pytest.raises(OSError, match="did not match"):
+            acquire_lock(lock_path)
+
+    def test_no_hard_link_support_propagates_as_plain_oserror(
+        self, tmp_path, monkeypatch
+    ):
+        """A filesystem without hard-link support (e.g. FAT32) makes
+        os.link() raise OSError -- documented as unsupported with no
+        fallback, so that OSError must reach the caller as-is rather
+        than being swallowed or misread as a busy/stale lock."""
+        lock_path = tmp_path / "code-forge.lock"
+
+        def _no_hardlink_support(src, dst):
+            raise OSError(
+                "simulated: filesystem does not support hard links"
+            )
+
+        monkeypatch.setattr(os, "link", _no_hardlink_support)
+        with pytest.raises(OSError, match="does not support hard links"):
+            acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_directory_at_lock_path_raises_friendly_oserror(
+        self, tmp_path
+    ):
+        """A directory sitting at the lock path -> friendly OSError,
+        no leftover temp file.
+
+        os.link() fails with FileExistsError (not IsADirectoryError)
+        when the destination is an existing directory, which routes
+        through _handle_existing_lock -- confirmed empirically to still
+        surface the same friendly message as the old direct-open path,
+        with no temp file left behind.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        lock_path.mkdir()
+        with pytest.raises(OSError, match="is a directory"):
+            acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_directory_at_lock_path_permission_error_variant(
+        self, tmp_path, monkeypatch
+    ):
+        """Same as above, but simulating a platform where os.link()
+        raises PermissionError instead of FileExistsError for a
+        directory destination (observed on some non-Linux Unixes).
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        lock_path.mkdir()
+        real_link = os.link
+
+        def _link_as_permission_error(src, dst):
+            try:
+                real_link(src, dst)
+            except FileExistsError:
+                raise PermissionError("simulated non-Linux errno")
+
+        monkeypatch.setattr(os, "link", _link_as_permission_error)
+        with pytest.raises(OSError, match="is a directory"):
+            acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_genuine_permission_error_propagates_raw(
+        self, tmp_path, monkeypatch
+    ):
+        """A PermissionError unrelated to *path* being a directory must
+        propagate as-is, not get misread as a busy or stale lock.
+
+        Distinguishes the macOS directory-destination quirk (handled
+        above) from a real EACCES on the target directory, where
+        misclassifying it as ForgeLockBusy would hide the actual cause.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+
+        def _boom_link(src, dst):
+            raise PermissionError("simulated EACCES, unrelated to path")
+
+        monkeypatch.setattr(os, "link", _boom_link)
+        with pytest.raises(PermissionError, match="simulated EACCES"):
+            acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
+
+    def test_is_dir_probe_failure_does_not_mask_original_error(
+        self, tmp_path, monkeypatch
+    ):
+        """If path.is_dir() itself raises while deciding whether a
+        PermissionError from os.link() was the directory-destination
+        case, the ORIGINAL PermissionError must still propagate --
+        not the probe's own, unrelated failure.
+
+        Distinguishes a probe-time error (e.g. EACCES on a directory
+        component that changed since os.link() ran) from a genuine
+        answer of False, so a second exception never silently replaces
+        the first one a caller actually needs to see.
+        """
+        lock_path = tmp_path / "code-forge.lock"
+        real_is_dir = Path.is_dir
+
+        def _boom_link(src, dst):
+            raise PermissionError("simulated EACCES from os.link")
+
+        def _boom_is_dir(self):
+            # Only fake a probe failure for *lock_path* itself -- Path.mkdir
+            # (called earlier in acquire_lock for path.parent, which is
+            # tmp_path and genuinely exists) also calls is_dir() internally
+            # under exist_ok=True, and must keep seeing real answers.
+            if self == lock_path:
+                raise OSError("simulated EACCES probing is_dir")
+            return real_is_dir(self)
+
+        monkeypatch.setattr(os, "link", _boom_link)
+        monkeypatch.setattr(Path, "is_dir", _boom_is_dir)
+        with pytest.raises(
+            PermissionError, match="simulated EACCES from os.link"
+        ):
+            acquire_lock(lock_path)
+        assert list(tmp_path.glob("*.tmp-*")) == []
 
 
 class TestAcquireDeadPid:
@@ -260,6 +649,22 @@ class TestPidAlive:
         proc.wait(timeout=5)
         lock_path = tmp_path / "forge.lock"
         lock_path.write_text(str(proc.pid))
+        _handle_existing_lock(lock_path)
+        assert not lock_path.exists()
+
+    def test_handle_existing_lock_empty_file_reclaimed_immediately(
+        self, tmp_path
+    ):
+        """Empty/unparseable lock file -> reclaimed right away, no raise.
+
+        Under the atomic write-then-link design, path is never linked
+        into place until its content is fully written, so an empty path
+        can only come from outside this module (an older forge version,
+        manual tampering) -- there is no legitimate in-progress writer
+        to wait for.
+        """
+        lock_path = tmp_path / "forge.lock"
+        lock_path.write_text("")
         _handle_existing_lock(lock_path)
         assert not lock_path.exists()
 
