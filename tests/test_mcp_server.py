@@ -18,6 +18,7 @@ from code_forge.user_config import (
 )
 from code_forge.mcp_server import (
     _check_backend,
+    _job_cap_s,
     _make_result,
     _make_simple_result,
     _resolve_workspace,
@@ -2010,3 +2011,92 @@ async def test_null_coercion_coerces_none_to_empty_string():
     assert received_args.get("other") == "val", (
         "Non-None value was corrupted"
     )
+
+
+# -- _job_cap_s direct tests (R-1) --
+
+
+def _make_backend(backend_type="cli", timeout_s=0, name="test"):
+    from code_forge.backend import BackendConfig
+    return BackendConfig(name=name, type=backend_type, model="", timeout_s=timeout_s)
+
+
+def test_job_cap_s_backend_explicit_timeout():
+    """Backend with timeout_s=1800 -> 1800 + 600 = 2400.0."""
+    be = _make_backend(timeout_s=1800)
+    with (
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+    ):
+        assert _job_cap_s(Path("/tmp")) == 2400.0
+
+
+def test_job_cap_s_api_backend_default_timeout():
+    """API backend with no explicit timeout -> API cap 600 + 600 = 1200.0."""
+    be = _make_backend(backend_type="api", timeout_s=0)
+    with (
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+    ):
+        assert _job_cap_s(Path("/tmp")) == 1200.0
+
+
+def test_job_cap_s_cli_backend_default_timeout():
+    """CLI backend with no explicit timeout -> CLI cap 300 + 600 = 900.0."""
+    be = _make_backend(backend_type="cli", timeout_s=0)
+    with (
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+    ):
+        assert _job_cap_s(Path("/tmp")) == 900.0
+
+
+def test_job_cap_s_env_override_wins():
+    """FORGE_MCP_JOB_TIMEOUT_S=50 -> 50.0, ignoring derived value."""
+    with patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "50"}):
+        assert _job_cap_s(Path("/tmp")) == 50.0
+
+
+def test_job_cap_s_env_junk_falls_back(caplog):
+    """FORGE_MCP_JOB_TIMEOUT_S=junk -> derived CLI 900.0 + warning."""
+    be = _make_backend(backend_type="cli", timeout_s=0)
+    with (
+        patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "junk"}),
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+    ):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
+            result = _job_cap_s(Path("/tmp"))
+    assert result == 900.0
+    assert any("not an int" in r.message for r in caplog.records)
+
+
+def test_job_cap_s_env_negative_falls_back(caplog):
+    """FORGE_MCP_JOB_TIMEOUT_S=-1 -> derived CLI 900.0 + warning."""
+    be = _make_backend(backend_type="cli", timeout_s=0)
+    with (
+        patch.dict(os.environ, {"FORGE_MCP_JOB_TIMEOUT_S": "-1"}),
+        patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
+        patch("code_forge.backend.resolve_backend", return_value=be),
+    ):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"):
+            result = _job_cap_s(Path("/tmp"))
+    assert result == 900.0
+    assert any("not positive" in r.message for r in caplog.records)
+
+
+def test_job_cap_s_resolution_failure_falls_back(caplog):
+    """Broken gate.yaml -> DEFAULT_BACKEND (CLI, no timeout) -> 900.0 + warning."""
+    import logging
+    with (
+        patch(
+            "code_forge.cli._load_gate_backends",
+            side_effect=RuntimeError("broken yaml"),
+        ),
+        caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
+    ):
+        result = _job_cap_s(Path("/tmp"))
+    assert result == 900.0
+    assert any("falling back" in r.message for r in caplog.records)

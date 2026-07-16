@@ -7,7 +7,7 @@ import asyncio
 import os
 import tempfile
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -514,3 +514,31 @@ def test_read_stderr_tail_truncates():
     result = _read_stderr_tail({"stderr_log_path": f.name}, max_bytes=100)
     assert len(result.encode()) <= 100
     os.unlink(f.name)
+
+
+# -- R-3: SIGKILL reap timeout edge test --
+
+
+@pytest.mark.asyncio
+async def test_watchdog_sigkill_reap_timeout_exit_code():
+    """D-state child after SIGKILL -> exit_code=-1, verdict=UNKNOWN(-1)."""
+
+    async def _comm():
+        await asyncio.sleep(60)
+        return (b"", b"")
+
+    task = asyncio.ensure_future(_comm())
+    proc = MagicMock()
+    proc.returncode = None  # stays None even after SIGKILL
+
+    async def _no_reap(p, grace=5.0):
+        pass  # simulate D-state: SIGKILL sent but proc.returncode stays None
+
+    job_id = start_job(task, proc, max_lifetime_s=0.1)
+    with patch("code_forge.mcp_jobs._terminate_and_reap", side_effect=_no_reap):
+        await asyncio.sleep(0.5)
+    entry = _jobs.get(job_id)
+    assert entry is not None
+    assert entry["status"] == "failed"
+    assert entry["result"]["exit_code"] == -1
+    assert entry["result"]["verdict"] == "TIMEOUT"

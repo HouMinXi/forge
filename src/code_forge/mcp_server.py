@@ -263,8 +263,17 @@ def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
             env_val = int(env_raw)
             if env_val > 0:
                 return float(env_val)
+            log.warning(
+                "FORGE_MCP_JOB_TIMEOUT_S=%r is not positive; "
+                "falling back to derived cap",
+                env_raw,
+            )
         except ValueError:
-            pass  # fall through to derived
+            log.warning(
+                "FORGE_MCP_JOB_TIMEOUT_S=%r is not an int; "
+                "falling back to derived cap",
+                env_raw,
+            )
 
     # Resolve the BackendConfig to get the effective invoke timeout
     from code_forge import cli as _cli
@@ -283,6 +292,12 @@ def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
             cli_value=backend_name or None,
         )
     except Exception:
+        log.warning(
+            "backend resolution failed; falling back to default "
+            "CLI backend (timeout_s=%d)",
+            effective_invoke_timeout_s(_DEFAULT),
+            exc_info=True,
+        )
         backend = _DEFAULT
 
     return float(effective_invoke_timeout_s(backend) + 600)

@@ -221,13 +221,14 @@ async def _wait_for_job(job_id: str) -> None:
         # Read stderr log BEFORE the finally-block unlink
         stderr_tail = _read_stderr_tail(entry)
         await _terminate_and_reap(proc)
+        # D-state children survive SIGKILL; proc.returncode stays None.
         entry["status"] = "failed"
         entry["result"] = {
             "stdout": "",
             "stderr": (
                 "job exceeded %ds cap\n%s" % (int(cap), stderr_tail)
             ),
-            "exit_code": proc.returncode,
+            "exit_code": proc.returncode if proc.returncode is not None else -1,
             "verdict": "TIMEOUT",
             "duration_s": elapsed,
         }
