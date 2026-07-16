@@ -352,9 +352,10 @@ async def test_run_cli_budgeted_timeout_returns_task_and_proc():
 
 @pytest.mark.asyncio
 async def test_run_cli_budgeted_cancelled_kills_proc():
-    """CancelledError triggers _kill_and_reap: kill + cancel task."""
+    """CancelledError triggers _kill_and_reap: terminate + cancel task."""
     mock_proc = MagicMock()
     mock_proc.kill = MagicMock()
+    mock_proc.terminate = MagicMock()
     mock_proc.returncode = None
     mock_proc.wait = AsyncMock()
 
@@ -378,7 +379,8 @@ async def test_run_cli_budgeted_cancelled_kills_proc():
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    mock_proc.kill.assert_called_once()
+    # Unified kill sequence: terminate first, kill only on grace timeout
+    mock_proc.terminate.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -630,6 +632,9 @@ async def test_forge_review_timeout_returns_job_ref():
             return_value=(mock_task, mock_proc, "/tmp/fake.log"),
         ),
         patch(
+            "code_forge.mcp_server._job_cap_s", return_value=900.0,
+        ),
+        patch(
             "code_forge.mcp_server.start_job", return_value="test-job-id"
         ),
     ):
@@ -654,6 +659,9 @@ async def test_forge_review_timeout_passes_tempfile_to_start_job():
             return_value=(mock_task, mock_proc, "/tmp/fake-stderr.log"),
         ),
         patch(
+            "code_forge.mcp_server._job_cap_s", return_value=900.0,
+        ),
+        patch(
             "code_forge.mcp_server.start_job", return_value="test-job-id"
         ) as mock_start,
     ):
@@ -661,6 +669,7 @@ async def test_forge_review_timeout_passes_tempfile_to_start_job():
         _, kwargs = mock_start.call_args
         assert kwargs.get("tempfile_path") is not None
         assert kwargs.get("stderr_log_path") == "/tmp/fake-stderr.log"
+        assert kwargs.get("max_lifetime_s") == 900.0
 
 
 @pytest.mark.asyncio
@@ -711,6 +720,9 @@ async def test_forge_gate_check_timeout_returns_job_ref():
             return_value=(mock_task, mock_proc, "/tmp/fake.log"),
         ),
         patch(
+            "code_forge.mcp_server._job_cap_s", return_value=900.0,
+        ),
+        patch(
             "code_forge.mcp_server.start_job", return_value="test-job-id"
         ) as mock_start,
     ):
@@ -719,7 +731,9 @@ async def test_forge_gate_check_timeout_returns_job_ref():
         assert result.structuredContent["job_id"] == "test-job-id"
         assert result.structuredContent["status"] == "running"
         mock_start.assert_called_once_with(
-            mock_task, mock_proc, stderr_log_path="/tmp/fake.log"
+            mock_task, mock_proc,
+            stderr_log_path="/tmp/fake.log",
+            max_lifetime_s=900.0,
         )
 
 

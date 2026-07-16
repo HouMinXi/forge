@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock, Mock
 import pytest
 
 from code_forge.llm_invoke import llm_invoke, LLMInvokeError, LLMResult, Usage
-from code_forge.backend import BackendConfig
+from code_forge.backend import BackendConfig, DEFAULT_BACKEND
 
 
 def _make_mock_proc(returncode=0, stdout="", stderr=""):
@@ -2950,3 +2950,75 @@ class TestReadWithDeadlineRealPath:
                 deadline=deadline,
                 backend_name="my-backend",
             )
+
+
+# -- effective_invoke_timeout_s (A2 + A3) --
+
+
+class TestEffectiveInvokeTimeoutS:
+    """Tests for the shared timeout-resolution helper."""
+
+    def test_backend_timeout_s_wins(self):
+        from code_forge.llm_invoke import effective_invoke_timeout_s
+        be = BackendConfig(
+            name="mimo", type="api", model="x",
+            timeout_s=1800, format=None,
+        )
+        assert effective_invoke_timeout_s(be) == 1800
+
+    def test_api_default_no_explicit(self):
+        from code_forge.llm_invoke import effective_invoke_timeout_s
+        be = BackendConfig(
+            name="api-default", type="api", model="x",
+            timeout_s=0, format=None,
+        )
+        # API default: DEFAULT_TIMEOUT_S=1800 capped to _API_TIMEOUT_CAP_S=600
+        assert effective_invoke_timeout_s(be) == 600
+
+    def test_cli_default_no_explicit(self):
+        from code_forge.llm_invoke import effective_invoke_timeout_s
+        be = DEFAULT_BACKEND  # type=cli, timeout_s=0
+        # CLI default: DEFAULT_TIMEOUT_S=1800 capped to _CLI_TIMEOUT_CAP_S=300
+        assert effective_invoke_timeout_s(be) == 300
+
+    def test_caller_explicit_wins_over_env(self, monkeypatch):
+        from code_forge.llm_invoke import effective_invoke_timeout_s
+        monkeypatch.setenv("FORGE_LLM_TIMEOUT_S", "999")
+        be = BackendConfig(
+            name="x", type="api", model="x",
+            timeout_s=0, format=None,
+        )
+        # caller explicit 500 > env 999?  No: caller_explicit wins.
+        assert effective_invoke_timeout_s(be, timeout_s=500) == 500
+
+    def test_env_override_wins_over_default(self, monkeypatch):
+        from code_forge.llm_invoke import effective_invoke_timeout_s
+        monkeypatch.setenv("FORGE_LLM_TIMEOUT_S", "42")
+        be = BackendConfig(
+            name="x", type="api", model="x",
+            timeout_s=0, format=None,
+        )
+        # env 42 < _API_TIMEOUT_CAP_S, so no cap applied
+        assert effective_invoke_timeout_s(be) == 42
+
+    def test_backend_timeout_s_bypasses_cap(self):
+        from code_forge.llm_invoke import effective_invoke_timeout_s
+        be = BackendConfig(
+            name="slow", type="api", model="x",
+            timeout_s=3600, format=None,
+        )
+        # backend.timeout_s > 0 -> no cap
+        assert effective_invoke_timeout_s(be) == 3600
+
+    def test_helper_matches_invoke_path(self):
+        """A3: helper return matches what invoke() applies for the same config."""
+        from code_forge.llm_invoke import effective_invoke_timeout_s
+        # For a CLI backend with timeout_s=0, invoke() caps at _CLI_TIMEOUT_CAP_S=300
+        be = DEFAULT_BACKEND
+        assert effective_invoke_timeout_s(be) == 300
+        # For an API backend with timeout_s=0, invoke() caps at _API_TIMEOUT_CAP_S=600
+        be_api = BackendConfig(
+            name="api", type="api", model="x",
+            timeout_s=0, format=None,
+        )
+        assert effective_invoke_timeout_s(be_api) == 600

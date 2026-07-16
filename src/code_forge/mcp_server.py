@@ -34,12 +34,14 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from code_forge.mcp_jobs import (
     ForgeJobRef,
     ForgeResult,
+    _terminate_and_reap,
     cleanup_all,
     exit_to_verdict,
     get_job,
     snapshot_tempfile_paths,
     start_job,
 )
+from code_forge.llm_invoke import effective_invoke_timeout_s
 
 log = logging.getLogger(__name__)
 
@@ -247,6 +249,45 @@ def _backend_names_for(workspace: Path) -> list[str]:
     return list(merge_backends(project_backends, user_backends).keys())
 
 
+def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
+    """Compute the wall-clock cap for a background MCP job.
+
+    Returns effective_invoke_timeout_s(backend) + 600s grace.
+    When FORGE_MCP_JOB_TIMEOUT_S is set and positive, it wins.
+    Falls back to derived value on junk env.
+    """
+    # Env override takes priority
+    env_raw = os.environ.get("FORGE_MCP_JOB_TIMEOUT_S")
+    if env_raw is not None:
+        try:
+            env_val = int(env_raw)
+            if env_val > 0:
+                return float(env_val)
+        except ValueError:
+            pass  # fall through to derived
+
+    # Resolve the BackendConfig to get the effective invoke timeout
+    from code_forge import cli as _cli
+    from code_forge.backend import (
+        DEFAULT_BACKEND as _DEFAULT,
+        load_backend_configs as _load,
+        resolve_backend as _resolve,
+    )
+
+    try:
+        gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
+        _, gate_data = _cli._load_gate_backends(gate_yaml_path)
+        configs = _load(gate_data)
+        backend = _resolve(
+            os.environ, configs,
+            cli_value=backend_name or None,
+        )
+    except Exception:
+        backend = _DEFAULT
+
+    return float(effective_invoke_timeout_s(backend) + 600)
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     """Load backend names at startup, clean up subprocesses on shutdown.
@@ -417,13 +458,7 @@ async def _kill_and_reap(
 ) -> None:
     """Best-effort subprocess cleanup.  Never raises."""
     task.cancel()
-    if proc.returncode is not None:
-        return
-    proc.kill()
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=5.0)
-    except BaseException:
-        log.warning("proc reap timed out after SIGKILL")
+    await _terminate_and_reap(proc)
 
 
 async def _run_cli_budgeted(
@@ -774,8 +809,10 @@ async def _dispatch_sampling(
                 return _make_result(stdout, exit_code, elapsed, stderr)
             else:
                 inner_task, proc, stderr_path = result  # type: ignore[misc]
+                cap = _job_cap_s(workspace, backend_name or "")
                 job_id = start_job(inner_task, proc,
-                                   stderr_log_path=stderr_path)
+                                   stderr_log_path=stderr_path,
+                                   max_lifetime_s=cap)
                 return _make_job_ref(job_id)
         elif _can_fallback:
             raise ToolError(
@@ -906,9 +943,11 @@ async def forge_review(
     else:
         # Timeout -- transfer tempfile ownership to job
         inner_task, proc, stderr_path = result  # type: ignore[misc]
+        cap = _job_cap_s(workspace, backend)
         try:
             job_id = start_job(inner_task, proc, tempfile_path=tmp_path,
-                               stderr_log_path=stderr_path)
+                               stderr_log_path=stderr_path,
+                               max_lifetime_s=cap)
         except Exception:
             for p in (tmp_path, stderr_path):
                 if p:
@@ -971,8 +1010,10 @@ async def forge_gate_check(
         return _make_result(stdout, exit_code, elapsed, stderr)
     else:
         inner_task, proc, stderr_path = result  # type: ignore[misc]
+        cap = _job_cap_s(workspace, backend)
         job_id = start_job(inner_task, proc,
-                           stderr_log_path=stderr_path)
+                           stderr_log_path=stderr_path,
+                           max_lifetime_s=cap)
         return _make_job_ref(job_id)
 
 

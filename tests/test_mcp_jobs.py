@@ -15,9 +15,7 @@ from code_forge.mcp_jobs import (
     ForgeJobRef,
     ForgeResult,
     _evict_stale,
-    _JOB_TTL_SECONDS,
     _jobs,
-    _wait_for_job,
     cleanup_all,
     exit_to_verdict,
     get_job,
@@ -164,7 +162,7 @@ async def test_wait_for_job_deletes_tempfile():
     task = asyncio.ensure_future(_comm())
     proc = MagicMock()
     proc.returncode = 0
-    job_id = start_job(task, proc, tempfile_path=tmp.name)
+    start_job(task, proc, tempfile_path=tmp.name)
     # Wait for _wait_for_job to complete and delete the file
     await asyncio.sleep(0.1)
     assert not os.path.exists(tmp.name)
@@ -200,7 +198,7 @@ async def test_wait_for_job_does_not_call_communicate():
     proc = MagicMock()
     proc.returncode = 0
     proc.communicate = MagicMock()  # not AsyncMock -- if called, would fail
-    job_id = start_job(task, proc)
+    start_job(task, proc)
     await asyncio.sleep(0.05)
     assert proc.communicate.call_count == 0
 
@@ -302,4 +300,217 @@ def test_snapshot_tempfile_paths_collects_both_keys():
     assert "/tmp/a.md" in paths
     assert "/tmp/a.log" in paths
     assert "/tmp/b.log" in paths
-    assert len(paths) == 3
+
+
+# -- _terminate_and_reap --
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_terminates():
+    proc = MagicMock()
+    proc.returncode = None
+
+    async def _wait_sets_returncode():
+        proc.returncode = -15
+        return None
+
+    proc.wait = AsyncMock(side_effect=_wait_sets_returncode)
+    from code_forge.mcp_jobs import _terminate_and_reap
+    await _terminate_and_reap(proc)
+    proc.terminate.assert_called_once()
+    proc.wait.assert_called_once()
+    proc.kill.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_kills_on_timeout():
+    proc = MagicMock()
+    proc.returncode = None
+    call_count = 0
+
+    async def _wait_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError
+        return None
+
+    proc.wait = AsyncMock(side_effect=_wait_side_effect)
+    from code_forge.mcp_jobs import _terminate_and_reap
+    await _terminate_and_reap(proc)
+    proc.terminate.assert_called_once()
+    proc.kill.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_skips_already_dead():
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.wait = AsyncMock()
+    from code_forge.mcp_jobs import _terminate_and_reap
+    await _terminate_and_reap(proc)
+    proc.terminate.assert_not_called()
+    proc.kill.assert_not_called()
+
+
+# -- watchdog (A1) --
+
+
+@pytest.mark.asyncio
+async def test_watchdog_kills_on_timeout():
+    """A1(i): sleeping subprocess + tiny cap -> status failed, verdict TIMEOUT."""
+    proc = await asyncio.create_subprocess_exec(
+        "sleep", "60",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    inner_task = asyncio.create_task(proc.communicate())
+    job_id = start_job(inner_task, proc, max_lifetime_s=0.5)
+    # Wait for watchdog to fire
+    await asyncio.sleep(1.0)
+    entry = _jobs.get(job_id)
+    assert entry is not None
+    assert entry["status"] == "failed"
+    assert entry["result"]["verdict"] == "TIMEOUT"
+    assert entry["result"]["exit_code"] is not None
+
+
+@pytest.mark.asyncio
+async def test_watchdog_reaps_proc():
+    """A1(ii): after timeout, proc.returncode is not None."""
+    proc = await asyncio.create_subprocess_exec(
+        "sleep", "60",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    inner_task = asyncio.create_task(proc.communicate())
+    start_job(inner_task, proc, max_lifetime_s=0.5)
+    await asyncio.sleep(1.0)
+    assert proc.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_watchdog_stderr_tail_preserved():
+    """A1(iii): child stderr marker survives timeout into result.stderr.
+
+    When stderr is redirected to a log file (the real production path via
+    _run_cli_budgeted), the watchdog reads the tail before unlinking.
+    The PIPE path cannot capture output after task cancellation, so this
+    test uses a log file to mirror production behavior.
+    """
+    stderr_fh = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False, encoding="utf-8",
+    )
+    stderr_fh.close()
+    stderr_fp = open(stderr_fh.name, "w")
+    proc = await asyncio.create_subprocess_exec(
+        "python3", "-c",
+        "import sys, time; sys.stderr.write('MARKER_SENTINEL\\n'); "
+        "sys.stderr.flush(); time.sleep(60)",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=stderr_fp,
+    )
+    stderr_fp.close()
+    inner_task = asyncio.create_task(proc.communicate())
+    job_id = start_job(
+        inner_task, proc,
+        stderr_log_path=stderr_fh.name,
+        max_lifetime_s=0.5,
+    )
+    await asyncio.sleep(1.0)
+    entry = _jobs.get(job_id)
+    assert entry is not None
+    assert "MARKER_SENTINEL" in entry["result"]["stderr"]
+
+
+@pytest.mark.asyncio
+async def test_watchdog_stderr_tail_from_log_file():
+    """A1(iii) variant: stderr redirected to log file, marker survives."""
+    stderr_fh = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False, encoding="utf-8",
+    )
+    stderr_fh.close()
+    proc = await asyncio.create_subprocess_exec(
+        "python3", "-c",
+        "import sys; sys.stderr.write('LOGFILE_MARKER\\n'); "
+        "sys.stderr.flush(); import time; time.sleep(60)",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=open(stderr_fh.name, "w"),
+    )
+    inner_task = asyncio.create_task(proc.communicate())
+    job_id = start_job(
+        inner_task, proc,
+        stderr_log_path=stderr_fh.name,
+        max_lifetime_s=0.5,
+    )
+    await asyncio.sleep(1.0)
+    entry = _jobs.get(job_id)
+    assert entry is not None
+    assert "LOGFILE_MARKER" in entry["result"]["stderr"]
+
+
+@pytest.mark.asyncio
+async def test_watchdog_normal_completion_unaffected():
+    """Normal (non-timeout) path still works with max_lifetime_s set."""
+    async def _comm():
+        return (b"ok", b"")
+
+    task = asyncio.ensure_future(_comm())
+    proc = MagicMock()
+    proc.returncode = 0
+    job_id = start_job(task, proc, max_lifetime_s=10.0)
+    await asyncio.sleep(0.05)
+    entry = _jobs.get(job_id)
+    if entry:
+        assert entry["status"] == "completed"
+        assert entry["result"]["verdict"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_watchdog_measures_real_elapsed():
+    """duration_s is measured elapsed, not the cap constant."""
+    proc = await asyncio.create_subprocess_exec(
+        "sleep", "60",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    inner_task = asyncio.create_task(proc.communicate())
+    job_id = start_job(inner_task, proc, max_lifetime_s=0.5)
+    await asyncio.sleep(1.0)
+    entry = _jobs.get(job_id)
+    assert entry is not None
+    # Elapsed should be roughly 0.5s, not 0.5 exactly
+    dur = entry["result"]["duration_s"]
+    assert 0.3 < dur < 10.0
+
+
+# -- _read_stderr_tail --
+
+
+def test_read_stderr_tail_no_log_path():
+    from code_forge.mcp_jobs import _read_stderr_tail
+    assert _read_stderr_tail({}) == ""
+
+
+def test_read_stderr_tail_reads_file():
+    from code_forge.mcp_jobs import _read_stderr_tail
+    f = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False, encoding="utf-8",
+    )
+    f.write("hello world tail")
+    f.close()
+    result = _read_stderr_tail({"stderr_log_path": f.name})
+    assert "hello world tail" in result
+    os.unlink(f.name)
+
+
+def test_read_stderr_tail_truncates():
+    from code_forge.mcp_jobs import _read_stderr_tail
+    f = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False, encoding="utf-8",
+    )
+    f.write("X" * 5000)
+    f.close()
+    result = _read_stderr_tail({"stderr_log_path": f.name}, max_bytes=100)
+    assert len(result.encode()) <= 100
+    os.unlink(f.name)

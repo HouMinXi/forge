@@ -13,6 +13,7 @@ enable_tasks() InMemoryTaskStore.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
+log = logging.getLogger(__name__)
 
 
 # -- verdict mapping (all 8 exit codes) --
@@ -78,11 +81,15 @@ def start_job(
     proc: asyncio.subprocess.Process,
     tempfile_path: str | None = None,
     stderr_log_path: str | None = None,
+    max_lifetime_s: float | None = None,
 ) -> str:
     """Register a background job. Returns job_id (UUID4).
 
     comm_task is the inner asyncio.Task wrapping proc.communicate(),
     NOT the cancelled shield wrapper.
+
+    max_lifetime_s: wall-clock cap for the entire job (LLM timeout +
+    retry overhead + subprocess grace).  None = unbounded (legacy).
     """
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
@@ -93,6 +100,7 @@ def start_job(
         "created_at": time.monotonic(),
         "tempfile_path": tempfile_path,
         "stderr_log_path": stderr_log_path,
+        "max_lifetime_s": max_lifetime_s,
     }
     asyncio.create_task(_wait_for_job(job_id))
     return job_id
@@ -118,17 +126,45 @@ def snapshot_tempfile_paths() -> list[str]:
     return paths
 
 
+async def _terminate_and_reap(
+    proc: asyncio.subprocess.Process,
+    grace: float = 5.0,
+) -> None:
+    """SIGTERM -> grace -> SIGKILL -> wait.  Never raises.
+
+    Unified subprocess teardown used by the watchdog, cleanup_all,
+    and mcp_server._kill_and_reap call sites.
+    """
+    if proc.returncode is not None:
+        return
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=grace)
+    except asyncio.TimeoutError:
+        log.warning(
+            "process did not exit after SIGTERM (%.1fs); sending SIGKILL",
+            grace,
+        )
+    except Exception:
+        log.warning(
+            "proc.wait after SIGTERM raised; sending SIGKILL",
+            exc_info=True,
+        )
+    if proc.returncode is None:
+        proc.kill()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except Exception:
+            log.warning("proc reap timed out after SIGKILL")
+
+
 async def cleanup_all() -> None:
     """Terminate all running subprocesses. Called from lifespan teardown."""
     for entry in list(_jobs.values()):
         proc = entry.get("proc")
         if proc is None or proc.returncode is not None:
             continue
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            proc.kill()
+        await _terminate_and_reap(proc)
     _jobs.clear()
 
 
@@ -136,13 +172,24 @@ async def cleanup_all() -> None:
 
 
 async def _wait_for_job(job_id: str) -> None:
-    """Await the comm_task and update job state on completion."""
+    """Await the comm_task and update job state on completion.
+
+    When max_lifetime_s is set, wraps the await in asyncio.wait_for.
+    On timeout the child is terminated (SIGTERM then SIGKILL) and the
+    job transitions to status=failed, verdict=TIMEOUT.
+    """
     entry = _jobs.get(job_id)
     if entry is None:
         return
-    elapsed = time.monotonic() - entry["created_at"]
+    cap = entry.get("max_lifetime_s")
+    elapsed = 0.0
     try:
-        stdout_bytes, stderr_bytes = await entry["comm_task"]
+        if cap is not None:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                entry["comm_task"], timeout=cap,
+            )
+        else:
+            stdout_bytes, stderr_bytes = await entry["comm_task"]
         elapsed = time.monotonic() - entry["created_at"]
         proc = entry["proc"]
         exit_code = proc.returncode if proc.returncode is not None else -1
@@ -168,7 +215,24 @@ async def _wait_for_job(job_id: str) -> None:
             "verdict": exit_to_verdict(exit_code),
             "duration_s": elapsed,
         }
+    except asyncio.TimeoutError:
+        elapsed = time.monotonic() - entry["created_at"]
+        proc = entry["proc"]
+        # Read stderr log BEFORE the finally-block unlink
+        stderr_tail = _read_stderr_tail(entry)
+        await _terminate_and_reap(proc)
+        entry["status"] = "failed"
+        entry["result"] = {
+            "stdout": "",
+            "stderr": (
+                "job exceeded %ds cap\n%s" % (int(cap), stderr_tail)
+            ),
+            "exit_code": proc.returncode,
+            "verdict": "TIMEOUT",
+            "duration_s": elapsed,
+        }
     except BaseException as exc:
+        elapsed = time.monotonic() - entry["created_at"]
         entry["status"] = "failed"
         entry["result"] = {
             "stdout": "",
@@ -188,12 +252,24 @@ async def _wait_for_job(job_id: str) -> None:
         _evict_stale()
 
 
+def _read_stderr_tail(entry: dict[str, Any], max_bytes: int = 2048) -> str:
+    """Read the last max_bytes of the stderr log file.  Never raises."""
+    log_path = entry.get("stderr_log_path")
+    if not log_path:
+        return ""
+    try:
+        data = Path(log_path).read_bytes()
+        return data[-max_bytes:].decode(errors="replace")
+    except OSError:
+        return ""
+
+
 def _evict_stale() -> None:
     """Remove terminal entries past TTL; unlink their tempfiles.
 
-    Running entries are left untouched -- their sole forced-death owner
-    is cleanup_all() at server shutdown.  A stuck child stays visible
-    via forge_job_status progress tail until the operator acts.
+    Running entries are left untouched.  Forced-death owners are:
+      - the job watchdog (_wait_for_job timeout path)
+      - cleanup_all() at server shutdown
     """
     now = time.monotonic()
     to_remove: list[str] = []

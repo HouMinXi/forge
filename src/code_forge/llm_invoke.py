@@ -303,6 +303,40 @@ def _default_timeout_s() -> int:
     return value if value > 0 else DEFAULT_TIMEOUT_S
 
 
+def effective_invoke_timeout_s(
+    backend: BackendConfig,
+    timeout_s: Optional[int] = None,
+) -> int:
+    """Return the timeout that llm_invoke would use for this backend.
+
+    Extracts the timeout-priority chain so both llm_invoke() and the MCP
+    job watchdog derive the same value from one shared helper.
+
+    Priority:
+      1. backend.timeout_s > 0
+      2. caller-supplied timeout_s > 0
+      3. FORGE_LLM_TIMEOUT_S env var
+      4. DEFAULT_TIMEOUT_S (1800s)
+      5. type-based cap: _CLI_TIMEOUT_CAP_S (300) / _API_TIMEOUT_CAP_S (600)
+         when timeout came from #3 or #4
+    """
+    caller_explicit = timeout_s is not None and timeout_s > 0
+    be_timeout = backend.timeout_s if backend.timeout_s is not None else 0
+    if be_timeout > 0:
+        resolved = be_timeout
+    elif caller_explicit:
+        resolved = timeout_s  # type: ignore[assignment]
+    else:
+        resolved = _default_timeout_s()
+
+    if not caller_explicit and be_timeout <= 0:
+        cap = (_CLI_TIMEOUT_CAP_S if backend.type == "cli"
+               else _API_TIMEOUT_CAP_S)
+        if resolved > cap:
+            resolved = cap
+    return resolved
+
+
 # DEFAULT_MODEL is kept for backward-compat (external importers). It is no longer
 # used as the fallback inside _resolve_model(); omitting --model when unset lets the
 # session default model run instead of pinning a specific model.
@@ -627,29 +661,11 @@ def llm_invoke(
     """
     if backend is None:
         backend = DEFAULT_BACKEND
-    # Timeout resolution priority:
-    #   1. backend.timeout_s > 0  (per-backend gate.yaml override)
-    #   2. caller-supplied timeout_s > 0
-    #   3. FORGE_LLM_TIMEOUT_S env var
-    #   4. DEFAULT_TIMEOUT_S (1800s)
-    #   5. CLI cap: _CLI_TIMEOUT_CAP_S (300s) when timeout came from #3/#4
-    caller_explicit_timeout = timeout_s is not None and timeout_s > 0
-    if backend.timeout_s > 0:
-        timeout_s = backend.timeout_s
-    elif not caller_explicit_timeout:
-        timeout_s = _default_timeout_s()
+    timeout_s = effective_invoke_timeout_s(backend, timeout_s)
 
     if backend.type == "cli":
-        # CLI subprocesses should not block for the full API default;
-        # cap at _CLI_TIMEOUT_CAP_S unless caller or backend set it.
-        if not caller_explicit_timeout and backend.timeout_s <= 0 \
-                and timeout_s > _CLI_TIMEOUT_CAP_S:
-            timeout_s = _CLI_TIMEOUT_CAP_S
         return _invoke_cli(prompt, backend, timeout_s)
     elif backend.type == "api":
-        if not caller_explicit_timeout and backend.timeout_s <= 0 \
-                and timeout_s > _API_TIMEOUT_CAP_S:
-            timeout_s = _API_TIMEOUT_CAP_S
         return _invoke_api(
             prompt, backend, timeout_s, expected_keys=expected_keys,
             max_attempts=max_attempts, initial_delay_s=initial_delay_s,
