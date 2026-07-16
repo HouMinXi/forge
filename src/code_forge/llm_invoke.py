@@ -319,6 +319,9 @@ def effective_invoke_timeout_s(
       4. DEFAULT_TIMEOUT_S (1800s)
       5. type-based cap: _CLI_TIMEOUT_CAP_S (300) / _API_TIMEOUT_CAP_S (600)
          when timeout came from #3 or #4
+
+    timeout_s=0 (or negative) is treated as "not configured" and falls
+    through to the next priority level, same as None.
     """
     caller_explicit = timeout_s is not None and timeout_s > 0
     be_timeout = backend.timeout_s if backend.timeout_s is not None else 0

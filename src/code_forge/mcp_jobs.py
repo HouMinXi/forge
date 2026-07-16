@@ -148,6 +148,8 @@ async def _terminate_and_reap(
         else:
             proc.terminate()
     except OSError:
+        # killpg or terminate failed (process may have exited
+        # between the returncode check and the signal).
         try:
             proc.terminate()
         except OSError:
@@ -174,11 +176,14 @@ async def _terminate_and_reap(
 
 async def cleanup_all() -> None:
     """Terminate all running subprocesses. Called from lifespan teardown."""
+    tasks = []
     for entry in list(_jobs.values()):
         proc = entry.get("proc")
         if proc is None or proc.returncode is not None:
             continue
-        await _terminate_and_reap(proc)
+        tasks.append(_terminate_and_reap(proc))
+    if tasks:
+        await asyncio.gather(*tasks)
     _jobs.clear()
 
 

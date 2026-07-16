@@ -275,7 +275,11 @@ def _job_cap_s(workspace: Path, backend_name: str = "") -> float:
                 env_raw,
             )
 
-    # Resolve the BackendConfig to get the effective invoke timeout
+    # Resolve the BackendConfig to get the effective invoke timeout.
+    # Lazy import avoids circular dependency (mcp_server <-> cli).
+    # Note: _load_gate_backends does sync file I/O (reading gate.yaml).
+    # This is acceptable because _job_cap_s is called only on the rare
+    # timeout-cap path, not on every request.
     from code_forge import cli as _cli
     from code_forge.backend import (
         DEFAULT_BACKEND as _DEFAULT,

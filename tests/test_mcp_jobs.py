@@ -310,6 +310,7 @@ def test_snapshot_tempfile_paths_collects_both_keys():
 async def test_terminate_and_reap_terminates():
     proc = MagicMock()
     proc.returncode = None
+    proc.pid = 12345  # valid int so os.getpgid() does not TypeError
 
     async def _wait_sets_returncode():
         proc.returncode = -15
@@ -327,6 +328,7 @@ async def test_terminate_and_reap_terminates():
 async def test_terminate_and_reap_kills_on_timeout():
     proc = MagicMock()
     proc.returncode = None
+    proc.pid = 12345  # valid int so os.getpgid() does not TypeError
     call_count = 0
 
     async def _wait_side_effect():
@@ -347,6 +349,7 @@ async def test_terminate_and_reap_kills_on_timeout():
 async def test_terminate_and_reap_skips_already_dead():
     proc = MagicMock()
     proc.returncode = 0
+    proc.pid = 12345  # valid int so os.getpgid() does not TypeError
     proc.wait = AsyncMock()
     from code_forge.mcp_jobs import _terminate_and_reap
     await _terminate_and_reap(proc)
@@ -514,9 +517,9 @@ async def test_watchdog_normal_completion_unaffected():
     job_id = start_job(task, proc, max_lifetime_s=10.0)
     await asyncio.sleep(0.05)
     entry = _jobs.get(job_id)
-    if entry:
-        assert entry["status"] == "completed"
-        assert entry["result"]["verdict"] == "PASS"
+    assert entry is not None
+    assert entry["status"] == "completed"
+    assert entry["result"]["verdict"] == "PASS"
 
 
 @pytest.mark.asyncio
@@ -558,6 +561,15 @@ async def test_watchdog_cancels_comm_task_on_timeout():
 def test_read_stderr_tail_no_log_path():
     from code_forge.mcp_jobs import _read_stderr_tail
     assert _read_stderr_tail({}) == ""
+
+
+def test_read_stderr_tail_missing_file():
+    """_read_stderr_tail returns '' when the log file does not exist."""
+    from code_forge.mcp_jobs import _read_stderr_tail
+    result = _read_stderr_tail(
+        {"stderr_log_path": "/tmp/nonexistent_mcp_test_999.log"}
+    )
+    assert result == ""
 
 
 def test_read_stderr_tail_reads_file():
