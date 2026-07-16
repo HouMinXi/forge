@@ -19,6 +19,33 @@ from .errors import CorruptedStateError, SchemaVersionMismatchError
 
 SCHEMA_VERSION: int = 1
 
+# Canonical pass names (shared by receipt.py, outlet_c.py, sarif.py).
+_PASS_NAMES = ("qodo", "expert", "adversarial")
+
+
+class PassOutcome(str, Enum):
+    """Per-pass outcome derived from INFRA findings.
+
+    Worst-outcome-wins ordering (most severe first):
+      TIMEOUT > ERROR > SCHEMA_FAIL > INCOMPLETE > COMPLETED
+    SKIPPED is reserved for future use (pass not attempted).
+    """
+    COMPLETED = "completed"
+    TIMEOUT = "timeout"
+    ERROR = "error"
+    SCHEMA_FAIL = "schema_fail"
+    INCOMPLETE = "incomplete"
+    SKIPPED = "skipped"
+
+
+_SEVERITY: dict[PassOutcome, int] = {
+    PassOutcome.TIMEOUT: 0,
+    PassOutcome.ERROR: 1,
+    PassOutcome.SCHEMA_FAIL: 2,
+    PassOutcome.INCOMPLETE: 3,
+    PassOutcome.COMPLETED: 4,
+}
+
 
 class Mode(str, Enum):
     """Forge execution mode. Resolved by 02-05, consumed by 02-02."""
@@ -56,6 +83,55 @@ class StateFinding:
     anchor: Optional[dict] = None
     evidence_files: Optional[list[str]] = None
     is_timeout: bool = False
+
+
+def derive_pass_outcomes(
+    l1_findings: list[StateFinding],
+) -> dict[str, PassOutcome]:
+    """Derive per-pass outcomes from INFRA findings.
+
+    Scans for INFRA findings with predictable IDs. Consults
+    StateFinding.is_timeout to distinguish TIMEOUT from ERROR
+    for invoke-fail findings (factories.py sets is_timeout on
+    each finding; the discriminant is already there).
+
+    Empty findings list: returns all COMPLETED. This is correct
+    because if _run_l1_phase produced zero findings, all passes
+    succeeded (no INFRA markers). If _run_l1_phase crashed,
+    machine.py catches the exception and sets verdict to
+    ESCALATED before format_summary is ever called.
+
+    Worst-outcome-wins: if multiple INFRA findings exist for
+    the same pass (e.g. across chunks), the most severe wins.
+    """
+    outcomes: dict[str, PassOutcome] = {}
+    for f in l1_findings:
+        if f.source != "INFRA":
+            continue
+        for pass_name in _PASS_NAMES:
+            candidate: PassOutcome | None = None
+            if f.id == "l1-%s-spawn-fail" % pass_name:
+                candidate = PassOutcome.TIMEOUT
+            elif f.id == "l1-%s-invoke-fail" % pass_name:
+                candidate = (
+                    PassOutcome.TIMEOUT
+                    if getattr(f, "is_timeout", False)
+                    else PassOutcome.ERROR
+                )
+            elif f.id == "l1-%s-schema-fail" % pass_name:
+                candidate = PassOutcome.SCHEMA_FAIL
+            elif f.id == "l1-%s-incomplete-coverage" % pass_name:
+                candidate = PassOutcome.INCOMPLETE
+            if candidate is not None:
+                existing = outcomes.get(pass_name)
+                if existing is None or (
+                    _SEVERITY[candidate] < _SEVERITY[existing]
+                ):
+                    outcomes[pass_name] = candidate
+    for pass_name in _PASS_NAMES:
+        if pass_name not in outcomes:
+            outcomes[pass_name] = PassOutcome.COMPLETED
+    return outcomes
 
 
 @dataclass

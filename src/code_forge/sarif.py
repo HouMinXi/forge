@@ -10,7 +10,14 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .disposition import Disposition
-from .state import State, StateFinding, Verdict
+from .state import (
+    State,
+    StateFinding,
+    Verdict,
+    PassOutcome,
+    derive_pass_outcomes,
+    _PASS_NAMES,
+)
 
 
 SARIF_VERSION = "2.1.0"
@@ -225,6 +232,22 @@ def _build_properties(finding: StateFinding) -> dict[str, Any]:
     return props
 
 
+def _count_pass_outcomes(
+    l1_findings: list[StateFinding],
+) -> tuple[int, int]:
+    """Return (completed, total) by deriving from findings.
+
+    Calls derive_pass_outcomes (same logic as receipt.py).
+    Empty findings -> (3,3) all-completed (clean run).
+    """
+    pass_outcomes = derive_pass_outcomes(l1_findings)
+    completed = sum(
+        1 for v in pass_outcomes.values()
+        if v == PassOutcome.COMPLETED
+    )
+    return (completed, len(_PASS_NAMES))
+
+
 def format_summary(state: State, advisory_count: int = 0) -> str:
     """One-line stderr summary per LAYER0-07.
 
@@ -265,4 +288,7 @@ def format_summary(state: State, advisory_count: int = 0) -> str:
         line += " infra=%d" % infra
     if advisory_count:
         line += " advisory=%d" % advisory_count
+    completed, total = _count_pass_outcomes(state.findings)
+    if completed < total:
+        line += " passes=%d/%d" % (completed, total)
     return line

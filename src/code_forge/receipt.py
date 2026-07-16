@@ -10,9 +10,13 @@ import datetime
 import json
 from pathlib import Path
 
-from .state import StateFinding
+from .state import (
+    StateFinding,
+    PassOutcome,
+    derive_pass_outcomes,
+    _PASS_NAMES,
+)
 
-_PASS_NAMES = ["qodo", "expert", "adversarial"]
 _SKILL_NAMES = ["qodo-review", "code-review-expert", "adversarial-qe"]
 
 
@@ -74,6 +78,7 @@ def write_receipts(
     written = []
 
     assembled_excerpts = _build_excerpts(reviewer_excerpts)
+    pass_outcomes = derive_pass_outcomes(l1_findings)
 
     for pass_idx, (pass_name, skill_name) in enumerate(
         zip(_PASS_NAMES, _SKILL_NAMES)
@@ -88,6 +93,9 @@ def write_receipts(
             "skill": skill_name,
             "diff_sha256": diff_sha256,
             "timestamp": ts.isoformat(),
+            "pass_status": pass_outcomes.get(
+                pass_name, PassOutcome.COMPLETED
+            ).value,
             "findings_count": len(pass_findings),
             "findings": [
                 {

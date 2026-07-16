@@ -9,6 +9,9 @@ Reviewer-provided code_excerpts flow: reviewer JSON -> l1_provider
 """
 from __future__ import annotations
 
+import logging
+import os
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -23,9 +26,106 @@ from .reviewer_json import (
     _collect_excerpts,
     _json_to_state_findings,
 )
-from .state import Mode, StateFinding, Verdict
+from .state import Mode, StateFinding, Verdict, _PASS_NAMES
 
-_PASS_NAMES = ["qodo", "expert", "adversarial"]
+log = logging.getLogger(__name__)
+
+_DEFAULT_CHUNK_THRESHOLD_KB = 100
+
+
+def _read_chunk_threshold_kb() -> int:
+    """Read FORGE_DIFF_CHUNK_THRESHOLD_KB from env.
+
+    Returns default (100) if unset. Returns -1 (always-chunk) if
+    non-positive. Logs warning and returns default if non-numeric.
+    """
+    raw = os.environ.get("FORGE_DIFF_CHUNK_THRESHOLD_KB")
+    if raw is None:
+        return _DEFAULT_CHUNK_THRESHOLD_KB
+    try:
+        val = int(raw)
+        return val
+    except ValueError:
+        log.warning(
+            "non-numeric FORGE_DIFF_CHUNK_THRESHOLD_KB=%r, "
+            "falling back to default %d",
+            raw, _DEFAULT_CHUNK_THRESHOLD_KB,
+        )
+        return _DEFAULT_CHUNK_THRESHOLD_KB
+
+
+def _split_diff_by_file(diff: str) -> list[str]:
+    """Split a unified diff into per-file chunks.
+
+    Uses findall (not split) to preserve the 'diff --git' header in
+    each chunk. Falls back to '--- a/' / '+++ b/' pairs for non-git
+    diffs. Skips chunks with no hunk headers (binary files, pure
+    renames). Returns empty list on parse failure (caller falls
+    through to un-chunked path).
+    """
+    if not diff or not diff.strip():
+        return []
+    # Primary: git-style diff headers.
+    chunks = re.findall(
+        r'diff --git .+?(?=diff --git |\Z)', diff, re.DOTALL,
+    )
+    if chunks:
+        return [c for c in chunks if "@@" in c]
+    # Fallback: unified diff without git headers.
+    chunks = re.findall(
+        r'(?:^|\n)--- .+?\n\+\+\+ .+?(?=(?:\n)--- |\Z)',
+        diff, re.DOTALL,
+    )
+    if chunks:
+        return [c for c in chunks if "@@" in c]
+    return []
+
+
+def _run_chunk(
+    chunk_diff: str,
+    spawn_fn: Callable[[str, str], str],
+    pass_names: tuple[str, ...],
+) -> tuple[list[StateFinding], list[dict], Usage, float]:
+    """Run all passes on one diff chunk.
+
+    Returns (findings, excerpts, usage, duration). On spawn/schema
+    failure for a pass, appends an INFRA finding and continues to
+    the next pass (same behavior as the original loop).
+    """
+    findings: list[StateFinding] = []
+    all_excerpts: list[dict] = []
+    for pass_name in pass_names:
+        raw = ""
+        try:
+            raw = spawn_fn(pass_name, chunk_diff)
+        except Exception as e:
+            findings.append(StateFinding(
+                id="l1-%s-spawn-fail" % pass_name,
+                fingerprint="spawn-fail-%s" % pass_name,
+                source="INFRA",
+                disposition=Disposition.CONFIRMED,
+                file="<spawn>",
+                line_range=[0, 0],
+                description="spawn failed: %s" % e,
+            ))
+            continue
+        try:
+            validated = validate_reviewer_json(raw)
+            findings.extend(
+                _json_to_state_findings(validated, pass_name),
+            )
+            all_excerpts.extend(_collect_excerpts(validated))
+        except ValueError as e:
+            findings.append(StateFinding(
+                id="l1-%s-schema-fail" % pass_name,
+                fingerprint="schema-fail-%s" % pass_name,
+                source="INFRA",
+                disposition=Disposition.CONFIRMED,
+                file="<schema-validation>",
+                line_range=[0, 0],
+                description="schema validation failed: %s" % e,
+            ))
+    return (findings, all_excerpts, Usage(), 0.0)
 
 ReviewerSpawnFn = Callable[[str, str], str]
 
@@ -54,40 +154,53 @@ def run_outlet_c(
         falsifier = build_falsifier(engine, backend=backend)
 
     def _l1_provider() -> tuple[list[StateFinding], list[dict], Usage, float]:
-        findings: list[StateFinding] = []
+        diff = resolved_review.git_diff or ""
+        threshold_kb = _read_chunk_threshold_kb()
+        diff_kb = len(diff.encode("utf-8")) / 1024
+
+        if threshold_kb > 0 and diff_kb <= threshold_kb:
+            # Under threshold: single chunk (original behavior).
+            return _run_chunk(diff, spawn_fn, _PASS_NAMES)
+
+        # Over threshold: chunk by file.
+        chunks = _split_diff_by_file(diff)
+        if not chunks:
+            # Parse failure or binary-only diff: fall through to
+            # un-chunked path to avoid silent zero-findings.
+            log.warning(
+                "chunking parse produced 0 chunks from %.1fKB diff, "
+                "falling through to un-chunked path", diff_kb,
+            )
+            return _run_chunk(diff, spawn_fn, _PASS_NAMES)
+
+        all_findings: list[StateFinding] = []
         all_excerpts: list[dict] = []
-        for pass_name in _PASS_NAMES:
-            raw = ""
-            try:
-                raw = spawn_fn(pass_name, resolved_review.git_diff or "")
-            except Exception as e:
-                findings.append(StateFinding(
-                    id="l1-%s-spawn-fail" % pass_name,
-                    fingerprint="spawn-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<spawn>",
-                    line_range=[0, 0],
-                    description="spawn failed: %s" % e,
-                ))
-                continue
-            try:
-                validated = validate_reviewer_json(raw)
-                findings.extend(
-                    _json_to_state_findings(validated, pass_name),
-                )
-                all_excerpts.extend(_collect_excerpts(validated))
-            except ValueError as e:
-                findings.append(StateFinding(
-                    id="l1-%s-schema-fail" % pass_name,
-                    fingerprint="schema-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<schema-validation>",
-                    line_range=[0, 0],
-                    description="schema validation failed: %s" % e,
-                ))
-        return (findings, all_excerpts, Usage(), 0.0)
+        total_usage = Usage()
+        total_duration = 0.0
+        for chunk in chunks:
+            c_findings, c_excerpts, c_usage, c_dur = _run_chunk(
+                chunk, spawn_fn, _PASS_NAMES,
+            )
+            all_findings.extend(c_findings)
+            all_excerpts.extend(c_excerpts)
+            total_usage = Usage(
+                input_tokens=(
+                    total_usage.input_tokens + c_usage.input_tokens
+                ),
+                output_tokens=(
+                    total_usage.output_tokens + c_usage.output_tokens
+                ),
+            )
+            total_duration += c_dur
+
+        # Dedup by fingerprint.
+        seen: set[str] = set()
+        deduped: list[StateFinding] = []
+        for f in all_findings:
+            if f.fingerprint not in seen:
+                seen.add(f.fingerprint)
+                deduped.append(f)
+        return (deduped, all_excerpts, total_usage, total_duration)
 
     sm = StateMachine(
         mode=Mode.LOCAL,
