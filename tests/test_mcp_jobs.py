@@ -516,12 +516,12 @@ def test_read_stderr_tail_truncates():
     os.unlink(f.name)
 
 
-# -- R-3: SIGKILL reap timeout edge test --
+# SIGKILL reap timeout edge test
 
 
 @pytest.mark.asyncio
 async def test_watchdog_sigkill_reap_timeout_exit_code():
-    """D-state child after SIGKILL -> exit_code=-1, verdict=UNKNOWN(-1)."""
+    """D-state child after SIGKILL -> exit_code=-1, verdict=TIMEOUT."""
 
     async def _comm():
         await asyncio.sleep(60)

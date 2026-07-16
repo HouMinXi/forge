@@ -2013,7 +2013,7 @@ async def test_null_coercion_coerces_none_to_empty_string():
     )
 
 
-# -- _job_cap_s direct tests (R-1) --
+# _job_cap_s direct tests
 
 
 def _make_backend(backend_type="cli", timeout_s=0, name="test"):
