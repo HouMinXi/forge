@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import time
 import uuid
 from pathlib import Path
@@ -137,7 +138,20 @@ async def _terminate_and_reap(
     """
     if proc.returncode is not None:
         return
-    proc.terminate()
+    try:
+        pgid = os.getpgid(proc.pid)
+    except OSError:
+        pgid = None
+    try:
+        if pgid is not None and pgid == proc.pid:
+            os.killpg(pgid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except OSError:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
     try:
         await asyncio.wait_for(proc.wait(), timeout=grace)
     except asyncio.TimeoutError:
@@ -220,6 +234,7 @@ async def _wait_for_job(job_id: str) -> None:
         proc = entry["proc"]
         # Read stderr log BEFORE the finally-block unlink
         stderr_tail = _read_stderr_tail(entry)
+        entry["comm_task"].cancel()
         await _terminate_and_reap(proc)
         # D-state children survive SIGKILL; proc.returncode stays None.
         entry["status"] = "failed"
