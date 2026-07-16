@@ -17,16 +17,12 @@ from code_forge.user_config import (
     user_config_path,
 )
 from code_forge.mcp_server import (
-    _resolve_workspace,
-    _backend_names_for,
     _check_backend,
-    _make_job_ref,
     _make_result,
     _make_simple_result,
     _resolve_workspace,
     _run_cli_budgeted,
     _run_cli_simple,
-    _validate_backend,
     forge_gate_check,
     forge_init,
     forge_job_status,
@@ -89,8 +85,6 @@ def test_preflight_empty_backends_names_workspace():
     """The zero-backend error must say WHICH workspace and gate.yaml it checked,
     so a wrong-workspace resolution is diagnosable."""
     import re
-
-    from code_forge import mcp_server
 
     with (
         patch.object(Path, "exists", return_value=True),
@@ -589,7 +583,7 @@ async def test_forge_review_with_valid_backend():
             return_value=("output", 0, 1.0, ""),
         ) as mock_cli,
     ):
-        result = await forge_review(backend="mimo-pro")
+        await forge_review(backend="mimo-pro")
         args = mock_cli.call_args[0]
         assert "--backend" in args
         assert "mimo-pro" in args
@@ -637,7 +631,7 @@ async def test_forge_review_timeout_returns_job_ref():
         ),
         patch(
             "code_forge.mcp_server.start_job", return_value="test-job-id"
-        ) as mock_start,
+        ),
     ):
         result = await forge_review()
         assert isinstance(result, CallToolResult)
@@ -680,7 +674,7 @@ async def test_forge_gate_check_calls_preflight():
             return_value=("ok", 0, 0.5, ""),
         ) as mock_cli,
     ):
-        result = await forge_gate_check()
+        await forge_gate_check()
         mock_check.assert_called_once()
         args = mock_cli.call_args[0]
         assert "gate-check" in args
@@ -739,7 +733,7 @@ async def test_forge_init_no_preflight():
             return_value=("initialized", "", 0),
         ) as mock_cli,
     ):
-        result = await forge_init()
+        await forge_init()
         mock_check.assert_not_called()
         args = mock_cli.call_args[0]
         assert "init" in args
@@ -764,7 +758,7 @@ async def test_forge_trust_calls_cli():
         new_callable=AsyncMock,
         return_value=("trusted", "", 0),
     ) as mock_cli:
-        result = await forge_trust()
+        await forge_trust()
         args = mock_cli.call_args[0]
         assert "trust" in args
 
@@ -776,7 +770,7 @@ async def test_forge_resolve_outlet_readonly():
         new_callable=AsyncMock,
         return_value=("outlet: inline", "", 0),
     ) as mock_cli:
-        result = await forge_resolve_outlet()
+        await forge_resolve_outlet()
         args = mock_cli.call_args[0]
         assert "resolve-outlet" in args
 
@@ -1587,6 +1581,51 @@ class TestWorkspaceFor:
         ws = await mod._workspace_for(ctx)
         assert ws == project
 
+    @pytest.mark.asyncio
+    async def test_empty_project_dir_falls_through(self):
+        """project_dir="" must NOT resolve to cwd; must fall through.
+
+        Bug-inject: reverting the guard to `if project_dir is not None:`
+        makes project_dir="" hit Path("").resolve() == cwd, so the
+        assertion ws == Path("/fallback") fails.
+        """
+        import code_forge.mcp_server as mod
+
+        ctx = self._make_ctx(roots_capable=False)
+
+        saved_ref = mod._cached_session_ref
+        saved_ws = mod._cached_workspace
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+        try:
+            with patch.object(mod, "_resolve_workspace",
+                              return_value=Path("/fallback")):
+                ws = await mod._workspace_for(ctx, project_dir="")
+            assert ws == Path("/fallback")
+            assert ws != Path.cwd().resolve()
+        finally:
+            mod._cached_session_ref = saved_ref
+            mod._cached_workspace = saved_ws
+
+    @pytest.mark.asyncio
+    async def test_explicit_project_dir_honored(self):
+        """project_dir="/explicit/path" resolves to that path."""
+        import code_forge.mcp_server as mod
+
+        ctx = self._make_ctx(roots_capable=False)
+
+        saved_ref = mod._cached_session_ref
+        saved_ws = mod._cached_workspace
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+        try:
+            ws = await mod._workspace_for(ctx,
+                                          project_dir="/explicit/path")
+            assert ws == Path("/explicit/path").expanduser().resolve()
+        finally:
+            mod._cached_session_ref = saved_ref
+            mod._cached_workspace = saved_ws
+
 
 class TestProjectDirOverride:
     """project_dir param overrides all other resolution and leaves cache intact."""
@@ -1926,3 +1965,34 @@ async def test_gate_check_guard_includes_remediation(monkeypatch):
         return_value=Path("/tmp/fake-ws"),
     ), pytest.raises(ToolError, match="Switch outlet"):
         await forge_gate_check(ctx=ctx)
+
+
+@pytest.mark.asyncio
+async def test_null_coercion_coerces_none_to_empty_string():
+    """MCP clients sending null for optional string params must not crash."""
+    import code_forge.mcp_server as mod
+
+    received_args: dict = {}
+
+    async def _spy(name, arguments, **kw):
+        received_args.update(arguments)
+        return "ok"
+
+    # Temporarily replace the underlying call_tool so we can capture
+    # the coerced arguments without triggering real tool logic.
+    saved = mod._original_tc
+    mod._original_tc = _spy
+    try:
+        await mod._null_coerce_call_tool(
+            "test_tool", {"project_dir": None, "other": "val"}
+        )
+    finally:
+        mod._original_tc = saved
+
+    # After coercion, None must become "" while non-None values pass through.
+    assert received_args.get("project_dir") == "", (
+        "None was not coerced to empty string"
+    )
+    assert received_args.get("other") == "val", (
+        "Non-None value was corrupted"
+    )

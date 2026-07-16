@@ -25,7 +25,7 @@ import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
@@ -163,21 +163,31 @@ def _resolve_workspace() -> Path:
 # User-level config shared with cli.py via user_config module.
 from code_forge.user_config import load_user_backends, merge_backends  # noqa: E402
 
+if TYPE_CHECKING:
+    from code_forge.baseline import ResolvedReview
+    from code_forge.state import Verdict
+
 
 # -- per-session workspace cache (single-slot, one session per stdio) --
 _cached_session_ref = None   # session object, identity-compared
 _cached_workspace = None     # resolved Path
 
 
-async def _workspace_for(ctx, project_dir: str | None = None) -> Path:
+async def _workspace_for(ctx, project_dir: str = "") -> Path:
     """Resolve workspace from MCP roots, env, or walk-up.
 
     Priority: project_dir (explicit per-call) > cached > MCP roots
     (prefer root with gate.yaml) > FORGE_PROJECT_DIR > walk-up > cwd.
+
+    project_dir default is "" (not None) for MCP schema compatibility:
+    Pydantic's str|None generates anyOf without a top-level "type",
+    causing Claude Code's tool inspector to show "unknown". Empty string
+    is falsy, so the truthy guard below is branch-neutral with the old
+    `is not None` check for all callers.
     """
     global _cached_session_ref, _cached_workspace
 
-    if project_dir is not None:
+    if project_dir:
         return Path(project_dir).expanduser().resolve()
 
     if ctx is None:
@@ -291,6 +301,30 @@ mcp = FastMCP(
     ),
     lifespan=lifespan,
 )
+
+# Null-coercion fallback: MCP clients may send null for optional string
+# params. Pydantic's str type rejects null, but our schema uses str=""
+# for display cleanliness. Coerce None -> "" before validation.
+#
+# TECHNICAL DEBT: uses private mcp._tool_manager.call_tool because SDK
+# FastMCP exposes no middleware/call-interceptor hook. Coerces all None
+# values (not just str-typed params) -- safe because Pydantic rejects ""
+# for bool/int exactly as it rejects None (ValidationError either way;
+# no observable behavior change). Mitigations: pin mcp<2 in
+# pyproject.toml; test_null_coercion_* tests act as a tripwire if a
+# future mcp 1.x renames _tool_manager (import-time crash, suite RED).
+# Upstream FR for middleware support would let us drop this entirely.
+_original_tc = mcp._tool_manager.call_tool
+
+
+async def _null_coerce_call_tool(name, arguments, **kw):
+    for k, v in list(arguments.items()):
+        if v is None:
+            arguments[k] = ""
+    return await _original_tc(name, arguments, **kw)
+
+
+mcp._tool_manager.call_tool = _null_coerce_call_tool
 
 
 # -- pre-flight helper --
@@ -546,7 +580,7 @@ def _make_job_ref(job_id: str) -> CallToolResult:
     )
 
 
-def _validate_backend(backend: str | None, workspace: Path) -> None:
+def _validate_backend(backend: str, workspace: Path) -> None:
     """Raise ToolError if backend name is not in the loaded list."""
     names = _backend_names_for(workspace)
     if backend and names and backend not in names:
@@ -558,7 +592,7 @@ def _validate_backend(backend: str | None, workspace: Path) -> None:
 
 def _build_review_context(
     cwd: Path, committed: bool, staged: bool = False,
-) -> tuple["ResolvedReview", str, str]:
+) -> tuple[ResolvedReview, str, str]:
     """Build review context for in-process sampling path.
 
     Returns (resolved, source_hash, baseline_repr).
@@ -610,7 +644,7 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _make_inprocess_result(
-    verdict: "Verdict", findings_count: int, elapsed: float,
+    verdict: Verdict, findings_count: int, elapsed: float,
     findings: list[dict] | None = None,
 ) -> CallToolResult:
     """Convert in-process Verdict to CallToolResult.
@@ -795,13 +829,13 @@ async def _dispatch_sampling(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
 )
 async def forge_review(
-    backend: str | None = None,
-    contract: str | None = None,
+    backend: str = "",
+    contract: str = "",
     committed: bool = False,
     whole_file: bool = False,
     canary: bool = False,
     allow_main: bool = False,
-    project_dir: str | None = None,
+    project_dir: str = "",
     ctx: Context = None,
 ) -> CallToolResult:
     """Run forge review pipeline."""
@@ -892,9 +926,9 @@ async def forge_review(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
 )
 async def forge_gate_check(
-    baseline: str | None = None,
-    backend: str | None = None,
-    project_dir: str | None = None,
+    baseline: str = "",
+    backend: str = "",
+    project_dir: str = "",
     ctx: Context = None,
 ) -> CallToolResult:
     """Run forge gate-check pipeline."""
@@ -947,7 +981,7 @@ async def forge_gate_check(
     description="Initialize .code-forge/ directory in the current workspace.",
     annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True),
 )
-async def forge_init(force: bool = False, project_dir: str | None = None, ctx: Context = None) -> CallToolResult:
+async def forge_init(force: bool = False, project_dir: str = "", ctx: Context = None) -> CallToolResult:
     """Initialize forge configuration.
 
     Refuses to create project markers at $HOME -- use user-level
@@ -976,7 +1010,7 @@ async def forge_init(force: bool = False, project_dir: str | None = None, ctx: C
     description="Trust the gate.yaml backends in the current workspace.",
     annotations=ToolAnnotations(readOnlyHint=False, idempotentHint=True),
 )
-async def forge_trust(project_dir: str | None = None, ctx: Context = None) -> CallToolResult:
+async def forge_trust(project_dir: str = "", ctx: Context = None) -> CallToolResult:
     """Trust forge backends."""
     workspace = await _workspace_for(ctx, project_dir=project_dir)
     stdout, stderr, exit_code = await _run_cli_simple(
@@ -993,7 +1027,7 @@ async def forge_trust(project_dir: str | None = None, ctx: Context = None) -> Ca
         readOnlyHint=True, destructiveHint=False, idempotentHint=True
     ),
 )
-async def forge_resolve_outlet(project_dir: str | None = None, ctx: Context = None) -> CallToolResult:
+async def forge_resolve_outlet(project_dir: str = "", ctx: Context = None) -> CallToolResult:
     """Diagnose backend routing.
 
     Appends the resolved workspace, gate.yaml path, backend names, and
