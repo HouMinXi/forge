@@ -860,7 +860,7 @@ async def test_watchdog_sigkill_reap_timeout_exit_code():
     assert entry["result"]["verdict"] == "TIMEOUT"
 
 
-# -- real-path group-kill (X-1) --
+# -- real-path group-kill --
 
 
 @pytest.mark.asyncio
@@ -921,3 +921,35 @@ async def test_killpg_kills_entire_process_group():
     assert not remaining, (
         f"process group {pgid} still has alive members: {remaining}"
     )
+
+
+@pytest.mark.asyncio
+async def test_run_cli_budgeted_sets_start_new_session():
+    """Production spawn must set start_new_session=True so the child
+    becomes a process group leader (pgid == pid).  Without this flag,
+    _terminate_and_reap falls back to proc.terminate() and orphan
+    children survive the kill."""
+    from pathlib import Path
+
+    from code_forge.mcp_server import _run_cli_budgeted
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    mock_proc.pid = 12345
+
+    with patch(
+        "code_forge.mcp_server.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+        return_value=mock_proc,
+    ) as mock_exec:
+        await _run_cli_budgeted(
+            "review", workspace=Path("/tmp"), budget=10.0
+        )
+        mock_exec.assert_called_once()
+        assert (
+            mock_exec.call_args.kwargs.get("start_new_session") is True
+        ), (
+            "_run_cli_budgeted must pass start_new_session=True to "
+            "create a new process group"
+        )
