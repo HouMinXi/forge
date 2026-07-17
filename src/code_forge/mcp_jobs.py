@@ -261,6 +261,22 @@ async def _wait_for_job(job_id: str) -> None:
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - entry["created_at"]
         proc = entry["proc"]
+        # Race: subprocess may have finished between its last check and
+        # the timeout.  If returncode is set, the process exited -- treat
+        # as a normal completion, not a timeout.  The comm_task was already
+        # cancelled by asyncio.wait_for on timeout, so we cannot await it;
+        # read stderr from the log file instead.
+        if proc.returncode is not None:
+            entry["comm_task"].cancel()
+            entry["status"] = "completed"
+            entry["result"] = {
+                "stdout": "",
+                "stderr": _read_stderr_tail(entry),
+                "exit_code": proc.returncode,
+                "verdict": exit_to_verdict(proc.returncode),
+                "duration_s": elapsed,
+            }
+            return
         # Cancel the comm_task to release its resources (file descriptors,
         # buffered data) before killing the process.  Without this, a
         # subprocess stuck in D-state leaves the task dangling.

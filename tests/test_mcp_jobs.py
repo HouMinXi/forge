@@ -723,6 +723,38 @@ async def test_watchdog_cancels_comm_task_on_timeout():
     assert inner_task.cancelled() or inner_task.done()
 
 
+@pytest.mark.asyncio
+async def test_watchdog_race_timeout_then_exit_is_not_false_timeout():
+    """When subprocess exits between its last check and the timeout, the
+    result should be a normal completion, not TIMEOUT."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+
+    # Create a comm_task that takes longer than the cap so wait_for
+    # raises TimeoutError.  Set returncode BEFORE the timeout fires,
+    # simulating the race where the process exited between its last
+    # poll and the timeout.
+    async def _slow_comm():
+        await asyncio.sleep(0.05)
+        proc.returncode = 0  # process exits
+        await asyncio.sleep(5.0)  # pipe stays open (D-state-like)
+        return (b"output", b"")
+
+    task = asyncio.ensure_future(_slow_comm())
+    job_id = start_job(task, proc, max_lifetime_s=0.1)
+    # Timeout fires at 0.1s; proc.returncode was set at 0.05s
+    await asyncio.sleep(0.5)
+    entry = _jobs.get(job_id)
+    assert entry is not None
+    # Should be completed (not TIMEOUT) because proc.returncode was set
+    assert entry["status"] == "completed"
+    assert entry["result"]["verdict"] == "PASS"
+    assert entry["result"]["exit_code"] == 0
+    # stdout is empty because comm_task was cancelled by wait_for
+    assert entry["result"]["stdout"] == ""
+
+
 # -- _read_stderr_tail --
 
 
