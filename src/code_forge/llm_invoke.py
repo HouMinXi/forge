@@ -1352,8 +1352,7 @@ async def invoke_sampling(
 ) -> LLMResult:
     from mcp.types import (
         SamplingMessage, TextContent as MCPTextContent,
-        ModelPreferences, ModelHint, CreateMessageResult,
-        ImageContent, AudioContent,
+        ModelPreferences, ModelHint,
     )
     t0 = time.time()
     kwargs = {
