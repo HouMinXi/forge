@@ -821,7 +821,7 @@ def test_read_stderr_tail_reads_file():
 
 
 def test_read_stderr_tail_truncates():
-    """Inject proof: must read TAIL, not HEAD.  HEAD would yield 'AAAA...';
+    """Must read the TAIL, not the HEAD: head yields 'AAAA...';
     tail yields 'BBBB...'."""
     from code_forge.mcp_jobs import _read_stderr_tail
     f = tempfile.NamedTemporaryFile(
