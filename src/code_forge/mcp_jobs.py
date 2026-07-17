@@ -261,6 +261,10 @@ async def _wait_for_job(job_id: str) -> None:
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - entry["created_at"]
         proc = entry["proc"]
+        # Cancel the comm_task to release its resources (file descriptors,
+        # buffered data) before killing the process.  Without this, a
+        # subprocess stuck in D-state leaves the task dangling.
+        entry["comm_task"].cancel()
         # Read stderr log BEFORE the finally-block unlink
         stderr_tail = _read_stderr_tail(entry)
         await _terminate_and_reap(proc)

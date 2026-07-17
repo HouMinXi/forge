@@ -8,7 +8,7 @@ import os
 import signal
 import tempfile
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -478,8 +478,103 @@ async def test_terminate_and_reap_sigkill_uses_killpg_for_session_leader():
     with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
          patch("code_forge.mcp_jobs.os.killpg") as mock_killpg:
         await _terminate_and_reap(proc)
-        mock_killpg.assert_any_call(12345, signal.SIGKILL)
+        # killpg called for both SIGTERM and SIGKILL; verify SIGKILL specifically
+        assert mock_killpg.call_args_list[-1] == call(12345, signal.SIGKILL)
         proc.kill.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_sigkill_pgid_none_falls_back_to_kill():
+    """When pgid is None, SIGKILL uses proc.kill instead of killpg."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+    call_count = 0
+
+    async def _wait_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError
+        proc.returncode = -9
+        return None
+
+    proc.wait = AsyncMock(side_effect=_wait_side_effect)
+    from code_forge.mcp_jobs import _terminate_and_reap
+    with patch("code_forge.mcp_jobs.os.getpgid", side_effect=OSError("no such process")):
+        await _terminate_and_reap(proc)
+        proc.kill.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_sigkill_pgid_not_equal_pid_falls_back_to_kill():
+    """When pgid != pid (not session leader), SIGKILL uses proc.kill."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+    call_count = 0
+
+    async def _wait_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError
+        proc.returncode = -9
+        return None
+
+    proc.wait = AsyncMock(side_effect=_wait_side_effect)
+    from code_forge.mcp_jobs import _terminate_and_reap
+    with patch("code_forge.mcp_jobs.os.getpgid", return_value=99999):
+        await _terminate_and_reap(proc)
+        proc.kill.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_sigkill_killpg_oserror_falls_back_to_kill():
+    """When killpg raises OSError during SIGKILL, falls back to proc.kill."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+    call_count = 0
+
+    async def _wait_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError
+        proc.returncode = -9
+        return None
+
+    proc.wait = AsyncMock(side_effect=_wait_side_effect)
+    from code_forge.mcp_jobs import _terminate_and_reap
+    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
+         patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("permission denied")):
+        await _terminate_and_reap(proc)
+        proc.kill.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_sigkill_both_fail_no_raise():
+    """When both killpg and proc.kill raise OSError, no exception escapes."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+    call_count = 0
+
+    async def _wait_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError
+        return None  # stays None: D-state child
+
+    proc.wait = AsyncMock(side_effect=_wait_side_effect)
+    proc.kill.side_effect = OSError("process not found")
+    from code_forge.mcp_jobs import _terminate_and_reap
+    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
+         patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("permission denied")):
+        # Must not raise
+        await _terminate_and_reap(proc)
 
 
 # -- watchdog (A1) --
