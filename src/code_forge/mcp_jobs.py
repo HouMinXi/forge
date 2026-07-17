@@ -321,8 +321,12 @@ def _read_stderr_tail(entry: dict[str, Any], max_bytes: int = 2048) -> str:
     if not log_path:
         return ""
     try:
-        data = Path(log_path).read_bytes()
-        return data[-max_bytes:].decode(errors="replace")
+        size = os.path.getsize(log_path)
+        with open(log_path, "rb") as fh:
+            if size > max_bytes:
+                fh.seek(size - max_bytes)
+            data = fh.read(max_bytes)
+        return data.decode(errors="replace")
     except OSError:
         return ""
 

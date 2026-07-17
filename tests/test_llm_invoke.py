@@ -2952,7 +2952,7 @@ class TestReadWithDeadlineRealPath:
             )
 
 
-# -- effective_invoke_timeout_s (A2 + A3) --
+# -- effective_invoke_timeout_s --
 
 
 class TestEffectiveInvokeTimeoutS:
@@ -3011,7 +3011,7 @@ class TestEffectiveInvokeTimeoutS:
         assert effective_invoke_timeout_s(be) == 3600
 
     def test_helper_matches_invoke_path(self):
-        """A3: helper return matches what invoke() applies for the same config."""
+        """Helper return matches what invoke() applies for the same config."""
         from code_forge.llm_invoke import effective_invoke_timeout_s
         # For a CLI backend with timeout_s=0, invoke() caps at _CLI_TIMEOUT_CAP_S=300
         be = DEFAULT_BACKEND

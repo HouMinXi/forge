@@ -577,12 +577,12 @@ async def test_terminate_and_reap_sigkill_both_fail_no_raise():
         await _terminate_and_reap(proc)
 
 
-# -- watchdog (A1) --
+# -- watchdog --
 
 
 @pytest.mark.asyncio
 async def test_watchdog_kills_on_timeout():
-    """A1(i): sleeping subprocess + tiny cap -> status failed, verdict TIMEOUT."""
+    """Sleeping subprocess + tiny cap -> status failed, verdict TIMEOUT."""
     proc = await asyncio.create_subprocess_exec(
         "sleep", "60",
         stdout=asyncio.subprocess.PIPE,
@@ -601,7 +601,7 @@ async def test_watchdog_kills_on_timeout():
 
 @pytest.mark.asyncio
 async def test_watchdog_reaps_proc():
-    """A1(ii): after timeout, proc.returncode is not None."""
+    """After timeout, proc.returncode is not None."""
     proc = await asyncio.create_subprocess_exec(
         "sleep", "60",
         stdout=asyncio.subprocess.PIPE,
@@ -615,7 +615,7 @@ async def test_watchdog_reaps_proc():
 
 @pytest.mark.asyncio
 async def test_watchdog_stderr_tail_preserved():
-    """A1(iii): child stderr marker survives timeout into result.stderr.
+    """Child stderr marker survives timeout into result.stderr.
 
     When stderr is redirected to a log file (the real production path via
     _run_cli_budgeted), the watchdog reads the tail before unlinking.
@@ -649,7 +649,7 @@ async def test_watchdog_stderr_tail_preserved():
 
 @pytest.mark.asyncio
 async def test_watchdog_stderr_tail_from_log_file():
-    """A1(iii) variant: stderr redirected to log file, marker survives."""
+    """Stderr redirected to log file, marker survives."""
     stderr_fh = tempfile.NamedTemporaryFile(
         mode="w", suffix=".log", delete=False, encoding="utf-8",
     )
@@ -821,14 +821,19 @@ def test_read_stderr_tail_reads_file():
 
 
 def test_read_stderr_tail_truncates():
+    """Inject proof: must read TAIL, not HEAD.  HEAD would yield 'AAAA...';
+    tail yields 'BBBB...'."""
     from code_forge.mcp_jobs import _read_stderr_tail
     f = tempfile.NamedTemporaryFile(
         mode="w", suffix=".log", delete=False, encoding="utf-8",
     )
-    f.write("X" * 5000)
+    f.write("A" * 4900)
+    f.write("B" * 100)
     f.close()
     result = _read_stderr_tail({"stderr_log_path": f.name}, max_bytes=100)
-    assert len(result.encode()) <= 100
+    assert result == "B" * 100, (
+        f"Expected tail (BBBB...), got HEAD or partial: {result[:20]}..."
+    )
     os.unlink(f.name)
 
 
