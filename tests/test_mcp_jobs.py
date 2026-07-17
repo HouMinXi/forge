@@ -250,6 +250,54 @@ async def test_cleanup_all_kills_on_wait_timeout():
     proc.kill.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_cleanup_all_cancels_wait_tasks_before_terminating():
+    """cleanup_all must cancel _wait_for_job tasks before terminating subprocesses,
+    so watchers cannot race on _jobs entries during teardown."""
+    order: list[str] = []
+
+    proc1 = await asyncio.create_subprocess_exec(
+        "sleep", "60",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    proc2 = await asyncio.create_subprocess_exec(
+        "sleep", "60",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    task1 = asyncio.create_task(proc1.communicate())
+    task2 = asyncio.create_task(proc2.communicate())
+    jid1 = start_job(task1, proc1)
+    jid2 = start_job(task2, proc2)
+
+    wt1 = _jobs[jid1]["wait_task"]
+    wt2 = _jobs[jid2]["wait_task"]
+
+    # Patch _terminate_and_reap to record that it runs AFTER wait_tasks cancel.
+    from code_forge.mcp_jobs import _terminate_and_reap as original_terminate
+
+    async def _tracked_terminate(proc, grace=5.0):
+        # wait_tasks should already be done (cancelled) by now
+        if wt1.done() and wt2.done():
+            order.append("terminate_after_cancel")
+        return await original_terminate(proc, grace)
+
+    with patch("code_forge.mcp_jobs._terminate_and_reap", side_effect=_tracked_terminate):
+        await cleanup_all()
+
+    # Both subprocesses reaped
+    assert proc1.returncode is not None
+    assert proc2.returncode is not None
+    # Wait tasks were cancelled
+    assert wt1.cancelled() or wt1.done()
+    assert wt2.cancelled() or wt2.done()
+    # Ordering: cancel happened before terminate
+    assert "terminate_after_cancel" in order
+    # State fully cleared
+    assert len(_jobs) == 0
+
+
 # -- _evict_stale --
 
 

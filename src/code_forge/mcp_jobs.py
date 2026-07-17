@@ -96,6 +96,7 @@ def start_job(
     _jobs[job_id] = {
         "comm_task": comm_task,
         "proc": proc,
+        "wait_task": None,
         "status": "running",
         "result": None,
         "created_at": time.monotonic(),
@@ -103,7 +104,7 @@ def start_job(
         "stderr_log_path": stderr_log_path,
         "max_lifetime_s": max_lifetime_s,
     }
-    asyncio.create_task(_wait_for_job(job_id))
+    _jobs[job_id]["wait_task"] = asyncio.create_task(_wait_for_job(job_id))
     return job_id
 
 
@@ -175,15 +176,29 @@ async def _terminate_and_reap(
 
 
 async def cleanup_all() -> None:
-    """Terminate all running subprocesses. Called from lifespan teardown."""
-    tasks = []
+    """Terminate all running subprocesses. Called from lifespan teardown.
+
+    Cancel wait_for_job tasks first to prevent them from racing on
+    _jobs entries while we terminate subprocesses and clear state.
+    """
+    # Phase 1: cancel _wait_for_job watchers so they stop modifying entries.
+    wait_tasks = []
+    for entry in list(_jobs.values()):
+        wt = entry.get("wait_task")
+        if wt is not None and not wt.done():
+            wt.cancel()
+            wait_tasks.append(wt)
+    if wait_tasks:
+        await asyncio.gather(*wait_tasks, return_exceptions=True)
+    # Phase 2: terminate subprocesses (no more watchers racing on entries).
+    term_tasks = []
     for entry in list(_jobs.values()):
         proc = entry.get("proc")
         if proc is None or proc.returncode is not None:
             continue
-        tasks.append(_terminate_and_reap(proc))
-    if tasks:
-        await asyncio.gather(*tasks)
+        term_tasks.append(_terminate_and_reap(proc))
+    if term_tasks:
+        await asyncio.gather(*term_tasks)
     _jobs.clear()
 
 
