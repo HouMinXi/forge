@@ -168,7 +168,16 @@ async def _terminate_and_reap(
             exc_info=True,
         )
     if proc.returncode is None:
-        proc.kill()
+        try:
+            if pgid is not None and pgid == proc.pid:
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except OSError:
+            try:
+                proc.kill()
+            except OSError:
+                pass
         try:
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except Exception:
@@ -254,7 +263,6 @@ async def _wait_for_job(job_id: str) -> None:
         proc = entry["proc"]
         # Read stderr log BEFORE the finally-block unlink
         stderr_tail = _read_stderr_tail(entry)
-        entry["comm_task"].cancel()
         await _terminate_and_reap(proc)
         # D-state children survive SIGKILL; proc.returncode stays None.
         entry["status"] = "failed"

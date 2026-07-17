@@ -407,7 +407,7 @@ async def test_terminate_and_reap_skips_already_dead():
 
 @pytest.mark.asyncio
 async def test_terminate_and_reap_catches_oserror_on_terminate():
-    """L1-2: OSError from terminate (process died mid-check) is caught."""
+    """OSError from terminate (process died mid-check) is caught."""
     proc = MagicMock()
     proc.returncode = None
     proc.pid = 99999  # nonexistent PID
@@ -420,7 +420,7 @@ async def test_terminate_and_reap_catches_oserror_on_terminate():
 
 @pytest.mark.asyncio
 async def test_terminate_and_reap_uses_killpg_for_session_leader():
-    """L1-3: session leader (pid == pgid) gets os.killpg, not proc.terminate."""
+    """Session leader (pid == pgid) gets os.killpg, not proc.terminate."""
     proc = MagicMock()
     proc.returncode = None
     proc.pid = 12345
@@ -440,7 +440,7 @@ async def test_terminate_and_reap_uses_killpg_for_session_leader():
 
 @pytest.mark.asyncio
 async def test_terminate_and_reap_falls_back_to_terminate_when_killpg_fails():
-    """L1-3: if killpg fails (not session leader), fall back to terminate."""
+    """If killpg fails (not session leader), fall back to terminate."""
     proc = MagicMock()
     proc.returncode = None
     proc.pid = 12345
@@ -455,6 +455,31 @@ async def test_terminate_and_reap_falls_back_to_terminate_when_killpg_fails():
          patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("not leader")):
         await _terminate_and_reap(proc)
         proc.terminate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_terminate_and_reap_sigkill_uses_killpg_for_session_leader():
+    """Session leader (pid == pgid) gets os.killpg(SIGKILL), not proc.kill."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+    call_count = 0
+
+    async def _wait_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError
+        proc.returncode = -9
+        return None
+
+    proc.wait = AsyncMock(side_effect=_wait_side_effect)
+    from code_forge.mcp_jobs import _terminate_and_reap
+    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
+         patch("code_forge.mcp_jobs.os.killpg") as mock_killpg:
+        await _terminate_and_reap(proc)
+        mock_killpg.assert_any_call(12345, signal.SIGKILL)
+        proc.kill.assert_not_called()
 
 
 # -- watchdog (A1) --
@@ -590,7 +615,7 @@ async def test_watchdog_measures_real_elapsed():
 
 @pytest.mark.asyncio
 async def test_watchdog_cancels_comm_task_on_timeout():
-    """L1-1: comm_task is cancelled after watchdog timeout, not left pending."""
+    """comm_task is cancelled after watchdog timeout, not left pending."""
     proc = await asyncio.create_subprocess_exec(
         "sleep", "60",
         stdout=asyncio.subprocess.PIPE,
