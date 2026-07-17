@@ -933,23 +933,54 @@ async def test_run_cli_budgeted_sets_start_new_session():
 
     from code_forge.mcp_server import _run_cli_budgeted
 
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-    mock_proc.returncode = 0
-    mock_proc.pid = 12345
+    captured_kwargs = {}
+    real_proc = await asyncio.create_subprocess_exec(
+        "true",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await real_proc.wait()
+
+    class _Proc:
+        """Proxy that delegates pid/returncode/communicate to a
+        real subprocess, forwarding start_new_session capture."""
+        @property
+        def pid(self):
+            return real_proc.pid
+        @property
+        def returncode(self):
+            return real_proc.returncode
+        async def communicate(self):
+            return (b"", b"")
+
+    async def _capture_exec(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _Proc()
 
     with patch(
         "code_forge.mcp_server.asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-        return_value=mock_proc,
-    ) as mock_exec:
+        side_effect=_capture_exec,
+    ):
         await _run_cli_budgeted(
             "review", workspace=Path("/tmp"), budget=10.0
         )
-        mock_exec.assert_called_once()
-        assert (
-            mock_exec.call_args.kwargs.get("start_new_session") is True
-        ), (
-            "_run_cli_budgeted must pass start_new_session=True to "
-            "create a new process group"
+
+    assert captured_kwargs.get("start_new_session") is True, (
+        "_run_cli_budgeted must pass start_new_session=True"
+    )
+
+    # Spawn a real process with the captured start_new_session to
+    # verify the child becomes a group leader (pgid == pid).
+    child = await asyncio.create_subprocess_exec(
+        "sh", "-c", "sleep 60",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=captured_kwargs["start_new_session"],
+    )
+    try:
+        assert os.getpgid(child.pid) == child.pid, (
+            "production start_new_session must make child a group leader"
         )
+    finally:
+        child.kill()
+        await child.wait()
