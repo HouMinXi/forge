@@ -741,18 +741,46 @@ async def test_watchdog_race_timeout_then_exit_is_not_false_timeout():
         await asyncio.sleep(5.0)  # pipe stays open (D-state-like)
         return (b"output", b"")
 
-    task = asyncio.ensure_future(_slow_comm())
-    job_id = start_job(task, proc, max_lifetime_s=0.1)
-    # Timeout fires at 0.1s; proc.returncode was set at 0.05s
-    await asyncio.sleep(0.5)
-    entry = _jobs.get(job_id)
-    assert entry is not None
-    # Should be completed (not TIMEOUT) because proc.returncode was set
-    assert entry["status"] == "completed"
-    assert entry["result"]["verdict"] == "PASS"
-    assert entry["result"]["exit_code"] == 0
-    # stdout is empty because comm_task was cancelled by wait_for
-    assert entry["result"]["stdout"] == ""
+    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345):
+        task = asyncio.create_task(_slow_comm())
+        job_id = start_job(task, proc, max_lifetime_s=0.1)
+        # Timeout fires at 0.1s; proc.returncode was set at 0.05s
+        await asyncio.sleep(0.5)
+        entry = _jobs.get(job_id)
+        assert entry is not None
+        # Should be completed (not TIMEOUT) because proc.returncode was set
+        assert entry["status"] == "completed"
+        assert entry["result"]["verdict"] == "PASS"
+        assert entry["result"]["exit_code"] == 0
+        # stdout is empty because comm_task was cancelled by wait_for
+        assert entry["result"]["stdout"] == ""
+        assert "duration_s" in entry["result"]
+
+
+@pytest.mark.asyncio
+async def test_watchdog_race_timeout_nonzero_exit():
+    """Race path with non-zero exit code maps to correct verdict."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+
+    async def _slow_comm():
+        await asyncio.sleep(0.05)
+        proc.returncode = 1  # process exits with failure
+        await asyncio.sleep(5.0)
+        return (b"", b"")
+
+    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345):
+        task = asyncio.create_task(_slow_comm())
+        job_id = start_job(task, proc, max_lifetime_s=0.1)
+        await asyncio.sleep(0.5)
+        entry = _jobs.get(job_id)
+        assert entry is not None
+        assert entry["status"] == "completed"
+        assert entry["result"]["verdict"] == "FAIL"
+        assert entry["result"]["exit_code"] == 1
+        assert entry["result"]["stdout"] == ""
+        assert "duration_s" in entry["result"]
 
 
 # -- _read_stderr_tail --
