@@ -837,6 +837,44 @@ def test_read_stderr_tail_truncates():
     os.unlink(f.name)
 
 
+def test_read_stderr_tail_multibyte_boundary():
+    """Multi-byte UTF-8 sequence straddling the max_bytes boundary must
+    decode without raising; decode(errors='replace') handles the seam."""
+    from code_forge.mcp_jobs import _read_stderr_tail
+    max_bytes = 100
+    # '中' is 3 bytes (E4 B8 AD).  4900 ASCII + 40 Chinese = 5020 bytes.
+    # Tail of 100 bytes starts at byte 4920, which is 20 bytes into the
+    # Chinese section.  20 / 3 = 6.67 -- the cut lands mid-character.
+    filler = "A" * 4900
+    chinese = "中" * 40  # U+4E2D = '中', 3 bytes each
+    content = filler + chinese
+    f = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False, encoding="utf-8",
+    )
+    f.write(content)
+    f.close()
+    result = _read_stderr_tail({"stderr_log_path": f.name}, max_bytes=max_bytes)
+    # (a) Must not raise -- decode(errors="replace") handles partial sequences
+    assert isinstance(result, str)
+    # (b) After the replacement char(s), the rest is clean Chinese.
+    #     The tail starts at byte 4920, which is 20 bytes into the Chinese
+    #     section.  20 / 3 = 6.67 -- byte 4920 is the last byte of the 7th
+    #     char (AD), an orphan byte that decode(errors="replace") turns into
+    #     U+FFFD.  Then 40 - 7 = 33 clean '中' chars follow.
+    stripped = result.replace("�", "")
+    assert stripped == "中" * 33, (
+        f"Expected 33 clean Chinese chars, got {len(stripped)}: {stripped[:10]}..."
+    )
+    # (c) The raw tail read is exactly max_bytes.  Re-encoding may produce
+    #     more bytes because U+FFFD (3 bytes) replaces a 1-byte orphan.
+    #     Verify the decoded content is sensible, not that re-encoding fits.
+    assert len(result) >= 1, "result must not be empty"
+    assert result[0] == "�", (
+        f"First char should be replacement, got {result[0]!r}"
+    )
+    os.unlink(f.name)
+
+
 # SIGKILL reap timeout edge test
 
 
