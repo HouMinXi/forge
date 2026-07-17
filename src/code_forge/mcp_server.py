@@ -530,6 +530,7 @@ async def _run_cli_budgeted(
             stderr=stderr_fh,
             cwd=str(workspace),
             env=env,
+            start_new_session=True,
         )
     except BaseException:
         stderr_fh.close()

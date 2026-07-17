@@ -754,6 +754,10 @@ async def test_watchdog_race_timeout_then_exit_is_not_false_timeout():
         assert entry["result"]["exit_code"] == 0
         # stdout is empty because comm_task was cancelled by wait_for
         assert entry["result"]["stdout"] == ""
+        # stderr must include the stdout-lost marker
+        assert "stdout lost: process exited at timeout boundary" in (
+            entry["result"]["stderr"]
+        )
         assert "duration_s" in entry["result"]
 
 
@@ -780,6 +784,10 @@ async def test_watchdog_race_timeout_nonzero_exit():
         assert entry["result"]["verdict"] == "FAIL"
         assert entry["result"]["exit_code"] == 1
         assert entry["result"]["stdout"] == ""
+        # stderr must include the stdout-lost marker
+        assert "stdout lost: process exited at timeout boundary" in (
+            entry["result"]["stderr"]
+        )
         assert "duration_s" in entry["result"]
 
 
@@ -850,3 +858,66 @@ async def test_watchdog_sigkill_reap_timeout_exit_code():
     assert entry["status"] == "failed"
     assert entry["result"]["exit_code"] == -1
     assert entry["result"]["verdict"] == "TIMEOUT"
+
+
+# -- real-path group-kill (X-1) --
+
+
+@pytest.mark.asyncio
+async def test_killpg_kills_entire_process_group():
+    """When start_new_session=True, killpg must kill the entire group.
+
+    This is a real-path test: spawns actual subprocesses that ignore
+    SIGTERM and fork a child.  After timeout + cleanup, ALL processes
+    must be gone -- not just the leader.
+
+    With start_new_session=True, the child becomes a process group
+    leader (pgid == pid), so _terminate_and_reap uses killpg to
+    signal the entire group.  Without it, the child inherits the
+    parent's pgid, pgid != pid, and only the leader gets SIGTERM --
+    the background sleep(60) survives as an orphan.
+    """
+    # Spawn a process that ignores TERM and forks a background sleeper.
+    # Both live in the same process group (start_new_session=True).
+    proc = await asyncio.create_subprocess_exec(
+        "sh", "-c",
+        'trap "" TERM; sleep 60 & sleep 60',
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    pgid = os.getpgid(proc.pid)
+    # Sanity: new session means pgid == pid (process group leader)
+    assert pgid == proc.pid, (
+        "start_new_session must make proc the group leader"
+    )
+
+    inner_task = asyncio.create_task(proc.communicate())
+    job_id = start_job(inner_task, proc, max_lifetime_s=0.5)
+    # Wait for watchdog timeout (0.5s) + SIGTERM grace (5s) + SIGKILL + reap
+    await asyncio.sleep(8.0)
+
+    # Verify the leader is dead
+    assert proc.returncode is not None, (
+        "leader process must have been reaped"
+    )
+
+    # Verify no process in the group survives
+    try:
+        os.kill(proc.pid, 0)  # should raise ProcessLookupError
+        assert False, "leader PID still alive after killpg cleanup"
+    except ProcessLookupError:
+        pass  # expected: leader is dead
+
+    # Check that the background sleeper is also dead
+    # (killpg kills the whole group, not just the leader)
+    import subprocess
+    result = subprocess.run(
+        ["ps", "-o", "pid=", "--sid", str(pgid)],
+        capture_output=True, text=True, timeout=5,
+    )
+    # If any processes remain in the session, the output is non-empty
+    remaining = result.stdout.strip()
+    assert not remaining, (
+        f"process group {pgid} still has alive members: {remaining}"
+    )

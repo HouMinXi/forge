@@ -267,20 +267,19 @@ async def _wait_for_job(job_id: str) -> None:
         # cancelled by asyncio.wait_for on timeout, so we cannot await it;
         # read stderr from the log file instead.
         if proc.returncode is not None:
-            entry["comm_task"].cancel()
+            stderr_tail = _read_stderr_tail(entry)
             entry["status"] = "completed"
             entry["result"] = {
                 "stdout": "",
-                "stderr": _read_stderr_tail(entry),
+                "stderr": (
+                    "stdout lost: process exited at timeout boundary\n"
+                    + stderr_tail
+                ),
                 "exit_code": proc.returncode,
                 "verdict": exit_to_verdict(proc.returncode),
                 "duration_s": elapsed,
             }
             return
-        # Cancel the comm_task to release its resources (file descriptors,
-        # buffered data) before killing the process.  Without this, a
-        # subprocess stuck in D-state leaves the task dangling.
-        entry["comm_task"].cancel()
         # Read stderr log BEFORE the finally-block unlink
         stderr_tail = _read_stderr_tail(entry)
         await _terminate_and_reap(proc)
