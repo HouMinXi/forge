@@ -898,7 +898,7 @@ async def test_killpg_kills_entire_process_group():
     )
 
     inner_task = asyncio.create_task(proc.communicate())
-    job_id = start_job(inner_task, proc, max_lifetime_s=0.5)
+    start_job(inner_task, proc, max_lifetime_s=0.5)
     # Wait for watchdog timeout (0.5s) + SIGTERM grace (5s) + SIGKILL + reap
     await asyncio.sleep(8.0)
 
