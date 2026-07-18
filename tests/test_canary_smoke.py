@@ -385,7 +385,6 @@ class TestRunInlineCanaryE2EMimo(unittest.TestCase):
             line for line in result.stdout.strip().splitlines()
             if line.strip()
             and "test_canary_smoke.py" not in line
-            and "spikes/canary_fence/" not in line
         ]
         self.assertEqual(
             stray, [],

@@ -6,7 +6,7 @@ Finding: frozen dataclass representing a single tool finding.
 ToolError: sentinel type representing a tool execution failure.
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -28,9 +28,6 @@ class Finding:
     tool_name: str      # which tool produced this
     fix: Optional[str] = None  # suggested fix text
 
-    def to_dict(self) -> dict:
-        """Serialize to plain dict for JSON state persistence."""
-        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -49,17 +46,3 @@ class ToolError:
     exit_code: int   # tool's exit code
     stderr: str      # stderr output (for diagnostics)
     message: str     # human-readable error description
-
-    def to_dict(self) -> dict:
-        """Serialize to plain dict for JSON state persistence.
-
-        Addresses Round 3 C-3: state.py needs to serialize ToolError
-        to state.json via this method. Without it, json.dumps crashes
-        on ToolError objects.
-        """
-        return {
-            "tool_name": self.tool_name,
-            "exit_code": self.exit_code,
-            "stderr": self.stderr,
-            "message": self.message,
-        }
