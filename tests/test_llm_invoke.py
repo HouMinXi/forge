@@ -2316,8 +2316,8 @@ class TestCliEnv:
 @pytest.mark.asyncio
 class TestInvokeSampling:
     async def test_invoke_sampling_success(self):
-        from code_forge.llm_invoke import invoke_sampling, LLMResult, Usage
-        from mcp.types import CreateMessageResult, TextContent, SamplingMessage
+        from code_forge.llm_invoke import invoke_sampling, Usage
+        from mcp.types import CreateMessageResult, TextContent
         from unittest.mock import AsyncMock, MagicMock
         
         session = MagicMock()
