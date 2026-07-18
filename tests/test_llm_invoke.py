@@ -1925,7 +1925,7 @@ class TestRetryLoop:
 
 # -- Wave 3: _apply_params body mapping tests -------------------------
 
-from code_forge.llm_invoke import _apply_params
+from code_forge.llm_invoke import _apply_params  # noqa: E402
 
 
 def _cfg(**kw):
@@ -2160,8 +2160,8 @@ class TestErrorMessageBackendName:
 
 # -- Wave 4: SSE streaming tests --------------------------------------
 
-from code_forge.llm_invoke import _read_sse
-from code_forge.errors import CliError
+from code_forge.llm_invoke import _read_sse  # noqa: E402
+from code_forge.errors import CliError  # noqa: E402
 
 
 def _sse_lines(*chunks):
