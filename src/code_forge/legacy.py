@@ -134,8 +134,10 @@ class LegacyRunner:
         if self.registry is None:
             return [_build_legacy_skipped("registry not injected")]
 
-        # Step 5: extract changed lines.
-        changed_lines = extract_changed_lines(diff_text)
+        # Step 5: extract changed lines (with absolute-path expansion).
+        changed_lines = extract_changed_lines(
+            diff_text, repo_root=repo_root
+        )
         if not changed_lines:
             return []
 
@@ -158,13 +160,9 @@ class LegacyRunner:
         if l0_infra:
             self.infra_errors.extend(l0_infra)
 
-        # Step 8: path normalization (RESEARCH.md Pitfall 2).
-        # Build normalized changed_lines dict with both relative and absolute keys.
-        changed_lines_norm: dict[str, set[int]] = {}
-        for rel_path, line_set in changed_lines.items():
-            changed_lines_norm[rel_path] = line_set
-            abs_key = str(repo_root / rel_path)
-            changed_lines_norm[abs_key] = line_set
+        # Step 8: extract_changed_lines already registered absolute
+        # keys when repo_root was passed in Step 5.
+        changed_lines_norm = changed_lines
 
         # Step 9: manual line-intersection (replaces filter_delta).
         changed_files_set = set(changed_lines_norm.keys())

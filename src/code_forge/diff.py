@@ -12,6 +12,7 @@ same files. Addresses LAYER0-03 and review Consensus #2.
 """
 
 import logging
+from pathlib import Path
 
 import unidiff
 
@@ -91,7 +92,38 @@ def tier_threshold(
     return 3
 
 
-def extract_changed_lines(diff_text: str) -> dict[str, set[int]]:
+def normalize_changed_lines(
+    changed_lines: dict[str, set[int]],
+    repo_root: "Path",
+) -> dict[str, set[int]]:
+    """Expand changed_lines with both relative and absolute keys.
+
+    extract_changed_lines returns relative paths (e.g. 'pkg/mod.py'),
+    but L0 tools may emit absolute paths (e.g. '/repo/pkg/mod.py').
+    This helper registers both forms so lookups succeed regardless of
+    which form the finding carries.
+
+    Args:
+        changed_lines: output of extract_changed_lines (relative keys)
+        repo_root: resolved repository root path
+
+    Returns:
+        New dict with both relative and absolute keys mapping to the
+        same line sets.  Input is not mutated.
+    """
+    result: dict[str, set[int]] = {}
+    repo_root = repo_root.resolve()
+    for rel_path, line_set in changed_lines.items():
+        result[rel_path] = line_set
+        abs_key = str(repo_root / rel_path)
+        result[abs_key] = line_set
+    return result
+
+
+def extract_changed_lines(
+    diff_text: str,
+    repo_root: "Path | None" = None,
+) -> dict[str, set[int]]:
     """Parse unified diff, return {file: set_of_changed_line_numbers}.
 
     Only added/modified lines. Deleted files excluded.
@@ -104,6 +136,9 @@ def extract_changed_lines(diff_text: str) -> dict[str, set[int]]:
 
     Args:
         diff_text: raw unified diff text (from git diff output)
+        repo_root: if provided, also register absolute path keys
+            (str(repo_root / rel_path)) so lookups succeed when
+            findings carry absolute paths.
 
     Returns:
         Dict mapping file paths to sets of added line numbers.
@@ -135,6 +170,9 @@ def extract_changed_lines(diff_text: str) -> dict[str, set[int]]:
 
         if changed_lines:
             result[filepath] = changed_lines
+            if repo_root is not None and not Path(filepath).is_absolute():
+                abs_key = str(Path(repo_root) / filepath)
+                result[abs_key] = changed_lines
 
     return result
 

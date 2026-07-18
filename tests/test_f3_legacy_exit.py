@@ -88,13 +88,17 @@ class TestP1PreExistingToAdvisory:
         # should reach PASS (no blocking findings).
         assert verdict == Verdict.PASS
 
-        # Finding appears in advisories (accumulates across rounds).
+        # Finding appears in advisories exactly once (dedup'd).
         advisories = machine._advisories
-        assert len(advisories) >= 1
+        assert len(advisories) == 1, (
+            "expected 1 advisory, got %d (per-round accumulation bug)"
+            % len(advisories)
+        )
         first = advisories[0]
         assert first.file == "test.py"
         assert first.line_range == [20, 20]
         assert "pre-existing" in first.id
+        assert first.attribution == "L0"
 
     def test_new_finding_enters_fix_loop(self, tmp_path):
         """Finding on line 10 (in diff) -> enters fix loop, not advisory."""
@@ -218,3 +222,90 @@ class TestP4Dispo05Once:
 
         # fix_attempts should be exactly 2 (not growing after promotion).
         assert machine._state.fix_attempts.get(fp, 0) == 2
+
+
+class TestP5AdvisoryDedup:
+    """P5: multi-round run emits each pre-existing finding EXACTLY ONCE."""
+
+    def test_advisory_emitted_once_across_rounds(self, tmp_path):
+        """Pre-existing finding appears exactly once, not N times."""
+        finding = _make_finding(line=99)
+
+        def mock_l0(registry, files):
+            return ([finding], [])
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=NoChangeAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(
+                git_diff=_DIFF_CHANGES_LINE_10
+            ),
+            source_hash="abc",
+            baseline_spec_repr="test",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+        )
+        machine.run()
+        assert len(machine._advisories) == 1
+
+
+class TestP7AbsolutePathClassifiedNew:
+    """P7: absolute-path finding on changed line is classified NEW."""
+
+    def test_absolute_path_on_changed_line_blocks(self, tmp_path):
+        """Absolute path (what real ruff emits) on a changed line."""
+        abs_path = str(tmp_path / "test.py")
+        finding = _make_finding(file=abs_path, line=10)
+
+        def mock_l0(registry, files):
+            return ([finding], [])
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=NoChangeAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(
+                git_diff=_DIFF_CHANGES_LINE_10
+            ),
+            source_hash="abc",
+            baseline_spec_repr="test",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+        )
+        verdict = machine.run()
+        # Absolute path on changed line -> NOT advisory, drives verdict.
+        assert verdict == Verdict.PENDING
+        assert len(machine._advisories) == 0
+
+
+class TestR7CiModeStillFails:
+    """R7: CI mode still FAILs on a CONFIRMED finding."""
+
+    def test_ci_mode_confirmed_finding_fails(self, tmp_path):
+        """CI mode with a new finding -> FAIL (not PASS)."""
+        finding = _make_finding(line=10)
+
+        def mock_l0(registry, files):
+            return ([finding], [])
+
+        machine = StateMachine(
+            mode=Mode.CI,
+            falsifier=StubFalsifier(),
+            autofixer=NoChangeAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(
+                git_diff=_DIFF_CHANGES_LINE_10
+            ),
+            source_hash="abc",
+            baseline_spec_repr="test",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+        )
+        verdict = machine.run()
+        assert verdict == Verdict.FAIL

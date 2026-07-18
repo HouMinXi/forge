@@ -242,6 +242,7 @@ class StateMachine:
         self._round_duration: float = 0.0
         self._pass_counter: int = 0
         self._advisories: "list[AdvisoryFinding]" = []
+        self._preexisting_buf: "list[AdvisoryFinding]" = []
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -259,6 +260,8 @@ class StateMachine:
         # Advisory axes run once after convergence, regardless of verdict
         #. Covers PASS, HOLD/PENDING, ESCALATED.
         self._run_advisory_axes()
+        self._advisories.extend(self._preexisting_buf)
+        self._preexisting_buf.clear()
         self._serialize_advisories()
         self._display_advisories()
         return verdict
@@ -653,13 +656,14 @@ class StateMachine:
         # Delta filter: separate new (in-diff) from pre-existing L0 findings.
         # Pre-existing findings go to advisories; only new findings enter
         # the fix loop and verdict.  Non-git mode: no filtering.
+        self._preexisting_buf = []
         if self.resolved_review.git_diff is not None and l0_findings:
             from .advisory import AdvisoryFinding
             from .delta import lines_intersect
             from .diff import extract_changed_lines
 
             changed = extract_changed_lines(
-                self.resolved_review.git_diff
+                self.resolved_review.git_diff, repo_root=self.cwd
             )
             delta: list = []
             for f in l0_findings:
@@ -669,18 +673,14 @@ class StateMachine:
                 ):
                     delta.append(f)
                 else:
-                    self._advisories.append(
+                    self._preexisting_buf.append(
                         AdvisoryFinding(
                             id="pre-existing-%s" % f.fingerprint,
                             axis="pre-existing-l0",
                             file=f.file,
                             line_range=f.line_range,
                             description=f.description,
-                            # All L0 findings come from ruff today.
-                            # StateFinding carries source="L0" but not
-                            # a tool name; revisit if L0 gains a second
-                            # runner.
-                            attribution="ruff",
+                            attribution=f.source,
                         )
                     )
             l0_findings = delta
