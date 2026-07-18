@@ -649,6 +649,42 @@ class StateMachine:
                 "L0 runner failed: %s" % exc
             )
             l0_findings = []
+
+        # Delta filter: separate new (in-diff) from pre-existing L0 findings.
+        # Pre-existing findings go to advisories; only new findings enter
+        # the fix loop and verdict.  Non-git mode: no filtering.
+        if self.resolved_review.git_diff is not None and l0_findings:
+            from .advisory import AdvisoryFinding
+            from .delta import lines_intersect
+            from .diff import extract_changed_lines
+
+            changed = extract_changed_lines(
+                self.resolved_review.git_diff
+            )
+            delta: list = []
+            for f in l0_findings:
+                file_lines = changed.get(f.file)
+                if file_lines is not None and lines_intersect(
+                    f.line_range, file_lines
+                ):
+                    delta.append(f)
+                else:
+                    self._advisories.append(
+                        AdvisoryFinding(
+                            id="pre-existing-%s" % f.fingerprint,
+                            axis="pre-existing-l0",
+                            file=f.file,
+                            line_range=f.line_range,
+                            description=f.description,
+                            # All L0 findings come from ruff today.
+                            # StateFinding carries source="L0" but not
+                            # a tool name; revisit if L0 gains a second
+                            # runner.
+                            attribution="ruff",
+                        )
+                    )
+            l0_findings = delta
+
         # Danger-score: L0 CONFIRMED StateFinding, causes HOLD on dangerous config fields.
         if self.resolved_review.git_diff is None:
             self._state.infra_errors.append(

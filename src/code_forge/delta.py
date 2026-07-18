@@ -14,6 +14,26 @@ produce same outputs, satisfying GATE-02 determinism.
 from code_forge.parsers.base import Finding, ToolError
 
 
+def lines_intersect(
+    line_range: list[int],
+    changed_lines: set[int],
+) -> bool:
+    """Check if any line in a finding's range intersects changed lines.
+
+    Shared by filter_delta (Finding objects with line/end_line) and
+    the L0 phase delta filter (StateFinding objects with line_range).
+
+    Args:
+        line_range: [start, end] inclusive line range
+        changed_lines: set of line numbers that changed in the diff
+
+    Returns:
+        True if any line in the range is in changed_lines
+    """
+    start, end = line_range[0], line_range[-1]
+    return any(ln in changed_lines for ln in range(start, end + 1))
+
+
 def filter_delta(
     findings: list[Finding | ToolError],
     changed_lines: dict[str, set[int]],
@@ -57,9 +77,7 @@ def filter_delta(
         if file_lines is None:
             continue
 
-        # Check if any line in the finding's range intersects
-        finding_range = range(item.line, item.end_line + 1)
-        if any(ln in file_lines for ln in finding_range):
+        if lines_intersect([item.line, item.end_line], file_lines):
             delta_findings.append(item)
 
     return (delta_findings, all_findings)

@@ -195,7 +195,7 @@ def run_cross_repo(
 
     Returns the joint Verdict (primary-authoritative).
     """
-    from .autofix import StubAutoFixer
+    from .autofix import NoChangeAutoFixer
     from .baseline import ResolvedReview
     from .factories import build_falsifier, build_l1_provider
     from .llm_invoke import Usage
@@ -333,7 +333,7 @@ def run_cross_repo(
                 sm = StateMachine(
                     mode=mode,
                     falsifier=falsifier,
-                    autofixer=StubAutoFixer(),
+                    autofixer=NoChangeAutoFixer(),
                     revert_fn=lambda f: None,
                     resolved_review=resolved_for_sm,
                     source_hash=source_hash,

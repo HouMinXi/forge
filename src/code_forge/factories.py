@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from .autofix import AutoFixer, FixOutcome, StubAutoFixer
+from .autofix import AutoFixer, FixOutcome, NoChangeAutoFixer
 from .baseline import ResolvedReview
 from .disposition import Disposition
 from .falsify import Falsifier, StubFalsifier
@@ -66,7 +66,7 @@ def build_autofixer(resolved: ResolvedReview) -> AutoFixer:
     to convert PARSE_FAIL -> NO_CHANGE, preventing revert_fn from
     being invoked (which would raise NotImplementedError per B1).
     """
-    base = StubAutoFixer()
+    base = NoChangeAutoFixer()
     if resolved.mode_hint == "non-git":
         return _NonGitSafeAutoFixer(base)
     return base

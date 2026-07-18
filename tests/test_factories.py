@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 
-from code_forge.autofix import AutoFixer, FixOutcome, StubAutoFixer
+from code_forge.autofix import (
+    AutoFixer,
+    FixOutcome,
+    NoChangeAutoFixer,
+    StubAutoFixer,
+)
 from code_forge.baseline import ResolvedReview
 from code_forge.factories import (
     _NonGitSafeAutoFixer,
@@ -112,10 +117,10 @@ class TestBuildAutofixer:
     """AutoFixer factory with non-git wrapper."""
 
     def test_git_mode_returns_plain_stub(self):
-        """SC-9(d): git mode -> StubAutoFixer (no wrapper)."""
+        """SC-9(d): git mode -> NoChangeAutoFixer (no wrapper)."""
         resolved = _make_resolved("git")
         af = build_autofixer(resolved)
-        assert isinstance(af, StubAutoFixer)
+        assert isinstance(af, NoChangeAutoFixer)
         assert not isinstance(af, _NonGitSafeAutoFixer)
 
     def test_non_git_mode_returns_wrapper(self):

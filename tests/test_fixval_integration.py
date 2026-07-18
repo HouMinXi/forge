@@ -315,7 +315,7 @@ class TestFixvalNotRunOnNonConverged:
                         fingerprint="persistent-fp",
                         source="L0",
                         disposition=Disposition.CONFIRMED,
-                        file="test.py",
+                        file="foo.py",
                         line_range=[1, 1],
                         description="persistent",
                     ),
@@ -330,6 +330,13 @@ class TestFixvalNotRunOnNonConverged:
 
         machine = _make_machine(
             tmp_path,
+            resolved=_make_resolved(
+                git_diff=(
+                    "--- a/foo.py\n+++ b/foo.py\n"
+                    "@@ -1,3 +1,4 @@\n"
+                    "+added\n old1\n old2\n old3\n"
+                ),
+            ),
             l0_runner=persistent_finding_l0,
         )
         machine.autofixer = NoChangeAutoFixer()

@@ -76,3 +76,20 @@ class StubAutoFixer(AutoFixer):
     def fix(self, finding: StateFinding, mode_hint: str) -> FixOutcome:
         """Return configured outcome for this finding's fingerprint."""
         return self._outcomes.get(finding.fingerprint, self._default)
+
+
+class NoChangeAutoFixer(AutoFixer):
+    """Production autofixer that never modifies the reviewed tree.
+
+    Always returns NO_CHANGE, which increments fix_attempts each round.
+    After max_fix_attempts rounds, DISPO-05 promotes CONFIRMED -> UNCERTAIN,
+    enabling the HOLD UX to present unfixable findings to the user.
+
+    StubAutoFixer remains the test fixture (57 test constructions depend on
+    its SUCCESS default). This class is the production default only.
+    """
+
+    def fix(self, finding: StateFinding, mode_hint: str) -> FixOutcome:
+        # mode_hint unused: NO_CHANGE is unconditional.  Parameter
+        # kept for interface parity with AutoFixer.fix().
+        return FixOutcome.NO_CHANGE
