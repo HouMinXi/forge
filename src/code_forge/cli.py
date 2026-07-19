@@ -2035,6 +2035,9 @@ def _dispatch_subagent(
             _yaml_digest_c = load_contract_digest(
                 _contracts_yaml_c, cwd, backend=backend,
             )
+        # Broad guard: load_contract_digest has internal error handling,
+        # but bugs in its code before its own try can escape here.
+        # Empty digest = proceed without contract context, not a review abort.
         except Exception as exc:
             sys.stderr.write(
                 "code-forge: contracts.yaml load failed: %s\n" % exc
@@ -2395,10 +2398,18 @@ def _run(args, env, cwd: Path) -> Verdict:
     _contracts_yaml_a = cwd / ".code-forge" / "contracts.yaml"
     _yaml_digest_a = ""
     if _contracts_yaml_a.is_file():
-        from .contract_loader import load_contract_digest
-        _yaml_digest_a = load_contract_digest(
-            _contracts_yaml_a, cwd, backend=backend,
-        )
+        try:
+            from .contract_loader import load_contract_digest
+            _yaml_digest_a = load_contract_digest(
+                _contracts_yaml_a, cwd, backend=backend,
+            )
+        # Broad guard: load_contract_digest has internal error handling,
+        # but bugs in its code before its own try can escape here.
+        # Empty digest = proceed without contract context, not a review abort.
+        except Exception as exc:
+            sys.stderr.write(
+                "code-forge: contracts.yaml load failed: %s\n" % exc
+            )
     _contract_spec_a = _merge_contract_spec(
         _yaml_digest_a, _contract_file_content,
         backend=backend, warn_fn=warn,
