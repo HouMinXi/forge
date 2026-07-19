@@ -1862,6 +1862,28 @@ def _merge_contract_spec(
     return merged
 
 
+def _dispatch_cross_repo(
+    gate_yaml_path, cwd, baseline_spec, head_spec, mode,
+    engine_choice, backend, max_rounds, max_fix, _clean_threshold,
+    warn,
+) -> "Verdict | None":
+    """Cross-repo dispatch. Returns Verdict if siblings exist, None otherwise."""
+    _cv = _cross_repo_verdict_or_none(
+        gate_yaml_path=gate_yaml_path,
+        cwd=cwd,
+        baseline_spec=baseline_spec,
+        head_spec=head_spec,
+        mode=mode,
+        engine_choice=engine_choice,
+        backend=backend,
+        max_rounds=max_rounds,
+        max_fix=max_fix,
+        _clean_threshold=_clean_threshold,
+        warn=warn,
+    )
+    return _cv
+
+
 def _dispatch_subagent(
     outlet, warn, _contract_file_content, backend,
     resolved, source_hash, registry, engine_choice,
@@ -2444,18 +2466,10 @@ def _run(args, env, cwd: Path) -> Verdict:
     # NOTE: this reads gate.yaml independently from the backend-resolution
     # load at line ~1249 because gate_data is scoped inside the has_inline
     # else-block and may not exist when the user passed --backend-url/etc.
-    _cv = _cross_repo_verdict_or_none(
-        gate_yaml_path=gate_yaml_path,
-        cwd=cwd,
-        baseline_spec=baseline_spec,
-        head_spec=head_spec,
-        mode=mode,
-        engine_choice=engine_choice,
-        backend=backend,
-        max_rounds=max_rounds,
-        max_fix=max_fix,
-        _clean_threshold=_clean_threshold,
-        warn=warn,
+    _cv = _dispatch_cross_repo(
+        gate_yaml_path, cwd, baseline_spec, head_spec, mode,
+        engine_choice, backend, max_rounds, max_fix, _clean_threshold,
+        warn,
     )
     if _cv is not None:
         return _cv
