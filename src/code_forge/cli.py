@@ -1884,6 +1884,130 @@ def _dispatch_cross_repo(
     return _cv
 
 
+def _dispatch_inline_canary(
+    outlet, args, env, cfgs, gate_data, cwd,
+) -> "Verdict | None":
+    """Inline/sampling outlet dispatch.
+
+    Returns Verdict for inline outlet (canary verdict or DELEGATED).
+    Raises CliError for sampling outlet.
+    Returns None for other outlets (caller continues to subprocess path).
+    """
+    if outlet == "sampling":
+        raise CliError(
+            "outlet 'sampling' is only available within the MCP server context"
+        )
+    if outlet != "inline":
+        return None
+    canary_config = _load_canary_config(args, gate_data)
+    if canary_config is not None:
+        try:
+            from .canary_gen import run_inline_canary
+            from .backend import resolve_backend
+            from .llm_invoke import llm_invoke as _llm_invoke
+
+            import subprocess as _sp
+            _diff_result = _sp.run(
+                ["git", "diff", "HEAD"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(cwd),
+            )
+            diff_text = _diff_result.stdout if _diff_result.returncode == 0 else ""
+
+            try:
+                backend = resolve_backend(
+                    env, configs=cfgs,
+                    cli_value=getattr(args, "backend", None),
+                )
+            except Exception:
+                backend = None
+
+            n_canaries = canary_config.get("n", 5)
+
+            def _canary_provider(diff_text_arg: str) -> list:
+                if backend is None:
+                    return []
+                import json as _json
+                prompt = (
+                    "You are a code mutation expert. Given this Python diff, "
+                    "generate %d subtle semantic mutations. Each mutation must "
+                    "introduce a real bug (off-by-one, None deref, resource "
+                    "leak, etc.) that requires non-local reasoning to detect. "
+                    "Do NOT include comments explaining the bug.\n"
+                    "Each snippet MUST be <= 5 lines. "
+                    '"line" is the 1-based line number of the bug WITHIN '
+                    "the 'code' snippet (not a file line number).\n"
+                    'Return JSON: {"mutations": [{"file": "...", '
+                    '"line": N, "original": "<unmodified code snippet>", '
+                    '"code": "<mutated code snippet>", '
+                    '"description": "..."}]}\n\n'
+                    "Diff:\n" + diff_text_arg
+                ) % n_canaries
+                try:
+                    result = _llm_invoke(prompt, backend=backend)
+                    content = result.content
+                    if isinstance(content, dict):
+                        return content.get("mutations", [])
+                    parsed = _json.loads(str(content))
+                    return parsed.get("mutations", [])
+                except Exception as exc:
+                    sys.stderr.write(
+                        "code-forge: canary generation failed: %s, "
+                        "falling back to templates\n" % exc
+                    )
+                    return []
+
+            def _review_provider(prompt: str) -> str:
+                if backend is None:
+                    raise RuntimeError("no backend available for canary review")
+                import json as _json
+                result = _llm_invoke(prompt, backend=backend)
+                return (
+                    _json.dumps(result.content)
+                    if isinstance(result.content, dict)
+                    else str(result.content)
+                )
+
+            def _source_lookup(filepath: str):
+                import os
+                cwd_real = os.path.realpath(str(cwd))
+                full = os.path.realpath(os.path.join(cwd_real, filepath))
+                if not full.startswith(cwd_real + os.sep) and full != cwd_real:
+                    return None
+                if not os.path.isfile(full):
+                    return None
+                with open(full, encoding="utf-8", errors="replace") as f:
+                    return f.readlines()
+
+            verdict, real_findings = run_inline_canary(
+                diff_text=diff_text,
+                n=canary_config.get("n", 5),
+                threshold_ratio=canary_config.get("threshold_ratio", 0.6),
+                canary_provider=_canary_provider,
+                review_provider=_review_provider,
+                source_lookup=_source_lookup,
+            )
+            if real_findings:
+                sys.stderr.write("code-forge: canary-verified findings:\n")
+                for f in real_findings:
+                    sys.stderr.write("  %s:%s [%s] %s\n" % (
+                        f.get("file", "?"), f.get("line", "?"),
+                        f.get("severity", "?"), f.get("description", "?"),
+                    ))
+            return verdict
+        except Exception as exc:
+            sys.stderr.write(
+                "code-forge: canary check failed (%s), "
+                "falling back to DELEGATED\n" % exc
+            )
+    # Honesty floor: inline does not run the StateMachine gate.
+    # Declare DELEGATED so callers can distinguish from a real PASS.
+    sys.stderr.write(
+        "code-forge: DELEGATED -- review delegated to session"
+        " + external R1; exit 5\n"
+    )
+    return Verdict.DELEGATED
+
+
 def _dispatch_subagent(
     outlet, warn, _contract_file_content, backend,
     resolved, source_hash, registry, engine_choice,
@@ -1906,10 +2030,15 @@ def _dispatch_subagent(
     _contracts_yaml_c = cwd / ".code-forge" / "contracts.yaml"
     _yaml_digest_c = ""
     if _contracts_yaml_c.is_file():
-        from .contract_loader import load_contract_digest
-        _yaml_digest_c = load_contract_digest(
-            _contracts_yaml_c, cwd, backend=backend,
-        )
+        try:
+            from .contract_loader import load_contract_digest
+            _yaml_digest_c = load_contract_digest(
+                _contracts_yaml_c, cwd, backend=backend,
+            )
+        except Exception as exc:
+            sys.stderr.write(
+                "code-forge: contracts.yaml load failed: %s\n" % exc
+            )
     _contract_spec_c = _merge_contract_spec(
         _yaml_digest_c, _contract_file_content,
         backend=backend, warn_fn=warn,
@@ -2066,122 +2195,9 @@ def _run(args, env, cwd: Path) -> Verdict:
         has_explicit_backend=has_explicit_backend,
         reachability_fn=_reachability,
     )
-    if outlet == "sampling":
-        raise CliError(
-            "outlet 'sampling' is only available within the MCP server context"
-        )
-    if outlet == "inline":
-        canary_config = _load_canary_config(args, gate_data)
-        if canary_config is not None:
-            try:
-                from .canary_gen import run_inline_canary
-                from .backend import resolve_backend
-                from .llm_invoke import llm_invoke as _llm_invoke
-
-                import subprocess as _sp
-                _diff_result = _sp.run(
-                    ["git", "diff", "HEAD"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(cwd),
-                )
-                diff_text = _diff_result.stdout if _diff_result.returncode == 0 else ""
-
-                try:
-                    backend = resolve_backend(
-                        env, configs=cfgs,
-                        cli_value=getattr(args, "backend", None),
-                    )
-                except Exception:
-                    backend = None
-
-                n_canaries = canary_config.get("n", 5)
-
-                def _canary_provider(diff_text_arg: str) -> list:
-                    if backend is None:
-                        return []
-                    import json as _json
-                    prompt = (
-                        "You are a code mutation expert. Given this Python diff, "
-                        "generate %d subtle semantic mutations. Each mutation must "
-                        "introduce a real bug (off-by-one, None deref, resource "
-                        "leak, etc.) that requires non-local reasoning to detect. "
-                        "Do NOT include comments explaining the bug.\n"
-                        "Each snippet MUST be <= 5 lines. "
-                        '"line" is the 1-based line number of the bug WITHIN '
-                        "the 'code' snippet (not a file line number).\n"
-                        'Return JSON: {"mutations": [{"file": "...", '
-                        '"line": N, "original": "<unmodified code snippet>", '
-                        '"code": "<mutated code snippet>", '
-                        '"description": "..."}]}\n\n'
-                        "Diff:\n" + diff_text_arg
-                    ) % n_canaries
-                    try:
-                        result = _llm_invoke(prompt, backend=backend)
-                        content = result.content
-                        if isinstance(content, dict):
-                            return content.get("mutations", [])
-                        parsed = _json.loads(str(content))
-                        return parsed.get("mutations", [])
-                    except Exception as exc:
-                        sys.stderr.write(
-                            "code-forge: canary generation failed: %s, "
-                            "falling back to templates\n" % exc
-                        )
-                        return []
-
-                def _review_provider(prompt: str) -> str:
-                    if backend is None:
-                        raise RuntimeError("no backend available for canary review")
-                    import json as _json
-                    result = _llm_invoke(prompt, backend=backend)
-                    return (
-                        _json.dumps(result.content)
-                        if isinstance(result.content, dict)
-                        else str(result.content)
-                    )
-
-                def _source_lookup(filepath: str):
-                    import os
-                    cwd_real = os.path.realpath(str(cwd))
-                    full = os.path.realpath(os.path.join(cwd_real, filepath))
-                    if not full.startswith(cwd_real + os.sep) and full != cwd_real:
-                        return None
-                    try:
-                        os.path.commonpath([cwd_real, full])
-                    except ValueError:
-                        return None
-                    if not os.path.isfile(full):
-                        return None
-                    with open(full, encoding="utf-8", errors="replace") as f:
-                        return f.readlines()
-
-                verdict, real_findings = run_inline_canary(
-                    diff_text=diff_text,
-                    n=canary_config.get("n", 5),
-                    threshold_ratio=canary_config.get("threshold_ratio", 0.6),
-                    canary_provider=_canary_provider,
-                    review_provider=_review_provider,
-                    source_lookup=_source_lookup,
-                )
-                if real_findings:
-                    sys.stderr.write("code-forge: canary-verified findings:\n")
-                    for f in real_findings:
-                        sys.stderr.write("  %s:%s [%s] %s\n" % (
-                            f.get("file", "?"), f.get("line", "?"),
-                            f.get("severity", "?"), f.get("description", "?"),
-                        ))
-                return verdict
-            except Exception as exc:
-                sys.stderr.write(
-                    "code-forge: canary check failed (%s), "
-                    "falling back to DELEGATED\n" % exc
-                )
-        # Honesty floor: inline does not run the StateMachine gate.
-        # Declare DELEGATED so callers can distinguish from a real PASS.
-        sys.stderr.write(
-            "code-forge: DELEGATED -- review delegated to session"
-            " + external R1; exit 5\n"
-        )
-        return Verdict.DELEGATED
+    _inline_v = _dispatch_inline_canary(outlet, args, env, cfgs, gate_data, cwd)
+    if _inline_v is not None:
+        return _inline_v
 
     # Step 6: backend resolution (moved above subagent dispatch so backend
     # is available to the C-leg spawn_fn closure -- M-R2-07).
