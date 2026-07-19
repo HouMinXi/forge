@@ -17,8 +17,8 @@ _SRC = pathlib.Path(__file__).parent.parent / "src" / "code_forge" / "cli.py"
 
 def _subagent_block() -> str:
     src = _SRC.read_text()
-    start = src.index('if outlet == "subagent":')
-    return src[start: start + 2000]
+    start = src.index('def _dispatch_subagent(')
+    return src[start: start + 2500]
 
 
 class TestSubagentDispatchLegs:

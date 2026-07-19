@@ -1862,6 +1862,73 @@ def _merge_contract_spec(
     return merged
 
 
+def _dispatch_subagent(
+    outlet, warn, _contract_file_content, backend,
+    resolved, source_hash, registry, engine_choice,
+    _clean_threshold, cwd,
+) -> "Verdict | None":
+    """Subagent outlet dispatch. Returns Verdict if outlet=='subagent',
+    None otherwise (caller continues to subprocess path)."""
+    if outlet != "subagent":
+        return None
+    from .outlet_c import run_outlet_c
+    from .taint import TaintRunner
+    from .runtime import RuntimeRunner
+    from .legacy import LegacyRunner
+    from .graph_triage import GraphTriageRunner
+    from .daemon_state import DaemonStateRunner
+
+    _post_image, _conv_digest = _assemble_post_image(
+        cwd, resolved.git_diff or ""
+    )
+    _contracts_yaml_c = cwd / ".code-forge" / "contracts.yaml"
+    _yaml_digest_c = ""
+    if _contracts_yaml_c.is_file():
+        from .contract_loader import load_contract_digest
+        _yaml_digest_c = load_contract_digest(
+            _contracts_yaml_c, cwd, backend=backend,
+        )
+    _contract_spec_c = _merge_contract_spec(
+        _yaml_digest_c, _contract_file_content,
+        backend=backend, warn_fn=warn,
+    )
+    _subagent_spawn = _make_subagent_spawn(
+        backend, _conv_digest, _post_image,
+        contract_spec=_contract_spec_c,
+    )
+    _c_taint = TaintRunner()
+    _c_runtime = RuntimeRunner(backend=backend)
+    _c_graph = GraphTriageRunner()
+    # Do NOT set _c_graph._cached_findings here.
+    # The pre-fetched graph findings variable is defined later in _run,
+    # after this block's early return -- it is not in scope here.
+    # GraphTriageRunner fetches fresh findings on its advisory pass.
+    _c_daemon = DaemonStateRunner(backend=backend)
+    _c_legacy = LegacyRunner()
+    verdict = run_outlet_c(
+        resolved_review=resolved,
+        source_hash=source_hash,
+        cwd=cwd,
+        spawn_fn=_subagent_spawn,
+        clean_round_threshold=_clean_threshold,
+        registry=registry,
+        backend=backend,
+        engine=engine_choice,
+        advisory_runners=[_c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy],
+    )
+    # Test-assertion review gate: advisory findings to stderr.
+    # D8 exception: not recorded in receipts (see _run_test_assertion_review).
+    if resolved.git_diff:
+        _ta_findings = _run_test_assertion_review(
+            resolved.git_diff, backend
+        )
+        for _f in _ta_findings:
+            sys.stderr.write(
+                "[test-assertion] %s\n" % _f.description
+            )
+    return verdict
+
+
 def _run(args, env, cwd: Path) -> Verdict:
     """Main pipeline body. Returns Verdict."""
     _wall_t0 = time.monotonic()
@@ -2245,63 +2312,13 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Outlet C (subagent): dispatch via run_outlet_c with llm_invoke-based
     # spawn_fn. Backend is resolved above. resolved/source_hash
     # are now in scope at this point in the flow.
-    if outlet == "subagent":
-        from .outlet_c import run_outlet_c
-        from .taint import TaintRunner
-        from .runtime import RuntimeRunner
-        from .legacy import LegacyRunner
-        from .graph_triage import GraphTriageRunner
-        from .daemon_state import DaemonStateRunner
-
-        _post_image, _conv_digest = _assemble_post_image(
-            cwd, resolved.git_diff or ""
-        )
-        _contracts_yaml_c = cwd / ".code-forge" / "contracts.yaml"
-        _yaml_digest_c = ""
-        if _contracts_yaml_c.is_file():
-            from .contract_loader import load_contract_digest
-            _yaml_digest_c = load_contract_digest(
-                _contracts_yaml_c, cwd, backend=backend,
-            )
-        _contract_spec_c = _merge_contract_spec(
-            _yaml_digest_c, _contract_file_content,
-            backend=backend, warn_fn=warn,
-        )
-        _subagent_spawn = _make_subagent_spawn(
-            backend, _conv_digest, _post_image,
-            contract_spec=_contract_spec_c,
-        )
-        _c_taint = TaintRunner()
-        _c_runtime = RuntimeRunner(backend=backend)
-        _c_graph = GraphTriageRunner()
-        # Do NOT set _c_graph._cached_findings here.
-        # The pre-fetched graph findings variable is defined later in _run,
-        # after this block's early return -- it is not in scope here.
-        # GraphTriageRunner fetches fresh findings on its advisory pass.
-        _c_daemon = DaemonStateRunner(backend=backend)
-        _c_legacy = LegacyRunner()
-        verdict = run_outlet_c(
-            resolved_review=resolved,
-            source_hash=source_hash,
-            cwd=cwd,
-            spawn_fn=_subagent_spawn,
-            clean_round_threshold=_clean_threshold,
-            registry=registry,
-            backend=backend,
-            engine=engine_choice,
-            advisory_runners=[_c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy],
-        )
-        # Test-assertion review gate: advisory findings to stderr.
-        # D8 exception: not recorded in receipts (see _run_test_assertion_review).
-        if resolved.git_diff:
-            _ta_findings = _run_test_assertion_review(
-                resolved.git_diff, backend
-            )
-            for _f in _ta_findings:
-                sys.stderr.write(
-                    "[test-assertion] %s\n" % _f.description
-                )
-        return verdict
+    _subagent_v = _dispatch_subagent(
+        outlet, warn, _contract_file_content, backend,
+        resolved, source_hash, registry, engine_choice,
+        _clean_threshold, cwd,
+    )
+    if _subagent_v is not None:
+        return _subagent_v
 
     # M6: non-git snapshot auto-detection.
     if (resolved.mode_hint == "non-git"
