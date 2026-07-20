@@ -25,7 +25,13 @@ committer date to blame attribution, and update existing tests for the new behav
 
 ## Tasks
 
+**Wave structure:**
+- Wave 1: Task 1 (header rename), Task 2 (blame date) -- independent, parallel
+- Wave 2: Task 3a, 3b, 3c (review-focus mechanism) -- depends on Task 1 for renamed header
+- Wave 3: Task 4 (blame degradation), Task 5 (full suite) -- depends on Wave 1+2
+
 ### Task 1: Rename contract header (all 3 builders) + update/extend tests
+**Wave:** 1 | **Depends on:** none
 
 **files:** src/code_forge/cli.py, src/code_forge/factories.py,
 tests/test_contract_wiring.py (+ factories prompt tests)
@@ -68,6 +74,7 @@ each site test-covered; per-site bug-inject verified.
 ---
 
 ### Task 2: Add date to git_blame() parser and blame attribution
+**Wave:** 1 | **Depends on:** none
 
 **files:** src/code_forge/git.py, src/code_forge/legacy.py
 
@@ -162,27 +169,21 @@ add date assertion (STAGED_PORCELAIN fixture also has committer-time
 
 ---
 
-### Task 3: Review focus emphasis parameter (P4) -- FULL mechanism
+### Task 3a: Focus mechanism -- merge helper + trust + gate.yaml source + CLI flag
+**Wave:** 2 | **Depends on:** Task 1 (header rename must land first for anchor sites)
 
-Adds a review-focus mechanism at parity with --contract (see 41-CONTEXT D5.1-D5.7).
-Two merged sources (persistent gate.yaml `review_focus:` + per-call `--focus FILE`),
-injected as a "## Review Focus" section into ALL 3 builders across ALL 4 review paths,
-with its own trust hash, schema entry, and per-path bug-inject proof.
+Adds the core focus plumbing: merge helper, trust hash, gate.yaml extraction, and CLI flag.
+Injected spec is NOT yet wired to builders (Task 3b does that).
 
 All line numbers below are verified against main @ 8e18aa0 (2026-07-20). They WILL drift
 once Task 1 and Task 2 land -- re-grep the anchor symbol before each edit, never trust
 the number alone.
 
-**files:** src/code_forge/cli.py, src/code_forge/factories.py,
-src/code_forge/mcp_server.py, src/code_forge/cross_repo.py, src/code_forge/trust.py,
-src/code_forge/mcp_jobs.py, src/code_forge/gate.schema.json, src/code_forge/init_template.py,
-tests/test_factories.py, tests/test_trust.py, tests/test_schema_corpus.py,
-tests/test_cross_repo.py (+ the CLI and MCP test modules -- confirm exact module names
-by grep before writing)
+**files:** src/code_forge/cli.py, src/code_forge/trust.py
 
 **action:**
 
-**3a. Merge helper** -- new `_merge_focus_spec(yaml_focus: str, file_content: str,
+**3a-1. Merge helper** -- new `_merge_focus_spec(yaml_focus: str, file_content: str,
 warn_fn) -> str` in cli.py, placed next to `_merge_contract_spec` (cli.py:1828).
 Mirrors its shape but is deliberately simpler (D5.2): concatenate yaml_focus then
 file_content; NO LLM summarization (summarizing focus areas destroys the specific areas,
@@ -191,7 +192,7 @@ which is the whole feature); NO "## Do NOT Flag" split; NO confirmation-bias dir
 warn_fn once and pass the text through UN-truncated -- silently dropping focus areas is
 worse than a warned-large prompt. Empty + empty returns "".
 
-**3b. Trust (D5.6)** -- in trust.py, mirroring the contracts pattern at trust.py:243-286:
+**3a-2. Trust (D5.6)** -- in trust.py, mirroring the contracts pattern at trust.py:243-286:
 - `hash_focus_text(gate_data: Optional[dict]) -> str`: sha256 of the canonical JSON of
   the `review_focus` value; returns "" when the field is absent or empty (this is what
   keeps every existing trust record valid -- see migration note below).
@@ -220,10 +221,23 @@ worse than a warned-large prompt. Empty + empty returns "".
   **re-run of `code-forge trust`** to authorize the new field -- the plan's earlier
   wording ("nothing is invalidated") was misleading; it applies to backends only, not
   to focus. Document this in the init_template.py comment for `review_focus:`.
+- Sampling-only trust (MM #1): `code-forge trust` (cli.py:1169-1180) refuses to record
+  trust when `backends` is absent. Extend to accept gate.yaml with EITHER backends OR
+  a non-empty `review_focus`:
+  ```python
+  has_backends = backends_raw and not (
+      isinstance(backends_raw, dict) and all(v is None for v in backends_raw.values())
+  )
+  has_focus = isinstance(gd.get("review_focus"), str) and gd["review_focus"].strip()
+  if not has_backends and not has_focus:
+      print("No backends or review_focus configured in this gate.yaml. "
+            "Configure at least one.", file=sys.stderr)
+      return EXIT_CLI_ERROR
+  ```
 - Do NOT touch `hash_backends_block` (24 call sites; conflates credential trust with
   prompt trust -- rejected in D5.6).
 
-**3c. gate.yaml source read** -- the review path already holds `gate_data`; do not add a
+**3a-3. gate.yaml source read** -- the review path already holds `gate_data`; do not add a
 new read. Extract `review_focus` from the dict returned by `_load_gate_backends`
 (cli.py:118, which already returns `{}` for an untrusted repo) and gate it:
 ```python
@@ -240,15 +254,35 @@ elif raw:  # non-string, non-None: list/dict/int from hand-edited YAML
 ```
 Same extraction on the MCP side, where `gate_data` is already in hand at
 mcp_server.py:243 and mcp_server.py:292. For the sampling path, also load
-the contracts.yaml digest (see 3g for the full data flow).
+the contracts.yaml digest (see Task 3b for the full data flow).
 
-**3d. CLI flag** -- add `--focus FILE` next to `--contract` (cli.py:350-355), same
+**3a-4. CLI flag** -- add `--focus FILE` next to `--contract` (cli.py:350-355), same
 FILE/stdin convention (`-` = stdin), reusing `_load_contract_file`'s read path as
 `_load_focus_file`. Then `focus_spec = _merge_focus_spec(yaml_focus, file_content, warn)`
 at the two existing merge sites, mirroring `_contract_spec_c` (cli.py:2063) and
 `_contract_spec_a` (cli.py:2422).
 
-**3e. Builder injection** -- add `focus_spec: str = ""` to each builder and inject
+**verify:** `python3 -B -m pytest tests/test_trust.py -v -k focus` plus CLI module tests
+for the new flag.
+
+**done:** merge helper exists; trust hash functions exist with short-circuit logic;
+gate.yaml review_focus extracted with trust gate; --focus FILE flag wired at both merge
+sites; sampling-only trust works; existing trust records survive.
+
+---
+
+### Task 3b: Focus mechanism -- builder injection + MCP wiring + sampling fix + tempfile
+**Wave:** 2 | **Depends on:** Task 3a (merge helper + trust must exist)
+
+Wires the focus spec into all 3 builders and all 4 review paths. Fixes the pre-existing
+sampling contract_spec gap. Extends tempfile ownership for dual-file tracking.
+
+**files:** src/code_forge/factories.py, src/code_forge/mcp_server.py,
+src/code_forge/cross_repo.py, src/code_forge/mcp_jobs.py
+
+**action:**
+
+**3b-1. Builder injection** -- add `focus_spec: str = ""` to each builder and inject
 immediately AFTER the design-intent block that Task 1 renames. Extract the injection
 text into a shared helper `_format_focus_section(focus_spec: str) -> str` (in
 factories.py or a small prompt module) to satisfy GR4 -- the advisory prose is
@@ -269,7 +303,7 @@ Each builder calls it: `if focus_spec: prompt += _format_focus_section(focus_spe
 | `build_l1_provider` (outlet_a + cross-repo) | factories.py:202 | factories.py:209 | factories.py:279-283 | cli.py:2480, cross_repo.py:307 |
 | `build_sampling_l1_provider` (MCP sampling) | factories.py:507 | factories.py:514 | factories.py:575-576 | mcp_server.py:765 |
 
-**Cross-repo focus data flow (MM #4, verified against 8e18aa0):** the current
+**3b-2. Cross-repo focus data flow (MM #4, verified against 8e18aa0):** the current
 call chain has NO focus parameter anywhere:
 - `_dispatch_cross_repo` (cli.py:1892) -- no focus param
 - `_cross_repo_verdict_or_none` (cli.py:1613) -- no focus param
@@ -286,7 +320,7 @@ Thread `focus_spec` through the full chain:
 Verify: `grep -n "focus_spec" src/code_forge/cli.py src/code_forge/cross_repo.py`
 must show the param at every level.
 
-**3f. MCP param** -- add `focus: str = ""` to forge_review (next to `contract`,
+**3b-3. MCP param** -- add `focus: str = ""` to forge_review (next to `contract`,
 mcp_server.py:890). Two outlets, both required (D5.5):
 - CLI-subprocess: mirror the contract temp-file wiring (mcp_server.py:936-943) -- write
   focus to a temp .md, `cli_args.extend(["--focus", focus_tmp_path])`, clean up in the
@@ -295,10 +329,10 @@ mcp_server.py:890). Two outlets, both required (D5.5):
 - Sampling: pass the MERGED focus spec (not the raw `focus` param) down through
   `_dispatch_sampling` into `build_sampling_l1_provider` (mcp_server.py:765). Raw
   pass-through would skip the gate.yaml `review_focus` merge and make the sampling
-  outlet's prompt differ from the CLI outlet's for identical input -- see 3g MERGE
-  PARITY for the locked shape and the cross-outlet parity test.
+  outlet's prompt differ from the CLI outlet's for identical input -- see 3b-5 MERGE
+  PARITY for the locked shape and the wiring-parity test.
 
-**Tempfile dual-file ownership (MM #5 + GLM #6, verified against 8e18aa0):**
+**3b-4. Tempfile dual-file ownership (MM #5 + GLM #6, verified against 8e18aa0):**
 `start_job` (mcp_jobs.py:80) accepts a single `tempfile_path: str | None`. When both
 contract and focus tmpfiles exist, only one can be job-transferred on timeout; the other
 leaks. Fix: extend `start_job` to accept `tempfile_paths: list[str] | None = None` (new
@@ -307,10 +341,9 @@ cleanup sites in `forge_review`:
 1. Inline success (mcp_server.py:957-961): unlink both contract_tmp and focus_tmp
 2. Timeout job-transfer (mcp_server.py:968): pass `tempfile_paths=[contract_tmp, focus_tmp]`
 3. Error cleanup (mcp_server.py:972-977): unlink both paths
-Update `mcp_jobs.py` eviction/timeout handlers to iterate the list. Add `mcp_jobs.py`
-to the Task 3 file list.
+Update `mcp_jobs.py` eviction/timeout handlers to iterate the list.
 
-**3g. Pre-existing bug, SEPARATE commit (D5.7)** -- that same call site passes no
+**3b-5. Pre-existing bug, SEPARATE commit (D5.7)** -- that same call site passes no
 `contract_spec` today, so `--contract` is already a silent no-op on the MCP sampling
 outlet and factories.py:576 is unreachable in production. Wiring focus there while
 contract stays broken reproduces D5.5's own failure mode. Fix it in its own commit,
@@ -369,7 +402,7 @@ if focus_spec:
     f_tmp.write(focus_spec); f_tmp.close()
     cli_args.extend(["--focus", f_tmp.name])
 ```
-Transfer both tmpfiles to the background job (use the extended `start_job` from 3f)
+Transfer both tmpfiles to the background job (use the extended `start_job` from 3b-4)
 or unlink on inline success. Add a test: mock sampling LLMInvokeError(kind="truncated")
 with both contract+focus present, assert CLI fallback args contain both `--contract`
 and `--focus`.
@@ -386,64 +419,40 @@ sampling path MUST call the same merge helpers before building the provider:
 - `backend=None` on the sampling path is deliberate: summarization would need an API
   backend, and sampling exists precisely because the client has no API key. A >4KB
   contract therefore passes through unsummarized -- warn, do not truncate (same rule as
-  3a).
+  3a-1).
 - No refactor needed to reach the helpers: mcp_server already calls cli's underscore
   privates (`cli._load_gate_backends` at mcp_server.py:243 and 292), so this follows an
   established in-repo pattern rather than introducing cross-module reach-in.
-- This supersedes the naive wording in 3f: 3f passes MERGED specs, never the raw MCP
+- This supersedes the naive wording in 3b-3: 3b-3 passes MERGED specs, never the raw MCP
   param.
 
-**Wiring-parity test (replaces the infeasible prompt-parity test -- GLM #2, #5):**
-The original plan claimed a "cross-outlet prompt parity test" comparing merged specs
-across the subprocess boundary. This is infeasible because: (a) the two outlets run
-`_merge_contract_spec` in different processes (CLI-subprocess merges in the forked
-child; sampling merges in-process), so no single in-process location has both merged
-specs; (b) the sampling path has `yaml_digest` from a different source than the CLI
-path (loaded in-process vs loaded in the subprocess), making inputs differ; (c) a test
-that spies on `_merge_contract_spec` with identical args is tautological (same function
-same args = always equal).
+**verify:** `python3 -B -m pytest tests/test_factories.py tests/test_cross_repo.py -v`
+plus MCP module tests.
 
-Replace with a **wiring-parity test** that verifies structure, not prompt content:
-1. Assert `_dispatch_sampling` calls `cli._merge_contract_spec` and
-   `cli._merge_focus_spec` (spy/mock, verify called with expected arg types)
-2. Assert the CLI-subprocess path writes both `--contract` and `--focus` tmpfiles
-   (spy on `cli_args.extend`)
-3. Assert `build_sampling_l1_provider` receives `contract_spec` and `focus_spec`
-   (spy on the builder call)
-4. Use contract body <=4096 bytes (post Do-Not-Flag stripping) so summarization
-   does not trigger on either outlet -- this avoids the >4KB divergence which is
-   BY DESIGN (CLI summarizes, sampling warns-and-passes-raw)
-5. Add a SEPARATE test asserting the >4KB divergence: CLI outlet summarizes,
-   sampling outlet passes raw with a warning -- this documents the divergence as
-   intentional, not accidental
+**done:** focus_spec wired on all 3 builders and all 4 review paths; cross-repo focus
+data flow complete; MCP sampling passes merged contract+focus via same helpers as CLI;
+fallback preserves both; tempfile dual-file ownership works.
 
-**Sampling-only trust (MM #1, verified against 8e18aa0):**
-`code-forge trust` (cli.py:1169-1180) refuses to record trust when `backends` is absent.
-A valid sampling-only repository (outlet: sampling, no API key) cannot create a
-`focus_hash` record, so its trusted persistent focus is always dropped. Fix: extend the
-trust command to accept a gate.yaml with EITHER a backends block OR a non-empty
-`review_focus`:
-```python
-# cli.py:1169-1180, replace the backends-only guard:
-has_backends = backends_raw and not (
-    isinstance(backends_raw, dict) and all(v is None for v in backends_raw.values())
-)
-has_focus = isinstance(gd.get("review_focus"), str) and gd["review_focus"].strip()
-if not has_backends and not has_focus:
-    print("No backends or review_focus configured in this gate.yaml. "
-          "Configure at least one.", file=sys.stderr)
-    return EXIT_CLI_ERROR
-```
-Add a test: gate.yaml with `outlet: sampling` + `review_focus: "check X"` + no
-`backends:` section -- `code-forge trust` succeeds and records `focus_hash`.
+---
 
-**3h. Schema + template (D5.3)** -- add `review_focus: {"type": "string"}` to
+### Task 3c: Focus mechanism -- schema + template + comprehensive tests
+**Wave:** 2 | **Depends on:** Task 3a + Task 3b (all wiring must exist before tests)
+
+Schema, template, and the full test matrix. Runs AFTER 3a+3b so tests exercise real code.
+
+**files:** src/code_forge/gate.schema.json, src/code_forge/init_template.py,
+tests/test_factories.py, tests/test_trust.py, tests/test_schema_corpus.py,
+tests/test_cross_repo.py (+ CLI and MCP test modules)
+
+**action:**
+
+**3c-1. Schema + template (D5.3)** -- add `review_focus: {"type": "string"}` to
 gate.schema.json properties; add a documented commented-out `review_focus:` entry to
 GATE_YAML_TEMPLATE (init_template.py) noting that changing it requires re-running
 `code-forge trust`; add a `review_focus` case to the tests/test_schema_corpus.py valid
 corpus so the schema and the real loader cannot drift.
 
-**3i. Tests** -- every row below is required; a missing row is an un-wired path that
+**3c-2. Tests** -- every row below is required; a missing row is an un-wired path that
 ships as a silent no-op:
 - Per builder x2: prompt CONTAINS "## Review Focus" and the focus text when focus_spec is
   non-empty; ABSENT when focus_spec == "" (3 builders x 2 = 6 minimum).
@@ -478,20 +487,16 @@ ships as a silent no-op:
   PASSES. A single inject proves one path, not the mechanism.
 
 **verify:** `python3 -B -m pytest tests/test_factories.py tests/test_trust.py
-tests/test_schema_corpus.py -v` plus the CLI and MCP test modules holding the new
-flag/param tests.
+tests/test_schema_corpus.py tests/test_cross_repo.py -v` plus CLI and MCP test modules.
 
-**done:** gate.yaml `review_focus` (trust-gated) and `--focus`/MCP `focus` (per-call)
-merge into one "## Review Focus" section injected on all 3 builders across all 4 review
-paths; untrusted and post-trust-edited focus is dropped with a warning while backends
-keep working; existing trust records survive; per-path bug-inject verified; empty focus
-is a no-op; the sampling contract_spec gap is fixed in its own commit.
-Efficacy (does the model actually emphasize?) stays an ASSUMPTION closed later by a
-real-model smoke, not a unit test (D5 ceiling).
+**done:** full test matrix passes; schema and loader drift guard in place; init template
+documents review_focus with re-trust note; per-path bug-inject verified; wiring-parity
+test confirms both outlets call same helpers; >4KB divergence documented.
 
 ---
 
 ### Task 4: Add untracked-file blame degradation test
+**Wave:** 3 | **Depends on:** Task 2
 
 **files:** tests/test_legacy.py
 
@@ -510,6 +515,7 @@ real-model smoke, not a unit test (D5 ceiling).
 ---
 
 ### Task 5: Full suite verification
+**Wave:** 3 | **Depends on:** Task 1 + 2 + 3a + 3b + 3c + 4
 
 **files:** None (verification only)
 
