@@ -1814,6 +1814,10 @@ def _safe_load_contract_digest(
         # must degrade to an empty digest, not abort the review.
         from . import contract_loader
         return contract_loader.load_contract_digest(contracts_yaml, cwd, backend=backend)
+    # Let memory exhaustion abort the review rather than degrade it; a
+    # PASS reached without contract context is worse than a hard failure.
+    except MemoryError:
+        raise
     except Exception as exc:
         sys.stderr.write(
             "code-forge: contracts.yaml load failed: %s\n" % exc

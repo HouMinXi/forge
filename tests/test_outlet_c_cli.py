@@ -11,6 +11,8 @@ false-positives.
 
 import pathlib
 
+import pytest
+
 # Absolute path so tests pass even when another test calls chdir
 _SRC = pathlib.Path(__file__).parent.parent / "src" / "code_forge" / "cli.py"
 
@@ -426,3 +428,25 @@ class TestContractsYamlGuard:
         assert "contracts.yaml load failed" in captured.err, (
             "import failure should be logged to stderr"
         )
+
+    def test_helper_lets_memoryerror_through(self, tmp_path):
+        """Memory exhaustion aborts instead of degrading to empty digest.
+
+        Everything else here is caught on purpose so a broken contract
+        cannot kill a review.  An out-of-memory failure is different:
+        returning "" would produce a review that lost its contract
+        context and can still report PASS.
+        """
+        from unittest.mock import patch
+        from code_forge.cli import _safe_load_contract_digest
+
+        contracts_yaml = tmp_path / ".code-forge" / "contracts.yaml"
+        contracts_yaml.parent.mkdir(parents=True)
+        contracts_yaml.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
+
+        with patch(
+            "code_forge.contract_loader.load_contract_digest",
+            side_effect=MemoryError("out of memory"),
+        ):
+            with pytest.raises(MemoryError):
+                _safe_load_contract_digest(contracts_yaml, tmp_path)

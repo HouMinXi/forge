@@ -7,9 +7,6 @@ check, per-spec error isolation, digest assembly.
 """
 from __future__ import annotations
 
-import hashlib
-import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -673,3 +670,50 @@ def test_bytes_decoded_before_summarization(tmp_path, trust_dir, monkeypatch):
         prompt_arg = mock_llm.call_args.args[0]
         assert isinstance(prompt_arg, str)
         assert "field: value" in prompt_arg
+
+
+# ====================================================================
+# Memory exhaustion must abort, not degrade to an empty digest
+# ====================================================================
+
+def test_memoryerror_in_spec_resolution_propagates(tmp_path):
+    """MemoryError while resolving specs aborts instead of returning "".
+
+    The surrounding `except Exception` deliberately degrades to an empty
+    digest so a broken contract cannot kill a review.  Memory exhaustion
+    is not that kind of failure: swallowing it yields a review that lost
+    its contract context and can still report PASS.
+    """
+    from code_forge.contract_loader import load_contract_digest
+
+    cfg_path = tmp_path / "contracts.yaml"
+    cfg_path.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
+
+    with patch(
+        "code_forge.contract_loader.resolve_contract_specs",
+        side_effect=MemoryError("out of memory"),
+    ):
+        with pytest.raises(MemoryError):
+            load_contract_digest(cfg_path, tmp_path)
+
+
+def test_memoryerror_in_digest_assembly_propagates(tmp_path):
+    """MemoryError after resolution also aborts rather than degrading.
+
+    Covers the second guard, which wraps trust checking and digest
+    assembly.  Same reasoning as the resolution guard above.
+    """
+    from code_forge.contract_loader import load_contract_digest
+
+    cfg_path = tmp_path / "contracts.yaml"
+    cfg_path.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
+
+    with patch(
+        "code_forge.contract_loader.resolve_contract_specs",
+        return_value=[],
+    ), patch(
+        "code_forge.contract_loader.is_trusted_contracts",
+        side_effect=MemoryError("out of memory"),
+    ):
+        with pytest.raises(MemoryError):
+            load_contract_digest(cfg_path, tmp_path)

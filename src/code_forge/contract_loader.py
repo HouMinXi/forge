@@ -20,7 +20,7 @@ import hashlib
 import json
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -356,6 +356,11 @@ def load_contract_digest(
 
     try:
         resolved_specs = resolve_contract_specs(config_path, cwd)
+    # Memory exhaustion is not a contract problem.  Degrading to an empty
+    # digest would hand back a review that quietly lost its contract
+    # context and can still report PASS; fail loudly instead.
+    except MemoryError:
+        raise
     except Exception as exc:
         _warn("failed to resolve specs: %s" % exc)
         return ""
@@ -419,6 +424,10 @@ def load_contract_digest(
 
         return "\n\n".join(sections) if sections else ""
 
+    # Same reasoning as the resolve guard above: an out-of-memory failure
+    # must not be laundered into "no contract context, carry on".
+    except MemoryError:
+        raise
     except Exception as exc:
         _warn("unexpected error: %s" % exc)
         return ""
