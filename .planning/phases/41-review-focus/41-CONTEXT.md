@@ -170,9 +170,16 @@ Locked design decisions (each nailed as PM; these are the review's attack surfac
   + a `focus_hash` key in the SAME trust-store entry keyed by the gate.yaml path;
   `code-forge trust` records both hashes in one run. Independent failure domains: a
   focus-hash mismatch drops focus with a stderr warning and leaves backends working (a
-  prompt-text edit must not disable the user's model config). Migration: hash only when
-  `review_focus` is present and non-empty, so every existing repo (none have the field)
-  keeps its current record and nothing is invalidated.
+  prompt-text edit must not disable the user's model config).
+  `is_trusted_focus` short-circuits True when `hash_focus_text` returns "" (absent/empty
+  focus = nothing to authorize), so pre-Phase-41 records (no `focus_hash` key) survive
+  the migration. Migration guarantee scope: BACKEND trust only -- existing records stay
+  valid for backends. Adding `review_focus` to an already-trusted gate.yaml requires a
+  re-run of `code-forge trust` to authorize the new field; the earlier wording
+  ("nothing is invalidated") was misleading. `record_trust` writes `focus_hash: ""` when
+  review_focus is absent, so the store entry explicitly records "no focus authorized."
+  Sampling-only repositories (no backends, has review_focus) must also be trustable:
+  extend `code-forge trust` to accept gate.yaml with EITHER backends OR review_focus.
   REJECTED alternative: extend `hash_backends_block` to cover review_focus. It conflates
   credential trust with prompt trust, makes the function name a lie, and churns 24 call
   sites (4 in trust.py, 20 in tests/test_trust.py) for no benefit.
