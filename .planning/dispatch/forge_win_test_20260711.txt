@@ -1,0 +1,67 @@
+FORGE MCP WINDOWS DEPLOYMENT TEST REPORT
+Date: 2026-07-11
+Target: gpu-win (Windows 11, RTX 3080 20GB)
+Forge: 2.7.0 @ main f53bf84 (scp from linux)
+Python: 3.12.10
+
+PREREQUISITES
+P1 Python 3.12.10 on PATH -- PASS
+P2 pip install -e .[mcp] -- PASS (code-forge.exe + code-forge-mcp.exe confirmed)
+P3 DEEPSEEK_API_KEY set via setx -- PASS
+P4 Test repo H:\forge-test\hello-test -- PASS
+P5 ruff installed (0.15.21) -- PASS
+
+T1 ENTRY POINTS
+T1a code-forge --version -> 2.7.0 -- PASS
+T1b MCP initialize -> NotImplementedError at mcp_server.py:257
+    loop.add_signal_handler() is POSIX-only on Windows
+    -- FAIL (Windows blocker)
+
+T2 DOCTOR + TOOL AUDIT
+T2a With ghost entry:
+  workspace:     PASS
+  gate.yaml:     PASS
+  trust:         PASS (after code-forge trust)
+  backend:       PASS (deepseek-direct)
+  outlet:        PASS (subprocess)
+  tool-audit:    ruff: ruff 0.15.21 -- PASS
+  tool-audit:    ghost: not_installed -- FAIL (correct)
+  self-check:    FAIL (add_signal_handler NotImplementedError)
+  exit code: 1 -- PASS (correctly reports ghost + self-check failures)
+
+T2b Without ghost entry:
+  All rows PASS except self-check (same MCP crash)
+  exit code: 1 (self-check blocks exit 0)
+  NOTE: self-check failure is NOT a doctor bug -- it is the
+  MCP server crashing at lifespan setup. Fix upstream.
+
+T3 MCP REGISTRATION
+  BLOCKED by T1b (MCP server cannot start on Windows).
+  Cannot test until add_signal_handler is fixed.
+
+T4 REAL REVIEW END-TO-END
+  BLOCKED by T1b. CLI review (code-forge review) also blocked
+  because self-check spawns MCP server.
+
+GRAY AREA FINDINGS
+G1 LOCK PROBE KILLS -- not tested (requires working review)
+   Predicted: os.kill(pid, 0) terminates process on Windows.
+
+G2 ENCODING -- not tested (requires working review)
+   PYTHONUTF8=1 workaround documented if needed.
+
+G3 start_new_session -- OBSERVED at mcp_server.py:257
+   Actual error: NotImplementedError from loop.add_signal_handler()
+   NOT from start_new_session as predicted. Both are Windows
+   incompatibilities but different code paths.
+   Error message: readable (full traceback) but NOT a clean
+   platform-unsupported message.
+
+T6 RELATIVE PATH -- not tested (requires clean self-check)
+
+SUMMARY
+MUST PASS: T1 FAIL, T2 PARTIAL, T3 BLOCKED, T4 BLOCKED, T5b BLOCKED
+Root cause: mcp_server.py:257 add_signal_handler() is POSIX-only.
+Fix: guard with sys.platform != "win32" or use signal.signal() on Windows.
+CLI review and MCP server are both blocked by this single issue.
+Doctor tool-audit (Phase 46) works correctly on Windows.

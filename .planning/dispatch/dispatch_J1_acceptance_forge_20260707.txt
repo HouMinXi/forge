@@ -1,0 +1,48 @@
+FLEET DISPATCH -- J1 QWEN ACCEPTANCE TASKS
+To: forge group session   From: harness-fleet PM   2026-07-07
+Charter section 1 (gpu-win ACCEPT clause); roadmap H0b / H2.
+
+CONTEXT (self-contained)
+The ashare group is standing up a LAN-local qwen endpoint on gpu-win
+(RTX 3080 20GB) under work order H0b -- the failure-domain
+decorrelation substrate that later serves forge review, ashare
+sentiment, and surflare diagnosis. You (forge) are its FIRST CUSTOMER
+and the designated ACCEPT authority. This clause exists to kill ONE
+failure mode: an endpoint built to the builder's taste instead of
+the real consumer's need. So before the endpoint is declared done,
+forge owes two deliverables. They do NOT block H0b from starting
+(ashare benchmarks with a placeholder first), but H0b's tok/s floor
+is RE-VALIDATED against your real workload before exit-criteria
+sign-off, and the endpoint is not "accepted" until (2) is satisfied.
+
+DELIVERABLE 1 -- SAMPLE REVIEW WORKLOAD (real, not synthetic)
+Real forge review prompts -- actual qodo/expert/adversarial pass
+inputs over a real diff, at representative token sizes -- that ashare
+replays to benchmark generation tok/s and p95 first-token. The H0b
+>=15 tok/s floor is meaningless on toy text; it must be measured on
+THIS. Deliver as a file on a shared host (or in the forge repo) plus
+the path. Redact any secrets in the prompts; the diff content itself
+is what matters, not live keys.
+
+DELIVERABLE 2 -- gate.yaml INTEGRATION SPEC
+The contract the qwen backend must satisfy to slot into gate.yaml as
+a Zone C forge change at H2:
+  - model id string: the exact backend id forge will write in
+    gate.yaml. Coordinate with H0b step (a)'s VERIFIED real model id
+    -- "qwen3.6" is the owner's shorthand until ashare confirms the
+    true id; do not hardcode the shorthand.
+  - timeout semantics: per-pass timeout + the retry/backoff your
+    review loop assumes (the LAN endpoint is fast but can be
+    lock-yielded to training -- state the timeout that implies).
+  - fallback ordering: when qwen is down or yielded, which incumbent
+    CN backend forge falls back to, in what order.
+
+WHY forge writes this and not ashare: only the review loop's owner
+knows the timeout/fallback semantics its pipeline needs. Built-to-
+builder's-taste is precisely the failure this clause kills.
+
+BLOCKS: H0b "done" declaration (real-workload floor re-validation +
+acceptance sign-off). Does NOT block H0b W1-W5 execution. The qwen
+gate.yaml wiring itself is H2 (forge Zone C, under forge's own review
+pipeline), not now -- this dispatch only asks for the two inputs H0b
+acceptance depends on.

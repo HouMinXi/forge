@@ -1,0 +1,10 @@
+file	bytes	est_tokens
+prompt_small_qodo.txt	6787	1696
+prompt_small_expert.txt	6779	1694
+prompt_small_adversarial.txt	6766	1691
+prompt_medium_qodo.txt	14829	3707
+prompt_medium_expert.txt	14821	3705
+prompt_medium_adversarial.txt	14808	3702
+prompt_large_qodo.txt	57228	14307
+prompt_large_expert.txt	57220	14305
+prompt_large_adversarial.txt	57207	14301

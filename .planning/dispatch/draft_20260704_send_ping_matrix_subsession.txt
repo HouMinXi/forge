@@ -1,0 +1,133 @@
+================================================================
+send_ping client-compat TEST MATRIX -- sub-session dispatch
+Authored by: forge main session, 2026-07-04
+Question: does an MCP CLIENT answer a SERVER-initiated send_ping,
+and does the mechanism work across Python 3.8-3.14 server-side?
+This decides Phase 38.4 GATE B (send_ping is only safe if real
+clients answer -- otherwise it false-kills healthy connections).
+Harness: .planning/evidence/send_ping_probe/ (server + client +
+README). Server logs each result to /tmp/ping_probe.log as
+`pyMAJ.MIN client=NAME/VER -> ANSWERED in N.Nms | TIMEOUT | ERROR`.
+================================================================
+
+## Environment note (read first)
+
+- A fact-forcing gate (GateGuard) may prompt before your first
+  Bash and before Edit/Write: it asks for 4 facts (the request in
+  one sentence; what the command verifies; etc). Present them in a
+  sentence, then RE-RUN the exact same command. This is expected,
+  not an error.
+- /tmp is tmpfs (wiped on reboot). The harness lives under
+  .planning/evidence/send_ping_probe/ (durable). Recreate
+  /tmp/ping_probe.log freely; the server appends to it.
+- Both probe scripts resolve the server path relative to their own
+  dir, so run them by absolute path from anywhere.
+
+## What you CAN test (headless) vs CANNOT (GUI, human-only)
+
+CAN (do all of these): the two SDK client families, the Claude
+Code CLI, a negative control, and the full Python-version sweep.
+CANNOT (mark as human-required, do NOT fake): PyCharm and VS Code
+are GUI apps driven through their own chat UIs -- a headless agent
+cannot invoke their tool calls. Report those cells as
+"human-required" with the exact steps (already in the harness
+README) so the operator can fill them. Codex/Copilot are not
+installed; note that, do not install-and-auth them unless it is
+non-interactive.
+
+## SWEEP 1 -- Python version axis (server side)
+
+Goal: turn the claim "mcp SDK requires >=3.10, and 3.10-3.14 are
+identical because ping is protocol-level" into MEASURED data.
+
+For v in 3.8 3.9 3.10 3.11 3.12 3.13 3.14:
+1. Get the interpreter. 3.9 and 3.14 are already on the box
+   (/usr/bin). For missing ones, install via uv (fast):
+   `uv python install 3.10 3.11 3.12 3.13` (uv is the lazy path;
+   if uv absent, `uv` via `pipx install uv` or pyenv -- record
+   which you used). If a version genuinely cannot be installed,
+   record "unavailable" -- do not fake it.
+2. Make an isolated venv for that version and install the SDK:
+   `<pythonX> -m venv /tmp/venvX && /tmp/venvX/bin/pip install mcp`
+   Record the mcp version pip resolved (`pip show mcp`).
+   EXPECT: 3.8 and 3.9 FAIL to install/import mcp (requires-python
+   >=3.10). Capture the actual error -- that IS the result for
+   those rows (turns the floor claim into evidence).
+3. For versions where mcp installed, drive the probe with the
+   SAME-version client to prove that server-python works end to
+   end:
+   `/tmp/venvX/bin/python .planning/evidence/send_ping_probe/ping_probe_client.py /tmp/venvX/bin/python`
+   (the client's argv[1] is the interpreter used to launch the
+   server; passing the venv python runs BOTH sides on version X).
+   Read /tmp/ping_probe.log for the `pyX.Y ... ANSWERED in N.Nms`
+   line.
+Record per row: python version | mcp version | ANSWERED+latency /
+FAILED(reason) / unavailable.
+
+## SWEEP 2 -- Client axis (server fixed at 3.14)
+
+Goal: does each real client answer a server ping. Server always
+launched with system python3.14.
+
+- C1 Python reference SDK (control):
+  `python3.14 .planning/evidence/send_ping_probe/ping_probe_client.py`
+  Already known ANSWERED ~1.0ms; re-run for independent confirm.
+- C2 TypeScript reference SDK (proxy for Cursor/Windsurf; VS Code
+  now confirmed directly by human): a node harness exists pattern
+  in the README/history -- `npm i @modelcontextprotocol/sdk` in a
+  scratch dir, connect a Client over StdioClientTransport to
+  `python3.14 <server>`, call probe_ping. Record ANSWERED+latency.
+- C3 Claude Code CLI: register the probe and trigger it headless.
+  `claude mcp add ping-probe --scope local -- python3.14 <abs server path>`
+  then `claude -p "Call the probe_ping tool and report its output."
+  --allowedTools "mcp__ping-probe__probe_ping"`, read the log,
+  then `claude mcp remove ping-probe --scope local`. (Known-good:
+  answered 2.4ms earlier; independent re-confirm.) If nesting
+  claude inside a claude sub-session misbehaves, record that and
+  move on -- do not loop.
+- C7 NEGATIVE CONTROL (discrimination check): a dumb pipe must NOT
+  produce ANSWERED (it can send requests but cannot answer the
+  server's ping, and EOF tears the session down first):
+  `printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"pipe","version":"1"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe_ping","arguments":{}}}' | python3.14 <abs server path>`
+  EXPECT: the server emits a ping request line on stdout but the
+  log shows NO ANSWERED line. This proves the test discriminates
+  answer-capable clients from dumb pipes (so a "no ANSWERED" for a
+  real client would be meaningful, not a harness artifact).
+
+## HUMAN-REQUIRED cells (do not attempt; report as pending)
+
+- VS Code 1.127.0 GUI: DONE by operator 2026-07-04 -> ANSWERED
+  16.2ms (record as already-passed; needs --directory=<host path>
+  in the flatpak-spawn args, see README).
+- PyCharm 2025.2 GUI: PENDING. Native Kotlin MCP client, no
+  headless proxy covers it. Steps in the harness README
+  ("PyCharm" section). Leave the cell PENDING(human).
+- Cursor / Windsurf: not installed; TS-SDK proxy (C2) is the
+  stand-in. Mark N/A(not installed).
+
+## Deliverables
+
+1. Write a results file:
+   .planning/evidence/send_ping_probe/RESULTS_matrix_2026-07-04.md
+   containing BOTH sweeps as tables + the negative-control outcome
+   + the human-required pending list. Every ANSWERED/latency value
+   must be copied from a real /tmp/ping_probe.log line or a real
+   tool output -- never narrated.
+2. Return to the main session a compact summary: which cells
+   passed (with latency), which failed (with the real error),
+   which are unavailable/human-required, and any SURPRISE (e.g. a
+   client that did NOT answer, an mcp version difference across
+   pythons, a 3.10-3.13 anomaly). Flag surprises loudly.
+3. Do NOT edit any forge source or config. This is test-only.
+   Do NOT commit or snapshot (main session does that). Leave venvs
+   under /tmp; note they are disposable.
+
+## Acceptance discipline (forge house rules)
+
+- Real output only. A cell with no captured command output is
+  not done -- it is pending.
+- Negative control MUST show no-ANSWERED, or the whole matrix is
+  suspect (report that as a blocker, do not paper over it).
+- If a step is impossible in your environment, say exactly why;
+  never substitute a plausible-looking fake result.
+================================================================

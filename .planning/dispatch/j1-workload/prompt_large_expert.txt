@@ -1,0 +1,1577 @@
+You are a senior engineer: SOLID, architecture, security. Review this diff.
+Return JSON: {"findings": [{"file": "...", "line": N, "severity": "P0"|"P1"|"P2"|"P3", "description": "..."}], "code_excerpts": [{"file": "...", "start_line": N, "end_line": M, "content": "..."}]}
+Each diff hunk MUST have at least one code_excerpt.
+Even if findings is empty, provide code_excerpts covering each changed hunk.
+code_excerpts content must be actual source code lines, not diff format -- no +/- prefixes, no @@ headers.
+
+Diff:
+diff --git a/src/code_forge/cli.py b/src/code_forge/cli.py
+index 7b7f16f..524e825 100644
+--- a/src/code_forge/cli.py
++++ b/src/code_forge/cli.py
+@@ -1889,10 +1889,10 @@ def _run(args, env, cwd: Path) -> Verdict:
+                     if git_dir == common_dir:
+                         raise CliError(
+                             "code-forge review must run inside a linked git "
+-                            "worktree, not the main tree. Create one: "
+-                            "git worktree add .worktrees/work <branch>\n"
+-                            "Or bypass: --allow-main / "
+-                            "FORGE_ALLOW_MAIN=1"
++                            "worktree, not the main tree. Create one:\n"
++                            "  git worktree add .worktrees/work <branch>\n"
++                            "If reviewing in a fork/clone or with uncommitted "
++                            "changes, use --allow-main / FORGE_ALLOW_MAIN=1."
+                         )
+             except subprocess.SubprocessError as exc:
+                 raise CliError(
+diff --git a/src/code_forge/detect.py b/src/code_forge/detect.py
+index 4d5c053..aba873f 100644
+--- a/src/code_forge/detect.py
++++ b/src/code_forge/detect.py
+@@ -113,11 +113,125 @@ SHELL_TOOL_REGISTRY: dict[str, dict] = {
+     },
+ }
+ 
++# Go tool registry: golangci-lint with SARIF output.
++# Detection is driven by go.mod or *.go file presence.
++GO_TOOL_REGISTRY: dict[str, dict] = {
++    "golangci-lint": {
++        "binary": "golangci-lint",
++        "tools_yaml_entry": {
++            "command": "golangci-lint run --output.sarif.path=stdout",
++            "output_format": "sarif",
++            "file_patterns": ["*.go"],
++        },
++    },
++}
++
++# C/C++ tool registry: cppcheck with SARIF output.
++# Detection is driven by Makefile/Kbuild/CMakeLists.txt or *.c/*.cpp files.
++# cppcheck emits SARIF on stderr; -q suppresses progress noise on stdout.
++C_CPP_TOOL_REGISTRY: dict[str, dict] = {
++    "cppcheck": {
++        "binary": "cppcheck",
++        "tools_yaml_entry": {
++            "command": "cppcheck -q --output-format=sarif",
++            "output_format": "sarif",
++            "file_patterns": ["*.c", "*.cpp", "*.hpp", "*.cxx"],
++            "output_stream": "stderr",
++        },
++    },
++}
++
++# Java tool registry: PMD with SARIF output.
++# Detection is driven by pom.xml/build.gradle or *.java files.
++# Files are appended by the runner (no -d flag; PMD accepts positional args).
++JAVA_TOOL_REGISTRY: dict[str, dict] = {
++    "pmd": {
++        "binary": "pmd",
++        "tools_yaml_entry": {
++            "command": "pmd check -R category/java/bestpractices.xml -f sarif",
++            "output_format": "sarif",
++            "file_patterns": ["*.java"],
++        },
++    },
++}
++
++# JS/TS tool registry: ESLint with JSON output.
++# Detection is driven by package.json or *.js/*.ts/*.jsx/*.tsx files.
++# Uses --format json (built-in) to avoid third-party SARIF formatter
++# resolution issues. Parsed by parse_eslint (eslint_json dispatch key).
++JS_TOOL_REGISTRY: dict[str, dict] = {
++    "eslint": {
++        "binary": "eslint",
++        "tools_yaml_entry": {
++            "command": "eslint --format json",
++            "output_format": "eslint_json",
++            "file_patterns": ["*.js", "*.ts", "*.jsx", "*.tsx"],
++        },
++    },
++}
++
++
++# ALL_REGISTRIES: single source of truth for all language registries.
++# Append new registries here in priority order (highest first).
++# New language = define dict + append to ALL_REGISTRIES (2 lines).
++ALL_REGISTRIES: list[dict[str, dict]] = [
++    PYTHON_TOOL_REGISTRY,
++    SHELL_TOOL_REGISTRY,
++    GO_TOOL_REGISTRY,
++    C_CPP_TOOL_REGISTRY,
++    JAVA_TOOL_REGISTRY,
++    JS_TOOL_REGISTRY,
++]
++
++
++# REGISTRY_LANG_NAMES: registry id -> language name string.
++# Used by generic detection loop and language inference.
++REGISTRY_LANG_NAMES: dict[int, str] = {
++    id(PYTHON_TOOL_REGISTRY): "python",
++    id(SHELL_TOOL_REGISTRY): "shell",
++    id(GO_TOOL_REGISTRY): "go",
++    id(C_CPP_TOOL_REGISTRY): "c_cpp",
++    id(JAVA_TOOL_REGISTRY): "java",
++    id(JS_TOOL_REGISTRY): "js",
++}
++
++
++# REGISTRY_MARKERS: language name -> marker files.
++# Marker file existence triggers detection for that language.
++REGISTRY_MARKERS: dict[str, list[str]] = {
++    "python": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
++    "shell": [],
++    "go": ["go.mod"],
++    "js": ["package.json"],
++    "cs": [],  # *.csproj is a glob, rely on .cs extension
++    "java": ["pom.xml", "build.gradle"],
++    "c_cpp": ["Makefile", "Kbuild", "CMakeLists.txt"],
++    "ruby": ["Gemfile"],
++    "swift": ["Package.swift"],
++    "php": ["composer.json"],
++}
++
++
++# REGISTRY_EXTENSIONS: language name -> dotted extensions.
++# File extension presence triggers detection for that language.
++REGISTRY_EXTENSIONS: dict[str, list[str]] = {
++    "python": [".py"],
++    "shell": [".sh", ".bash"],
++    "go": [".go"],
++    "js": [".js", ".ts", ".jsx", ".tsx"],
++    "cs": [".cs"],
++    "java": [".java"],
++    "c_cpp": [".c", ".cpp", ".hpp", ".cxx"],
++    "ruby": [".rb"],
++    "swift": [".swift"],
++    "php": [".php"],
++}
++
+ 
+ def _get_tool_meta(tool_name: str) -> Optional[dict]:
+     """Look up tool metadata across all registries.
+ 
+-    Checks PYTHON_TOOL_REGISTRY first, then SHELL_TOOL_REGISTRY.
++    Iterates ALL_REGISTRIES in priority order.
+ 
+     Args:
+         tool_name: Name of the tool to look up.
+@@ -125,7 +239,7 @@ def _get_tool_meta(tool_name: str) -> Optional[dict]:
+     Returns:
+         Registry entry dict, or None if not found in any registry.
+     """
+-    for registry in (PYTHON_TOOL_REGISTRY, SHELL_TOOL_REGISTRY):
++    for registry in ALL_REGISTRIES:
+         if tool_name in registry:
+             return registry[tool_name]
+     return None
+@@ -321,6 +435,29 @@ def detect_toolchain(
+             which_fn, detected, missing, registry=SHELL_TOOL_REGISTRY,
+         )
+ 
++    # Generic detection loop for new languages (Go, JS, C#, Java, etc.).
++    # Iterates ALL_REGISTRIES, skipping Python/Shell (already handled).
++    # Priority: first match wins (ALL_REGISTRIES is priority-ordered).
++    primary_lang = None
++    for registry in ALL_REGISTRIES:
++        lang = REGISTRY_LANG_NAMES.get(id(registry))
++        if lang in ("python", "shell"):
++            continue  # already handled above
++        markers = REGISTRY_MARKERS.get(lang, [])
++        extensions = REGISTRY_EXTENSIONS.get(lang, [])
++        has_marker = any((project_root / m).exists() for m in markers)
++        has_files = any(
++            list(project_root.glob(f"*{ext}"))
++            or list(project_root.glob(f"*/*{ext}"))
++            for ext in extensions
++        )
++        if has_marker or has_files:
++            _scan_path_for_tools(
++                which_fn, detected, missing, registry=registry,
++            )
++            if primary_lang is None:
++                primary_lang = lang
++
+     # De-duplicate: a tool must not be in both lists
+     for name in list(detected):
+         if name in missing:
+@@ -334,9 +471,16 @@ def detect_toolchain(
+             "`.code-forge/tools.yaml`."
+         )
+ 
+-    # Language: Python takes priority in mixed projects.
+-    # "shell" only when no Python indicators are present.
+-    language = "python" if has_python else ("shell" if has_shell else "python")
++    # Language priority: Go > Python > Shell in mixed projects.
++    # New languages tie-break via ALL_REGISTRIES order.
++    if primary_lang is not None:
++        language = primary_lang
++    elif has_python:
++        language = "python"
++    elif has_shell:
++        language = "shell"
++    else:
++        language = "python"
+ 
+     return DetectionResult(
+         detected=detected,
+@@ -420,7 +564,7 @@ def _merge_and_write(result: DetectionResult, output_path: Path) -> None:
+ 
+     # Merge: keep only user-added entries (not in any registry),
+     # then layer detected entries on top.
+-    all_registry_names = set(PYTHON_TOOL_REGISTRY) | set(SHELL_TOOL_REGISTRY)
++    all_registry_names = set().union(*(set(r) for r in ALL_REGISTRIES))
+     merged = {k: v for k, v in existing_tools.items()
+               if k not in all_registry_names}
+     merged.update(detected_tools)
+@@ -478,12 +622,12 @@ def detect_and_init(
+         if registry:
+             # Existing non-empty registry -> return without regeneration.
+             # Infer language from tool names present in the registry.
+-            has_shell_tools = any(t in SHELL_TOOL_REGISTRY for t in registry)
+-            has_python_tools = any(t in PYTHON_TOOL_REGISTRY for t in registry)
+-            if has_python_tools or not has_shell_tools:
+-                lang = "python"
+-            else:
+-                lang = "shell"
++            lang = "python"  # default
++            for r in ALL_REGISTRIES:
++                r_lang = REGISTRY_LANG_NAMES.get(id(r))
++                if r_lang and any(t in r for t in registry):
++                    lang = r_lang
++                    break
+             return DetectionResult(
+                 detected=list(registry.keys()),
+                 missing=[],
+diff --git a/src/code_forge/machine.py b/src/code_forge/machine.py
+index 8f1e05b..3313663 100644
+--- a/src/code_forge/machine.py
++++ b/src/code_forge/machine.py
+@@ -112,6 +112,20 @@ def _default_l0_runner(
+     for tool, (stdout, returncode, stderr) in tool_results.items():
+         tc = registry[tool]
+         items = parse_output(stdout, tc.output_format, tool, returncode)
++        # Nonzero exit with empty stdout is a tool crash, not a clean
++        # run. Every real tool that exits nonzero WITH findings produces
++        # non-empty stdout, so this guard cannot eat real findings.
++        if not items and returncode != 0 and not stdout.strip():
++            items = [ToolError(
++                tool_name=tool,
++                exit_code=returncode,
++                stderr=stderr or "",
++                message=(
++                    "Tool exited %d with no output -- "
++                    "likely a crash or configuration error"
++                    % returncode
++                ),
++            )]
+         for item in items:
+             if isinstance(item, ToolError):
+                 err_msg = "L0 ToolError tool=%s msg=%s" % (tool, item.message)
+diff --git a/src/code_forge/mcp_server.py b/src/code_forge/mcp_server.py
+index 203eea3..b9978a9 100644
+--- a/src/code_forge/mcp_server.py
++++ b/src/code_forge/mcp_server.py
+@@ -383,16 +383,39 @@ async def _run_cli_budgeted(
+     *args: str,
+     workspace: Path,
+     budget: float = 20.0,
++    env: dict[str, str] | None = None,
+ ) -> (
+     tuple[str, int, float, str]
+     | tuple[asyncio.Task[Any], asyncio.subprocess.Process, str]
+ ):
+     """Run CLI with a time budget.
+ 
++    Args:
++        *args: CLI arguments to pass to code-forge.
++        workspace: Working directory for the subprocess.
++        budget: Maximum wall-clock seconds before timeout.
++        env: Optional environment dict for the subprocess. When None,
++            the child inherits the server process environment. When
++            provided, it completely replaces the child's environment
++            (must include PATH and other essentials). Pass a shallow
++            copy of os.environ with overrides merged in, e.g.
++            ``{**os.environ, "MY_VAR": "1"}``.
++
+     Returns inline 4-tuple or (task, proc, stderr_log_path) on timeout.
+     Child stderr is redirected to a tempfile so forge_job_status can
+     report real-time progress while a background job runs.
++
++    Raises:
++        ValueError: If env is an empty dict (would strip PATH and all
++            environment variables, causing the subprocess to fail
++            silently).
+     """
++    if env is not None and not env:
++        raise ValueError(
++            "env must be None (inherit parent) or a non-empty dict; "
++            "an empty dict would strip PATH and all environment "
++            "variables from the subprocess"
++        )
+     stderr_fh = tempfile.NamedTemporaryFile(
+         mode="w", prefix="forge-stderr-", suffix=".log", delete=False
+     )
+@@ -405,6 +428,7 @@ async def _run_cli_budgeted(
+             stdout=asyncio.subprocess.PIPE,
+             stderr=stderr_fh,
+             cwd=str(workspace),
++            env=env,
+         )
+     except BaseException:
+         stderr_fh.close()
+@@ -763,6 +787,7 @@ async def forge_review(
+     committed: bool = False,
+     whole_file: bool = False,
+     canary: bool = False,
++    allow_main: bool = False,
+     project_dir: str | None = None,
+     ctx: Context = None,
+ ) -> CallToolResult:
+@@ -813,7 +838,14 @@ async def forge_review(
+         tmp_path = tmp.name
+         cli_args.extend(["--contract", tmp_path])
+ 
+-    result = await _run_cli_budgeted(*cli_args, workspace=workspace)
++    # Build per-call env when allow_main is requested so we never
++    # mutate the server process environment.
++    child_env: dict[str, str] | None = (
++        {**os.environ, "FORGE_ALLOW_MAIN": "1"} if allow_main else None
++    )
++    result = await _run_cli_budgeted(
++        *cli_args, workspace=workspace, env=child_env
++    )
+ 
+     if isinstance(result[0], str):
+         # Inline completion
+diff --git a/src/code_forge/parsers/__init__.py b/src/code_forge/parsers/__init__.py
+index 49cd428..fd1a66a 100644
+--- a/src/code_forge/parsers/__init__.py
++++ b/src/code_forge/parsers/__init__.py
+@@ -16,11 +16,11 @@ from code_forge.parsers.non_ascii import parse_non_ascii
+ from code_forge.parsers._sarif import _parse_sarif
+ from code_forge.parsers.flake8 import parse_flake8
+ from code_forge.parsers.pylint import parse_pylint
++from code_forge.parsers.eslint import parse_eslint
+ 
+-# 7 keys map to 8 tools: ruff and semgrep both use output_format="sarif"
++# 8 keys map to 9 tools: ruff and semgrep both use output_format="sarif"
+ # in tools.yaml, dispatching to the shared _parse_sarif function.
+ # The tool_name parameter distinguishes them in the Finding objects.
+-# flake8 uses "flake8" (text parser), pylint uses "pylint_json" (JSON).
+ PARSER_DISPATCH: dict = {
+     "shellcheck_json": parse_shellcheck,
+     "sarif": _parse_sarif,
+@@ -29,6 +29,7 @@ PARSER_DISPATCH: dict = {
+     "grep_line": parse_non_ascii,
+     "flake8": parse_flake8,
+     "pylint_json": parse_pylint,
++    "eslint_json": parse_eslint,
+ }
+ 
+ 
+diff --git a/src/code_forge/parsers/_sarif.py b/src/code_forge/parsers/_sarif.py
+index 9aea23e..e0e3c35 100644
+--- a/src/code_forge/parsers/_sarif.py
++++ b/src/code_forge/parsers/_sarif.py
+@@ -25,7 +25,11 @@ def _parse_sarif(
+     if not output.strip():
+         return []
+     try:
+-        sarif = json.loads(output)
++        # Use raw_decode to parse the FIRST JSON value, ignoring
++        # trailing noise (e.g. golangci-lint appends a text summary
++        # after the SARIF JSON).
++        dec = json.JSONDecoder()
++        sarif, _end = dec.raw_decode(output.lstrip())
+     except (json.JSONDecodeError, ValueError):
+         return [ToolError(
+             tool_name=tool_name,
+diff --git a/src/code_forge/parsers/eslint.py b/src/code_forge/parsers/eslint.py
+new file mode 100644
+index 0000000..15112dd
+--- /dev/null
++++ b/src/code_forge/parsers/eslint.py
+@@ -0,0 +1,64 @@
++# SPDX-License-Identifier: Apache-2.0
++# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
++"""Parse eslint --format json into Finding objects.
++
++eslint --format json emits a JSON array with one object per file,
++each containing a "messages" array. Each message has: ruleId, severity
++(1=warning, 2=error), message, line, column, endLine, endColumn.
++
++Verified against eslint 8.57.1 actual output.
++"""
++
++import json
++
++from code_forge.parsers.base import Finding, ToolError
++
++# eslint severity -> base.Finding.level
++_SEVERITY_MAP: dict[int, str] = {
++    1: "warning",
++    2: "error",
++}
++
++
++def parse_eslint(
++    output: str,
++    tool_name: str = "eslint",
++    exit_code: int = 0,
++) -> list[Finding | ToolError]:
++    """Parse eslint JSON output into Finding objects.
++
++    Returns:
++        [] on empty string (clean run).
++        [Finding, ...] on valid JSON with messages.
++        [ToolError] on malformed/unparseable output.
++    """
++    if not output.strip():
++        return []
++    try:
++        data = json.loads(output)
++    except json.JSONDecodeError:
++        return [ToolError(
++            tool_name=tool_name,
++            exit_code=exit_code,
++            stderr="",
++            message="Failed to parse %s JSON output" % tool_name,
++        )]
++
++    findings: list[Finding | ToolError] = []
++    for entry in data:
++        filepath = entry.get("filePath", "")
++        for msg in entry.get("messages", []):
++            rule_id = msg.get("ruleId", "unknown")
++            severity = msg.get("severity", 1)
++            level = _SEVERITY_MAP.get(severity, "warning")
++            findings.append(Finding(
++                file=filepath,
++                line=msg.get("line", 0),
++                end_line=msg.get("endLine", msg.get("line", 0)),
++                column=msg.get("column", 0),
++                rule_id=rule_id,
++                level=level,
++                message=msg.get("message", ""),
++                tool_name=tool_name,
++            ))
++    return findings
+diff --git a/src/code_forge/registry.py b/src/code_forge/registry.py
+index 3de8705..270b273 100644
+--- a/src/code_forge/registry.py
++++ b/src/code_forge/registry.py
+@@ -37,6 +37,7 @@ class ToolConfig:
+     exclude_patterns: list[str] = field(default_factory=list)
+     working_dir: Optional[str] = None  # e.g. "cargo_root"
+     enabled: bool = True        # Round 3 C-4: allows disabling tools
++    output_stream: str = "stdout"  # "stdout" or "stderr"
+ 
+ 
+ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
+@@ -113,6 +114,7 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
+             exclude_patterns=entry.get("exclude_patterns", []),
+             working_dir=entry.get("working_dir"),
+             enabled=entry.get("enabled", True),
++            output_stream=entry.get("output_stream", "stdout"),
+         )
+ 
+         # Filter disabled entries (Round 3 C-4)
+diff --git a/src/code_forge/runner.py b/src/code_forge/runner.py
+index dc55623..b788990 100644
+--- a/src/code_forge/runner.py
++++ b/src/code_forge/runner.py
+@@ -32,9 +32,10 @@ logger = logging.getLogger(__name__)
+ def _resolve_command(command: str) -> str | None:
+     """Resolve a tool command to an executable path.
+ 
+-    First tries shutil.which (PATH-based resolution).  If that fails
+-    and the command contains os.sep (e.g. "scripts/checkpatch.pl"),
+-    checks whether the path exists and is executable.
++    First tries shutil.which on the binary name (first word of command).
++    If that fails and the command contains os.sep (e.g.
++    "scripts/checkpatch.pl"), checks whether the path exists and is
++    executable.
+ 
+     This addresses DeepSeek's finding: checkpatch.pl is a relative
+     path, not on PATH.  shutil.which alone misses it.
+@@ -45,14 +46,17 @@ def _resolve_command(command: str) -> str | None:
+     Returns:
+         Resolved path string, or None if not found.
+     """
+-    resolved = shutil.which(command)
++    # Extract binary name (first word) for PATH resolution.
++    # "cppcheck -q --output-format=sarif" -> "cppcheck"
++    binary = command.split()[0] if command else command
++    resolved = shutil.which(binary)
+     if resolved is not None:
+         return resolved
+ 
+     # Try relative path resolution (e.g. scripts/checkpatch.pl)
+-    if os.sep in command:
+-        if os.path.isfile(command) and os.access(command, os.X_OK):
+-            return command
++    if os.sep in binary:
++        if os.path.isfile(binary) and os.access(binary, os.X_OK):
++            return binary
+ 
+     return None
+ 
+@@ -124,9 +128,12 @@ def run_tool(
+         )
+         return None
+ 
+-    # Build command: [resolved_cmd] + args + files
+-    # Exception: cargo_root mode skips file args (clippy operates on crate)
+-    cmd = [resolved] + tool_config.args
++    # Build command: [resolved_cmd] + flags + args + files
++    # The command string may contain flags (e.g. "cppcheck -q --output-format=sarif").
++    # _resolve_command returns the binary path; we need to extract flags from
++    # the original command string.
++    cmd_parts = tool_config.command.split()
++    cmd = [resolved] + cmd_parts[1:] + tool_config.args
+     if tool_config.working_dir != "cargo_root":
+         cmd = cmd + files
+ 
+@@ -138,6 +145,11 @@ def run_tool(
+             timeout=tool_config.timeout,
+             check=False,
+         )
++        # Some tools (e.g. cppcheck) emit SARIF on stderr.
++        # output_stream="stderr" swaps the streams so the parser
++        # receives the SARIF content in the stdout position.
++        if tool_config.output_stream == "stderr":
++            return (result.stderr, result.returncode, result.stdout)
+         return (result.stdout, result.returncode, result.stderr)
+     except subprocess.TimeoutExpired:
+         logger.warning(
+diff --git a/tests/fixtures/sarif/c_real.sarif b/tests/fixtures/sarif/c_real.sarif
+new file mode 100644
+index 0000000..01c5c1c
+--- /dev/null
++++ b/tests/fixtures/sarif/c_real.sarif
+@@ -0,0 +1,80 @@
++{
++  "version": "2.1.0",
++  "$schema": "https:\/\/docs.oasis-open.org\/sarif\/sarif\/v2.1.0\/errata01\/os\/schemas\/sarif-schema-2.1.0.json",
++  "runs": [
++    {
++      "results": [
++        {
++          "level": "error",
++          "locations": [
++            {
++              "physicalLocation": {
++                "artifactLocation": {
++                  "uri": "\/tmp\/c_sarif_spike\/main.c"
++                },
++                "region": {
++                  "endColumn": 14,
++                  "endLine": 4,
++                  "startColumn": 14,
++                  "startLine": 4
++                }
++              }
++            },
++            {
++              "physicalLocation": {
++                "artifactLocation": {
++                  "uri": "\/tmp\/c_sarif_spike\/main.c"
++                },
++                "region": {
++                  "endColumn": 6,
++                  "endLine": 5,
++                  "startColumn": 6,
++                  "startLine": 5
++                }
++              }
++            }
++          ],
++          "message": {
++            "text": "Null pointer dereference: p"
++          },
++          "ruleId": "nullPointer"
++        }
++      ],
++      "tool": {
++        "driver": {
++          "informationUri": "https:\/\/cppcheck.sourceforge.io",
++          "name": "Cppcheck",
++          "rules": [
++            {
++              "defaultConfiguration": {
++                "level": "error"
++              },
++              "fullDescription": {
++                "text": ""
++              },
++              "help": {
++                "text": ""
++              },
++              "id": "nullPointer",
++              "name": "",
++              "properties": {
++                "precision": "high",
++                "problem.severity": "error",
++                "security-severity": "9.9",
++                "tags": [
++                  "external\/cwe\/cwe-476",
++                  "security"
++                ]
++              },
++              "shortDescription": {
++                "text": ""
++              }
++            }
++          ],
++          "semanticVersion": "2.21.1"
++        }
++      }
++    }
++  ]
++}
++
+diff --git a/tests/fixtures/sarif/cpp_real.sarif b/tests/fixtures/sarif/cpp_real.sarif
+new file mode 100644
+index 0000000..e76e5c2
+--- /dev/null
++++ b/tests/fixtures/sarif/cpp_real.sarif
+@@ -0,0 +1,80 @@
++{
++  "version": "2.1.0",
++  "$schema": "https:\/\/docs.oasis-open.org\/sarif\/sarif\/v2.1.0\/errata01\/os\/schemas\/sarif-schema-2.1.0.json",
++  "runs": [
++    {
++      "results": [
++        {
++          "level": "error",
++          "locations": [
++            {
++              "physicalLocation": {
++                "artifactLocation": {
++                  "uri": "\/tmp\/cpp_sarif_spike\/main.cpp"
++                },
++                "region": {
++                  "endColumn": 14,
++                  "endLine": 4,
++                  "startColumn": 14,
++                  "startLine": 4
++                }
++              }
++            },
++            {
++              "physicalLocation": {
++                "artifactLocation": {
++                  "uri": "\/tmp\/cpp_sarif_spike\/main.cpp"
++                },
++                "region": {
++                  "endColumn": 6,
++                  "endLine": 5,
++                  "startColumn": 6,
++                  "startLine": 5
++                }
++              }
++            }
++          ],
++          "message": {
++            "text": "Null pointer dereference: p"
++          },
++          "ruleId": "nullPointer"
++        }
++      ],
++      "tool": {
++        "driver": {
++          "informationUri": "https:\/\/cppcheck.sourceforge.io",
++          "name": "Cppcheck",
++          "rules": [
++            {
++              "defaultConfiguration": {
++                "level": "error"
++              },
++              "fullDescription": {
++                "text": ""
++              },
++              "help": {
++                "text": ""
++              },
++              "id": "nullPointer",
++              "name": "",
++              "properties": {
++                "precision": "high",
++                "problem.severity": "error",
++                "security-severity": "9.9",
++                "tags": [
++                  "external\/cwe\/cwe-476",
++                  "security"
++                ]
++              },
++              "shortDescription": {
++                "text": ""
++              }
++            }
++          ],
++          "semanticVersion": "2.21.1"
++        }
++      }
++    }
++  ]
++}
++
+diff --git a/tests/fixtures/sarif/go_real.sarif b/tests/fixtures/sarif/go_real.sarif
+new file mode 100644
+index 0000000..15251ba
+--- /dev/null
++++ b/tests/fixtures/sarif/go_real.sarif
+@@ -0,0 +1,3 @@
++{"version":"2.1.0","$schema":"https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.6.json","runs":[{"tool":{"driver":{"name":"golangci-lint"}},"results":[{"ruleId":"ineffassign","level":"error","message":{"text":"ineffectual assignment to x"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"main.go","index":0},"region":{"startLine":6,"startColumn":2}}}]}]}]}
++1 issues:
++* ineffassign: 1
+diff --git a/tests/fixtures/sarif/java_real.sarif b/tests/fixtures/sarif/java_real.sarif
+new file mode 100644
+index 0000000..a5bb7f1
+--- /dev/null
++++ b/tests/fixtures/sarif/java_real.sarif
+@@ -0,0 +1,72 @@
++{
++  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
++  "version": "2.1.0",
++  "runs": [
++    {
++      "tool": {
++        "driver": {
++          "name": "PMD",
++          "version": "7.14.0",
++          "informationUri": "https://docs.pmd-code.org/latest/",
++          "rules": [
++            {
++              "id": "SystemPrintln",
++              "shortDescription": {
++                "text": "Usage of System.out/err"
++              },
++              "fullDescription": {
++                "text": "\nReferences to System.(out|err).print are usually intended for debugging purposes and can remain in\nthe codebase even in production code. By using a logger one can enable/disable this behaviour at\nwill (and by priority) and avoid clogging the Standard out log.\n        "
++              },
++              "helpUri": "https://docs.pmd-code.org/pmd-doc-7.14.0/pmd_rules_java_bestpractices.html#systemprintln",
++              "help": {
++                "text": "\nReferences to System.(out|err).print are usually intended for debugging purposes and can remain in\nthe codebase even in production code. By using a logger one can enable/disable this behaviour at\nwill (and by priority) and avoid clogging the Standard out log.\n        "
++              },
++              "properties": {
++                "ruleset": "Best Practices",
++                "priority": 2,
++                "tags": [
++                  "Best Practices"
++                ]
++              },
++              "defaultConfiguration": {
++                "level": "error"
++              }
++            }
++          ]
++        }
++      },
++      "results": [
++        {
++          "ruleId": "SystemPrintln",
++          "ruleIndex": 0,
++          "message": {
++            "text": "Usage of System.out/err"
++          },
++          "level": "error",
++          "locations": [
++            {
++              "physicalLocation": {
++                "artifactLocation": {
++                  "uri": "file:///tmp/java_sarif_spike/Main.java"
++                },
++                "region": {
++                  "startLine": 9,
++                  "startColumn": 9,
++                  "endLine": 9,
++                  "endColumn": 15
++                }
++              }
++            }
++          ]
++        }
++      ],
++      "invocations": [
++        {
++          "executionSuccessful": true,
++          "toolConfigurationNotifications": [],
++          "toolExecutionNotifications": []
++        }
++      ]
++    }
++  ]
++}
+diff --git a/tests/fixtures/sarif/js_real.sarif b/tests/fixtures/sarif/js_real.sarif
+new file mode 100644
+index 0000000..669f2bb
+--- /dev/null
++++ b/tests/fixtures/sarif/js_real.sarif
+@@ -0,0 +1 @@
++[{"filePath":"/tmp/eslint_sarif_spike/index.js","messages":[{"ruleId":"no-unused-vars","severity":2,"message":"'unused' is assigned a value but never used.","line":1,"column":5,"nodeType":"Identifier","messageId":"unusedVar","endLine":1,"endColumn":11}],"suppressedMessages":[],"errorCount":1,"fatalErrorCount":0,"warningCount":0,"fixableErrorCount":0,"fixableWarningCount":0,"source":"var unused = 42;\nconsole.log(\"Hello\");\n","usedDeprecatedRules":[]}]
+diff --git a/tests/test_cli_integration.py b/tests/test_cli_integration.py
+index 72e172a..460cb2d 100644
+--- a/tests/test_cli_integration.py
++++ b/tests/test_cli_integration.py
+@@ -69,7 +69,10 @@ class TestGitRepoPassCI:
+             cwd=str(repo), capture_output=True, check=True,
+         )
+         # Modify file to create a diff.
+-        (repo / "a.py").write_text("# clean\nx = 1\n")
++        # Module docstring + UPPER_CASE constant keeps pylint happy.
++        (repo / "a.py").write_text(
++            '"""Clean module."""\nX = 1\n'
++        )
+ 
+         monkeypatch.setattr(
+             sys, "argv",
+diff --git a/tests/test_detect.py b/tests/test_detect.py
+index 51dee5c..2b6823e 100644
+--- a/tests/test_detect.py
++++ b/tests/test_detect.py
+@@ -21,6 +21,8 @@ Tests cover:
+   - Shell round-trip: shellcheck entry round-trips through load_registry
+ """
+ 
++import json
++from pathlib import Path
+ import yaml
+ import pytest
+ 
+@@ -32,6 +34,8 @@ from code_forge.detect import (
+     generate_tools_yaml,
+ )
+ from code_forge.errors import CliError
++from code_forge.parsers._sarif import _parse_sarif
++from code_forge.parsers.base import Finding
+ from code_forge.registry import ToolConfig, load_registry
+ 
+ 
+@@ -670,3 +674,103 @@ class TestShellRoundTrip:
+         assert tc.output_format == "shellcheck_json"
+         assert isinstance(tc.command, str)
+         assert "shellcheck" in tc.command
++
++
++class TestGoDetection:
++    """Go project detection via go.mod and *.go files."""
++
++    def test_go_mod_detected(self, tmp_path):
++        """go.mod triggers Go detection."""
++        (tmp_path / "go.mod").write_text("module example.com/foo\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("golangci-lint"),
++        )
++        assert "golangci-lint" in result.detected
++        assert result.language == "go"
++
++    def test_go_files_detected(self, tmp_path):
++        """*.go files trigger Go detection."""
++        (tmp_path / "main.go").write_text("package main\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("golangci-lint"),
++        )
++        assert "golangci-lint" in result.detected
++        assert result.language == "go"
++
++    def test_go_missing_linter(self, tmp_path):
++        """Go project without golangci-lint -> missing list."""
++        (tmp_path / "go.mod").write_text("module example.com/foo\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
++        )
++        assert "golangci-lint" in result.missing
++        assert result.language == "go"
++
++    def test_go_tools_yaml_roundtrip(self, tmp_path):
++        """golangci-lint tools.yaml entry round-trips."""
++        (tmp_path / "go.mod").write_text("module example.com/foo\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("golangci-lint"),
++        )
++        assert "golangci-lint" in result.detected
++
++        yaml_path = tmp_path / "tools.yaml"
++        generate_tools_yaml(result, yaml_path)
++
++        registry = load_registry(str(yaml_path))
++        assert "golangci-lint" in registry
++        tc = registry["golangci-lint"]
++        assert tc.output_format == "sarif"
++        assert isinstance(tc.command, str)
++
++    def test_go_priority_over_shell(self, tmp_path):
++        """Go takes priority over Shell in mixed projects."""
++        (tmp_path / "go.mod").write_text("module example.com/foo\n")
++        (tmp_path / "script.sh").write_text("#!/bin/bash\necho hi\n")
++        result = detect_toolchain(
++            tmp_path,
++            which_fn=_make_which_fn("golangci-lint", "shellcheck"),
++        )
++        assert result.language == "go"
++
++
++# -- SARIF hardening (TEST GATE B) --
++
++
++_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sarif"
++
++
++class TestGoSarifTrailingNoise:
++    """golangci-lint appends a text summary after SARIF JSON.
++    raw_decode must parse the first JSON value and ignore the rest."""
++
++    def test_real_fixture_parses_ineffassign_finding(self):
++        """The PM spike fixture (go_real.sarif) contains trailing noise.
++        _parse_sarif must extract the ineffassign finding."""
++        fixture = (_FIXTURES_DIR / "go_real.sarif").read_text()
++        results = _parse_sarif(fixture, tool_name="golangci-lint")
++        assert len(results) == 1
++        f = results[0]
++        assert isinstance(f, Finding)
++        assert f.file == "main.go"
++        assert f.line == 6
++        assert "ineffassign" in f.rule_id
++
++    def test_json_loads_fails_on_trailing_noise(self):
++        """Bug-inject: json.loads raises on trailing noise.
++        This proves raw_decode is necessary, not optional."""
++        fixture = (_FIXTURES_DIR / "go_real.sarif").read_text()
++        with pytest.raises(json.JSONDecodeError):
++            json.loads(fixture)
++
++    def test_go_command_contains_correct_flag(self, tmp_path):
++        """Generated golangci-lint command uses v2 SARIF flag."""
++        (tmp_path / "go.mod").write_text("module example.com/foo\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("golangci-lint"),
++        )
++        yaml_path = tmp_path / "tools.yaml"
++        generate_tools_yaml(result, yaml_path)
++        registry = load_registry(str(yaml_path))
++        tc = registry["golangci-lint"]
++        assert "--output.sarif.path=stdout" in tc.command
+diff --git a/tests/test_detect_c.py b/tests/test_detect_c.py
+new file mode 100644
+index 0000000..b5c9dc1
+--- /dev/null
++++ b/tests/test_detect_c.py
+@@ -0,0 +1,88 @@
++# SPDX-License-Identifier: Apache-2.0
++# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
++"""Tests for C language detection (cppcheck)."""
++from pathlib import Path
++
++import pytest
++
++from code_forge.detect import (
++    C_CPP_TOOL_REGISTRY,
++    DetectionResult,
++    detect_toolchain,
++    generate_tools_yaml,
++)
++from code_forge.parsers._sarif import _parse_sarif
++from code_forge.parsers.base import Finding
++from code_forge.registry import load_registry
++
++
++def _make_which_fn(*known_binaries):
++    """Return a which_fn that knows only the given binaries."""
++    known = set(known_binaries)
++
++    def _which(name):
++        return f"/usr/bin/{name}" if name in known else None
++
++    return _which
++
++
++_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sarif"
++
++
++class TestCDetection:
++    """C project detection via Makefile and *.c files."""
++
++    def test_makefile_detected(self, tmp_path):
++        """Makefile triggers C/C++ detection."""
++        (tmp_path / "Makefile").write_text("all: main.o\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("cppcheck"),
++        )
++        assert "cppcheck" in result.detected
++
++    def test_c_files_detected(self, tmp_path):
++        """*.c files trigger C/C++ detection."""
++        (tmp_path / "main.c").write_text("#include <stdio.h>\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("cppcheck"),
++        )
++        assert "cppcheck" in result.detected
++
++    def test_c_missing_linter(self, tmp_path):
++        """cppcheck not on PATH -> missing list."""
++        (tmp_path / "Makefile").write_text("all: main.o\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
++        )
++        assert "cppcheck" in result.missing
++        assert result.language == "c_cpp"
++
++    def test_c_tools_yaml_roundtrip(self, tmp_path):
++        """cppcheck tools.yaml entry round-trips."""
++        (tmp_path / "Makefile").write_text("all: main.o\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("cppcheck"),
++        )
++        assert "cppcheck" in result.detected
++
++        yaml_path = tmp_path / "tools.yaml"
++        generate_tools_yaml(result, yaml_path)
++
++        registry = load_registry(str(yaml_path))
++        assert "cppcheck" in registry
++        tc = registry["cppcheck"]
++        assert tc.output_format == "sarif"
++        assert isinstance(tc.command, str)
++
++
++class TestCSarifFixture:
++    """Real cppcheck SARIF fixture for C."""
++
++    def test_real_fixture_parses_nullpointer_finding(self):
++        """The spike fixture (c_real.sarif) must parse to Finding."""
++        fixture = (_FIXTURES_DIR / "c_real.sarif").read_text()
++        results = _parse_sarif(fixture, tool_name="cppcheck")
++        assert len(results) >= 1
++        f = results[0]
++        assert isinstance(f, Finding)
++        assert "nullPointer" in f.rule_id
+diff --git a/tests/test_detect_cpp.py b/tests/test_detect_cpp.py
+new file mode 100644
+index 0000000..7b26ab4
+--- /dev/null
++++ b/tests/test_detect_cpp.py
+@@ -0,0 +1,88 @@
++# SPDX-License-Identifier: Apache-2.0
++# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
++"""Tests for C++ language detection (cppcheck)."""
++from pathlib import Path
++
++import pytest
++
++from code_forge.detect import (
++    C_CPP_TOOL_REGISTRY,
++    DetectionResult,
++    detect_toolchain,
++    generate_tools_yaml,
++)
++from code_forge.parsers._sarif import _parse_sarif
++from code_forge.parsers.base import Finding
++from code_forge.registry import load_registry
++
++
++def _make_which_fn(*known_binaries):
++    """Return a which_fn that knows only the given binaries."""
++    known = set(known_binaries)
++
++    def _which(name):
++        return f"/usr/bin/{name}" if name in known else None
++
++    return _which
++
++
++_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sarif"
++
++
++class TestCppDetection:
++    """C++ project detection via CMakeLists.txt and *.cpp files."""
++
++    def test_cmake_detected(self, tmp_path):
++        """CMakeLists.txt triggers C/C++ detection."""
++        (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("cppcheck"),
++        )
++        assert "cppcheck" in result.detected
++
++    def test_cpp_files_detected(self, tmp_path):
++        """*.cpp files trigger C/C++ detection."""
++        (tmp_path / "main.cpp").write_text("#include <iostream>\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("cppcheck"),
++        )
++        assert "cppcheck" in result.detected
++
++    def test_cpp_missing_linter(self, tmp_path):
++        """cppcheck not on PATH -> missing list."""
++        (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
++        )
++        assert "cppcheck" in result.missing
++        assert result.language == "c_cpp"
++
++    def test_cpp_tools_yaml_roundtrip(self, tmp_path):
++        """cppcheck tools.yaml entry round-trips."""
++        (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("cppcheck"),
++        )
++        assert "cppcheck" in result.detected
++
++        yaml_path = tmp_path / "tools.yaml"
++        generate_tools_yaml(result, yaml_path)
++
++        registry = load_registry(str(yaml_path))
++        assert "cppcheck" in registry
++        tc = registry["cppcheck"]
++        assert tc.output_format == "sarif"
++        assert isinstance(tc.command, str)
++
++
++class TestCppSarifFixture:
++    """Real cppcheck SARIF fixture for C++."""
++
++    def test_real_fixture_parses_nullpointer_finding(self):
++        """The spike fixture (cpp_real.sarif) must parse to Finding."""
++        fixture = (_FIXTURES_DIR / "cpp_real.sarif").read_text()
++        results = _parse_sarif(fixture, tool_name="cppcheck")
++        assert len(results) >= 1
++        f = results[0]
++        assert isinstance(f, Finding)
++        assert "nullPointer" in f.rule_id
+diff --git a/tests/test_detect_java.py b/tests/test_detect_java.py
+new file mode 100644
+index 0000000..59a3203
+--- /dev/null
++++ b/tests/test_detect_java.py
+@@ -0,0 +1,96 @@
++# SPDX-License-Identifier: Apache-2.0
++# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
++"""Tests for Java language detection (PMD)."""
++from pathlib import Path
++
++import pytest
++
++from code_forge.detect import (
++    JAVA_TOOL_REGISTRY,
++    DetectionResult,
++    detect_toolchain,
++    generate_tools_yaml,
++)
++from code_forge.parsers._sarif import _parse_sarif
++from code_forge.parsers.base import Finding
++from code_forge.registry import load_registry
++
++
++def _make_which_fn(*known_binaries):
++    """Return a which_fn that knows only the given binaries."""
++    known = set(known_binaries)
++
++    def _which(name):
++        return f"/usr/bin/{name}" if name in known else None
++
++    return _which
++
++
++_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sarif"
++
++
++class TestJavaDetection:
++    """Java project detection via pom.xml and *.java files."""
++
++    def test_pom_xml_detected(self, tmp_path):
++        """pom.xml triggers Java detection."""
++        (tmp_path / "pom.xml").write_text("<project></project>\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("pmd"),
++        )
++        assert "pmd" in result.detected
++
++    def test_build_gradle_detected(self, tmp_path):
++        """build.gradle triggers Java detection."""
++        (tmp_path / "build.gradle").write_text("apply plugin: 'java'\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("pmd"),
++        )
++        assert "pmd" in result.detected
++
++    def test_java_files_detected(self, tmp_path):
++        """*.java files trigger Java detection."""
++        (tmp_path / "Main.java").write_text("public class Main {}\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("pmd"),
++        )
++        assert "pmd" in result.detected
++
++    def test_java_missing_linter(self, tmp_path):
++        """pmd not on PATH -> missing list."""
++        (tmp_path / "pom.xml").write_text("<project></project>\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
++        )
++        assert "pmd" in result.missing
++        assert result.language == "java"
++
++    def test_java_tools_yaml_roundtrip(self, tmp_path):
++        """pmd tools.yaml entry round-trips."""
++        (tmp_path / "pom.xml").write_text("<project></project>\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("pmd"),
++        )
++        assert "pmd" in result.detected
++
++        yaml_path = tmp_path / "tools.yaml"
++        generate_tools_yaml(result, yaml_path)
++
++        registry = load_registry(str(yaml_path))
++        assert "pmd" in registry
++        tc = registry["pmd"]
++        assert tc.output_format == "sarif"
++        assert isinstance(tc.command, str)
++
++
++class TestJavaSarifFixture:
++    """Real PMD SARIF fixture for Java."""
++
++    def test_real_fixture_parses_systemprintln_finding(self):
++        """The spike fixture (java_real.sarif) must parse to Finding."""
++        fixture = (_FIXTURES_DIR / "java_real.sarif").read_text()
++        results = _parse_sarif(fixture, tool_name="pmd")
++        assert len(results) >= 1
++        f = results[0]
++        assert isinstance(f, Finding)
++        assert "SystemPrintln" in f.rule_id
+diff --git a/tests/test_detect_js.py b/tests/test_detect_js.py
+new file mode 100644
+index 0000000..314c030
+--- /dev/null
++++ b/tests/test_detect_js.py
+@@ -0,0 +1,96 @@
++# SPDX-License-Identifier: Apache-2.0
++# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
++"""Tests for JS/TS language detection (ESLint)."""
++from pathlib import Path
++
++import pytest
++
++from code_forge.detect import (
++    JS_TOOL_REGISTRY,
++    DetectionResult,
++    detect_toolchain,
++    generate_tools_yaml,
++)
++from code_forge.parsers.eslint import parse_eslint
++from code_forge.parsers.base import Finding
++from code_forge.registry import load_registry
++
++
++def _make_which_fn(*known_binaries):
++    """Return a which_fn that knows only the given binaries."""
++    known = set(known_binaries)
++
++    def _which(name):
++        return f"/usr/bin/{name}" if name in known else None
++
++    return _which
++
++
++_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sarif"
++
++
++class TestJSDetection:
++    """JS/TS project detection via package.json and *.js files."""
++
++    def test_package_json_detected(self, tmp_path):
++        """package.json triggers JS detection."""
++        (tmp_path / "package.json").write_text('{"name": "test"}\n')
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("eslint"),
++        )
++        assert "eslint" in result.detected
++
++    def test_js_files_detected(self, tmp_path):
++        """*.js files trigger JS detection."""
++        (tmp_path / "index.js").write_text("console.log('hello');\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("eslint"),
++        )
++        assert "eslint" in result.detected
++
++    def test_ts_files_detected(self, tmp_path):
++        """*.ts files trigger JS detection."""
++        (tmp_path / "index.ts").write_text("console.log('hello');\n")
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("eslint"),
++        )
++        assert "eslint" in result.detected
++
++    def test_js_missing_linter(self, tmp_path):
++        """eslint not on PATH -> missing list."""
++        (tmp_path / "package.json").write_text('{"name": "test"}\n')
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
++        )
++        assert "eslint" in result.missing
++        assert result.language == "js"
++
++    def test_js_tools_yaml_roundtrip(self, tmp_path):
++        """eslint tools.yaml entry round-trips."""
++        (tmp_path / "package.json").write_text('{"name": "test"}\n')
++        result = detect_toolchain(
++            tmp_path, which_fn=_make_which_fn("eslint"),
++        )
++        assert "eslint" in result.detected
++
++        yaml_path = tmp_path / "tools.yaml"
++        generate_tools_yaml(result, yaml_path)
++
++        registry = load_registry(str(yaml_path))
++        assert "eslint" in registry
++        tc = registry["eslint"]
++        assert tc.output_format == "eslint_json"
++        assert isinstance(tc.command, str)
++
++
++class TestJSSarifFixture:
++    """Real ESLint SARIF fixture for JS."""
++
++    def test_real_fixture_parses_nounusedvars_finding(self):
++        """The spike fixture (js_real.sarif) must parse to Finding."""
++        fixture = (_FIXTURES_DIR / "js_real.sarif").read_text()
++        results = parse_eslint(fixture, tool_name="eslint")
++        assert len(results) >= 1
++        f = results[0]
++        assert isinstance(f, Finding)
++        assert "no-unused-vars" in f.rule_id
+diff --git a/tests/test_machine_l0_crash_guard.py b/tests/test_machine_l0_crash_guard.py
+new file mode 100644
+index 0000000..ccfd10e
+--- /dev/null
++++ b/tests/test_machine_l0_crash_guard.py
+@@ -0,0 +1,93 @@
++# SPDX-License-Identifier: Apache-2.0
++# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
++"""Tests for L0 crash guard: nonzero exit + empty stdout = ToolError."""
++from pathlib import Path
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from code_forge.machine import _default_l0_runner
++from code_forge.parsers.base import Finding, ToolError
++
++
++def _make_registry(tool_name="test-tool", output_format="sarif"):
++    """Create a minimal registry entry."""
++    tc = MagicMock()
++    tc.output_format = output_format
++    tc.command = "test-tool"
++    return {tool_name: tc}
++
++
++class TestL0CrashGuard:
++    """Nonzero exit + empty stdout must produce ToolError, not []."""
++
++    @patch("code_forge.runner.run_tools")
++    @patch("code_forge.parsers.parse_output", return_value=[])
++    def test_crash_produces_toolerror(self, mock_parse, mock_run):
++        """Nonzero exit + empty stdout -> ToolError."""
++        mock_run.return_value = (
++            {"test-tool": ("", 2, "some stderr")},
++            {},
++            [],
++            [],
++        )
++        findings, infra = _default_l0_runner(
++            _make_registry(), [Path("test.c")]
++        )
++        assert len(findings) == 0
++        assert len(infra) == 1
++        assert "exited 2" in infra[0]
++        assert "some stderr" in infra[0]
++
++    @patch("code_forge.runner.run_tools")
++    @patch("code_forge.parsers.parse_output", return_value=[])
++    def test_clean_run_no_toolerror(self, mock_parse, mock_run):
++        """Zero exit + empty stdout -> no ToolError (clean run)."""
++        mock_run.return_value = (
++            {"test-tool": ("", 0, "")},
++            {},
++            [],
++            [],
++        )
++        findings, infra = _default_l0_runner(
++            _make_registry(), [Path("test.c")]
++        )
++        assert len(findings) == 0
++        assert len(infra) == 0
++
++    @patch("code_forge.runner.run_tools")
++    @patch("code_forge.parsers.parse_output")
++    def test_nonempty_stdout_no_guard(self, mock_parse, mock_run):
++        """Nonzero exit + non-empty stdout -> parser handles it, not guard."""
++        mock_parse.return_value = [
++            Finding(file="test.c", line=1, end_line=1, column=0,
++                    rule_id="test", level="error", message="test",
++                    tool_name="test-tool"),
++        ]
++        mock_run.return_value = (
++            {"test-tool": ("sarif output here", 1, "")},
++            {},
++            [],
++            [],
++        )
++        findings, infra = _default_l0_runner(
++            _make_registry(), [Path("test.c")]
++        )
++        assert len(findings) == 1
++        assert len(infra) == 0
++
++    @patch("code_forge.runner.run_tools")
++    @patch("code_forge.parsers.parse_output", return_value=[])
++    def test_guard_disabled_makes_crash_silent(self, mock_parse, mock_run):
++        """Removing the guard makes crash produce silent []."""
++        mock_run.return_value = (
++            {"test-tool": ("", 2, "crash stderr")},
++            {},
++            [],
++            [],
++        )
++        # With guard active: infra has 1 error
++        findings, infra = _default_l0_runner(
++            _make_registry(), [Path("test.c")]
++        )
++        assert len(infra) == 1, "guard must catch crash"
+diff --git a/tests/test_mcp_server.py b/tests/test_mcp_server.py
+index 948c2c8..7fc1491 100644
+--- a/tests/test_mcp_server.py
++++ b/tests/test_mcp_server.py
+@@ -402,6 +402,86 @@ async def test_kill_and_reap_already_exited_skips_kill():
+     mock_proc.kill.assert_not_called()
+ 
+ 
++# -- allow_main env threading (BLOCKER 1 fix) --
++
++
++@pytest.mark.asyncio
++async def test_allow_main_true_injects_env_without_polluting_os():
++    """allow_main=True passes FORGE_ALLOW_MAIN=1 to the child process
++    via the env kwarg without mutating os.environ."""
++    mock_proc = MagicMock()
++    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
++    mock_proc.returncode = 0
++    with (
++        patch(
++            "code_forge.mcp_server.asyncio.create_subprocess_exec",
++            new_callable=AsyncMock,
++            return_value=mock_proc,
++        ) as mock_exec,
++        patch.dict(os.environ, {}, clear=False),
++    ):
++        os.environ.pop("FORGE_ALLOW_MAIN", None)
++        await _run_cli_budgeted(
++            "review", workspace=_resolve_workspace(), budget=5.0,
++            env={**os.environ, "FORGE_ALLOW_MAIN": "1"},
++        )
++        call_env = mock_exec.call_args.kwargs.get("env")
++        assert call_env is not None
++        assert call_env["FORGE_ALLOW_MAIN"] == "1"
++        assert "FORGE_ALLOW_MAIN" not in os.environ
++
++
++@pytest.mark.asyncio
++async def test_allow_main_false_passes_none_env():
++    """allow_main=False passes env=None (inherits parent env)."""
++    mock_proc = MagicMock()
++    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
++    mock_proc.returncode = 0
++    with patch(
++        "code_forge.mcp_server.asyncio.create_subprocess_exec",
++        new_callable=AsyncMock,
++        return_value=mock_proc,
++    ) as mock_exec:
++        await _run_cli_budgeted(
++            "review", workspace=_resolve_workspace(), budget=5.0,
++            env=None,
++        )
++        assert mock_exec.call_args.kwargs.get("env") is None
++
++
++@pytest.mark.asyncio
++async def test_allow_main_preserves_preexisting_server_env():
++    """If the server process already has FORGE_ALLOW_MAIN set,
++    an allow_main=True call must not delete it afterward."""
++    mock_proc = MagicMock()
++    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
++    mock_proc.returncode = 0
++    with (
++        patch(
++            "code_forge.mcp_server.asyncio.create_subprocess_exec",
++            new_callable=AsyncMock,
++            return_value=mock_proc,
++        ),
++        patch.dict(os.environ, {"FORGE_ALLOW_MAIN": "1"}, clear=False),
++    ):
++        await _run_cli_budgeted(
++            "review", workspace=_resolve_workspace(), budget=5.0,
++            env={**os.environ, "FORGE_ALLOW_MAIN": "1"},
++        )
++        assert os.environ.get("FORGE_ALLOW_MAIN") == "1"
++
++
++@pytest.mark.asyncio
++async def test_empty_env_dict_raises_value_error():
++    """Empty env dict must be rejected -- it would strip PATH and all
++    environment variables, causing the subprocess to fail silently."""
++    with pytest.raises(ValueError, match="non-empty dict"):
++        await _run_cli_budgeted(
++            "review", workspace=_resolve_workspace(), budget=5.0,
++            env={},
++        )
++
++
+ # -- result formatting --
+ 
+ 
+@@ -460,6 +540,28 @@ async def test_forge_review_calls_preflight_then_cli():
+         assert isinstance(result, CallToolResult)
+ 
+ 
++@pytest.mark.asyncio
++async def test_forge_review_allow_main_passes_env_to_cli():
++    """Integration: forge_review(allow_main=True) constructs child_env
++    with FORGE_ALLOW_MAIN=1 and passes it to _run_cli_budgeted."""
++    with (
++        patch("code_forge.mcp_server._check_backend"),
++        patch("code_forge.mcp_server._validate_backend"),
++        patch(
++            "code_forge.mcp_server._run_cli_budgeted",
++            new_callable=AsyncMock,
++            return_value=("output", 0, 1.5, ""),
++        ) as mock_cli,
++        patch.dict(os.environ, {}, clear=False),
++    ):
++        os.environ.pop("FORGE_ALLOW_MAIN", None)
++        await forge_review(allow_main=True)
++        call_env = mock_cli.call_args.kwargs.get("env")
++        assert call_env is not None
++        assert call_env["FORGE_ALLOW_MAIN"] == "1"
++        assert "FORGE_ALLOW_MAIN" not in os.environ
++
++
+ @pytest.mark.asyncio
+ async def test_forge_review_with_backend_param_validates():
+     with (
+diff --git a/tests/test_parsers.py b/tests/test_parsers.py
+index 0f96314..a163bf7 100644
+--- a/tests/test_parsers.py
++++ b/tests/test_parsers.py
+@@ -304,6 +304,7 @@ class TestParserDispatch:
+             "grep_line",
+             "flake8",
+             "pylint_json",
++            "eslint_json",
+         }
+         assert set(PARSER_DISPATCH.keys()) == expected
+ 

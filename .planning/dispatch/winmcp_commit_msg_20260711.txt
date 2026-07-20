@@ -1,0 +1,22 @@
+mcp: tolerate event loops without signal handler support
+
+Windows event loops raise NotImplementedError from
+loop.add_signal_handler, so the first MCP deployment on Windows
+died at lifespan setup before serving a single request -- taking
+doctor's self-check and CLI review down with it, since both spawn
+the server.
+
+Catch NotImplementedError around the two handler installs and fall
+back to stdio-EOF shutdown, which already runs cleanup_all on
+orderly exit. SIGTERM on Windows is TerminateProcess anyway (no
+handler could run), and Ctrl+C reaches asyncio.run as
+KeyboardInterrupt on its own. The kill-without-EOF path loses
+tempfile cleanup on Windows, the same documented gap
+_install_pdeathsig accepts for non-Linux rather than faking a
+handler that cannot work.
+
+The guard stays narrow on purpose: anything other than
+NotImplementedError (wrong thread, closed loop) is a real bug and
+still propagates. Both sides are pinned by tests.
+
+Signed-off-by: Minxi Hou <houminxi@gmail.com>

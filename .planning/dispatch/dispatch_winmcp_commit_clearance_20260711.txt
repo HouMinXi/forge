@@ -1,0 +1,85 @@
+FORGE PM COMMIT CLEARANCE: WIN-MCP SIGNAL FIX, WAVE 1 (2026-07-11)
+
+VERDICT: CLEARED FOR COMMIT (post-review-c3 legitimately reached)
+
+STAGED STATE (frozen)
+  Worktree: .worktrees/win-mcp   Branch: fix/win-mcp-signal
+  Base: ab1fff5 (main)
+  Files: src/code_forge/mcp_server.py (+17/-4)
+         tests/test_mcp_server.py    (+55)
+  sha256(git diff --cached):
+    775cd528d88429d5aae9699d9e6c67eb15826782e4b07a5ded5468b695b059aa
+  tree==index verified after every mutation/restore step.
+
+L4 ACCEPTANCE OF EXECUTOR BRIEF (all re-run by PM, not trusted)
+  - Ground: branch/base/stat/sha256 matched the brief exactly.
+  - Step 0: py_compile OK; ruff base-vs-now histograms identical
+    (16=16, zero new); zero hits in new-hunk line ranges;
+    non-ASCII scan clean.
+  - Injection (survival test): guard removed -> exactly
+    test_lifespan_survives_missing_signal_support FAILED with
+    NotImplementedError, 9 others passed; restored -> 10/10,
+    sha256 byte-identical.
+  - Full suite: 2711 passed / 7 skipped (baseline 2710/7, +1 new).
+  - Real-path smoke: initialize frame -> serverInfo reply, EOF
+    shutdown, exit 0 (worktree src confirmed via startup log).
+
+THREE-CYCLE REVIEW (12 passes total)
+  Cycle 1: qodo 0 / expert 0 / adversarial 1 CONFIRMED finding:
+    guard narrowness unpinned -- mutating except NotImplementedError
+    to except Exception survived all 111 tests (real run). Fix:
+    added test_lifespan_propagates_unexpected_signal_errors
+    (RuntimeError from add_signal_handler must propagate,
+    cleanup_all not awaited). Injection proof: mutation active ->
+    exactly the new test FAILED (DID NOT RAISE RuntimeError);
+    restored -> 11/11. Cycle counter RESET per rules.
+  Post-reset C1': qodo 0 (stat/sha/ruff-range/uniqueness/vocab
+    scan) / expert 0 (coverage term-missing excludes guard lines
+    262-273 -- every new line executed) / adversarial 0 (mutation
+    matrix: any catch-all broadening now killed; single-type
+    exotic broadenings declared out of scope, infinite space).
+  C2': 0/0/0 (out-of-scope file check: only untracked .coverage
+    byproduct; patch-stack duplication = sibling convention;
+    deterministic test, no timing/real signals).
+  C3': 0/0/0 (final sweeps; smoke re-run on final state exit 0).
+  Exit criteria: 3 consecutive clean cycles post-reset + smoke +
+  diff coverage gate. Full suite on final state: 2712 passed /
+  7 skipped (baseline +2, exactly the two new tests).
+
+COMMIT MESSAGE
+  /tmp/winmcp_commit_msg_20260711.txt
+  Entity check (expert step 5): add_signal_handler,
+  NotImplementedError, cleanup_all, _install_pdeathsig, stdio EOF
+  all grep-confirmed present in the staged diff. No severity
+  labels, no review vocabulary, no bullet inventory.
+
+EXECUTE (user, from .worktrees/win-mcp; marker outside quotes,
+last token):
+  git commit -F /tmp/winmcp_commit_msg_20260711.txt # post-review-c3
+
+DISCLOSURES
+  1. Author==reviewer: the PM authored both the guard and the fix,
+     then ran the review passes. Mitigations: executor sub-session
+     independently verified conformance + injection before review;
+     every finding and every dismissal above is anchored to a
+     runnable command output, not judgment; the mutation harness
+     (not opinion) validated the one fix; gpu-win real-platform
+     retest remains downstream as the independent gate.
+  2. Executor micro-deviation: brief T2b ran the single test node
+     ("1 passed") where the dispatch asked for the full class; PM
+     re-ran the full class both directions, evidence complete.
+  3. FAIL<->PASS flips in this record are the injection design,
+     disclosed with literal outputs (S1).
+  4. Linux evidence is necessary, NOT sufficient. Windows is not
+     "fixed" until gpu-win reruns T1b/T3/T4 from
+     /tmp/draft_forge_wingpu_mcp_test_20260711.md on a build
+     containing this commit.
+
+AFTER COMMIT
+  1. User: scp/redeploy to gpu-win, rerun T1b (initialize frame),
+     then T3 (MCP registration) and T4 (real review E2E).
+  2. Wave 2 backlog unchanged, evidence-driven: lock.py os.kill
+     probe (T5a sleeper evidence), graph_triage encoding (T5b/c),
+     llm_invoke killpg (T5d) -- all deferred until gpu-win data.
+  3. Branch hygiene: after merge + verification, remind user to
+     delete fix/win-mcp-signal manually.

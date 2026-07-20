@@ -1,0 +1,82 @@
+R1 ADJUDICATION -- AMENDMENT 1 external review (2026-07-08, fleet PM)
+
+Panel: deepseek (ds) + longcat (lc), adversarial, full schedule as
+context, AMENDMENT 1 section only in scope. Raw outputs:
+/tmp/review_out_forge_env_r1_{ds,lc}.md (tmpfs; tallies reproduced
+here). ds 0/2/1/1, lc 0/3/4/3. Zero blockers. Zero cross-model
+contradictions. Independent double-hits: version-sensitivity
+classifier gap (ds-H1 == lc-M1) and Phase 53 over-scope
+(ds-Q4 == lc-Q4) -- highest-confidence fixes of the round.
+
+CONFIRMED + FIXED in rev 2:
+- ds-H1/lc-M1 classifier unspecified -> mechanical trigger: 42
+  claim_type gains version_sensitive attribute OR symbol absent
+  from manifest declared-version set. Never model-self-reported.
+- ds-H2 lockfile-less repos silently no-op -> manifest TIERS
+  (declared > observed > absent), absent = first-class verdict-
+  header state.
+- ds-M1/lc-Q4/ds-Q4 Phase 50 charter overreach + container
+  over-scope -> 53 split: 53a native venv/build-tree subprocess
+  (prereq 52 only, ~100-200 LOC, kernel C delegated to Beaker);
+  53b container + driver surface (opt-in, post-50-charter, bought
+  only on demonstrated need).
+- lc-H1 "delivery" undefined -> defined: patch ARTIFACT (diff in
+  receipt/SARIF or forge artifact dir) + evidence bundle; never
+  applied state.
+- lc-H2 pass-after as judgment input crosses Phase 50 boundary ->
+  evidence scoped: reviewed-diff exec + fail-before = verdict
+  inputs (WHAT); pass-after = receipt-level ONLY (a passing fix
+  must not confirm a finding, a failing fix must not demote one).
+- lc-H3 async gate breaks synchronous verdict contract ->
+  synchronous-with-budget; timeout degrades to explicit
+  exec-evidence-unavailable disclosure. No convergence/receipt
+  semantics change.
+- lc-M3 acceptance test confounded (Step0 catches compile breaks)
+  -> known-answer defect static review provably misses (pinned-env
+  behavioral regression / runtime-only failure).
+- lc-M4 "reviewed tree" criminalizes .code-forge/ writes -> scoped
+  to reviewed tree's CODE, .code-forge/ carved out.
+- ds-L1 basis loses convergence gradient -> falsification_survived
+  + convergence_rounds sub-fields (pipeline already computes both).
+- lc-L1 AutoFixer-vs-organ undefined -> component split stated
+  (organ runs code, never drafts; delivering AutoFixer post-53a
+  consumes organ; one-way dependency).
+- lc-L2 S2 undefined in standalone doc -> one-line gloss added.
+
+PARTIAL / PUSHED BACK (with reasoning, per adjudication law):
+- lc-M2 "disclosure theater": REJECTED as framing -- a lopsided
+  llm-trained majority is the true state, and honest uniformity is
+  not noise; the informativeness remedy (sub-fields) was adopted
+  via ds-L1 anyway. Expected-distribution honesty note added.
+- lc-L3 "non-collision false": IMPRECISE -- 45-47 file overlap was
+  and remains zero; the real overlap is with Phase 50
+  (falsify_real.py), which the original text already flagged.
+  Wording tightened to name the file explicitly; claim of falsity
+  not accepted.
+
+CONSENSUS RULINGS (focus questions):
+- Q1: 51 post-44 slot = queue hygiene, not dependency; pull-forward
+  to post-43 PERMITTED (now stated in graph note).
+- Q2: degrade > block, both models ratify; lc's perception caveat
+  adopted (distinct SARIF level for capped findings).
+- Q3: constitution conflicts NONE (ds); lc's 53-evidence tension
+  resolved by the lc-H2 scoping fix.
+
+R2: verification round (same pair) -- confirm rev 2 folds landed,
+no new findings introduced by the fixes themselves.
+
+R2 RESULT (same day): DOUBLE 0/0/0/0. ds verified all 10 folds
+"present verbatim", zero new defects. lc verified all 10 folds,
+zero new defects, pushed-back items closed (lc itself notes the
+rev 2 text now names falsify_real.py explicitly, satisfying its
+L3 point). SERIES CONVERGED IN 2 ROUNDS.
+
+NOTED (carry-forward to the Phase 52 plan author, not a rev 3):
+when manifest state is "absent", the second version-sensitivity
+condition (symbol absent from the declared-version set) is
+unevaluatable. Intended resolution to specify in the 52 plan:
+absent manifest -> condition 2 vacuously false -> only the
+claim_type attribute triggers; all such findings are already
+covered by the verdict-header absent-state disclosure. (lc R2
+micro-note, classified by lc as new-feature boundary, not a
+regression.)

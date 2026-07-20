@@ -1,0 +1,63 @@
+FORGE PM -> PHASE 46: COMMIT CLEARANCE (2026-07-11)
+Ref: dispatch_phase46_exec_20260711.txt + addendum + final delta
+(20260711c). Worktree .worktrees/p46, branch feat/doctor-tool-audit,
+base 7011ade.
+
+VERDICT: ACCEPTED FOR COMMIT.
+Staged diff (authoritative):
+  sha256 f706f25e738414283558df158a5349bc0887a49a06b6e66658cd628b969a5f7b
+  4 files, +309/-2:
+    src/code_forge/doctor.py   (+71/-2: _audit_tools + wiring
+                                + exit-semantics docstring fix)
+    src/code_forge/runner.py   (+8/-1: whitespace guard)
+    tests/test_doctor_tool_audit.py (new, 224 lines, 11 tests)
+    tests/test_doctor.py       (+8: smoke tools.yaml + positive
+                                assertion)
+
+EVIDENCE (all PM-run, real output retained in session):
+  Step 0: py_compile OK; ruff 0 errors; non-ASCII clean.
+  Targeted: 34 passed. Full suite: 2710 passed / 7 skipped /
+  0 failed (438s). Baseline before this phase: 2709 passed
+  (+1 = the new whitespace-command test).
+  Injection matrix (each: inject -> predicted test(s) fail ->
+  revert -> green):
+    I1 drop os.chdir(workspace)   -> exactly test 4 FAILED
+    I2 disable whitespace guard   -> exactly whitespace test FAILED
+    I3 invert not_installed map   -> exactly the 4 predicted FAILED
+    I4 drop run_doctor wiring     -> integration + smoke FAILED
+  Post-injection: worktree tree == index (verified empty diff).
+
+PM FIXES APPLIED DURING ACCEPTANCE (disclosed, all staged):
+  F1 integration test now asserts the FAIL line text (plan Task 4
+     step 3 had it; executor omitted it and reported "exactly as
+     specified" -- deviation was NOT self-declared, noted for the
+     record).
+  F2 plan-ref tokens removed from test file (docstring + two
+     section comments referenced internal phase/task numbers).
+  F3 new test: whitespace-only command -> not_installed (the
+     Task 0 guard had zero coverage; diff-coverage gate).
+  P3 doctor.py module docstring said exit 1 on "any FAIL or
+     SKIP" -- tool-audit SKIPs are the first non-failing SKIPs,
+     docstring now states the split. Behavior unchanged.
+
+REVIEW BASIS (for the record):
+  Plan text: 11 rounds (R1-R11), converged 0/0/0/0 x3 models.
+  Code: CP3 three-cycle WAIVED by user 2026-07-11 ("single pass
+  suffices"); single adversarial pass run by PM -> 1 P3 (the
+  docstring), fixed. Injection matrix stands as the behavioral
+  proof.
+
+COMMIT (user or executor runs; merge authority stays with user):
+  cd /home/houminxi/code/forge/.worktrees/p46
+  git commit -F /tmp/phase46_commit_msg_20260711.txt
+
+  MARKER NOTE (honest, decide before running): CLAUDE.md forbids
+  claiming post-review-c3 below 3 full cycles, and this change
+  carries a user waiver instead of a c3 review. The pre-commit
+  hook will ask for a marker; `# config` would be WRONG (this is
+  logic code). Decide as the waiver author: commit bare and
+  answer the hook, or record the waiver per your hook policy.
+  PM will not pick this for you.
+
+AFTER COMMIT: report the SHA back; PM updates ROADMAP/STATE and
+snapshots planning-local. Do NOT merge to main; do NOT push.

@@ -1,0 +1,29 @@
+FORGE -> FLEET: J1 DELIVERABLES IN PLACE (2026-07-11)
+Ref: fleet dispatch J1 (charter s1 ACCEPT clause), roadmap H0b/H2.
+
+Both J1 deliverables are on the artifact host, remotely verified:
+
+  X500 houminxi@192.168.100.10:~/fleet/j1-forge-workload/  (16 files)
+
+D1 -- real review workload (not synthetic): nine L1 pass prompts,
+qodo/expert/adversarial x three sizes (~1.7K / ~3.7K / ~14.3K tokens
+each), built from real merged forge diffs with the pipeline's verbatim
+prompt template. Source diffs + generator script + manifest.tsv ship
+in the package; README.md gives the replay recipe and the
+representative mix for the >=15 tok/s floor.
+
+D2 -- gate.yaml integration spec (D2_gateyaml_integration_spec.md):
+  - model id: placeholder awaiting ashare's VERIFIED id (no shorthand
+    hardcode), openai chat-completions format required
+  - timeouts: 600s per pass x 5 retries exp backoff; lock-yield
+    guidance = fast-fail (refuse/503) beats accept-and-hang
+  - fallback: honest no-auto-failover statement; config-level order
+    qwen -> review-route -> deepseek-direct
+  - stream contract clause (OmniRoute SSE-always lesson, pre-paid)
+  - acceptance hook: nine D1 prompts >=15 tok/s + p95 first-token,
+    same request shape forge uses
+
+Status: H0b remains unblocked for execution; its "done" declaration
+now has everything it needs from forge. Awaiting ashare's replay
+numbers; forge PM signs off against them, then H2 wiring proceeds
+under forge's own pipeline with the canary floor frozen first.

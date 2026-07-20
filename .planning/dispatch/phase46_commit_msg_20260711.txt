@@ -1,0 +1,32 @@
+doctor: audit registry tools through the real resolver
+
+A registry entry whose command never resolves fails silently: the
+pipeline logs the skip at info level and L0 coverage quietly
+degrades. The resolver bug fixed in ab0387e (shutil.which on the
+whole command string, so every entry carrying flags never
+resolved) shipped exactly this way and stayed invisible for
+months.
+
+Add a tool-audit section to forge doctor that walks tools.yaml
+and probes every enabled tool through capture_tool_version, so
+the declared registry and the executable reality are compared via
+the same resolution path the pipeline uses. Missing tools fail
+the exit code. An absent or empty tools.yaml reports SKIP without
+failing, since the registry is optional. cargo_root tools are
+skipped: a --version probe outside a Cargo project proves
+nothing about runtime behavior.
+
+The audit anchors resolution to the workspace root so
+relative-path entries (scripts/checkpatch.pl) probe identically
+no matter which directory doctor is invoked from, and restores
+the caller's CWD even when a probe raises. Each tool is isolated
+in its own error boundary: one broken entry reports FAIL and the
+rest of the audit still runs.
+
+Also harden _resolve_command against whitespace-only commands,
+which load_registry accepts but str.split() turns into an
+IndexError. The audit made this reachable from any tools.yaml;
+the guard returns None so the entry reports not_installed
+instead of crashing the diagnostic.
+
+Signed-off-by: Minxi Hou <houminxi@gmail.com>

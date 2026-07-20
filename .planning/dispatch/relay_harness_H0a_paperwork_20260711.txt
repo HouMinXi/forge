@@ -1,0 +1,31 @@
+FLEET -> HARNESS (relayed via forge PM): H0a PAPERWORK CALL
+Date: 2026-07-11. Ref: work order H0a, constitution R4.
+
+FLEET ADJUDICATION: H0a is SUBSTANTIVELY COMPLETE, OWES PAPERWORK.
+This is a report chase, not a work chase.
+
+Fleet ground-checked (overriding a stale pessimistic relay):
+  - harness repo actual state: 5/7 phases done, 335 tests
+    (the circulating "3/7, 292 tests" figure is stale)
+  - 3eb8175 (2026-07-07) covers ALL remaining security items named
+    by ADDENDUM 3: hook-timeout + orphan-PID; UAT 12/12
+  - X500 repo tip is synced to that commit; the dispatcher service
+    is enabled + active and running
+
+The three days of "no report" were work-done-but-unreported: the R4
+contract (every handler reports {request_id, exit_code, duration,
+summary}) failed in MIRROR at the group level -- the group built the
+reporting rule into its handlers, then did not itself report.
+
+WHAT HARNESS OWES (to unlock certification):
+  1. An R4-format completion report for H0a: phases done, test
+     count, UAT results, dispatcher service state, commit SHA(s),
+     deviations if any.
+  2. The bug-inject evidence the H0a work order requires: for each
+     security guard (hook-timeout, orphan-PID), show the guard
+     CATCHING the injected fault (real command output, both the
+     failing run under injection and the passing run after revert).
+     Narrated "tests pass" does not satisfy this.
+
+ON RECEIPT: fleet verifies, certifies H0a CLOSED, and H1 unlocks
+immediately.

@@ -1,0 +1,95 @@
+================================================================
+DISPATCH -- Phase 46 EXECUTION: doctor registry-vs-executed tool audit
+From: forge PM, 2026-07-11. To: the executor sub-session.
+================================================================
+
+## YOUR TASK
+Implement 46-PLAN.md exactly as written. The plan survived 5 review
+rounds (internal PBR + Gemini + DeepSeek, kimi/mimo round in flight)
+and every implementation decision is PINNED. Do NOT redesign, do NOT
+"improve", do NOT deviate. If ground contradicts the plan, STOP and
+report -- do not push past it.
+
+Plan file (read it FULLY before any edit):
+/home/houminxi/code/forge/.planning/phases/46-doctor-registry-vs-executed-tool-audit/46-PLAN.md
+
+## PHASE 0 -- worktree (mandatory; NEVER edit the main tree)
+  cd /home/houminxi/code/forge
+  git worktree add .worktrees/p46 -b feat/doctor-tool-audit main
+  ln -sf "$(git rev-parse --show-toplevel)/CLAUDE.md" .worktrees/p46/CLAUDE.md
+  cd .worktrees/p46
+Verify: `git branch --show-current` prints feat/doctor-tool-audit.
+Record `git rev-parse --short main` (your base) in the report.
+
+## EXECUTION ORDER (Task 3 is already DONE -- skip it)
+  1. Task 0: runner.py whitespace guard (verbatim from plan)
+  2. Task 1: doctor.py _audit_tools + run_doctor wiring
+  3. Task 2: tests/test_doctor_tool_audit.py (8 tests as specified)
+  4. Task 4: integration test (appended to the same test file)
+
+## PINNED DECISIONS -- you MUST NOT change these
+- Iterate `registry.values()` (bare dict iteration yields name
+  strings, not ToolConfig objects).
+- Return type `Optional[bool]`; SKIP means ok=None; wiring checks
+  `if ok is False` (None must NOT set has_fail).
+- Lazy imports INSIDE _audit_tools (doctor.py convention).
+- Audit reuses capture_tool_version as-is (timeout=5). No new
+  timeout logic, no direct _resolve_command call.
+- cargo_root tools: skip with a SKIP line, before any resolution.
+- Bug-inject mock: mock.patch("code_forge.runner._resolve_command",
+  return_value=None) -- None for ALL commands.
+- Relative-path test uses monkeypatch.chdir(tmp_path) (isfile is
+  CWD-relative).
+- Integration test: build on the all-PASS recipe from
+  test_doctor.py lines 380-393 (valid gate.yaml + DEMO_API_KEY +
+  patched _check_handshake/_check_registries/trust_status), then
+  add .code-forge/tools.yaml naming a nonexistent tool. rc==1 must
+  be attributable ONLY to tool-audit.
+- Missing-file check: `not tools_yaml.exists()`.
+- Wiring insertion point: TOP LEVEL of run_doctor, after the outlet
+  else-block, before the existing `ok_h, msg_h = _check_handshake()`
+  line (~307). Guard with `if workspace is not None:`. Line numbers
+  may have drifted -- adapt positions, never behavior.
+
+## EVIDENCE OBLIGATIONS -- real output, never narration
+- Task 2 test 8 bug-inject: run it BOTH ways and paste both outputs
+  in the report: the audit must report FAIL while the patch simulates
+  the regression, PASS after. A described-but-not-run inject = not
+  done.
+- Step 0 before reporting:
+  a. python3 -m py_compile src/code_forge/runner.py src/code_forge/doctor.py
+  b. ruff check src/code_forge/runner.py src/code_forge/doctor.py \
+       tests/test_doctor_tool_audit.py    (zero NEW warnings)
+  c. Non-ASCII scan (must print 0):
+     git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -cP '[^\x00-\x7F]'
+- FULL suite regression, not module-only:
+     python3 -B -m pytest tests/ -q      (record the real numbers)
+- New tests verbose:
+     python3 -B -m pytest tests/test_doctor_tool_audit.py -v
+
+## CODE HYGIENE -- violations mean rework
+- NO plan-ref tokens in code, comments, test names, or filenames:
+  no task numbers, no round/severity labels, no plan filenames.
+  Every comment must be a self-contained technical statement.
+- Pure ASCII in all new code (em dash, arrows, smart quotes banned).
+- Author identity: Minxi Hou <houminxi@gmail.com> (repo default;
+  verify with `git config user.email`).
+
+## DELIVERY -- stage only, do NOT commit
+  1. git add -- src/code_forge/runner.py src/code_forge/doctor.py \
+       tests/test_doctor_tool_audit.py
+  2. git status --short     (must list ONLY those three files)
+  3. git diff --cached | sha256sum      (report the hash)
+  4. Write the report to /tmp/phase46_exec_brief_20260711.txt with:
+     branch, base SHA, diffstat, full-suite numbers, new-test -v
+     output, bug-inject FAIL/PASS evidence, Step 0 results, and any
+     deviations (what forced each, what you chose).
+NO commit, NO merge, NO push, NO touching main. PM reviews the
+staged diff and issues commit clearance separately.
+
+## STOP GATES
+- Plan-vs-ground behavioral contradiction -> STOP and report
+  (drifted line numbers are fine to adapt; changed behavior is not).
+- Two consecutive failures on the same approach -> STOP and report.
+- Anything forcing an edit outside the three files above -> STOP.
+================================================================

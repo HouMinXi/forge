@@ -1,0 +1,63 @@
+WIN-MCP SIGNAL FIX EXECUTION BRIEF
+====================================
+Date: 2026-07-11
+Worktree: .worktrees/win-mcp (branch fix/win-mcp-signal)
+Base: ab1fff5 (main)
+
+STAGED DIFF
+  sha256: 6acc988c1998863d2b6ae8047dfb3b10e15520a4061d829a6f14e8a903629071
+  2 files changed, 47 insertions(+), 4 deletions(-)
+    src/code_forge/mcp_server.py  (+17/-4)
+    tests/test_mcp_server.py      (+30)
+
+T1 VERIFY EDITS
+  mcp_server.py lifespan: try/except NotImplementedError around
+    add_signal_handler pair. Comment explains Windows behavior.
+    log.info fallback on except. Matches D1 (behavior-based guard,
+    not sys.platform). Matches D2 (no Windows-side substitute).
+  test_mcp_server.py: test_lifespan_survives_missing_signal_support
+    in TestShutdownInfrastructure. Mock loop with
+    add_signal_handler.side_effect=NotImplementedError. Asserts
+    reached_body=True and cleanup_all.assert_awaited_once().
+    Matches D4 (reuses existing patch stack).
+  Scope: exactly 2 files. Matches D3. DEVIATIONS: none.
+
+T2 BUG-INJECT PROOF
+  a. Guard reverted (stash mcp_server.py, keep new test):
+     FAILED tests/test_mcp_server.py::TestShutdownInfrastructure
+       ::test_lifespan_survives_missing_signal_support
+     NotImplementedError raised at mock.py:1241
+
+  b. Guard restored (stash pop):
+     PASSED tests/test_mcp_server.py::TestShutdownInfrastructure
+       ::test_lifespan_survives_missing_signal_support
+     1 passed in 0.42s
+
+  c. git diff --stat after restore:
+     src/code_forge/mcp_server.py | 21 +++++++++++++++++----
+     tests/test_mcp_server.py     | 30 ++++++++++++++++++++++++++++++
+     2 files changed, 47 insertions(+), 4 deletions(-)
+
+T3 STEP 0
+  0a py_compile mcp_server.py: OK
+  0b ruff: 16 errors, ALL pre-existing (F821 line 561/613, F401/F811/F841
+     in test lines <1267). Zero new warnings from this diff.
+  0c non-ASCII on staged diff: CLEAN
+
+T4 REGRESSION
+  T4a targeted (test_mcp_server + test_mcp_jobs + test_mcp_pdeathsig):
+    133 passed in 6.27s
+  T4b FULL SUITE:
+    2711 passed, 7 skipped, 6 warnings in 345.37s (5m45s)
+    Baseline: 2710 passed / 7 skipped
+    Delta: +1 (the new test). Zero regressions.
+
+T5 PLAN-REF SCAN
+  CLEAN. Docstring references "gpu-win deployment failure" (real
+  incident, not plan artifact).
+
+DEVIATIONS: none.
+
+NOTE: Linux evidence is necessary but NOT sufficient. Real-platform
+smoke requires redeploying to gpu-win and rerunning T1b/T3/T4 from
+the Windows test plan.

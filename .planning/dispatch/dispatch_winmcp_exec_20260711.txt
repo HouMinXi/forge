@@ -1,0 +1,95 @@
+FORGE PM -> EXECUTOR: WIN-MCP SIGNAL FIX, WAVE 1 (2026-07-11)
+
+CONTEXT
+Windows deployment test on gpu-win (report:
+/tmp/forge_win_test_20260711.txt) found ONE startup blocker:
+mcp_server.py lifespan calls loop.add_signal_handler(SIGTERM/
+SIGINT) unguarded; Windows event loops raise NotImplementedError,
+killing the MCP server at startup and blocking doctor self-check,
+MCP registration, and reviews. Everything else in the report
+(lock probe, killpg, encoding) is OUT OF SCOPE for this wave.
+
+WORKTREE STATE (PM pre-applied the edits -- verify, do not redo)
+  Path: .worktrees/win-mcp   Branch: fix/win-mcp-signal
+  Base: ab1fff5 (current main)
+  Two files already modified, UNSTAGED:
+  1. src/code_forge/mcp_server.py -- the add_signal_handler pair
+     in lifespan() is now wrapped in try/except NotImplementedError
+     with an explanatory comment block and a log.info fallback line
+     ("loop.add_signal_handler unsupported on this platform; "
+     "relying on stdio EOF for shutdown").
+  2. tests/test_mcp_server.py -- new async test in class
+     TestShutdownInfrastructure:
+     test_lifespan_survives_missing_signal_support
+     (mock loop with add_signal_handler.side_effect =
+     NotImplementedError; asserts lifespan reaches its body AND
+     cleanup_all is awaited once on exit).
+  PM ran TestShutdownInfrastructure once: 10 passed. Nothing else
+  verified yet. Your job is the full evidence chain.
+
+PINNED DECISIONS (do not revisit)
+  D1 Guard shape is try/except NotImplementedError, NOT a
+     sys.platform check: behavior-based, testable on Linux with a
+     mock loop, and covers any loop lacking signal support.
+  D2 No Windows-side shutdown substitute (no signal.signal, no
+     win32 handlers). stdio EOF already exits the lifespan and
+     runs cleanup_all; kill-without-EOF loses cleanup -- same
+     documented gap as _install_pdeathsig on non-Linux. Document,
+     do not fake.
+  D3 Scope is exactly these two files. llm_invoke.py killpg /
+     start_new_session, lock.py os.kill probe, graph_triage
+     encoding: all deferred to wave 2 with gpu-win evidence.
+  D4 New test lives in TestShutdownInfrastructure next to
+     test_lifespan_installs_signal_handlers and reuses its patch
+     stack (load_user_backends, _load_gate_backends,
+     asyncio.get_running_loop) plus cleanup_all.
+
+TASKS
+T1 Verify the two edits match the spec above (read the diff,
+   quote the hunks in your report). If anything diverges from
+   D1-D4, STOP and report; do not improvise.
+T2 Bug-inject proof (both directions, REAL output in report):
+   a. Temporarily revert ONLY the guard (restore the bare
+      add_signal_handler calls; keep the new test).
+   b. Run: python3 -B -m pytest \
+        "tests/test_mcp_server.py::TestShutdownInfrastructure" -v
+      EXPECT: test_lifespan_survives_missing_signal_support FAILS
+      with NotImplementedError. Paste the failure lines.
+   c. Restore the guard (git diff must match T1 state again --
+      show `git diff --stat` proving only the two files differ
+      from base).
+   d. Re-run the same command. EXPECT: all pass. Paste tail.
+T3 Step 0:
+   python3 -m py_compile src/code_forge/mcp_server.py
+   ruff check src/code_forge/mcp_server.py tests/test_mcp_server.py
+   Non-ASCII scan on the staged diff (stage first, see T5):
+     git diff --cached -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+   EXPECT: empty. Any hit = fix before proceeding.
+T4 Regression:
+   a. Targeted: python3 -B -m pytest tests/test_mcp_server.py \
+        tests/test_mcp_jobs.py tests/test_mcp_pdeathsig.py -q
+   b. FULL suite: python3 -B -m pytest tests/ -q
+      (takes ~8-9 min; run foreground, paste the summary line;
+      baseline on main is 2710 passed / 7 skipped)
+T5 Plan-ref scan on staged diff (stage with git add of the two
+   files ONLY): grep the staged diff for phase/task/dispatch/
+   review vocabulary; the new test docstring must read as a
+   human-written regression note (it references the gpu-win
+   deployment failure -- that is fine, it is a real incident,
+   not a plan artifact).
+T6 STAGE ONLY. No commit. Report to
+   /tmp/winmcp_exec_brief_20260711.txt with: branch/base SHA,
+   git diff --cached --stat, sha256 of git diff --cached, T2
+   both-direction outputs, T3 outputs, T4 both summary lines,
+   deviations (or "none").
+
+STOP GATES
+  - Any test failing outside the injected step.
+  - Full-suite regression vs the 2710/7 baseline.
+  - Ground contradicting any pinned decision.
+
+AFTER YOUR REPORT: PM re-verifies, issues commit clearance, then
+the user redeploys to gpu-win and reruns T1b/T3/T4 from
+/tmp/draft_forge_wingpu_mcp_test_20260711.md as the real-platform
+smoke. Your Linux evidence is necessary but not sufficient -- say
+so in your report rather than claiming Windows is fixed.

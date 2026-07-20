@@ -1,0 +1,105 @@
+================================================================
+Phase 38.2 orphan-guard -- GATE RETURN (main session ruling)
+Date: 2026-07-04. Branch: orphan-guard @ 7a1d5ac (NOT merged).
+Spec of record: draft_20260704_phase38.2_orphan_guard.txt
+Verdict: BLOCKED. Implementation core is sound; delivery is
+incomplete. Fix the blockers ON THE SAME BRANCH, then resubmit
+branch/SHA/diffstat/regression per standard delivery rules.
+================================================================
+
+## What passed (do not redo, do not re-litigate)
+
+- Landmine 1 (set after all execs): _install_pdeathsig() runs at
+  lifespan startup, inside Python. Correct.
+- Landmine 2 (startup race): unconditional getppid()==1 check after
+  the prctl attempt, exits via os._exit(1). Correct. The subreaper/
+  container limitation is documented honestly in the docstring.
+- Landmine 3 (handler timing): documented; default-terminate
+  accepted. Correct per spec.
+- OPEN QUESTION answered: sys.platform=="linux" guard; other
+  platforms explicitly unguarded and documented. Accepted.
+- Commit message: WHY-focused, no inventory, Signed-off-by. Good.
+- Non-ASCII scan on the diff: clean (verified by main session).
+- 6/6 new unit tests pass (verified by main session, real run:
+  pytest tests/test_mcp_server.py -k pdeathsig -> 6 passed).
+
+## Blockers (all must clear before merge)
+
+B1. Plan-ref token in code. mcp_server.py docstring line:
+    "handled by the lifespan signal handler (38.1)".
+    "(38.1)" is a planning-doc reference; future readers cannot
+    see the plan. Replace with self-contained wording, e.g.
+    "handled by the SIGTERM handler installed by lifespan()".
+    Grep the diff for any other refs before resubmitting.
+
+B2. No real-path acceptance test. All 6 tests mock libc/ctypes/
+    os. The spec acceptance is explicit and is the core of this
+    delivery:
+      - spawn the REAL server as a child of a throwaway parent
+        process; kill ONLY the parent; assert the server exits
+        within the pdeathsig window with no signal sent to the
+        server directly (reuse the 38.1 harness shape).
+      - Bug-inject: disable the prctl call -> server survives
+        parent death -> RED; restore -> GREEN. Record both runs
+        in the delivery briefing (real output, not narration).
+    Mock tests prove the code matches what was imagined; the
+    orphan incident was real, so the fix must be proven real.
+
+B3. Landmine 4 unverified (child subprocess inheritance). Spec
+    says "confirm, do not assume": verify a review-job CLI child
+    spawned by the server is NOT killed early while the server
+    (its parent) stays alive. One real-path check or a targeted
+    test; state the result explicitly in the briefing.
+
+B4. Process evidence missing. No 3-cycle review receipts, no
+    delivery briefing. Standard rules restated:
+      - impl session != review session; 3-cycle review on the
+        final diff before resubmission.
+      - Full regression: at minimum the 38.1 targeted set (the
+        89-test set + SIGTERM/EOF smokes) with real numbers.
+      - Briefing to /tmp: branch/SHA/diffstat/regression/review
+        history/B2+B3 evidence.
+
+## Added scope: send_ping deferral tripwire (B5 -- required)
+
+B5. The decision to DEFER the send_ping secondary layer is only
+    honest if PDEATHSIG ships with a way to observe whether the
+    orphan actually stops. Otherwise "fixed" is narrated, not
+    proven, and the deferral rots into a silent gap. Add, cheaply:
+    - A DISTINCT log line on each PDEATHSIG exit path so logs can
+      later confirm the mechanism fired: one at the getppid()==1
+      startup-race exit (already present -- keep it distinct), and
+      one when the delivered SIGTERM runs cleanup (tag it so it is
+      greppable as "parent-death shutdown", separable from a
+      client-sent SIGTERM).
+    - An operational note in the delivery briefing (NOT code):
+      after 38.2 is live across a few real IDE/session restarts,
+      re-run the ppid probe below. This is the standing tripwire
+      that decides whether send_ping is ever needed.
+      Corrected probe (the spec's cmdline-grep is a false-negative,
+      0/3 today; match comm instead, verified 3/3):
+        for d in /proc/[0-9]*; do
+          [ "$(cat $d/comm 2>/dev/null)" = "code-forge-mcp" ] &&
+          echo "$d ppid=$(awk '/^PPid:/{print $2}' $d/status)"
+        done
+      Reading it: ppid==1 or a subreaper that OUTLIVED 38.2 =
+      PDEATHSIG failed (real bug, reopen). A code-forge-mcp whose
+      parent is ALIVE but which is demonstrably abandoned = the
+      parent-alive mode is real -> send_ping unit (38.4) unblocks.
+      Zero survivors across the window = PDEATHSIG sufficed,
+      send_ping stays deferred (correct YAGNI outcome).
+    This is a scope ADD, not a rejection of the core fix; the
+    PDEATHSIG logic itself passed (see "What passed").
+
+## Notes
+
+- If you amend rather than stack commits, include
+  git range-diff main...<old-sha> main...<new-sha> evidence in
+  the briefing so rework scope is provable.
+- The ppid probe and the send_ping secondary layer remain OUT of
+  scope for this branch. The send_ping IMPLEMENTATION is its own
+  gated unit (38.4, see draft_20260704_phase38.4_send_ping.txt) --
+  do NOT bundle it here (an unproven, false-kill-capable layer
+  must not be able to block this proven fix).
+- No auto-merge. Main session re-verifies and the user merges.
+================================================================

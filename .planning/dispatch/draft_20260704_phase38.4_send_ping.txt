@@ -1,0 +1,174 @@
+================================================================
+Phase 38.4 -- send_ping liveness (GATED unit, do NOT start blind)
+Authored by: forge main session, 2026-07-04
+Ground-truthed at main 0a85662 + MCP SDK
+/usr/local/lib/python3.14/site-packages/mcp/.
+This is the SECONDARY orphan-guard layer, covering ONLY the
+parent-alive-but-abandoned fd-leak mode. PDEATHSIG (38.2) covers
+parent-death; do not duplicate it here.
+================================================================
+
+## TWO gates before ANY liveness-loop code is written
+
+Both must be GREEN or this unit does not proceed:
+
+GATE A -- necessity (from 38.2's tripwire): a real orphaned
+  code-forge-mcp has been caught with its parent process still
+  ALIVE. Until observed, there is ZERO evidence this mode exists
+  (2026-07-04 probe: 3 live servers, all parents alive, zero
+  orphans). If the tripwire never fires after 38.2 is live, this
+  unit stays closed -- correct YAGNI outcome.
+
+GATE B -- efficacy + safety (task T0 below): the REAL Claude Code
+  client answers a server-initiated ping AND stops answering when
+  the connection is genuinely abandoned. If CC does not answer
+  pings at all -> send_ping false-kills healthy servers -> the
+  approach is DEAD, document the residual gap, do not build. If CC
+  keeps answering even when logically abandoned -> send_ping does
+  not detect the leak -> also dead for this mode. send_ping is
+  only valid in the narrow case where abandonment == transport
+  peer stops answering.
+
+  GATE B HALF-A: MEASURED 2026-07-04, PASS for Claude Code.
+  Real headless CC session called a probe tool that fired
+  ctx.session.send_ping(); server-side log (ground truth, not
+  narrated): "client=claude-code/2.1.197 -> ANSWERED in 2.4ms".
+  Positive control (Python reference client) answered in 1.0ms.
+  => CC answers server pings fast and reliably; the false-kill
+  risk on a HEALTHY connection is retired for the CC surface.
+  Probe harness kept at /tmp/ping_probe_server.py (+ _client.py);
+  register with `claude mcp add ping-probe --scope local --
+  python3.14 /tmp/ping_probe_server.py` then trigger the tool.
+  GATE B HALF-B still OPEN: whether CC STOPS answering when the
+  connection is abandoned (the efficacy half) is NOT yet tested
+  -- it needs the background pinger (T1) plus a real abandonment.
+  So T0 below is now reduced to HALF-B only.
+  Codex + GitHub Copilot: CORRECTION to the earlier "not installed"
+  claim -- both ARE present as PyCharm ACP agent entries (Codex v1.1.0,
+  GitHub Copilot v1.517.0, bundled). Copilot ACP tested 2026-07-04:
+  `/mcp list` empty despite the passthrough toggle -> probe
+  unreachable, send_ping never exercised (per-agent-registry
+  caution below). Codex ACP still untested. Copilot's MCP ping
+  data point stands from VS Code (16.2ms), a different surface.
+
+  CLIENT-FAMILY MATRIX (measured 2026-07-04, server-log ground
+  truth, all on py3.14 = forge's deploy interpreter):
+  - Claude Code 2.1.197  ANSWERED 2.4ms  (REAL, direct)
+  - VS Code 1.127.0  ANSWERED 16.2ms  (REAL, direct GUI -- via
+    flatpak-spawn --host --directory=/tmp; supersedes the TS-SDK
+    proxy below, now a direct confirmation not an inference)
+  - TS reference SDK 1.29.0  ANSWERED 2.5ms  (proxy for Cursor /
+    Windsurf / other @modelcontextprotocol/sdk clients; VS Code
+    itself is now confirmed directly, above)
+  - Python reference SDK 1.27.0  ANSWERED 1.0ms  (control)
+  - Gemini Code Assist (PyCharm, Gemini 3.1 Pro Preview)  ANSWERED
+    0.8ms  (REAL, direct GUI -- /probe_ping in Gemini Agent mode;
+    log client=aiplugin-mcp-client-ping-probe-stdio/0.0.1. CLOSES
+    the PyCharm cell -- configured via the Gemini plugin's OWN
+    registry, Settings > Tools > Gemini > MCP Servers, NOT the AI
+    Assistant registry.)
+  THREE distinct client families now auto-answer server pings fast
+  (Claude / JetBrains-aiplugin / VS Code host, plus both SDKs) ->
+  the false-kill-healthy-connection risk is broadly retired, not
+  just for CC.
+  LATENCY DESIGN INPUT: real VS Code is 16.2ms vs 1-2.5ms for the
+  raw SDKs (full GUI client + flatpak-spawn round-trip). A busy
+  IDE could spike higher, so T1's ping request_read_timeout MUST
+  be generous (order of seconds, not tens of ms) or it will
+  false-kill slow-but-alive clients. Set the timeout from the
+  SLOWEST real client under load, never the SDK microbenchmark.
+  PyCharm now DIRECTLY tested via the Gemini plugin (matrix row
+  above, 0.8ms). CAUTION on the GitHub Copilot ACP surface in
+  PyCharm: `/mcp list` there returned "No MCP servers configured"
+  even with the server green in AI Assistant and the "pass custom
+  MCP servers" toggle ON -- PyCharm's per-agent MCP registries do
+  NOT cross-populate, so a passed server can be invisible to the
+  acting agent with ZERO error surfaced. Not a ping result (probe
+  unreachable). Only Codex remains untested (data otherwise covered).
+  Python 3.8/3.9 remain N/A regardless (SDK floor >=3.10; 3.9
+  confirmed installed but below floor).
+  GUI probe handoff (both IDEs, flatpak-aware):
+  /tmp/draft_20260704_send_ping_gui_test.txt
+
+## Why the gates (architect note, do not skip)
+
+- SDK confirms the mechanism EXISTS: server/session.py:443
+  send_ping(); shared/session.py:244 send_request
+  request_read_timeout_seconds. The Python CLIENT auto-answers
+  (client/session.py:589 -> EmptyResult). BUT Claude Code ships
+  its own TS client -- the Python SDK's behavior is a PRIOR, not
+  proof about CC.
+- send_ping detects "is the transport peer alive and responding",
+  NOT "does the client still want this server". The whole value
+  depends on abandonment manifesting as no-answer. That is an
+  INFERENCE from the schedule's narrowed leak model (a subreaper/
+  pty-host holds a dup of the socket fd, so the real client is
+  gone from the transport) -- unverified. T0 verifies it.
+- Shipping this blind risks a regression worse than the bug: a
+  false-kill hits every live review, the orphan hits a rare
+  corner. Asymmetric downside = gate hard.
+
+## T0 -- the decisive experiment (the ONLY thing to do until it passes)
+
+Instrument a throwaway build of the server to send ONE ping to
+the client shortly after the first request, log the result and
+latency. Connect via REAL Claude Code (not a synthetic client).
+Then, in the same real session, force the abandonment condition
+the tripwire caught (e.g. the real IDE/session-restart or
+failure-reconnect that produced the wild orphan) and send another
+ping. Record:
+  (a) healthy connection: does CC answer? within what latency?
+  (b) abandoned connection: does the ping time out (good) or still
+      get answered (send_ping is useless for this mode)?
+Deliver the raw log. Only (a)=answered-fast AND (b)=times-out
+unlocks T1+.
+
+## T1+ -- implementation (ONLY if T0 passes)
+
+Wiring (ground-truthed; the reason this is not free):
+- low-level Server.run (lowlevel/server.py:640) enters lifespan
+  (657) BEFORE creating ServerSession (659). The session is a
+  request-scoped local via contextvar; FastMCP lifespan gets only
+  `self` and cannot reach it.
+- The pinger must capture the session from the FIRST request
+  context (stash in a module global) or wrap the low-level run.
+  Until the first request arrives there is no session to ping --
+  acceptable: a server abandoned before any request still gets
+  EOF on a clean disconnect; only fd-leak-before-first-request is
+  uncovered, and that is vanishingly rare.
+- Background task: every ping-interval, send_ping with
+  request_read_timeout_seconds; on timeout -> cleanup_all -> exit
+  (reuse the 38.1 shutdown path, do NOT reinvent it). Interval and
+  timeout are named constants with a comment (detection latency =
+  interval; set from T0's measured healthy latency, not guessed).
+- Coexist with PDEATHSIG: parent-death is still caught by 38.2
+  first (faster, kernel-level). send_ping only adds the
+  parent-alive path. Verify the two shutdown triggers do not race
+  into a double cleanup_all (idempotency of cleanup_all).
+
+## Acceptance (real path, blocker-gated)
+
+1. GATE B / T0 raw log delivered and passes (see T0). This is the
+   hard blocker; no code review starts until it is green.
+2. Real CC-connected server SURVIVES the steady-state ping loop
+   across a multi-minute real review (proves no false-kill on a
+   healthy, busy connection -- the schedule's named blocker).
+3. Simulated abandonment (the T0 (b) condition): server ping times
+   out and it exits cleanly via the shared shutdown path.
+4. Bug-inject: disable the timeout->exit branch -> abandoned
+   server survives -> RED -> restore -> GREEN.
+5. Regression: 38.1 SIGTERM/EOF and 38.2 PDEATHSIG tests stay
+   green; double-shutdown idempotency test present.
+
+## Dispatch rules (restated)
+
+- Phase 0: git worktree add .worktrees/send-ping -b send-ping
+- impl != review; 3-cycle review WITH receipts before resubmit.
+- Non-ASCII check; no plan-ref tokens ("38.4", "T0", "GATE A" ->
+  self-contained technical language).
+- Commit WHY (a forge MCP server whose client abandoned it while
+  the parent stayed alive received neither SIGTERM nor EOF nor a
+  parent-death signal, so it could not notice), not WHAT.
+- No auto-merge. Branch + SHA + diffstat + full real regression +
+  the T0 log to the main session.
+================================================================

@@ -1,0 +1,125 @@
+================================================================
+Phase 43 LEDGER -- dispatch briefing (self-contained)
+Authored by: forge main session, 2026-07-04
+Schedule of record: .planning/v2.9-V3-GROUNDTRUTH-SCHEDULE.md
+(main tree only -- NOT visible in your worktree; this briefing
+embeds everything you need).
+Ground-truthed at main 0a85662: every anchor below re-verified
+TODAY by the main session, not quoted from the older schedule.
+Est. size: ~150-250 LOC production + tests.
+================================================================
+
+## Why this exists (scope-challenge pre-answered)
+
+The v3 flywheel (ledger -> eval growth -> escape intake ->
+synthesis -> registry) starts here. Named top process risk:
+"components built, ledger never fed" -- hence the dogfood hard
+gate below. Three real consumers:
+1. Phase 44 case generator: re-extracts reviewed diffs via
+   base_sha/head_sha (the reviewed diff is NOT persisted anywhere
+   today -- receipts hold excerpts only; verified).
+2. Phase 42 claim_type oracle: consumes the axis_claim field
+   (alignment memo, task T4).
+3. Human ruling workflow: `ledger mark` / `ledger list`.
+Do-nothing cost: review outcomes vanish at session end; the
+self-evolution arc has no data source.
+
+## Verified anchors (main @ 0a85662, re-read 2026-07-04)
+
+- state.py:49  StateFinding.fingerprint (stable id; :97
+  promoted_fingerprints set exists)
+- machine.py:527 consecutive_clean_rounds counter; :543 threshold
+  check; :544 call to _finalize_local_terminal; :966 its def
+- disposition.py:17 Disposition enum: CONFIRMED / DISMISSED /
+  UNCERTAIN / FIXED (+documented transitions). Do NOT touch.
+- cli.py:632 eval_parser -- follow this subparsers.add_parser
+  pattern for the new `ledger` subcommand
+- No src/tests file matching *ledger* exists (no collision)
+- .code-forge/ exists (state.json, receipts/, gate.yaml, ...) --
+  ledger.jsonl lands beside them
+
+## Design decisions (ratified; do not relitigate)
+
+- ESCAPED is LEDGER-side vocabulary ONLY. disposition.py's enum
+  stays untouched (field changes there require a protocol version
+  bump; runtime protocol stays v1).
+- Ledger terminal states are a superset of disposition terminals:
+  FIXED / DISPROVED(evidence_class) / DUPLICATE / ESCAPED.
+- Append-only. No rewrites, no compaction in this phase.
+
+## Tasks (one commit each preferred; own done-condition)
+
+T1 ledger.py -- append-only .code-forge/ledger.jsonl, schema v1:
+   {fingerprint, repo_root, base_sha, head_sha, file, line,
+    axis_claim, pass_provenance, terminal_state, evidence_class,
+    ts}
+   - base_sha/head_sha REQUIRED per row (Phase 44 depends on
+     them; see consumers).
+   - ts = ISO-8601 UTC. One JSON object per line. Use O_APPEND
+     single-write per row (atomic under PIPE_BUF for realistic
+     row sizes; note the assumption in a comment).
+   - Done: unit round-trip + malformed-line tolerance on read.
+
+T2 machine.py hook -- at _finalize_local_terminal (call site
+   :544, def :966): batch-write rows for findings that reached a
+   ledger-terminal outcome.
+   - DESIGN POINT you must pin in your plan before coding (do
+     not default silently): the disposition->ledger mapping.
+     Recommended: FIXED -> FIXED; DISMISSED -> DISPROVED with
+     evidence_class from the dismissal reason; UNCERTAIN and
+     still-open CONFIRMED -> NO row (not terminal outcomes);
+     DUPLICATE/ESCAPED enter only via `ledger mark`, never from
+     the hook. If you deviate, state why in the plan.
+   - DESIGN POINT 2: base_sha/head_sha provenance. The machine
+     does not carry the reviewed range today. Trace where the
+     diff range enters (cli review path) and thread it to the
+     finalize site or capture it into state at review start.
+     Done-condition: every hook-written row from a REAL run
+     carries real SHAs (no placeholder/empty values).
+
+T3 CLI -- `code-forge ledger mark <fingerprint> <state>
+   --evidence "..."` + `code-forge ledger list`. Follow the
+   existing add_parser pattern (cli.py:632 area). mark validates
+   state against the ledger vocabulary and refuses unknown
+   fingerprints unless --new (escapes arrive from outside runs).
+
+T4 Schema alignment memo -- one paragraph in the delivery
+   briefing: Phase 42's claim_type oracle must consume the
+   axis_claim field as written here (one-way constraint, borne
+   by 42; nothing to code in 43).
+
+## Acceptance (all provable, real output -- not narration)
+
+1. Bug-inject: disconnect the T2 hook -> ledger row-count test
+   RED -> restore -> GREEN. Record both runs.
+2. REAL-PATH (hard requirement): one real review run on a real
+   diff produces >=1 ledger row with real SHAs. Mock-only test
+   suites get gate-returned -- precedent: the 38.2 delivery was
+   BLOCKED for exactly this (6 unit tests, all libc/os mocked,
+   zero real-path evidence).
+3. Dogfood hard gate (split of duties): you deliver the working
+   `ledger mark` command + docs; the MAIN session executes one
+   real ruling at L4 verification and the delivery is not DONE
+   until that row exists. Make the command path frictionless.
+4. Full regression with real numbers + diff-coverage gate.
+5. New standing invariant starts with this phase: after every
+   real review convergence, ledger row count is monotonically
+   non-decreasing.
+
+## Dispatch rules (restated; 38.2 was gate-returned on these)
+
+- Phase 0: worktree first --
+  git worktree add .worktrees/ledger -b ledger
+- impl session != review session; 3-cycle review on the final
+  diff WITH receipts. No receipts = gate return (B4 precedent).
+- Non-ASCII check on every changed file before commit.
+- No plan-ref tokens in code or commit messages ("43-1", "T2",
+  "Phase 43", schedule vocabulary -> translate into
+  self-contained technical language).
+- Commit messages state WHY (review outcomes were lost at
+  session end; the self-improvement loop needs a durable,
+  append-only record), not a WHAT inventory.
+- No auto-merge. Deliver branch + SHA + diffstat + full real
+  regression + acceptance evidence (items 1-4) to the main
+  session for independent re-verification.
+================================================================

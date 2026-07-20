@@ -1,0 +1,82 @@
+================================================================
+send_ping GUI verification -- VS Code + PyCharm (30 sec each)
+Authored by: forge main session, 2026-07-04
+Why: headless proxies proved the TS + Python SDK client families
+answer server pings, but PyCharm ships a native Kotlin client (no
+proxy) and Flatpak VS Code needs a host-escape to even start the
+probe. These two GUI actions close the last gap.
+Probe server already on disk: /tmp/ping_probe_server.py
+Result log (read after each trigger): /tmp/ping_probe.log
+================================================================
+
+Before each test, clear the log so the new line is unambiguous:
+  : > /tmp/ping_probe.log
+
+----------------------------------------------------------------
+## VS Code (Flatpak) -- host-escape required
+----------------------------------------------------------------
+The Flatpak sandbox has NO python3.14 (verified), so the probe
+must run on the HOST via flatpak-spawn --host. Do NOT touch your
+existing user mcp.json (it holds forge). Use a scratch workspace:
+
+  mkdir -p /tmp/ping-ws/.vscode
+  cat > /tmp/ping-ws/.vscode/mcp.json <<'JSON'
+  {
+    "servers": {
+      "ping-probe": {
+        "type": "stdio",
+        "command": "flatpak-spawn",
+        "args": ["--host", "python3.14", "/tmp/ping_probe_server.py"]
+      }
+    }
+  }
+  JSON
+
+Then in VS Code:
+1. File > Open Folder > /tmp/ping-ws
+2. Open Copilot Chat, switch to Agent mode.
+3. Ensure the ping-probe server is started (MCP: List Servers ->
+   Start if needed).
+4. Prompt: "Call the probe_ping tool and paste its output."
+5. Back here: cat /tmp/ping_probe.log
+   Expect a line like:
+     py3.14 client=<vscode-client-name>/<ver> -> ANSWERED in N ms
+
+----------------------------------------------------------------
+## PyCharm -- native client, direct python (no sandbox)
+----------------------------------------------------------------
+PyCharm is not sandboxed; python3.14 works directly.
+
+1. Settings > Tools > AI Assistant > Model Context Protocol (MCP)
+   (2025.2+; exact path may read "MCP Servers").
+2. Add server (stdio):
+     command: python3.14
+     args:    /tmp/ping_probe_server.py
+   Or paste JSON if the dialog offers it:
+     {"command": "python3.14",
+      "args": ["/tmp/ping_probe_server.py"]}
+3. Apply; confirm the server shows connected / tools discovered.
+4. Open AI Assistant chat (agent/tool mode) and prompt:
+   "Call the probe_ping tool and paste its output."
+5. Back here: cat /tmp/ping_probe.log
+   Expect:
+     py3.14 client=<jetbrains-client-name>/<ver> -> ANSWERED in N ms
+
+----------------------------------------------------------------
+## Reading the result
+----------------------------------------------------------------
+- "ANSWERED in N ms"  -> that client answers server pings ->
+  send_ping will NOT false-kill a healthy connection on it.
+- "TIMEOUT (no answer in 5s)" -> that client does NOT answer ->
+  send_ping would false-kill healthy servers on it -> send_ping
+  is unsafe for that surface (document the gap, do not ship it
+  there).
+- The client=NAME/VER field also records exactly what each IDE
+  calls itself over MCP -- useful data on its own.
+
+Cleanup when done:
+  - VS Code: close /tmp/ping-ws (or delete it).
+  - PyCharm: remove the ping-probe MCP server entry.
+  - rm -rf /tmp/ping-ws /tmp/ping_probe_server.py
+    /tmp/ping_probe_client.py /tmp/ts-mcp-test
+================================================================

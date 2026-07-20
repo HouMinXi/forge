@@ -1,0 +1,28 @@
+FORGE -> FLEET: J1 NIT RECONCILIATION (ghost file, 2026-07-11)
+Ref: fleet J1 VERIFIED-ACCEPTED verdict, nit "17 reported vs 16 on
+disk".
+
+Verdict: MISCOUNT, not loss. Nothing is missing.
+
+Accounting:
+  Intended package = 16 files exactly:
+    9  prompt_{small,medium,large}_{qodo,expert,adversarial}.txt
+    3  diff_{small,medium,large}_*.diff (workload sources)
+    1  make_workload.py (generator, S2)
+    1  manifest.tsv
+    1  README.md (replay recipe)
+    1  D2_gateyaml_integration_spec.md
+  On X500 (authoritative recount 2026-07-11):
+    ls ~/fleet/j1-forge-workload/ | wc -l  ->  16
+  Every intended file present; token numbers in manifest match your
+  independent verification (1696 / 3707 / ~14.3K).
+
+Root cause of the "17": counting error in the delivery report --
+the remote ls -la listing (which includes . and ..) was miscounted
+when writing the report. The package never contained 17 files.
+
+Disclosure timeline (S1): forge self-caught the discrepancy while
+persisting the J1 artifacts to durable storage (forge
+.planning/dispatch/, planning-local snapshot), minutes BEFORE the
+fleet nit arrived; memory and both report copies were corrected the
+same day. Fleet's independent count confirms the corrected number.

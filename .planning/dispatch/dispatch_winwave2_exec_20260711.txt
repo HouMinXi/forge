@@ -1,0 +1,155 @@
+FORGE PM -> EXECUTOR: WINDOWS WAVE 2 (2026-07-11)
+Three fixes, user-mandated: encoding class (G2), lock liveness probe
+(G1), sem index probe (T5c). Base: main @ 4b060bd. Branch:
+fix/win-wave2. Phase 0: create worktree .worktrees/win-wave2 +
+symlink CLAUDE.md per protocol. Full-suite baseline: 2712 passed /
+7 skipped.
+
+EVIDENCE BASE (PM-verified; do not re-litigate)
+  E1 gpu-win T5a: sleeper PID in forge.lock, review run -> sleeper
+     KILLED and Busy reported. os.kill(pid,0) on Windows is
+     TerminateProcess. G1 confirmed experimentally.
+  E2 gpu-win T5b: CJK review crashed with GBK codec error; passed
+     with PYTHONUTF8=1. Chinese-locale Windows ANSI codepage is
+     cp936/GBK (earlier cp1252 note was an English-locale
+     assumption). Confirms the locale-decode class.
+  E3 gpu-win T5c: sem 0.13.0 installed; _sem_has_index probe fails
+     "stream did not contain valid UTF-8" -> sem backend never
+     activates on Windows.
+  E4 PM Linux matrix (sem 0.10.1, run 2026-07-11):
+       indexed repo   + empty stdin      -> exit 1 (no input on stdin)
+       indexed repo   + valid mini-diff  -> exit 0 (JSON)
+       unindexed repo + empty stdin      -> exit 1
+       unindexed repo + header-only diff -> exit 1 (no hunks)
+       unindexed repo + valid mini-diff  -> exit 0 (JSON, and NO
+                                            .semcode.db side effect)
+     Conclusion: exit code tracks PAYLOAD VALIDITY only, never index
+     presence. The current empty-stdin probe is dead on EVERY
+     platform (sem backend has never activated); the payload-swap
+     fix proposed in the T5 report is REJECTED -- it would flip to
+     always-True and reopen the N x 15s unindexed hang. The index
+     artifact is the file <repo_root>/.semcode.db (present in
+     linux-net-next, absent in forge -- verified).
+  E5 T5d record correction: os.killpg (llm_invoke.py:549/552) and
+     start_new_session (:713) are UNTOUCHED on main; "refactored to
+     subprocess" in the T5 report was a gate.yaml observation, not a
+     code change. G3 stays deferred. llm_invoke.py logic is OUT OF
+     SCOPE here (its text=True site gets the mechanical D3 encoding
+     param only).
+
+PINNED DECISIONS
+  D1 sem probe (graph_triage.py): _sem_has_index becomes a file
+     check: `(repo_root / _SEMCODE_DB).is_file()` with module
+     constant _SEMCODE_DB = ".semcode.db". Drop the sem_path param
+     (single caller at :134 -- update it). Delete the subprocess
+     probe. Rewrite the docstring to state WHY exit-code probing is
+     unusable (summarize E4). Residual risk accepted: file existence
+     does not prove the db is loadable, but _sem_diff (:200) and
+     _get_sem_impact (:239) already degrade gracefully on non-zero
+     exit; verify those fallbacks still hold after your change.
+     Filename on sem 0.13.0 is confirmed at W1 (post-merge, gpu-win);
+     if it differs, the constant is a one-line fix.
+  D2 lock probe (lock.py): extract `_pid_alive(pid: int) -> bool`.
+     POSIX branch: EXACTLY current semantics -- os.kill(pid, 0);
+     ProcessLookupError -> False; PermissionError -> True; success
+     -> True. Windows branch (os.name == "nt"): ctypes kernel32
+     OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, False,
+     pid); NULL handle -> GetLastError() == ERROR_ACCESS_DENIED (5)
+     -> True, anything else -> False; valid handle ->
+     WaitForSingleObject(h, 0): WAIT_TIMEOUT (0x102) -> True, else
+     False; ALWAYS CloseHandle. _handle_existing_lock routes through
+     the helper; grep src/ for any other os.kill(<pid>, 0) probe and
+     route it too. After this change `os.kill` with sig 0 must not
+     appear outside the helper (enforced by D3's conformance test
+     file -- add the pattern there).
+  D3 encoding class: close it, do not spot-fix.
+     a. Every subprocess call with text=True gets
+        encoding="utf-8", errors="replace" (external output -- git,
+        tools, sem -- flows into review text; replacement chars are
+        acceptable, crashes are not). ~48 sites across: taint, cli,
+        daemon_state, gate_check, conventions_resolver, mutation,
+        git, install_hooks, runner, graph_triage (:93/:195/:235),
+        fixval, backend, machine, llm_invoke (:712, param only).
+     b. Text-mode file IO forge owns gets encoding="utf-8" strict:
+        graph_triage :186 (os.fdopen "w") + :190 (open "r"),
+        lock :65/:156 read_text, receipt :21/:131, snapshot
+        :89/:113, contract_loader :253, conventions_resolver :803,
+        cross_repo :143/:411, verify :61/:323, legacy :219,
+        autofix :69. Binary-mode sites are exempt (detect :344,
+        git :185 -- "rb"). Judge each remaining hit by the rule:
+        text-mode boundary -> explicit encoding.
+     c. Entry points (cli main + mcp_server main): guard-wrapped
+        sys.stdout/sys.stderr .reconfigure(errors="backslashreplace")
+        so CJK/emoji in findings never crash redirected output on
+        Windows (console handles are already UTF-16-safe via
+        PEP 528; pipes are not).
+     d. NEW conformance test (the class-closer): a test that greps
+        src/code_forge/ for (i) text=True without encoding= in the
+        same call, (ii) encoding-less text-mode open(/read_text(/
+        write_text(/os.fdopen(, (iii) os.kill probe outside
+        lock._pid_alive. Deliberate exceptions need an inline
+        comment and a test allowlist entry. This is what keeps the
+        class closed.
+  D4 evidence gate (T0, FIRST): user syncs gpu-win
+     H:\forge-test\t5_evidence.txt to /tmp/t5_evidence_20260711.txt.
+     Read the T5b traceback; confirm the crash site is inside the
+     D3 class. If it is outside -> STOP and report before sweeping.
+     If the file is not present when you start, STOP and say so.
+  D5 stage only, no commits. Three logical concerns kept separable
+     for clearance-time commit boundaries: (1) graph_triage sem
+     probe, (2) lock _pid_alive, (3) encoding sweep + conformance
+     test + entry reconfigure. PM reviews the whole staged diff,
+     then issues per-concern commit messages.
+
+TASKS
+  T0 Evidence gate per D4.
+  T1 Phase 0 worktree; confirm baseline: python3 -B -m pytest
+     tests/ -q (expect 2712/7; paste the line).
+  T2 Implement D1 with tests: tmp_path fixture both directions
+     (db file present -> True, absent -> False). Real known-answer
+     (run, paste output): probe function against
+     ~/code/linux-net-next (True) and ~/code/forge (False) -- run
+     ad hoc in the worktree, do NOT hardcode user paths in tests.
+  T3 Implement D2 with tests:
+     a. POSIX real-path regression (this is the Linux analog of
+        gpu-win T5a): spawn a real sleeper child, write its PID into
+        a lock file, call _handle_existing_lock -> expect
+        ForgeLockBusy AND the sleeper still alive after (assert,
+        then terminate it in teardown).
+     b. Dead-PID path: spawn+reap a child, write its PID -> lock
+        file removed, no raise.
+     c. Windows branch: pure-logic structure keeps ctypes usage
+        inside _pid_alive; add @pytest.mark.skipif(os.name != "nt")
+        unit test (runs on gpu-win at W2, skipped on Linux). Do not
+        fake a Linux mock of windll -- real-platform validation is
+        W2's job. Say so in the report.
+  T4 Implement D3: sweep per a/b, entry reconfigure per c,
+     conformance test per d. Regression test for the decode class:
+     monkeypatch locale.getpreferredencoding to return "gbk", run a
+     representative subprocess text path (e.g. git.py diff capture)
+     whose child emits CJK, expect clean decode. Bug-inject: revert
+     ONE representative site's encoding param -> that test FAILS;
+     restore -> passes. Paste both outputs.
+  T5 Step 0: py_compile every touched file; ruff base-vs-now (zero
+     new); non-ASCII scan on staged diff (expect none -- test
+     fixtures needing CJK literals use \u escapes, never raw).
+  T6 Full suite: expect baseline + your new tests, zero regressions.
+     Paste the summary line.
+  T7 Stage everything. Report to /tmp/winwave2_exec_brief_20260711.txt:
+     branch/base, git diff --cached --stat, sha256 of
+     git diff --cached, T0 confirmation, per-task real outputs,
+     deviations (or "none").
+
+STOP GATES
+  - T0 traceback outside the D3 class.
+  - Any full-suite regression vs 2712/7.
+  - Ground contradicting any pinned decision (report, do not
+    improvise).
+
+AFTER YOUR REPORT
+  PM three-cycle review -> commit clearance (3 commits) -> user
+  merges -> gpu-win revalidation: W1 sem 0.13.0 db filename +
+  triage activates on an indexed repo; W2 T5a re-run -> sleeper
+  SURVIVES + Busy; W3 CJK review WITHOUT PYTHONUTF8 -> completes.
+  Your Linux evidence is necessary but not sufficient -- do not
+  claim Windows is fixed in your report.

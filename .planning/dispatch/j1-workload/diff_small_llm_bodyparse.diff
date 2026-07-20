@@ -1,0 +1,143 @@
+diff --git a/src/code_forge/llm_invoke.py b/src/code_forge/llm_invoke.py
+index 0438dff..9ed99db 100644
+--- a/src/code_forge/llm_invoke.py
++++ b/src/code_forge/llm_invoke.py
+@@ -937,6 +937,28 @@ def _invoke_api(
+     return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
+ 
+ 
++def _parse_response_body(raw: bytes, backend_name: str) -> dict:
++    """Parse a raw HTTP 200 response body as JSON.
++
++    Providers can return 200 with a non-JSON body (proxy error page,
++    truncated upstream response).  Wrap the parse failure in
++    LLMInvokeError so retry/circuit-breaker callers that only catch
++    LLMInvokeError see it instead of a raw JSONDecodeError.  Decode
++    with errors="replace" (the error-path convention in this file) so
++    a non-UTF-8 body becomes the same wrapped parse failure instead of
++    an escaping UnicodeDecodeError.
++    """
++    body_text = raw.decode("utf-8", errors="replace")
++    try:
++        return json.loads(body_text)
++    except json.JSONDecodeError as exc:
++        raise LLMInvokeError(
++            "%s backend returned non-JSON response body: %s"
++            % (backend_name, body_text[:200]),
++            retryable=True,
++        ) from exc
++
++
+ def _invoke_openai(
+     prompt: str,
+     backend: BackendConfig,
+@@ -977,7 +999,7 @@ def _invoke_openai(
+                 raw = _read_with_deadline(
+                     response, deadline, backend.name
+                 )
+-                resp_data = json.loads(raw.decode("utf-8"))
++                resp_data = _parse_response_body(raw, backend.name)
+     except urllib.error.HTTPError as exc:
+         body_bytes = exc.read()  # read once (second read returns b"")
+         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
+@@ -1075,7 +1097,7 @@ def _invoke_anthropic(
+         deadline = time.monotonic() + timeout_s
+         with urllib.request.urlopen(req, timeout=timeout_s) as response:
+             raw = _read_with_deadline(response, deadline, backend.name)
+-            resp_data = json.loads(raw.decode("utf-8"))
++            resp_data = _parse_response_body(raw, backend.name)
+     except urllib.error.HTTPError as exc:
+         body_bytes = exc.read()
+         body_excerpt = body_bytes.decode("utf-8", errors="replace")[:200]
+@@ -1249,7 +1271,7 @@ def _invoke_vertex(
+         deadline = time.monotonic() + timeout_s
+         with urllib.request.urlopen(req, timeout=timeout_s) as response:
+             raw = _read_with_deadline(response, deadline, backend.name)
+-            resp_data = json.loads(raw.decode("utf-8"))
++            resp_data = _parse_response_body(raw, backend.name)
+     except urllib.error.HTTPError as exc:
+         body_excerpt = exc.read().decode("utf-8", errors="replace")[:200]
+         raise LLMInvokeError(
+diff --git a/tests/test_llm_invoke.py b/tests/test_llm_invoke.py
+index 3873dce..3ae31d7 100644
+--- a/tests/test_llm_invoke.py
++++ b/tests/test_llm_invoke.py
+@@ -1630,6 +1630,78 @@ class TestBodyDetectionWiring:
+         assert exc.value.retryable is False
+ 
+ 
++class TestMalformedResponseBody:
++    """A non-JSON HTTP 200 body from the provider must raise LLMInvokeError,
++    not an unwrapped json.JSONDecodeError, so retry/circuit-breaker callers
++    that catch LLMInvokeError actually see the failure.
++    """
++
++    def _garbled_response(self, garbage):
++        resp = Mock()
++        if isinstance(garbage, str):
++            garbage = garbage.encode("utf-8")
++        resp.read.return_value = garbage
++        resp.__enter__ = Mock(return_value=resp)
++        resp.__exit__ = Mock(return_value=False)
++        return resp
++
++    def test_openai_non_json_body_raises_llm_invoke_error(self):
++        from code_forge.llm_invoke import _invoke_openai
++
++        backend = _make_api_backend(name="ds", fmt="openai")
++        resp = self._garbled_response("<html>502 Bad Gateway</html>")
++
++        with patch("urllib.request.urlopen", return_value=resp):
++            with pytest.raises(LLMInvokeError) as exc:
++                _invoke_openai("p", backend, api_key="k", timeout_s=10)
++        assert exc.value.retryable is True
++        assert "ds" in str(exc.value)
++        assert "502 Bad Gateway" in str(exc.value)
++
++    def test_anthropic_non_json_body_raises_llm_invoke_error(self):
++        from code_forge.llm_invoke import _invoke_anthropic
++
++        backend = _make_api_backend(name="mimo", fmt="anthropic")
++        resp = self._garbled_response("<html>502 Bad Gateway</html>")
++
++        with patch("urllib.request.urlopen", return_value=resp):
++            with pytest.raises(LLMInvokeError) as exc:
++                _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
++        assert exc.value.retryable is True
++        assert "mimo" in str(exc.value)
++        assert "502 Bad Gateway" in str(exc.value)
++
++    def test_vertex_non_json_body_raises_llm_invoke_error(self):
++        from code_forge.llm_invoke import _invoke_vertex
++
++        backend = _make_vertex_backend()
++        mock_creds = MagicMock()
++        mock_creds.token = "tok"
++        resp = self._garbled_response("<html>502 Bad Gateway</html>")
++
++        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
++             patch("google.auth.transport.requests.Request"), \
++             patch("urllib.request.urlopen", return_value=resp):
++            with pytest.raises(LLMInvokeError) as exc:
++                _invoke_vertex("p", backend, timeout_s=10)
++        assert exc.value.retryable is True
++        assert "vtx" in str(exc.value)
++        assert "502 Bad Gateway" in str(exc.value)
++
++    def test_non_utf8_body_raises_llm_invoke_error(self):
++        from code_forge.llm_invoke import _invoke_openai
++
++        backend = _make_api_backend(name="ds", fmt="openai")
++        resp = self._garbled_response(b"\xff\xfe\x00garbage")
++
++        with patch("urllib.request.urlopen", return_value=resp):
++            with pytest.raises(LLMInvokeError) as exc:
++                _invoke_openai("p", backend, api_key="k", timeout_s=10)
++        assert exc.value.retryable is True
++        assert "ds" in str(exc.value)
++        assert "garbage" in str(exc.value)
++
++
+ class TestRetryLoop:
+     """_invoke_api retry loop with backoff, jitter, Retry-After, stderr."""
+ 

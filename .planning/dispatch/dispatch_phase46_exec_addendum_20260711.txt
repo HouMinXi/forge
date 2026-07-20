@@ -1,0 +1,52 @@
+================================================================
+ADDENDUM 1 -- Phase 46 EXECUTION (supplements the dispatch of
+2026-07-11; that dispatch remains in force except as amended here)
+From: forge PM. To: the executor sub-session.
+================================================================
+
+The external review round (kimi + mimo) landed after your dispatch.
+Both models independently confirmed one HIGH; the plan file has been
+updated (46-PLAN.md, Review History R5). Re-read the plan before
+continuing. Changes that affect you:
+
+## 1. FILE LIST IS NOW FOUR (was three)
+  src/code_forge/runner.py
+  src/code_forge/doctor.py
+  tests/test_doctor_tool_audit.py
+  tests/test_doctor.py          <- NEW, Task 5 only
+The stage command and the "only those files" check in the dispatch
+apply to these FOUR. The STOP gate "anything outside the three
+files" now reads "outside the four files".
+
+## 2. NEW TASK 5 (in the updated plan)
+The existing test_smoke_all_green (tests/test_doctor.py, ~365-393)
+will FAIL once tool-audit is wired: its project has no tools.yaml,
+the new "tool-audit: SKIP" line trips `assert "SKIP" not in out`.
+This is EXPECTED, and the fix is Task 5 in the plan: add a minimal
+valid tools.yaml to that test's project (command: python3) so the
+audit line is PASS. Do NOT weaken the assertions. Do NOT touch any
+other test in that file.
+
+If you already hit this failure in full regression: that was the
+known break; apply Task 5 and re-run.
+
+## 3. FIXTURE TEMPLATES ARE NOW PINNED
+Every tools.yaml a test writes must carry ALL THREE required fields
+(command, output_format, file_patterns) and output_format must be a
+real parser key. The plan now embeds exact YAML blocks in Task 4
+step 1 and Task 5 step 1 -- copy them verbatim. A fixture missing a
+field dies in load_registry validation and never reaches the audit
+logic you are testing.
+
+## 4. MINOR PINS (already in the updated plan)
+- Lazy imports go INSIDE _audit_tools (Task 1 step 7 clarified).
+- Relative-path test CREATES tmp_path/scripts/checkpatch.pl and
+  chmods it 0o755, plus monkeypatch.chdir(tmp_path).
+- Bug-inject mock is a with-block:
+  with mock.patch("code_forge.runner._resolve_command",
+                  return_value=None):
+
+Everything else in the original dispatch stands: stage only, no
+commit, report to /tmp/phase46_exec_brief_20260711.txt, same
+evidence obligations, same STOP gates.
+================================================================
