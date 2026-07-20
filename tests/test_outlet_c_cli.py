@@ -378,3 +378,51 @@ class TestContractsYamlGuard:
         assert mock_merge.call_args[0][0] == "", (
             "expected empty digest, got %r" % mock_merge.call_args[0][0]
         )
+
+    def test_helper_catches_import_failure(
+        self, tmp_path, capsys, monkeypatch,
+    ):
+        """Import-time failure degrades to empty digest.
+
+        Distinct from the two tests above: those make load_contract_digest
+        (the function) raise, which requires contract_loader to have
+        imported cleanly first.  This exercises the other failure mode --
+        `from . import contract_loader` itself raising, as it would on a
+        module-level syntax error or a circular import on first load.
+        The import lives inside the helper's try for exactly this reason;
+        outside it, that failure would abort the review instead of
+        degrading to no contract context.
+        """
+        import sys
+        from unittest.mock import MagicMock
+        import code_forge
+        from code_forge.cli import _safe_load_contract_digest
+
+        contracts_yaml = tmp_path / ".code-forge" / "contracts.yaml"
+        contracts_yaml.parent.mkdir(parents=True)
+        contracts_yaml.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
+
+        # Both steps below are load-bearing; neither is redundant defense.
+        # delattr: `from . import X` returns a cached attribute off the
+        #   package object when one exists, never reaching import machinery.
+        #   Without this, a submodule imported earlier in the run makes the
+        #   import succeed and this test silently stops testing anything.
+        # setitem: None in sys.modules is the interpreter's sentinel for
+        #   "this module is barred"; _find_and_load raises ModuleNotFoundError
+        #   on it rather than falling back to the filesystem.
+        # Together they raise deterministically regardless of import order.
+        # monkeypatch reverts both at teardown, so nothing leaks to later tests.
+        monkeypatch.delattr(code_forge, "contract_loader", raising=False)
+        monkeypatch.setitem(sys.modules, "code_forge.contract_loader", None)
+
+        # Pass a backend like both live call sites do, rather than relying
+        # on the default, so a broken backend hand-off is still caught here.
+        digest = _safe_load_contract_digest(
+            contracts_yaml, tmp_path, backend=MagicMock(name="backend"),
+        )
+
+        assert digest == "", "import failure should degrade to empty digest"
+        captured = capsys.readouterr()
+        assert "contracts.yaml load failed" in captured.err, (
+            "import failure should be logged to stderr"
+        )

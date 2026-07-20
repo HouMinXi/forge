@@ -1798,6 +1798,29 @@ def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
     return "\n".join(remaining).strip(), do_not_flag
 
 
+def _safe_load_contract_digest(
+    contracts_yaml: Path, cwd: Path, backend=None,
+) -> str:
+    """Load contracts.yaml digest with defense-in-depth error handling.
+
+    load_contract_digest has its own internal error handling, but bugs
+    before its first try (or truly unexpected failures) can escape.
+    This wrapper catches those, logs to stderr, and returns "" so the
+    caller proceeds without contract context rather than aborting.
+    """
+    try:
+        # Import inside the try on purpose: a module-level failure in
+        # contract_loader (syntax error, circular import on first load)
+        # must degrade to an empty digest, not abort the review.
+        from . import contract_loader
+        return contract_loader.load_contract_digest(contracts_yaml, cwd, backend=backend)
+    except Exception as exc:
+        sys.stderr.write(
+            "code-forge: contracts.yaml load failed: %s\n" % exc
+        )
+        return ""
+
+
 def _merge_contract_spec(
     yaml_digest: str,
     file_content: str,
@@ -2030,18 +2053,9 @@ def _dispatch_subagent(
     _contracts_yaml_c = cwd / ".code-forge" / "contracts.yaml"
     _yaml_digest_c = ""
     if _contracts_yaml_c.is_file():
-        try:
-            from .contract_loader import load_contract_digest
-            _yaml_digest_c = load_contract_digest(
-                _contracts_yaml_c, cwd, backend=backend,
-            )
-        # Broad guard: load_contract_digest has internal error handling,
-        # but bugs in its code before its own try can escape here.
-        # Empty digest = proceed without contract context, not a review abort.
-        except Exception as exc:
-            sys.stderr.write(
-                "code-forge: contracts.yaml load failed: %s\n" % exc
-            )
+        _yaml_digest_c = _safe_load_contract_digest(
+            _contracts_yaml_c, cwd, backend=backend,
+        )
     _contract_spec_c = _merge_contract_spec(
         _yaml_digest_c, _contract_file_content,
         backend=backend, warn_fn=warn,
@@ -2398,18 +2412,9 @@ def _run(args, env, cwd: Path) -> Verdict:
     _contracts_yaml_a = cwd / ".code-forge" / "contracts.yaml"
     _yaml_digest_a = ""
     if _contracts_yaml_a.is_file():
-        try:
-            from .contract_loader import load_contract_digest
-            _yaml_digest_a = load_contract_digest(
-                _contracts_yaml_a, cwd, backend=backend,
-            )
-        # Broad guard: load_contract_digest has internal error handling,
-        # but bugs in its code before its own try can escape here.
-        # Empty digest = proceed without contract context, not a review abort.
-        except Exception as exc:
-            sys.stderr.write(
-                "code-forge: contracts.yaml load failed: %s\n" % exc
-            )
+        _yaml_digest_a = _safe_load_contract_digest(
+            _contracts_yaml_a, cwd, backend=backend,
+        )
     _contract_spec_a = _merge_contract_spec(
         _yaml_digest_a, _contract_file_content,
         backend=backend, warn_fn=warn,
