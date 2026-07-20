@@ -247,14 +247,53 @@ mcp_server.py:890). Two outlets, both required (D5.5):
 - CLI-subprocess: mirror the contract temp-file wiring (mcp_server.py:936-943) -- write
   focus to a temp .md, `cli_args.extend(["--focus", tmp_path])`, clean up in the same
   place the contract temp file is cleaned.
-- Sampling: pass `focus_spec=focus` into `build_sampling_l1_provider` (mcp_server.py:765).
+- Sampling: pass the MERGED focus spec (not the raw `focus` param) down through
+  `_dispatch_sampling` into `build_sampling_l1_provider` (mcp_server.py:765). Raw
+  pass-through would skip the gate.yaml `review_focus` merge and make the sampling
+  outlet's prompt differ from the CLI outlet's for identical input -- see 3g MERGE
+  PARITY for the locked shape and the cross-outlet parity test.
 
 **3g. Pre-existing bug, SEPARATE commit (D5.7)** -- that same call site passes no
 `contract_spec` today, so `--contract` is already a silent no-op on the MCP sampling
 outlet and factories.py:576 is unreachable in production. Wiring focus there while
 contract stays broken reproduces D5.5's own failure mode. Fix it in its own commit,
-before the focus commit, with a message explaining the gap. Do NOT fold it into the
+BEFORE the focus commit, with a message explaining the gap. Do NOT fold it into the
 focus change.
+
+Fix shape (verified against 8e18aa0 -- contract never reaches the sampling path because
+`_dispatch_sampling` has no such parameter):
+- `_dispatch_sampling` (mcp_server.py:735): add `contract_spec: str = ""` and
+  `focus_spec: str = ""` params; pass both into `build_sampling_l1_provider`
+  (mcp_server.py:765-769).
+- `forge_review` call site (mcp_server.py:914): pass the merged specs. `contract` is in
+  scope (mcp_server.py:890).
+- `forge_gate_check` call site (mcp_server.py:1009): leave both at default "". That
+  handler has no contract/focus param and gate-check has no contract concept -- this is
+  correct, not a second gap. Assert it stays empty so a future edit cannot leak
+  review-only prompt content into the gate-check path.
+
+MERGE PARITY (locked -- the naive 4-line fix is NOT sufficient): on the CLI-subprocess
+outlet the MCP `contract` string reaches the prompt only after `_merge_contract_spec`
+(cli.py:1828) merges the contracts.yaml digest, splits `## Do NOT Flag`, summarizes
+bodies >4KB, and appends the confirmation-bias directive. Passing the raw string to the
+sampling builder skips all of it, producing two different prompts for the same MCP input
+depending on outlet -- the exact inconsistency class Task 1 exists to remove. So the
+sampling path MUST call the same merge helpers before building the provider:
+`cli._merge_contract_spec(yaml_digest, contract, backend=None, warn_fn=...)` and
+`cli._merge_focus_spec(yaml_focus, focus, warn_fn=...)`.
+- `backend=None` on the sampling path is deliberate: summarization would need an API
+  backend, and sampling exists precisely because the client has no API key. A >4KB
+  contract therefore passes through unsummarized -- warn, do not truncate (same rule as
+  3a).
+- No refactor needed to reach the helpers: mcp_server already calls cli's underscore
+  privates (`cli._load_gate_backends` at mcp_server.py:243 and 292), so this follows an
+  established in-repo pattern rather than introducing cross-module reach-in.
+- This supersedes the naive wording in 3f: 3f passes MERGED specs, never the raw MCP
+  param.
+- Test: same MCP input (contract + focus, plus a contracts.yaml digest and a gate.yaml
+  `review_focus`) produces the SAME prompt sections on the sampling outlet as on the
+  CLI-subprocess outlet. This cross-outlet parity assertion is the only test that can
+  catch a re-divergence; a per-outlet test cannot.
 
 **3h. Schema + template (D5.3)** -- add `review_focus: {"type": "string"}` to
 gate.schema.json properties; add a documented commented-out `review_focus:` entry to
@@ -344,7 +383,10 @@ real-model smoke, not a unit test (D5 ceiling).
 - Non-string `review_focus` is ignored with a warning, never coerced into the prompt
 - gate.schema.json documents `review_focus`; the schema-corpus test covers it; the init
   template documents it including the re-trust requirement
-- MCP sampling outlet passes contract_spec (pre-existing gap, separate commit)
+- MCP sampling outlet passes contract_spec (pre-existing gap, separate commit), and
+  passes MERGED specs so identical MCP input yields identical prompt sections on the
+  sampling and CLI-subprocess outlets (cross-outlet parity test)
+- forge_gate_check's sampling dispatch passes no contract/focus, asserted
 - git_blame() returns "date" key (UTC ISO YYYY-MM-DD)
 - Blame attribution includes date
 - test_legacy.py updated for date field + degradation tests

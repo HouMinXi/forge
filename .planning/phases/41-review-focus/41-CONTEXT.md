@@ -190,6 +190,21 @@ Locked design decisions (each nailed as PM; these are the review's attack surfac
   so rather than imply e2e coverage; (b) Task 3 cannot wire focus into that builder and
   leave contract broken -- that is D5.5's own failure mode. Fix lands in Phase 41 as a
   SEPARATE commit with its own explanation, not folded into the focus commit.
+  FIXABLE, verified 2026-07-20 -- no structural blocker. Root cause is a missing
+  parameter, not a missing capability: `_dispatch_sampling` (mcp_server.py:735) has no
+  contract param at all, so the value never reaches line 765, while the receiving side
+  (`build_sampling_l1_provider`'s param and injection) is already fully built. The
+  `forge_review` caller has `contract` in scope (mcp_server.py:890); the
+  `forge_gate_check` caller correctly has none. Threading it is ~4 lines.
+  BUT the 4-line version is rejected: on the CLI-subprocess outlet the same MCP input
+  passes through `_merge_contract_spec` (digest merge, `## Do NOT Flag` split, >4KB
+  summarization, confirmation-bias directive) before reaching the prompt, so raw
+  pass-through would make one MCP input produce two different prompts by outlet -- the
+  same inconsistency class Task 1 removes. LOCKED: the sampling path calls the same
+  merge helpers, reached via the established cross-module private-call pattern already
+  used for `cli._load_gate_backends` (mcp_server.py:243, 292), with `backend=None` since
+  a sampling client has no API key to summarize with. Guarded by a cross-outlet prompt
+  parity test, which is the only shape that can catch a re-divergence.
 
 Efficacy [ASSUMPTION]: the imperative wording measurably steers the model more than a
 passive append -- unverified until a real-model focus smoke exists (unit tests prove
