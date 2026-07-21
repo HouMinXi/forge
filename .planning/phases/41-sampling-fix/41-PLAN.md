@@ -39,7 +39,7 @@ by Phase 41; it ships with its own explanation commit.
 | `forge_gate_check` calls `_dispatch_sampling` | mcp_server.py:1009-1015 | staged=True, no contract/focus — correct |
 | `_build_review_context` loads no contracts.yaml | mcp_server.py:648-678 | only baseline/diff/source_hash |
 | CLI-subprocess merge helper | cli.py:1828 | `_merge_contract_spec(yaml_digest, file_content, backend, warn_fn)` |
-| Sampling fallback drops contract+focus | mcp_server.py:822-823 | fallback cli_args: only `--backend`/`--outlet`/`--committed` |
+| Sampling fallback drops contract | mcp_server.py:822-823 | fallback cli_args: only `--backend`/`--outlet`/`--committed` (focus is not a param at 8e18aa0 per row above — nothing to drop; 41b adds it, D7) |
 | mcp_server already calls cli privates | mcp_server.py:243 | `cli._load_gate_backends(gate_yaml_path)` — established pattern |
 | `import sys` already at module level | mcp_server.py:23 | no need for redundant function-level import |
 | Existing lazy `from code_forge import cli` | mcp_server.py:237, 283, 404 | per-file convention in `_backend_names_for` and siblings |
@@ -185,7 +185,7 @@ it into `yaml_digest = ""` + a green review (Task 5 case 7).
    Add an assertion comment:
 
    ```python
-   # gate-check has no contract concept — contract_spec stays empty.
+   # gate-check has no contract concept -- contract_spec stays empty.
    # Asserted by test_gate_check_no_contract.
    return await _dispatch_sampling(
        session=ctx.session,
@@ -241,7 +241,7 @@ from code_forge import cli
 # Save raw MCP value before merge (Task 3 fallback writes raw, not merged)
 raw_contract = contract_spec
 
-# Load contracts.yaml digest — review path only (not gate-check).
+# Load contracts.yaml digest -- review path only (not gate-check).
 # CLI gate-check (run_gate_check) does NOT load contracts.yaml;
 # unconditional loading would create outlet divergence (D2).
 contracts_yaml = workspace / ".code-forge" / "contracts.yaml"
