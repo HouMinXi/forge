@@ -295,3 +295,107 @@ the answer.
 
 The PM re-runs nothing on the reviewer's word. Every accepted finding gets
 re-derived against the source before any fix is written.
+
+---
+
+# CP3 ROUND 1 -- kimi K3 delivery, PM adjudication 2026-07-21
+
+Delivery: /tmp/draft_p41_review_report_20260721.txt. Verdict: 0 high, 0
+medium, 4 low (F1-F4), plus 3 pre-existing (P1-P3).
+
+## Exit verifier applied
+
+Mechanical checks (frozen above):
+1. Citations resolve + quote matches: PASS. Every F1-F4 and P1-P3 line was
+   reopened at the reviewed SHA by the PM; all quoted lines are byte-exact.
+2. No locked-decision restatement: PASS. No finding restates D5/D6/D7/
+   backend=None/gate-check.
+3. No bare re-raise of adjudicated (a)/(b)/(c): PASS. F1 explicitly
+   distinguishes itself from closed-(b): (b) was SIGKILL (unhandleable), F1
+   is a Python exception path (handleable) with the cleanup idiom 12 lines
+   away. New substance -> legitimate, counts.
+4. "What I could not check" present + non-empty: PASS (7 items).
+5. Per-cycle counts present: PASS (c1 4/0/6, c2 0/4/5, c3 0/0/2).
+
+Held-out adversaries (the independence test):
+- H1 (commit-message review-process phrasing): NOT caught. K3 verified both
+  commit bodies "accurate against the code" and stopped there -- it read
+  accuracy, not forge's banned-terms rule. Expected: H1 was disclosed as a
+  weak signal, so missing it is uninformative.
+- H2 (three weak tests): PARTIALLY caught, and DEEPENED. K3's F4 nails
+  test_sampling_builder_injects_contract_into_prompt with a sharper mechanism
+  than the PM had (false-PASS on guard deletion, not merely "fragile"). It did
+  NOT separately flag test_sampling_builder_receives_contract (callable-only)
+  or name the e2e test's boundary-capture limitation. So: 1 of 3, but the 1 it
+  took, it took deeper than the held-out note.
+- H3 (site (a) single-test guard): NOT caught as such. K3's F3 is adjacent
+  (job-branch zero coverage) but is a DIFFERENT gap than H3 (site-(a) guarded
+  by one test). Both real.
+
+Independence read: K3 caught a real superset on the test-quality dimension
+(F3 + F4 are both genuine and F4 exceeds the held-out note), and added F1/F2
+which were NOT in the held-out set at all -- two real findings the PM had not
+pre-measured. This is a genuine independent review, not a rubber stamp. The
+H1 miss is discounted per the frozen weak-signal note. Trust the delivery.
+
+## PM re-derivation of each finding (not taken on K3's word)
+
+F1 -- CONFIRMED real. _run_cli_budgeted re-raises after unlinking only its
+own stderr log (mcp_server.py:535-541 BaseException, 569-575 CancelledError).
+The await at :863 has no guard; raw_contract_tmp (:855-860, NEW code this PR)
+leaks on any raise. Severity low (0600 tmp, OS eventually reaps), but it is
+NEW this change and the fix idiom is already present at :875-887.
+
+F2 -- CONFIRMED real. Sampling _merge_contract_spec (cli.py:1861/1884) only
+warns at >4096 backend=None, never rejects; CLI _load_contract (cli.py:1715,
+1721) hard-raises CliError on empty and >65536. Same MCP input: sampling
+succeeds, fallback dies naming a "contract file" the user never passed.
+
+F3 -- CONFIRMED real. Sampling fallback test returns a 4-str-tuple
+(test:2213-2243) -> only the inline branch (:864) runs. The job branch
+(:872-888) is reached by no sampling test; start_job raising side_effect
+exists in no test. Zero coverage confirmed by grep.
+
+F4 -- CONFIRMED real, and it upgrades the PM's own A4 note. getsource
+assertion (test:2132) matches source text that survives deleting the
+`if contract_spec:` guard (factories.py:575). Delete guard -> every
+no-contract review emits an empty "## Contract Reference" header, test stays
+green. False-PASS, not merely "fragile" as A4 had it.
+
+P1/P2/P3 -- all three CONFIRMED pre-existing and correctly scoped out. P1
+line-ref stale (cli.py:1653 is siblings=, lock is :2276); :814 not in any
+diff hunk. P2 is F1's twin on the non-sampling path. P3 gate-check start_job
+(:1090) has no cleanup guard. None touched by this diff.
+
+## PM disposition -- does NOT follow K3's suggested fixes verbatim
+
+F1 -> FIX IN THIS PR. But not K3's `except BaseException`: prefer the existing
+   :875-887 idiom (except-cleanup-reraise) wrapping the :863 await, or a
+   finally that unlinks only when neither success-unlink nor job-transfer
+   ran. NEW code this PR = must fix here, not deferred to P2.
+F3 -> FIX IN THIS PR. Add the start_job-raises test through the sampling
+   fallback; it simultaneously pins F1's fix. This is the highest-value fix
+   (covers the branch that contains F1).
+F4 -> FIX IN THIS PR. Add a behavioural test that drives the real provider
+   closure with invoke_sampling patched and asserts the contract body in the
+   captured prompt. Keep or drop the getsource pin as secondary.
+F2 -> DEFER, needs discussion. Root cause is an outlet-policy divergence
+   (should the MCP boundary pre-validate?), a product decision OUTSIDE the
+   D5.7 wiring scope. Folding a boundary-validation behaviour change into this
+   PR is scope creep. Record as follow-up; do not touch here.
+P1 -> trivial comment fix, fold into this PR opportunistically (stale line
+   ref, one line). P2/P3 -> follow-up, out of scope.
+
+## Still open (revised)
+
+1. H1 amend to af665a8 (unchanged from before).
+2. Implement F1 + F3 + F4 fixes + P1 comment. Executor != PM, != kimi.
+   These are logic-bearing (F1) and test changes (F3/F4) -> the fixes
+   themselves need the 3-cycle review before commit.
+3. F2 + P2 + P3 -> follow-up notes, not this PR.
+4. Re-review after fixes (CP3 does not exit at round 1 -- new code landed).
+5. Smoke, CP4, CP5, then merge.
+
+CP3 round 1 did NOT converge (4 findings, 3 to fix). Next round reviews the
+fix commits, and its prompt must carry: what F1/F3/F4 fixes landed, that F2
+was deferred-by-decision (not missed), and that P1-P3 are pre-existing.
