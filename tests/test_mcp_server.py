@@ -2133,6 +2133,220 @@ def test_sampling_builder_injects_contract_into_prompt():
     assert '## Contract Reference\\n" + contract_spec' in src
 
 
+def test_sampling_builder_contract_header_behavioral():
+    """Behavioral: empty contract_spec must NOT emit '## Contract Reference'
+    in the prompt; non-empty contract_spec MUST emit it with the text.
+
+    Exercises the runtime prompt-building path by capturing what
+    invoke_sampling receives, rather than inspecting source text."""
+    import asyncio
+    from code_forge.factories import build_sampling_l1_provider
+
+    resolved = MagicMock(git_diff="diff --git a/f b/f\n+line", mode_hint="git")
+    loop = asyncio.new_event_loop()
+    captured_prompts = []
+
+    async def _fake_invoke(session, prompt, **kwargs):
+        captured_prompts.append(prompt)
+        result = MagicMock()
+        result.duration_s = 0.1
+        result.content = '{"findings": [], "code_excerpts": []}'
+        return result
+
+    class _FakeFuture:
+        def __init__(self, result):
+            self._result = result
+        def result(self, timeout=None):
+            return self._result
+        def cancel(self):
+            pass
+
+    def _fake_rcts(coro, loop):
+        return _FakeFuture(loop.run_until_complete(coro))
+
+    try:
+        # EMPTY contract_spec: header must NOT appear
+        captured_prompts.clear()
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", side_effect=_fake_invoke),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_fake_rcts),
+        ):
+            provider = build_sampling_l1_provider(
+                session=MagicMock(), loop=loop, resolved=resolved,
+                contract_spec="",
+            )
+            provider()
+        for p in captured_prompts:
+            assert "## Contract Reference" not in p, (
+                "empty contract_spec must not emit Contract Reference header"
+            )
+
+        # NON-EMPTY contract_spec: header MUST appear with the text
+        captured_prompts.clear()
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", side_effect=_fake_invoke),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_fake_rcts),
+        ):
+            provider = build_sampling_l1_provider(
+                session=MagicMock(), loop=loop, resolved=resolved,
+                contract_spec="My contract rules",
+            )
+            provider()
+        found = any("## Contract Reference" in p and "My contract rules" in p
+                     for p in captured_prompts)
+        assert found, "non-empty contract_spec must emit Contract Reference header"
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_sampling_e2e_contract_in_prompt():
+    """End-to-end: forge_review(contract=...) passes contract_spec into
+    build_sampling_l1_provider via _dispatch_sampling. Bug-inject proof:
+    remove contract_spec=contract at the forge_review call site -> this
+    test FAILS; restore -> PASSES."""
+    from code_forge.mcp_server import forge_review
+
+    builder_kwargs = {}
+
+    def capture_build(session, loop, resolved, **kwargs):
+        builder_kwargs.update(kwargs)
+        def _provider():
+            return ([], [], MagicMock(), 0.0)
+        return _provider
+
+    ctx = MagicMock()
+    ctx.session.client_params.capabilities.sampling = MagicMock()
+
+    with (
+        patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
+        patch("code_forge.mcp_server._workspace_for",
+              new_callable=AsyncMock, return_value=_resolve_workspace()),
+        patch("code_forge.mcp_server._build_review_context",
+              return_value=(MagicMock(git_diff="d", mode_hint="git"), "h", "r")),
+        patch("code_forge.factories.build_sampling_l1_provider",
+              side_effect=capture_build),
+        patch("code_forge.factories.build_revert_fn", return_value=lambda f: None),
+        patch("code_forge.machine.StateMachine") as mock_sm,
+        patch("code_forge.mcp_server.asyncio.to_thread",
+              new_callable=AsyncMock, return_value=MagicMock(value="PASS")),
+    ):
+        mock_sm.return_value.active_findings = []
+        result = await forge_review(
+            contract="test contract",
+            ctx=ctx,
+        )
+
+    assert "test contract" in builder_kwargs.get("contract_spec", "")
+    assert isinstance(result, CallToolResult)
+
+
+@pytest.mark.asyncio
+async def test_gate_check_no_contract():
+    """forge_gate_check with sampling outlet passes no contract_spec
+    and does not load contracts.yaml (staged=True skips digest)."""
+    ctx = MagicMock()
+    ctx.session.client_params.capabilities.sampling = MagicMock()
+
+    builder_kwargs = {}
+
+    def capture_build(session, loop, resolved, **kwargs):
+        builder_kwargs.update(kwargs)
+        def _provider():
+            return ([], [], MagicMock(), 0.0)
+        return _provider
+
+    with (
+        patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
+        patch("code_forge.mcp_server._build_review_context",
+              return_value=(MagicMock(git_diff="d", mode_hint="git"), "h", "r")),
+        patch("code_forge.factories.build_sampling_l1_provider",
+              side_effect=capture_build),
+        patch("code_forge.factories.build_revert_fn", return_value=lambda f: None),
+        patch("code_forge.machine.StateMachine") as mock_sm,
+        patch("code_forge.mcp_server.asyncio.to_thread",
+              new_callable=AsyncMock, return_value=MagicMock(value="PASS")),
+        patch("code_forge.cli._safe_load_contract_digest") as mock_load,
+    ):
+        mock_sm.return_value.active_findings = []
+        await forge_gate_check(ctx=ctx)
+
+    mock_load.assert_not_called()
+    # contract_spec stays at default "" -- omitted from call
+    assert builder_kwargs.get("contract_spec", "") == ""
+
+
+@pytest.mark.asyncio
+async def test_sampling_fallback_preserves_contract():
+    """Fallback on LLMInvokeError writes raw contract to tmpfile."""
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, p3, p4 = _sampling_dispatch_patches("truncated", ["deepseek"])
+    captured_content = []
+
+    def capture_cli(*args, **kwargs):
+        # Read tmpfile content before the function cleans it up on success
+        if "--contract" in args:
+            idx = args.index("--contract") + 1
+            with open(args[idx]) as f:
+                captured_content.append(f.read())
+        return ("fallback ran", 0, 1.0, "")
+
+    with p1, p2, p3, p4, patch(
+        "code_forge.mcp_server._run_cli_budgeted",
+        new_callable=AsyncMock,
+        side_effect=capture_cli,
+    ):
+        result = await _dispatch_sampling(
+            session=MagicMock(), committed=False,
+            workspace=_resolve_workspace(),
+            contract_spec="raw contract text",
+        )
+
+    assert len(captured_content) == 1
+    assert captured_content[0] == "raw contract text"
+    assert isinstance(result, CallToolResult)
+
+
+@pytest.mark.asyncio
+async def test_sampling_digest_loaded_from_workspace(tmp_path):
+    """contracts.yaml digest appears in the sampling prompt via the
+    _safe_load_contract_digest -> _merge_contract_spec path."""
+    from code_forge.mcp_server import _dispatch_sampling
+
+    contracts_dir = tmp_path / ".code-forge"
+    contracts_dir.mkdir()
+    (contracts_dir / "contracts.yaml").write_text("repos: {}")
+
+    builder_kwargs = {}
+
+    def capture_build(session, loop, resolved, **kwargs):
+        builder_kwargs.update(kwargs)
+        def _provider():
+            return ([], [], MagicMock(), 0.0)
+        return _provider
+
+    with (
+        patch("code_forge.mcp_server._build_review_context",
+              return_value=(MagicMock(git_diff="d", mode_hint="git"), "h", "r")),
+        patch("code_forge.factories.build_sampling_l1_provider",
+              side_effect=capture_build),
+        patch("code_forge.factories.build_revert_fn", return_value=lambda f: None),
+        patch("code_forge.machine.StateMachine") as mock_sm,
+        patch("code_forge.mcp_server.asyncio.to_thread",
+              new_callable=AsyncMock, return_value=MagicMock(value="PASS")),
+        patch("code_forge.cli._safe_load_contract_digest",
+              return_value="digest from yaml"),
+    ):
+        mock_sm.return_value.active_findings = []
+        await _dispatch_sampling(
+            session=MagicMock(), committed=False,
+            workspace=tmp_path,
+        )
+
+    assert "digest from yaml" in builder_kwargs.get("contract_spec", "")
+
+
 def test_merge_contract_spec_warns_on_large_no_backend():
     """_merge_contract_spec with backend=None + >4KB emits warning,
     content not truncated."""
