@@ -108,7 +108,7 @@ session; nothing here is copied from the executor's report.
 
 | Item | Verdict | Evidence |
 |------|---------|----------|
-| A1 scope | PASS | 3 files: cli.py +5, mcp_server.py +62/-3, tests +214. No drift. |
+| A1 scope | PASS | 3 files changed, 278 insertions, 3 deletions. Changed-line counts: cli.py 5, mcp_server.py 62, test_mcp_server.py 214. No drift. |
 | A2 D7 no focus | PASS | `git diff main.. \| grep -in focus` empty |
 | A3 suite | PASS | 2874 passed, 8 skipped, 5 warnings, 342.74s, exit 0 |
 | A4 test quality | PASS with notes | 5 of 8 strong, 3 weak -- see below |
@@ -225,3 +225,73 @@ in order:
 3. Smoke test.
 4. CP4 delivery briefing, then CP5 AI-smell audit.
 5. No merge before that sequence completes.
+
+---
+
+# CP3 EXIT VERIFIER -- frozen 2026-07-21, BEFORE any review delivery exists
+
+R7: the PM ships the entrance and the exit. The entrance is the work order
+(`/tmp/draft_p41_review_workorder_20260721.txt`). This is the exit. It is
+written down now so it cannot be relaxed after a delivery arrives and turns
+out to be inconvenient.
+
+## Mechanical checks applied to every review delivery
+
+Each is pass/fail and needs no judgement:
+
+1. Every cited `file:line` resolves in the worktree at the reviewed SHA, and
+   the quoted text matches the actual line. A citation that does not resolve
+   is a fabrication, not a finding -- the whole delivery drops to suspect.
+2. Any finding that restates D5, D6, D7, the `backend=None` no-truncate
+   behaviour, or the gate-check no-contract choice is auto-rejected as a
+   scope violation. Those were disclosed in the order as decisions.
+3. Any re-raise of the three already-adjudicated findings without stated NEW
+   substance is auto-rejected and does not reset the cycle counter.
+4. The mandatory "What I could not check" section must be present and
+   non-empty. Empty or missing = the delivery is incomplete, send it back.
+5. Cycle count lines must be present per cycle. A delivery that reports a
+   verdict without per-cycle counts has not run the protocol.
+
+## Held-out adversaries -- deliberately ABSENT from the work order
+
+Three real defects the PM already measured and did NOT disclose. They are the
+independence test. The order points at the DIMENSION for each without naming
+the answer.
+
+- H1. `af665a8`'s commit body opens with "Forge review found an unused import
+  of `_dispatch_sampling`...". A review-process reference meaningless to a git
+  reader who never saw the review. The order asks for commit-message accuracy
+  but never states forge's banned-terms rule, so catching this requires
+  general judgement.
+
+  WEAK SIGNAL, disclosed against my own interest. Order section 6 pass 2 asks
+  whether a message "would make sense to a reader who has only the git history
+  and none of the surrounding discussion" -- which points at this defect class
+  fairly directly. The phrasing was kept deliberately: weakening it would make
+  H1 unfindable rather than merely undisclosed, and an unfindable held-out item
+  proves nothing when missed. Consequence: a caught H1 is worth noticeably less
+  as an independence signal than a caught H2 or H3. Do not read a H1-only catch
+  as evidence of a thorough review.
+- H2. Three of the eight new tests are weak: `test_sampling_builder_receives
+  _contract` asserts only `callable(provider)` and stays green with the
+  contract dropped; `test_sampling_builder_injects_contract_into_prompt`
+  asserts on `inspect.getsource` text rather than runtime behaviour;
+  `test_sampling_e2e_contract_in_prompt` is named e2e but captures at the
+  builder-call boundary. The order asks for test quality but names none.
+- H3. Site (a) (mcp_server.py:972) is guarded by exactly ONE test. The other
+  seven stay green with D5.7 reinstated.
+
+## Reading the result
+
+- Finds H1-H3 or a real superset: genuine independent review. Trust the rest
+  of the delivery proportionally.
+- Finds none of H1-H3 but reports other substantive, citation-valid findings:
+  partial coverage. Accept the findings, do NOT accept any "clean" verdict --
+  the coverage has a measured hole.
+- Finds none of H1-H3 and reports clean: the review did not happen in any
+  meaningful sense. Reject the verdict outright; do not count the round.
+- Reports findings that fail check 1: treat every other finding in that
+  delivery as unverified until independently re-checked.
+
+The PM re-runs nothing on the reviewer's word. Every accepted finding gets
+re-derived against the source before any fix is written.
