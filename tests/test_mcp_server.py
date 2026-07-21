@@ -2178,7 +2178,6 @@ async def test_sampling_e2e_contract_in_prompt():
 async def test_gate_check_no_contract():
     """forge_gate_check with sampling outlet passes no contract_spec
     and does not load contracts.yaml (staged=True skips digest)."""
-    from code_forge.mcp_server import _dispatch_sampling
     ctx = MagicMock()
     ctx.session.client_params.capabilities.sampling = MagicMock()
 
