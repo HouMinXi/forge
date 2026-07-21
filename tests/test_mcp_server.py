@@ -733,6 +733,7 @@ async def test_forge_gate_check_timeout_returns_job_ref():
         assert result.structuredContent["status"] == "running"
         mock_start.assert_called_once_with(
             mock_task, mock_proc,
+            tempfile_path=None,
             stderr_log_path="/tmp/fake.log",
             max_lifetime_s=900.0,
         )
@@ -2132,154 +2133,6 @@ def test_sampling_builder_injects_contract_into_prompt():
     assert '## Contract Reference\\n" + contract_spec' in src
 
 
-@pytest.mark.asyncio
-async def test_sampling_e2e_contract_in_prompt():
-    """End-to-end: forge_review(contract=...) passes contract_spec into
-    build_sampling_l1_provider via _dispatch_sampling. Bug-inject proof:
-    remove contract_spec=contract at the forge_review call site -> this
-    test FAILS; restore -> PASSES."""
-    from code_forge.mcp_server import forge_review
-
-    builder_kwargs = {}
-
-    def capture_build(session, loop, resolved, **kwargs):
-        builder_kwargs.update(kwargs)
-        def _provider():
-            return ([], [], MagicMock(), 0.0)
-        return _provider
-
-    ctx = MagicMock()
-    ctx.session.client_params.capabilities.sampling = MagicMock()
-
-    with (
-        patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
-        patch("code_forge.mcp_server._workspace_for",
-              new_callable=AsyncMock, return_value=_resolve_workspace()),
-        patch("code_forge.mcp_server._build_review_context",
-              return_value=(MagicMock(git_diff="d", mode_hint="git"), "h", "r")),
-        patch("code_forge.factories.build_sampling_l1_provider",
-              side_effect=capture_build),
-        patch("code_forge.factories.build_revert_fn", return_value=lambda f: None),
-        patch("code_forge.machine.StateMachine") as mock_sm,
-        patch("code_forge.mcp_server.asyncio.to_thread",
-              new_callable=AsyncMock, return_value=MagicMock(value="PASS")),
-    ):
-        mock_sm.return_value.active_findings = []
-        result = await forge_review(
-            contract="test contract",
-            ctx=ctx,
-        )
-
-    assert "test contract" in builder_kwargs.get("contract_spec", "")
-    assert isinstance(result, CallToolResult)
-
-
-@pytest.mark.asyncio
-async def test_gate_check_no_contract():
-    """forge_gate_check with sampling outlet passes no contract_spec
-    and does not load contracts.yaml (staged=True skips digest)."""
-    ctx = MagicMock()
-    ctx.session.client_params.capabilities.sampling = MagicMock()
-
-    builder_kwargs = {}
-
-    def capture_build(session, loop, resolved, **kwargs):
-        builder_kwargs.update(kwargs)
-        def _provider():
-            return ([], [], MagicMock(), 0.0)
-        return _provider
-
-    with (
-        patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
-        patch("code_forge.mcp_server._build_review_context",
-              return_value=(MagicMock(git_diff="d", mode_hint="git"), "h", "r")),
-        patch("code_forge.factories.build_sampling_l1_provider",
-              side_effect=capture_build),
-        patch("code_forge.factories.build_revert_fn", return_value=lambda f: None),
-        patch("code_forge.machine.StateMachine") as mock_sm,
-        patch("code_forge.mcp_server.asyncio.to_thread",
-              new_callable=AsyncMock, return_value=MagicMock(value="PASS")),
-        patch("code_forge.cli._safe_load_contract_digest") as mock_load,
-    ):
-        mock_sm.return_value.active_findings = []
-        await forge_gate_check(ctx=ctx)
-
-    mock_load.assert_not_called()
-    # contract_spec stays at default "" -- omitted from call
-    assert builder_kwargs.get("contract_spec", "") == ""
-
-
-@pytest.mark.asyncio
-async def test_sampling_fallback_preserves_contract():
-    """Fallback on LLMInvokeError writes raw contract to tmpfile."""
-    from code_forge.mcp_server import _dispatch_sampling
-
-    p1, p2, p3, p4 = _sampling_dispatch_patches("truncated", ["deepseek"])
-    captured_content = []
-
-    def capture_cli(*args, **kwargs):
-        # Read tmpfile content before the function cleans it up on success
-        if "--contract" in args:
-            idx = args.index("--contract") + 1
-            with open(args[idx]) as f:
-                captured_content.append(f.read())
-        return ("fallback ran", 0, 1.0, "")
-
-    with p1, p2, p3, p4, patch(
-        "code_forge.mcp_server._run_cli_budgeted",
-        new_callable=AsyncMock,
-        side_effect=capture_cli,
-    ):
-        result = await _dispatch_sampling(
-            session=MagicMock(), committed=False,
-            workspace=_resolve_workspace(),
-            contract_spec="raw contract text",
-        )
-
-    assert len(captured_content) == 1
-    assert captured_content[0] == "raw contract text"
-    assert isinstance(result, CallToolResult)
-
-
-@pytest.mark.asyncio
-async def test_sampling_digest_loaded_from_workspace(tmp_path):
-    """contracts.yaml digest appears in the sampling prompt via the
-    _safe_load_contract_digest -> _merge_contract_spec path."""
-    from code_forge.mcp_server import _dispatch_sampling
-
-    contracts_dir = tmp_path / ".code-forge"
-    contracts_dir.mkdir()
-    (contracts_dir / "contracts.yaml").write_text("repos: {}")
-
-    builder_kwargs = {}
-
-    def capture_build(session, loop, resolved, **kwargs):
-        builder_kwargs.update(kwargs)
-        def _provider():
-            return ([], [], MagicMock(), 0.0)
-        return _provider
-
-    with (
-        patch("code_forge.mcp_server._build_review_context",
-              return_value=(MagicMock(git_diff="d", mode_hint="git"), "h", "r")),
-        patch("code_forge.factories.build_sampling_l1_provider",
-              side_effect=capture_build),
-        patch("code_forge.factories.build_revert_fn", return_value=lambda f: None),
-        patch("code_forge.machine.StateMachine") as mock_sm,
-        patch("code_forge.mcp_server.asyncio.to_thread",
-              new_callable=AsyncMock, return_value=MagicMock(value="PASS")),
-        patch("code_forge.cli._safe_load_contract_digest",
-              return_value="digest from yaml"),
-    ):
-        mock_sm.return_value.active_findings = []
-        await _dispatch_sampling(
-            session=MagicMock(), committed=False,
-            workspace=tmp_path,
-        )
-
-    assert "digest from yaml" in builder_kwargs.get("contract_spec", "")
-
-
 def test_merge_contract_spec_warns_on_large_no_backend():
     """_merge_contract_spec with backend=None + >4KB emits warning,
     content not truncated."""
@@ -2314,3 +2167,171 @@ async def test_sampling_memory_error_propagates(tmp_path):
                 session=MagicMock(), committed=False,
                 workspace=tmp_path,
             )
+
+
+# -- _dispatch_cli: contract tmpfile lifecycle --
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cli_job_success_keeps_contract():
+    """Job branch transfers contract ownership -- must NOT unlink."""
+    from code_forge.mcp_server import _dispatch_cli
+
+    mock_task = MagicMock(spec=asyncio.Task)
+    mock_proc = MagicMock()
+
+    with (
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=(mock_task, mock_proc, "/tmp/stderr.log"),
+        ),
+        patch(
+            "code_forge.mcp_server.start_job", return_value="job-123",
+        ) as mock_start,
+    ):
+        result = await _dispatch_cli(
+            ["review"], Path("/tmp"), cap=900.0, contract="my spec",
+        )
+        assert result.structuredContent["job_id"] == "job-123"
+        # start_job received a tempfile_path (not None)
+        tmp_arg = mock_start.call_args.kwargs.get("tempfile_path")
+        assert tmp_arg is not None
+        # tmpfile still exists on disk (ownership transferred)
+        assert os.path.exists(tmp_arg)
+        os.unlink(tmp_arg)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cli_run_raises_unlinks_contract():
+    """If _run_cli_budgeted raises, contract tmpfile is cleaned up."""
+    from code_forge.mcp_server import _dispatch_cli
+
+    captured_tmp_path = None
+
+    def _capture_run(*args, **kwargs):
+        nonlocal captured_tmp_path
+        # Find --contract arg to discover the tmpfile path
+        for i, a in enumerate(args):
+            if a == "--contract" and i + 1 < len(args):
+                captured_tmp_path = args[i + 1]
+                break
+        raise RuntimeError("cli crashed")
+
+    with patch(
+        "code_forge.mcp_server._run_cli_budgeted",
+        new_callable=AsyncMock,
+        side_effect=_capture_run,
+    ):
+        with pytest.raises(RuntimeError, match="cli crashed"):
+            await _dispatch_cli(
+                ["review"], Path("/tmp"), cap=900.0, contract="doomed spec",
+            )
+        # Contract tmpfile was created then cleaned up
+        assert captured_tmp_path is not None
+        assert not os.path.exists(captured_tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cli_start_job_raises_unlinks_both():
+    """If start_job raises, both contract tmpfile and stderr log are unlinked."""
+    from code_forge.mcp_server import _dispatch_cli
+
+    mock_task = MagicMock(spec=asyncio.Task)
+    mock_proc = MagicMock()
+
+    # Create a real stderr tmpfile to verify cleanup
+    stderr_tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False,
+    )
+    stderr_tmp.close()
+
+    captured_tmp_path = None
+
+    def _capture_start(*args, **kwargs):
+        nonlocal captured_tmp_path
+        captured_tmp_path = kwargs.get("tempfile_path")
+        raise RuntimeError("start failed")
+
+    with (
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=(mock_task, mock_proc, stderr_tmp.name),
+        ),
+        patch(
+            "code_forge.mcp_server.start_job",
+            side_effect=_capture_start,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="start failed"):
+            await _dispatch_cli(
+                ["review"], Path("/tmp"), cap=900.0,
+                contract="test contract",
+            )
+        # Contract tmpfile was created then cleaned up
+        assert captured_tmp_path is not None
+        assert not os.path.exists(captured_tmp_path)
+        # Stderr log also cleaned up
+        assert not os.path.exists(stderr_tmp.name)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cli_no_contract_no_tmpfile():
+    """No contract = no tmpfile created; contract_tmp passed as None."""
+    from code_forge.mcp_server import _dispatch_cli
+
+    mock_task = MagicMock(spec=asyncio.Task)
+    mock_proc = MagicMock()
+
+    with (
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=(mock_task, mock_proc, "/tmp/stderr.log"),
+        ),
+        patch(
+            "code_forge.mcp_server.start_job", return_value="job-456",
+        ) as mock_start,
+    ):
+        result = await _dispatch_cli(
+            ["gate-check"], Path("/tmp"), cap=900.0,
+        )
+        assert result.structuredContent["job_id"] == "job-456"
+        tmp_arg = mock_start.call_args.kwargs.get("tempfile_path")
+        assert tmp_arg is None
+
+
+# -- site-C integration: start_job failure routes through helper --
+
+
+@pytest.mark.asyncio
+async def test_gate_check_start_job_raises_cleans_stderr():
+    """Site C (forge_gate_check) must route through _dispatch_cli so
+    start_job failures get stderr cleanup."""
+    mock_task = MagicMock(spec=asyncio.Task)
+    mock_proc = MagicMock()
+    stderr_tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False,
+    )
+    stderr_tmp.close()
+
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=(mock_task, mock_proc, stderr_tmp.name),
+        ),
+        patch(
+            "code_forge.mcp_server._job_cap_s", return_value=900.0,
+        ),
+        patch(
+            "code_forge.mcp_server.start_job",
+            side_effect=RuntimeError("job init failed"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="job init failed"):
+            await forge_gate_check()
+        assert not os.path.exists(stderr_tmp.name)

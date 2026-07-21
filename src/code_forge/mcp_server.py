@@ -635,6 +635,71 @@ def _make_job_ref(job_id: str) -> CallToolResult:
     )
 
 
+def _unlink(path: str | None) -> None:
+    """Best-effort unlink; never raises."""
+    if path:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+async def _dispatch_cli(
+    cli_args: list[str],
+    workspace: Path,
+    cap: float,
+    contract: str | None = None,
+    env: dict[str, str] | None = None,
+) -> CallToolResult:
+    """Shared CLI-subprocess dispatch with contract tmpfile lifecycle.
+
+    Materializes an optional contract to a tmpfile, runs
+    _run_cli_budgeted, and routes the result to inline or job
+    completion.  Cleanup is automatic on every exit path:
+      - raise from _run_cli_budgeted: unlink tmpfile, re-raise
+      - inline result: unlink tmpfile, return _make_result
+      - job result: transfer tmpfile ownership to start_job;
+        if start_job raises, unlink both tmpfile and stderr, re-raise
+    """
+    contract_tmp: str | None = None
+    if contract:
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        )
+        tmp.write(contract)
+        tmp.close()
+        contract_tmp = tmp.name
+        cli_args.extend(["--contract", contract_tmp])
+
+    try:
+        result = await _run_cli_budgeted(
+            *cli_args, workspace=workspace, env=env
+        )
+    except Exception:
+        _unlink(contract_tmp)
+        raise
+
+    if isinstance(result[0], str):
+        stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
+        _unlink(contract_tmp)
+        return _make_result(stdout, exit_code, elapsed, stderr)
+
+    # Timeout -- transfer ownership to background job
+    inner_task, proc, stderr_path = result  # type: ignore[misc]
+    try:
+        job_id = start_job(
+            inner_task, proc,
+            tempfile_path=contract_tmp,
+            stderr_log_path=stderr_path,
+            max_lifetime_s=cap,
+        )
+    except Exception:
+        _unlink(contract_tmp)
+        _unlink(stderr_path)
+        raise
+    return _make_job_ref(job_id)
+
+
 def _validate_backend(backend: str, workspace: Path) -> None:
     """Raise ToolError if backend name is not in the loaded list."""
     names = _backend_names_for(workspace)
@@ -848,44 +913,10 @@ async def _dispatch_sampling(
             if committed:
                 cli_args.append("--committed")
 
-            # Write raw MCP contract to tmpfile for CLI subprocess
-            # (CLI subprocess will run its own _merge_contract_spec)
-            raw_contract_tmp: str | None = None
-            if raw_contract:
-                c_tmp = tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".md", delete=False, encoding="utf-8"
-                )
-                c_tmp.write(raw_contract)  # RAW, not merged
-                c_tmp.close()
-                raw_contract_tmp = c_tmp.name
-                cli_args.extend(["--contract", raw_contract_tmp])
-
-            result = await _run_cli_budgeted(*cli_args, workspace=workspace)
-            if isinstance(result[0], str):
-                stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
-                if raw_contract_tmp:
-                    try:
-                        os.unlink(raw_contract_tmp)
-                    except FileNotFoundError:
-                        pass
-                return _make_result(stdout, exit_code, elapsed, stderr)
-            else:
-                inner_task, proc, stderr_path = result  # type: ignore[misc]
-                cap = _job_cap_s(workspace, backend_name or "")
-                try:
-                    job_id = start_job(inner_task, proc,
-                                       tempfile_path=raw_contract_tmp,
-                                       stderr_log_path=stderr_path,
-                                       max_lifetime_s=cap)
-                except Exception:
-                    for p in (raw_contract_tmp, stderr_path):
-                        if p:
-                            try:
-                                os.unlink(p)
-                            except OSError:
-                                pass
-                    raise
-                return _make_job_ref(job_id)
+            cap = _job_cap_s(workspace, backend_name or "")
+            return await _dispatch_cli(
+                cli_args, workspace, cap, contract=raw_contract,
+            )
         elif _can_fallback:
             raise ToolError(
                 "Sampling failed: %s. Configure an API backend in "
@@ -985,51 +1016,15 @@ async def forge_review(
     if canary:
         cli_args.append("--canary")
 
-    tmp_path: str | None = None
-    if contract:
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", delete=False, encoding="utf-8"
-        )
-        tmp.write(contract)
-        tmp.close()
-        tmp_path = tmp.name
-        cli_args.extend(["--contract", tmp_path])
-
     # Build per-call env when allow_main is requested so we never
     # mutate the server process environment.
     child_env: dict[str, str] | None = (
         {**os.environ, "FORGE_ALLOW_MAIN": "1"} if allow_main else None
     )
-    result = await _run_cli_budgeted(
-        *cli_args, workspace=workspace, env=child_env
+    cap = _job_cap_s(workspace, backend)
+    return await _dispatch_cli(
+        cli_args, workspace, cap, contract=contract or None, env=child_env,
     )
-
-    if isinstance(result[0], str):
-        # Inline completion
-        stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except FileNotFoundError:
-                pass
-        return _make_result(stdout, exit_code, elapsed, stderr)
-    else:
-        # Timeout -- transfer tempfile ownership to job
-        inner_task, proc, stderr_path = result  # type: ignore[misc]
-        cap = _job_cap_s(workspace, backend)
-        try:
-            job_id = start_job(inner_task, proc, tempfile_path=tmp_path,
-                               stderr_log_path=stderr_path,
-                               max_lifetime_s=cap)
-        except Exception:
-            for p in (tmp_path, stderr_path):
-                if p:
-                    try:
-                        os.unlink(p)
-                    except OSError:
-                        pass
-            raise
-        return _make_job_ref(job_id)
 
 
 @mcp.tool(
@@ -1079,18 +1074,8 @@ async def forge_gate_check(
     if backend:
         cli_args.extend(["--backend", backend])
 
-    result = await _run_cli_budgeted(*cli_args, workspace=workspace)
-
-    if isinstance(result[0], str):
-        stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
-        return _make_result(stdout, exit_code, elapsed, stderr)
-    else:
-        inner_task, proc, stderr_path = result  # type: ignore[misc]
-        cap = _job_cap_s(workspace, backend)
-        job_id = start_job(inner_task, proc,
-                           stderr_log_path=stderr_path,
-                           max_lifetime_s=cap)
-        return _make_job_ref(job_id)
+    cap = _job_cap_s(workspace, backend)
+    return await _dispatch_cli(cli_args, workspace, cap)
 
 
 @mcp.tool(
