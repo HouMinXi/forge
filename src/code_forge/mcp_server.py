@@ -876,7 +876,7 @@ async def _dispatch_sampling(
     )
 
     from code_forge.lock import ForgeLock
-    lock_path = workspace / ".code-forge" / "code-forge.lock"  # must match cli.py:1653
+    lock_path = workspace / ".code-forge" / "code-forge.lock"  # must match cli._run
 
     # Lock acquisition + machine.run both inside worker thread to avoid
     # blocking the MCP server event loop on lock contention.
