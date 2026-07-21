@@ -738,6 +738,7 @@ async def _dispatch_sampling(
     workspace: Path,
     backend_name: str | None = None,
     staged: bool = False,  # True for gate-check (INDEX), False for review (WORKING)
+    contract_spec: str = "",
 ) -> CallToolResult:
     """Run forge review in-process via MCP sampling transport.
 
@@ -759,6 +760,28 @@ async def _dispatch_sampling(
 
     resolved, source_hash, baseline_repr = _build_review_context(workspace, committed, staged=staged)
 
+    # Lazy import per file convention (see _backend_names_for at line 237).
+    from code_forge import cli
+
+    # Save raw MCP value before merge -- fallback writes raw, not merged
+    raw_contract = contract_spec
+
+    # Load contracts.yaml digest -- review path only (not gate-check).
+    # CLI gate-check does NOT load contracts.yaml; unconditional loading
+    # would create outlet divergence (D2).
+    contracts_yaml = workspace / ".code-forge" / "contracts.yaml"
+    yaml_digest = ""
+    if not staged and contracts_yaml.is_file():
+        yaml_digest = cli._safe_load_contract_digest(
+            contracts_yaml, workspace, backend=None
+        )
+
+    if contract_spec or yaml_digest:
+        contract_spec = cli._merge_contract_spec(
+            yaml_digest, contract_spec, backend=None,
+            warn_fn=lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush())
+        )
+
     # capture event loop BEFORE dispatching to worker thread
     loop = asyncio.get_running_loop()
 
@@ -766,6 +789,7 @@ async def _dispatch_sampling(
         session=session,
         loop=loop,
         resolved=resolved,
+        contract_spec=contract_spec,
     )
 
     # ponytail: sampling path uses stubs -- stub falsifier (not "auto",
@@ -823,16 +847,44 @@ async def _dispatch_sampling(
                         "--outlet", "subprocess"]
             if committed:
                 cli_args.append("--committed")
+
+            # Write raw MCP contract to tmpfile for CLI subprocess
+            # (CLI subprocess will run its own _merge_contract_spec)
+            raw_contract_tmp: str | None = None
+            if raw_contract:
+                c_tmp = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".md", delete=False, encoding="utf-8"
+                )
+                c_tmp.write(raw_contract)  # RAW, not merged
+                c_tmp.close()
+                raw_contract_tmp = c_tmp.name
+                cli_args.extend(["--contract", raw_contract_tmp])
+
             result = await _run_cli_budgeted(*cli_args, workspace=workspace)
             if isinstance(result[0], str):
                 stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
+                if raw_contract_tmp:
+                    try:
+                        os.unlink(raw_contract_tmp)
+                    except FileNotFoundError:
+                        pass
                 return _make_result(stdout, exit_code, elapsed, stderr)
             else:
                 inner_task, proc, stderr_path = result  # type: ignore[misc]
                 cap = _job_cap_s(workspace, backend_name or "")
-                job_id = start_job(inner_task, proc,
-                                   stderr_log_path=stderr_path,
-                                   max_lifetime_s=cap)
+                try:
+                    job_id = start_job(inner_task, proc,
+                                       tempfile_path=raw_contract_tmp,
+                                       stderr_log_path=stderr_path,
+                                       max_lifetime_s=cap)
+                except Exception:
+                    for p in (raw_contract_tmp, stderr_path):
+                        if p:
+                            try:
+                                os.unlink(p)
+                            except OSError:
+                                pass
+                    raise
                 return _make_job_ref(job_id)
         elif _can_fallback:
             raise ToolError(
@@ -917,6 +969,7 @@ async def forge_review(
             workspace=workspace,
             backend_name=backend,
             staged=False,
+            contract_spec=contract,
         )
 
     _check_backend(workspace)
@@ -1006,12 +1059,15 @@ async def forge_gate_check(
                 "Client does not support sampling capability. "
                 + SAMPLING_REMEDIATION
             )
+        # gate-check has no contract concept -- contract_spec stays empty.
+        # Asserted by test_gate_check_no_contract.
         return await _dispatch_sampling(
             session=ctx.session,
             committed=False,
             workspace=workspace,
             backend_name=backend,
             staged=True,
+            # contract_spec intentionally omitted
         )
 
     _check_backend(workspace)

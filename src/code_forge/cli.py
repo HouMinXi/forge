@@ -1881,6 +1881,11 @@ def _merge_contract_spec(
                         "contract: summarization failed, "
                         "injecting raw content"
                     )
+        elif len(effective_content.encode("utf-8")) > 4096 and backend is None and warn_fn:
+            warn_fn(
+                "contract: content exceeds 4KB but no backend available "
+                "for summarization; injecting raw content"
+            )
         merged = (merged + "\n\n" if merged else "") + effective_content
     if merged:
         merged += _CONFIRMATION_BIAS_DIRECTIVE
