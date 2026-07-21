@@ -740,6 +740,44 @@ async def test_forge_gate_check_timeout_returns_job_ref():
 
 
 @pytest.mark.asyncio
+async def test_gate_check_start_job_cleans_up_on_raise():
+    """Site C (forge_gate_check subprocess path): if start_job raises,
+    the helper must unlink the stderr log. Bug-inject proof: delete the
+    _dispatch_cli call at site C and replace with inline unguarded
+    start_job -- this test must FAIL (stderr leaked)."""
+    mock_task = MagicMock(spec=asyncio.Task)
+    mock_proc = MagicMock()
+
+    stderr_tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", delete=False,
+    )
+    stderr_tmp.close()
+
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=(mock_task, mock_proc, stderr_tmp.name),
+        ),
+        patch("code_forge.mcp_server._job_cap_s", return_value=900.0),
+        patch(
+            "code_forge.mcp_server.start_job",
+            side_effect=RuntimeError("start failed"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="start failed"):
+            await forge_gate_check()
+
+    # If site C routes through _dispatch_cli, stderr is cleaned up.
+    # If site C uses inline unguarded start_job, stderr leaks.
+    assert not os.path.exists(stderr_tmp.name), (
+        "stderr log leaked -- site C may not route through _dispatch_cli"
+    )
+
+
+@pytest.mark.asyncio
 async def test_forge_init_no_preflight():
     with (
         patch("code_forge.mcp_server._check_backend") as mock_check,
