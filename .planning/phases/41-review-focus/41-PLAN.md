@@ -26,9 +26,10 @@ committer date to blame attribution, and update existing tests for the new behav
 ## Tasks
 
 **Wave structure:**
-- Wave 1: Task 1 (header rename), Task 2 (blame date) -- independent, parallel
-- Wave 2: Task 3a, 3b, 3c (review-focus mechanism) -- depends on Task 1 for renamed header
-- Wave 3: Task 4 (blame degradation), Task 5 (full suite) -- depends on Wave 1+2
+- Wave 1: Task 1 (header rename), Task 2 (blame date), Task 3a (focus plumbing) -- all independent
+- Wave 2: Task 3b (builder wiring + sampling fix) -- depends on 3a (merge helper exists) + Task 1 (renamed header anchor)
+- Wave 3: Task 3c (schema + template + tests), Task 4 (blame degradation) -- depends on Wave 1+2
+- Wave 4: Task 5 (full suite) -- depends on all
 
 ### Task 1: Rename contract header (all 3 builders) + update/extend tests
 **Wave:** 1 | **Depends on:** none
@@ -170,10 +171,12 @@ add date assertion (STAGED_PORCELAIN fixture also has committer-time
 ---
 
 ### Task 3a: Focus mechanism -- merge helper + trust + gate.yaml source + CLI flag
-**Wave:** 2 | **Depends on:** Task 1 (header rename must land first for anchor sites)
+**Wave:** 1 | **Depends on:** none (parallel with Task 1 and Task 2)
 
 Adds the core focus plumbing: merge helper, trust hash, gate.yaml extraction, and CLI flag.
 Injected spec is NOT yet wired to builders (Task 3b does that).
+No dependency on Task 1: the anchor sites (cli.py:1828, trust.py) are not affected by
+the header rename at cli.py:780.
 
 All line numbers below are verified against main @ 8e18aa0 (2026-07-20). They WILL drift
 once Task 1 and Task 2 land -- re-grep the anchor symbol before each edit, never trust
@@ -216,6 +219,12 @@ worse than a warned-large prompt. Empty + empty returns "".
   `hash` key, in the SAME store entry keyed by the gate.yaml path. One `code-forge trust`
   run authorizes both. When `review_focus` is absent or empty, `focus_hash` is written
   as "" (not omitted) so the store entry explicitly records "no focus authorized."
+  **Implementation note:** `record_trust` currently replaces the entire dict
+  (`store[key] = {"hash": current_hash}`). The new version must write BOTH keys in
+  one replacement: `store[key] = {"hash": current_hash, "focus_hash": focus_hash}`.
+  Do NOT attempt `store[key]["focus_hash"] = ...` — that would KeyError on fresh
+  entries. The existing `is_trusted` reads only `entry.get("hash")` and ignores extra
+  keys, so adding `focus_hash` to the dict is safe.
 - Migration guarantee: existing trust records (no `focus_hash` key) continue to work for
   backends. Adding `review_focus` to an already-trusted gate.yaml requires a
   **re-run of `code-forge trust`** to authorize the new field -- the plan's earlier
@@ -252,15 +261,29 @@ elif raw:  # non-string, non-None: list/dict/int from hand-edited YAML
     warn("gate.yaml review_focus ignored: not a string (got %s). "
          "Use a YAML string value." % type(raw).__name__)
 ```
-Same extraction on the MCP side, where `gate_data` is already in hand at
-mcp_server.py:243 and mcp_server.py:292. For the sampling path, also load
+Same extraction on the MCP side. For the CLI-subprocess outlet, `gate_data` is
+available at the `forge_review` call site. For the sampling path, `_dispatch_sampling`
+(mcp_server.py:735) does NOT currently hold `gate_data` -- it must call
+`cli._load_gate_backends` itself to extract `review_focus` behind `is_trusted_focus`.
+This is one additional read per sampling review (acceptable; the CLI-subprocess path
+reads gate.yaml inside its forked subprocess anyway). For the sampling path, also load
 the contracts.yaml digest (see Task 3b for the full data flow).
 
 **3a-4. CLI flag** -- add `--focus FILE` next to `--contract` (cli.py:350-355), same
-FILE/stdin convention (`-` = stdin), reusing `_load_contract_file`'s read path as
-`_load_focus_file`. Then `focus_spec = _merge_focus_spec(yaml_focus, file_content, warn)`
-at the two existing merge sites, mirroring `_contract_spec_c` (cli.py:2063) and
-`_contract_spec_a` (cli.py:2422).
+FILE/stdin convention (`-` = stdin). Define `_load_focus_file(path_or_dash: str) -> str`
+mirroring `_load_contract_file`: read file content from path, or stdin if `-`. No new
+error handling needed beyond what argparse FILE type provides (missing file → argparse
+error, binary content → UTF-8 decode error). Then
+`focus_spec = _merge_focus_spec(yaml_focus, file_content, warn)` at the two existing
+merge sites, mirroring `_contract_spec_c` (cli.py:2063) and `_contract_spec_a` (cli.py:2422).
+
+**M2 fix:** `_dispatch_subagent` (cli.py:2038-2042) wraps the outlet_c merge site
+(cli.py:2063). Its current params are `(outlet, warn, _contract_file_content, backend,
+resolved, source_hash, registry, engine_choice, _clean_threshold, cwd)` -- no
+`yaml_focus`, no `gate_data`, no `focus_spec`. Add `yaml_focus=""` to its signature
+(mirroring `_contract_file_content`) and thread it through to the merge site. Without
+this, outlet_c hits a NameError or silently merges file-only content -- a per-outlet
+prompt divergence.
 
 **verify:** `python3 -B -m pytest tests/test_trust.py -v -k focus` plus CLI module tests
 for the new flag.
@@ -310,6 +333,15 @@ call chain has NO focus parameter anywhere:
 - `run_cross_repo` (cross_repo.py:170) -- no focus param
 - `build_l1_provider` call (cross_repo.py:304-308) -- only `contract_spec`
 
+**Pre-existing gap disclosed (same defect class as D5.7):** `--contract FILE` is
+already a silent no-op on the cross-repo path. `run_cross_repo` loads its contract
+**internally** (cross_repo.py:250-256: digest only, no `--contract` file, no
+`_merge_contract_spec`); `_cross_repo_verdict_or_none` (cli.py:1649-1661) passes no
+contract at all. This is the same "missing parameter" class as D5.7. Out of scope for
+Phase 41 — follow-up work. The focus threading below deliberately does NOT mirror the
+contract mechanism on this path (it threads the merged `focus_spec` directly to
+`build_l1_provider`), avoiding replicating the gap.
+
 Thread `focus_spec` through the full chain:
 1. `_run` (cli.py main entry) computes `focus_spec` from yaml_focus + --focus
 2. `_dispatch_cross_repo` (cli.py:1892): add `focus_spec=""` param, pass through
@@ -332,6 +364,15 @@ mcp_server.py:890). Two outlets, both required (D5.5):
   outlet's prompt differ from the CLI outlet's for identical input -- see 3b-5 MERGE
   PARITY for the locked shape and the wiring-parity test.
 
+**M3 fix (tmpfile leak on dispatch-error):** In `forge_review`, `_run_cli_budgeted`
+(mcp_server.py:950-952) is called **outside** any try; the error cleanup at 972-977
+wraps only `start_job`. A raise from `_run_cli_budgeted` leaks the contract tmpfile
+today and will leak the focus tmpfile too. Same hole in the sampling-fallback branch:
+`c_tmp`/`f_tmp` are created inside `_dispatch_sampling`, outside `forge_review`'s
+cleanup scope. Fix: wrap tmpfile creation + dispatch in try/except with unlink-on-error
+on both paths. Narrow the Acceptance claim to "start_job and dispatch-error paths" (not
+all possible exceptions).
+
 **3b-4. Tempfile dual-file ownership (MM #5 + GLM #6, verified against 8e18aa0):**
 `start_job` (mcp_jobs.py:80) accepts a single `tempfile_path: str | None`. When both
 contract and focus tmpfiles exist, only one can be job-transferred on timeout; the other
@@ -339,9 +380,34 @@ leaks. Fix: extend `start_job` to accept `tempfile_paths: list[str] | None = Non
 param, old `tempfile_path` deprecated but accepted for backward compat). Update all three
 cleanup sites in `forge_review`:
 1. Inline success (mcp_server.py:957-961): unlink both contract_tmp and focus_tmp
-2. Timeout job-transfer (mcp_server.py:968): pass `tempfile_paths=[contract_tmp, focus_tmp]`
-3. Error cleanup (mcp_server.py:972-977): unlink both paths
-Update `mcp_jobs.py` eviction/timeout handlers to iterate the list.
+   (filter None first: `[p for p in [contract_tmp, focus_tmp] if p]`)
+2. Timeout job-transfer (mcp_server.py:968): pass `tempfile_paths=[p for p in [contract_tmp, focus_tmp] if p]`
+3. Error cleanup (mcp_server.py:972-977): unlink both paths (same None filter)
+
+Update `mcp_jobs.py` eviction/timeout handlers to iterate the list. When iterating,
+skip None/empty paths: `for p in paths: if p: os.unlink(p)`. **All three consumers**
+of `tempfile_path` in mcp_jobs.py must be updated: `_wait_for_job`'s finally block,
+`_evict_stale`, **and `snapshot_tempfile_paths`** (mcp_jobs.py:120-128, which feeds
+the lifespan pre-shutdown cleanup at mcp_server.py:136). If `snapshot_tempfile_paths`
+is not updated, server shutdown with a running job leaks the focus tmpfile.
+
+The migration snippet must match the actual `_jobs` dict structure (`entry.get(...)`),
+not attribute access:
+```python
+# In _wait_for_job finally, _evict_stale, and snapshot_tempfile_paths:
+paths_to_clean = [
+    p for p in (
+        [entry.get("tempfile_path")]
+        + (entry.get("tempfile_paths") or [])
+    )
+    if p
+]
+for p in paths_to_clean:
+    try:
+        os.unlink(p)
+    except OSError:
+        pass
+```
 
 **3b-5. Pre-existing bug, SEPARATE commit (D5.7)** -- that same call site passes no
 `contract_spec` today, so `--contract` is already a silent no-op on the MCP sampling
@@ -366,46 +432,60 @@ Fix shape (verified against 8e18aa0 -- contract never reaches the sampling path 
 `_build_review_context` (mcp_server.py:648-678) loads only baseline/diff/source_hash --
 no contracts.yaml. The CLI-subprocess path loads the digest inside the forked subprocess
 (cli.py:2063/2422); the MCP sampling path has no equivalent. For the merge to work,
-`_dispatch_sampling` must also load the contracts.yaml digest:
+`_dispatch_sampling` must also load the contracts.yaml digest. Use the same safe loader
+as CLI paths:
 ```python
 # Inside _dispatch_sampling, after _build_review_context:
 contracts_yaml = workspace / ".code-forge" / "contracts.yaml"
 yaml_digest = ""
 if contracts_yaml.is_file():
-    from .contract_loader import load_contract_digest
-    yaml_digest = load_contract_digest(contracts_yaml, workspace, backend=None)
+    yaml_digest = cli._safe_load_contract_digest(contracts_yaml, workspace, backend=None)
 ```
-This follows the same `backend=None` pattern as the trust-gated path. The
-`is_trusted_contracts` check (trust.py:271) must also be applied -- without it, loading
-the digest on sampling would be a contracts.yaml prompt-injection bypass, since the
-CLI path gates it via trust but the sampling path would not. Add the trust check:
-```python
-if contracts_yaml.is_file() and is_trusted_contracts(contracts_yaml, workspace):
-    yaml_digest = load_contract_digest(contracts_yaml, workspace, backend=None)
-```
+**M4 fix:** `load_contract_digest` already trust-gates internally (contract_loader.py:375:
+untrusted → `""`), so the explicit `is_trusted_contracts` pre-check is defense-in-depth,
+not the primary gate. The earlier rationale ("skipping would be a prompt-injection bypass")
+is factually wrong. More importantly, the pseudocode must call `cli._safe_load_contract_digest`
+(not raw `load_contract_digest`) to match CLI behavior -- `_safe_load_contract_digest`
+degrades unexpected loader exceptions to `""`, while raw `load_contract_digest` would
+raise through `_dispatch_sampling` where CLI would degrade -- a parity break.
 
 **Sampling fallback preserves contract+focus (MM #4b, verified against 8e18aa0):**
 On recoverable sampling failure, `_dispatch_sampling` constructs fallback CLI args
 (mcp_server.py:822-823) containing only `--backend`/`--outlet`/`--committed`. The
-`contract` and `focus` values are lost. Fix: thread the raw `contract` and `focus`
-strings into `_dispatch_sampling` as params (they are already in scope at the
-`forge_review` call site, mcp_server.py:890/891), and on fallback create tmpfiles
-for both before constructing `cli_args`:
+`contract` and `focus` values are lost. Fix: thread the **raw, pre-merge** MCP
+`contract` and `focus` strings into `_dispatch_sampling` as params (they are already
+in scope at the `forge_review` call site, mcp_server.py:890/891), and on fallback
+create tmpfiles for both before constructing `cli_args`. **Critical:** the tmpfiles
+must contain the RAW MCP input values, NOT the merged `contract_spec`/`focus_spec`.
+The fallback subprocess re-runs `_merge_contract_spec` / `_merge_focus_spec` inside
+its own CLI path — writing merged values would cause double-merge (digest prepended
+twice, confirmation-bias directive appended twice), producing a third divergent
+prompt. The test must assert tmpfile **content** equals the raw params, not just flag
+presence:
 ```python
 # Inside _dispatch_sampling fallback branch (mcp_server.py:822):
-if contract_spec:
+if contract_raw:
     c_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False)
-    c_tmp.write(contract_spec); c_tmp.close()
+    c_tmp.write(contract_raw); c_tmp.close()   # RAW, not merged contract_spec
     cli_args.extend(["--contract", c_tmp.name])
-if focus_spec:
+if focus_raw:
     f_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False)
-    f_tmp.write(focus_spec); f_tmp.close()
+    f_tmp.write(focus_raw); f_tmp.close()       # RAW, not merged focus_spec
     cli_args.extend(["--focus", f_tmp.name])
 ```
 Transfer both tmpfiles to the background job (use the extended `start_job` from 3b-4)
 or unlink on inline success. Add a test: mock sampling LLMInvokeError(kind="truncated")
 with both contract+focus present, assert CLI fallback args contain both `--contract`
-and `--focus`.
+and `--focus`, AND assert the tmpfile content matches the raw input (not merged).
+
+**Tempfile lifecycle note:** The fallback path's tmpfiles (c_tmp, f_tmp) are created
+inline and NOT tracked by `start_job` unless explicitly passed via the extended
+`tempfile_paths` param. On the inline-success path (`_run_cli_budgeted` returns a
+string, not a background task), these tmpfiles must be explicitly unlinked after the
+result is returned — otherwise they leak on every sampling-fallback invocation. On the
+background-job path (result is a tuple), pass them to `start_job` for eviction-managed
+cleanup. The test should cover BOTH paths: inline success (assert tmpfiles unlinked)
+and background job (assert tmpfiles transferred to job).
 
 MERGE PARITY (locked -- the naive 4-line fix is NOT sufficient): on the CLI-subprocess
 outlet the MCP `contract` string reaches the prompt only after `_merge_contract_spec`
@@ -420,6 +500,11 @@ sampling path MUST call the same merge helpers before building the provider:
   backend, and sampling exists precisely because the client has no API key. A >4KB
   contract therefore passes through unsummarized -- warn, do not truncate (same rule as
   3a-1).
+- **M1 fix:** `_merge_contract_spec`'s size branch is
+  `if len(...) > 4096 and backend is not None:` (cli.py:1861). With `backend=None` there
+  is no warning path at all -- the contract passes **silently**. Add a
+  `elif len(...) > 4096 and backend is None and warn_fn:` branch that calls
+  `warn_fn(...)` once. This also fixes the CLI path when no backend is configured.
 - No refactor needed to reach the helpers: mcp_server already calls cli's underscore
   privates (`cli._load_gate_backends` at mcp_server.py:243 and 292), so this follows an
   established in-repo pattern rather than introducing cross-module reach-in.
