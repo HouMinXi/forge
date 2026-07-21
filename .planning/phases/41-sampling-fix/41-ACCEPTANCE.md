@@ -399,3 +399,50 @@ P1 -> trivial comment fix, fold into this PR opportunistically (stale line
 CP3 round 1 did NOT converge (4 findings, 3 to fix). Next round reviews the
 fix commits, and its prompt must carry: what F1/F3/F4 fixes landed, that F2
 was deferred-by-decision (not missed), and that P1-P3 are pre-existing.
+
+## CP3 R1 -> fix-dispatch decisions (2026-07-21, SUPERSEDES "Still open" P1-P3 rows above)
+
+PM decisions after user review of the R1 adjudication:
+
+- P1, P2, P3 PULLED IN-SCOPE this round (user: "P1-P3 pre-existing, lean to
+  fix this round too"). Reverses the review work order's out-of-scope note.
+  Verified all three sit OUTSIDE this PR's diff hunks (git diff main..HEAD
+  hunk headers) -- genuinely pre-existing.
+- F1 + P2 + P3 are two defect classes across three near-identical dispatch
+  sites (A _dispatch_sampling fallback ~847, B forge_review direct ~988, C
+  gate-check ~1082). Class 1 = contract tmpfile leaks if _run_cli_budgeted
+  raises (F1 site A NEW, P2 site B pre-existing twin). Class 2 = transferred
+  stderr/tmpfile leaks if start_job raises (site C P3 is the lone unguarded
+  site; this PR added the guard to A, left C behind).
+- Fix method CHOSEN (user picked): extract ONE shared dispatch helper, route
+  A/B/C through it. Not three in-place guards -- the three sites are already
+  duplicated and three guards add more copies (Golden Rule 4). Grounded facts
+  for the helper: all sites return _make_result/_make_job_ref uniformly; cap
+  via _job_cap_s(workspace, backend_name="") differs per site so it is a
+  helper param; no _unlink helper exists today (new symbol); site B carries
+  env=child_env (FORGE_ALLOW_MAIN) which must survive.
+- INVERSION owned: the helper touches gate-check + direct-review, two paths
+  this PR did not otherwise touch and which currently work. Fix blast radius
+  exceeds the bug (low-sev leak on exception paths). User accepted this
+  trade for completeness.
+- F2 STILL DEFERRED. Reason sharpened this round: there is NO policy-free
+  fix. Every in-place fix path routes back to one product-policy fork (should
+  the MCP contract boundary be lenient like the sampling path or strict like
+  cli._load_contract), and any fix touches _load_contract which real CLI
+  file-path users depend on for the current "contract file" message. Defer
+  DESTINATION: a dedicated follow-up "MCP<->CLI contract-validation parity",
+  bundled with nothing else (P2/P3 no longer travel with it -- they are now
+  fixed here). Blocked on the user's direction call (lenient vs strict); not
+  started.
+- Implementation work order (R7 ENTRANCE) frozen at
+  /tmp/draft_p41_impl_workorder_20260721.txt (275 lines, ASCII-clean): T1
+  helper+F1/P2/P3, T2 F3 coverage + per-site injection, T3 F4 behavioral
+  test, T4 P1 comment. Dispatch channel = user's call; executor != PM,
+  != kimi (impl != reviewer). Fix commits need their own 3-cycle review.
+- H1 amend to af665a8: DONE by user this session.
+
+Revised open list: (1) dispatch the impl work order to an executor.
+(2) 3-cycle review the fix commits. (3) CP3 R2 with non-convergence
+disclosure (T1-T4 landed, P1-P3 pulled in by decision, F2 deferred).
+(4) F2 parity follow-up: get user's lenient-vs-strict direction, then plan.
+(5) Smoke, CP4, CP5, merge.
