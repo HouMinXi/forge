@@ -752,3 +752,87 @@ recorded pre-compaction undercounted by omitting docs/adr from the disk
 side of that comparison -- not a real mismatch, just an incomplete check
 both times until this one. Full check going forward: find .planning -type f
 plus find docs/adr -type f, summed, against git ls-tree -r planning-local.
+
+## R3 fix delivery -- PM acceptance verification (2026-07-22)
+
+Delivery: branch fix/sampling-contract @ 89bdb4d. Briefing at
+/tmp/draft_p41_r3_briefing_20260722.txt. Three new commits, confirmed via
+git log timestamps to have landed in the order the work order specified
+(T3 936c1b3 first, T2 396a0ff second, T1 89bdb4d last) -- the briefing's
+own section 2 lists them in a different order, which is just a listing
+convention, not the true history; verified against git log directly
+rather than trusting the briefing's ordering.
+
+Everything below is independently reproduced by the PM, not read off the
+briefing's pasted output:
+
+- Full suite, forced PYTHONPATH: 2880 passed, 8 skipped, 6 warnings,
+  331.65s. Matches the work order's predicted 2880 exactly. This is the
+  SECOND round in a row the executor did not run this itself ("timeout"),
+  and the real runtime (331.65s / 5.5 min) plausibly exceeds whatever
+  tool-call ceiling that environment has -- read as an infrastructure
+  limit, not evasion. Established division of labor going forward: PM
+  runs the full suite every round regardless of what the briefing claims.
+- T3 bug-injection, reproduced first-hand (cp-backup + python3
+  substitution, not the Edit tool, per the earlier staleness lesson):
+  baseline md5 c6025857ce0a4ae88fb995bc1e3b1346 -> injected except
+  BaseException -> except Exception -> new test FAILED with exactly the
+  predicted assertion (`assert not os.path.exists(captured_tmp_path)`,
+  file still present) -> restored from backup -> md5 matched baseline
+  exactly -> test PASSED again. Full FAIL/PASS cycle by my own hand.
+- T1 verified: test_gate_check_start_job_raises_cleans_stderr is gone;
+  the orphaned "-- site-C integration --" section-header comment I
+  flagged in the work order is ALSO gone (mimo caught it, not just the
+  function body) -- confirmed by grep, not assumed from the diffstat's
+  "33 deletions" matching arithmetic.
+- T2 verified: test_sampling_builder_injects_contract_into_prompt is
+  gone; exactly 2 blank lines survive between
+  test_sampling_builder_receives_contract and
+  test_sampling_builder_contract_header_behavioral, matching file
+  convention -- the blank-line footgun named in the work order was
+  handled correctly, confirmed by direct Read, not diffstat arithmetic.
+- New test verified at line 2481, verbatim match to the work order's
+  suggested code -- no mocking-mechanism adjustment was needed.
+- Scope fence verified on the R3-only range (1f2a613..HEAD): exactly 2
+  files (mcp_server.py, test_mcp_server.py). cli.py's 5-line change is
+  pre-existing from R1 and outside this range -- the briefing's "cli.py
+  from R1" label checks out against a range-restricted diff, not just
+  trusted.
+- ASCII gate and banned-vocabulary scan (severity labels, review-process
+  terms, plan-ref tokens, model names) run by the PM directly against
+  ALL 10 commit messages on the branch, not just R3's 3: both clean.
+
+Two minor, non-blocking findings:
+  1. File ends with 2 trailing blank lines instead of the 0 the work
+     order specified. Confirmed harmless: `ruff check` reports zero
+     issues on the file, no test depends on file-end whitespace. Not
+     worth a re-round; left as-is unless the user wants it trimmed.
+  2. Full-suite warning count is 6 vs the R1/R2 baseline's 5 -- traced to
+     four unrelated pre-existing mock-heavy tests in test_doctor.py,
+     test_factories.py, and test_fixval.py (none touched by this
+     branch), all "coroutine was never awaited" RuntimeWarnings whose
+     capture is timing-dependent on garbage collection. Read as run-to-run
+     non-determinism, not a regression -- LOW confidence this is fully
+     benign (did not bisect to confirm), but the mechanism and file
+     locations rule out this branch as the cause.
+
+VERDICT: R3 fix delivery ACCEPTED. All three CP3 R2 findings (F-ds-1,
+F-ds-2, F-ds-3/HX) are closed and independently confirmed closed. Ready
+for CP3 R3 independent review dispatch.
+
+## CP3 R3 review work order frozen (2026-07-22)
+
+R3's diff is small (2 files, ~78 changed lines net) -- well under the
+200-line threshold that set R1/R2's 4-cycle/12-pass protocol. Scaled the
+review protocol down to 2 cycles x 3 passes = 6 passes minimum,
+consistent with the adaptive-threshold rule; still requires the same
+non-convergence protocol (state what R3 fixed, that HX is closed, that
+F2 and the contracts.yaml-fallback gap stay deferred, that P1-P3 remain
+in-scope by standing decision). Reviewer must be independent of mimo (the
+R1/R2/R3 implementer); ds remains eligible since ds only reviewed, never
+implemented -- but reusing the same reviewer three rounds running trades
+away some of the fresh-eyes value the non-convergence protocol exists
+for. Model choice left to the user, as in R1/R2.
+
+Work order frozen at /tmp/draft_p41_r3_review_workorder_20260722.txt,
+non-ASCII gate run, clean.
