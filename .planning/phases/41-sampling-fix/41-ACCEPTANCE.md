@@ -621,3 +621,75 @@ into the R2 dispatch decision, do not treat it as R2 done.
 SHA anchor update: everywhere this file said 75e846b as ground truth,
 1f2a613 is the identical-tree successor. 2881/8skip/498s and the injection
 proof stand at 1f2a613 without re-run (tree identity).
+
+## CP3 R2 -- independent ds review, PM adjudication (2026-07-22)
+
+Dispatched aicc ds (DeepSeek V4 Pro; NOT the executor's deepseek-flash) to a
+fresh clean session p41-cp3r2-ds, self-contained packet (work order + full
+diff + line-numbered mcp_server.py + cli.py excerpts) so the reviewer could
+not misread the pre-fix base tree. Report captured, adjudicated below.
+
+DISPATCH INCIDENT (process): first --new p41-r2-ds collided with an EXISTING
+session. STOP-and-verify (not blind --upsert) revealed p41-r2-ds is a Phase
+41 PLAN-review (CP1b) session, a different track sharing the p41-rN-model
+naming. Blind --upsert would have fed the code packet into a plan-review
+context and produced a contaminated review. Re-dispatched under p41-cp3r2-ds
+(distinct code-review namespace). Note: a full p41 plan-review campaign
+(r1-r6 + verify, 7 models) exists upstream at CP1b; does not change CP3.
+
+HELD-OUT RESULT: HX CAUGHT. ds Finding 3 is exactly the held-out adversary
+(except Exception at mcp_server.py:678 misses CancelledError/BaseException,
+contract_tmp leaks on cancellation), mechanism traced correctly. Per the
+frozen R2 rubric, catching HX => genuine independent async-path tracing =>
+trust the review. Doubly validated: the executor's own flash self-review
+MISSED this exact bug; the independent V4 Pro review caught it. That is the
+entire case for impl != reviewer, demonstrated on live evidence.
+
+ALL 3 ds FINDINGS RE-DERIVED AGAINST SOURCE (zero hallucination, all low):
+- F-ds-1 duplicate gate-check test: CONFIRMED. test_gate_check_start_job_
+  cleans_up_on_raise (743, tmp_path + assert_called_once route proof)
+  strictly dominates test_gate_check_start_job_raises_cleans_stderr (2563,
+  bare NamedTemporaryFile, no route assertion). Same precondition. 1f2a613
+  "strengthen" added 743 without deleting 2563. Fix: delete 2563.
+- F-ds-2 stale getsource test: CONFIRMED. test_sampling_builder_injects_
+  contract_into_prompt (2167) still asserts on inspect.getsource() text
+  (2172-2173) and coexists with the behavioral test (2176). It false-passes
+  if the guard is deleted -- the exact F4 mechanism, left in place because
+  the F4 fix added the behavioral test but did not remove the source-text
+  one. ACCOUNTABILITY: my own impl work order T3 said "the getsource
+  assertion may stay as a secondary pin" -- that phrasing is the loophole.
+  Fix: delete 2167 (behavioral test at 2176 is the definitive replacement).
+- F-ds-3 CancelledError leak (HX): CONFIRMED (independently found by PM
+  earlier; ds confirms). Line 678 except Exception, CancelledError is
+  BaseException (3.8+). Fix: widen 678 to except BaseException (re-raises =
+  cleanup-then-reraise, does NOT swallow; pre-authorized in impl WO). The
+  sync start_job-except at 696 does NOT need it (no await, cancellation
+  cannot originate there). ds's suggested try/finally is more invasive and
+  ds itself flagged the ownership-transfer complication ("needs discussion")
+  -- reject that shape, the one-line except-widen is correct and minimal.
+  ds's incidental claim that _run_cli_budgeted re-raises CancelledError at
+  :569 is plausible but NOT load-bearing (678 fails to catch it either way)
+  and was not separately re-verified.
+
+ds "could not check" item 2 (contracts.yaml digest not propagated on the
+sampling->CLI fallback path; sampling-success loads it, fallback passes only
+raw_contract) is a sharp F2-adjacent observation. ds correctly scoped it as
+F2 territory. Logged for the F2 parity follow-up; NOT this PR.
+
+CP3 R2 VERDICT: genuine independent review, trusted. R2 produced 3 NEW
+confirmed low findings -> R2 did NOT converge. CP3 exit (3 consecutive
+0/0/0/0 rounds) not met: R1 had 4, R2 had 3. Zero clean rounds so far.
+
+Open, ordered:
+1. R3 fix batch (all low, all cheap): delete test 2563; delete test 2167;
+   widen mcp_server.py:678 except Exception -> except BaseException. Impl !=
+   reviewer -> executor is fine (implemented before), NOT the PM, NOT ds,
+   NOT kimi. Fix commits need their own review before commit.
+2. CP3 R3 independent review of the R3 fixes. Non-convergence prompt must
+   carry: what R3 fixed (the 3 above), that HX is now closed, that F2 +
+   contracts.yaml-fallback stay deferred, that P1-P3 were pulled in by
+   decision. R3 reviewer must be independent (fresh model or ds --cont is
+   acceptable since ds is not the implementer).
+3. Continue until 3 consecutive clean rounds. Then smoke, CP4, CP5, merge.
+4. Commit-message cleanup already done (verified). F2 parity follow-up
+   (now including the contracts.yaml-fallback gap) remains separate.
