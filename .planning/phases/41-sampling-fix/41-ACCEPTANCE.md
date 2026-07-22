@@ -570,3 +570,54 @@ READING THE R2 RESULT:
   - fails M1 (citations do not resolve): treat every finding as unverified
     until PM re-derives, same bar as any delivery.
 
+
+## Message-rewrite + self-review event -- PM verification (2026-07-22)
+
+Branch rewritten 75e846b -> 1f2a613 (rebase from commit 2 onward). A
+"briefing audit" fixed 2 commit messages + polished the R2 briefing.
+
+VERIFIED BY PM (own hands, git ground truth, not the audit's table):
+- CODE UNCHANGED. 75e846b^{tree} == 1f2a613^{tree} == 17e749c3..., and
+  mcp_server.py md5 still fdb6023. range-diff 8e18aa0..75e846b vs
+  8e18aa0..1f2a613: commits 1/3/4/5/6 identical; only 2 and 7 changed,
+  and each shows ONLY a "Commit message" hunk, zero code hunks.
+  => Message-only rewrite. My 2881 full-suite result and the injection
+  FAIL->restore->PASS proof transfer VERBATIM to 1f2a613 (identical tree
+  cannot behave differently). worktree clean, 598/63, 3 in-scope files.
+- MY TWO MESSAGE FINDINGS CLOSED CORRECTLY:
+    20258ce->1945ca8: em-dash "--" now ASCII "--". Fixed.
+    75e846b->1f2a613: "addressing the review finding that..." removed,
+      now "-- a bare tempfile... leaves residual files on disk". Fixed.
+  Full re-scan of all 7 messages at 1f2a613: non-ASCII CLEAN, banned
+  review-vocab CLEAN, no truncated subjects. The buried-commit filter-repo
+  concern is moot -- it was rewritten and verified correct.
+
+BRIEFING SECTION 6 CLAIM -- REJECTED as CP3 R2 satisfaction:
+- The briefing claims "R2 exit: 4 consecutive clean cycles, 0 confirmed"
+  from an MCP deepseek review + a 12-pass CLI deepseek review. But §7
+  ("I re-ran with --mode local") shows THE EXECUTOR ran them itself.
+  That is the implementer reviewing its own code = self-review. The R2
+  work order section 0 pre-empted exactly this: "A prior self-review by
+  the implementer is NOT binding and NOT evidence." impl != reviewer is
+  categorical; a forge deepseek run invoked by the implementer is at most
+  an advisory pre-check (like the inline gate), NOT the independent R2.
+- HELD-OUT HX MISSED. The self-review reported 0 findings and did not
+  surface the except-Exception/CancelledError leak (mcp_server.py:678,
+  still present -- byte-identical tree). By the frozen R2 exit rubric
+  ("misses HX and reports the branch clean -> reject the clean verdict as
+  non-independent"), this verdict is rejected. Two independent grounds:
+  procedural (self-review) and empirical (blind to a PM-verified bug).
+- §9 is honest where it counts: it does NOT claim to have re-run the full
+  suite (timeout; leaned on prior-session = PM ground truth). That honesty
+  is correct and noted. The overclaim is confined to §6's R2-converged
+  framing.
+
+STATUS UNCHANGED BY THIS EVENT: CP3 R2 (independent review) STILL OWED.
+The R2 work order is ready at 1f2a613 (SHAs updated). HX remains the live
+held-out. The executor's self-review producing a false-clean (missed HX)
+is itself fresh evidence for why independence is required here -- fold that
+into the R2 dispatch decision, do not treat it as R2 done.
+
+SHA anchor update: everywhere this file said 75e846b as ground truth,
+1f2a613 is the identical-tree successor. 2881/8skip/498s and the injection
+proof stand at 1f2a613 without re-run (tree identity).
