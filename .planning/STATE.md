@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.8
 milestone_name: Onboarding + Throughput
 status: active
-stopped_at: main @ 8e18aa0 -- Phase 40 merged (25b063e honest-partial mechanical half) + contract/memoryerror chore fix merged (8e18aa0, user-pushed, worktree cleaned); next per queue Phase 41 (scope expanded with P4 review-focus, pre-CP1)
-last_updated: "2026-07-20T12:30:00.000Z"
-last_activity: 2026-07-20 -- Phase 41 plan expanded (P4 review-focus/emphasis param folded into 41-PLAN before CP1, per user decision) + pre-existing 41-PLAN defect fixed (design-intent header rename now covers all 3 prompt builders, not just cli.py:780); Phase 40 wrap-up accounting completed (ROADMAP Phase 40 [x], 40-SUMMARY SHA corrected to 25b063e, STATE recount 15/17=88%)
+stopped_at: main @ 89bdb4d -- sampling-contract fix merged (fast-forward from 8e18aa0, user-executed, ad-hoc defect fix outside the v2.8 17-phase count like the prior contract/memoryerror fix); next per queue Phase 41 (review focus, scope expanded with P4, pre-CP1) unaffected
+last_updated: "2026-07-22T15:30:00.000Z"
+last_activity: 2026-07-22 -- sampling-contract fix (dir 41-sampling-fix, not the roadmap's Phase 41) merged to main: contract_spec wiring through _dispatch_sampling + _dispatch_cli helper unification closing 3 tmpfile/stderr leaks (1 new, 2 pre-existing) + CancelledError gap; CP3 3 rounds (R1 4 findings, R2 3 findings, R3 0 after adjudication, closed at 1 clean round by user proportionality decision); real-path smoke test + CP4 briefing + CP5 anti-AI audit all complete; full details in .planning/phases/41-sampling-fix/41-ACCEPTANCE.md. Separately, Phase 47 (invoke-error-visibility, fleet-reported bug: API-path LLMInvokeError discards its own diagnostic content) opened, worktree + work order dispatched to mimo, fix in progress.
 progress:
   total_phases: 17
   completed_phases: 15
