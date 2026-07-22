@@ -446,3 +446,73 @@ Revised open list: (1) dispatch the impl work order to an executor.
 disclosure (T1-T4 landed, P1-P3 pulled in by decision, F2 deferred).
 (4) F2 parity follow-up: get user's lenient-vs-strict direction, then plan.
 (5) Smoke, CP4, CP5, merge.
+
+## CP3 R1 fix delivery -- PM acceptance verification (2026-07-21)
+
+Delivery: branch fix/sampling-contract @ 75e846b (7 commits on main@8e18aa0).
+Briefing at /tmp/draft_p41_briefing_20260721.txt. Verified independently, not
+accepted on the briefing's word.
+
+VERIFIED BY PM (own hands, not narrated):
+- HEAD 75e846b, worktree md5 == HEAD (fdb6023...), clean. diffstat 598/63,
+  3 in-scope files only. code ASCII gate clean.
+- af665a8 (H1) amended -> 20258ce; content is import-removal only.
+- FULL SUITE: 2881 passed, 8 skipped, 0 failed, 498s -- run against WORKTREE
+  src with forced PYTHONPATH (editable install resolves to MAIN tree by
+  default; unforced pytest would validate the wrong code). Baseline was 2874;
+  +7 net. Briefing only ran a 137-test subset -- its "None remaining / all
+  verified" was overclaimed; the real regression number is this one.
+- Helper _dispatch_cli (647): contract lifecycle correct; 3 call sites
+  (917/1025/1078) route through it; cap per-site; env forwarded at site B.
+- HELD-OUT PROBE (order preservation, executor not told): inline branch
+  unpacks stdout/exit_code/elapsed/stderr and passes them to _make_result in
+  the same order -- no silent stdout/stderr swap. PASS.
+- Test quality read: T3 captures the real runtime prompt (not getsource);
+  site-C test asserts real stderr-file cleanup + assert_called_once route
+  lock; 3 _dispatch_cli direct tests assert real filesystem state.
+- BUG-INJECTION (Golden Rule 2, own hands): removed _unlink(stderr_path) from
+  the helper -> test_gate_check_start_job_cleans_up_on_raise AND
+  test_dispatch_cli_start_job_raises_unlinks_both both FAIL -> restore
+  (md5==HEAD) -> both PASS. Breaking the HELPER reddened the through-handler
+  site-C test, proving site C really routes through the helper (the
+  equal-looking-coverage collapse point).
+- F2 NOT touched (cli.py diff is the original backend=None warn branch;
+  _load_contract untouched). Correctly deferred, not silently fixed.
+
+PM FINDINGS (not in briefing, not caught by executor's self-review):
+- L1 except Exception (mcp_server.py:678) misses asyncio.CancelledError
+  (BaseException in py3.8+): cancellation during the await orphans
+  contract_tmp -- same leak class the change set out to kill, via
+  cancellation. Low sev. PM owns it: the impl work order named except
+  Exception as an acceptable floor, so this is a floor gap, not executor
+  error. Fix: widen the run-except to except BaseException (work order
+  pre-authorized it) in the R2 fix batch.
+- Commit-message defects (message layer; the diff-based ASCII/vocab gate
+  does not cover messages):
+    * 20258ce body has an em-dash (non-ASCII). Introduced by the H1 amend.
+    * 75e846b body has "review finding" (banned review-process vocab).
+  Both must be amended before merge.
+- Coverage note (minor): site A/B routing verified by source-read + inline
+  tests; only site C has a dedicated job-branch through-handler regression
+  test. Centralized cleanup makes the risk low.
+
+GOVERNANCE: the briefing's two deepseek-v4-flash reviews are the executor's
+OWN self-review (the impl order said "you are not the reviewer"). They do NOT
+satisfy CP3 R2. impl != reviewer -> CP3 R2 still owed to an independent
+reviewer that is neither the executor nor kimi.
+
+VERDICT: fix is correct, complete, and genuinely tested. PM-accepted as a
+delivery. NOT merge-ready. CP3 has NOT converged -- this was the fix, not a
+review round.
+
+Open, ordered:
+1. Amend 2 commit messages (20258ce em-dash -> ASCII; 75e846b drop "review
+   finding" phrasing). Changes those SHAs.
+2. Widen except Exception -> except BaseException at the helper run-except
+   (folds the CancelledError leak). Own commit, needs review with the batch.
+3. CP3 R2: independent review of the fix commits (not executor, not kimi).
+   Non-convergence prompt must carry: what landed (helper T1 + F3/F4 tests +
+   P1), that P1-P3 were pulled in-scope by decision, that F2 stays deferred,
+   and the PM findings above so R2 does not re-discover them cold.
+4. CP3 R3 if R2 finds anything; exit at 3 consecutive 0/0/0/0.
+5. Then smoke, CP4, CP5, merge. F2 parity follow-up remains separate.
