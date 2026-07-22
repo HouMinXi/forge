@@ -2487,6 +2487,40 @@ async def test_dispatch_cli_run_raises_unlinks_contract():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_cli_run_raises_cancelled_error_unlinks_contract():
+    """asyncio.CancelledError is a BaseException (Python 3.8+), not
+    an Exception -- the except clause around _run_cli_budgeted must
+    widen to BaseException or this leaks the contract tmpfile on
+    cancellation. Bug-inject proof: narrow the except back to
+    `except Exception:` -- this test must FAIL (tmpfile still
+    exists) because CancelledError is not an Exception subclass."""
+    from code_forge.mcp_server import _dispatch_cli
+
+    captured_tmp_path = None
+
+    def _capture_run(*args, **kwargs):
+        nonlocal captured_tmp_path
+        for i, a in enumerate(args):
+            if a == "--contract" and i + 1 < len(args):
+                captured_tmp_path = args[i + 1]
+                break
+        raise asyncio.CancelledError()
+
+    with patch(
+        "code_forge.mcp_server._run_cli_budgeted",
+        new_callable=AsyncMock,
+        side_effect=_capture_run,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await _dispatch_cli(
+                ["review"], Path("/tmp"), cap=900.0,
+                contract="doomed spec",
+            )
+        assert captured_tmp_path is not None
+        assert not os.path.exists(captured_tmp_path)
+
+
+@pytest.mark.asyncio
 async def test_dispatch_cli_start_job_raises_unlinks_both():
     """If start_job raises, both contract tmpfile and stderr log are unlinked."""
     from code_forge.mcp_server import _dispatch_cli

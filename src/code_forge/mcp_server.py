@@ -675,7 +675,7 @@ async def _dispatch_cli(
         result = await _run_cli_budgeted(
             *cli_args, workspace=workspace, env=env
         )
-    except Exception:
+    except BaseException:
         _unlink(contract_tmp)
         raise
 
