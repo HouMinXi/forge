@@ -738,8 +738,17 @@ Work order frozen at /tmp/draft_p41_r3_workorder_20260722.txt (non-ASCII gate
 run, clean). User forwards to mimo.
 
 Note on this file: prior "Current Work" continuity note (pre-compaction
-summary) recorded the last snapshot as disk=641/tree=641; on resume this file
-measured 695 lines by direct wc -l, with tail content matching the summary's
-described final section exactly. Treating the disk read as ground truth over
-the recalled figure (summaries are lossy); not chasing the discrepancy
-further since content, not line count, is what was verified.
+summary) recorded the last snapshot as disk=641/tree=641. On resume this file
+measured 695 lines by direct wc -l -- a different, unrelated number (line
+count of one file vs. the disk/tree check's file count across all of
+.planning/); tail content matched the summary's described final section
+exactly, so no data loss. Re-ran the real disk/tree check after this
+appendix and this fix work order's snapshot: disk .planning = 641 files,
+but planning-local tree = 654 -- initially looked like drift. Resolved:
+snapshot-planning.sh also commits docs/adr/ into the same tree (script
+read directly, .git/snapshot-planning.sh:35), and docs/adr has 13 files;
+641 + 13 = 654 = tree total, exact match. The bare "disk=641/tree=641"
+recorded pre-compaction undercounted by omitting docs/adr from the disk
+side of that comparison -- not a real mismatch, just an incomplete check
+both times until this one. Full check going forward: find .planning -type f
+plus find docs/adr -type f, summed, against git ls-tree -r planning-local.
