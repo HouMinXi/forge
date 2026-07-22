@@ -2164,15 +2164,6 @@ def test_sampling_builder_receives_contract():
         loop.close()
 
 
-def test_sampling_builder_injects_contract_into_prompt():
-    """Verify the factory's prompt template includes the contract when
-    contract_spec is provided (reads the source template directly)."""
-    import inspect
-    from code_forge import factories
-    src = inspect.getsource(factories.build_sampling_l1_provider)
-    assert '## Contract Reference\\n" + contract_spec' in src
-
-
 def test_sampling_builder_contract_header_behavioral():
     """Behavioral: empty contract_spec must NOT emit '## Contract Reference'
     in the prompt; non-empty contract_spec MUST emit it with the text.
