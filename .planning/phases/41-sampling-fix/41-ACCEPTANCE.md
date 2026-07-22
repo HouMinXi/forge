@@ -594,7 +594,7 @@ VERIFIED BY PM (own hands, git ground truth, not the audit's table):
 
 BRIEFING SECTION 6 CLAIM -- REJECTED as CP3 R2 satisfaction:
 - The briefing claims "R2 exit: 4 consecutive clean cycles, 0 confirmed"
-  from an MCP deepseek review + a 12-pass CLI deepseek review. But §7
+  from an MCP deepseek review + a 12-pass CLI deepseek review. But section 7
   ("I re-ran with --mode local") shows THE EXECUTOR ran them itself.
   That is the implementer reviewing its own code = self-review. The R2
   work order section 0 pre-empted exactly this: "A prior self-review by
@@ -607,9 +607,9 @@ BRIEFING SECTION 6 CLAIM -- REJECTED as CP3 R2 satisfaction:
   ("misses HX and reports the branch clean -> reject the clean verdict as
   non-independent"), this verdict is rejected. Two independent grounds:
   procedural (self-review) and empirical (blind to a PM-verified bug).
-- §9 is honest where it counts: it does NOT claim to have re-run the full
+- section 9 is honest where it counts: it does NOT claim to have re-run the full
   suite (timeout; leaned on prior-session = PM ground truth). That honesty
-  is correct and noted. The overclaim is confined to §6's R2-converged
+  is correct and noted. The overclaim is confined to section 6's R2-converged
   framing.
 
 STATUS UNCHANGED BY THIS EVENT: CP3 R2 (independent review) STILL OWED.
