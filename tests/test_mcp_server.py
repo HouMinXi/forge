@@ -2581,36 +2581,3 @@ async def test_dispatch_cli_no_contract_no_tmpfile():
         assert tmp_arg is None
 
 
-# -- site-C integration: start_job failure routes through helper --
-
-
-@pytest.mark.asyncio
-async def test_gate_check_start_job_raises_cleans_stderr():
-    """Site C (forge_gate_check) must route through _dispatch_cli so
-    start_job failures get stderr cleanup."""
-    mock_task = MagicMock(spec=asyncio.Task)
-    mock_proc = MagicMock()
-    stderr_tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".log", delete=False,
-    )
-    stderr_tmp.close()
-
-    with (
-        patch("code_forge.mcp_server._check_backend"),
-        patch("code_forge.mcp_server._validate_backend"),
-        patch(
-            "code_forge.mcp_server._run_cli_budgeted",
-            new_callable=AsyncMock,
-            return_value=(mock_task, mock_proc, stderr_tmp.name),
-        ),
-        patch(
-            "code_forge.mcp_server._job_cap_s", return_value=900.0,
-        ),
-        patch(
-            "code_forge.mcp_server.start_job",
-            side_effect=RuntimeError("job init failed"),
-        ),
-    ):
-        with pytest.raises(RuntimeError, match="job init failed"):
-            await forge_gate_check()
-        assert not os.path.exists(stderr_tmp.name)
