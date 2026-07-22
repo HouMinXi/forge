@@ -693,3 +693,53 @@ Open, ordered:
 3. Continue until 3 consecutive clean rounds. Then smoke, CP4, CP5, merge.
 4. Commit-message cleanup already done (verified). F2 parity follow-up
    (now including the contracts.yaml-fallback gap) remains separate.
+
+## R3 fix work order frozen and dispatched (2026-07-22)
+
+User decision: R3 implementer is the same executor used for R1/R2 (permissible
+under impl != reviewer, which restricts who REVIEWS a delivery, not who fixes
+it -- explicitly not the PM, not ds, not kimi). User dispatches; PM authored
+and froze the work order first (Fleet Constitution R7: PM's deliverable is the
+pinned entrance before the artifact exists).
+
+Re-grounded all three fix sites fresh from disk at HEAD 1f2a613 before writing
+the order (did not trust the line numbers already recorded above) and found
+one boundary the prior record did not call out: test_gate_check_start_job_
+raises_cleans_stderr (2563) is the LAST test in the file, preceded by an
+orphaning section-header comment ("-- site-C integration --") that covers
+only this one test. Deleting the test without the header would leave a
+comment pointing at nothing -- folded into the T1 deletion instruction.
+
+Also verified before freezing: start_job is `def start_job(...)` (sync, not
+async) at mcp_jobs.py:80, confirming the T3 fix must NOT touch the second
+except block (~696, no await in that span, cancellation cannot land there) --
+this was asserted in the R2 adjudication above from memory of an earlier
+check; re-confirmed by fresh grep rather than carried over uninspected.
+
+T3 additionally requires a NEW regression test proving the CancelledError gap
+by bug-injection (Golden Rule 2), not just the one-line except-widen: checked
+the existing sibling test (test_dispatch_cli_run_raises_unlinks_contract,
+~2460) and confirmed it uses plain RuntimeError, which the current `except
+Exception` already catches -- that test passes both before and after this fix
+and proves nothing about the actual gap. A new test using
+`asyncio.CancelledError` as the injected exception is the only thing that can
+distinguish `except Exception` from `except BaseException`. Work order
+supplies exact test code as a strong suggestion, with explicit authorization
+to adjust the mocking mechanism if pytest-asyncio behaves unexpectedly with a
+raised CancelledError, provided the semantic proof (FAIL under Exception, PASS
+under BaseException) survives.
+
+Commit order specified: T3 first (the actual bug fix + its proof), then T2,
+then T1 (both deletions) -- fix lands before cleanup, matching how a human
+would narrate the change; instructed to re-grep anchors before every edit
+since line numbers shift once earlier commits in the same order land.
+
+Work order frozen at /tmp/draft_p41_r3_workorder_20260722.txt (non-ASCII gate
+run, clean). User forwards to mimo.
+
+Note on this file: prior "Current Work" continuity note (pre-compaction
+summary) recorded the last snapshot as disk=641/tree=641; on resume this file
+measured 695 lines by direct wc -l, with tail content matching the summary's
+described final section exactly. Treating the disk read as ground truth over
+the recalled figure (summaries are lossy); not chasing the discrepancy
+further since content, not line count, is what was verified.
