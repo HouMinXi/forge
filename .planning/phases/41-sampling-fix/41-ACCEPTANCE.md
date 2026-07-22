@@ -836,3 +836,75 @@ for. Model choice left to the user, as in R1/R2.
 
 Work order frozen at /tmp/draft_p41_r3_review_workorder_20260722.txt,
 non-ASCII gate run, clean.
+
+## CP3 R3 -- independent review received, PM adjudication (2026-07-22)
+
+Reviewer: Kimi Code CLI, run directly by the user (not dispatched via aicc
+this round) -- confirmed independent of mimo (the R1/R2/R3 implementer),
+satisfying impl != reviewer regardless of dispatch mechanism. Report at
+/tmp/draft_20260722_102627_r3_review_report_v2.txt, labeled "v2 --
+expanded," stating a v1 was criticized as too shallow and re-run at 12
+passes (4 cycles x 3, double the work order's 6-pass minimum). v1 itself
+was not seen by the PM; per the user, the expansion came from the user's
+own direct interaction with the Kimi CLI session, not an unseen process --
+noted, not treated as suspicious.
+
+Unlike ds's R2 review (text-only, reasoning from a static packet), this
+reviewer had live repo access and ran real commands -- explains the
+precision of its citations. Spot-verified independently rather than
+trusted:
+  - Full suite: reviewer got 2880 passed, 8 skipped, 6 warnings (435.29s).
+    Matches the PM's own independent R3 run exactly (2880/8/6, 331.65s --
+    different wall-clock, same machine-independent counts). Strong
+    corroboration.
+  - _dispatch_cli's 3 call sites (917, 1025, 1078): re-verified by grep,
+    exact match.
+  - The detailed _run_cli_budgeted internal-CancelledError trace (claims
+    specific behavior at lines 526/535/547/569) was NOT something the PM
+    had traced before -- re-read the actual lines: matches byte-for-byte.
+    Line 535 IS `except BaseException:` (subprocess-creation cancellation
+    path), line 569 IS `except asyncio.CancelledError:` (communicate-wait
+    cancellation path), both clean up and re-raise as claimed. This is
+    genuine additional verification depth beyond what R1/R2 or the PM's
+    own prior passes covered.
+  - ruff format --check flags both files; re-ran `ruff format --diff` and
+    confirmed the flagged hunks span nearly the ENTIRE file top to bottom
+    (mcp_server.py lines 14-1201, test file lines 1-2681) with none
+    clustered near the R3-touched regions specifically -- corroborates
+    "pre-existing project-wide drift, not introduced by this diff."
+
+Finding 1 (trailing blank line at tests/test_mcp_server.py:2582, causes
+`git diff --check` to fail) -- re-ran the exact command, confirmed real:
+exit code 2, exact same message. This is the SAME fact the PM already
+disclosed and pre-assessed as harmless in the R3 review work order
+(section 5: "known and accepted as-is... do not re-report unless you have
+concrete evidence they are NOT harmless"). Kimi's new angle (a different
+tool than the PM's own ruff-check-only assessment) is real but its harm
+claim is conditional ("a repository that runs git diff --check in CI or a
+pre-commit hook will flag this" -- correctly hedged, not overclaimed).
+Checked forge's actual .github/workflows/ and .git/hooks/: no gate
+anywhere runs git diff --check or any whitespace check. RULING: real,
+confirmed, honestly-scoped finding, but does not meet the pre-registered
+bar of NEW evidence of active harm to this repo -- same file/line/category
+as an already-disclosed item, different tool, no demonstrated new
+consequence. Does not count as a new confirmed finding for CP3 purposes.
+Recommend trimming the one line whenever the branch is next touched
+(free, zero risk) but not worth its own round.
+
+CP3 R3 VERDICT: 0 new confirmed findings after adjudication (12 passes,
+1 raw finding, ruled not new substance). This is the FIRST clean round in
+this CP3 pipeline (R1: 4 findings, R2: 3 findings, R3: 0 after
+adjudication) -- 1 of 3 consecutive clean rounds needed.
+
+OPEN QUESTION for the user, not decided unilaterally: the exit rule is 3
+CONSECUTIVE clean rounds. No code changes are pending (R3's one raw
+finding was ruled non-substantive), so rounds 2 and 3 of that count would
+review UNCHANGED code (89bdb4d) through two more independent reviewers,
+purely to build multi-reviewer confidence rather than to catch a new fix.
+Given the cumulative depth already spent (R1 4 findings fixed, R2 3
+findings fixed, R3 12 passes including live tool execution and a byte-
+exact internal-cancellation trace, 0 net), the marginal value of 2 more
+mechanical rounds against identical code is arguably low -- but this is a
+proportionality judgment call the PM is flagging, not silently deciding
+either way. Per standing rule ("speak up, never silently skip a rule you
+judge disproportionate"), not skipping this without asking.
