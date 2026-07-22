@@ -516,3 +516,57 @@ Open, ordered:
    and the PM findings above so R2 does not re-discover them cold.
 4. CP3 R3 if R2 finds anything; exit at 3 consecutive 0/0/0/0.
 5. Then smoke, CP4, CP5, merge. F2 parity follow-up remains separate.
+
+## CP3 R2 EXIT VERIFIER -- frozen 2026-07-22, BEFORE any R2 delivery exists
+
+R2 review work order (ENTRANCE) frozen at
+/tmp/draft_p41_r2_workorder_20260721.txt (260 lines, ASCII-clean,
+held-out-leak-clean). Dispatch pending user's channel choice; executor of
+the fix and kimi (R1 reviewer) are both disqualified from R2.
+
+MECHANICAL CHECKS (apply to the returned R2 report before reading findings):
+  M1 every finding cites file:line + a quoted line that resolves in
+     75e846b source (anti-hallucination gate).
+  M2 no section-4 locked decision reported as a finding.
+  M3 F2 deferral / P1-P3 in-scope reversal not reported as problems.
+  M4 "What I could not check" present and non-empty.
+  M5 per-cycle count lines present for all 3 cycles; >=9 passes.
+  M6 if it re-raises F1/F2/F3/F4/P1/P2/P3 it carries NEW substance or is
+     a fix-is-wrong claim, not a bare repeat.
+
+HELD-OUT ADVERSARY (deliberately absent from the R2 work order):
+  HX -- the helper's run-except is `except Exception` (mcp_server.py:678),
+        which does NOT catch asyncio.CancelledError (a BaseException in
+        py3.8+). If the awaiting task is cancelled (client disconnect /
+        server shutdown) between tmpfile creation and completion,
+        contract_tmp orphans -- the SAME leak class F1/P2 set out to kill,
+        reached via cancellation instead of a normal exception. PM found
+        and verified this independently; it is real, low-severity, and
+        UNFIXED on purpose so R2 has a live target. The impl work order
+        named `except Exception` as an acceptable floor, so this is a
+        floor gap, not executor error.
+
+  WEAK-SIGNAL DISCLOSURE (against my own interest): the R2 work order
+  section 6 pass 2 says "catch breadth on the async paths" and pass 3 says
+  "error handling and RESILIENCE on the async dispatch paths". Those lines
+  point a diligent reviewer toward the except-breadth question, i.e.
+  toward HX's neighborhood. They are NOT removed -- deleting them would
+  tell the reviewer to skip async exception paths, turning HX into a
+  target that can never be hit (a dead adversary proves nothing when
+  missed). Consequence: a caught HX is a weaker independence signal here
+  than a fully-blind catch would be. Do not over-credit an HX catch; do
+  still discount an HX miss.
+
+READING THE R2 RESULT:
+  - catches HX (or a superset: any BaseException/cancellation-path leak):
+    genuine independent async-path tracing -> trust the review; fold HX
+    into the fix batch as already-planned.
+  - misses HX but surfaces other substantive, source-verified findings:
+    partial -- accept those findings on their own evidence; do not read
+    "clean on the helper" as proof the helper is clean; PM still fixes HX.
+  - misses HX and reports the branch clean: reject the clean verdict as
+    non-independent (a blind spot the prior self-review also had); HX
+    fixed regardless; consider re-dispatch to a different model.
+  - fails M1 (citations do not resolve): treat every finding as unverified
+    until PM re-derives, same bar as any delivery.
+
