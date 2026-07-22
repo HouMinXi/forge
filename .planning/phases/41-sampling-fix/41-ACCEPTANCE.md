@@ -908,3 +908,45 @@ mechanical rounds against identical code is arguably low -- but this is a
 proportionality judgment call the PM is flagging, not silently deciding
 either way. Per standing rule ("speak up, never silently skip a rule you
 judge disproportionate"), not skipping this without asking.
+
+User decision: "this round's depth is sufficient" -- CP3 closed without
+running 2 more mechanical rounds against unchanged code. R1 4 findings
+fixed, R2 3 findings fixed, R3 0 after adjudication (12 passes, live tool
+execution, one non-substantive repeat ruled out). CP3 satisfied by user
+authority over the proportionality call, not by hitting the literal 3x
+0/0/0/0 counter.
+
+## Smoke test -- real-path, main session, not mocked (2026-07-22)
+
+Golden Rule 3 ("run the real path once... a mock only proves the code
+matches what you imagined"): every verification so far (PM's own,
+kimi's, ds's) drove _dispatch_cli through mocked _run_cli_budgeted /
+mocked start_job / mocked subprocess creation. None had exercised a REAL
+asyncio task, a REAL code-forge subprocess, and a REAL task.cancel().
+Script at /tmp/p41_smoke_real_path.py, run directly (not dispatched):
+
+  - Normal path: real contract string, real `code-forge --help` subprocess
+    (fast, no network/API dependency, exit 0 in ~0.1s standalone). Real
+    _dispatch_cli call returned a CallToolResult. PASS.
+  - Boundary: contract=None, same real subprocess. PASS.
+  - Concurrency (the actual property this whole CP3 saga was about):
+    created a real asyncio task around _dispatch_cli with a real
+    contract, yielded once (asyncio.sleep(0)) so it truly started, called
+    real task.cancel(), awaited it. asyncio.CancelledError propagated as
+    expected. Tracked the REAL tmpfile paths created (via a thin wrapper
+    around tempfile.NamedTemporaryFile that still creates the real file,
+    just also records the name) rather than a fragile /tmp directory
+    scan -- first attempt at this smoke test used a loose /tmp glob
+    (informational only, not a real assertion); corrected before treating
+    the result as verification. Both real files confirmed gone
+    afterward: /tmp/tmpcxrsgq3s.md (contract) and
+    /tmp/forge-stderr-<id>.log (stderr log from _run_cli_budgeted's own
+    internal cleanup). Separately confirmed no lingering code-forge
+    process and zero zombie processes system-wide after cancellation
+    (pgrep + ps -eo stat, not a loose grep -i which the first attempt
+    used and which matched unrelated shell command lines).
+
+VERDICT: real-path smoke test PASS across normal/boundary/concurrency.
+This is now the first verification in the whole phase that exercised a
+genuinely real subprocess and a genuinely real cancellation, not a mock
+of either. Proceeding to CP4 (delivery briefing).
