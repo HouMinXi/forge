@@ -950,3 +950,52 @@ VERDICT: real-path smoke test PASS across normal/boundary/concurrency.
 This is now the first verification in the whole phase that exercised a
 genuinely real subprocess and a genuinely real cancellation, not a mock
 of either. Proceeding to CP4 (delivery briefing).
+
+## CP4 delivery briefing + CP5 anti-AI audit (2026-07-22)
+
+CP4 briefing written by the PM directly (not a sub-model deliverable) at
+/tmp/draft_p41_cp4_briefing_20260722.txt, covering the full phase: all 10
+commits, diffstat, test/smoke results, all three CP3 rounds, deferred
+items. Before treating any number in it as fact, re-ran the exact three
+commands quoted in its own non-ASCII/vocab-hygiene section against the
+real repo rather than trusting that an earlier, differently-scoped check
+covered the same ground: all three (diff non-ASCII, all-10-commit-message
+non-ASCII, banned-vocab scan) reproduced clean on the literal command as
+written. This caught nothing wrong, but the check was worth doing on its
+own: an earlier pass had scoped one of these to 1f2a613..HEAD (the R3-only
+range) while the briefing claims the full main..HEAD range, and assuming
+the narrower check "should" generalize is exactly the kind of confabulated
+precision (H3) the CP5 audit exists to catch.
+
+Ran the anti-ai-audit skill on the briefing itself. Findings: no
+hallucinations (every number traces to a command actually run in this
+session), no deliberation-trail/plan-ref vocabulary, no bold-header-list
+padding, no rule-of-three artifacts, no generic positive-conclusion
+ending (section 9 ends on a concrete "not done" list, not vague optimism).
+One real AI-smell pattern found: S8 (dash-heavy parentheticals) -- three
+paragraphs (test-count comparison, R2 description, R3 description) each
+had 2 instances of " -- " per paragraph, over the flagged threshold.
+Fixed by splitting into separate sentences or plain commas; re-ran the
+non-ASCII gate after editing (clean, no em-dash introduced by the fix
+itself -- the exact mistake this session made twice earlier on its own
+prose, checked for deliberately this time).
+
+VERDICT: briefing SAFE TO SHIP. CP4 and CP5 both complete.
+
+## Phase status
+
+CP1/CP1b: not applicable this round (no plan review was needed; the fix
+was fully specified by diagnosis, no design ambiguity -- see the R1/R2/R3
+work order framing throughout this file).
+CP2: implicitly satisfied -- every work order's exact line-level
+specification was independently re-verified against real source at each
+delivery (R1, R2, R3 acceptance sections above).
+CP3: closed at 1 clean round (R3) by explicit user proportionality
+decision, after R1 (4 findings) and R2 (3 findings) were fully addressed.
+Smoke test: real-path, PASS (normal/boundary/concurrency).
+CP4: delivery briefing complete, all numbers independently verified.
+CP5: anti-AI audit complete, 1 style fix applied, re-verified clean.
+
+Remaining before merge: user go-ahead. No auto-merge per forge's own
+rule (commits in worktree only; output is branch/SHA/tests, main session
+never merges without being asked).
