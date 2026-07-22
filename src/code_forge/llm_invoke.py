@@ -945,11 +945,13 @@ def _invoke_api(
         # balanced JSON object/array in the raw text as a fallback.
         parsed_content = _extract_json_from_text(content, expected_keys=expected_keys)
         if parsed_content is None:
+            diag = "JSONDecodeError: %s\ncontent[:500]: %r" % (
+                exc, content[:500],
+            )
             raise LLMInvokeError(
-                "API response content is not valid JSON",
+                "API response content is not valid JSON -- %s" % diag,
                 exit_code=0,
-                stderr="JSONDecodeError: %s\ncontent[:500]: %s"
-                % (exc, content[:500]),
+                stderr=diag,
                 duration_s=duration,
             ) from exc
 

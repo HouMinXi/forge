@@ -1702,6 +1702,45 @@ class TestMalformedResponseBody:
         assert "garbage" in str(exc.value)
 
 
+class TestApiNoJsonDiagnostic:
+    """API path must surface model output in str(exc) when JSON parsing fails.
+
+    Bug-injection proof: narrow the message back to the bare literal
+    'API response content is not valid JSON' (no diagnostic interpolated)
+    -- this test must FAIL because 'weather is nice' won't appear in
+    str(exc). The sampling path (llm_invoke.py:1427) already interpolates
+    its diagnostic; this test closes the equivalent gap on the API path.
+    """
+
+    def test_api_no_json_surfaces_content_in_message(self):
+        from code_forge.llm_invoke import _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+
+        def _mock_openai_no_json(*args, **kwargs):
+            return "The weather is nice today.", {
+                "prompt_tokens": 10, "completion_tokens": 5,
+            }
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_mock_openai_no_json):
+            with pytest.raises(LLMInvokeError) as exc_info:
+                _invoke_api(
+                    "prompt", backend, timeout_s=10, max_attempts=1,
+                )
+
+        msg = str(exc_info.value)
+        # The diagnostic must survive str(exc) -- this is the whole point.
+        assert "weather is nice" in msg, (
+            "model output missing from str(exc): %s" % msg,
+        )
+        # The original prefix must still be recognizable.
+        assert "API response content is not valid JSON" in msg
+        # stderr attribute must also carry the diagnostic.
+        assert "weather is nice" in exc_info.value.stderr
+
+
 class TestRetryLoop:
     """_invoke_api retry loop with backoff, jitter, Retry-After, stderr."""
 
