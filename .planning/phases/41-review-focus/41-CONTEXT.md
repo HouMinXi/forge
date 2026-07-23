@@ -1,5 +1,15 @@
 # Phase 41: Review focus -- design-intent header + review-focus emphasis param + git-blame date
 
+> **RECONCILE 2026-07-23 (main @ 89bdb4d).** D5.7 (sampling contract_spec
+> wiring) and the M3 tmpfile-leak fix were split into phase 41-sampling-fix
+> and MERGED (2edb9d4 + 5c8e001). The ground-truth line refs below were
+> verified against 8e18aa0/7d871a5 and are partly stale (mcp_server.py
+> shifted +167 lines; contract tmpfile handling moved into a new
+> `_dispatch_cli`). Item 8 and decision D5.7 in this file are CLOSED (done).
+> Authoritative reconcile detail + the still-valid vs re-plan-needed split
+> is the RECONCILE block at the top of 41-PLAN.md "## Tasks". Task 3b needs a
+> focused re-plan against `_dispatch_cli` before CP1.
+
 ## Goal
 
 Improve review prompt quality: rename contract header for clarity, add date

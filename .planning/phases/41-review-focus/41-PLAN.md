@@ -25,6 +25,48 @@ committer date to blame attribution, and update existing tests for the new behav
 
 ## Tasks
 
+> **RECONCILE 2026-07-23 against main @ 89bdb4d (PM, was ground vs 8e18aa0/
+> 7d871a5). READ BEFORE PLANNING/EXECUTING.** The sampling-contract work
+> that this plan listed as in-scope was split into a separate phase
+> (.planning/phases/41-sampling-fix, ACCEPTANCE present) and MERGED to main
+> as 2edb9d4 + 5c8e001. Two consequences:
+>
+> ALREADY DONE -- do NOT rebuild (verified in main, not inferred):
+> - **D5.7 / Task 3b-5 (sampling contract_spec wiring)**: merged (2edb9d4).
+>   `_dispatch_sampling` (now mcp_server.py:800, was :735) has a
+>   `contract_spec: str = ""` param (:806), merges via `cli._merge_contract_spec`
+>   (:845), and passes it to `build_sampling_l1_provider` (:853/:857). Tests
+>   exist: test_mcp_server.py:2146+ ("Phase 41: contract_spec wiring"). The
+>   entire 3b-5 sub-task is obsolete.
+> - **M3 tmpfile-leak fix + CLI-dispatch centralization**: merged (5c8e001,
+>   "centralize CLI dispatch to close tmpfile leak and two pre-existing
+>   siblings"). Contract tmpfile lifecycle now lives in one place,
+>   `_dispatch_cli` (mcp_server.py:647-697): materialize at :669-672, unlink
+>   on `_run_cli_budgeted` raise at :679/:684, transfer to `start_job` at
+>   :690-692, unlink on `start_job` raise at :697. The plan's "M3 fix" (3b-3)
+>   and its scattered forge_review cleanup sites (old :936-977) are obsolete.
+>
+> IMPLEMENTATION-SHAPE CHANGE for Task 3b (the reason this is not a pure
+> line-number touch-up): focus tmpfile wiring must now MIRROR the contract_tmp
+> lifecycle INSIDE `_dispatch_cli` (:664-697), not the old scattered
+> forge_review sites. This is simpler than the plan's 3b-3/3b-4 text but the
+> text is written against the pre-centralization architecture and must be
+> re-grounded. 3b-4 (start_job dual-file ownership) is still live -- start_job
+> still takes a single `tempfile_path` (mcp_jobs.py:83) -- but the two tmpfiles
+> now both flow through `_dispatch_cli`, so the dual-file handling localizes
+> there. **Task 3b (3b-1..3b-4) needs a focused re-plan against _dispatch_cli
+> BEFORE CP1; this note is the scope of that remaining reconcile, not its
+> completion.**
+>
+> STILL VALID (re-verified unchanged on 89bdb4d): Task 1 header sites
+> (cli.py:780, factories.py:281, factories.py:576 -- all still "## Contract
+> Reference"); Task 2 (git.py:358 git_blame, legacy.py:~232-243 attribution);
+> cli._merge_contract_spec (:1828), cli._load_gate_backends (:118), SEC-02
+> (:1028); trust anchors (hash_backends_block :99, is_trusted :125,
+> hash_contracts_content :243, contracts_hash pattern :286+); cross-module
+> `cli._load_gate_backends` call pattern in mcp_server.py (:243/:292). Task 1,
+> Task 2, Task 3a, Task 3c, Task 4 scope is unaffected by the merge.
+
 **Wave structure:**
 - Wave 1: Task 1 (header rename), Task 2 (blame date), Task 3a (focus plumbing) -- all independent
 - Wave 2: Task 3b (builder wiring + sampling fix) -- depends on 3a (merge helper exists) + Task 1 (renamed header anchor)
