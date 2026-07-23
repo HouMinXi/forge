@@ -394,6 +394,102 @@ Thread `focus_spec` through the full chain:
 Verify: `grep -n "focus_spec" src/code_forge/cli.py src/code_forge/cross_repo.py`
 must show the param at every level.
 
+> **3b-3..3b-5 REPLAN 2026-07-23 (graph-grounded vs main @ ca0d860).
+> IMPLEMENT THIS BLOCK. The 3b-3 / 3b-4 / 3b-5 text below it (down to the
+> "### Task 3c" header) is SUPERSEDED -- kept only for design-decision
+> history; do NOT implement it.** Why: the sampling-fix merge (2edb9d4 +
+> 5c8e001) centralized all CLI-subprocess dispatch into one function and
+> already closed D5.7 + the M3 leak. The old sub-tasks target a
+> pre-centralization architecture that no longer exists.
+>
+> ALREADY DONE in main -- do NOT rebuild (verified, not inferred):
+> - **D5.7 (old 3b-5)**: `_dispatch_sampling` (mcp_server.py:800) has a
+>   `contract_spec` param, merges via `cli._merge_contract_spec`, and passes
+>   it into `build_sampling_l1_provider`. Tests at test_mcp_server.py:2146+.
+> - **M3 tmpfile leak (old 3b-3 "M3 fix")**: `_dispatch_cli`
+>   (mcp_server.py:647-700) owns the whole tmpfile lifecycle -- unlink on
+>   `_run_cli_budgeted` raise, unlink on inline return, transfer to
+>   `start_job` on timeout, unlink both on `start_job` raise. Do NOT re-add
+>   scattered forge_review cleanup.
+>
+> GRAPH GROUND TRUTH (code-review-graph, 2026-07-23): `_dispatch_cli` has
+> exactly THREE production callers -- `forge_review` (call at mcp_server.py
+> :1025), `forge_gate_check` (:1078), and `_dispatch_sampling`'s CLI-fallback
+> branch (:917). All CLI dispatch is centralized there; focus is threaded
+> from each caller and materialized ONCE inside `_dispatch_cli`.
+>
+> **(a) CLI outlet -- focus tmpfile inside `_dispatch_cli`** (replaces old
+> 3b-3 CLI bullet + M3 fix). Add one param `focus: str | None = None` after
+> `contract` in the `_dispatch_cli` signature. Do for `focus` EXACTLY what
+> the function already does for `contract` -- this "mirror the contract_tmp
+> lifecycle" instruction is deliberately symbol-anchored, not line-anchored,
+> so it survives edit drift:
+> ```
+> focus_tmp: str | None = None
+> if focus:
+>     ftmp = tempfile.NamedTemporaryFile(
+>         mode="w", suffix=".md", delete=False, encoding="utf-8"
+>     )
+>     ftmp.write(focus)
+>     ftmp.close()
+>     focus_tmp = ftmp.name
+>     cli_args.extend(["--focus", focus_tmp])
+> ```
+> Then add `_unlink(focus_tmp)` beside every existing `_unlink(contract_tmp)`
+> (the `except BaseException` path, the inline-result path, and the
+> `start_job` `except Exception` path), and pass `focus_tempfile_path=focus_tmp`
+> in the `start_job(...)` call.
+>
+> **(b) start_job dual-file** (replaces old 3b-4). The current code is
+> KEY-based, not list-based: `start_job` (mcp_jobs.py:80) stores each tmpfile
+> under a named dict key, and three consumers iterate the fixed tuple
+> `("tempfile_path", "stderr_log_path")`. Minimal, convention-matching change:
+> add a `focus_tempfile_path: str | None = None` param to `start_job`, store
+> it under key `"focus_tempfile_path"`, and add that key to the iteration
+> tuple in ALL THREE consumers -- `snapshot_tempfile_paths`, `_wait_for_job`'s
+> finally block, and `_evict_stale`. Intentional: a `list[str]` param (old
+> 3b-4's shape) would diverge from the existing key convention and force a
+> rewrite of the three iteration sites; adding one named key is the smaller,
+> consistent change. (INVERSION: forgetting one of the three consumer tuples
+> silently leaks the focus tmpfile on that path -- the bug-injection below
+> targets exactly this.)
+>
+> **(c) Thread focus from the 3 callers** (mirrors how `contract` is passed):
+> - `forge_review` (:1025 call): add a `focus: str = ""` MCP param, merge it
+>   with the gate.yaml `review_focus` field via Task 3a's `_merge_focus_spec`
+>   FIRST, then pass `focus=<merged> or None` (mirror `contract=contract or
+>   None`).
+> - `forge_gate_check` (:1078 call): pass nothing, leave `focus` default --
+>   gate-check has no focus concept, exactly as it passes no `contract`.
+> - `_dispatch_sampling` fallback (:917 call): pass `focus=raw_focus`,
+>   mirroring the existing `contract=raw_contract`.
+>
+> **(d) Sampling in-process outlet -- focus_spec** (parallel to the
+> already-merged contract_spec): add `focus_spec: str = ""` to
+> `_dispatch_sampling` (:800); save `raw_focus = focus_spec` before merge
+> (mirror `raw_contract = contract_spec` at :832 -- the fallback in (c) needs
+> the RAW value); merge via `_merge_focus_spec`; pass `focus_spec=focus_spec`
+> into `build_sampling_l1_provider`. Add `focus_spec: str = ""` to
+> `build_sampling_l1_provider` (factories.py:507) and inject the
+> `## Review Focus` section via `_format_focus_section` (Task 3b-1) after the
+> contract injection, guarded `if focus_spec:`. The forge_review sampling
+> call (mcp_server.py:997-1004, which already passes `contract_spec=contract`)
+> also passes the merged `focus_spec`.
+>
+> **(e) Tests** -- mirror the FIVE existing `_dispatch_cli` contract tests in
+> test_mcp_server.py one-for-one for focus: `..._job_success_keeps_focus`,
+> `..._no_focus_no_tmpfile`, `..._run_raises_unlinks_focus`,
+> `..._run_raises_cancelled_unlinks_focus`, and extend `..._start_job_raises`
+> to assert all THREE tmpfiles (contract + focus + stderr) are unlinked. Plus
+> the cross-outlet parity test: one MCP `focus` input yields identical
+> `## Review Focus` text on the CLI outlet and the sampling outlet.
+>
+> **(f) Bug-injection (Golden Rule 2, at each fix site)**: delete one
+> `_unlink(focus_tmp)` line -> the matching leak test must FAIL; restore ->
+> PASS. Delete `"focus_tempfile_path"` from ONE consumer's iteration tuple ->
+> that consumer's leak test must FAIL. Inject at each site separately; equal-
+> looking coverage collapses the moment you do.
+
 **3b-3. MCP param** -- add `focus: str = ""` to forge_review (next to `contract`,
 mcp_server.py:890). Two outlets, both required (D5.5):
 - CLI-subprocess: mirror the contract temp-file wiring (mcp_server.py:936-943) -- write
