@@ -1732,13 +1732,51 @@ class TestApiNoJsonDiagnostic:
 
         msg = str(exc_info.value)
         # The diagnostic must survive str(exc) -- this is the whole point.
-        assert "weather is nice" in msg, (
-            "model output missing from str(exc): %s" % msg,
-        )
+        assert "weather is nice" in msg, \
+            "model output missing from str(exc): %s" % msg
         # The original prefix must still be recognizable.
         assert "API response content is not valid JSON" in msg
         # stderr attribute must also carry the diagnostic.
         assert "weather is nice" in exc_info.value.stderr
+
+
+class TestCliNoJsonDiagnostic:
+    """CLI path must surface subprocess stdout in str(exc) when JSON parsing
+    fails.
+
+    Bug-injection proof: narrow the message back to the bare literal
+    'LLM subprocess returned non-JSON stdout' (no diagnostic interpolated)
+    -- this test must FAIL because 'prose not json' won't appear in
+    str(exc). Mirrors TestApiNoJsonDiagnostic for the API path.
+    """
+
+    @patch("shutil.which", return_value="/usr/bin/echo")
+    @patch("subprocess.Popen")
+    def test_cli_no_json_surfaces_stdout_in_message(self, mock_popen, _):
+        from code_forge.llm_invoke import _invoke_cli
+
+        mock_proc = Mock()
+        mock_proc.communicate.return_value = (
+            "subprocess emitted this prose not json", "",
+        )
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        backend = BackendConfig(
+            name="local", type="cli", model="m", command="echo",
+        )
+
+        with pytest.raises(LLMInvokeError) as exc_info:
+            _invoke_cli("prompt", backend, timeout_s=10)
+
+        msg = str(exc_info.value)
+        # The diagnostic must survive str(exc) -- this is the whole point.
+        assert "prose not json" in msg, \
+            "stdout missing from str(exc): %s" % msg
+        # The original prefix must still be recognizable.
+        assert "LLM subprocess returned non-JSON stdout" in msg
+        # stderr attribute must also carry the diagnostic.
+        assert "prose not json" in exc_info.value.stderr
 
 
 class TestRetryLoop:

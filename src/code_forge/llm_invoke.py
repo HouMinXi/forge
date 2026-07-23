@@ -779,11 +779,11 @@ def _invoke_cli(
     try:
         parsed = json.loads(stdout)
     except json.JSONDecodeError as exc:
+        diag = "JSONDecodeError: %s\nstdout[:500]: %r" % (exc, stdout[:500])
         raise LLMInvokeError(
-            "LLM subprocess returned non-JSON stdout",
+            "LLM subprocess returned non-JSON stdout -- %s" % diag,
             exit_code=0,
-            stderr="JSONDecodeError: %s\nstdout[:500]: %s"
-            % (exc, stdout[:500]),
+            stderr=diag,
             duration_s=duration,
         ) from exc
 
