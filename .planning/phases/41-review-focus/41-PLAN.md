@@ -298,14 +298,43 @@ worse than a warned-large prompt. Empty + empty returns "".
 - Do NOT touch `hash_backends_block` (24 call sites; conflates credential trust with
   prompt trust -- rejected in D5.6).
 
-**3a-3. gate.yaml source read** -- the review path already holds `gate_data`; do not add a
-new read. Extract `review_focus` from the dict returned by `_load_gate_backends`
-(cli.py:118, which already returns `{}` for an untrusted repo) and gate it:
+**3a-3. gate.yaml source read (H1 fix -- focus trust is INDEPENDENT of backend trust).**
+Do NOT read `review_focus` from `_load_gate_backends`'s `gate_data`: that function
+returns `([], {})` when the backends block is untrusted (cli.py:160), which would
+silently drop a legitimately-trusted `review_focus` and never fire its warning --
+coupling focus to backend trust and defeating the independent focus-trust design
+(D5.6). Read the raw YAML independently and gate ONLY on `is_trusted_focus`.
+
+Add a standalone helper next to `_load_gate_backends` (do NOT fold it in -- that
+function's trust-gated `{}`-on-untrust return is relied on by 24+ callers; leave its
+body and contract untouched):
 ```python
+def _load_gate_yaml_raw(gate_yaml_path: Path) -> dict:
+    """Best-effort parse of gate.yaml with NO trust gating.
+    Returns the parsed dict, or {} if absent / empty / not a dict.
+    Mirrors _load_gate_backends's parse prefix (same YAMLError -> CliError)
+    so both readers agree on syntax errors."""
+    import yaml as _y
+    try:
+        with open(gate_yaml_path, "r", encoding="utf-8") as _f:
+            gd = _y.safe_load(_f)
+    except FileNotFoundError:
+        return {}
+    except _y.YAMLError as exc:
+        raise CliError(
+            "gate.yaml parse error: %s" % exc,
+            remediation="Check gate.yaml syntax. "
+            "Run 'code-forge init --force' to regenerate.",
+        ) from exc
+    return gd if isinstance(gd, dict) else {}
+```
+Then extract + gate focus against the RAW dict (never the backend `gate_data`):
+```python
+focus_gd = _load_gate_yaml_raw(gate_yaml_path)  # NOT backend-trust-gated
 yaml_focus = ""
-raw = gate_data.get("review_focus", "")
+raw = focus_gd.get("review_focus", "")
 if isinstance(raw, str) and raw.strip():
-    if is_trusted_focus(gate_yaml_path, gate_data):
+    if is_trusted_focus(gate_yaml_path, focus_gd):
         yaml_focus = raw
     else:
         warn("gate.yaml review_focus ignored: not trusted. Run 'code-forge trust'.")
@@ -313,13 +342,17 @@ elif raw:  # non-string, non-None: list/dict/int from hand-edited YAML
     warn("gate.yaml review_focus ignored: not a string (got %s). "
          "Use a YAML string value." % type(raw).__name__)
 ```
-Same extraction on the MCP side. For the CLI-subprocess outlet, `gate_data` is
-available at the `forge_review` call site. For the sampling path, `_dispatch_sampling`
-(mcp_server.py:735) does NOT currently hold `gate_data` -- it must call
-`cli._load_gate_backends` itself to extract `review_focus` behind `is_trusted_focus`.
-This is one additional read per sampling review (acceptable; the CLI-subprocess path
-reads gate.yaml inside its forked subprocess anyway). For the sampling path, also load
+All three focus paths use `_load_gate_yaml_raw`: the CLI `_run` path, the
+CLI-subprocess outlet (reads gate.yaml inside its fork), and the sampling path
+(`_dispatch_sampling`, mcp_server.py:800), which needed its own read anyway and now
+uses `_load_gate_yaml_raw` instead of `_load_gate_backends` for focus. Backend loading
+still flows through `_load_gate_backends` unchanged. For the sampling path, also load
 the contracts.yaml digest (see Task 3b for the full data flow).
+
+**Bug-inject (H1 regression guard, Golden Rule 2):** with a repo whose backends block
+is untrusted (edit it after `code-forge trust`) but whose `review_focus` is trusted,
+`## Review Focus` must STILL appear. Revert the focus read to `_load_gate_backends`'s
+`gate_data` -> that test must FAIL; restore -> PASS.
 
 **3a-4. CLI flag** -- add `--focus FILE` next to `--contract` (cli.py:350-355), same
 FILE/stdin convention (`-` = stdin). Define `_load_focus_file(path_or_dash: str) -> str`
@@ -810,8 +843,10 @@ test confirms both outlets call same helpers; >4KB divergence documented.
 - focus wired on all 3 builders and all 4 review paths (outlet_a, outlet_c, cross-repo,
   MCP CLI-subprocess + MCP sampling)
 - Untrusted repo injects no focus; a post-trust `review_focus` edit drops focus with a
-  warning while backends keep loading; a repo without `review_focus` keeps its existing
-  trust record valid; `is_trusted_focus` short-circuits True for empty/absent focus
+  warning while backends keep loading; untrusted BACKENDS with a still-trusted
+  `review_focus` STILL inject focus (focus trust is independent of backend trust -- H1);
+  a repo without `review_focus` keeps its existing trust record valid;
+  `is_trusted_focus` short-circuits True for empty/absent focus
 - Non-string `review_focus` is ignored with a warning, never coerced into the prompt
 - gate.schema.json documents `review_focus`; the schema-corpus test covers it; the init
   template documents it including the re-trust requirement

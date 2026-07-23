@@ -81,8 +81,13 @@ the ds/kimi/lc panel missed:
     defeating the independent focus-trust design (D5.6). All paths hit it
     (3a-3 says the sampling path also calls _load_gate_backends for focus,
     41-PLAN.md:316-319).
-  - STATUS: OPEN. mimo's diff has no _load_gate_backends / 3a-3 change --
-    H1 was never fixed.
+  - STATUS: FIX APPLIED by PM this session (3a-3, 41-PLAN.md:301-355):
+    standalone `_load_gate_yaml_raw` (no trust gating), review_focus read
+    from it and gated ONLY on is_trusted_focus; _load_gate_backends left
+    untouched; all 3 focus paths unified on the raw loader; + an H1
+    bug-inject guard and an acceptance criterion ("untrusted BACKENDS with a
+    still-trusted review_focus STILL inject focus"). The fix is a NEW claim
+    -- round-3 must review it.
 
 gm round-2 (on p41-r2-gm-combined.md): SUMMARY B=0 H=0 M=0 L=0, "ready for
 direct implementation." REFUTED. gm marked its own H1 "fully resolved" on
@@ -123,8 +128,9 @@ also resolves M2's None concern.
 ## Convergence status -- NOT 0/0/0/0 (H1 open)
 
 gm round-2 arrived (0/0/0/0) and was REFUTED on H1 (above). To close CP1b:
-1. Fix H1 in 3a-3 (recommended fix above) -- a NEW confirmed finding, so it
-   RESETS convergence; the corrected plan must go through another round.
+1. H1 fix APPLIED in 3a-3 this session (standalone _load_gate_yaml_raw) --
+   a NEW confirmed finding, so it RESETS convergence; the corrected plan
+   must go through another round to verify the fix.
 2. Re-dispatch round-3 carrying full prior disposition (R1 fixes verified,
    H-claim disproved, M1-wording/L1 addressed, H1 fix new) -- gm via manual
    relay, ds/kimi/lc via aicc. ds/kimi/lc round-2 responses were never
