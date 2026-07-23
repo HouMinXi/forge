@@ -125,22 +125,44 @@ also resolves M2's None concern.
 - Snapshot: planning-local @ b4f5316 after the edits;
   integrity disk=642 == snapshot=642.
 
-## Convergence status -- NOT 0/0/0/0 (H1 open)
+## Round-3 (5-model panel, 2026-07-23) -- reviewing the H1 fix
 
-gm round-2 arrived (0/0/0/0) and was REFUTED on H1 (above). To close CP1b:
-1. H1 fix APPLIED in 3a-3 this session (standalone _load_gate_yaml_raw) --
-   a NEW confirmed finding, so it RESETS convergence; the corrected plan
-   must go through another round to verify the fix.
-2. Re-dispatch round-3 carrying full prior disposition (R1 fixes verified,
-   H-claim disproved, M1-wording/L1 addressed, H1 fix new) -- gm via manual
-   relay, ds/kimi/lc via aicc. ds/kimi/lc round-2 responses were never
-   captured (r2-plan.md/r2-prompt.txt at 08:21 suggest one was prepared;
-   fold them into round-3 if they surface).
+Dispatched the reconciled plan (cp1b-r3-payload.md) to ds/kimi/mm/lc via aicc
++ gm via manual relay. H1 CORE fix confirmed CORRECT by ALL FIVE independently
+(each traced the 6 verification points against real code). No core-logic
+defect. 11 distinct NEW findings, all completeness/robustness, all PM-verified
+against code. Raw responses: cp1b-r3-{ds,mm,kimi,gm,lc}.md.
+
+| #  | src     | sev | gap | fix |
+|----|---------|-----|-----|-----|
+| 1  | ds      | M | _merge_focus_spec missing \n\n separator (3a-1) | mirror _merge_contract_spec:62 |
+| 2  | ds      | L | (e) tests skip _evict_stale/snapshot leak paths | add 2 tests + per-consumer inject notes |
+| 3  | kimi/mm | M | line 772 stale ("_load_gate_backends {}->no focus") | rewrite to is_trusted_focus-gated scenario |
+| 4  | kimi    | M | cli.py:2182 "never re-read gate.yaml raw" invariant conflicts w/ H1 | revise comment to carve out focus exception |
+| 5  | kimi    | M | bug-inject edits non-dangerous field -> is_trusted stays True -> HOLLOW | edit a DANGEROUS_FIELDS field; assert backends dropped first |
+| 6  | kimi    | M | extract+gate duplicated CLI vs sampling; no shared helper (GR4) | new cli._load_trusted_yaml_focus(); both call it |
+| 7  | kimi    | L | branch: whitespace-str warns "not a string"; falsy non-str silently dropped | restructure isinstance/strip branches |
+| 8  | kimi    | L | 3a-4 attributes validation to argparse (--contract has no FileType) | guards live in _load_focus_file (CliError) |
+| 9  | gm      | M | REPLAN(a) 2nd tmpfile created outside try -> leaks 1st on OSError | init both None; creates inside try/except-unlink-both |
+| 10 | gm      | L | is_trusted_focus pseudocode missing store=_load_trust_store() | add the load line |
+| 11 | lc      | L | Task 1 factories.py:576 "unreachable" stale + dangling "Task 3g" | rewrite caveat (reachable post-2edb9d4); delete Task 3g |
+
+Keystone: kimi #6 (shared helper `cli._load_trusted_yaml_focus`) collapses #6 +
+the sampling instantiation + #7 (branch logic fixed once) + part of #4.
+
+## Convergence status -- NOT 0/0/0/0 (round-3 found 11)
+
+Round-2 H1 false-green (above) -> H1 fix applied -> round-3 (5-model) confirmed
+the H1 fix CORRECT but surfaced 11 completeness findings. To close CP1b:
+1. Apply the union fix (11 findings, organized around the shared helper) --
+   a NEW batch of confirmed findings, so convergence stays RESET.
+2. Round-4: re-dispatch carrying round-3 disposition -- panel now
+   kimi/gemini/deepseek (minimax dropped 2026-07-23, no quota; gm manual).
 3. Any new finding -> fix -> next round, per the non-convergence protocol.
 Then: user final human review before /gsd:execute-phase (forge CP1b exit).
 
 Every external verdict, incl. any "0/0/0/0", is a CLAIM verified against code
-before it counts -- H1 is the proof of why (gm self-certified a false green).
+before it counts -- round-2 H1 (gm self-certified a false green) is the proof.
 
 ## /tmp inventory map (campaign 2026-07-23)
 
