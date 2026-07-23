@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.8
 milestone_name: Onboarding + Throughput
 status: active
-stopped_at: main @ 89bdb4d -- sampling-contract fix merged (fast-forward from 8e18aa0, user-executed, ad-hoc defect fix outside the v2.8 17-phase count like the prior contract/memoryerror fix); next per queue Phase 41 (review focus, scope expanded with P4, pre-CP1) unaffected
-last_updated: "2026-07-22T15:30:00.000Z"
-last_activity: 2026-07-22 -- sampling-contract fix (dir 41-sampling-fix, not the roadmap's Phase 41) merged to main: contract_spec wiring through _dispatch_sampling + _dispatch_cli helper unification closing 3 tmpfile/stderr leaks (1 new, 2 pre-existing) + CancelledError gap; CP3 3 rounds (R1 4 findings, R2 3 findings, R3 0 after adjudication, closed at 1 clean round by user proportionality decision); real-path smoke test + CP4 briefing + CP5 anti-AI audit all complete; full details in .planning/phases/41-sampling-fix/41-ACCEPTANCE.md. Separately, Phase 47 (invoke-error-visibility, fleet-reported bug: API-path LLMInvokeError discards its own diagnostic content) opened, worktree + work order dispatched to mimo, fix in progress.
+stopped_at: main @ ca0d860 -- Phase 47 (invoke-error-visibility) merged: API-path + CLI-path LLMInvokeError diagnostic surfaced in str(exc); next per queue Phase 41 (review focus, scope expanded with P4, pre-CP1) unaffected
+last_updated: "2026-07-23T07:00:00.000Z"
+last_activity: 2026-07-23 -- Phase 47 (invoke-error-visibility, fleet-reported bug: API-path + CLI-path LLMInvokeError discards its own diagnostic content) MERGED as ca0d860 (fast-forward from fix/invoke-error-visibility, 2 commits on 89bdb4d). Fix: compute diag once at each raise site, interpolate into message so str(exc) carries it. 2 files, +85/-6. Bug-injection proof at both sites (3-step: PASS/FAIL/PASS). Full suite 2882/8/5. Forge review (deepseek, 3 internal passes). Real-path smoke test: echo binary emits plaintext, JSONDecodeError path confirmed diagnostic in str(exc). Worktree + branch cleanup pending (user-owned).
 progress:
   total_phases: 17
   completed_phases: 15
@@ -330,9 +330,9 @@ SEC-01 resolved in Phase 17 (trust gate shipped).
 
 ## Session Continuity
 
-Last session: 2026-07-11 (execution session)
-Stopped at: Phase 46 committed (f53bf84, feat/doctor-tool-audit, not merged to main)
-Resume: Phase 40 (honest partial results + convergence)
+Last session: 2026-07-23 (execution session)
+Stopped at: Phase 47 merged (ca0d860, fix/invoke-error-visibility, fast-forward to main)
+Resume: Phase 41 (review focus, scope expanded with P4, pre-CP1); queue 41 -> 42
 F-3 binding: DISCHARGED
 
 ---
