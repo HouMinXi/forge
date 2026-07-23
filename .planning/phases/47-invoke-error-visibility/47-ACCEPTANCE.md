@@ -372,6 +372,14 @@ needed, the existing one already caught both.
   4. DONE -- CP4 PM briefing + CP5 audit. See "CP4/CP5" below.
   5. DONE -- rebased onto 89bdb4d, reword folded in, PM-verified. See
      "Rebase onto current main" above.
-  6. No auto-merge; user runs the merge and the branch/worktree cleanup
-     (protect_git_worktree.sh blocks AI branch deletion by design). New tip
-     to merge: ca0d860.
+  6. DONE (merge) / PARTIAL (cleanup). User fast-forwarded main to ca0d860
+     (PM-verified: main tip == ca0d860, both commits present, worktree
+     removed). STILL PENDING: `git branch -d fix/invoke-error-visibility`
+     (the merged branch ref survives; AI cannot delete it by design). A
+     sub-session updated ROADMAP (Phase 47 -> [x]) and STATE (main @
+     ca0d860); PM corrected two drift errors it left: the "2882/8/5" suite
+     line (the 5 was a misplaced warning count in the passed/skipped/FAILED
+     slot -> corrected to 2882/8/0 from the PM's own run) and the stale
+     "main @ 8e18aa0" authoritative pointer in STATE's body (added a
+     2026-07-23 reconcile). v2.8 phase count correctly left at 15/17 --
+     Phase 47 is an out-of-milestone fleet bugfix, 41 and 42 still pending.

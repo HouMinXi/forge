@@ -5,7 +5,7 @@ milestone_name: Onboarding + Throughput
 status: active
 stopped_at: main @ ca0d860 -- Phase 47 (invoke-error-visibility) merged: API-path + CLI-path LLMInvokeError diagnostic surfaced in str(exc); next per queue Phase 41 (review focus, scope expanded with P4, pre-CP1) unaffected
 last_updated: "2026-07-23T07:00:00.000Z"
-last_activity: 2026-07-23 -- Phase 47 (invoke-error-visibility, fleet-reported bug: API-path + CLI-path LLMInvokeError discards its own diagnostic content) MERGED as ca0d860 (fast-forward from fix/invoke-error-visibility, 2 commits on 89bdb4d). Fix: compute diag once at each raise site, interpolate into message so str(exc) carries it. 2 files, +85/-6. Bug-injection proof at both sites (3-step: PASS/FAIL/PASS). Full suite 2882/8/5. Forge review (deepseek, 3 internal passes). Real-path smoke test: echo binary emits plaintext, JSONDecodeError path confirmed diagnostic in str(exc). Worktree + branch cleanup pending (user-owned).
+last_activity: 2026-07-23 -- Phase 47 (invoke-error-visibility, fleet-reported bug: API-path + CLI-path LLMInvokeError discards its own diagnostic content) MERGED as ca0d860 (fast-forward from fix/invoke-error-visibility, 2 commits on 89bdb4d). Fix: compute diag once at each raise site, interpolate into message so str(exc) carries it. 2 files, +85/-6. Bug-injection proof at both sites (3-step: PASS/FAIL/PASS). Full suite 2882/8/0 (passed/skipped/failed; PM-verified independent run, 423.90s). Forge review (deepseek, 3 internal passes, one %s->%r warning dismissed on ground truth). Real-path smoke: real subprocess emits non-JSON stdout, JSONDecodeError path confirmed diagnostic in str(exc). Worktree removed; branch fix/invoke-error-visibility deletion still pending (user-owned).
 progress:
   total_phases: 17
   completed_phases: 15
@@ -28,7 +28,23 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 
 ## Current Position
 
-**RECONCILE 2026-07-20 (authoritative; supersedes everything below).**
+**RECONCILE 2026-07-23 (authoritative main pointer; supersedes the 07-20
+main SHA below).** main @ ca0d860. Phase 47 (invoke-error-visibility, a
+fleet-reported bug outside the v2.8 37-42 set) MERGED fast-forward, 2 commits
+(79907c2 API + ca0d860 CLI), +85/-6. PM-verified independently: bug-injection
+at both raise sites, deepseek CP3 (one warning dismissed on ground truth),
+real-path CLI subprocess smoke, byte-identical rebase, full suite 2882/8/0 at
+423.90s. Full record: .planning/phases/47-invoke-error-visibility/
+47-ACCEPTANCE.md. Because Phase 47 is out-of-milestone, the v2.8 count is
+UNCHANGED at 15/17 (88%) -- the two pending phases are still 41 and 42, and
+the working queue below (41 -> 42) still holds. Cleanup: worktree removed;
+branch fix/invoke-error-visibility still needs `git branch -d` (user-owned).
+Tech debt from this phase logged as TD-9 (kind= asymmetry, latent,
+condition-triggered). The 07-20 block below remains valid for the 41/42 queue
+context; only its "main @ 8e18aa0" pointer is superseded.
+
+**RECONCILE 2026-07-20 (main SHA superseded by 07-23 above; queue + Phase 41
+scope still current).**
 main @ 8e18aa0. Landed since 07-14:
 (1) Phase 40 Honest-partial-results (mechanical half) MERGED 2026-07-16 as
 25b063e. The worktree tip dd6d40f was rebased on the way in -> now a dangling
