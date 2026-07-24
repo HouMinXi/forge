@@ -246,11 +246,13 @@ start `merged = yaml_focus`, then when file_content is present
 value and a file body never fuse into one run-on line (`"short textFile body"`); NO LLM
 summarization (summarizing focus areas destroys the specific areas, which is the whole
 feature); NO "## Do NOT Flag" split; NO confirmation-bias directive (both are
-contract-specific). Size guard: if the merged string exceeds 8192 CHARACTERS
-(`len(merged) > 8192`, matching `_merge_contract_spec`'s `len()` char-count guard at
-cli.py:1861 -- NOT bytes; "bytes" would diverge from `len()` on non-ASCII focus text,
-gm r4), call warn_fn once and pass the text through UN-truncated -- silently dropping
-focus areas is worse than a warned-large prompt. Empty + empty returns "".
+contract-specific). Size guard: if the merged string exceeds 8192 BYTES
+(`len(merged.encode("utf-8")) > 8192`, mirroring `_merge_contract_spec`'s byte-count
+guard `len(effective_content.encode("utf-8")) > 4096` at cli.py:1861 -- same UTF-8 byte
+mechanism, but a larger 8192-byte threshold because focus never summarizes, so this
+guard only warns whereas contract's 4096 is a summarization trigger), call warn_fn once
+and pass the text through UN-truncated -- silently dropping focus areas is worse than a
+warned-large prompt. Empty + empty returns "".
 
 **3a-2. Trust (D5.6)** -- in trust.py, mirroring the contracts pattern at trust.py:243-286:
 - `hash_focus_text(gate_data: dict) -> str`: sha256 of the canonical JSON of

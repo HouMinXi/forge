@@ -255,21 +255,48 @@ PM verification highlights (all against real code, not transcribed):
 - Applied edits: non-ASCII 5 (0 new), fences 24/4 balanced, D1 guard + E raw_focus
   block py_compiled AND executed (name captured before write; raw saved before merge).
 
-## Convergence status -- round-4 union APPLIED, round-5 pending
+## Round-5 (2026-07-24) -- reviewing the R4 union fix
 
-R3 found 11, all fixed -> R4 found 11 MORE, all fixed. NOT converged. Most R4
-findings hit the R3 union edits themselves (B1/M2, M3, M1 in edit-8/7; lc-M1 in
-edit-10) + pre-existing staleness earlier rounds missed (M4, L1-L5) -- this is
-the review catching the PM's own introduced defects, NOT oscillation (no settled
-item re-litigated; each finding is new and code-confirmed). Convergence stays
-RESET. Next:
-1. [DONE] apply the R4 union (11 findings).
-2. Round-5: re-dispatch carrying R4 disposition -- ds/kimi/lc via aicc, gm manual.
+Panel this round: gm + lc returned; ds + kimi both 503 (infra, NOT a verdict).
+- gm: ran WITH repo access this round (agentic Read/grep, not no-repo relay).
+  0/0/0/0 + one NOTE. Record: cp1b-r5-gm.md.
+- lc (aicc): B=0 H=0 M=1 L=0. Record: cp1b-r5-lc.md.
+- ds (aicc): 503 x2 -- DeepSeek upstream busy (gateway 18890 UP, curl 401).
+  Circuit-breaker: stopped after 2 tries, not a verdict.
+- kimi (aicc): 503 -- K2.7 key pool exhausted / TPD (gateway 18888 UP, curl 200).
+  Not a verdict. User chose to WAIT for natural recovery, not substitute glm.
+
+Union = exactly ONE finding, independently CONVERGED (gm NOTE + lc Medium + PM
+ground-truth read of cli.py:1861):
+- [gm+lc+PM] 3a-1 size-guard mislabel: edit A (R4 fix #6) recast the original
+  "8192 bytes" to "8192 CHARACTERS matching cli.py:1861's char-count guard".
+  cli.py:1861 is `len(...encode("utf-8")) > 4096` -- a BYTE count. Wrong unit +
+  contradicted 41-PLAN.md:936. Root cause: the PM marked gm's R4 claim CONFIRMED
+  in round-4 WITHOUT reading :1861 (a Golden-Rule-1 grounding lapse). -> FIXED:
+  reverted to byte-count at the original 8192 threshold
+  (`len(merged.encode("utf-8")) > 8192`), false "gm r4 char-count" rationale
+  deleted, :936 contradiction resolved. Verified: non-ASCII 5 (0 new), fences
+  24/4, all 3 stale char-count strings cleared.
+
+lc corroboration (repo-grounded): all the OTHER R4 edits verified CLEAN --
+D1/D2 (REPLAN(a) lifecycle), F/G (REPLAN(e) tests, evict-stale falsifiable),
+E (raw_focus save), B/C/H/I/J (cross-refs). Only edit A (fix #6) was defective.
+
+## Convergence status -- round-5 union APPLIED, round-6 pending
+
+R3=11 -> R4=11 -> R5=1. Converging hard. Still RESET (1 confirmed finding), but
+the single R5 finding was one already-in-play prose rationale (edit A), not a new
+class, and 10 of 11 R4 edits were independently confirmed clean by lc -- so
+round-6 is a real shot at 0/0/0/0. Next:
+1. [DONE] apply the R5 union (1 finding).
+2. Round-6: re-dispatch carrying R5 disposition. Full panel -- ds/kimi rejoin IF
+   recovered (user: wait, do not substitute glm); gm + lc proven this round.
 3. New finding -> fix -> next round, per the non-convergence protocol.
 Then: user final human review before /gsd:execute-phase (CP1b exit).
 
-META (worth watching): R3=11 and R4=11, several of R4 in the PM's own R3 edits.
-The REPLAN block is pseudocode-heavy; each edit round the PM writes into it risks
-a new precision defect. If R5 also lands >5 new, consider whether the REPLAN
-block should be simplified (fewer verbatim-copy code fences, more symbol-anchored
-prose) rather than iterated further.
+META update: the R3=11 -> R4=11 -> R5=1 drop ARGUES AGAINST simplifying the
+REPLAN block. The pseudocode-heavy blocks (D1/E/F/G) all verified clean by lc
+once written carefully; R5's only finding was a PROSE rationale (edit A) adopted
+from an unverified sub-model claim -- not a copy-paste pseudocode defect. The
+lesson is grounding discipline (read :1861 before asserting a mirror's
+semantics), not block structure.
