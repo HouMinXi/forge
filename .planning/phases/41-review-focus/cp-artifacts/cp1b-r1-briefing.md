@@ -1,10 +1,12 @@
 # Phase 41 (review-focus) -- CP1b external review: PM adjudication
 
-Status: OPEN -- CP1b REFUTED at round-2. gm (human-relayed) round-2 returned
-0/0/0/0 ("ready for direct implementation"), but PM ground truth found that
-verdict rests on a false-green: gm's OWN round-1 [H1] (_load_gate_backends
-wipes review_focus when backends are untrusted) is a REAL, code-confirmed,
-UNFIXED finding. CP1b needs another round after the H1 fix. As of 2026-07-23.
+Status: OPEN -- round-3 union fix APPLIED, awaiting round-4. Round-2 was a gm
+false-green (its own round-1 [H1] retracted with a backwards code claim);
+round-3 (5-model) confirmed the H1 fix core CORRECT and surfaced 11
+completeness findings; ALL 11 are now fixed in 41-PLAN.md and PM-verified
+(non-ASCII 5, fences balanced, shared helper syntax + 4 edge cases executed).
+Next: round-4 to the kimi/gemini/deepseek panel carrying round-3 disposition.
+As of 2026-07-23.
 
 ## Panel and channels (IMPORTANT: gm is human-relayed)
 
@@ -148,15 +150,45 @@ against code. Raw responses: cp1b-r3-{ds,mm,kimi,gm,lc}.md.
 | 11 | lc      | L | Task 1 factories.py:576 "unreachable" stale + dangling "Task 3g" | rewrite caveat (reachable post-2edb9d4); delete Task 3g |
 
 Keystone: kimi #6 (shared helper `cli._load_trusted_yaml_focus`) collapses #6 +
-the sampling instantiation + #7 (branch logic fixed once) + part of #4.
+the sampling instantiation (mm-L) + #7 (branch logic fixed once) + part of #4.
 
-## Convergence status -- NOT 0/0/0/0 (round-3 found 11)
+## Round-3 union fix -- APPLIED 2026-07-23 (PM, in 41-PLAN.md)
 
-Round-2 H1 false-green (above) -> H1 fix applied -> round-3 (5-model) confirmed
-the H1 fix CORRECT but surfaced 11 completeness findings. To close CP1b:
-1. Apply the union fix (11 findings, organized around the shared helper) --
-   a NEW batch of confirmed findings, so convergence stays RESET.
-2. Round-4: re-dispatch carrying round-3 disposition -- panel now
+All 11 landed as plan-document edits; each verified against real source before
+writing (line numbers re-derived, not transcribed from the relay):
+- #6+#7+#4+mm-L -> keystone: new `_load_trusted_yaml_focus(gate_yaml_path,
+  warn_fn)` helper in 3a-3 (raw load + trust-gate + fixed branch); CLI `_run`
+  and `_dispatch_sampling` both call it; 3b(d) now shows the explicit sampling
+  call block (workspace/staged in scope, computes gate_yaml_path, mirrors the
+  :847 warn lambda); invariant comment cli.py:2182-2184 carve-out instructed.
+- #1 -> 3a-1 `_merge_focus_spec` gets the `(merged + "\n\n" if merged else "")`
+  separator, mirroring `_merge_contract_spec` (cli.py:1889, verified).
+- #5 -> 3a-3 bug-inject now edits a DANGEROUS_FIELDS field (base_url) so
+  is_trusted actually flips; asserts "Untrusted repo backends ignored" first.
+- #9 -> REPLAN(a): both tmpfiles None-init, created inside one try/except that
+  unlinks both (contract_tmp is created pre-try at mcp_server.py:664-672, verified).
+- #2 -> REPLAN(e): added _evict_stale (TTL) + snapshot_tempfile_paths leak tests.
+- #3 -> 3c-2 stale row rewritten to the is_trusted_focus-gated scenario, kept
+  distinct from the H1 acceptance row (no shared fixture).
+- #8 -> 3a-4 attribution corrected: guards live in `_load_focus_file` (--contract
+  has no argparse FileType, cli.py:351, verified).
+- #10 -> is_trusted_focus pseudocode gets `store = _load_trust_store()` (real
+  loader name, trust.py:131, verified) after the short-circuit.
+- #11 -> Task 1 caveat rewritten: factories.py:576 reachable post-2edb9d4;
+  dangling "Task 3g" deleted.
+
+Ground-truth proof beyond static: the shared helper pseudocode was extracted,
+py_compile'd, and RUN on 4 edge cases -- whitespace-str silent, empty-list
+warns "not a string", trusted-str returned, untrusted-str warns "not trusted"
+-- all PASS. This is the #7 branch fix proven by execution, not narration.
+
+## Convergence status -- round-3 union APPLIED, round-4 pending
+
+Round-2 H1 false-green -> H1 fix -> round-3 (5-model) confirmed H1 core CORRECT,
+found 11 completeness gaps -> ALL 11 now fixed and PM-verified. Because this is
+a NEW batch of confirmed findings, convergence stays RESET. To close CP1b:
+1. [DONE] Apply the union fix (11 findings, organized around the shared helper).
+2. Round-4: re-dispatch carrying this round-3 disposition -- panel now
    kimi/gemini/deepseek (minimax dropped 2026-07-23, no quota; gm manual).
 3. Any new finding -> fix -> next round, per the non-convergence protocol.
 Then: user final human review before /gsd:execute-phase (forge CP1b exit).

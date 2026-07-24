@@ -102,11 +102,13 @@ tests/test_contract_wiring.py (+ factories prompt tests)
    cli.py path; verify whether the build_l1_provider and build_sampling_l1_provider
    prompt paths are asserted anywhere -- add a prompt-content assertion for any
    uncovered builder, else the factories renames ship unverified.
-   Caveat for the third site: factories.py:576 is currently UNREACHABLE in production --
-   its only caller (mcp_server.py:765) passes no contract_spec (see 41-CONTEXT D5.7). It
-   can therefore only be covered by a direct unit test of the builder, never end-to-end.
-   Do not write a test that claims e2e coverage of that path. Task 3g fixes the caller;
-   if 3g lands first, an e2e assertion becomes possible -- state which one the test is.
+   Caveat for the third site: post-2edb9d4 (the sampling contract_spec merge -- see the
+   RECONCILE note above), `build_sampling_l1_provider`'s caller `_dispatch_sampling`
+   (mcp_server.py:800) DOES pass `contract_spec`, so factories.py:576 is reachable
+   end-to-end on the sampling path when a contract is provided; it is also unit-testable
+   on the builder directly. Prefer the direct builder unit test for the header assertion
+   (no LLM sampling round-trip needed); an e2e sampling assertion is additionally possible
+   if desired -- state which one the test is.
 
 4. Bug-inject (Golden Rule 2): revert ONE of the 3 sites to "Contract Reference" ->
    its covering test FAILS -> restore -> PASSES. Repeat PER SITE; a single-site inject
@@ -234,12 +236,16 @@ the number alone.
 
 **3a-1. Merge helper** -- new `_merge_focus_spec(yaml_focus: str, file_content: str,
 warn_fn) -> str` in cli.py, placed next to `_merge_contract_spec` (cli.py:1828).
-Mirrors its shape but is deliberately simpler (D5.2): concatenate yaml_focus then
-file_content; NO LLM summarization (summarizing focus areas destroys the specific areas,
-which is the whole feature); NO "## Do NOT Flag" split; NO confirmation-bias directive
-(both are contract-specific). Size guard: if the merged string exceeds 8192 bytes, call
-warn_fn once and pass the text through UN-truncated -- silently dropping focus areas is
-worse than a warned-large prompt. Empty + empty returns "".
+Mirrors its shape but is deliberately simpler (D5.2): join yaml_focus then file_content
+with a blank-line separator EXACTLY as `_merge_contract_spec` does (cli.py:1889) --
+start `merged = yaml_focus`, then when file_content is present
+`merged = (merged + "\n\n" if merged else "") + file_content` -- so a newline-less yaml
+value and a file body never fuse into one run-on line (`"short textFile body"`); NO LLM
+summarization (summarizing focus areas destroys the specific areas, which is the whole
+feature); NO "## Do NOT Flag" split; NO confirmation-bias directive (both are
+contract-specific). Size guard: if the merged string exceeds 8192 bytes, call warn_fn
+once and pass the text through UN-truncated -- silently dropping focus areas is worse
+than a warned-large prompt. Empty + empty returns "".
 
 **3a-2. Trust (D5.6)** -- in trust.py, mirroring the contracts pattern at trust.py:243-286:
 - `hash_focus_text(gate_data: dict) -> str`: sha256 of the canonical JSON of
@@ -252,6 +258,7 @@ worse than a warned-large prompt. Empty + empty returns "".
   current = hash_focus_text(gate_data)
   if not current:        # absent or empty -> nothing to authorize
       return True
+  store = _load_trust_store()   # same loader is_trusted uses (trust.py:131)
   entry = store.get(str(gate_yaml_path.resolve()))  # MUST match is_trusted key format
   if entry is None:      # repo never ran trust -> not trusted
       return False
@@ -328,37 +335,80 @@ def _load_gate_yaml_raw(gate_yaml_path: Path) -> dict:
         ) from exc
     return gd if isinstance(gd, dict) else {}
 ```
-Then extract + gate focus against the RAW dict (never the backend `gate_data`):
+Then wrap extract + trust-gate into ONE shared helper next to `_load_gate_yaml_raw`, so
+the CLI path and the sampling path cannot drift (GR4 -- the extract/gate/warn logic is
+this feature's security boundary and must not be hand-copied into two call sites):
 ```python
-focus_gd = _load_gate_yaml_raw(gate_yaml_path)  # NOT backend-trust-gated
-yaml_focus = ""
-raw = focus_gd.get("review_focus", "")
-if isinstance(raw, str) and raw.strip():
-    if is_trusted_focus(gate_yaml_path, focus_gd):
-        yaml_focus = raw
-    else:
-        warn("gate.yaml review_focus ignored: not trusted. Run 'code-forge trust'.")
-elif raw:  # non-string, non-None: list/dict/int from hand-edited YAML
-    warn("gate.yaml review_focus ignored: not a string (got %s). "
-         "Use a YAML string value." % type(raw).__name__)
-```
-All three focus paths use `_load_gate_yaml_raw`: the CLI `_run` path, the
-CLI-subprocess outlet (reads gate.yaml inside its fork), and the sampling path
-(`_dispatch_sampling`, mcp_server.py:800), which needed its own read anyway and now
-uses `_load_gate_yaml_raw` instead of `_load_gate_backends` for focus. Backend loading
-still flows through `_load_gate_backends` unchanged. For the sampling path, also load
-the contracts.yaml digest (see Task 3b for the full data flow).
+def _load_trusted_yaml_focus(gate_yaml_path: Path, warn_fn) -> str:
+    """Return the trusted review_focus string from gate.yaml, or "".
 
-**Bug-inject (H1 regression guard, Golden Rule 2):** with a repo whose backends block
-is untrusted (edit it after `code-forge trust`) but whose `review_focus` is trusted,
-`## Review Focus` must STILL appear. Revert the focus read to `_load_gate_backends`'s
-`gate_data` -> that test must FAIL; restore -> PASS.
+    Reads gate.yaml with NO backend-trust gating (via _load_gate_yaml_raw),
+    then authorizes review_focus ONLY through is_trusted_focus -- so focus
+    trust is independent of backend trust (H1/D5.6). Warns and returns ""
+    when review_focus is present-but-untrusted or a non-string value."""
+    focus_gd = _load_gate_yaml_raw(gate_yaml_path)  # NOT backend-trust-gated
+    raw = focus_gd.get("review_focus", "")
+    if isinstance(raw, str):
+        if not raw.strip():
+            return ""  # absent / empty / whitespace-only: nothing to inject
+        if is_trusted_focus(gate_yaml_path, focus_gd):
+            return raw
+        warn_fn("gate.yaml review_focus ignored: not trusted. "
+                "Run 'code-forge trust'.")
+        return ""
+    if raw is not None:  # list / dict / int from hand-edited YAML
+        warn_fn("gate.yaml review_focus ignored: not a string (got %s). "
+                "Use a YAML string value." % type(raw).__name__)
+    return ""
+```
+Branch shape is deliberate -- it fixes two edge bugs a naive `if raw.strip(): ... elif
+raw:` has: (1) a whitespace-only value IS a string, so it takes the `isinstance` branch
+and returns "" silently -- it must NOT fall through to the "not a string" warning;
+(2) a falsy NON-string (`[]`, `{}`, `0`) is caught by `raw is not None` and DOES warn,
+matching the 3c-2 test row "list, dict, int -> ignored with warning" (a bare `elif raw:`
+silently drops these and fails that test).
+
+Both focus-reading paths call this ONE helper as `yaml_focus =
+_load_trusted_yaml_focus(gate_yaml_path, warn)`: (1) the CLI `_run` path (which also
+serves the CLI-subprocess outlet -- the fork re-enters `_run` and reads gate.yaml
+there); and (2) the sampling path, as `cli._load_trusted_yaml_focus(gate_yaml_path,
+warn)` inside `_dispatch_sampling` (mcp_server.py:800), gated
+`if not staged and gate_yaml_path.is_file():` -- parallel to the existing contracts.yaml
+load at mcp_server.py:837-839, and shown as an explicit call site in Task 3b (d).
+Backend loading still flows through `_load_gate_backends` unchanged. For the sampling
+path, also load the contracts.yaml digest (see Task 3b for the full data flow).
+
+**Invariant-comment carve-out (do this in the SAME edit as the CLI read):** the H1
+read adds a SECOND raw gate.yaml read inside `_run`, which the comment at
+cli.py:2182-2184 ("Never re-read gate.yaml raw after this point -- a second read
+bypasses the trust check") forbids. Place the `_load_trusted_yaml_focus(gate_yaml_path,
+warn)` call next to the contract file read at cli.py:2195-2200, and revise that comment
+to carve out the focus exception, e.g.: "...never re-read gate.yaml raw for BACKEND
+consumption; the review_focus read below is gated separately by is_trusted_focus (D5.6),
+independent of backend trust." Without the revision an implementer either leaves a
+self-contradicting comment or -- worse -- obeys it and reverts focus to the trust-gated
+`gate_data`, silently re-introducing H1.
+
+**Bug-inject (H1 regression guard, Golden Rule 2):** set up a repo, run `code-forge
+trust`, THEN edit a DANGEROUS_FIELDS backend field (e.g. change `base_url:` in gate.yaml
+-- the hashed set is trust.py:23-31) so `is_trusted` actually flips to False and
+`_load_gate_backends` returns `([], {})`. Leave `review_focus` unchanged (still trusted).
+The test asserts BOTH, in order: (1) backends were dropped -- stderr contains "Untrusted
+repo backends ignored" (emitted by `_load_gate_backends`); (2) `## Review Focus` STILL
+appears. Then revert the focus read to `_load_gate_backends`'s `gate_data` -> step (2)
+must FAIL; restore -> PASS. CRITICAL: the inject MUST target a dangerous field. Editing
+`model`/`temperature` does NOT flip `is_trusted` (`hash_backends_block` hashes only
+DANGEROUS_FIELDS, trust.py:99-122), so `gate_data` stays non-empty and the reverted-code
+test would still PASS -- a hollow guard that proves nothing.
 
 **3a-4. CLI flag** -- add `--focus FILE` next to `--contract` (cli.py:350-355), same
 FILE/stdin convention (`-` = stdin). Define `_load_focus_file(path_or_dash: str) -> str`
-mirroring `_load_contract_file`: read file content from path, or stdin if `-`. No new
-error handling needed beyond what argparse FILE type provides (missing file → argparse
-error, binary content → UTF-8 decode error). Then
+mirroring `_load_contract_file` (cli.py:1666): read file content from path, or stdin if
+`-`. All guards live in `_load_focus_file`, mirroring `_load_contract_file`'s CliError
+behavior -- `--contract` (cli.py:351) has NO `type=argparse.FileType`, so argparse does
+no validation; missing-file, binary-content, oversize, and stdin handling all raise
+CliError inside the loader. Do NOT add `type=argparse.FileType` to `--focus`: it would
+hand `_load_focus_file` an open file object and break the `-`=stdin convention. Then
 `focus_spec = _merge_focus_spec(yaml_focus, file_content, warn)` at the two existing
 merge sites, mirroring `_contract_spec_c` (cli.py:2063) and `_contract_spec_a` (cli.py:2422).
 
@@ -478,22 +528,44 @@ must show the param at every level.
 > `contract` in the `_dispatch_cli` signature. Do for `focus` EXACTLY what
 > the function already does for `contract` -- this "mirror the contract_tmp
 > lifecycle" instruction is deliberately symbol-anchored, not line-anchored,
-> so it survives edit drift:
+> so it survives edit drift.
+>
+> LEAK TRAP (gm r3): `contract_tmp` is created BEFORE the dispatch `try`
+> (mcp_server.py:664-672; the `try` starts :674 and its `except BaseException:
+> _unlink(contract_tmp)` only covers the dispatch call, not creation). Adding
+> a SECOND pre-try creation for `focus_tmp` widens this: an OSError while
+> creating/writing focus_tmp would leak the already-created contract_tmp,
+> because that except never runs. So initialize BOTH to None and wrap BOTH
+> creations in one guard that unlinks whichever exists on failure:
 > ```
+> contract_tmp: str | None = None
 > focus_tmp: str | None = None
-> if focus:
->     ftmp = tempfile.NamedTemporaryFile(
->         mode="w", suffix=".md", delete=False, encoding="utf-8"
->     )
->     ftmp.write(focus)
->     ftmp.close()
->     focus_tmp = ftmp.name
->     cli_args.extend(["--focus", focus_tmp])
+> try:
+>     if contract:
+>         tmp = tempfile.NamedTemporaryFile(
+>             mode="w", suffix=".md", delete=False, encoding="utf-8"
+>         )
+>         tmp.write(contract); tmp.close()
+>         contract_tmp = tmp.name
+>         cli_args.extend(["--contract", contract_tmp])
+>     if focus:
+>         ftmp = tempfile.NamedTemporaryFile(
+>             mode="w", suffix=".md", delete=False, encoding="utf-8"
+>         )
+>         ftmp.write(focus); ftmp.close()
+>         focus_tmp = ftmp.name
+>         cli_args.extend(["--focus", focus_tmp])
+> except BaseException:
+>     _unlink(contract_tmp); _unlink(focus_tmp)
+>     raise
 > ```
-> Then add `_unlink(focus_tmp)` beside every existing `_unlink(contract_tmp)`
-> (the `except BaseException` path, the inline-result path, and the
-> `start_job` `except Exception` path), and pass `focus_tempfile_path=focus_tmp`
-> in the `start_job(...)` call.
+> (`_unlink` already no-ops on None -- the current code calls
+> `_unlink(contract_tmp)` with `contract_tmp=None` whenever `contract` is
+> absent, so passing an un-created sibling is safe.) Then add `_unlink(
+> focus_tmp)` beside every existing `_unlink(contract_tmp)` in the DISPATCH
+> try (the `except BaseException` path, the inline-result path, and the
+> `start_job` `except Exception` path), and pass `focus_tempfile_path=
+> focus_tmp` in the `start_job(...)` call.
 >
 > **(b) start_job dual-file** (replaces old 3b-4). The current code is
 > KEY-based, not list-based: `start_job` (mcp_jobs.py:80) stores each tmpfile
@@ -545,6 +617,25 @@ must show the param at every level.
 > and the yaml_focus extraction is skipped for gate-check, so its prompt
 > never contains "## Review Focus".
 >
+> Explicit load block (mm r3 -- show the call, not just the policy), parallel
+> to the contracts.yaml load at mcp_server.py:837-839. `_dispatch_sampling`
+> has `workspace` and `staged` in scope but NO `gate_yaml_path` / `warn`
+> local, so compute the path and mirror the real inline warn lambda (:847):
+> ```
+> gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
+> yaml_focus = ""
+> if not staged and gate_yaml_path.is_file():
+>     yaml_focus = cli._load_trusted_yaml_focus(
+>         gate_yaml_path,
+>         lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush()),
+>     )
+> ```
+> Then merge with the raw MCP focus (the (d) step): `focus_spec =
+> cli._merge_focus_spec(yaml_focus, raw_focus, warn_fn=...)`. Reading focus via
+> the shared `_load_trusted_yaml_focus` (Task 3a-3) -- NOT `_load_gate_backends`'s
+> trust-gated dict -- is what keeps the sampling outlet's focus trust identical
+> to the CLI outlet's; the wrong loader here silently re-introduces H1.
+>
 > **(e) Tests** -- mirror the FIVE existing `_dispatch_cli` contract tests in
 > test_mcp_server.py one-for-one for focus: `..._job_success_keeps_focus`,
 > `..._no_focus_no_tmpfile`, `..._run_raises_unlinks_focus`,
@@ -555,6 +646,18 @@ must show the param at every level.
 > NOT a merged value. This catches the double-merge regression that the (c)/(d)
 > fixes address. Plus the cross-outlet parity test: one MCP `focus` input yields
 > identical `## Review Focus` text on the CLI outlet and the sampling outlet.
+>
+> Per-consumer leak tests (gm/ds r3): the FIVE tests above all exercise the
+> `_dispatch_cli` scenarios, but (b) adds `"focus_tempfile_path"` to THREE
+> consumer tuples and only one (`_wait_for_job`'s finally) is hit by those
+> tests -- so a dropped tuple entry in the other two ships silently, and (f)'s
+> per-consumer inject would have no test to fail against. Add one test each for
+> the two uncovered consumers: (i) drive `_evict_stale` via TTL expiry (small
+> `max_lifetime_s`) on a job carrying a focus tmpfile, then assert that tmpfile
+> is unlinked; (ii) assert `snapshot_tempfile_paths` returns the job's
+> `focus_tempfile_path` (this feeds the lifespan pre-shutdown cleanup at
+> mcp_server.py:136). With all three consumers individually covered, (f)'s
+> per-consumer inject targets a test that actually fails.
 >
 > **(f) Bug-injection (Golden Rule 2, at each fix site)**: delete one
 > `_unlink(focus_tmp)` line -> the matching leak test must FAIL; restore ->
@@ -769,7 +872,11 @@ ships as a silent no-op:
 - Trust command: sampling-only gate.yaml (no backends, has review_focus) -> trust
   succeeds and records focus_hash; gate.yaml with neither backends nor review_focus
   -> trust fails with error.
-- Untrusted repo: `_load_gate_backends` returns `{}` -> no focus injected.
+- No trust record (or a post-trust-edited / untrusted `review_focus`): focus is dropped
+  with a warning by `is_trusted_focus` (NOT by `_load_gate_backends` returning `{}` --
+  that coupling was the H1 bug). Backend loading is unaffected. This is a SEPARATE
+  fixture from the H1 row above (untrusted BACKENDS + still-trusted focus -> focus STILL
+  injects): the two assert independent trust domains and must not share a fixture.
 - Non-string `review_focus` (list, dict, int) -> ignored with warning, never coerced.
 - MCP: focus writes a temp file and adds `--focus <path>` to cli_args (CLI outlet);
   focus reaches the sampling builder (sampling outlet); sampling fallback on
