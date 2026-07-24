@@ -1,12 +1,15 @@
 # Phase 41 (review-focus) -- CP1b external review: PM adjudication
 
-Status: OPEN -- round-3 union fix APPLIED, awaiting round-4. Round-2 was a gm
-false-green (its own round-1 [H1] retracted with a backwards code claim);
-round-3 (5-model) confirmed the H1 fix core CORRECT and surfaced 11
-completeness findings; ALL 11 are now fixed in 41-PLAN.md and PM-verified
-(non-ASCII 5, fences balanced, shared helper syntax + 4 edge cases executed).
-Next: round-4 to the kimi/gemini/deepseek panel carrying round-3 disposition.
-As of 2026-07-23.
+Status: OPEN -- round-4 union fix APPLIED, awaiting round-5. Round-3 (5-model)
+confirmed the H1 fix core CORRECT + 11 completeness findings, all fixed. Round-4
+(panel: ds/kimi/gm/lc; +longcat, minimax dropped, gm now via manual relay after
+aicc-direct produced only an agentic preamble) confirmed all 11 R3 fixes correct
+and surfaced 11 MORE (dedup): 3 independently converged (evict-knob ds+kimi,
+name-after-write kimi+gm, stale-:765-table kimi+gm). ALL 11 now fixed in
+41-PLAN.md and PM-verified (non-ASCII 5, fences 24/4 balanced, D1+E pseudocode
+py_compiled + executed). Most R4 findings hit the R3 union edits themselves --
+the review catching the PM's own introduced defects. Next: round-5.
+As of 2026-07-24.
 
 ## Panel and channels (IMPORTANT: gm is human-relayed)
 
@@ -213,3 +216,60 @@ Left in /tmp (noise / superseded, deliberately not migrated):
   embed the whole plan; the plan already lives in 41-PLAN.md, not duplicated.
 - p41-* dated 2026-07-20 / 07-21 -- the earlier pre-reconcile review
   campaign (r1..r6), superseded by this CP1b run.
+
+## Round-4 (2026-07-24) -- reviewing the R3 union fix
+
+Panel change: minimax DROPPED (no quota); longcat (lc) ADDED; kimi on the K2.7
+key pool (aicc default, 20-key rotation). gm-aicc-direct was TRIED this round
+and DISPROVED -- OmniRoute gemini goes agentic and print-mode captured only a
+195-byte preamble ("I will run a script to verify..."), unusable. gm reverted to
+HUMAN RELAY with a no-repo prompt variant (cp1b-r4-prompt-manual.md); it produced
+real findings by reasoning, marking unverifiable ones [INFERRED]. So R4 channels:
+ds/kimi/lc = aicc; gm = manual relay (NOT aicc). Raw: cp1b-r4-{ds,kimi,gm,lc}.md.
+
+All 4 reviewers confirmed the 11 R3 fixes correct. 11 NEW findings (dedup),
+every one PM-verified against real source before acceptance:
+
+| # | src (converge) | sev | gap | fix applied |
+|---|----------------|-----|-----|-------------|
+| B1/M2 | ds+kimi | Blocker/M | `_evict_stale` test used `max_lifetime_s` (=`_wait_for_job` cap :227), not `_JOB_TTL_SECONDS` (:74/:345); finally preempts -> false-green, inject disarmed | REPLAN(e)(i): inject stale `_jobs` entry / monkeypatch TTL, call `_evict_stale`/`get_job` directly |
+| M3/H1 | kimi+gm | High/M | REPLAN(a) `*_tmp = .name` AFTER write -> write-failure leaks (guard's own invariant unmet) | capture `.name` BEFORE write (verified :671 real ordering) |
+| M1 | kimi | M | inline `_unlink` site (:684) untested: 5 mirror tests all job/raise; inline test :595 asserts not-None only | REPLAN(e): add 6th inline-path deletion test |
+| M4 | kimi | M | 3a-2 msg change breaks test_trust_empty_backends.py:51/:64 verbatim asserts | 3c-2: add assert-update line |
+| lc-M1 | lc | M | 3b(d) block omitted `raw_focus = focus_spec` save -> verbatim copy re-doubles merge | add save line to block (verified :832 raw_contract pattern) |
+| L1/M | kimi+gm | L/M | 3b-1 table sampling row cites stale :765; real call :853 | table -> symbol anchor :853-857 |
+| L2 | kimi | L | 3a-3 "also load contracts.yaml digest" reads as new work; exists :837-842 | mark "already exists, do NOT re-add" |
+| L3 | kimi | L | Task 3b header "Fixes pre-existing gap" contradicts RECONCILE (2edb9d4) | reword -> "already fixed, see RECONCILE" |
+| L4 | kimi | L | Task 2c omits test_legacy.py:262 docstring (old format) update | 2c: add docstring update |
+| L5 | kimi | L | REPLAN(a) omits `_dispatch_cli` docstring (contract-only) update | REPLAN(a): add docstring update |
+| gm-L | gm | L | 3a-1 "8192 bytes" vs mirror `len()` char count | reword -> "8192 characters" |
+
+PM verification highlights (all against real code, not transcribed):
+- B1/M2: mcp_jobs.py:74 (`_JOB_TTL_SECONDS`), :227 (`max_lifetime_s` in `_wait_for_job`),
+  :116 (`get_job` calls `_evict_stale`), :341-359 (evict gates on TTL + terminal only).
+- M3: mcp_server.py:671 assigns contract_tmp AFTER write :669 -- real ordering confirmed.
+- M1: test_mcp_server.py:595-619 inline test asserts `written_path is not None` only;
+  the 5 dispatch_cli tests are all job/raise.
+- M4: test_trust_empty_backends.py:51/:64 assert old string; cli.py:1176 real message.
+- lc-M1: mcp_server.py:832 `raw_contract = contract_spec` -- the pattern to mirror.
+- Applied edits: non-ASCII 5 (0 new), fences 24/4 balanced, D1 guard + E raw_focus
+  block py_compiled AND executed (name captured before write; raw saved before merge).
+
+## Convergence status -- round-4 union APPLIED, round-5 pending
+
+R3 found 11, all fixed -> R4 found 11 MORE, all fixed. NOT converged. Most R4
+findings hit the R3 union edits themselves (B1/M2, M3, M1 in edit-8/7; lc-M1 in
+edit-10) + pre-existing staleness earlier rounds missed (M4, L1-L5) -- this is
+the review catching the PM's own introduced defects, NOT oscillation (no settled
+item re-litigated; each finding is new and code-confirmed). Convergence stays
+RESET. Next:
+1. [DONE] apply the R4 union (11 findings).
+2. Round-5: re-dispatch carrying R4 disposition -- ds/kimi/lc via aicc, gm manual.
+3. New finding -> fix -> next round, per the non-convergence protocol.
+Then: user final human review before /gsd:execute-phase (CP1b exit).
+
+META (worth watching): R3=11 and R4=11, several of R4 in the PM's own R3 edits.
+The REPLAN block is pseudocode-heavy; each edit round the PM writes into it risks
+a new precision defect. If R5 also lands >5 new, consider whether the REPLAN
+block should be simplified (fewer verbatim-copy code fences, more symbol-anchored
+prose) rather than iterated further.

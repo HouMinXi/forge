@@ -1,3 +1,91 @@
+# forge Phase 41 -- CP1b ROUND-4 plan review (manual relay, no repo access)
+
+You are reviewing an IMPLEMENTATION PLAN (the document that follows). It
+describes changes to a Python codebase you do NOT have live access to. Review
+the PLAN as a document: reason from its own claims, its cited `file:line`
+references, and your engineering judgment about Python / asyncio / tempfile /
+trust-hash patterns. Where a finding depends on actual code you cannot see, say
+so explicitly ("unverified -- depends on <file> real behavior") rather than
+asserting it as fact. A well-reasoned "this looks inconsistent, confirm X" beats
+a confident guess. A clean 0/0/0/0 is a valid result if the plan holds.
+
+## What this feature is
+
+Phase 41 adds a `review_focus` prompt mechanism at parity with `--contract`:
+gate.yaml `review_focus:` (with its OWN trust hash, independent of backend
+trust), a `--focus FILE` CLI flag, and a `focus` MCP param, all merging into a
+"## Review Focus" prompt section on 3 builders / 4 review paths. It also renames
+"## Contract Reference" -> "## Design Intent" and adds a committer date to
+git-blame.
+
+## Round-3 disposition (READ before reviewing -- do NOT re-report these as open)
+
+Round-3 (5 models) confirmed the core H1 fix CORRECT (focus trust decoupled from
+backend trust via a raw gate.yaml read) and found 11 completeness findings, ALL
+now FIXED in the plan below. Do NOT re-raise them unless you judge the FIX itself
+wrong:
+
+1. `_merge_focus_spec` missing `\n\n` separator -> FIXED 3a-1 (mirrors
+   `_merge_contract_spec`).
+2. tests skipped `_evict_stale`/`snapshot_tempfile_paths` leak paths -> FIXED
+   REPLAN(e).
+3. a 3c-2 test row described pre-H1 behavior -> FIXED (is_trusted_focus scenario).
+4. "never re-read gate.yaml raw" invariant conflicted with the H1 read -> FIXED
+   (3a-3 carves out the focus exception).
+5. H1 bug-inject edited a non-dangerous field (hollow) -> FIXED (edits a
+   DANGEROUS_FIELDS field, asserts backends dropped first).
+6. extract+gate duplicated CLI vs sampling -> FIXED: shared helper
+   `_load_trusted_yaml_focus`; both paths call it.
+7. branch logic bug (whitespace-str mislabeled, falsy non-str silently dropped)
+   -> FIXED inside the helper. (The plan author already executed 4 edge cases --
+   whitespace silent, empty-list warns, trusted returns, untrusted warns -- all
+   pass; do not re-litigate unless you find a NEW input class.)
+8. 3a-4 mis-attributed validation to argparse -> FIXED (guards in
+   `_load_focus_file`).
+9. REPLAN(a) second tmpfile created outside the cleanup try leaks the first ->
+   FIXED (both created inside one try/except-unlink-both).
+10. is_trusted_focus pseudocode omitted the trust-store load -> FIXED.
+11. Task 1 "unreachable factories.py:576" + dangling "Task 3g" -> FIXED.
+
+Do NOT resurrect: round-2 claimed H1 "fully resolved" via a backwards reading of
+`_load_gate_backends` (it returns `([], {})` when untrusted, NOT `(cfgs, gd)`);
+that false-green is exactly why H1 was fixed.
+
+## Review this hardest (the 11 fixes CHANGED plan text -- attack the changes)
+
+A. The shared helper `_load_trusted_yaml_focus` (3a-3): does ONE helper correctly
+   serve BOTH the CLI path and the sampling path? The plan (3b(d)) shows a
+   sampling call block that computes `gate_yaml_path` and uses an inline warn
+   lambda. Is the block's logic self-consistent, and does the plan establish that
+   the variables it uses exist in `_dispatch_sampling`?
+
+B. REPLAN(a) dual-tmpfile restructure: both tmpfiles created inside a NEW
+   try/except-unlink-both, followed by the existing dispatch try. Trace every
+   exit path (creation-failure, dispatch-raise, inline-return, timeout
+   job-transfer, start_job-raise): any double-unlink, leak, or unlink of a path
+   still owned by a running job? Does the pseudocode actually capture the tmpfile
+   name BEFORE the write that could fail?
+
+C. The invariant-comment carve-out: the plan adds a SECOND raw gate.yaml read in
+   `_run`. Does the plan's reasoning that this doesn't bypass backend trust hold
+   (focus gated by is_trusted_focus; backends still via _load_gate_backends)?
+
+D. Cross-reference integrity: the plan references helpers/tasks/line-numbers
+   across sections (3a-3 <-> 3b(d), Task 1 <-> RECONCILE, the 3b-1 wiring table).
+   Any internal contradiction or stale line-number reference that would send an
+   implementer to the wrong place?
+
+E. Test falsifiability: for each new test the plan specifies, would it actually
+   FAIL if the code it targets were broken (per the plan's own bug-injection
+   claims)? A test that passes whether or not the bug exists is a hollow guard.
+
+## Output format
+
+First line: `SUMMARY: B=<n> H=<n> M=<n> L=<n>` (Blocker/High/Medium/Low).
+Then per finding: severity, plan location (+ any cited file:line), description,
+required fix. Mark anything you could not verify without the code as "unverified".
+
+--- PLAN FOLLOWS ---
 # Phase 41: Review focus -- design-intent header + review-focus emphasis param + git-blame date
 
 ## Goal
@@ -198,10 +286,7 @@ parts = [
 
 Update `test_legacy.py:test_attribution_format` (line 261-279):
 expected output includes date: `"git-blame: Alice abc12345 2023-11-14 fix: null"`.
-Add `"date": "2023-11-14"` to mock blame_entry. Also update that test's docstring
-(test_legacy.py:262), which spells out the OLD format
-`'git-blame: {author} {sha[:8]} {subject}'` -- add the date field so it matches the
-new assertion (kimi r4 L4; Task 2 Step 8 set the docstring-tracks-behavior standard).
+Add `"date": "2023-11-14"` to mock blame_entry.
 
 Update `test_git.py:test_git_blame_parses_simple` (line 324-330):
 add `"date": "2023-11-14"` to the expected dict (fixture contains
@@ -246,11 +331,9 @@ start `merged = yaml_focus`, then when file_content is present
 value and a file body never fuse into one run-on line (`"short textFile body"`); NO LLM
 summarization (summarizing focus areas destroys the specific areas, which is the whole
 feature); NO "## Do NOT Flag" split; NO confirmation-bias directive (both are
-contract-specific). Size guard: if the merged string exceeds 8192 CHARACTERS
-(`len(merged) > 8192`, matching `_merge_contract_spec`'s `len()` char-count guard at
-cli.py:1861 -- NOT bytes; "bytes" would diverge from `len()` on non-ASCII focus text,
-gm r4), call warn_fn once and pass the text through UN-truncated -- silently dropping
-focus areas is worse than a warned-large prompt. Empty + empty returns "".
+contract-specific). Size guard: if the merged string exceeds 8192 bytes, call warn_fn
+once and pass the text through UN-truncated -- silently dropping focus areas is worse
+than a warned-large prompt. Empty + empty returns "".
 
 **3a-2. Trust (D5.6)** -- in trust.py, mirroring the contracts pattern at trust.py:243-286:
 - `hash_focus_text(gate_data: dict) -> str`: sha256 of the canonical JSON of
@@ -380,9 +463,8 @@ there); and (2) the sampling path, as `cli._load_trusted_yaml_focus(gate_yaml_pa
 warn)` inside `_dispatch_sampling` (mcp_server.py:800), gated
 `if not staged and gate_yaml_path.is_file():` -- parallel to the existing contracts.yaml
 load at mcp_server.py:837-839, and shown as an explicit call site in Task 3b (d).
-Backend loading still flows through `_load_gate_backends` unchanged. (The sampling
-path's contracts.yaml digest load already exists at mcp_server.py:837-842 post-2edb9d4
--- do NOT re-add it, kimi r4 L2; see Task 3b(d) for the full sampling data flow.)
+Backend loading still flows through `_load_gate_backends` unchanged. For the sampling
+path, also load the contracts.yaml digest (see Task 3b for the full data flow).
 
 **Invariant-comment carve-out (do this in the SAME edit as the CLI read):** the H1
 read adds a SECOND raw gate.yaml read inside `_run`, which the comment at
@@ -448,9 +530,8 @@ sites; sampling-only trust works; existing trust records survive.
 ### Task 3b: Focus mechanism -- builder injection + MCP wiring + sampling fix + tempfile
 **Wave:** 2 | **Depends on:** Task 3a (merge helper + trust must exist)
 
-Wires the focus spec into all 3 builders and all 4 review paths. (The sampling
-contract_spec gap D5.7 is ALREADY fixed in main via 2edb9d4 -- see RECONCILE; not
-re-done here, kimi r4 L3.) Extends tempfile ownership for dual-file tracking.
+Wires the focus spec into all 3 builders and all 4 review paths. Fixes the pre-existing
+sampling contract_spec gap. Extends tempfile ownership for dual-file tracking.
 
 **files:** src/code_forge/factories.py, src/code_forge/mcp_server.py,
 src/code_forge/cross_repo.py, src/code_forge/mcp_jobs.py
@@ -476,7 +557,7 @@ Each builder calls it: `if focus_spec: prompt += _format_focus_section(focus_spe
 |---|---|---|---|---|
 | `_make_subagent_spawn` (outlet_c) | cli.py:730 | cli.py:731 | cli.py:778-782 | cli.py:2069 |
 | `build_l1_provider` (outlet_a + cross-repo) | factories.py:202 | factories.py:209 | factories.py:279-283 | cli.py:2480, cross_repo.py:307 |
-| `build_sampling_l1_provider` (MCP sampling) | factories.py:507 | factories.py:514 | factories.py:575-576 | the `build_sampling_l1_provider(...)` call in `_dispatch_sampling`, mcp_server.py:853-857 post-2edb9d4 -- NOT :765 (stale pre-merge, kimi/gm r4) |
+| `build_sampling_l1_provider` (MCP sampling) | factories.py:507 | factories.py:514 | factories.py:575-576 | mcp_server.py:765 |
 
 **3b-2. Cross-repo focus data flow (MM #4, verified against 8e18aa0):** the current
 call chain has NO focus parameter anywhere:
@@ -543,9 +624,7 @@ must show the param at every level.
 > a SECOND pre-try creation for `focus_tmp` widens this: an OSError while
 > creating/writing focus_tmp would leak the already-created contract_tmp,
 > because that except never runs. So initialize BOTH to None and wrap BOTH
-> creations in one guard that unlinks whichever exists on failure -- and
-> capture `.name` BEFORE the write, so a write/close failure (the trap's own
-> motivating case) still leaves a path for the except to unlink (kimi/gm r4):
+> creations in one guard that unlinks whichever exists on failure:
 > ```
 > contract_tmp: str | None = None
 > focus_tmp: str | None = None
@@ -554,15 +633,15 @@ must show the param at every level.
 >         tmp = tempfile.NamedTemporaryFile(
 >             mode="w", suffix=".md", delete=False, encoding="utf-8"
 >         )
->         contract_tmp = tmp.name   # BEFORE write: file already on disk post-ctor
 >         tmp.write(contract); tmp.close()
+>         contract_tmp = tmp.name
 >         cli_args.extend(["--contract", contract_tmp])
 >     if focus:
 >         ftmp = tempfile.NamedTemporaryFile(
 >             mode="w", suffix=".md", delete=False, encoding="utf-8"
 >         )
->         focus_tmp = ftmp.name   # BEFORE write (same reason)
 >         ftmp.write(focus); ftmp.close()
+>         focus_tmp = ftmp.name
 >         cli_args.extend(["--focus", focus_tmp])
 > except BaseException:
 >     _unlink(contract_tmp); _unlink(focus_tmp)
@@ -574,10 +653,7 @@ must show the param at every level.
 > focus_tmp)` beside every existing `_unlink(contract_tmp)` in the DISPATCH
 > try (the `except BaseException` path, the inline-result path, and the
 > `start_job` `except Exception` path), and pass `focus_tempfile_path=
-> focus_tmp` in the `start_job(...)` call. Also update the `_dispatch_cli`
-> docstring (mcp_server.py:654-663), which today documents a contract-only
-> tmpfile lifecycle, to describe the dual contract+focus lifecycle -- Task 2
-> Step 8 set the "change behavior -> update docstring" standard (kimi r4 L5).
+> focus_tmp` in the `start_job(...)` call.
 >
 > **(b) start_job dual-file** (replaces old 3b-4). The current code is
 > KEY-based, not list-based: `start_job` (mcp_jobs.py:80) stores each tmpfile
@@ -634,8 +710,6 @@ must show the param at every level.
 > has `workspace` and `staged` in scope but NO `gate_yaml_path` / `warn`
 > local, so compute the path and mirror the real inline warn lambda (:847):
 > ```
-> raw_focus = focus_spec   # save raw MCP value BEFORE merge, mirror
->                          # raw_contract = contract_spec at mcp_server.py:832
 > gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
 > yaml_focus = ""
 > if not staged and gate_yaml_path.is_file():
@@ -643,13 +717,10 @@ must show the param at every level.
 >         gate_yaml_path,
 >         lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush()),
 >     )
-> focus_spec = cli._merge_focus_spec(yaml_focus, raw_focus, warn_fn=...)
 > ```
-> The `raw_focus = focus_spec` save is REQUIRED and must stay INSIDE this block
-> (lc r4): the merge line reassigns `focus_spec`, and the (c) fallback consumes
-> the raw value, so an implementer who copies the block without it re-introduces
-> the double-merge the (c)/(d) fixes exist to prevent. Reading focus via the
-> shared `_load_trusted_yaml_focus` (Task 3a-3) -- NOT `_load_gate_backends`'s
+> Then merge with the raw MCP focus (the (d) step): `focus_spec =
+> cli._merge_focus_spec(yaml_focus, raw_focus, warn_fn=...)`. Reading focus via
+> the shared `_load_trusted_yaml_focus` (Task 3a-3) -- NOT `_load_gate_backends`'s
 > trust-gated dict -- is what keeps the sampling outlet's focus trust identical
 > to the CLI outlet's; the wrong loader here silently re-introduces H1.
 >
@@ -663,40 +734,18 @@ must show the param at every level.
 > NOT a merged value. This catches the double-merge regression that the (c)/(d)
 > fixes address. Plus the cross-outlet parity test: one MCP `focus` input yields
 > identical `## Review Focus` text on the CLI outlet and the sampling outlet.
-> Plus a SIXTH test the existing five omit (kimi r4): all five drive the
-> job/raise branches, and the one inline test
-> (`test_forge_review_with_contract_writes_tempfile`, test_mcp_server.py:595)
-> only asserts the path was PASSED (`written_path is not None`), never that it
-> was DELETED -- so the inline-result `_unlink` site (mcp_server.py:684) has no
-> failing test and (f)'s per-site inject cannot prove it. Add a focus test that
-> drives the inline path (`_run_cli_budgeted` returns a str tuple
-> `("out", 0, 1.0, "")`), captures the `--focus` tmpfile path from the cli_args,
-> and asserts `not os.path.exists(path)` after the call returns.
 >
 > Per-consumer leak tests (gm/ds r3): the FIVE tests above all exercise the
 > `_dispatch_cli` scenarios, but (b) adds `"focus_tempfile_path"` to THREE
 > consumer tuples and only one (`_wait_for_job`'s finally) is hit by those
 > tests -- so a dropped tuple entry in the other two ships silently, and (f)'s
 > per-consumer inject would have no test to fail against. Add one test each for
-> the two uncovered consumers: (i) `_evict_stale` cleanup -- WRONG-KNOB WARNING
-> (ds+kimi r4, independently converged): do NOT use a small `max_lifetime_s`.
-> That is the `_wait_for_job` `asyncio.wait_for` cap (mcp_jobs.py:227), and on
-> timeout the `_wait_for_job` finally (mcp_jobs.py:307-314) unlinks the tmpfile
-> FIRST -- a DIFFERENT consumer -- so the assertion passes even if
-> `"focus_tempfile_path"` was never added to `_evict_stale`'s tuple (a
-> false-green that also disarms (f)'s inject for this consumer). `_evict_stale`
-> gates ONLY on the module global `_JOB_TTL_SECONDS` (mcp_jobs.py:74/:345) and
-> only for terminal (`completed`/`failed`) entries. Build the scenario in
-> isolation: inject a `status="failed"` entry directly into `mcp_jobs._jobs`
-> with a backdated `created_at` (or monkeypatch `_JOB_TTL_SECONDS` to a small
-> value), carrying a real focus tmpfile, then call `_evict_stale()` directly
-> (or `get_job()`, which invokes it at mcp_jobs.py:116) and assert the focus
-> tmpfile is unlinked -- never route through a real job lifecycle, or the
-> finally preempts and the test proves nothing. (ii) assert
-> `snapshot_tempfile_paths` returns the job's `focus_tempfile_path` (this feeds
-> the lifespan pre-shutdown cleanup at mcp_server.py:136). With all three
-> consumers individually covered, (f)'s per-consumer inject targets a test that
-> actually fails.
+> the two uncovered consumers: (i) drive `_evict_stale` via TTL expiry (small
+> `max_lifetime_s`) on a job carrying a focus tmpfile, then assert that tmpfile
+> is unlinked; (ii) assert `snapshot_tempfile_paths` returns the job's
+> `focus_tempfile_path` (this feeds the lifespan pre-shutdown cleanup at
+> mcp_server.py:136). With all three consumers individually covered, (f)'s
+> per-consumer inject targets a test that actually fails.
 >
 > **(f) Bug-injection (Golden Rule 2, at each fix site)**: delete one
 > `_unlink(focus_tmp)` line -> the matching leak test must FAIL; restore ->
@@ -911,13 +960,6 @@ ships as a silent no-op:
 - Trust command: sampling-only gate.yaml (no backends, has review_focus) -> trust
   succeeds and records focus_hash; gate.yaml with neither backends nor review_focus
   -> trust fails with error.
-- Existing-assert update (kimi r4 M4): 3a-2 changes the rejection message from
-  "No backends configured in this gate.yaml." to "No backends or review_focus configured
-  in this gate.yaml. Configure at least one." Two existing tests assert the OLD substring
-  -- test_trust_empty_backends.py:51 ("No backends configured in this gate.yaml") and
-  :64 ("No backends configured") -- both broken by the new message (it inserts "or
-  review_focus" between "backends" and "configured"). Update both asserts to the new
-  message, else Wave 3/5 goes red on an unlisted pre-existing test.
 - No trust record (or a post-trust-edited / untrusted `review_focus`): focus is dropped
   with a warning by `is_trusted_focus` (NOT by `_load_gate_backends` returning `{}` --
   that coupling was the H1 bug). Backend loading is unaffected. This is a SEPARATE
