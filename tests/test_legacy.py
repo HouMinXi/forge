@@ -278,6 +278,29 @@ class TestPreExistingDetection:
         assert len(result) == 1
         assert result[0].attribution == "git-blame: Alice abc12345 2023-11-14 fix: null"
 
+    @patch("code_forge.legacy.git_blame")
+    def test_attribution_format_missing_date(self, mock_blame, tmp_path):
+        """blame_entry without 'date' key -> attribution still works, no crash."""
+        sha_full = "abc12345" + "0" * 32
+        mock_blame.return_value = {
+            20: {"sha": sha_full, "author": "Alice", "subject": "fix: null"},
+        }
+        finding = _make_finding(file="foo.py", line=20)
+        runner = LegacyRunner(l0_runner=_fake_runner([finding]))
+        runner.source_files = [Path("foo.py")]
+        runner.registry = {"tools": []}
+
+        (tmp_path / "foo.py").write_text(
+            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
+        )
+
+        result = runner.run(DIFF_FOO_LINE5, tmp_path)
+
+        assert len(result) == 1
+        # date defaults to empty string; join filters it out, so no extra space.
+        assert result[0].attribution == "git-blame: Alice abc12345 fix: null"
+        assert "unavailable" not in result[0].attribution
+
 
 # ---------------------------------------------------------------------------
 # REVIEW-INTENT-01 tests
