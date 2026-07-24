@@ -26,11 +26,11 @@ import pytest
 
 
 class TestOutletAContractSpec:
-    """Outlet A injects ## Contract Reference into the L1 prompt."""
+    """Outlet A injects ## Design Intent into the L1 prompt."""
 
     def test_outlet_a_includes_contract_spec(self):
         """When contract_spec is non-empty, the prompt contains
-        '## Contract Reference' followed by the spec content, before 'Diff:'.
+        '## Design Intent' followed by the spec content, before 'Diff:'.
         """
         from code_forge.factories import build_l1_provider
         from code_forge.baseline import ResolvedReview
@@ -69,13 +69,13 @@ class TestOutletAContractSpec:
 
         assert captured_prompts, "llm_invoke was never called"
         prompt = captured_prompts[0]
-        assert "## Contract Reference" in prompt
+        assert "## Design Intent" in prompt
         assert contract_text in prompt
-        # Contract Reference must appear before Diff:
-        cr_idx = prompt.index("## Contract Reference")
+        # Design Intent must appear before Diff:
+        cr_idx = prompt.index("## Design Intent")
         diff_idx = prompt.index("\nDiff:\n")
         assert cr_idx < diff_idx, (
-            "## Contract Reference must appear before Diff:"
+            "## Design Intent must appear before Diff:"
         )
 
 
@@ -85,7 +85,7 @@ class TestOutletAContractSpec:
 
 
 class TestOutletCContractSpec:
-    """Outlet C injects ## Contract Reference into the subagent prompt."""
+    """Outlet C injects ## Design Intent into the subagent prompt."""
 
     def test_outlet_c_includes_contract_spec(self):
         """_make_subagent_spawn with contract_spec injects it before Diff:."""
@@ -110,9 +110,9 @@ class TestOutletCContractSpec:
 
         assert captured_prompts
         prompt = captured_prompts[0]
-        assert "## Contract Reference" in prompt
+        assert "## Design Intent" in prompt
         assert contract_text in prompt
-        cr_idx = prompt.index("## Contract Reference")
+        cr_idx = prompt.index("## Design Intent")
         diff_idx = prompt.index("\nDiff:\n")
         assert cr_idx < diff_idx
 
@@ -123,7 +123,7 @@ class TestOutletCContractSpec:
 
 
 class TestNoContractsYaml:
-    """When contract_spec is empty, no ## Contract Reference appears."""
+    """When contract_spec is empty, no ## Design Intent appears."""
 
     def test_no_contracts_yaml_no_contract_in_prompt(self):
         """Default contract_spec='' produces no contract section."""
@@ -162,7 +162,7 @@ class TestNoContractsYaml:
 
         assert captured_prompts
         for p in captured_prompts:
-            assert "## Contract Reference" not in p
+            assert "## Design Intent" not in p
 
 
 # ---------------------------------------------------------------------------
@@ -217,19 +217,19 @@ class TestPromptSectionOrder:
         assert "## Post-Image" in prompt
         assert "## Conventions Digest" in prompt
         assert "## Blast Radius Context" in prompt
-        assert "## Contract Reference" in prompt
+        assert "## Design Intent" in prompt
         assert "\nDiff:\n" in prompt
 
         # Verify ordering
         pi_idx = prompt.index("## Post-Image")
         cd_idx = prompt.index("## Conventions Digest")
         br_idx = prompt.index("## Blast Radius Context")
-        cr_idx = prompt.index("## Contract Reference")
+        cr_idx = prompt.index("## Design Intent")
         di_idx = prompt.index("\nDiff:\n")
 
         assert pi_idx < cd_idx < br_idx < cr_idx < di_idx, (
             "Section order must be: Post-Image < Conventions < "
-            "Blast Radius < Contract Reference < Diff"
+            "Blast Radius < Design Intent < Diff"
         )
 
 

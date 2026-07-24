@@ -278,7 +278,7 @@ def build_l1_provider(
                 )
             if contract_spec:
                 prompt += (
-                    "\n## Contract Reference\n"
+                    "\n## Design Intent\n"
                     + contract_spec + "\n"
                 )
             prompt += "\nDiff:\n" + diff_text
@@ -573,7 +573,7 @@ def build_sampling_l1_provider(
             if graph_impact_context:
                 prompt += "\n## Blast Radius Context\n" + graph_impact_context + "\n"
             if contract_spec:
-                prompt += "\n## Contract Reference\n" + contract_spec + "\n"
+                prompt += "\n## Design Intent\n" + contract_spec + "\n"
             prompt += "\nDiff:\n" + diff_text
             prompts.append(prompt)
 

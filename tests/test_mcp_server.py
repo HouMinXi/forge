@@ -2165,7 +2165,7 @@ def test_sampling_builder_receives_contract():
 
 
 def test_sampling_builder_contract_header_behavioral():
-    """Behavioral: empty contract_spec must NOT emit '## Contract Reference'
+    """Behavioral: empty contract_spec must NOT emit '## Design Intent'
     in the prompt; non-empty contract_spec MUST emit it with the text.
 
     Exercises the runtime prompt-building path by capturing what
@@ -2208,8 +2208,8 @@ def test_sampling_builder_contract_header_behavioral():
             )
             provider()
         for p in captured_prompts:
-            assert "## Contract Reference" not in p, (
-                "empty contract_spec must not emit Contract Reference header"
+            assert "## Design Intent" not in p, (
+                "empty contract_spec must not emit Design Intent header"
             )
 
         # NON-EMPTY contract_spec: header MUST appear with the text
@@ -2223,9 +2223,9 @@ def test_sampling_builder_contract_header_behavioral():
                 contract_spec="My contract rules",
             )
             provider()
-        found = any("## Contract Reference" in p and "My contract rules" in p
+        found = any("## Design Intent" in p and "My contract rules" in p
                      for p in captured_prompts)
-        assert found, "non-empty contract_spec must emit Contract Reference header"
+        assert found, "non-empty contract_spec must emit Design Intent header"
     finally:
         loop.close()
 

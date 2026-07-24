@@ -113,7 +113,7 @@ class TestSC1EndToEnd:
     def test_sc1_end_to_end_contracts_to_l1_prompt(self, tmp_path, trust_dir):
         """One test exercising the full chain:
         contracts.yaml -> trust -> load_contract_digest -> build_l1_provider
-        -> L1 prompt contains '## Contract Reference' with spec content,
+        -> L1 prompt contains '## Design Intent' with spec content,
         appearing BEFORE 'Diff:' (order).
 
         Mocks llm_invoke (NOT build_l1_provider) so the real prompt assembly
@@ -194,15 +194,15 @@ class TestSC1EndToEnd:
         prompt = captured_prompts[0]
 
         # Verify contract content appears in the prompt
-        assert "## Contract Reference" in prompt
+        assert "## Design Intent" in prompt
         assert "ovs_flow" in prompt
         assert spec_content.strip() in prompt or "ovs_flow" in prompt
 
-        # Contract Reference BEFORE Diff:
-        cr_idx = prompt.index("## Contract Reference")
+        # Design Intent BEFORE Diff:
+        cr_idx = prompt.index("## Design Intent")
         diff_idx = prompt.index("\nDiff:\n")
         assert cr_idx < diff_idx, (
-            "## Contract Reference must appear before Diff:"
+            "## Design Intent must appear before Diff:"
         )
 
 

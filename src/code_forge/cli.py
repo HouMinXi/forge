@@ -777,7 +777,7 @@ def _make_subagent_spawn(
             )
         if contract_spec:
             prompt += (
-                "\n## Contract Reference\n"
+                "\n## Design Intent\n"
                 + contract_spec + "\n"
             )
         prompt += "\nDiff:\n" + diff_text
