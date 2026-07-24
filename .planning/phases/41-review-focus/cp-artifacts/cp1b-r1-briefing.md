@@ -282,21 +282,46 @@ lc corroboration (repo-grounded): all the OTHER R4 edits verified CLEAN --
 D1/D2 (REPLAN(a) lifecycle), F/G (REPLAN(e) tests, evict-stale falsifiable),
 E (raw_focus save), B/C/H/I/J (cross-refs). Only edit A (fix #6) was defective.
 
-## Convergence status -- round-5 union APPLIED, round-6 pending
+## Round-6 (2026-07-24) -- convergence round; gm clean, CN aicc panel infra-failed
 
-R3=11 -> R4=11 -> R5=1. Converging hard. Still RESET (1 confirmed finding), but
-the single R5 finding was one already-in-play prose rationale (edit A), not a new
-class, and 10 of 11 R4 edits were independently confirmed clean by lc -- so
-round-6 is a real shot at 0/0/0/0. Next:
-1. [DONE] apply the R5 union (1 finding).
-2. Round-6: re-dispatch carrying R5 disposition. Full panel -- ds/kimi rejoin IF
-   recovered (user: wait, do not substitute glm); gm + lc proven this round.
-3. New finding -> fix -> next round, per the non-convergence protocol.
-Then: user final human review before /gsd:execute-phase (CP1b exit).
+Panel: gm returned a clean repo-grounded verdict; ds/lc/kimi all failed on
+INFRASTRUCTURE (none is a review verdict).
+- gm: 0/0/0/0, human-relayed via agy (Antigravity, Gemini 3.6 Flash) WITH live
+  repo access -- real Read across cli.py/factories.py/git.py/legacy.py/trust.py/
+  mcp_server.py/mcp_jobs.py/cross_repo.py. Independently re-confirmed the R5
+  byte-count fix (4th independent read: gm-r5, lc-r5, PM, gm-r6) + full residual
+  sweep clean. Record: cp1b-r6-gm.md.
+- ds (aicc): executor-drift x2 (offered to implement, no SUMMARY); an explicit
+  anti-drift guard header produced BYTE-IDENTICAL output -> cached/deterministic
+  route issue, not a fixable prompt. + 503 x2 adjacent. Declared OUT for R6.
+- lc (aicc): "Connection closed mid-response" x3. Route unstable this window.
+- kimi (aicc): NOT genuine key exhaustion. Direct upstream probe (3 k3 keys,
+  proxy bypassed) = 1x200 / 2x429, body `engine_overloaded_error` -- Moonshot
+  shared-capacity on the kimi-k3 model, not an account/TPD wall. R5 "all keys
+  exhausted" + R6 "Request timed out" were local: stale rotation cap (20 vs a
+  46-key pool) + kimi-k3 permission filter shrinking the pool, atop upstream
+  overload. Tooling fix prepared (kimi-proxy.py, worktree fix/kimi-rotation,
+  uncommitted, parked non-blocking per path-2). NOT a verdict.
 
-META update: the R3=11 -> R4=11 -> R5=1 drop ARGUES AGAINST simplifying the
-REPLAN block. The pseudocode-heavy blocks (D1/E/F/G) all verified clean by lc
-once written carefully; R5's only finding was a PROSE rationale (edit A) adopted
-from an unverified sub-model claim -- not a copy-paste pseudocode defect. The
-lesson is grounding discipline (read :1861 before asserting a mirror's
-semantics), not block structure.
+## Convergence status -- CP1b plan-review CLOSED (round-6, path-2 decision)
+
+R3=11 -> R4=11 -> R5=1 -> R6=0 confirmed findings. Closed by USER DECISION
+(path 2), NOT by a literal full-panel 0/0/0/0: gm-r6 clean repo-grounded 0/0/0/0
++ R5's 3-way convergence on the only open finding (now 4x-confirmed). The CN
+aicc panel (ds/lc/kimi) failed WHOLESALE on infrastructure -- drift / connection
+drops / engine-overload -- not on finding defects. The CP1b protocol's PURPOSE,
+independent multi-model defect-finding, is met: 44 findings fixed across R1-R5,
+then a clean repo-grounded gm-r6; R6 was a corroboration round and corroboration
+was achieved. Disclosed honestly rather than forcing a green panel (S1).
+
+Remaining gate: user's final human review before /gsd:execute-phase (CP1b exit).
+Next (path 2): hand the plan to mimo-pro for implementation -- PM crafts the R7
+entrance + a frozen exit verifier; dispatch channel is the user's call. The kimi
+tooling fix proceeds in parallel, non-blocking.
+
+META: the R3=11 -> R4=11 -> R5=1 -> R6=0 curve ARGUES AGAINST simplifying the
+REPLAN block. The pseudocode-heavy blocks (D1/E/F/G) all verified clean by lc +
+gm once written carefully; the only late finding (R5 edit A) was a PROSE
+rationale adopted from an unverified sub-model claim -- not a copy-paste
+pseudocode defect. Lesson: grounding discipline (read the source before
+asserting a mirror's semantics), not block structure.
