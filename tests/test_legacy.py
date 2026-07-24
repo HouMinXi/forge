@@ -259,10 +259,10 @@ class TestPreExistingDetection:
 
     @patch("code_forge.legacy.git_blame")
     def test_attribution_format(self, mock_blame, tmp_path):
-        """Verify attribution format: 'git-blame: {author} {sha[:8]} {subject}'."""
+        """Verify attribution format: 'git-blame: {author} {sha[:8]} {date} {subject}'."""
         sha_full = "abc12345" + "0" * 32
         mock_blame.return_value = {
-            20: {"sha": sha_full, "author": "Alice", "subject": "fix: null"},
+            20: {"sha": sha_full, "author": "Alice", "subject": "fix: null", "date": "2023-11-14"},
         }
         finding = _make_finding(file="foo.py", line=20)
         runner = LegacyRunner(l0_runner=_fake_runner([finding]))
@@ -276,7 +276,7 @@ class TestPreExistingDetection:
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
         assert len(result) == 1
-        assert result[0].attribution == "git-blame: Alice abc12345 fix: null"
+        assert result[0].attribution == "git-blame: Alice abc12345 2023-11-14 fix: null"
 
 
 # ---------------------------------------------------------------------------

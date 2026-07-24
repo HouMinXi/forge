@@ -326,6 +326,7 @@ class TestGitBlame:
                 "sha": "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee",
                 "author": "Alice",
                 "subject": "fix: null check",
+                "date": "2023-11-14",
             }
         }
 
@@ -345,6 +346,8 @@ class TestGitBlame:
         assert result[2]["subject"] == "refactor: extract helper"
         assert result[1]["sha"] == "5040f17eaabbccdd0011223344556677aabbccdd"
         assert result[2]["sha"] == "5040f17eaabbccdd0011223344556677aabbccdd"
+        assert result[1]["date"] == "2023-11-14"
+        assert result[2]["date"] == "2023-11-14"
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")

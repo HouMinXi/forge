@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Safe known flags that are allowed despite starting with --
@@ -358,7 +359,7 @@ _HEX_CHARS = frozenset("0123456789abcdef")
 def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
     """Parse git blame --porcelain output for file_path.
 
-    Returns {line_number: {"author": str, "sha": str, "subject": str}}.
+    Returns {line_number: {"author": str, "sha": str, "date": str, "subject": str}}.
     line_number is the final file line number (1-indexed).
     Returns {} if git blame fails (file absent, binary, untracked, etc.).
 
@@ -397,6 +398,7 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
     # Track whether we saw "author" in the current block (for sha_cache)
     current_block_author: str = ""
     current_block_subject: str = ""
+    current_block_date: str = ""
     current_block_has_author: bool = False
 
     for raw_line in result.stdout.splitlines():
@@ -406,12 +408,13 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
         if raw_line.startswith("\t"):
             entry = sha_cache.get(
                 current_sha,
-                {"sha": current_sha, "author": "unknown", "subject": ""},
+                {"sha": current_sha, "author": "unknown", "subject": "", "date": ""},
             )
             blame_map[current_final_line] = {
                 "sha": current_sha,
                 "author": entry.get("author", "unknown"),
                 "subject": entry.get("subject", ""),
+                "date": entry.get("date", ""),
             }
             continue
 
@@ -431,6 +434,7 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
             current_final_line = int(parts[2])
             current_block_author = ""
             current_block_subject = ""
+            current_block_date = ""
             current_block_has_author = False
             continue
 
@@ -443,6 +447,14 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
             and current_sha not in sha_cache
         ):
             current_block_subject = raw_line[8:]
+        elif raw_line.startswith("committer-time ") and current_sha not in sha_cache:
+            try:
+                ts = int(raw_line.split(" ", 1)[1])
+                current_block_date = datetime.fromtimestamp(
+                    ts, tz=timezone.utc
+                ).strftime("%Y-%m-%d")
+            except (ValueError, OSError, OverflowError):
+                pass
         elif raw_line.startswith("filename "):
             # filename marks end of header block -- finalize sha_cache
             # entry IF author was seen (first occurrence of this SHA)
@@ -451,6 +463,7 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
                     "sha": current_sha,
                     "author": current_block_author,
                     "subject": current_block_subject,
+                    "date": current_block_date,
                 }
 
     return blame_map

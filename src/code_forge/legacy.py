@@ -234,6 +234,7 @@ class LegacyRunner:
                 parts = [
                     blame_entry.get("author", "unknown"),
                     sha[:8],
+                    blame_entry.get("date", ""),
                     blame_entry.get("subject", ""),
                 ]
                 attribution = "git-blame: " + " ".join(
