@@ -207,6 +207,7 @@ def build_l1_provider(
     post_image: str = "",
     graph_impact_context: str = "",
     contract_spec: str = "",
+    focus_spec: str = "",
     breaker=None,
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
@@ -280,6 +281,12 @@ def build_l1_provider(
                 prompt += (
                     "\n## Design Intent\n"
                     + contract_spec + "\n"
+                )
+            if focus_spec:
+                prompt += (
+                    "\n## Review Focus\n" + focus_spec
+                    + "\nPrioritize findings in these areas; in your response, "
+                    + "state whether each area was checked.\n"
                 )
             prompt += "\nDiff:\n" + diff_text
             prompts.append(prompt)
@@ -512,6 +519,7 @@ def build_sampling_l1_provider(
     post_image: str = "",
     graph_impact_context: str = "",
     contract_spec: str = "",
+    focus_spec: str = "",
 ) -> "Callable":
     """Build L1 provider that dispatches via MCP sampling.
 
@@ -574,6 +582,12 @@ def build_sampling_l1_provider(
                 prompt += "\n## Blast Radius Context\n" + graph_impact_context + "\n"
             if contract_spec:
                 prompt += "\n## Design Intent\n" + contract_spec + "\n"
+            if focus_spec:
+                prompt += (
+                    "\n## Review Focus\n" + focus_spec
+                    + "\nPrioritize findings in these areas; in your response, "
+                    + "state whether each area was checked.\n"
+                )
             prompt += "\nDiff:\n" + diff_text
             prompts.append(prompt)
 

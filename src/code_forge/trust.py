@@ -167,7 +167,9 @@ def record_trust(
     store = _load_trust_store(config_dir)
     key = str(gate_yaml_path.resolve())
     current_hash = hash_backends_block(gate_data)
-    store[key] = {"hash": current_hash}
+    focus_hash = hash_focus_text(gate_data)
+    store[key] = {**store.get(key, {}), "hash": current_hash,
+                  "focus_hash": focus_hash}
     _save_trust_store(store, config_dir)
 
 
@@ -330,3 +332,38 @@ def trust_status_contracts(
         current_hash=current,
         gate_yaml_path=key,
     )
+
+
+# -- Review focus trust (spec-content hashing) -----------------------------
+
+
+def hash_focus_text(gate_data: dict) -> str:
+    """Hash gate.yaml's review_focus value for trust verification.
+
+    Returns "" when the field is absent or empty -- this keeps every
+    existing trust record valid (the migration guarantee).
+    """
+    import hashlib
+    import json
+
+    raw = gate_data.get("review_focus", "")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    canonical = json.dumps(raw, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_trusted_focus(gate_yaml_path: Path, gate_data: dict) -> bool:
+    """Check whether gate.yaml's review_focus is trusted.
+
+    Returns True for absent/empty focus (nothing to authorize).
+    Returns False when the store has no entry for this gate.yaml.
+    """
+    current = hash_focus_text(gate_data)
+    if not current:
+        return True  # absent or empty -> nothing to authorize
+    store = _load_trust_store()
+    entry = store.get(str(gate_yaml_path.resolve()))
+    if entry is None:
+        return False
+    return entry.get("focus_hash") == current

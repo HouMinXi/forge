@@ -353,6 +353,11 @@ def _build_parser() -> argparse.ArgumentParser:
              "state invariants-to-verify and residual risks, "
              "NOT 'this code is correct'",
     )
+    review_parser.add_argument(
+        "--focus", default=None, metavar="FILE",
+        help="path to review focus areas (use - for stdin); "
+             "areas to prioritize during review",
+    )
 
     # Backend selection flags
     review_parser.add_argument(
@@ -729,6 +734,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _make_subagent_spawn(
     backend, conv_digest: str, post_image: str, contract_spec: str = "",
+    focus_spec: str = "",
 ):
     """Factory for subagent spawn_fn. Module-level for testability.
 
@@ -779,6 +785,12 @@ def _make_subagent_spawn(
             prompt += (
                 "\n## Design Intent\n"
                 + contract_spec + "\n"
+            )
+        if focus_spec:
+            prompt += (
+                "\n## Review Focus\n" + focus_spec
+                + "\nPrioritize findings in these areas; in your response, "
+                + "state whether each area was checked.\n"
             )
         prompt += "\nDiff:\n" + diff_text
         result = llm_invoke(prompt, backend=backend)
@@ -1166,15 +1178,17 @@ def _run_trust(args, cwd: Path) -> int:
             )
         return EXIT_PASS
 
-    # Guard: refuse to trust a gate.yaml with no backends configured.
+    # Guard: refuse to trust a gate.yaml with no backends and no review_focus.
     backends_raw = gd.get("backends")
-    if not backends_raw or (
+    has_backends = backends_raw and not (
         isinstance(backends_raw, dict)
         and all(v is None for v in backends_raw.values())
-    ):
+    )
+    has_focus = isinstance(gd.get("review_focus"), str) and gd["review_focus"].strip()
+    if not has_backends and not has_focus:
         print(
-            "No backends configured in this gate.yaml. "
-            "Uncomment one backend under 'backends:' first.",
+            "No backends or review_focus configured in this gate.yaml. "
+            "Configure at least one.",
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
@@ -1613,7 +1627,8 @@ def _load_gate_siblings(gate_yaml_path: Path) -> tuple:
 def _cross_repo_verdict_or_none(
     *, gate_yaml_path: Path, cwd: Path, baseline_spec, head_spec,
     mode, engine_choice, backend, max_rounds: Optional[int],
-    max_fix: Optional[int], _clean_threshold: int, warn: Callable
+    max_fix: Optional[int], _clean_threshold: int, warn: Callable,
+    focus_spec: str = "",
 ) -> Optional[Verdict]:
     """Decide and execute cross-repo dispatch, or return None to fall through."""
     _gate_raw, _gate_siblings = _load_gate_siblings(gate_yaml_path)
@@ -1658,6 +1673,7 @@ def _cross_repo_verdict_or_none(
             max_rounds=max_rounds,
             max_fix_attempts=max_fix,
             clean_round_threshold=_clean_threshold,
+            focus_spec=focus_spec,
         )
         return _cross_verdict
     return None
@@ -1894,10 +1910,106 @@ def _merge_contract_spec(
     return merged
 
 
+# -- Focus merge + trust-gated gate.yaml read -------------------------------
+
+
+def _merge_focus_spec(yaml_focus: str, file_content: str, warn_fn=None) -> str:
+    """Merge gate.yaml review_focus with --focus file content.
+
+    Joins yaml_focus then file_content with blank-line separator.
+    No summarization, no 'Do NOT Flag' split, no confirmation-bias.
+    Warns once if merged exceeds 8192 bytes but passes through untruncated.
+    """
+    merged = yaml_focus
+    if file_content:
+        merged = (merged + "\n\n" if merged else "") + file_content
+    if merged and len(merged.encode("utf-8")) > 8192:
+        if warn_fn:
+            warn_fn(
+                "review_focus content is %d bytes (>8192); passing through "
+                "untruncated." % len(merged.encode("utf-8"))
+            )
+    return merged
+
+
+def _load_gate_yaml_raw(gate_yaml_path: Path) -> dict:
+    """Best-effort parse of gate.yaml with NO trust gating.
+
+    Returns the parsed dict, or {} if absent / empty / not a dict.
+    Mirrors _load_gate_backends's parse prefix so both readers agree
+    on syntax errors.
+    """
+    import yaml as _y
+    try:
+        with open(gate_yaml_path, "r", encoding="utf-8") as _f:
+            gd = _y.safe_load(_f)
+    except FileNotFoundError:
+        return {}
+    except _y.YAMLError as exc:
+        raise CliError(
+            "gate.yaml parse error: %s" % exc,
+            remediation="Check gate.yaml syntax. "
+            "Run 'code-forge init --force' to regenerate.",
+        ) from exc
+    return gd if isinstance(gd, dict) else {}
+
+
+def _load_trusted_yaml_focus(gate_yaml_path: Path, warn_fn) -> str:
+    """Return the trusted review_focus string from gate.yaml, or "".
+
+    Reads gate.yaml with NO backend-trust gating, then authorizes
+    review_focus ONLY through is_trusted_focus -- so focus trust is
+    independent of backend trust.
+    """
+    from .trust import is_trusted_focus
+    focus_gd = _load_gate_yaml_raw(gate_yaml_path)
+    raw = focus_gd.get("review_focus", "")
+    if isinstance(raw, str):
+        if not raw.strip():
+            return ""
+        if is_trusted_focus(gate_yaml_path, focus_gd):
+            return raw
+        warn_fn("gate.yaml review_focus ignored: not trusted. "
+                "Run 'code-forge trust'.")
+        return ""
+    if raw is not None:
+        warn_fn("gate.yaml review_focus ignored: not a string (got %s). "
+                "Use a YAML string value." % type(raw).__name__)
+    return ""
+
+
+def _load_focus_file(path_str: str, warn_fn=None) -> str:
+    """Load focus content from file path or stdin ('-')."""
+    if path_str == "-":
+        import sys
+        content = sys.stdin.read()
+    else:
+        p = Path(path_str)
+        if not p.exists():
+            raise CliError(
+                "Focus file not found: %s" % path_str,
+                remediation="Check the path and try again.",
+            )
+        try:
+            content = p.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise CliError(
+                "Focus file is not valid UTF-8: %s" % path_str,
+                remediation="Provide a text file.",
+            )
+    if len(content.encode("utf-8")) > 8192:
+        if warn_fn:
+            warn_fn(
+                "Focus file is %d bytes (>8192); passing through "
+                "untruncated." % len(content.encode("utf-8"))
+            )
+    return content
+
+
 def _dispatch_cross_repo(
     gate_yaml_path, cwd, baseline_spec, head_spec, mode,
     engine_choice, backend, max_rounds, max_fix, _clean_threshold,
-    warn,
+    warn, focus_spec="",
 ) -> "Verdict | None":
     """Cross-repo dispatch. Returns Verdict if siblings exist, None otherwise."""
     _cv = _cross_repo_verdict_or_none(
@@ -1912,6 +2024,7 @@ def _dispatch_cross_repo(
         max_fix=max_fix,
         _clean_threshold=_clean_threshold,
         warn=warn,
+        focus_spec=focus_spec,
     )
     return _cv
 
@@ -2044,6 +2157,7 @@ def _dispatch_subagent(
     outlet, warn, _contract_file_content, backend,
     resolved, source_hash, registry, engine_choice,
     _clean_threshold, cwd,
+    yaml_focus="", _focus_file_content="",
 ) -> "Verdict | None":
     """Subagent outlet dispatch. Returns Verdict if outlet=='subagent',
     None otherwise (caller continues to subprocess path)."""
@@ -2069,9 +2183,11 @@ def _dispatch_subagent(
         _yaml_digest_c, _contract_file_content,
         backend=backend, warn_fn=warn,
     )
+    _focus_spec_c = _merge_focus_spec(yaml_focus, _focus_file_content, warn)
     _subagent_spawn = _make_subagent_spawn(
         backend, _conv_digest, _post_image,
         contract_spec=_contract_spec_c,
+        focus_spec=_focus_spec_c,
     )
     _c_taint = TaintRunner()
     _c_runtime = RuntimeRunner(backend=backend)
@@ -2181,7 +2297,8 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     # Load gate backends once through the trust guard; reuse cfgs for outlet
     # resolution, reachability probe, AND backend resolution.  Never re-read
-    # gate.yaml raw after this point -- a second read bypasses the trust check.
+    # gate.yaml raw for BACKEND consumption; the review_focus read below is
+    # gated separately by is_trusted_focus, independent of backend trust.
     cfgs, gate_data = _load_gate_backends(gate_yaml_path)
     cfgs = _merge_user_into(cfgs, gate_data)
     # Validate and extract retry config from gate.yaml.
@@ -2198,6 +2315,18 @@ def _run(args, env, cwd: Path) -> Verdict:
         _contract_file_content = _load_contract_file(
             args.contract, warn_fn=warn,
         )
+
+    # Early focus file read: validate before backend resolution.
+    _focus_file_content = ""
+    if getattr(args, "focus", None) is not None:
+        _focus_file_content = _load_focus_file(
+            args.focus, warn_fn=warn,
+        )
+
+    # Load trusted yaml focus (independent of backend trust).
+    yaml_focus = ""
+    if gate_yaml_path.is_file():
+        yaml_focus = _load_trusted_yaml_focus(gate_yaml_path, warn)
 
     # has_explicit_backend is True when the user passed --backend <name>
     # or assembled an inline backend via --backend-url/format/key-env/model.
@@ -2380,6 +2509,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         outlet, warn, _contract_file_content, backend,
         resolved, source_hash, registry, engine_choice,
         _clean_threshold, cwd,
+        yaml_focus=yaml_focus, _focus_file_content=_focus_file_content,
     )
     if _subagent_v is not None:
         return _subagent_v
@@ -2510,7 +2640,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     _cv = _dispatch_cross_repo(
         gate_yaml_path, cwd, baseline_spec, head_spec, mode,
         engine_choice, backend, max_rounds, max_fix, _clean_threshold,
-        warn,
+        warn, focus_spec=(yaml_focus + ("\n\n" if yaml_focus and _focus_file_content else "") + _focus_file_content),
     )
     if _cv is not None:
         return _cv

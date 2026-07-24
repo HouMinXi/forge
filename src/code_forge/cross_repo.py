@@ -181,6 +181,7 @@ def run_cross_repo(
     max_fix_attempts: int,
     clean_round_threshold: int,
     output_fn=print,
+    focus_spec: str = "",
 ):
     """Orchestrate cross-repo parallel review.
 
@@ -305,6 +306,7 @@ def run_cross_repo(
                         engine_choice, resolved_for_l1, backend=backend,
                         breaker=breaker,
                         contract_spec=_contract_spec,
+                        focus_spec=focus_spec,
                     )
                     from .cross_repo_impact import CrossRepoImpactRunner
                     from .daemon_state import DaemonStateRunner
@@ -323,7 +325,7 @@ def run_cross_repo(
                     ]
                 else:
                     # Siblings: no L1 cost, no advisory runners
-                    l1_provider = lambda: ([], [], Usage(), 0.0)
+                    l1_provider = lambda: ([], [], Usage(), 0.0)  # noqa: E731
                     advisory_runners = []
 
                 falsifier = build_falsifier(engine_choice, backend=backend)
