@@ -81,6 +81,7 @@ def start_job(
     comm_task: asyncio.Task[Any],
     proc: asyncio.subprocess.Process,
     tempfile_path: str | None = None,
+    focus_tempfile_path: str | None = None,
     stderr_log_path: str | None = None,
     max_lifetime_s: float | None = None,
 ) -> str:
@@ -101,6 +102,7 @@ def start_job(
         "result": None,
         "created_at": time.monotonic(),
         "tempfile_path": tempfile_path,
+        "focus_tempfile_path": focus_tempfile_path,
         "stderr_log_path": stderr_log_path,
         "max_lifetime_s": max_lifetime_s,
     }
@@ -121,7 +123,7 @@ def snapshot_tempfile_paths() -> list[str]:
     """Return all tempfile paths from job entries for pre-shutdown cleanup."""
     paths: list[str] = []
     for entry in _jobs.values():
-        for key in ("tempfile_path", "stderr_log_path"):
+        for key in ("tempfile_path", "focus_tempfile_path", "stderr_log_path"):
             p = entry.get(key)
             if p:
                 paths.append(p)
@@ -305,7 +307,7 @@ async def _wait_for_job(job_id: str) -> None:
             "duration_s": elapsed,
         }
     finally:
-        for key in ("tempfile_path", "stderr_log_path"):
+        for key in ("tempfile_path", "focus_tempfile_path", "stderr_log_path"):
             p = entry.get(key)
             if p:
                 try:
@@ -350,7 +352,7 @@ def _evict_stale() -> None:
         entry = _jobs.pop(jid, None)
         if entry is None:
             continue
-        for key in ("tempfile_path", "stderr_log_path"):
+        for key in ("tempfile_path", "focus_tempfile_path", "stderr_log_path"):
             p = entry.get(key)
             if p:
                 try:

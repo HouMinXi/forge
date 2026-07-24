@@ -734,6 +734,7 @@ async def test_forge_gate_check_timeout_returns_job_ref():
         mock_start.assert_called_once_with(
             mock_task, mock_proc,
             tempfile_path=None,
+            focus_tempfile_path=None,
             stderr_log_path="/tmp/fake.log",
             max_lifetime_s=900.0,
         )

@@ -649,27 +649,42 @@ async def _dispatch_cli(
     workspace: Path,
     cap: float,
     contract: str | None = None,
+    focus: str | None = None,
     env: dict[str, str] | None = None,
 ) -> CallToolResult:
-    """Shared CLI-subprocess dispatch with contract tmpfile lifecycle.
+    """Shared CLI-subprocess dispatch with contract+focus tmpfile lifecycle.
 
-    Materializes an optional contract to a tmpfile, runs
+    Materializes optional contract and focus to tmpfiles, runs
     _run_cli_budgeted, and routes the result to inline or job
     completion.  Cleanup is automatic on every exit path:
-      - raise from _run_cli_budgeted: unlink tmpfile, re-raise
-      - inline result: unlink tmpfile, return _make_result
+      - raise from _run_cli_budgeted: unlink both tmpfiles, re-raise
+      - inline result: unlink both tmpfiles, return _make_result
       - job result: transfer tmpfile ownership to start_job;
-        if start_job raises, unlink both tmpfile and stderr, re-raise
+        if start_job raises, unlink all three (contract + focus + stderr)
     """
     contract_tmp: str | None = None
-    if contract:
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", delete=False, encoding="utf-8"
-        )
-        tmp.write(contract)
-        tmp.close()
-        contract_tmp = tmp.name
-        cli_args.extend(["--contract", contract_tmp])
+    focus_tmp: str | None = None
+    try:
+        if contract:
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False, encoding="utf-8"
+            )
+            contract_tmp = tmp.name
+            tmp.write(contract)
+            tmp.close()
+            cli_args.extend(["--contract", contract_tmp])
+        if focus:
+            ftmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False, encoding="utf-8"
+            )
+            focus_tmp = ftmp.name
+            ftmp.write(focus)
+            ftmp.close()
+            cli_args.extend(["--focus", focus_tmp])
+    except BaseException:
+        _unlink(contract_tmp)
+        _unlink(focus_tmp)
+        raise
 
     try:
         result = await _run_cli_budgeted(
@@ -677,11 +692,13 @@ async def _dispatch_cli(
         )
     except BaseException:
         _unlink(contract_tmp)
+        _unlink(focus_tmp)
         raise
 
     if isinstance(result[0], str):
         stdout, exit_code, elapsed, stderr = result  # type: ignore[misc]
         _unlink(contract_tmp)
+        _unlink(focus_tmp)
         return _make_result(stdout, exit_code, elapsed, stderr)
 
     # Timeout -- transfer ownership to background job
@@ -690,11 +707,13 @@ async def _dispatch_cli(
         job_id = start_job(
             inner_task, proc,
             tempfile_path=contract_tmp,
+            focus_tempfile_path=focus_tmp,
             stderr_log_path=stderr_path,
             max_lifetime_s=cap,
         )
     except Exception:
         _unlink(contract_tmp)
+        _unlink(focus_tmp)
         _unlink(stderr_path)
         raise
     return _make_job_ref(job_id)
@@ -804,6 +823,7 @@ async def _dispatch_sampling(
     backend_name: str | None = None,
     staged: bool = False,  # True for gate-check (INDEX), False for review (WORKING)
     contract_spec: str = "",
+    focus_spec: str = "",
 ) -> CallToolResult:
     """Run forge review in-process via MCP sampling transport.
 
@@ -830,6 +850,7 @@ async def _dispatch_sampling(
 
     # Save raw MCP value before merge -- fallback writes raw, not merged
     raw_contract = contract_spec
+    raw_focus = focus_spec
 
     # Load contracts.yaml digest -- review path only (not gate-check).
     # CLI gate-check does NOT load contracts.yaml; unconditional loading
@@ -847,6 +868,21 @@ async def _dispatch_sampling(
             warn_fn=lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush())
         )
 
+    # Load trusted yaml focus -- review path only (not gate-check).
+    gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
+    yaml_focus = ""
+    if not staged and gate_yaml_path.is_file():
+        yaml_focus = cli._load_trusted_yaml_focus(
+            gate_yaml_path,
+            lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush()),
+        )
+
+    if yaml_focus or focus_spec:
+        focus_spec = cli._merge_focus_spec(
+            yaml_focus, focus_spec,
+            warn_fn=lambda msg: (sys.stderr.write(msg + "\n"), sys.stderr.flush())
+        )
+
     # capture event loop BEFORE dispatching to worker thread
     loop = asyncio.get_running_loop()
 
@@ -855,6 +891,7 @@ async def _dispatch_sampling(
         loop=loop,
         resolved=resolved,
         contract_spec=contract_spec,
+        focus_spec=focus_spec,
     )
 
     # ponytail: sampling path uses stubs -- stub falsifier (not "auto",
@@ -916,6 +953,7 @@ async def _dispatch_sampling(
             cap = _job_cap_s(workspace, backend_name or "")
             return await _dispatch_cli(
                 cli_args, workspace, cap, contract=raw_contract,
+                focus=raw_focus,
             )
         elif _can_fallback:
             raise ToolError(
@@ -971,6 +1009,7 @@ async def _dispatch_sampling(
 async def forge_review(
     backend: str = "",
     contract: str = "",
+    focus: str = "",
     committed: bool = False,
     whole_file: bool = False,
     canary: bool = False,
@@ -1001,6 +1040,7 @@ async def forge_review(
             backend_name=backend,
             staged=False,
             contract_spec=contract,
+            focus_spec=focus,
         )
 
     _check_backend(workspace)
@@ -1023,7 +1063,8 @@ async def forge_review(
     )
     cap = _job_cap_s(workspace, backend)
     return await _dispatch_cli(
-        cli_args, workspace, cap, contract=contract or None, env=child_env,
+        cli_args, workspace, cap, contract=contract or None,
+        focus=focus or None, env=child_env,
     )
 
 
