@@ -299,6 +299,8 @@ class TestContractsYamlGuard:
         args.backend_format = None
         args.backend_key_env = None
         args.backend_model = None
+        # Focus arg must be None (same MagicMock truthy issue as above).
+        args.focus = None
 
         fake_backend = MagicMock()
         fake_backend.name = "test"
