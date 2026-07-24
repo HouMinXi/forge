@@ -19,6 +19,10 @@
         "$ref": "#/$defs/backendEntry"
       }
     },
+    "review_focus": {
+      "type": "string",
+      "description": "Areas to prioritize during review. Injected as a '## Review Focus' section in the review prompt. Requires re-running 'code-forge trust' after changing."
+    },
     "test": {
       "type": "object",
       "description": "Test command configuration for the R1 commit gate (code-forge gate-check).",

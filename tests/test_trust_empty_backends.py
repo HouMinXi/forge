@@ -48,7 +48,7 @@ class TestTrustEmptyBackends:
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 2
-        assert "No backends configured in this gate.yaml" in result.stderr
+        assert "No backends or review_focus configured in this gate.yaml" in result.stderr
         assert "Trusted:" not in result.stderr
 
     def test_commented_out_backends_rejected(self, repo_with_gate):
@@ -61,7 +61,7 @@ class TestTrustEmptyBackends:
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 2
-        assert "No backends configured" in result.stderr
+        assert "No backends or review_focus configured" in result.stderr
 
     def test_real_backend_accepted(self, repo_with_gate):
         """gate.yaml with a real backend: trust succeeds."""

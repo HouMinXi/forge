@@ -143,6 +143,14 @@ outlet: subprocess
 #       set:
 #         ANTHROPIC_API_KEY_SOURCE: gate-yaml
 
+# review_focus: areas to prioritize during review. Injected as a
+#   "## Review Focus" section in the prompt, distinct from "## Design Intent"
+#   (contracts). Changing this value requires re-running 'code-forge trust'
+#   to authorize the new content.
+# review_focus: |
+#   Focus on error handling and edge cases.
+#   Pay special attention to the authentication flow.
+
 # test: test command run by code-forge gate-check (R1 commit gate).
 # Without this section, gate-check exits with an error.
 # test:
