@@ -63,9 +63,28 @@ re-derived by the PM, not copied from that report.
   wrong covering test for 584 (says test_cross_repo_contracts; real =
   test_mcp_server). /tmp report, uncommitted, trivial. Flip disclosed per S1.
 
-## Gate verdict
+## Gate verdict (initial)
 A green EXCEPT A5 (F1). B satisfied (B-A + B-B + C all pass; gate needs >=1).
 => Advance to CP3-external / merge ONLY after F1 is fixed. All substantive code,
 coverage, trust-independence, and suite claims independently VERIFIED PASS. F1 is
-a 4-line hygiene cleanup, not a design defect. PM does not implement source: F1
-routing (executor vs PM-exception vs user) is the user's call.
+a 4-line hygiene cleanup, not a design defect.
+
+## F1 CLEARED -- amendment verified (2026-07-24, user amended)
+User rebased the branch to strip D5.6. New tip 74adbf2 (was b0b4d03); commits
+32eb3da/ae00d5c unchanged, fbc3f2b (was 35568e0) + 3 descendants rewritten.
+Verified NOT by trusting the claim but by:
+- range-diff ca0d860..b0b4d03 vs ca0d860..74adbf2: ONLY deltas are the 4 D5.6
+  tokens removed (1 commit-body line + 3 cli.py comment lines); commits 4-7
+  identical patches; zero logic lines touched.
+- D5.6/D-5 in code = 0; in commit bodies = 0; no P0-3/Task/Wave.
+- non-ASCII on amended diff = 0; Contract Reference = 0; Design Intent = 3 sites.
+- 3 rewritten comments read as complete self-contained sentences.
+- py_compile OK on all 5 touched sources.
+- B-B post-trust-edit RE-RUN against amended tip 74adbf2: 8/8 PASS.
+- Full suite NOT re-run: amendment is comment/message-only (range-diff proves
+  executable lines byte-identical), so 2903/8/0 stands; a re-run would be theater.
+
+## Final gate verdict
+A FULLY green (A5 now clean). B satisfied (B-A + B-B + C). => Phase 41 impl is
+CLEARED to advance to CP3 external-model forge review (3 rounds, exit all
+0/0/0/0) before merge. Final tip: 74adbf2. Branch unmerged/unpushed.
