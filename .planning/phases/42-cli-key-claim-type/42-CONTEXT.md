@@ -14,7 +14,7 @@ mimo's independent ground-review (42-CONTEXT-VERIFICATION.md) caught a real
 defect in the PM's first-draft F8 seams: the PM asserted "the review command
 does not validate key resolvability before dispatching the pipeline," which is
 FALSE. An early fast-fail guard for api_key_env already exists (commit 92ca717,
-cli.py:2392-2400). Root cause of the PM error: the PM's Read window ended at
+cli.py:2396-2400). Root cause of the PM error: the PM's Read window ended at
 cli.py:2390, two lines short of the guard at 2392, and asserted a negative from
 a truncated read. The F8 Phase-Boundary line, seams, and Q3 are CORRECTED below;
 F8 is now scoped as an EXTENSION (api_key_file + vertex), not a greenfield build.
@@ -29,7 +29,7 @@ This phase builds EXACTLY two things, both logic-bearing:
 
 1. **F8 CLI key fast-fail (EXTENSION, not greenfield -- see CORRECTION above).**
    An early fast-fail guard already exists for api_key_env (commit 92ca717,
-   cli.py:2392-2400). This phase EXTENDS it to the credential types it currently
+   cli.py:2396-2400). This phase EXTENDS it to the credential types it currently
    skips (api_key_file, vertex), OR declares the existing coverage sufficient and
    closes F8. Scope decided by the plan; see corrected F8 seams + Q3.
 
@@ -91,7 +91,7 @@ phases.
   pipeline has spun up and dispatched a pass, and may burn retry/backoff before
   surfacing.
 - **An early fast-fail guard ALREADY EXISTS for api_key_env** (commit 92ca717,
-  `cli.py:2392-2400`), AFTER outlet/backend resolution but BEFORE the review
+  `cli.py:2396-2400`), AFTER outlet/backend resolution but BEFORE the review
   state machine:
   `if backend.format != "vertex" and backend.api_key_env: if not
   os.environ.get(backend.api_key_env): raise CliError("API key env var %r is not
@@ -169,7 +169,7 @@ F8:
    inline / subagent)?
 3. **Already-covered: PARTIALLY RESOLVED (see CORRECTION + corrected seams).**
    The api_key_env case is ALREADY fast-failed by the 92ca717 guard
-   (`cli.py:2392-2400`) -- do NOT rebuild it. The open part is only whether to
+   (`cli.py:2396-2400`) -- do NOT rebuild it. The open part is only whether to
    EXTEND the guard to api_key_file + vertex (reusing `_probe_api`, which already
    resolves both), or declare existing coverage sufficient and close F8. State
    which, with the one-line reason. (This is the F5-of-the-router-RCA lesson,
