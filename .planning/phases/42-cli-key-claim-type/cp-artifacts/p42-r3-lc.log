@@ -1,0 +1,5 @@
+[aicc] session: p42-r3-lc
+[aicc] output saved to: /tmp/p42-r3-lc.md (2293 bytes)
+
+[aicc] session saved: p42-r3-lc
+[aicc] to resume:  aicc lc --cont p42-r3-lc "continue"

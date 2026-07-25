@@ -3,16 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.8
 milestone_name: Onboarding + Throughput
 status: active
-stopped_at: main @ 74adbf2 -- Phase 41 (review focus) merged 2026-07-25 (fast-forward, 7 commits on ca0d860). v2.8 tail now: Phase 42, then a Router onboarding compat batch (scheduled 2026-07-25 from the OmniRoute/gemini RCA, after Phase 42). Next per queue Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1).
-last_updated: "2026-07-25T04:36:02.000Z"
-last_activity: 2026-07-25 -- Phase 41 (review focus) MERGED as 74adbf2 (fast-forward from phase-41-review-focus, 7 commits on ca0d860, +565/-60, 18 files incl. new tests/test_focus.py). Delivered: "## Contract Reference"->"## Design Intent" in all 3 prompt builders; review-focus emphasis mechanism (gate.yaml review_focus + --focus FILE + MCP focus param merged into a "## Review Focus" section on all 3 builders, own trust hash independent of backend trust); git-blame committer date in attribution. PM-verified INDEPENDENTLY (not executor self-report): full suite 2903/8/0 on the REAL editable-install main path (582.12s); per-site bug-injection on all 3 header sites, each proven caught (cli.py:786 + factories.py:282 -> test_contract_wiring; factories.py:584 -> test_mcp_server); post-trust-edit adversary proved focus trust independent of backend trust; degenerate --focus (empty/missing) graceful. F1 (plan-ref "D5.6" in 3 comments + 1 commit body; the repo [Dd]-[0-9] self-check misses it, no hyphen) fixed pre-merge via rebase, range-diff confirmed comment/message-only, zero logic touched. Executor report mislabeled factories.py:584's covering test (said test_cross_repo, real = test_mcp_server); coverage exists, attribution corrected. Sibling 41-sampling-fix (2edb9d4 + 5c8e001) already in, NOT rebuilt. Cleanup: worktree removed; branch phase-41-review-focus + tag phase-41-rescue deleted (user-owned, both confirmed merged). Full record: 41-review-focus/41-ACCEPTANCE.md.
+stopped_at: Phase 47 merged (ca0d860, fix/invoke-error-visibility, fast-forward to main)
+last_updated: "2026-07-25T11:20:28.908Z"
 progress:
-  total_phases: 18
-  completed_phases: 16
-  total_plans: 0
-  completed_plans: 0
-  percent: 89
-  counters_basis: v2.8 tracked checklist lines incl. batches (16/18 after adding the Router onboarding compat batch 2026-07-25; was 16/17 after Phase 41 flipped [x]; 15/17 after Phase 40; basis frozen 2026-07-11, prior 10/11 basis unrecoverable)
+  total_phases: 17
+  completed_phases: 10
+  total_plans: 35
+  completed_plans: 31
+  percent: 59
 ---
 
 # State: Forge
@@ -173,9 +171,11 @@ collision with doctor audit phase).
 
 **RECONCILE 2026-07-10 midday (superseded above; kept for history).**
 main @ 4c5f46d. Landed since 07-09:
+
 - W3 slow-drip deadline fix MERGED 2026-07-10 (4c5f46d; tree byte-identical
   to e5ccf8f, message amend only). _read_with_deadline daemon-thread +
   sock.shutdown(SHUT_RDWR); three-round L4 convergence.
+
 - Phase 45 multi-language IN FLIGHT on feat/multi-language (worktree
   .worktrees/multilang), ff-clean on 4c5f46d. Wave 1 (Go via golangci-lint
   SARIF + mcp allow_main per-call env) ACCEPTED @ a31e3a8, 5 commits.
@@ -186,6 +186,7 @@ main @ 4c5f46d. Landed since 07-09:
   Rework dispatched (verdict /tmp/L4_verdict_phase45_wave2_20260710.txt);
   eaf33c1 refactor itself accepted. C4 refined: spike must run the landed
   command in pipeline argv shape end-to-end through run_tools+parse_output.
+
 - Phase 45 multi-language runs PARALLEL to the 40->41->42 working queue
   (queue unchanged). NUMBERING NOTE: it is NOT the learning-loop flywheel.
   The v3.x sketch lane (ESCAPE/SYNTHESIS/REGISTRY/SCOUT/COMPILATION/driver)
@@ -196,12 +197,15 @@ main @ 4c5f46d. Landed since 07-09:
 
 **RECONCILE 2026-07-09 (superseded above; kept for history).**
 main @ 14b3985. Landed since the 07-08 snapshot:
+
 - 38.3 MCP OOB UX: content is IN main (T1 roots mcp_server.py:173-216, T2
   api_key_file backend.py:89/309-326/636, _truncate limit<4 :568). The
   mcp-oobe branch @ 98f1ddd was superseded by the onramp/surflare work,
   then deleted; 98f1ddd + 6bf1682 dangle (safe to GC). NOT an open merge.
+
 - Usability on-ramp batch @ 89a091f (merged 2026-07-07, PM L4 verified).
 - surflare consumer-pain fixes @ e50b375 (merged 2026-07-08, PM L4 x4 rounds).
+
 Next: Phase 40 (Honest partial results + convergence). QUEUE (authoritative,
 2026-07-08): the in-flight working queue is 40 -> 41 -> 42, UNCHANGED. Phase 44
 is now scoped (EVAL-ON-DUTY, v2.9 AMENDMENT 1 rev 2) as the root of the parallel
@@ -221,12 +225,15 @@ Also landed (pre-Phase 39, this session): sig_b OSError (0b94363), output-ceilin
 Current: Phase 40 (next in queue)
 Next: Phase 40 (queue: 40 -> 41 -> 42; see the authoritative QUEUE note above -- Phase 44 is the parallel v2.9 lane root, not in-flight)
 Open 38.x tail:
+
 - 38.2 PDEATHSIG: MERGED 2026-07-04 (9f96fd5). All B1-B4 blockers
   closed, mimo-pro 3-round convergence, commit messages reworded.
+
 - 38.1-5 + 38.1-6: MERGED 2026-07-09 (14b3985). Contract heading
   matcher (fuzzy + level-aware + CommonMark indent guard) + duration
   inflation fix (wall-clock for parallel paths). 7 commits, 464+/15-,
   2647 tests pass, PM L4 verified across 3 rounds.
+
 - 38.2 ppid probe: RUN 2026-07-04 -- zero orphans (3 live servers,
   all with live claude parents, ages match). Deciding fact still
   uncollected; send_ping stays gated. Spec's cmdline-grep probe is a
@@ -234,6 +241,7 @@ Open 38.x tail:
   for d in /proc/[0-9]*; do [ "$(cat $d/comm 2>/dev/null)" =
   "code-forge-mcp" ] && echo "$d ppid=$(awk '/^PPid:/{print $2}'
   $d/status)"; done
+
 - 38.2 B5 tripwire: HALF-RETRACTED. The "distinct log per PDEATHSIG
   exit" half is unsatisfiable (normal parent-death SIGTERM is
   signal-indistinguishable) -> dropped. The OTHER half -- observe
@@ -241,11 +249,13 @@ Open 38.x tail:
   exactly 38.4 GATE A's deciding fact (ppid probe above = current
   reading, zero so far). Not superseded by PDEATHSIG (that covers
   parent-DEATH only).
+
 - 38.4 send_ping = SEPARATE gated unit (NOT bundled into 38.2 --
   unproven + false-kill-capable must not block the proven PDEATHSIG
   fix). Briefing /tmp/draft_20260704_phase38.4_send_ping.txt. Double
   gate: GATE A necessity (tripwire catches a parent-ALIVE orphan) +
   GATE B efficacy. SDK grounded: send_ping server/session.py:443.
+
 - send_ping CLIENT-COMPAT TEST RUN 2026-07-04 (real, not desk):
   * Python axis 3.8-3.14 mostly N/A: MCP SDK (mcp 1.27.0)
     requires-python >=3.10 -> 3.8/3.9 CANNOT run send_ping at all
@@ -253,6 +263,7 @@ Open 38.x tail:
     but below floor). 3.10-3.14: ping is JSON-RPC protocol-level,
     server Python version invisible to client, one SDK serves all ->
     axis collapses to per-CLIENT. Tested on 3.14 (forge's deploy).
+
   * GATE B HALF-A PASS for Claude Code: real headless CC ran a probe
     tool firing ctx.session.send_ping(); server log ground truth
     "client=claude-code/2.1.197 -> ANSWERED in 2.4ms" (Python ref
@@ -261,12 +272,14 @@ Open 38.x tail:
     answering when abandoned) still open -> needs T1 pinger + real
     orphan. Codex/Copilot untested (not installed; gh copilot is not
     an MCP stdio client). Harness kept /tmp/ping_probe_server.py.
+
   * CLIENT-FAMILY MATRIX extended 2026-07-04 (all py3.14, server-log
     ground truth): Claude Code 2.1.197 ANSWERED 2.4ms (real); TS ref
     SDK 1.29.0 ANSWERED 2.5ms (proxy for VS Code/Cursor/Windsurf --
     all on @modelcontextprotocol/sdk, ping auto-answered in Protocol
     base); Python ref SDK 1.27.0 ANSWERED 1.0ms (control). Both SDK
     families auto-answer -> false-kill risk broadly retired.
+
   * Still no DIRECT test: PyCharm (native Kotlin client, plugin
     `mcpserver`; NO proxy covers it -- genuinely untested) and VS
     Code GUI (TS-family implies yes; bundle grep inconclusive, core
@@ -276,6 +289,7 @@ Open 38.x tail:
     ~/code/hermes-agent (path EXISTS, so not stale there, unlike the
     ~/.claude.json trinity pin). GUI-probe handoff (30s/IDE):
     /tmp/draft_20260704_send_ping_gui_test.txt
+
   * FLATPAK VS CODE SPAWN ROOT CAUSE found 2026-07-04 (live, MCP
     server log): forge/probe MCP fails NOT from gpg/multi-instance
     but because flatpak-spawn --host inherits cwd = VS Code's
@@ -290,6 +304,7 @@ Open 38.x tail:
     failure; strongest Flatpak onramp). This spawn layer is NOT
     forge-fixable in code; the fix is config (--directory) + the
     sampling on-ramp.
+
 - 38.1-5 + 38.1-6: MERGED 2026-07-09 (14b3985)
 - MCP "failed" status diagnosed 2026-07-04: launch chain verified OK
   now (pass rc=0, wrapper rc=0); failure is state-dependent -- wrapper
@@ -428,12 +443,15 @@ freed. Probe README results table updated + planning snapshot.
 User is rebooting; /tmp confirmed tmpfs (wiped on reboot). Rescued
 today's live artifacts to durable disk storage (byte-diff verified
 identical to /tmp originals):
+
 - .planning/dispatch/draft_20260704_{phase38.2_gate_return,
   phase38.3_mcp_credential_ux, phase38.4_send_ping,
   phase43_ledger_dispatch, send_ping_gui_test}.txt
+
 - .planning/evidence/send_ping_probe/{ping_probe_server.py,
   ping_probe_client.py, README.md (rerun instructions + results
   table + the flatpak cwd bug note)}
+
 - Project memory: project_forge_38x_mcp_hardening_2026-07-04.md
   (full session narrative) + MEMORY.md index line
 Also fixed proactively (was going to break identically on next
@@ -450,14 +468,18 @@ don't silently let them go.
 
 - Forward /tmp/draft_20260704_phase38.2_gate_return.txt to the 38.2
   exec session (fix on branch orphan-guard, resubmit)
+
 - Dispatch /tmp/draft_20260704_phase43_ledger_dispatch.txt (Phase 43
   LEDGER, anchors re-verified at 0a85662) to a fresh exec session
+
 - 38.1-5/6: MERGED 2026-07-09 (14b3985)
 - Fix ~/.claude.json forge env: remove FORGE_PROJECT_DIR (stale path;
   server walk-up takes over). Edit outside a live CC session, then
   /mcp Reconnect in affected sessions
+
 - Dispatch /tmp/draft_20260704_phase38.3_mcp_credential_ux.txt
   (credential UX: retire the wrapper; T1 env-validate + T2 api_key_path
+
   + T3 onboarding flip). Parallel-safe with 38.2/43 (different files).
 - Open v2.9 milestone requirements via GSD flow at/before 43 merge
 - Queue: 43 -> 39 -> 40 -> 44 -> 41 -> 42 (per v2.9 schedule)

@@ -1,0 +1,5 @@
+[aicc] session: p42-r3-ds
+[aicc] output saved to: /tmp/p42-r3-ds.md (3536 bytes)
+
+[aicc] session saved: p42-r3-ds
+[aicc] to resume:  aicc ds --cont p42-r3-ds "continue"

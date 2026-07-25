@@ -1,0 +1,29 @@
+地面核查已全部完成（两份计划 + 全部引用源码逐一比对）。以下为最终评审结论。
+
+## kimi Review — Phase 42 (Final)
+
+### Findings
+
+| # | Severity | Plan | Finding |
+|---|----------|------|---------|
+| 1 | MEDIUM | 42-02 | Acceptance criteria + verification contradict the Round-3-corrected Step 4. Task 2 acceptance says "hardcoding 'review' back causes **L0 test** to FAIL; removing version_sensitive causes **L1 test** to FAIL", and `<verification>` repeats both. But Step 4 (fixed in Round 3) explicitly states tests 9-10 bypass machine.py and "Test 13 is the ONLY test that catches this wiring regression". Under the designed suite, re-hardcoding `"review"` in machine.py fails ONLY Test 13 — `test_l0_lint` tests claim.py in isolation and stays green. Same for the version_sensitive injection: only Test 13(c) fails, no "L1 test". The verification section even lists both phrasings side by side ("causes L0 test to FAIL" AND "re-hardcoding 'review' in machine.py causes test 13 FAIL") as if distinct. The Round 3 fix updated the action text but left the stale acceptance/verification bullets — an executor watching `test_l0_lint` stay green post-injection cannot tell whether the bug-injection proof succeeded. Fix: replace "L0 test"/"L1 test" with "test 13" in both sections. |
+| 2 | MEDIUM | 42-01 | Step 1 pattern code omits the required `type` argument: `BackendConfig(name="test", model="m", format="openai", api_key_file=...)` raises TypeError — `type` has no default (backend.py:84). The next sentence does point to the correct pattern (test_cli_integration.py:696-703 passes `type="api"`), so it fails loudly and is trivially repaired, but a copied-verbatim snippet that cannot run violates plan-writing discipline. Fix: add `type="api"` to the snippet. |
+| 3 | LOW | 42-01 | Objective says api_key_file backends "fail deep in the **retry loop** at llm_invoke.py:840-851". Key resolution (llm_invoke.py:838-862) runs BEFORE the retry loop (which starts after `start = time.monotonic()` at :873). Substance is accurate (per-pass failure × 3 passes = 3 INFRA findings; line ref correct); "retry loop" is the wrong frame — it fails once per pass, pre-retry. |
+| 4 | LOW | 42-02 | Task 2 acceptance pins "machine.py:**1211** no longer has hardcoded axis_claim='review'". Adding `from .claim import derive_claim_type` near machine.py:39 shifts the line (~1212); the pinned number goes stale on implementation. The grep-based check (`grep -c 'axis_claim="review"' machine.py` → 0, verified sound: exactly one occurrence today at :1211) is the robust criterion — cite it instead. |
+
+### Verified clean (spot-checked against source, no findings)
+
+- **file:line accuracy** — every reference confirmed: cli.py:2396-2400 guard; state_dir at :2402; backend.py:281-300 vertex parse / :310-320 XOR enforcement; llm_invoke.py:840-851; machine.py:1162 `_write_ledger_rows` def, :1204-1216 write with `axis_claim="review"` at :1211; ledger.py:40-54 LedgerRow (frozen, zero defaults, `ts` last); iter_rows json.loads at :92, `axis_claim=data[...]` at :108; state.py:66-86 StateFinding 7-value Literal; cli.py:1314-1326 manual mark at :1321; test_cli_integration.py:691-706.
+- **Guard logic** — elif chain correct: vertex configs always have api_key_env=None AND api_key_file=None (backend.py:292-300; `_parse_provider_fields` :132-181 injects neither), so elif never fires for vertex; cli-type backends (format=None, no creds) correctly skip all checks; inline backend (cli.py:2366-2376) keeps existing env-var behavior.
+- **Plan premise** — forge's own gate.yaml sets `outlet: subprocess`, which short-circuits BEFORE the reachability probe (outlet_resolver.py:222-252), so `_probe_api` never runs on the real path; the inline guard is the only pre-pipeline check. Probe also never checks file emptiness (backend.py:636-652), so the empty-file gap exists on both paths. Premise holds.
+- **claim_type mapping** — all 7 `StateFinding.source` Literal values mapped, ValueError on unknown; L1/MUTANT version_sensitive=True consistent across truths/behaviors/tests.
+- **Backward compat** — `version_sensitive: bool = False` at END of frozen dataclass is mandatory (TypeError otherwise) and correct; all 3 construction sites (machine.py:1204, cli.py:1314, ledger.py:101) use kwargs; `data.get("version_sensitive", False)` handles old rows; cli.py:1321 untouched and correctly defaults to False.
+- **Existing tests unbroken** — test_ledger.py:125-136 asserts keys with `in` (not exact-dict equality), so the new JSON key is additive-safe; test_cli_integration.py:691 exercises the llm_invoke deep path, untouched by the guard.
+- **Acceptance checks non-vacuous** — cli.py today has ZERO occurrences of `api_key_file`/`credentials_path`, so `grep -c >= 1` only passes post-implementation; `axis_claim="review"` occurs exactly once in machine.py, so grep→0 is a real signal.
+- **Bug-injection design (42-01)** — injects at the NEW elif/vertex blocks only, explicitly NOT at the pre-existing api_key_env guard (false-green trap correctly named); Test 13 source-assertion correctly covers the machine.py wiring that runtime tests 9-10 bypass.
+- **Imports** — `CliError` importable from code_forge.cli (cli.py:40, re-exported from .errors); `Path` at cli.py:18; `append_row`/`iter_rows`/`TerminalState`/`LedgerRow` all real in ledger.py (machine.py:39 aliases `append_row as ledger_append`); claim.py confirmed absent — "Create" is correct.
+- **Scope** — 42-01 touches only cli.py + test_fast_fail.py (F8); 42-02 touches claim.py/machine.py/ledger.py/test_claim_type.py (7.1); manual mark explicitly out of scope; both wave 1 with no shared files.
+
+### Verdict: NOT CLEAN — 0B/0H/2M/2L
+
+两条 MEDIUM 都是一节可修的小改（#1 把 acceptance/verification 里的 "L0 test"/"L1 test" 改成 "test 13"；#2 给示例补 `type="api"`），其中 #1 值得修——它错误陈述了 bug-injection 的退出条件，执行者会无法判定注入证明是否成功。修完即可进入执行。

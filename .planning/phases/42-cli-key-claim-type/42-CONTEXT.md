@@ -15,7 +15,7 @@ defect in the PM's first-draft F8 seams: the PM asserted "the review command
 does not validate key resolvability before dispatching the pipeline," which is
 FALSE. An early fast-fail guard for api_key_env already exists (commit 92ca717,
 cli.py:2396-2400). Root cause of the PM error: the PM's Read window ended at
-cli.py:2390, two lines short of the guard at 2392, and asserted a negative from
+cli.py:2390, several lines short of the guard at 2396, and asserted a negative from
 a truncated read. The F8 Phase-Boundary line, seams, and Q3 are CORRECTED below;
 F8 is now scoped as an EXTENSION (api_key_file + vertex), not a greenfield build.
 Every other anchor passed mimo's verification unchanged, and the claim_type half
