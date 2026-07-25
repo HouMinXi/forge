@@ -9,15 +9,29 @@ read by the PM this session, not inherited from a report. Code graph refreshed
 **Verified-by:** forge PM. Ground truth is the code at the cited lines, not the
 roadmap one-liner.
 
+**CORRECTION 2026-07-25 (post-mimo verification; disclosed per Fleet Law S1).**
+mimo's independent ground-review (42-CONTEXT-VERIFICATION.md) caught a real
+defect in the PM's first-draft F8 seams: the PM asserted "the review command
+does not validate key resolvability before dispatching the pipeline," which is
+FALSE. An early fast-fail guard for api_key_env already exists (commit 92ca717,
+cli.py:2392-2400). Root cause of the PM error: the PM's Read window ended at
+cli.py:2390, two lines short of the guard at 2392, and asserted a negative from
+a truncated read. The F8 Phase-Boundary line, seams, and Q3 are CORRECTED below;
+F8 is now scoped as an EXTENSION (api_key_file + vertex), not a greenfield build.
+Every other anchor passed mimo's verification unchanged, and the claim_type half
+is fully correct.
+
 <domain>
 
 ## Phase Boundary
 
 This phase builds EXACTLY two things, both logic-bearing:
 
-1. **F8 CLI key fast-fail.** Make a review abort EARLY with a clear message
-   when a configured backend's API key is not resolvable, instead of failing
-   deep inside the pipeline (per-pass, inside a retry loop) as it does today.
+1. **F8 CLI key fast-fail (EXTENSION, not greenfield -- see CORRECTION above).**
+   An early fast-fail guard already exists for api_key_env (commit 92ca717,
+   cli.py:2392-2400). This phase EXTENDS it to the credential types it currently
+   skips (api_key_file, vertex), OR declares the existing coverage sufficient and
+   closes F8. Scope decided by the plan; see corrected F8 seams + Q3.
 
 2. **claim_type oracle (7.1).** Mechanically derive "WHAT is claimed" for each
    finding (a claim_type), aligned to the existing Phase 43 ledger `axis_claim`
@@ -76,20 +90,35 @@ phases.
   `:879`. A configured-but-unresolvable key is only discovered AFTER the review
   pipeline has spun up and dispatched a pass, and may burn retry/backoff before
   surfacing.
-- **A resolvability probe EXISTS but is presence-only and not wired as a review
-  gate:** `_probe_api` (`backend.py:600-628+`) checks api_key_env presence /
-  vertex creds resolvability, NO network. On the review path it is invoked only
-  via the `_reachability` closure (`cli.py:2336-2343`) passed to
-  `resolve_outlet(reachability_fn=...)` (`cli.py:2345-2351`) -- its job there is
-  OUTLET auto-detection (subprocess vs inline vs subagent), NOT a hard key gate.
-  After outlet resolution the path falls through to `resolve_backend`
-  (`cli.py:2382`) and into the pipeline (`:2390`); the key value is still not
-  resolved until `_invoke_api`.
+- **An early fast-fail guard ALREADY EXISTS for api_key_env** (commit 92ca717,
+  `cli.py:2392-2400`), AFTER outlet/backend resolution but BEFORE the review
+  state machine:
+  `if backend.format != "vertex" and backend.api_key_env: if not
+  os.environ.get(backend.api_key_env): raise CliError("API key env var %r is not
+  set")`. So a missing ENV-VAR key on a non-vertex backend ALREADY fails fast
+  with one clear message (not 3 deep INFRA findings, one per pass).
+- **A resolvability probe also exists** (`_probe_api`, `backend.py:600-628+`,
+  presence-only, no network) and resolves BOTH api_key_env presence and vertex
+  creds. On the review path it is invoked via `_reachability`
+  (`cli.py:2336-2343`) into `resolve_outlet(reachability_fn=...)`
+  (`cli.py:2345-2351`) -- but that call's job is OUTLET auto-detection, not the
+  key gate. The key gate is the explicit 92ca717 guard above.
 
-Net grounded gap: **the `review` command does not validate key resolvability
-before dispatching the pipeline; it fails deep, late, and possibly after
-retries.** The building blocks to fix it (`_probe_api`) already exist and should
-be reused, not reinvented.
+Net grounded gap (CORRECTED -- SMALLER than the first draft claimed): the
+92ca717 guard fires ONLY when `backend.api_key_env` is set AND the backend is
+non-vertex. It therefore does NOT cover:
+- **api_key_file backends** -- the guard's `and backend.api_key_env` is falsy
+  (a backend sets api_key_env XOR api_key_file, verified backend.py:310-320), so
+  the guard is skipped and a missing/empty key FILE still fails deep at
+  `_invoke_api` (`llm_invoke.py:840-851`), per-pass, in the retry loop.
+- **vertex backends** -- explicitly excluded by `format != "vertex"`;
+  unresolvable ADC / credentials_path still fails deep at invoke.
+
+So F8 is NOT "build fast-fail from scratch" -- it is "EXTEND the existing 92ca717
+guard to the two credential types it skips (api_key_file, vertex), reusing
+`_probe_api` which already resolves both," OR judge that api_key_file/vertex
+fast-fail is not worth it and close F8 as already-covered. The plan decides and
+states which.
 
 ### claim_type -- the Phase 43 ledger field it aligns to
 
@@ -138,11 +167,14 @@ F8:
 2. Placement: a pre-dispatch gate reusing `_probe_api`, vs. hoisting the
    `llm_invoke.py:853` check earlier. Which outlets does it cover (subprocess /
    inline / subagent)?
-3. **Already-covered check (do this FIRST):** trace whether
-   `resolve_outlet(reachability_fn=_reachability)` ALREADY aborts cleanly when
-   `_probe_api` returns ok=False for every outlet. If it does, F8 collapses to a
-   message-quality fix -- a valid outcome to report, not work to invent. This is
-   the F5-of-the-router-RCA risk: verify before building.
+3. **Already-covered: PARTIALLY RESOLVED (see CORRECTION + corrected seams).**
+   The api_key_env case is ALREADY fast-failed by the 92ca717 guard
+   (`cli.py:2392-2400`) -- do NOT rebuild it. The open part is only whether to
+   EXTEND the guard to api_key_file + vertex (reusing `_probe_api`, which already
+   resolves both), or declare existing coverage sufficient and close F8. State
+   which, with the one-line reason. (This is the F5-of-the-router-RCA lesson,
+   now realized on THIS phase: the first-draft "no validation" claim was wrong;
+   verify before building.)
 4. Exit code + message shape for the fast-fail.
 
 claim_type:
@@ -169,7 +201,9 @@ claim_type:
 - A threat_model / inversion note per part (how it fails; the check that catches
   it).
 - Bug-injection points named UP FRONT for each part (inject AT the fix site, not
-  near it): F8 -- the fast-fail guard; claim_type -- the derivation seam AND the
+  near it): F8 -- the NEW api_key_file/vertex extension guard (NOT the pre-existing
+  92ca717 api_key_env guard -- injecting there is "near, not at" and stays green
+  when the extension is removed); claim_type -- the derivation seam AND the
   ledger-alignment write.
 
 ## Acceptance gates (freeze the plan toward these)
@@ -178,9 +212,13 @@ From the source schedule + project law:
 - **Logic-bearing -> full 3-cycle static review + smoke test.** Both parts.
 - **Bug-injection proof for BOTH parts** (Golden Rule 2): inject the bug the
   test targets -> watch FAIL -> revert -> watch PASS, at the exact fix site.
-  - F8: remove the fast-fail guard -> a test asserting early clear failure on an
-    unset key goes RED. (Note the editable-install trap: force PYTHONPATH to the
-    worktree src pre-merge.)
+  - F8: if extending -- remove the NEW api_key_file/vertex extension -> a test
+    with a missing/empty key FILE (or unresolvable vertex creds) asserting early
+    clear failure goes RED. Do NOT inject at the pre-existing 92ca717 api_key_env
+    guard (that stays green when the extension is removed = false green). If F8
+    closes as already-covered, there is no new guard to inject -- the deliverable
+    is the trace proving api_key_file/vertex fast-fail is not needed. (Editable-
+    install trap: force PYTHONPATH to the worktree src pre-merge.)
   - claim_type: strip the derivation -> a test asserting the derived claim_type /
     ledger alignment goes RED.
 - **claim_type is MECHANICAL, not a prompt change** -> it does NOT require the
