@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v2.8
 milestone_name: Onboarding + Throughput
 status: active
-stopped_at: main @ 74adbf2 -- Phase 41 (review focus) merged 2026-07-25 (fast-forward, 7 commits on ca0d860). Only Phase 42 remains in v2.8. Next per queue Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1).
+stopped_at: main @ 74adbf2 -- Phase 41 (review focus) merged 2026-07-25 (fast-forward, 7 commits on ca0d860). v2.8 tail now: Phase 42, then a Router onboarding compat batch (scheduled 2026-07-25 from the OmniRoute/gemini RCA, after Phase 42). Next per queue Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1).
 last_updated: "2026-07-25T04:36:02.000Z"
 last_activity: 2026-07-25 -- Phase 41 (review focus) MERGED as 74adbf2 (fast-forward from phase-41-review-focus, 7 commits on ca0d860, +565/-60, 18 files incl. new tests/test_focus.py). Delivered: "## Contract Reference"->"## Design Intent" in all 3 prompt builders; review-focus emphasis mechanism (gate.yaml review_focus + --focus FILE + MCP focus param merged into a "## Review Focus" section on all 3 builders, own trust hash independent of backend trust); git-blame committer date in attribution. PM-verified INDEPENDENTLY (not executor self-report): full suite 2903/8/0 on the REAL editable-install main path (582.12s); per-site bug-injection on all 3 header sites, each proven caught (cli.py:786 + factories.py:282 -> test_contract_wiring; factories.py:584 -> test_mcp_server); post-trust-edit adversary proved focus trust independent of backend trust; degenerate --focus (empty/missing) graceful. F1 (plan-ref "D5.6" in 3 comments + 1 commit body; the repo [Dd]-[0-9] self-check misses it, no hyphen) fixed pre-merge via rebase, range-diff confirmed comment/message-only, zero logic touched. Executor report mislabeled factories.py:584's covering test (said test_cross_repo, real = test_mcp_server); coverage exists, attribution corrected. Sibling 41-sampling-fix (2edb9d4 + 5c8e001) already in, NOT rebuilt. Cleanup: worktree removed; branch phase-41-review-focus + tag phase-41-rescue deleted (user-owned, both confirmed merged). Full record: 41-review-focus/41-ACCEPTANCE.md.
 progress:
-  total_phases: 17
+  total_phases: 18
   completed_phases: 16
   total_plans: 0
   completed_plans: 0
-  percent: 94
-  counters_basis: v2.8 tracked checklist lines incl. batches (16/17 after Phase 41 flipped [x] 2026-07-25; was 15/17 after Phase 40; basis frozen 2026-07-11, prior 10/11 basis unrecoverable)
+  percent: 89
+  counters_basis: v2.8 tracked checklist lines incl. batches (16/18 after adding the Router onboarding compat batch 2026-07-25; was 16/17 after Phase 41 flipped [x]; 15/17 after Phase 40; basis frozen 2026-07-11, prior 10/11 basis unrecoverable)
 ---
 
 # State: Forge
@@ -24,9 +24,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** No code ships without surviving three consecutive clean review cycles; a green verdict is honest or declares what it did not verify
-**Current focus:** Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1) -- last v2.8 phase; Phase 41 (review focus) merged 2026-07-25 (74adbf2, PM-verified, suite 2903/8/0); Windows wave-2 parked until gpu-win evidence
+**Current focus:** Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1) -- next in queue; then Router onboarding compat batch (F1 SSE blocker + F3 trust + F4 live-probe + F2/F5 docs, scheduled 2026-07-25 after Phase 42); Phase 41 (review focus) merged 2026-07-25 (74adbf2, PM-verified, suite 2903/8/0); Windows wave-2 parked until gpu-win evidence
 
 ## Current Position
+
+**SCHEDULED 2026-07-25.** Router onboarding compat batch added to the v2.8 tail
+after Phase 42, from the OmniRoute/gemini default-router RCA
+(/tmp/forge-router-friction-rca.md). PM-verified all 5 findings against main @
+74adbf2, NOT the report's self-assessment: F1 (SSE body parsed as JSON) is a real
+reproduced blocker -- unblocks the gemini CP3 backend the fleet wants; F3
+(CWD-scoped trust) is a real footgun; F4 partially disproved (doctor already
+probes, but _probe_api is offline -- needs a live mode); F2 doc-only; F5 DISPROVED
+(user-level backend inheritance already ships via _merge_user_into, Phase 37.1).
+Triage + evidence: reports/router-friction-triage-20260725.md. v2.8 recount 16/18
+(89%).
 
 **RECONCILE 2026-07-25 (authoritative main pointer; supersedes 07-23 below).**
 main @ 74adbf2. Phase 41 (review focus) MERGED fast-forward (7 commits on
