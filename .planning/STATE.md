@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** No code ships without surviving three consecutive clean review cycles; a green verdict is honest or declares what it did not verify
-**Current focus:** Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1) -- next in queue; then Router onboarding compat batch (F1 SSE blocker + F3 trust + F4 live-probe + F2/F5 docs, scheduled 2026-07-25 after Phase 42); Phase 41 (review focus) merged 2026-07-25 (74adbf2, PM-verified, suite 2903/8/0); Windows wave-2 parked until gpu-win evidence
+**Current focus:** Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1) -- CONTEXT/ENTRANCE grounded + written 2026-07-25 (phases/42-cli-key-claim-type/42-CONTEXT.md, PM-verified seams vs main @ 74adbf2); OUT at mimo for plan generation, then static + multi-model adversarial review before any commit. Graph refreshed 2026-07-25 (286 files/5436 nodes). Then Router onboarding compat batch (F1 SSE blocker + F3 trust + F4 live-probe + F2/F5 docs, scheduled 2026-07-25 after Phase 42); Phase 41 (review focus) merged 2026-07-25 (74adbf2, PM-verified, suite 2903/8/0); Windows wave-2 parked until gpu-win evidence
 
 ## Current Position
 
