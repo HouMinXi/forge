@@ -38,7 +38,7 @@ dev = [
     "mutmut>=3.3,<4.0",
     # semgrep>=1.100 uses io_uring which fails on systems with low RLIMIT_MEMLOCK.
     # Pin to <1.100 until the upstream io_uring memory issue is resolved.
-    "semgrep>=1.0,<1.170",
+    "semgrep>=1.0,<1.172",
     "jsonschema>=4.18",
 ]
 vertex = [
