@@ -1,0 +1,5 @@
+[aicc] session: p42-confirm-lc
+[aicc] output saved to: /tmp/p42-confirm-lc.md (2229 bytes)
+
+[aicc] session saved: p42-confirm-lc
+[aicc] to resume:  aicc lc --cont p42-confirm-lc "continue"

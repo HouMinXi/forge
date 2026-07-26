@@ -1,0 +1,5 @@
+[aicc] session: p42-conv-ds
+[aicc] output saved to: /tmp/p42-conv-ds.md (2842 bytes)
+
+[aicc] session saved: p42-conv-ds
+[aicc] to resume:  aicc ds --cont p42-conv-ds "continue"
