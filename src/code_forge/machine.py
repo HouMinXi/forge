@@ -35,6 +35,7 @@ import logging
 
 from .autofix import AutoFixer, FixOutcome
 from .baseline import ResolvedReview
+from .claim import derive_claim_type
 from .diagnose import diagnose_non_convergence
 from .ledger import LedgerRow, TerminalState, append_row as ledger_append
 from .disposition import (
@@ -1201,6 +1202,7 @@ class StateMachine:
                 if state == TerminalState.FIXED
                 else (f.error or "falsifier_rejected")
             )
+            ct = derive_claim_type(f.source)
             ledger_append(self.cwd, LedgerRow(
                 fingerprint=f.fingerprint,
                 repo_root=str(self.cwd.resolve()),
@@ -1208,11 +1210,12 @@ class StateMachine:
                 head_sha=head,
                 file=f.file,
                 line=f.line_range[0] if f.line_range else 0,
-                axis_claim="review",
+                axis_claim=ct.type,
                 pass_provenance=f.source,
                 terminal_state=state,
                 evidence_class=evidence,
                 ts=ts,
+                version_sensitive=ct.version_sensitive,
             ))
             existing.add((f.fingerprint, state))
             rows += 1

@@ -274,36 +274,31 @@ def test_unit_dedup_does_not_block_different_state(tmp_path):
     assert states == {TerminalState.FIXED, TerminalState.DISPROVED}
 
 
-@pytest.mark.xfail(
-    reason="Phase 42 Task 2 RED: derive_claim_type not yet wired into machine.py",
-    strict=True,
-)
 def test_write_ledger_derives_claim_type_from_source(tmp_path):
-    """_write_ledger_rows() writes mechanically derived axis_claim.
+    """_write_ledger_rows derives axis_claim from f.source, not hardcoded.
 
-    Exercises TWO source values (L0 and L1) through the real
-    _write_ledger_rows path.  A single-source test is always
-    defeatable by hardcoding that source's literal:
-        derive_claim_type("L0") -> "lint" -> PASS (survives)
-    Two sources close the mirror mutation AND cover the
-    version_sensitive True branch.
+    Two-source coverage closes the mirror mutation: derive_claim_type("L0")
+    returning "review" would pass a single-L0 test but fail the L1 assertion.
     """
+    from code_forge.ledger import iter_rows as lr_iter
+
     _prep_local_state(tmp_path)
+    l0_finding = _make_finding("fp-l0", disp=Disposition.FIXED, source="L0")
+    l1_finding = _make_finding("fp-l1", disp=Disposition.FIXED, source="L1")
     machine = _build_machine(tmp_path, _resolved_with_shas())
-    machine._state.findings.append(
-        _make_finding("fp-lint", source="L0", disp=Disposition.FIXED)
-    )
-    machine._state.findings.append(
-        _make_finding("fp-review", source="L1", disp=Disposition.FIXED)
-    )
+    machine._state.findings.append(l0_finding)
+    machine._state.findings.append(l1_finding)
     n = machine._write_ledger_rows()
     assert n == 2
-    rows = list(iter_rows(tmp_path))
-    assert len(rows) == 2
-    by_fp = {r.fingerprint: r for r in rows}
-    # L0 -> lint, version_sensitive=False
-    assert by_fp["fp-lint"].axis_claim == "lint"
-    assert getattr(by_fp["fp-lint"], "version_sensitive", None) is False
-    # L1 -> review, version_sensitive=True
-    assert by_fp["fp-review"].axis_claim == "review"
-    assert getattr(by_fp["fp-review"], "version_sensitive", None) is True
+
+    rows_by_fp = {r.fingerprint: r for r in lr_iter(tmp_path)}
+
+    # L0 -> lint, not version-sensitive
+    r_l0 = rows_by_fp["fp-l0"]
+    assert r_l0.axis_claim == "lint"
+    assert r_l0.version_sensitive is False
+
+    # L1 -> review, version-sensitive
+    r_l1 = rows_by_fp["fp-l1"]
+    assert r_l1.axis_claim == "review"
+    assert r_l1.version_sensitive is True

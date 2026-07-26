@@ -52,6 +52,7 @@ class LedgerRow:
     terminal_state: TerminalState
     evidence_class: str
     ts: str  # ISO-8601 UTC
+    version_sensitive: bool = False
 
 
 def _ledger_path(cwd: Path) -> Path:
@@ -110,6 +111,7 @@ def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
                     terminal_state=TerminalState(data["terminal_state"]),
                     evidence_class=data["evidence_class"],
                     ts=data["ts"],
+                    version_sensitive=data.get("version_sensitive", False),
                 )
             except (KeyError, ValueError, TypeError) as exc:
                 print(
