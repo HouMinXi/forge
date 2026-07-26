@@ -6,6 +6,8 @@ point mocking needed because the guard runs before the review pipeline.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from code_forge.backend import BackendConfig
@@ -58,6 +60,10 @@ class TestApiKeyFileGuard:
         # Must not raise
         _check_backend_credentials(backend)
 
+    @pytest.mark.skipif(
+        os.getuid() == 0,
+        reason="root bypasses file permissions, chmod 0o000 ineffective",
+    )
     def test_unreadable_file_raises(self, tmp_path):
         """api_key_file that raises OSError on read wraps in CliError."""
         key_file = tmp_path / "unreadable.key"
