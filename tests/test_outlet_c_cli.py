@@ -305,7 +305,7 @@ class TestContractsYamlGuard:
         fake_backend = MagicMock()
         fake_backend.name = "test"
         fake_backend.format = "openai"
-        fake_backend.api_key_env = ""  # skip os.environ API key check
+        fake_backend.api_key_env = "FAKE_KEY_FOR_TEST"  # matches env dict below
         fake_backend.api_key_file = None  # skip file-based key check
         fake_backend.credentials_path = None  # skip vertex credentials check
 

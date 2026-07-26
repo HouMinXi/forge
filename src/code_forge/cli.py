@@ -2224,14 +2224,20 @@ def _dispatch_subagent(
 
 def _check_backend_credentials(
     backend: BackendConfig,
+    env: Optional[Mapping[str, str]] = None,
 ) -> None:
     """Fast-fail if the backend's credentials are missing/unresolvable.
 
     Runs before the review state machine.  Raises CliError on failure.
     Delegates to the shared credential_error rule in backend.py.
     """
+    if env is None:
+        env = os.environ
+    # CLI backends authenticate via claude auth, not API keys.
+    if backend.type == "cli":
+        return
     from .backend import credential_error
-    err = credential_error(backend, os.environ)
+    err = credential_error(backend, env)
     if err is not None:
         raise CliError(err)
 
@@ -2407,7 +2413,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     # before entering the review state machine.  Without this, each of
     # the 3 passes independently discovers the missing key, producing 3
     # identical INFRA findings instead of one clear error at startup.
-    _check_backend_credentials(backend)
+    _check_backend_credentials(backend, env=env)
 
     state_dir = cwd / ".code-forge"
     state_dir.mkdir(parents=True, exist_ok=True)
