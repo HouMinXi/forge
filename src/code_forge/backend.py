@@ -597,29 +597,93 @@ def probe_backend(
     return result
 
 
+def credential_error(
+    backend: BackendConfig,
+    env: Mapping[str, str],
+) -> Optional[str]:
+    """Single credential validation rule shared by fast-fail and probe.
+
+    Returns None when credentials are resolvable, or a human-readable
+    error string when they are not.  Wrappers decide how to surface the
+    error (CliError vs ProbeResult).
+
+    Covers explicitly configured credentials only.  Vertex ADC fallback
+    (GOOGLE_APPLICATION_CREDENTIALS / gcloud ADC) is handled by
+    _probe_api, not here -- the fast-fail path deliberately defers it.
+    """
+    # Vertex: explicit credentials_path only
+    if backend.format == "vertex":
+        if backend.credentials_path:
+            if not Path(backend.credentials_path).is_file():
+                return (
+                    "backend %r (vertex): credentials_path %r not found"
+                    % (backend.name, backend.credentials_path)
+                )
+        return None
+
+    # File-based credential
+    if backend.api_key_file:
+        p = Path(backend.api_key_file)
+        if not p.is_file():
+            return (
+                "backend %r: api_key_file not found: %s"
+                % (backend.name, backend.api_key_file)
+            )
+        try:
+            content = p.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            return (
+                "backend %r: api_key_file unreadable: %s: %s"
+                % (backend.name, backend.api_key_file, exc)
+            )
+        if not content:
+            return (
+                "backend %r: api_key_file empty: %s"
+                % (backend.name, backend.api_key_file)
+            )
+        mode = p.stat().st_mode
+        if mode & 0o077:
+            return (
+                "backend %r: api_key_file %s is group/world "
+                "readable (mode %o). chmod 600 it."
+                % (backend.name, backend.api_key_file, mode & 0o777)
+            )
+        return None
+
+    # Env-var credential
+    key_name = backend.api_key_env
+    if not key_name:
+        return (
+            "backend %r: no api_key_env or api_key_file configured"
+            % backend.name
+        )
+    if env.get(key_name):
+        return None
+    return (
+        "%s not set. Export the API key for backend %r."
+        % (key_name, backend.name)
+    )
+
+
 def _probe_api(
     backend: BackendConfig,
     env: Mapping[str, str],
 ) -> ProbeResult:
     """Check that the configured backend credential is resolvable.
 
-    No subprocess, no network call. openai/anthropic backends check
-    api_key_env presence; vertex backends authenticate via OAuth2/ADC (no
-    api_key_env), so they probe for resolvable GCP credentials instead,
-    mirroring _invoke_vertex's resolution order.
+    No subprocess, no network call.  Uses credential_error for the
+    shared validation rule; adds vertex ADC fallback (ADC / gcloud)
+    which the fast-fail path deliberately defers.
     """
-    if backend.format == "vertex":
-        if backend.credentials_path:
-            if Path(backend.credentials_path).is_file():
-                return ProbeResult(ok=True)
-            return ProbeResult(
-                ok=False,
-                error="backend %r (vertex): credentials_path %r not found"
-                % (backend.name, backend.credentials_path),
-            )
-        # Presence-only, like the api_key_env check: validity is invoke's
-        # job and the probe must stay no-network. credentials_path gets the
-        # stronger is_file() check because it is forge-owned config.
+    # Shared rule: covers explicit credentials for all formats
+    err = credential_error(backend, env)
+    if err is not None:
+        return ProbeResult(ok=False, error=err)
+
+    # Vertex ADC fallback: only when no explicit credentials_path.
+    # credential_error returns None for vertex without credentials_path,
+    # so we check ADC here to cover the implicit-credentials case.
+    if backend.format == "vertex" and not backend.credentials_path:
         if env.get("GOOGLE_APPLICATION_CREDENTIALS"):
             return ProbeResult(ok=True)
         adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
@@ -632,40 +696,7 @@ def _probe_api(
             "'gcloud auth application-default login'." % backend.name,
         )
 
-    # File-based credential: check file exists and is not world-readable
-    if backend.api_key_file:
-        p = Path(backend.api_key_file)
-        if not p.is_file():
-            return ProbeResult(
-                ok=False,
-                error="backend %r: api_key_file not found: %s"
-                % (backend.name, backend.api_key_file),
-            )
-        mode = p.stat().st_mode
-        if mode & 0o077:
-            return ProbeResult(
-                ok=False,
-                error="backend %r: api_key_file %s is group/world "
-                "readable (mode %o). chmod 600 it."
-                % (backend.name, backend.api_key_file, mode & 0o777),
-            )
-        return ProbeResult(ok=True)
-
-    # Env-var credential
-    key_name = backend.api_key_env
-    if not key_name:
-        return ProbeResult(
-            ok=False,
-            error="backend %r: no api_key_env or api_key_file "
-            "configured" % backend.name,
-        )
-    if env.get(key_name):
-        return ProbeResult(ok=True)
-    return ProbeResult(
-        ok=False,
-        error="%s not set. Export the API key for backend %r."
-        % (key_name, backend.name),
-    )
+    return ProbeResult(ok=True)
 
 
 def _probe_cli(

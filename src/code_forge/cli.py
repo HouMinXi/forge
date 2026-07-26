@@ -2222,40 +2222,18 @@ def _dispatch_subagent(
     return verdict
 
 
-def _check_backend_credentials(backend) -> None:
+def _check_backend_credentials(
+    backend: BackendConfig,
+) -> None:
     """Fast-fail if the backend's credentials are missing/unresolvable.
 
     Runs before the review state machine.  Raises CliError on failure.
+    Delegates to the shared credential_error rule in backend.py.
     """
-    if backend.format != "vertex" and backend.api_key_env:
-        if not os.environ.get(backend.api_key_env):
-            raise CliError(
-                "API key env var %r is not set" % backend.api_key_env
-            )
-    elif backend.api_key_file:
-        p = Path(backend.api_key_file)
-        if not p.is_file():
-            raise CliError(
-                "API key file not found: %s" % backend.api_key_file
-            )
-        try:
-            content = p.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise CliError(
-                "API key file unreadable: %s: %s"
-                % (backend.api_key_file, exc)
-            ) from exc
-        if not content:
-            raise CliError(
-                "API key file is empty: %s" % backend.api_key_file
-            )
-
-    if backend.format == "vertex" and backend.credentials_path:
-        if not Path(backend.credentials_path).is_file():
-            raise CliError(
-                "Vertex credentials file not found: %s"
-                % backend.credentials_path
-            )
+    from .backend import credential_error
+    err = credential_error(backend, os.environ)
+    if err is not None:
+        raise CliError(err)
 
 
 def _run(args, env, cwd: Path) -> Verdict:
