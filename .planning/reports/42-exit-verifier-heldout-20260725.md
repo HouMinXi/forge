@@ -108,6 +108,59 @@ FAIL if: the plan modifies a file its own frontmatter does not name. This is
 the same defect class kimi caught in R2 (`ledger.py` missing from
 `files_modified`); recurrence means the fix did not generalise.
 
+## Part 2b -- round 2 held-out checks (H8-H10, NOT in REWORK-ORDER-2)
+
+Added 2026-07-25 after round 1, frozen before the round-2 delivery exists.
+Round 1 outcome for the record: G1-G4, H2, H5, H7 passed; H1 failed exactly
+as predicted (single-source test, mirror mutation survives); H4 caught a
+delta-note line that the diff does not support; H6 failed on placement.
+
+### H8 -- per-row assertion, not per-position
+
+If both findings are written into one ledger, each row's claim must be
+asserted against its own identity (fingerprint), not against a list index.
+
+    rows = list(iter_rows(tmp_path))
+    by_fp = {r.fingerprint: r for r in rows}     # correct
+    assert rows[0].axis_claim == "lint"          # positional, fragile
+
+Rationale: `iter_rows` order is a file-append artifact, not a guaranteed
+contract. A positional test can pass for the wrong reason today and flip on
+any reordering, and if both rows were somehow written with the same claim a
+positional assertion could still land green on one of them. This is the same
+class of defect as the single-source gap: an assertion that appears to cover
+two cases while actually pinning one.
+
+FAIL if: positional indexing is used where two rows carry different expected
+claims, without an accompanying assertion that ties each row to its source.
+
+### H9 -- the mirror injection must be proven, not just documented
+
+Item D asks for a fourth injection (`derive_claim_type("L0")`) AND a real
+run showing the L1 assertion red while the L0 assertion stays green.
+
+FAIL if: Step 4 gains the fourth injection as text while the delivery
+reports it as verified without pytest output, or with output that does not
+show the asymmetry (L1 red, L0 green). That asymmetry is the entire claim --
+output showing both red would mean something else broke.
+
+PASS is also achievable by an explicit, reasoned "deferred to GREEN because
+the wiring does not exist yet". The order pre-authorises that. Treat a
+fabricated transcript and a missing one very differently: the second is
+honest, the first is the documented mimo-pro failure mode.
+
+### H10 -- did the delta note get re-checked after the final edit
+
+Round 1's note was off by exactly 4 lines on both anchors, consistent with
+edits made above them after the note was written, and claimed a
+trailing-newline fix that never happened.
+
+Re-verify every line number in the round-2 note against the final file, and
+re-run `tail -c1 <file> | od -c` if the note again claims a newline fix.
+
+FAIL if: any anchor is off, or any claimed change is absent from the diff.
+A note written before the last edit is not a note of what shipped.
+
 ## Part 3 -- PM discipline for this verification pass
 
 Two failures of mine this session, both the same shape: asserting that
