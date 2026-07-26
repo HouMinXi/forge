@@ -134,6 +134,20 @@ two cases while actually pinning one.
 FAIL if: positional indexing is used where two rows carry different expected
 claims, without an accompanying assertion that ties each row to its source.
 
+**Scope the check to the new test, not the file.** `by_fp` already exists at
+`tests/test_machine_ledger.py:109` inside an unrelated pre-existing test, so
+a file-wide grep reports PASS no matter what the executor writes. This gate
+was vacuous on its first known-answer run for exactly that reason. Extract
+the behavioural test's own span first:
+
+    awk '/def test_write_ledger_derives_claim_type/,0' tests/test_machine_ledger.py \
+      | grep -cE 'by_fp|\{r\.fingerprint: r for r in'
+
+Note also that the per-row idiom is already this file's local convention
+(line 109), so satisfying H8 requires following sibling style rather than
+inventing anything. That makes a positional assertion in the new test a
+convention-adherence miss, not merely a stylistic preference.
+
 ### H9 -- the mirror injection must be proven, not just documented
 
 Item D asks for a fourth injection (`derive_claim_type("L0")`) AND a real
