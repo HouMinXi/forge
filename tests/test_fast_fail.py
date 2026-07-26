@@ -58,6 +58,24 @@ class TestApiKeyFileGuard:
         # Must not raise
         _check_backend_credentials(backend)
 
+    def test_unreadable_file_raises(self, tmp_path):
+        """api_key_file that raises OSError on read wraps in CliError."""
+        key_file = tmp_path / "unreadable.key"
+        key_file.write_text("sk-abc123\n", encoding="utf-8")
+        key_file.chmod(0o000)
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="m",
+            format="openai",
+            api_key_file=str(key_file),
+        )
+        try:
+            with pytest.raises(CliError, match="unreadable"):
+                _check_backend_credentials(backend)
+        finally:
+            key_file.chmod(0o644)
+
 
 # -- vertex credentials_path tests ---------------------------------------
 
@@ -92,6 +110,20 @@ class TestVertexCredentialsPathGuard:
         # Must not raise
         _check_backend_credentials(backend)
 
+    def test_existing_credentials_path_passes(self, tmp_path):
+        """Vertex backend with existing credentials_path does NOT raise."""
+        cred_file = tmp_path / "service-account.json"
+        cred_file.write_text('{"type":"service_account"}', encoding="utf-8")
+        backend = BackendConfig(
+            name="test-vertex",
+            type="api",
+            model="gemini-pro",
+            format="vertex",
+            project_id="my-project",
+            credentials_path=str(cred_file),
+        )
+        _check_backend_credentials(backend)
+
 
 # -- existing api_key_env guard (unchanged) -------------------------------
 
@@ -110,3 +142,15 @@ class TestApiKeyEnvGuard:
         )
         with pytest.raises(CliError, match="is not set"):
             _check_backend_credentials(backend)
+
+    def test_env_var_present_passes(self, monkeypatch):
+        """Set api_key_env value does NOT raise CliError."""
+        monkeypatch.setenv("TEST_PRESENT_KEY_XYZ", "sk-abc123")
+        backend = BackendConfig(
+            name="test",
+            type="api",
+            model="m",
+            format="openai",
+            api_key_env="TEST_PRESENT_KEY_XYZ",
+        )
+        _check_backend_credentials(backend)
