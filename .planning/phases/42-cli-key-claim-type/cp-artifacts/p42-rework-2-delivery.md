@@ -59,15 +59,14 @@ This is a known limitation of pre-wiring test design, not a fabrication.
 
 ### tests/test_machine_ledger.py (worktree `phase-42-cli-key-claim-type`, SHA `4ac9a78`)
 
-- **Line 277-315**: Extended `test_write_ledger_derives_claim_type_from_source` from single-L0 to dual L0+L1. Added L1 finding (`_make_finding("fp-review", source="L1", disp=Disposition.FIXED)`), changed `assert n == 1` to `assert n == 2`, dict-keyed rows by fingerprint, added L1 assertions (axis_claim="review", version_sensitive=True). Docstring updated to explain two-source rationale.
-- **Line 277**: `@pytest.mark.xfail(strict=True)` unchanged.
+- **Lines 277-309**: Extended `test_write_ledger_derives_claim_type_from_source` from single-L0 to dual L0+L1. xfail decorator at 277, def at 281, L0 finding at 299, L1 finding at 302, L0 assertions at 307-308, L1 assertions at 309. Docstring updated to explain two-source rationale.
 
 ### 42-02-PLAN.md
 
 - **Line 283**: Test 14 description updated: "source=L0" -> "L0 AND L1 findings", added mirror-mutation rationale and version_sensitive=True branch coverage.
-- **Lines 419-424**: Step 4 +fourth injection: hardcode `derive_claim_type("L0")`, L0 green/L1 red.
-- **Lines 437-438**: acceptance_criteria +two bug-injection bullets (L1 arg + L0 mirror).
-- **Lines 481-482**: verification +two bug-injection bullets matching acceptance_criteria.
+- **Lines 420-425**: Step 4 +fourth injection: hardcode `derive_claim_type("L0")`, L0 green/L1 red.
+- **Lines 440-443**: acceptance_criteria: 4 bug-injection bullets (re-hardcode "review" / hardcode "L1" / hardcode "L0" mirror / remove version_sensitive).
+- **Lines 479-482**: verification: 4 bug-injection bullets matching acceptance_criteria.
 
 ---
 
