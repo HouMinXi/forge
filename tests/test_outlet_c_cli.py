@@ -306,6 +306,8 @@ class TestContractsYamlGuard:
         fake_backend.name = "test"
         fake_backend.format = "openai"
         fake_backend.api_key_env = ""  # skip os.environ API key check
+        fake_backend.api_key_file = None  # skip file-based key check
+        fake_backend.credentials_path = None  # skip vertex credentials check
 
         fake_resolved = MagicMock()
         fake_resolved.git_diff = "diff --git a/x b/x\n--- a/x\n+++ b/x\n"
