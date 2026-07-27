@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from code_forge.backend import BackendConfig, credential_error
+from code_forge.backend import BackendConfig, credential_error, _probe_api
 from code_forge.cli import _check_backend_credentials
 from code_forge.errors import CliError
 
@@ -281,3 +281,96 @@ class TestCredentialErrorTable:
             {},
         )
         assert err is not None and "not found" in err
+
+
+# -- wrapper union tests ---------------------------------------------------
+
+class TestWrapperUnion:
+    """Drive BOTH wrappers over the same matrix and compare verdicts.
+
+    This is the test that proves _check_backend_credentials and _probe_api
+    agree on every row, not just that they call the same function.
+    Inheritance by structure is what F2 disproved once already.
+    """
+
+    @staticmethod
+    def _fast_fail_accepts(backend, env):
+        """Return True if _check_backend_credentials does NOT raise."""
+        try:
+            _check_backend_credentials(backend, env=env)
+            return True
+        except CliError:
+            return False
+
+    @staticmethod
+    def _probe_accepts(backend, env):
+        """Return True if _probe_api returns ok=True."""
+        return _probe_api(backend, env).ok
+
+    def test_union_api_key_file_missing(self, tmp_path):
+        b = BackendConfig(name="b", type="api", model="m", format="openai",
+                          api_key_file=str(tmp_path / "nope"))
+        assert self._fast_fail_accepts(b, {}) is False
+        assert self._probe_accepts(b, {}) is False
+
+    def test_union_api_key_file_empty(self, tmp_path):
+        key = tmp_path / "empty.key"
+        key.write_text("", encoding="utf-8")
+        b = BackendConfig(name="b", type="api", model="m", format="openai",
+                          api_key_file=str(key))
+        assert self._fast_fail_accepts(b, {}) is False
+        assert self._probe_accepts(b, {}) is False
+
+    def test_union_api_key_file_0644(self, tmp_path):
+        key = tmp_path / "perms.key"
+        key.write_text("sk-abc\n", encoding="utf-8")
+        key.chmod(0o644)
+        b = BackendConfig(name="b", type="api", model="m", format="openai",
+                          api_key_file=str(key))
+        try:
+            assert self._fast_fail_accepts(b, {}) is False
+            assert self._probe_accepts(b, {}) is False
+        finally:
+            key.chmod(0o600)
+
+    def test_union_api_key_file_ok(self, tmp_path):
+        key = tmp_path / "good.key"
+        key.write_text("sk-abc\n", encoding="utf-8")
+        key.chmod(0o600)
+        b = BackendConfig(name="b", type="api", model="m", format="openai",
+                          api_key_file=str(key))
+        assert self._fast_fail_accepts(b, {}) is True
+        assert self._probe_accepts(b, {}) is True
+
+    def test_union_api_key_env_present(self):
+        b = BackendConfig(name="b", type="api", model="m", format="openai",
+                          api_key_env="MY_KEY")
+        env = {"MY_KEY": "sk-abc"}
+        assert self._fast_fail_accepts(b, env) is True
+        assert self._probe_accepts(b, env) is True
+
+    def test_union_api_key_env_missing(self):
+        b = BackendConfig(name="b", type="api", model="m", format="openai",
+                          api_key_env="MY_KEY")
+        assert self._fast_fail_accepts(b, {}) is False
+        assert self._probe_accepts(b, {}) is False
+
+    def test_union_vertex_credentials_path_ok(self, tmp_path):
+        cred = tmp_path / "sa.json"
+        cred.write_text("{}")
+        b = BackendConfig(name="b", type="api", model="m", format="vertex",
+                          credentials_path=str(cred))
+        assert self._fast_fail_accepts(b, {}) is True
+        assert self._probe_accepts(b, {}) is True
+
+    def test_union_vertex_credentials_path_missing(self, tmp_path):
+        b = BackendConfig(name="b", type="api", model="m", format="vertex",
+                          credentials_path=str(tmp_path / "nope.json"))
+        assert self._fast_fail_accepts(b, {}) is False
+        assert self._probe_accepts(b, {}) is False
+
+    def test_union_neither_configured(self):
+        """Both wrappers reject a backend with no credentials at all."""
+        b = BackendConfig(name="b", type="api", model="m", format="openai")
+        assert self._fast_fail_accepts(b, {}) is False
+        assert self._probe_accepts(b, {}) is False
