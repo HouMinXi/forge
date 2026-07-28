@@ -1,7 +1,9 @@
 import hashlib
 import json
 from pathlib import Path
-from code_forge.verify import run_verify, parse_diff_files
+
+import pytest
+from code_forge.verify import run_verify, parse_diff_files, _validate_receipt_schema
 
 
 def _sha(text: str) -> str:
@@ -35,6 +37,23 @@ def _write_all(rd, diff_sha, vary=True):
             (rd / name).write_text(json.dumps(
                 _receipt(c, p, diff_sha, 1 + off, 45 + off)
             ))
+
+
+def _nine_with_one_field_set(tmp_path, field, value):
+    """Write 9 valid receipts, then set one top-level field on c2p1 to
+    value -- which may be any JSON-serializable type, not just the
+    schema-correct one. Proves a schema violation is reported by name,
+    not crashed past and not silently accepted."""
+    rd = tmp_path / ".code-forge" / "receipts"
+    rd.mkdir(parents=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+    sha = _sha("diff")
+    _write_all(rd, sha)
+    bad = _receipt(2, 1, sha)
+    bad[field] = value
+    (rd / "receipt-c2p1.json").write_text(json.dumps(bad))
+    return sha
 
 
 class TestVerifyChecks:
@@ -86,6 +105,258 @@ class TestVerifyChecks:
                 ))
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 201))})
         assert not r.passed
+
+
+class TestCorruptReceipt:
+    """A receipt that cannot be parsed must fail verify, not crash it.
+
+    The real incident: one receipt held a raw newline inside a JSON
+    string value, so every code commit in the repo aborted on an
+    unhandled JSONDecodeError while the hook reported "receipt
+    verification failed" -- pointing the operator at the review
+    instead of at the file.
+    """
+
+    def _nine_with_one_broken(self, tmp_path, broken_text):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        (rd / "receipt-c2p1.json").write_text(broken_text, encoding="utf-8")
+        return sha
+
+    def test_raw_control_char_reports_the_file(self, tmp_path):
+        # Verbatim shape of the incident: unescaped newline in a value.
+        broken = '{\n  "cycle": 2,\n  "pass": 1,\n  "skill": "qodo-review\ncode-review-expert"\n}\n'
+        sha = self._nine_with_one_broken(tmp_path, broken)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_corrupt_is_not_reported_as_missing(self, tmp_path):
+        # Guards the tempting wrong fix: skipping a bad file would leave
+        # 8 receipts and blame "missing receipts", hiding the corruption.
+        sha = self._nine_with_one_broken(tmp_path, "{ not json at all")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "missing receipts" not in r.reason
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_truncated_json_reports_the_file(self, tmp_path):
+        sha = self._nine_with_one_broken(tmp_path, '{"cycle": 2, "pass":')
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_undecodable_bytes_report_the_file(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        (rd / "receipt-c2p1.json").write_bytes(b"\xff\xfe\x00binary")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_deeply_nested_json_reports_the_file(self, tmp_path):
+        # json.loads raises RecursionError here, a RuntimeError that no
+        # ValueError catch covers. Without naming it the guard leaks the
+        # very crash it exists to prevent.
+        deep = "[" * 100000 + "]" * 100000
+        sha = self._nine_with_one_broken(tmp_path, deep)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_oversized_int_reports_the_file(self, tmp_path):
+        # Past sys.get_int_max_str_digits() json.loads raises a plain
+        # ValueError, not a JSONDecodeError, so catching only the named
+        # subclasses let a single receipt abort verify with a traceback.
+        big = '{"cycle": 2, "pass": 1, "findings_count": ' + "9" * 5000 + "}"
+        sha = self._nine_with_one_broken(tmp_path, big)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    @pytest.mark.parametrize("body", ["[1, 2, 3]", "42", '"a string"', "null", "true"])
+    def test_non_object_json_reports_the_file(self, tmp_path, body):
+        # These parse cleanly, so no exception guard sees them. Every check
+        # downstream then calls .get() on the result and dies with an
+        # AttributeError pointing into verify.py instead of at the file.
+        sha = self._nine_with_one_broken(tmp_path, body)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_unreadable_entry_reports_the_file(self, tmp_path):
+        # glob returns directories too, and read_text on one raises
+        # IsADirectoryError -- an OSError, outside the ValueError branch.
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        (rd / "receipt-c2p1.json").unlink()
+        (rd / "receipt-c2p1.json").mkdir()
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_intact_receipts_still_pass(self, tmp_path):
+        # The guard must not reject a healthy set.
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed
+
+
+class TestReceiptSchema:
+    """A receipt with a field of the wrong type must fail verify by name,
+    not crash it and not silently pass. Schema validation is the single
+    gate every one of the 7 checks in run_verify trusts, instead of each
+    check carrying its own copy of the same defensive guard.
+
+    Two of these are regression guards for mistakes made while building
+    this fix: an early draft replaced a non-list anchors field with []
+    instead of reporting it (turning corrupt data into a false pass), and
+    a later draft derived the schema from the writer rather than from the
+    receipts on disk, so it rejected every real receipt whose
+    covered_line_ranges used the string shape.
+    """
+
+    @pytest.mark.parametrize("field,value,expected", [
+        ("cycle", [2], "cycle must be an integer"),
+        ("cycle", True, "cycle must be an integer"),
+        ("pass", "1", "pass must be an integer"),
+        ("timestamp", None, "timestamp must be a string"),
+        ("timestamp", 123, "timestamp must be a string"),
+        ("diff_sha256", 12345, "diff_sha256 must be a string"),
+        ("findings_count", "0", "findings_count must be an integer"),
+        ("findings", "not a list", "findings must be a list of objects"),
+        ("findings", [1, 2], "findings must be a list of objects"),
+        ("anchors", "not a list", "anchors must be a list of objects"),
+        ("anchors", [1], "anchors must be a list of objects"),
+        ("code_excerpts", "not a list", "code_excerpts must be a list of objects"),
+        ("code_excerpts", [1, 2, 3], "code_excerpts must be a list of objects"),
+    ])
+    def test_malformed_top_level_field_reports_the_file(
+        self, tmp_path, field, value, expected
+    ):
+        sha = _nine_with_one_field_set(tmp_path, field, value)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert expected in r.reason
+
+    @pytest.mark.parametrize("list_field,item,expected", [
+        ("code_excerpts",
+         {"file": 5, "start_line": 1, "end_line": 1, "content": "x"},
+         "code_excerpts.file must be a string"),
+        ("code_excerpts",
+         {"file": "x.py", "start_line": "1", "end_line": 1, "content": "x"},
+         "code_excerpts.start_line must be an integer"),
+        ("code_excerpts",
+         {"file": "x.py", "start_line": 1, "end_line": None, "content": "x"},
+         "code_excerpts.end_line must be an integer"),
+        ("code_excerpts",
+         {"file": "x.py", "start_line": 1, "end_line": 1, "content": 5},
+         "code_excerpts.content must be a string"),
+    ])
+    def test_malformed_nested_field_reports_the_file(
+        self, tmp_path, list_field, item, expected
+    ):
+        sha = _nine_with_one_field_set(tmp_path, list_field, [item])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert expected in r.reason
+
+    def test_malformed_anchors_no_longer_silently_passes(self, tmp_path):
+        sha = _nine_with_one_field_set(tmp_path, "anchors", "not a list")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        # The regression this guards was a silent PASS, so the inequality
+        # below is the point. Assert the positive form too: != "all 7 checks
+        # passed" alone would also be satisfied by an unrelated failure.
+        assert r.reason != "all 7 checks passed"
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert "anchors must be a list of objects" in r.reason
+
+    @pytest.mark.parametrize("field", [
+        "cycle", "pass", "findings_count", "diff_sha256", "timestamp",
+        "findings", "anchors", "code_excerpts",
+    ])
+    def test_absent_top_level_field_reports_the_file(self, tmp_path, field):
+        """A field that is missing entirely, not merely the wrong type.
+        obj.get() returns None for both, but only the wrong-type case was
+        covered -- absence deserves its own case so a future .get(field, X)
+        default cannot quietly reintroduce the gap.
+        """
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        bad = _receipt(2, 1, sha)
+        del bad[field]
+        (rd / "receipt-c2p1.json").write_text(json.dumps(bad))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert field in r.reason
+
+    def test_absent_nested_field_reports_the_file(self, tmp_path):
+        """Same, one level down: a code_excerpts item missing a subfield."""
+        sha = _nine_with_one_field_set(
+            tmp_path, "code_excerpts",
+            [{"start_line": 1, "end_line": 1, "content": "x"}],
+        )
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "code_excerpts.file must be a string" in r.reason
+
+    @pytest.mark.parametrize("ranges", [
+        [{"file": "src/code_forge/llm_invoke.py", "start": 143, "end": 151}],
+        ["SKILL.md:1-1400"],
+        [],
+    ])
+    def test_real_covered_line_ranges_shapes_are_accepted(self, tmp_path, ranges):
+        """Receipts on disk carry covered_line_ranges in both a dict shape and
+        a "path:start-end" string shape. An earlier draft of the schema
+        asserted the dict shape and rejected 11 of the 14 real receipts in
+        this repo -- turning every commit into a corrupt-receipt failure, the
+        same outage this fix exists to prevent, from the other direction.
+        Nothing on the production path reads the field, so the schema must
+        accept whatever is in it. Asserted against the gate itself: driving
+        this through run_verify without diff_text would take the legacy
+        branch into _covered(), whose crash on the string shape predates
+        this change and is left alone here.
+        """
+        receipt = _receipt(2, 1, "abc")
+        receipt["covered_line_ranges"] = ranges
+        _validate_receipt_schema(receipt, "receipt-c2p1.json")
+
+    def test_intact_receipts_still_pass_schema(self, tmp_path):
+        """The schema gate must not reject a healthy set."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed
 
 
 class TestReceiptVerifyE2E:
@@ -287,14 +558,17 @@ class TestHardenedVerify:
         assert "< 60%" in r.reason
 
     def test_missing_field_fail(self, tmp_path):
-        """STEP 0: excerpt with start_line missing -> excerpt missing required fields."""
+        """Excerpt with start_line missing is now caught by schema
+        validation at load time, before any of the 7 checks run -- not by
+        STEP 0 inside check 5. STEP 0 stays in place as defense in depth
+        but can no longer be reached by this particular input."""
         rd = self._rd(tmp_path)
         sha = _sha(_HARDEN_DIFF)
         diff_files = parse_diff_files(_HARDEN_DIFF)
         bad = [
             {"file": "foo.py", "start_line": 1, "end_line": 3,
              "content": "x = 1\ny = 2\nz = 3"},
-            # Missing start_line -- STEP 0 rejects before STEP A.
+            # Missing start_line -- rejected by schema validation.
             {"file": "foo.py", "end_line": 8, "content": "a = 1\nb = 2\nc = 3"},
             {"file": "bar.py", "start_line": 1, "end_line": 3,
              "content": "p = 1\nq = 2\nr = 3"},
@@ -302,4 +576,5 @@ class TestHardenedVerify:
         _write_hardened(rd, sha, excerpts=bad)
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert not r.passed
-        assert "excerpt missing required fields" in r.reason
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "code_excerpts.start_line must be an integer" in r.reason
