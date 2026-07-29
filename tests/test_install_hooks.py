@@ -1269,7 +1269,7 @@ class TestHookExecutionOrder:
 
 
 class TestAttestationOutputCapture:
-    """Item A: the hook must capture verify output and replay it on failure,
+    """The hook must capture verify output and replay it on failure,
     so the operator sees the reason (including the filename bf44af5 produces)
     without re-running anything. On PASS the hook must stay silent."""
 

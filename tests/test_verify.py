@@ -622,10 +622,10 @@ class TestHardenedVerify:
         assert "code_excerpts.start_line must be an integer" in r.reason
 
 
-class TestItem1CrossRepoGuard:
-    """Item 1: cross_repo.py must route through _load_receipts, not bare
-    json.loads. A receipt with a raw unescaped newline inside a JSON string
-    must report the filename, not crash with a traceback."""
+class TestCrossRepoGuard:
+    """cross_repo.py must route through _load_receipts, not bare json.loads.
+    A receipt with a raw unescaped newline inside a JSON string must report
+    the filename, not crash with a traceback."""
 
     def test_malformed_receipt_reports_filename(self, tmp_path):
         from code_forge.verify import _load_receipts
@@ -646,8 +646,8 @@ class TestItem1CrossRepoGuard:
             _load_receipts(rd)
 
 
-class TestItem3InvertedExcerptRange:
-    """Item 3: _validate_receipt_schema must reject start_line > end_line."""
+class TestInvertedExcerptRange:
+    """_validate_receipt_schema must reject start_line > end_line."""
 
     def test_inverted_range_rejected(self):
         receipt = _receipt(1, 1, "abc")
@@ -672,8 +672,8 @@ class TestItem3InvertedExcerptRange:
         _validate_receipt_schema(receipt, "test.json")
 
 
-class TestItem4CoveredStringShape:
-    """Item 4: _covered must tolerate both dict and string shapes of
+class TestCoveredStringShape:
+    """_covered must tolerate both dict and string shapes of
     covered_line_ranges."""
 
     def test_dict_shape(self):
