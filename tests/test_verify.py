@@ -557,6 +557,48 @@ class TestHardenedVerify:
         assert not r.passed
         assert "< 60%" in r.reason
 
+    def test_wide_range_with_thin_content_earns_no_extra_coverage(self, tmp_path):
+        """Check 6 credits only lines an excerpt actually shows.
+
+        Each excerpt below spans a whole hunk but pastes a single line. The
+        content that is present matches the post-image, so the excerpt check
+        passes -- it only compares lines the content actually has. Crediting
+        the declared span would score 9/9 and pass the floor on three lines
+        of evidence; crediting what is shown scores 3/9 and fails.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        inflated = [
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1"},
+        ]
+        _write_hardened(rd, sha, excerpts=inflated)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "< 60%" in r.reason
+
+    def test_repeated_excerpts_still_read_as_rubber_stamp(self, tmp_path):
+        """Check 7 shares _excerpt_covered with check 6.
+
+        Capping credit at the shown lines shrinks what check 7 compares, so
+        pin the case it exists to catch: cycles that paste the same excerpts
+        still produce identical coverage sets and still trip the overlap
+        ceiling. Findings are present because check 7 skips pairs where both
+        cycles came back clean.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "Jaccard" in r.reason
+
     def test_missing_field_fail(self, tmp_path):
         """Excerpt with start_line missing is now caught by schema
         validation at load time, before any of the 7 checks run -- not by

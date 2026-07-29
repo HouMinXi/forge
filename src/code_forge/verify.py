@@ -188,8 +188,15 @@ def _excerpt_covered(receipt: dict) -> set[tuple[str, int]]:
         f = exc.get("file", "")
         start = exc.get("start_line", 0)
         end = exc.get("end_line", 0)
+        content = exc.get("content", "")
         if isinstance(start, int) and isinstance(end, int) and f:
-            for ln in range(start, end + 1):
+            # Credit only the lines the excerpt actually shows. The declared
+            # range used to be trusted on its own, so claiming 1-1000 while
+            # pasting three lines earned 1000 lines toward the 60% floor in
+            # check 6 -- and the content check upstream never noticed,
+            # because it only compares lines the content actually has.
+            shown = len(content.splitlines()) if isinstance(content, str) else 0
+            for ln in range(start, min(end, start + shown - 1) + 1):
                 s.add((f, ln))
     return s
 
