@@ -8,7 +8,6 @@ isolation utilities.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import shutil
 import tempfile
@@ -19,6 +18,7 @@ import yaml
 
 from .diff import get_changed_files
 from .git import git_diff, resolve_git_ref
+from .verify import _load_receipts
 
 
 def get_sibling_diff(repo_path: Path, ref_spec: str) -> str:
@@ -406,14 +406,14 @@ def run_cross_repo(
             if not receipts_dir.is_dir():
                 per_repo_findings[label] = []
                 continue
-            receipts = sorted(receipts_dir.glob("receipt-*.json"))
+            all_receipts = _load_receipts(receipts_dir)
             findings = []
-            for r in receipts:
+            for r in all_receipts:
+                findings.extend(r.get("findings", []))
+            per_repo_findings[label] = findings
+            for r in receipts_dir.glob("receipt-*.json"):
                 dst = primary_receipts_dest / ("%s-%s" % (label, r.name))
                 shutil.copy2(r, dst)
-                data = json.loads(r.read_text(encoding="utf-8"))
-                findings.extend(data.get("findings", []))
-            per_repo_findings[label] = findings
 
     # -- Step 9: grouped output (after receipts are fully collected) --
     ordered_labels = [primary_label] + [
