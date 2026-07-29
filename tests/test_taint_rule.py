@@ -178,11 +178,17 @@ def test_forge_taint_focus_metavariable():
 )
 def test_semgrep_validate():
     """semgrep --validate passes on forge-taint.yaml."""
+    import os
+    env = os.environ.copy()
+    # Force IPv4 resolution to avoid semgrep hanging on IPv6 connections
+    # to the Semgrep registry (13.249.182.46:443).
+    env["GAI_OVERRIDE"] = "AI_NUMERICCONFIG"
     result = subprocess.run(
         ["semgrep", "--validate", "--config", str(_RULES_PATH)],
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
     assert result.returncode == 0, (
         "semgrep --validate failed: %s" % result.stderr
@@ -195,6 +201,9 @@ def test_semgrep_validate():
 )
 def test_semgrep_test_annotations():
     """semgrep --test passes with ruleid/ok annotations in this file."""
+    import os
+    env = os.environ.copy()
+    env["GAI_OVERRIDE"] = "AI_NUMERICCONFIG"
     result = subprocess.run(
         [
             "semgrep", "--test",
@@ -204,6 +213,7 @@ def test_semgrep_test_annotations():
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
     assert result.returncode == 0, (
         "semgrep --test failed: %s\n%s" % (result.stderr, result.stdout)
