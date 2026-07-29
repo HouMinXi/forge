@@ -121,6 +121,15 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
                     raise CorruptedReceiptError(
                         "%s: %s.%s must be %s" % (
                             name, list_field, subfield, _TYPE_LABEL[subtype]))
+    # Excerpt line ranges must be ordered. An inverted range silently credits
+    # zero lines, which looks identical to an honest excerpt that sits outside
+    # the diff -- two different problems, one symptom, no way to tell apart.
+    for exc in obj.get("code_excerpts", []):
+        s = exc.get("start_line")
+        e = exc.get("end_line")
+        if isinstance(s, int) and isinstance(e, int) and s > e:
+            raise CorruptedReceiptError(
+                "%s: code_excerpts start_line %d > end_line %d" % (name, s, e))
 
 
 def _load_receipts(rd: Path) -> list[dict]:
