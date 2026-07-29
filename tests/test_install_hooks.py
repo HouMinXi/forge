@@ -1266,3 +1266,115 @@ class TestHookExecutionOrder:
         idx_exec = content.index("exec code-forge gate-check")
 
         assert idx_review < idx_chain < idx_exec
+
+
+class TestAttestationOutputCapture:
+    """Item A: the hook must capture verify output and replay it on failure,
+    so the operator sees the reason (including the filename bf44af5 produces)
+    without re-running anything. On PASS the hook must stay silent."""
+
+    MARKER = "FORGE_INTEGRATION_MARKER_xyzzy"
+
+    def _write_stub_forge(self, tmp_path, exit_code):
+        """Create a stub code-forge: verify prints marker to stderr and
+        exits with exit_code; all other subcommands succeed silently."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub = bin_dir / "code-forge"
+        stub.write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  verify)\n"
+            "    echo '%s' >&2\n"
+            "    exit %d\n"
+            "    ;;\n"
+            "  *) exit 0 ;;\n"
+            "esac\n" % (self.MARKER, exit_code)
+        )
+        stub.chmod(0o755)
+        return bin_dir
+
+    def _setup_git_repo(self, tmp_path, monkeypatch):
+        """Init a git repo in tmp_path so the hook's git-dir check passes."""
+        monkeypatch.setenv(
+            "GIT_CEILING_DIRECTORIES",
+            str(tmp_path.parent),
+            prepend=os.pathsep,
+        )
+        subprocess.run(
+            ["git", "init"], cwd=tmp_path,
+            capture_output=True, check=True,
+        )
+        # Stage a dummy file so git diff --cached is non-empty
+        (tmp_path / "dummy.py").write_text("x = 1\n")
+        subprocess.run(
+            ["git", "add", "dummy.py"], cwd=tmp_path,
+            capture_output=True, check=True,
+        )
+
+    def test_fail_replays_verify_output(self, tmp_path, monkeypatch):
+        """When verify fails, the operator sees the reason in the hook output."""
+        self._setup_git_repo(tmp_path, monkeypatch)
+        bin_dir = self._write_stub_forge(tmp_path, exit_code=1)
+        content = generate_hook_content(
+            str(bin_dir / "code-forge gate-check"), None)
+        hook_path = tmp_path / "pre-commit"
+        hook_path.write_text(content)
+        hook_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+        result = subprocess.run(
+            [str(hook_path)],
+            capture_output=True, text=True, cwd=tmp_path, env=env,
+        )
+        assert result.returncode == 1
+        assert self.MARKER in result.stderr
+
+    def test_pass_is_silent(self, tmp_path, monkeypatch):
+        """When verify passes, the hook produces no output."""
+        self._setup_git_repo(tmp_path, monkeypatch)
+        bin_dir = self._write_stub_forge(tmp_path, exit_code=0)
+        content = generate_hook_content(
+            str(bin_dir / "code-forge gate-check"), None)
+        hook_path = tmp_path / "pre-commit"
+        hook_path.write_text(content)
+        hook_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+        result = subprocess.run(
+            [str(hook_path)],
+            capture_output=True, text=True, cwd=tmp_path, env=env,
+        )
+        assert result.returncode == 0
+        assert self.MARKER not in result.stderr
+        assert self.MARKER not in result.stdout
+
+    def test_injection_restores_quiet(self, tmp_path, monkeypatch):
+        """Bug injection: restoring --quiet 2>/dev/null at the definition
+        causes the test to FAIL (marker not in output)."""
+        self._setup_git_repo(tmp_path, monkeypatch)
+        bin_dir = self._write_stub_forge(tmp_path, exit_code=1)
+        # Inject the old broken mechanism into the generated content
+        content = generate_hook_content(
+            str(bin_dir / "code-forge gate-check"), None)
+        content = content.replace(
+            "VERIFY_OUT=$(code-forge verify 2>&1)",
+            "code-forge verify --quiet 2>/dev/null")
+        content = content.replace(
+            '    echo "$VERIFY_OUT" >&2\n    exit 1\n',
+            '    echo "code-forge: receipt verification failed.'
+            ' See verify output above for details." >&2\n    exit 1\n')
+        hook_path = tmp_path / "pre-commit"
+        hook_path.write_text(content)
+        hook_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+        result = subprocess.run(
+            [str(hook_path)],
+            capture_output=True, text=True, cwd=tmp_path, env=env,
+        )
+        # With --quiet 2>/dev/null, the marker is suppressed
+        assert self.MARKER not in result.stderr

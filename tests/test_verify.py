@@ -620,3 +620,93 @@ class TestHardenedVerify:
         assert not r.passed
         assert r.reason.startswith("corrupt receipt: ")
         assert "code_excerpts.start_line must be an integer" in r.reason
+
+
+class TestItem1CrossRepoGuard:
+    """Item 1: cross_repo.py must route through _load_receipts, not bare
+    json.loads. A receipt with a raw unescaped newline inside a JSON string
+    must report the filename, not crash with a traceback."""
+
+    def test_malformed_receipt_reports_filename(self, tmp_path):
+        from code_forge.verify import _load_receipts
+        rd = tmp_path / "receipts"
+        rd.mkdir()
+        # Real corruption: raw newline inside a JSON string value
+        bad = '{"cycle": 1, "pass": 1, "diff_sha256": "abc", ' \
+              '"timestamp": "2026-01-01T00:00:00Z", ' \
+              '"findings_count": 0, "findings": [], "anchors": [], ' \
+              '"code_excerpts": [], "covered_line_ranges": []}\n' \
+              '{"cycle": 2, "pass": 1, "diff_sha256": "abc", ' \
+              '"timestamp": "2026-01-01T00:00:01Z", ' \
+              '"findings_count": 0, "findings": [], "anchors": [], ' \
+              '"code_excerpts": [], "covered_line_ranges": []}'
+        (rd / "receipt-c2p1.json").write_text(bad)
+        from code_forge.errors import CorruptedReceiptError
+        with pytest.raises(CorruptedReceiptError, match="receipt-c2p1.json"):
+            _load_receipts(rd)
+
+
+class TestItem3InvertedExcerptRange:
+    """Item 3: _validate_receipt_schema must reject start_line > end_line."""
+
+    def test_inverted_range_rejected(self):
+        receipt = _receipt(1, 1, "abc")
+        receipt["code_excerpts"] = [
+            {"file": "src/f.py", "start_line": 10, "end_line": 3,
+             "content": "code", "rationale": "r"}
+        ]
+        from code_forge.errors import CorruptedReceiptError
+        with pytest.raises(CorruptedReceiptError, match="start_line 10 > end_line 3"):
+            _validate_receipt_schema(receipt, "test.json")
+
+    def test_equal_range_accepted(self):
+        receipt = _receipt(1, 1, "abc")
+        receipt["code_excerpts"] = [
+            {"file": "src/f.py", "start_line": 5, "end_line": 5,
+             "content": "line", "rationale": "r"}
+        ]
+        _validate_receipt_schema(receipt, "test.json")
+
+    def test_normal_range_accepted(self):
+        receipt = _receipt(1, 1, "abc")
+        _validate_receipt_schema(receipt, "test.json")
+
+
+class TestItem4CoveredStringShape:
+    """Item 4: _covered must tolerate both dict and string shapes of
+    covered_line_ranges."""
+
+    def test_dict_shape(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": [
+            {"file": "a.py", "start": 1, "end": 3}
+        ]}
+        result = _covered(receipt)
+        assert result == {("a.py", 1), ("a.py", 2), ("a.py", 3)}
+
+    def test_string_shape(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": ["a.py:1-3"]}
+        result = _covered(receipt)
+        assert result == {("a.py", 1), ("a.py", 2), ("a.py", 3)}
+
+    def test_mixed_shapes(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": [
+            {"file": "a.py", "start": 1, "end": 2},
+            "b.py:5-7",
+        ]}
+        result = _covered(receipt)
+        assert result == {("a.py", 1), ("a.py", 2), ("b.py", 5), ("b.py", 6), ("b.py", 7)}
+
+    def test_malformed_string_skipped(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": ["no-colon-here"]}
+        result = _covered(receipt)
+        assert result == set()
+
+    def test_empty_ranges(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": []}
+        result = _covered(receipt)
+        assert result == set()
