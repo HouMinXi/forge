@@ -171,14 +171,24 @@ def _load_receipts(rd: Path) -> list[dict]:
 
 def _covered(receipt: dict) -> set[tuple[str, int]]:
     # Reached only from the legacy branch, which run_verify's production
-    # caller never takes. Unguarded on purpose: receipts carry
-    # covered_line_ranges in two shapes and this indexes the dict one, so
-    # it raises on the string form exactly as it did before this change.
-    # Left alone rather than fixed inline -- pre-existing, separate change.
+    # caller never takes. Receipts carry covered_line_ranges in two shapes:
+    # dict {"file","start","end"} and string "path:start-end". Both are
+    # real (352 dict-shaped, 156 string-shaped on disk as of 2026-07-28).
     s = set()
     for r in receipt.get("covered_line_ranges", []):
-        for ln in range(r["start"], r["end"] + 1):
-            s.add((r["file"], ln))
+        if isinstance(r, str):
+            # "path:start-end"
+            try:
+                path, range_part = r.rsplit(":", 1)
+                start_s, end_s = range_part.split("-", 1)
+                start, end = int(start_s), int(end_s)
+            except (ValueError, IndexError):
+                continue
+            for ln in range(start, end + 1):
+                s.add((path, ln))
+        elif isinstance(r, dict):
+            for ln in range(r["start"], r["end"] + 1):
+                s.add((r["file"], ln))
     return s
 
 
