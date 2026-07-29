@@ -14,7 +14,6 @@ on receipts, not a replacement for them.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -485,18 +484,3 @@ def run_verify(
     return VerifyResult(True, "all 7 checks passed", 7, 7)
 
 
-def write_attestation(cwd: Path, diff_sha256: str) -> Path:
-    import datetime
-    att = {
-        "verified_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "diff_sha256": diff_sha256,
-        "receipt_sha256": hashlib.sha256(
-            json.dumps(_load_receipts(cwd / ".code-forge" / "receipts"), sort_keys=True).encode()
-        ).hexdigest(),
-        "result": "PASS",
-    }
-    d = cwd / ".code-forge"
-    d.mkdir(parents=True, exist_ok=True)
-    p = d / "attestation.json"
-    p.write_text(json.dumps(att, indent=2), encoding="utf-8")
-    return p
