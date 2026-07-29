@@ -436,7 +436,7 @@ def generate_hook_content(
       0a. .git jurisdiction check  -- non-git dirs silently skip
       0b. planning-leak guard      -- optional, blocks .planning/ and CLAUDE.md
       1.  carveout block           -- non-code commits exit 0 here
-      2.  attestation              -- code-forge verify --quiet
+      2.  attestation              -- code-forge verify (output captured, shown on failure)
       3.  built-in staged-diff     -- non-ASCII + AI-vocab on staged diff
       4.  presubmit runner         -- user-configured linters (fail-closed)
       5.  LLM review               -- code-forge review (graceful degradation)
@@ -487,9 +487,8 @@ def generate_hook_content(
     )
     attestation_block = (
         "# code-forge receipt attestation check\n"
-        "code-forge verify --quiet 2>/dev/null || {\n"
-        '    echo "code-forge: receipt verification failed.'
-        ' Run: code-forge verify" >&2\n'
+        "VERIFY_OUT=$(code-forge verify 2>&1) || {\n"
+        '    echo "$VERIFY_OUT" >&2\n'
         "    exit 1\n"
         "}\n"
         "\n"
