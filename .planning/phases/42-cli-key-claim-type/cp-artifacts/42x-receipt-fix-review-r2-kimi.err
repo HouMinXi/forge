@@ -1,0 +1,5 @@
+[aicc] session: receiptfix-r2-kimi
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+
+[aicc] session saved: receiptfix-r2-kimi
+[aicc] to resume:  aicc kimi --cont receiptfix-r2-kimi "continue"

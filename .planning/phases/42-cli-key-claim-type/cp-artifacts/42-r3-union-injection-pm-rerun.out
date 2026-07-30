@@ -1,0 +1,28 @@
+PM bug-injection of the R3 union test (TestWrapperUnion), worktree
+.worktrees/p42-inject detached at f7bd6ad.
+
+Injection site: cli.py _check_backend_credentials, at the delegation that
+IS the F2 fix -- make the fast-fail wrapper swallow the 0600 rule while
+_probe_api still enforces it.  This recreates F2 exactly.
+
+    err = credential_error(backend, env)
++   if err is not None and "group/world readable" in err:
++       return
+    if err is not None:
+        raise CliError(err)
+
+INJECTED:
+  FAILED tests/test_fast_fail.py::TestWrapperUnion::test_union_api_key_file_0644
+  E   AssertionError: assert True is False
+  1 failed, 8 passed in 0.09s
+
+  Same tree, TestCredentialErrorTable:  9 passed
+  -> the table-only class does NOT notice.  This is the gap R3 named.
+
+REVERTED (Edit tool, exact):
+  git diff --stat -> empty (byte-identical revert)
+  tests/test_fast_fail.py::TestWrapperUnion -> 9 passed in 0.07s
+
+Verdict: the union test is real.  It fails when the unification breaks and
+passes when it holds, and it catches a divergence the pre-existing tests
+cannot see.

@@ -1,0 +1,193 @@
+================================================================
+DISPATCH -- two defects in forge's own receipt attestation gate
+From: forge PM, 2026-07-30. To: mimo (executor sub-session).
+Two items in src/code_forge/verify.py. Both measured, not inferred.
+================================================================
+
+## WHY THIS EXISTS
+
+While committing a fix to llm_invoke.py I could not pass forge's own
+pre-commit gate (.git/hooks/pre-commit:25 calls `code-forge verify
+--quiet`). Two separate checks in verify.py rejected an attestation that
+was, on inspection, sound. Neither rejection was caused by the change
+under review.
+
+This is forge reviewing forge. The gate is doing its job in spirit --
+these are not requests to weaken it. Both items are about a check that
+measures a proxy instead of the property it wants.
+
+## GROUND TRUTH -- measured 2026-07-30 by me
+
+  U1. The change under review: 2 files, +54 -3, three hunks.
+      llm_invoke.py  post-image lines 146-150
+      test_llm_invoke.py  post-image lines 2149-2160 and 2646-2682
+
+  U2. A bounded review produced exactly 9 receipts:
+      FORGE_MODE=local FORGE_MAX_TOTAL_ROUNDS=3 code-forge review
+      9 passes, 26.0s cpu / 77.6s wall, 257771 tokens, deepseek backend.
+      Receipt matrix c1p1..c3p3 complete, timestamps monotonic.
+
+  U3. Of the 9 recorded excerpts, 8 overlap a diff hunk and 1 does not:
+        llm_invoke.py:143-157      overlaps 146-150   ok
+        llm_invoke.py:143-155      overlaps 146-150   ok
+        test_llm_invoke.py:2146-2161, 2146-2157,
+          2146-2158, 2146-2159    overlap 2149-2160   ok
+        test_llm_invoke.py:2643-2685, 2643-2682
+                                  overlap 2646-2682   ok
+        llm_invoke.py:163-173      NO overlap
+      163-173 is real code: the docstring and opening lines of
+      _read_with_deadline, adjacent to the change and unmodified by it.
+
+  U4. STEP A (coverage) PASSES on this receipt set: every non-deletion
+      hunk is witnessed by at least one excerpt. The attestation fails
+      only at STEP B, on the single stray excerpt in U3.
+
+      verify: FAIL -- excerpt src/code_forge/llm_invoke.py:163-173
+      not in any diff hunk
+
+  U5. An earlier unbounded CI-mode review of the same work took 4 rounds
+      to converge and wrote receipts c1p1..c4p3 (12 files). verify on
+      that set: FAIL -- missing cycle/pass combinations.
+
+  U6. max_total_rounds defaults to 20 (cli.py:325). A backend that
+      oscillates rather than converging therefore writes up to c20p3,
+      i.e. 60 receipts, and item A then rejects the run permanently --
+      the receipts are on disk and every later verify sees them.
+      Correction to an earlier belief of mine: this is bounded, not a
+      livelock. I claimed livelock after watching 11 rounds without
+      finding the bound. The bound exists.
+
+## ITEM A -- verify.py:271 hardcodes cycles 1 through 3
+
+    expected = {(c, p) for c in range(1, 4) for p in range(1, 4)}
+    if seen_keys != expected:
+        return VerifyResult(False, "missing cycle/pass combinations", 1, cp)
+
+The constraint is already documented against itself at verify.py:250-253:
+
+    # Known design constraint: expects exactly cycles 1-3 x passes 1-3.
+    # Reviews that take >3 total rounds write cycle 4+ receipts and fail
+    # this check. Intended for post-convergence verification only (the
+    # last 3 consecutive clean cycles produce the authoritative 9
+    # receipts).
+
+The comment states the intent: the last three clean cycles are what
+matters. The code does not implement that -- it demands that the three
+clean cycles be numbered 1, 2 and 3. A review that needed four rounds
+has three clean cycles too; they are numbered 2, 3 and 4.
+
+PINNED: verify the LAST three consecutive cycles present, whatever their
+numbers, with all three passes each. Do not lower the count below 9
+receipts and do not accept a set with a gap between the three cycles.
+
+Decide and state which of these the check should treat as failure, and
+why: (a) fewer than 3 cycles present, (b) 3 cycles present but not
+consecutive, (c) more than 3 cycles present where the last 3 are
+consecutive and complete. My reading is that (c) is the normal case for
+any review that took more than three rounds, but the decision is yours
+to argue -- if you believe (c) must stay a failure, say so with the
+reason and stop there.
+
+Do NOT add an env var or a flag to relax the check. A gate whose
+strictness is caller-controlled is not a gate.
+
+## ITEM B -- verify.py:358-369 rejects extra context
+
+    if exc["file"] in hunk_map:
+        overlaps = any(
+            max(exc["start_line"], h["start"]) <= min(exc["end_line"], h["end"])
+            for h in hunk_map[exc["file"]]
+        )
+        if not overlaps and exc["file"] not in exempt_files:
+            return VerifyResult(False, "excerpt %s:%d-%d not in any diff hunk" ...)
+
+One excerpt outside the hunks fails the whole attestation. Per U3 and U4
+that happened with 8 of 9 excerpts anchored and full hunk coverage
+satisfied.
+
+The check exists to catch a fabricated excerpt -- a reviewer inventing
+code it never read. An excerpt of real, unchanged, adjacent code is not
+that. It is what a reviewer does when the change only makes sense next to
+its neighbours. Note STEP C (verify.py:371-395) already compares excerpt
+content against the diff post-image line by line, so fabrication inside
+the hunks is caught there; an excerpt wholly outside the post-image
+simply has no line to compare.
+
+PINNED: an excerpt that lies outside every hunk must not by itself fail
+the attestation, PROVIDED the hunk coverage requirement of STEP A is
+satisfied. Fabrication detection must not weaken: an excerpt claiming
+content that does not match the file it cites must still fail.
+
+The obvious hole in the above, and the part I want you to close: if an
+out-of-hunk excerpt is simply ignored, a reviewer can pad its receipt
+with excerpts of code it never looked at and nothing checks them. STEP C
+cannot help, because out-of-hunk lines are absent from the post-image.
+Say how you close that. Verifying such an excerpt against the working
+tree is one option and it has a TOCTOU problem the current design
+deliberately avoids (see the comment at verify.py:372); if you take
+that route, state why the exposure is acceptable, and if you reject it,
+state what you do instead. An answer of "ignore them entirely, the
+coverage floor makes padding pointless" is acceptable if you can show
+the floor actually makes it pointless -- check 6 at verify.py:401 exists, read it before
+relying on it.
+
+## SCOPE FENCE
+
+  IN:  src/code_forge/verify.py and its tests.
+  OUT: the receipt writer, machine.py, the pre-commit hook, gate.yaml,
+       and llm_invoke.py. Do not touch the L1 pipeline. Do not change
+       what a receipt contains.
+  OUT: the reason I hit this at all -- a fix in llm_invoke.py -- is not
+       yours and is being handled separately. If you find yourself
+       reading llm_invoke.py, you have left scope.
+
+## EVIDENCE OBLIGATIONS
+
+  a. For each item, a test that FAILS before your change and PASSES
+     after. Prove it: delete your fix, run the test, paste the failure,
+     restore, run again. A test written after the fix and never seen red
+     is not evidence.
+  b. Item A: a receipt set with cycles 2-4 complete must verify; a set
+     with cycles 1, 2 and 4 must not; a set with only cycles 1-2 must
+     not. Three tests, three outcomes.
+  c. Item B: the U3 receipt set (8 anchored, 1 stray, full coverage)
+     must verify. A receipt whose excerpt content contradicts the file
+     it cites must still fail. A receipt set that leaves a hunk
+     unwitnessed must still fail.
+  d. Full suite with counts and exit code. Measure your own baseline
+     before changing anything and report both numbers. For reference,
+     I measured 3010 passed / 9 skipped on fix/null-content with both
+     of its commits applied; main without them is 8 tests lower. Do not
+     copy either number -- if yours differs, that difference is the
+     finding.
+  e. Step 0 on changed files: py_compile, ruff, and
+       git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+     empty.
+
+## OUTPUT CONTRACT
+
+  1. Branch and new tip SHA.
+  2. One section per item: the decision you made, the reason, the test
+     that proves it, and the injection transcript from (a).
+  3. Full suite numbers, measured.
+  4. Anything you did NOT do and why.
+  5. Every PM artifact you ran, by path, with its result on its own line.
+
+Do NOT merge, push, or delete the worktree. Commit messages: WHY not
+WHAT, no order IDs, Signed-off-by on each.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+Both items ask you to change a security-relevant check, and both carry a
+way to make forge weaker while making the error message go away. If
+either item cannot be done without weakening fabrication detection, the
+useful answer is that argument, not a passing verify.
+
+Item B is the one I am least sure about. I could not find a way to keep
+out-of-hunk excerpts honest without either a working-tree read or an
+argument that they do not need to be honest. If you cannot either, say
+so and deliver item A alone -- that is a complete delivery, not a
+partial one.
+
+Two consecutive failed attempts on one item: stop that item, report
+both, move on.

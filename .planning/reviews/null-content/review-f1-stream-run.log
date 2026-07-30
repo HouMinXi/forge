@@ -1,0 +1,24 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+[deepseek:qodo] 27579 in / 1012 out tokens
+[deepseek:adversarial] 27578 in / 1106 out tokens
+[deepseek:expert] 27580 in / 1163 out tokens
+[deepseek:qodo] 27579 in / 932 out tokens
+[deepseek:expert] 27580 in / 967 out tokens
+[deepseek:adversarial] 27578 in / 1130 out tokens
+[deepseek:qodo] 27579 in / 942 out tokens
+[deepseek:expert] 27580 in / 1145 out tokens
+[deepseek:adversarial] 27578 in / 1163 out tokens
+
+--- Smoke Status ---
+smoke: 0/2 surfaces verified; NOT VERIFIED: [network sockets, subprocess calls]
+
+--- Advisory ---
+[RUNTIME] src/code_forge/llm_invoke.py:148-148 - The change always sends 'stream' field in the HTTP request body. Previously, when backend.stream was False, the field was omitted. Now it's explicitly set to false. This changes the HTTP request payload structure, which could break if the server expects the field to be absent when streaming is disabled, or if the server has a bug handling explicit false values. The OmniRoute server specifically is mentioned as picking SSE when the field is absent, so this change is designed to prevent that, but other servers might behave differently.
+[RUNTIME] src/code_forge/llm_invoke.py:148-148 - The HTTP request is made via urllib.request.urlopen, which is a subprocess-level network call. If the server connection fails, times out, or returns an unexpected response format, the _parse_response_body function could fail to parse the response, leading to a non-JSON response error. The change ensures stream=false is always sent, but if the server still returns SSE format despite this, parsing will fail.
+[DAEMON-STATE] :0-0 - Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis
+code-forge: cost: 257771 tokens (248211 in + 9560 out), 9 passes, 26.0s (wall: 77.6s)
+[test-assertion] [test-assertion] The test `test_stream_false_is_sent_explicitly` only verifies that `_apply_params` sets `body["stream"]` to `False`. This is a unit-level check that doesn't validate the actual HTTP request behavior. The test is redundant with the more comprehensive integration test in `TestStreamFlagOnTheWire`.
+[test-assertion] [test-assertion] The `TestStreamFlagOnTheWire` test class uses a mock `fake_urlopen` that returns a hardcoded response. This mock doesn't validate that the request body is correctly formatted or that the response is properly parsed. The test should also verify that the response parsing works correctly when `stream: false` is sent.
+[test-assertion] [test-assertion] The `TestStreamFlagOnTheWire` test class only tests the `stream=False` case. It should also include a test for `stream=True` to ensure both paths are covered and that the boolean conversion works correctly in both directions.
+[test-assertion] [test-assertion] The test uses `patch.dict(os.environ, {"TEST_KEY": "sk-test"})` but doesn't restore the original environment after the test. While `patch.dict` is a context manager and should restore automatically, the test doesn't handle the case where `TEST_KEY` might already be set in the environment.
+[test-assertion] [test-assertion] The test doesn't verify that the response is correctly parsed when `stream: false` is sent. The mock response returns a valid JSON, but the test should also check that the response is properly handled by `_parse_response_body` or equivalent.

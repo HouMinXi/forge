@@ -1,0 +1,32 @@
+worktree: /home/houminxi/code/forge/.worktrees/receipt-followups-2
+base:     891772a   prev tip: ef3d961   head: 017eb39
+
+== E. the inert semgrep commit is gone ==
+  PASS  test_taint_rule.py matches main
+  PASS  no GAI_OVERRIDE reference in the tree
+
+== F. work-order coordinates removed from code ==
+  PASS  no Item-N coordinate in src/ or tests/
+        collected: 3011 (was 3011 at ef3d961)
+  PASS  collected count unchanged
+
+== G. the report matches the delivery ==
+  FAIL  report still describes the reverted semgrep work
+  PASS  report names the PM artifacts it ran
+  PASS  report carries gate pass/fail numbers
+
+== H. hygiene ==
+  PASS  all 9 commits signed off
+  PASS  author correct on all commits
+  PASS  commit messages clean
+  PASS  non-ASCII gate clean
+  PASS  ruff clean on changed files
+  PASS  py_compile clean on changed files
+
+== I. suite ==
+        
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3002 passed, 9 skipped, 6 warnings in 499.32s (0:08:19)
+  PASS  suite green, 3002 passed (baseline 3002)
+
+== TOTAL: 13 pass, 1 fail ==

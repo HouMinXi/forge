@@ -1,0 +1,278 @@
+================================================================
+DISPATCH -- receipt-handling follow-ups deferred by Phase 42
+From: forge PM, 2026-07-28. To: mimo (executor sub-session).
+Scheduled: dispatch AFTER Phase 42 closes, BEFORE Phase 43 starts.
+================================================================
+
+## WHY THIS EXISTS
+
+Two commits closed during Phase 42 hardened how receipts are loaded and
+how excerpt coverage is credited. Each one found neighbours it did not
+touch, and each neighbour was written down instead of fixed, because a
+drive-by fix inside an unrelated diff is how review loses the thread.
+This order collects those neighbours. Nothing here was discovered by
+reading this order -- every item below was measured on 2026-07-28
+against main @ f7bd6ad and the line numbers are from that commit.
+
+Prior art you MUST read before editing (they set the pattern and the
+reasoning you are extending):
+
+  git show bf44af5          receipt load crash -> named file, not traceback
+  git log -1 fix/excerpt-coverage-inflation   coverage credited to shown lines
+
+## PHASE 0 -- worktree (mandatory; NEVER edit the main tree)
+
+  cd /home/houminxi/code/forge
+  git worktree add .worktrees/receipt-followups -b fix/receipt-followups main
+  ln -sf "$(git rev-parse --show-toplevel)/CLAUDE.md" \
+      .worktrees/receipt-followups/CLAUDE.md
+  cd .worktrees/receipt-followups
+
+Verify `git branch --show-current` prints fix/receipt-followups. Record
+`git rev-parse --short main` as your base and put it in the report.
+
+STOP CONDITION -- corrected twice on 2026-07-28. Run it INSIDE your worktree,
+AFTER Phase 0, and re-run it if you ever suspect your base moved:
+
+    git merge-base --is-ancestor bf44af5 HEAD && echo OK || echo STOP
+
+If that prints STOP, the receipt-load fix is not on main and items 1, 3 and
+4 have nothing to build on: `_validate_receipt_schema`, `CorruptedReceiptError`
+and the guarded `_load_receipts` do not exist there, and item 4's "update
+bf44af5's comment" refers to a comment that is not in the file. Report and
+wait. Do NOT invent the missing infrastructure to make the item fit.
+
+Items 2 (write_attestation, present on main at verify.py:373 with zero
+callers) and 5 (the hook message, install_hooks.py:491) do NOT depend on
+bf44af5 and are safe on either base.
+
+Two corrections, both of the same defect, both worth reading because the
+pattern will recur:
+
+1. The original tested whether main was "f7bd6ad or a descendant". main WAS
+   f7bd6ad, so it passed and would have waved the executor into a base with
+   none of the infrastructure -- it checked the ORDER's base instead of the
+   DEPENDENCY. It also named items 1 and 2 as the dependent pair; the real
+   pair is 1, 3, 4.
+
+2. The first correction tested `main`, but you do not work in main -- Phase 0
+   gives you a worktree, and a worktree created BEFORE a merge keeps the old
+   base no matter what main does afterwards. That is exactly what happened:
+   the worktree was cut at f7bd6ad, main later fast-forwarded to 891772a, and
+   a gate reading `main` said OK while the actual working base still had
+   nothing. Hence `HEAD`, inside the worktree.
+
+Both versions were wrong the same way: the gate measured a global while the
+work happened in a local snapshot of it. A gate that tests the wrong thing
+reads exactly like one that tests the right thing, so when the ground
+contradicts the gate, trust the ground and report -- that judgement was
+correct the first time and is pre-authorised again.
+
+If this fires because your worktree is stale and you have NO commits yet, the
+cheapest recovery is to abandon it and re-cut from current main. Say so in
+your report; do not rebase around it silently, and do not hand-port the
+missing infrastructure.
+
+## ENVIRONMENT NOTE -- added 2026-07-28, after this order was first written
+
+The code graph is now built on the MAIN worktree only. A PreToolUse hook
+blocks `code-review-graph build|update|watch` from inside a linked worktree,
+because building there produced a second graph of the same project that still
+answered queries as if it were the whole repo (measured: 3 files / 68 nodes
+against main's 284 / 5369).
+
+If you want graph context while working, read the main graph explicitly:
+
+    code-review-graph <query|impact|dead-code|status> --repo /home/houminxi/code/forge
+
+Reads are never blocked. Passing --repo is always allowed. Do not try to
+build a graph in your worktree, and do not work around the hook.
+
+Also: `code-review-graph` is no longer an MCP server. Use the CLI.
+
+## SCOPE FENCE
+
+FIVE items, listed below. One commit per item. Do not bundle them, do
+not reorder them, do not fix anything you notice outside this list.
+
+Explicitly OUT of scope, already triaged, do NOT touch:
+  - The plan-ref ID leak pile (F1/F2/F3 strings in llm_invoke.py,
+    test_outlet_c.py, test_machine_local.py, test_factories.py,
+    test_llm_invoke.py, test_fast_fail.py). ~12 real sites plus a
+    grep pattern in CLAUDE.md that misses docstrings. PM keeps this;
+    it touches a rules file and needs a pattern that does not flag
+    flake8 codes like F401.
+  - TestWrapperUnion's three coverage gaps. Those belong to the
+    phase that owns that test file.
+  - Deleting the legacy branch in run_verify. See item 4.
+
+## GROUND TRUTH -- measured 2026-07-28, not inferred
+
+Read these before you form any theory. Each was checked with a command
+whose output is quoted; re-run any of them if you doubt it.
+
+  G1. run_verify has exactly ONE production caller: cli.py:1513, and it
+      always passes diff_text=. cli.py:1510 sets
+      `diff_text = diff_result.stdout`, which is a str -- empty for an
+      empty diff, never None. `hardened` defaults True and is never
+      passed False anywhere under src/.
+      => the legacy branch (verify.py:309 `else:`) is DEAD IN
+      PRODUCTION. It runs only from tests.
+      Command: grep -rn "run_verify(" src/ --include=*.py
+               grep -rn "hardened" src/ --include=*.py
+
+  G2. covered_line_ranges exists on disk in TWO shapes, both real:
+      dict {"file","start","end"} and string "path:start-end".
+      Measured across ~/code: 352 dict-shaped, 156 string-shaped.
+      _validate_receipt_schema deliberately does NOT assert either
+      one -- asserting either rejects real receipts. That exclusion
+      is load-bearing; do not "tidy" it.
+
+  G3. 252 receipt files exist under ~/code; 2 are unparseable JSON.
+      Unguarded json.loads on that corpus is not hypothetical.
+
+## THE FIVE ITEMS
+
+### Item 1 -- cross_repo.py:414, unguarded json.loads
+
+    data = json.loads(r.read_text(encoding="utf-8"))
+
+Same defect class bf44af5 closed in _load_receipts, different consumer:
+a receipt that is unreadable or malformed raises a raw traceback and the
+operator is pointed at the review when the problem is a file on disk.
+
+PINNED, and the pin is specific because a second convention here is
+the actual risk: call `verify._load_receipts(receipts_dir)` ONCE for
+the findings, and keep the per-file loop only for the shutil.copy2.
+Do NOT write a new guard, do NOT invent a new error type, do NOT
+catch-and-skip. bf44af5 already built exactly this guard and its
+message; a parallel one in cross_repo.py is the duplicate-logic
+defect, not a fix. A skipped receipt also gets miscounted as a
+missing one, which is the reasoning bf44af5's message records.
+
+This pin exists so the behaviour is testable from outside. After your
+change `grep -n "json.loads" src/code_forge/cross_repo.py` must show
+no receipt read, and `_load_receipts` must appear in that file.
+
+Test: one receipt with a raw unescaped newline inside a JSON string
+(that is the real corruption on disk, not a synthetic one). Assert the
+filename appears in the error.
+
+### Item 2 -- write_attestation is dead code
+
+verify.py:373. Zero callers under src/ or tests/. It also calls
+_load_receipts unguarded, so it carries item 1's defect too.
+
+PINNED: DELETE it. Do not wire it up to something to justify keeping
+it. If grep finds a caller you did not expect, STOP and report --
+that would contradict G1's neighbourhood and the order is wrong.
+
+Command that must return nothing after your change:
+  grep -rn "write_attestation" src/ tests/
+
+### Item 3 -- excerpts are never checked for start_line <= end_line
+
+Nothing validates the ordering. An inverted range silently credits
+zero lines today, which looks identical to an honest excerpt that
+happens to sit outside the diff -- two different problems, one
+symptom, and no way to tell them apart from the failure message.
+
+PINNED: reject the inverted range at load, in _validate_receipt_schema,
+with the file named -- same treatment as every other shape violation
+the schema already catches. Do NOT add the check inside the seven
+checks; that is exactly the scattered-guard pattern bf44af5 removed.
+
+MEASURE BEFORE YOU ASSERT. This is the trap that already bit this
+codebase once: an earlier schema draft was derived from the writer
+alone and rejected 11 of 14 real receipts. Before committing, run the
+new schema against every receipt under ~/code and report the count
+accepted vs rejected. A single real receipt rejected means the rule is
+wrong, not the data -- STOP and report rather than "fixing" the data.
+
+### Item 4 -- _covered raises TypeError on the string shape
+
+verify.py:164. It indexes r["start"], so it raises on the string form
+of covered_line_ranges. bf44af5 left this deliberately, with a comment
+saying so, because it was pre-existing and outside that diff.
+
+Per G1 this sits on a branch that production never reaches, so the
+crash is latent, not live.
+
+PINNED: make _covered tolerate BOTH shapes and leave the branch in
+place. Do NOT delete the legacy branch, and do NOT delete the
+`hardened` parameter -- run_verify is imported by other repos in this
+fleet and the blast radius of an API change is larger than this bug
+justifies. Update bf44af5's comment, which currently says the crash is
+left alone on purpose; after your change that comment is false, and a
+stale comment left behind is itself a finding (it has already happened
+once on this file).
+
+Consider and reject in your report, in one line each: deleting the
+branch, and doing nothing. If you conclude the pin is wrong, say so
+with evidence -- see HONEST FAILURE below.
+
+### Item 5 -- the hook message names the review, not the data
+
+install_hooks.py:491:
+
+    echo "code-forge: receipt verification failed. ..."
+
+After bf44af5 the failure is frequently a file on disk, not a review
+that fell short, but the message still sends the operator to redo the
+review. Make it point at the reason instead -- running verify prints
+the named file now.
+
+This one is a string change. Commit it with a `# chore` marker; it
+takes no review pass.
+
+## EVIDENCE OBLIGATIONS -- real output, never narration
+
+Per item, in your report:
+
+  a. The bug-injected proof for items 1, 3, 4: delete or revert THE
+     EXACT LINE you added, show the new test FAILING, restore, show it
+     PASSING. Paste both outputs. Injecting near the fix instead of at
+     it does not count -- if your fix is a guard at one call site,
+     delete that call site, not the helper it calls.
+  b. Item 3's corpus measurement (accepted vs rejected over all
+     receipts under ~/code), as raw numbers.
+  c. Item 2's grep returning empty.
+  d. Step 0 on every changed file: python3 -m py_compile, ruff check,
+     and the non-ASCII gate:
+       git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+     must print nothing.
+  e. Full suite: python3 -m pytest -q, with the pass/skip counts and
+     the exit code. Baseline at main is 2990 passed / 8 skipped.
+     A drop in the passed count is a STOP, not a footnote.
+
+## OUTPUT CONTRACT
+
+Report back, in this order:
+  1. Base SHA and branch name.
+  2. One section per item: commit SHA, what changed and WHY, the
+     evidence from the list above.
+  3. Anything you did NOT do, and why.
+  4. Anything you found that is outside the fence -- named, not
+     fixed.
+
+Do NOT merge. Do NOT push. Do NOT delete the worktree. The branch and
+the report are the whole deliverable.
+
+Commit messages follow forge's rules: WHY not WHAT, no severity
+labels, no review-process vocabulary, no bullet inventories, no
+finding IDs anywhere in code or message, Signed-off-by:
+Minxi Hou <houminxi@gmail.com>. Read `git show bf44af5` for the
+register to write in.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+If an item turns out to be wrong -- the defect does not exist, the pin
+is unsound, the measurement contradicts the ground truth above --
+report that. "Item 3 is not a real defect, here is the evidence" is a
+SUCCESSFUL outcome of this order and will be treated as one. What is
+not acceptable is a fix that was never run, a test asserted to pass
+that was not executed, or an item silently skipped.
+
+If two consecutive attempts on the same item fail, STOP on that item,
+report both attempts, and move to the next. Do not try a third
+variation of the same approach.

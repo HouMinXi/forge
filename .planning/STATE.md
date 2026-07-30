@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.8
 milestone_name: Onboarding + Throughput
 status: active
-stopped_at: Phase 47 merged (ca0d860, fix/invoke-error-visibility, fast-forward to main)
-last_updated: "2026-07-25T11:20:28.908Z"
+stopped_at: Router batch F1 merged (695f739); F3 + F4-live-probe + F2/F5 docs remain
+last_updated: "2026-07-30T07:30:00.000Z"
 progress:
   total_phases: 17
-  completed_phases: 10
+  completed_phases: 11
   total_plans: 35
-  completed_plans: 31
-  percent: 59
+  completed_plans: 33
+  percent: 64
 ---
 
 # State: Forge
@@ -22,9 +22,34 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** No code ships without surviving three consecutive clean review cycles; a green verdict is honest or declares what it did not verify
-**Current focus:** Phase 42 (CLI key fast-fail F8 + claim_type oracle 7.1) -- CONTEXT/ENTRANCE grounded + written 2026-07-25 (phases/42-cli-key-claim-type/42-CONTEXT.md, PM-verified seams vs main @ 74adbf2); OUT at mimo for plan generation, then static + multi-model adversarial review before any commit. Graph refreshed 2026-07-25 (286 files/5436 nodes). Then Router onboarding compat batch (F1 SSE blocker + F3 trust + F4 live-probe + F2/F5 docs, scheduled 2026-07-25 after Phase 42); Phase 41 (review focus) merged 2026-07-25 (74adbf2, PM-verified, suite 2903/8/0); Windows wave-2 parked until gpu-win evidence
+**Current focus:** Router onboarding compat batch, F1 LANDED 2026-07-30 (695f739). Remaining batch items: F3 trust path, F4 live probe, F2/F5 docs. Phase 42 MERGED (933032d, 2026-07-29). Windows wave-2 parked until gpu-win evidence
 
 ## Current Position
+
+**F1 LANDED 2026-07-30, main @ 695f739 (fast-forward from 933032d).** Two
+commits: a47d888 sends the stream flag explicitly on every api request, 695f739
+makes an unusable content field retryable (a separate crash ashare hit on the
+deepseek path). Suite 3010 passed / 9 skipped.
+
+Read this before planning the rest of the batch -- F1 was closed by a DIFFERENT
+mechanism than the triage recommended, and the difference decides what is left:
+
+- The triage proposed SSE auto-detect in the shared parse path (3 sites). What
+  shipped instead sends `stream: false` explicitly, so a router that picks its
+  own default never picks SSE. Prevention, not tolerance.
+- PM-verified on the real path, not inferred. Against OmniRoute
+  (192.168.100.10:20128, onmi-gemini3.6): stream omitted returns a
+  `data: {...,"object":"chat.completion.chunk"}` event stream; `stream: false`
+  returns a `chat.completion` JSON object. Through forge's own llm_invoke the
+  call succeeds; re-injecting the old conditional at llm_invoke.py:152 reproduces
+  the exact F1 error and restoring it byte-identically passes again.
+- What is therefore NOT covered: a router that returns SSE despite being told
+  not to. `_parse_response_body` still has no SSE tolerance and the three
+  non-streaming parse sites are untouched. If such a router shows up, the
+  triage's shared-path fix is still the right answer -- it is deferred, not done.
+- F4's live probe was scoped as F1's acceptance test. That rationale now needs
+  restating: the acceptance test already exists as the real-path check above,
+  so F4 has to justify itself on its own value (faster debug loop), or shrink.
 
 **SCHEDULED 2026-07-25.** Router onboarding compat batch added to the v2.8 tail
 after Phase 42, from the OmniRoute/gemini default-router RCA

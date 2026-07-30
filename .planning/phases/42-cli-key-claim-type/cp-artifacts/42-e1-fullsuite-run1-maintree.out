@@ -1,0 +1,40 @@
+            from code_forge.mode_resolver import Mode
+            mock_rm.return_value = Mode.LOCAL
+            # _run will eventually raise (downstream code needs real
+            # objects for JSON serialization), but the contracts guard
+            # at cli.py:2401 executes BEFORE that point.  We verify
+            # the guard's side-effects even if _run ultimately fails.
+            try:
+                _run(args, env, tmp_path)
+            except Exception:
+                pass  # expected: downstream MagicMock serialization
+    
+        # Guard side-effects: stderr message + empty digest fallback
+        captured = capsys.readouterr()
+>       assert "contracts.yaml load failed" in captured.err, (
+            "guard did not log to stderr"
+        )
+E       AssertionError: guard did not log to stderr
+E       assert 'contracts.yaml load failed' in ''
+E        +  where '' = CaptureResult(out='', err='').err
+
+/home/houminxi/code/forge/tests/test_outlet_c_cli.py:371: AssertionError
+=============================== warnings summary ===============================
+tests/test_doctor_tool_audit.py::TestAuditTools::test_skip_cargo_root
+  /usr/lib64/python3.14/unittest/mock.py:2259: RuntimeWarning: coroutine '_check_handshake.<locals>._async' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_factories.py::TestParallelL1::test_cli_backend_stays_serial
+tests/test_falsify_real.py::TestRealFalsifier::test_uncertain_on_invoke_error
+tests/test_gate_check.py::TestLoadGateConfig::test_error_snippet_satisfies_load_gate_config
+  /usr/lib64/python3.14/unittest/mock.py:2259: RuntimeWarning: coroutine 'build_sampling_l1_provider.<locals>._provider.<locals>._gather' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_outlet_c_cli.py::TestContractsYamlGuard::test_run_contracts_guard_catches_exception
+1 failed, 2925 passed, 8 skipped, 4 warnings in 633.41s (0:10:33)

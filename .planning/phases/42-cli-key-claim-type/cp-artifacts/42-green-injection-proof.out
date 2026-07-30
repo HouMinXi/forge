@@ -1,0 +1,32 @@
+
+=== BASELINE (no injection) -- all targets must be GREEN ===
+  behavioural                  GREEN
+  test13-sourcetext            GREEN
+  fast-fail(all)               GREEN
+
+=== INJ1  re-hardcode output: axis_claim=ct.type -> "review" ===
+  behavioural                  RED   E       AssertionError: assert 'review' == 'lint'
+  test13-sourcetext            RED   E       AssertionError: _write_ledger_rows must not hardcode axis_claim='review'
+
+=== INJ2  hardcode argument: derive_claim_type(f.source) -> ("L1") ===
+  behavioural                  RED   E       AssertionError: assert 'review' == 'lint'
+  test13-sourcetext            GREEN
+
+=== INJ3  drop the version_sensitive write ===
+  behavioural                  RED   E       AssertionError: assert False is True
+  test13-sourcetext            RED   E       AssertionError: _write_ledger_rows must write version_sensitive
+
+=== INJ4  MIRROR: derive_claim_type(f.source) -> ("L0") ===
+  behavioural                  RED   E       AssertionError: assert 'lint' == 'review'
+  test13-sourcetext            GREEN
+
+=== INJ5  F8 site A: disable the api_key_file branch only ===
+  fastfail -k api_key_file     RED   E       Failed: DID NOT RAISE CliError
+  fastfail -k vertex           GREEN
+
+=== INJ6  F8 site B: disable the vertex credentials_path branch only ===
+  fastfail -k api_key_file     GREEN
+  fastfail -k vertex           RED   E       Failed: DID NOT RAISE CliError
+
+=== FINAL: tree restored? ===
+clean

@@ -1,0 +1,5 @@
+[aicc] session: receiptfix-r1-ds
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+
+[aicc] session saved: receiptfix-r1-ds
+[aicc] to resume:  aicc ds --cont receiptfix-r1-ds "continue"

@@ -1,0 +1,5 @@
+[aicc] session: receiptfix-r3-glm
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+
+[aicc] session saved: receiptfix-r3-glm
+[aicc] to resume:  aicc glm --cont receiptfix-r3-glm "continue"

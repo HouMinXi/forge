@@ -1,0 +1,247 @@
+================================================================
+DISPATCH R2 -- rework on fix/receipt-followups-2
+From: forge PM, 2026-07-29. To: mimo (executor sub-session).
+Supersedes nothing. The first order still stands; this adds four items.
+================================================================
+
+## READ THIS FIRST -- one of my gates was wrong, not your work
+
+My verifier reported "E. item 5 -- FAIL, message unchanged". That was MY
+defect. The check grepped for `receipt verification failed`, which is the
+UNCHANGED first half of the message; you changed the second half. c06840a is
+applied and correct as written. A perfect delivery would have failed that
+check too.
+
+Item 5 still needs rework, but for a different and deeper reason -- see item
+A. Do not re-do c06840a's text edit on the assumption it did not land.
+
+Everything else measured clean, independently:
+
+  suite                    2999 passed / 9 skipped   re-run by me, matches
+  corpus (item 3)          204 accepted / 0 rejected  re-measured, matches
+  held-out adversary       10 pass / 0 fail           was 8/2 before your work
+  frozen artifacts         untouched
+  fabricated receipts      none -- no .code-forge/ dir exists in the worktree
+
+The held-out adversary is the strongest evidence here. Its H1 does not ask
+whether `_covered` tolerates the string shape; it asks whether the lines it
+returns are CORRECT. A `try/except: continue` that silently returns nothing
+would have passed a tolerance check and failed H1. It passed H1.
+
+Items 1, 2, 3 and 4 of the first order are ACCEPTED. Do not touch that code
+again except where item C below moves it between commits unchanged.
+
+## GROUND TRUTH -- measured 2026-07-29 on your branch, not inferred
+
+  T1. install_hooks.py:490 generates:
+        code-forge verify --quiet 2>/dev/null || {
+
+  T2. cli.py:1514 is `if not args.quiet:` guarding the ONLY line that
+      carries the reason:
+        print("verify: %s -- %s" % ("PASS" if vr.passed else "FAIL", vr.reason))
+      That reason is what bf44af5 fills with the offending filename.
+      So `--quiet` suppresses exactly the thing your new message points at.
+
+  T3. cli.py:1505 prints "verify: FAIL -- git diff failed: ..." to STDERR.
+      `2>/dev/null` eats that one. Two different channels, both silenced.
+
+  T4. attestation_block is defined ONCE (install_hooks.py:488-494) and used
+      TWICE (line 513 chained, line 528 unchained). One fix covers both; a
+      fix applied at a use site instead of the definition covers one.
+
+  T5. generate_hook_content is already under test:
+      tests/test_install_hooks.py:528, :535, :643, :648, :664.
+
+  T6. The docstring at install_hooks.py:439 reads
+        2.  attestation              -- code-forge verify --quiet
+      If the fix removes --quiet, that line becomes false.
+
+  T7. Branch state: 4 commits on fix/receipt-followups-2, base 891772a,
+      NOT merged into main, NO upstream remote. History rewriting on this
+      branch is free and affects nobody.
+
+## THE FOUR ITEMS
+
+### Item A -- the hook silences the output its own message points at
+
+This is the real defect and the only logic-bearing item here.
+
+The generated hook runs verify with `--quiet 2>/dev/null`, then on failure
+prints "See verify output above for details." Per T2 and T3 there is no
+output above: stdout's reason line is suppressed by --quiet and stderr is
+sent to /dev/null. The message now points at nothing.
+
+Note what this replaced. "Run: code-forge verify" was actionable -- it told
+the operator to run the command again WITHOUT --quiet, which is exactly how
+you see the named file. The change followed the letter of item 5 (point at
+the data, not the review) and left the operator worse off than before.
+
+PINNED AS BEHAVIOUR, not as an implementation. After your change:
+
+  1. On PASS the hook stays SILENT. --quiet is there for a reason; a fix
+     that prints "verify: PASS -- all 7 checks passed" before every commit
+     is not acceptable.
+  2. On FAIL the operator sees verify's reason, including the filename
+     bf44af5 produces, WITHOUT running anything a second time.
+  3. Both channels are covered, not just stdout -- see T3.
+  4. The hook still exits 1 on failure.
+
+Choose the mechanism yourself. Consider and reject in one line each, in your
+report: reverting the message to "Run: code-forge verify"; dropping --quiet
+only; dropping 2>/dev/null only; capturing output and replaying it on
+failure. If you conclude the cheapest option is right, say so with evidence
+-- honest disagreement with the framing is a successful outcome.
+
+Fix at the DEFINITION (T4), not at a use site.
+
+Update the docstring at T6 in the same commit. A comment that describes the
+old behaviour is itself a finding, and this exact file has been bitten by a
+stale comment once already.
+
+TEST OBLIGATION, and read this part carefully. A test that asserts the
+generated STRING contains or omits some substring proves almost nothing --
+it tests the shape of the implementation you just wrote, and it is the
+classic assertion that silently checks the wrong thing. The test must fail
+if the reason is discarded. The shape that achieves that: write the
+generated hook to a temp file, put a stub `code-forge` on PATH that exits 1
+and prints a known marker, run the hook, and assert the marker appears in
+the output the operator would see. Also assert the exit code is 1. Use a
+different mechanism if you have one that fails for the same reason; say
+which you used and why.
+
+INJECTION: restore `--quiet 2>/dev/null` at the definition, show the new
+test FAILING, restore, show it PASSING. Paste both outputs. Injecting
+anywhere other than that exact line does not count.
+
+### Item B -- no commit carries Signed-off-by
+
+Zero of the four. The first order required
+`Signed-off-by: Minxi Hou <houminxi@gmail.com>` on every commit. Add it
+during the item C rewrite so this costs one pass, not two.
+
+### Item C -- 6851dd5 bundles three items and describes one
+
+Its subject is "verify: remove dead write_attestation and unused hashlib
+import" -- that is item 2. The same commit also changes
+`_validate_receipt_schema` (item 3's inverted-range rejection) and
+`_covered` (item 4's dual-shape handling). Neither appears in the message.
+
+Two things are wrong with that. The first order said one commit per item.
+Worse, a reader of `git log` who never saw this review is told the commit
+deletes dead code, and will not find the schema rule or the shape handling.
+Forge's own rule is that the message must stand alone for that reader.
+
+Split it into three, each with an accurate WHY. The code moves between
+commits UNCHANGED -- this is a history rewrite, not a re-implementation.
+Per T7 the branch is unmerged and unpushed, so this is safe. Do NOT force
+push (there is nothing to push to), do NOT touch main, do NOT rebase onto
+anything.
+
+While you are rewriting: the tests in b6df31a cover all five items in one
+commit. Move each item's tests into that item's commit if the test file
+splits cleanly. If shared fixtures make a clean split impossible, keep one
+test commit and SAY SO in your report with the specific fixture that blocks
+it -- a forced bad split is worse than an honest single commit.
+
+A rewrite that only moves content changes no content. Prove it, and note
+that HOW you prove it depends on the order you work in.
+
+If you do item C before item A, the tree is unchanged at that moment and the
+proof is a single empty diff:
+
+    git diff b6df31a <tip-after-split>      # must be empty
+
+Once item A lands the tree does change, so the final proof is narrower: the
+difference between the old tip and the new one must touch ONLY the files
+item A is allowed to touch.
+
+    git diff b6df31a HEAD --name-only
+
+That list must contain nothing but install_hooks.py and the test file item
+A's test lives in. If `verify.py` or `cross_repo.py` appears there, content
+moved during a rewrite that was supposed to only reorganise it, and that is
+a STOP. Paste whichever proof matches your working order.
+
+### Item D -- the report says the work is not committed
+
+`.planning/phases/dispatch-receipt-followups/report.md` reads "Status:
+BLOCKED on commit" and marks every item "not committed (hook blocks)". Four
+commits existed ten minutes after that file was written. A PM who trusted
+the report would have concluded nothing shipped.
+
+Nothing was fabricated -- there is no `.code-forge/` directory in the
+worktree, so no receipts were invented to clear the gate, and that is the
+outcome the order asked for when it pre-authorised honest failure.
+
+Rewrite the report to describe what was actually delivered, and add one
+thing it does not currently say: HOW the pre-commit hook was bypassed. I
+could not determine that from git -- the reflog records plain `commit:`
+entries either way. This is not an accusation; a repeatable bypass of
+forge's own gate is a fact this project needs written down, and if the
+bypass was `--no-verify` then the gate has a documented hole worth its own
+follow-up.
+
+Write it as a line of its own, starting with exactly this label:
+
+    Hook bypass: <the flag or method you used, or "none -- the hook did not fire">
+
+The label is required because the current report already contains the word
+"bypass" in a sentence asking the PM to perform one, which is not the same
+as recording what happened.
+
+## SCOPE FENCE
+
+Items A, B, C, D. Nothing else.
+
+Explicitly OUT of scope:
+  - The five items of the first order. Accepted, verified, do not revisit.
+  - The extra skipped test. 2991 -> 2999 is +8 passed, not +9, because
+    tests/test_dead_code.py:619 is gated on graph.db existing; it runs on
+    main and skips in your worktree. That is a consequence of a new rule
+    that graphs are built only on the main worktree. Not a defect, and not
+    yours to fix -- but your report called it "pre-existing", and it is
+    not, so correct that line.
+  - The plan-ref ID leak pile and TestWrapperUnion's gaps. Still PM's.
+
+## EVIDENCE OBLIGATIONS -- real output, never narration
+
+  a. Item A: the injection proof, both outputs pasted, injected at the
+     definition line.
+  b. Item C: the empty `git diff b6df31a <new-tip>`.
+  c. Step 0 on every changed file: py_compile, ruff check on the changed
+     files only, and the non-ASCII gate:
+       git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+     must print nothing.
+  d. Full suite with pass/skip counts and exit code. Baseline is YOUR
+     branch's current 2999 passed / 9 skipped. A drop is a STOP.
+  e. `git log --format='%h %s' 891772a..HEAD` and a signoff count that
+     equals the commit count.
+
+## OUTPUT CONTRACT
+
+  1. Branch name and new tip SHA.
+  2. One section per item: commit SHA, what changed and WHY, the evidence.
+  3. For item A, the four alternatives considered and rejected.
+  4. Anything you did NOT do, and why.
+  5. Anything found outside the fence -- named, not fixed.
+
+Do NOT merge. Do NOT push. Do NOT delete the worktree.
+
+Commit messages follow forge's rules: WHY not WHAT, no severity labels, no
+review-process vocabulary, no finding IDs, no item letters from this order
+anywhere in code or messages. Signed-off-by on every commit.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+If item A's framing is wrong -- if silencing the output is deliberate and
+documented somewhere I did not find, or if the cheapest option really is
+best -- report that with evidence. "The PM's item A is not a real defect,
+here is why" is a successful outcome, exactly as it was last time, when your
+STOP was right and my gate was wrong.
+
+That has now happened twice on this order: the STOP condition tested the
+wrong SHA, and section E tested the wrong half of a string. When the ground
+contradicts the gate, trust the ground and report.
+
+If two consecutive attempts on the same item fail, STOP on that item, report
+both attempts, and move on. No third variation of the same approach.

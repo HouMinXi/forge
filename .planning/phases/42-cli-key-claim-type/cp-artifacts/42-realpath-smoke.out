@@ -1,0 +1,28 @@
+Real-path smoke, worktree /home/houminxi/code/forge/.worktrees/p42-rework-verify, HEAD 0dda79b
+--- doctor (exercises probe_backend -> _probe_api -> credential_error) ---
+[07/26/26 11:21:35] INFO     startup workspace:                mcp_server.py:323
+                             /home/houminxi/code/forge                          
+  workspace:     /home/houminxi/code/forge                PASS
+  gate.yaml:     /home/houminxi/code/forge/.code-forge/gate.yaml PASS
+  trust:         granted                                  PASS
+  backend:       mock-local (project): FORGE_MOCK_KEY not set. Export the API key for backend 'mock-local'. FAIL
+  backend:       gemini-omniroute (user) SHADOWED by project PASS
+  backend:       gemini-omniroute (project)               PASS
+  backend:       deepseek (user): DEEPSEEK_API_KEY not set. Export the API key for backend 'deepseek'. FAIL
+  outlet:        subprocess                               PASS
+  tool-audit:    ruff: ruff 0.15.13                       PASS
+  tool-audit:    shellcheck: ShellCheck - shell script analysis tool PASS
+  self-check:    code-forge-mcp                           PASS
+  registries:
+    Claude Code:   PRESENT
+    Cursor:        ABSENT
+    VS Code:       ABSENT
+    Windsurf:      ABSENT
+    JetBrains:     ABSENT
+    JetBrains JSON:ABSENT
+  ---
+  If a tool is still missing, run /mcp list in your agent.
+DOCTOR_EXIT=1
+--- resolve-outlet ---
+subprocess
+RESOLVE_EXIT=0

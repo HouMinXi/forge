@@ -1,0 +1,21 @@
+held-out R3 against /home/houminxi/code/forge/.worktrees/receipt-followups-2
+baseline frozen at ef3d961: 3011 collected
+
+-- HX1: every test function that existed at ef3d961 still exists
+  PASS  HX1a no test function lost
+  PASS  HX1b collected count unchanged  -- got 3011, baseline 3011
+
+-- HX2: no trace of the reverted mechanism anywhere in the tree
+  PASS  HX2a GAI_OVERRIDE gone from the whole tree
+  PASS  HX2b test_taint_rule.py matches main  -- 0 diff lines remain
+
+-- HX3: no work-order coordinates left in src/ or tests/
+  PASS  HX3 no Item-N coordinate in code
+
+-- HX4: item A still behaves correctly after the cleanup
+  PASS  HX4 R2 adversary still 10/0
+
+-- HX5: items 1-4 still behave correctly after the cleanup
+  PASS  HX5 R1 adversary still clean
+
+== held-out R3: 7 pass, 0 fail ==

@@ -1,0 +1,26 @@
+KNOWN-ANSWER RUN (instrument v2): adversary vs pre-rework code 5a7f5ee
+Expected: DIVERGENCE. A pass here would mean the instrument is blind.
+row                                fast-fail  probe      agree    expected
+------------------------------------------------------------------------------------
+api_key_file missing               REJECT     REJECT     yes      ok
+api_key_file empty                 REJECT     accept     NO       ok
+    fast-fail: API key file is empty: /tmp/w4adv-9j7momei/empty.key
+    probe    : 
+api_key_file 0644                  accept     REJECT     NO       MISMATCH(want reject 'chmod 600')
+    fast-fail: 
+    probe    : backend 'adv2': api_key_file /tmp/w4adv-9j7momei/loose.key is group/world readable (mode 644). chmod 600 it.
+api_key_file 0600 non-empty        accept     accept     yes      ok
+api_key_file unreadable            REJECT     accept     NO       ok
+    fast-fail: API key file unreadable: /tmp/w4adv-9j7momei/noread.key: [Errno 13] Permission denied: '/tmp/w4adv-9j7momei/noread.key'
+    probe    : 
+api_key_env present                accept     accept     yes      ok
+api_key_env absent                 REJECT     REJECT     yes      ok
+neither configured                 accept     REJECT     NO       MISMATCH(want reject 'no api_key_env or api_key_file')
+    fast-fail: 
+    probe    : backend 'adv7': no api_key_env or api_key_file configured
+vertex credentials_path ok         accept     accept     yes      ok
+vertex credentials_path missing    REJECT     REJECT     yes      ok
+------------------------------------------------------------------------------------
+rows=10 diverged=4 table_mismatch=2
+RESULT: FAIL
+EXIT=1

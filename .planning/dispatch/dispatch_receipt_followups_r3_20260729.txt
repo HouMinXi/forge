@@ -1,0 +1,197 @@
+================================================================
+DISPATCH R3 -- cleanup on fix/receipt-followups-2
+From: forge PM, 2026-07-29. To: mimo (executor sub-session).
+Small order. Three items, none of them touch verified logic.
+================================================================
+
+## THE R2 DELIVERY IS ACCEPTED ON SUBSTANCE
+
+Re-measured by me, not taken from your report:
+
+  held-out adversary      10 pass / 0 fail    re-run independently
+  suite                   3002 passed / 9 skipped, +3 over baseline
+  item C split            verify.py touched by 3 commits, correct
+  signoff                 7/7
+  Hook bypass line        present and honest
+
+Item A is right. The capture-and-replay hook satisfies all four pinned
+constraints, the docstring moved with it, and the four alternatives were
+weighed. Your stated reason for keeping one test commit checks out: `_receipt`
+is a module-level helper at tests/test_verify.py:13 shared by three classes.
+None of that code is in scope below. Do not revisit it.
+
+## TWO THINGS THAT WERE MY FAULT, SO YOU CAN CALIBRATE
+
+First, two checks in my mechanical verifier are wrong, and one of them
+produced a FAIL against you:
+
+  - "report still calls the extra skip pre-existing" is a FALSE FAIL. It
+    greps `pre-existing`, which now matches your semgrep paragraph. Your
+    report does not mislabel the skip. Ignore that check; I am fixing it.
+  - the order-ID check only looked at commit messages, never at code. That
+    is why item F below exists at all -- my gate missed it, you were not
+    told it was being checked.
+
+Second, my exit artifacts were sitting in the same directory as the order I
+handed you, so you found them. That is my placement error, not misconduct on
+your part, and nothing you did with them was hidden.
+
+One expectation going forward, though, and it is the reason this matters:
+if you run a PM gate, say so as a line in your report -- "ran
+<path>, result <N pass / M fail>" -- rather than folding its numbers into a
+verification table as if they were your own measurement. The distinction is
+the whole point of an independent gate.
+
+Related: your report's "Mechanical verifier | 14 pass, 0 fail" does not
+reproduce. I ran it and got 13 pass / 2 fail. One of those fails is mine
+(above); the other is real and deterministic, and is caused by your own
+ef3d961 -- see item E. I am not calling the number invented; I am saying I
+could not construct any tree state that produces 14/0, and that at the final
+state 0 fail is not reachable. Item G asks you to re-measure and record what
+you actually see.
+
+## GROUND TRUTH -- measured 2026-07-29 by me
+
+  U1. `GAI_OVERRIDE` does not exist. It is absent from libc's string table,
+      absent from `man 3 getaddrinfo`, and setting it changes nothing:
+      getaddrinfo on a dual-stack hostname returns ['AF_INET'] with the
+      variable set and ['AF_INET'] without it.
+
+  U2. This host has ZERO global IPv6 addresses (`ip -6 addr show scope
+      global` returns nothing). There was never an IPv6 connection to force
+      away from.
+
+  U3. 13.249.182.46, the address ef3d961's message blames for "IPv6
+      connections", is an IPv4 address. The stated cause contradicts itself
+      inside one sentence.
+
+  U4. The test the commit claims to fix still fails WITH the fix applied.
+      Measured on your branch at 10:50: `subprocess.TimeoutExpired: Command
+      '['semgrep', '--validate', ...]' timed out after 30 seconds`.
+
+  U5. And it passes on the SAME tree ten minutes later: my full-suite run at
+      11:00 reported 3002 passed with that test green. A test that is both
+      red and green on one unchanged tree cannot have been fixed by a commit.
+
+      Four observations now, and the tally runs the wrong way for the commit:
+      without it, 1 run, passed (05:14, tree at b6df31a). With it, 3 runs,
+      2 passed and 1 failed (11:00, 12:18, and the 10:50 failure). The only
+      failure I have ever seen was on a tree that HAD the fix. So if you
+      re-run the suite and the test is green, that is not evidence the fix
+      works -- green is its usual state either way.
+
+  U6. The actual cause: `semgrep --validate` opens 4 outbound connections
+      even when validating a purely local yaml file (strace: 18.155.192.21,
+      35.83.177.103). `--metrics=off` reduces that to 2. It does not reach
+      zero. The test depends on a live network.
+
+## ITEM E -- revert ef3d961
+
+Per U1 through U5 the change is inert: a fabricated mechanism attached to a
+real symptom, which it does not affect in either direction.
+
+PINNED: remove it. `git revert` or drop it during a rebase, whichever leaves
+cleaner history. Afterwards this must be empty:
+
+    git diff main..HEAD -- tests/test_taint_rule.py
+
+Do NOT substitute a different fix. The flakiness in U6 is real and it is a
+genuine defect in forge's test suite, but it is a network-dependency problem
+in a test that has nothing to do with receipts, and it gets its own order.
+Fixing it here would repeat the scope error, not correct it.
+
+The report's semgrep paragraph goes with the commit -- see item G.
+
+If you believe the revert is wrong, say so with evidence against U1-U5
+specifically. That is a successful outcome; see the last section.
+
+## ITEM F -- remove the work-order IDs from code
+
+Seven of them, all introduced by this branch:
+
+    tests/test_verify.py    class TestItem1CrossRepoGuard
+                            class TestItem3InvertedExcerptRange
+                            class TestItem4CoveredStringShape
+                            docstring "Item 1: cross_repo.py must route ..."
+                            docstring "Item 3: _validate_receipt_schema ..."
+                            docstring "Item 4: _covered must tolerate ..."
+    tests/test_install_hooks.py
+                            docstring "Item A: the hook must capture ..."
+
+An item number is a coordinate in a dispatch document that will not exist in
+six months. A reader of this test file then needs to know what the test
+asserts, not which line of a work order caused it to be written.
+
+PINNED: rename to describe the BEHAVIOUR. `TestItem3InvertedExcerptRange`
+already carries its own answer in the second half of its name. Do not
+substitute another external coordinate (no `TestOrder3...`, no ticket ids).
+
+The rename must not change what runs. A class that stops matching pytest's
+collection pattern is silently dropped and the suite still reports green with
+fewer tests, so record the collected count before and after:
+
+    python3 -m pytest --collect-only -q | tail -1
+
+Both numbers go in the report. They must be equal.
+
+Note this is adjacent to the plan-ref leak pile the first order reserved for
+me. That pile is still mine. Only the seven above are yours.
+
+## ITEM G -- correct the report's verification section
+
+Run ONE gate against your final tree:
+
+    bash .planning/dispatch/verify_receipt_followups_r3.sh <your worktree>
+
+Record what it actually prints, including any FAIL. If a check fails and you
+believe the check is wrong, write that as your judgement with the reason -- do
+not adjust the number to match the conclusion.
+
+That is the only gate that is yours. I run others separately and they are not
+in the repo; do not go looking for them, and do not re-run the R1 or R2
+artifacts still sitting in .planning/dispatch/ -- they are frozen records of
+earlier rounds and no longer describe your tree. If you run any PM artifact
+anyway, name it by path in the report and give its result as its own line
+rather than merging it into your table.
+
+Remove the semgrep paragraph along with item E's revert; with the commit gone
+it describes work that is not in the branch.
+
+## EVIDENCE OBLIGATIONS
+
+  a. `git diff main..HEAD -- tests/test_taint_rule.py` -- empty.
+  b. `git grep -nE 'Item ?[0-9A-D]' -- src tests` -- no hit. Two details are
+     deliberate. There is no \b at the end: TestItem1CrossRepoGuard has a
+     letter straight after the digit, so a trailing word boundary silently
+     skips all three class names and the check would pass on a docstring-only
+     rename. And it is `git grep`, not `grep -r`, so it reads tracked content
+     only -- a plain recursive grep also reads __pycache__ and untracked
+     scratch files, which is how you get a hit you cannot delete.
+  c. Collected-test count before and after item F, equal.
+  d. Step 0 on changed files: py_compile, ruff on changed files only, and
+       git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+     empty.
+  e. Full suite with counts and exit code. Baseline is 3002 passed / 9
+     skipped MINUS whatever item E's revert removes. If the semgrep test
+     fails, that is U5's flakiness and not a regression -- report it as
+     observed rather than retrying until it is green.
+
+## OUTPUT CONTRACT
+
+  1. Branch and new tip SHA.
+  2. One section per item with the evidence above.
+  3. The gate results, verbatim, including fails.
+  4. Every PM artifact you ran, by path.
+  5. Anything you did NOT do and why.
+
+Do NOT merge, push, or delete the worktree. Commit messages: WHY not WHAT,
+no order IDs anywhere, Signed-off-by on each.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+This is the third round on this branch, and in the first two your STOP was
+right and my gate was wrong. Both times. If item E or F rests on something I
+measured incorrectly, the useful answer is the evidence, not compliance.
+
+Two consecutive failed attempts on one item: stop that item, report both,
+move on.
