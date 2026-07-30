@@ -27,7 +27,7 @@ Tracked phases:
 - [x] Phase 38.1: Stale-process/workspace guard (P5) -- merged 2026-07-04 (0a85662)
 - [x] Phase 38.1-5/6: Contract heading matcher + duration inflation fix -- merged 2026-07-09 (14b3985)
 - [x] Phase 38.2: PDEATHSIG orphan guard -- merged 2026-07-04 (9f96fd5)
-- [x] Phase 43: LEDGER append-only outcome record -- merged 2026-07-04 (8f7cdd6)
+- [x] Phase 43: LEDGER append-only outcome record -- merged 2026-07-04 (14328bb)
 - [x] Phase 39: L1 pass parallelization -- 3x wall-clock via ThreadPoolExecutor/gather, CLI serial guard, fixed-order fold -- merged 2026-07-05 (6abb6fb)
 - [x] Phase 38.3: MCP out-of-box UX -- workspace from client roots (T1), api_key_file credential (T2), findings visibility (T3) -- LANDED IN MAIN via the usability-onramp + surflare-consumer-pain work, NOT via mcp-oobe. Ground truth: roots resolution mcp_server.py:173-216 (T1), api_key_file backend.py:89/309-326/636 (T2), _truncate limit<4 guard mcp_server.py:568. mcp-oobe branch superseded + deleted; 98f1ddd/6bf1682 dangling duplicates (safe to GC). Reconciled 2026-07-08.
 - [x] Usability on-ramp batch (db4b51c..89a091f) -- getting-started walkthrough, actionable gate-check YAML snippet, first-time receipt-gate guidance, doctor self-consistency, infra-count in summary, "Dangerous"->"Sensitive" reword -- merged 2026-07-07 (89a091f). PM L4 verified (round-trip test caught a real snippet indent bug, fixed).
@@ -58,7 +58,7 @@ v3.x sketch collision note below); does NOT change the 40 -> 41 -> 42
 in-flight queue.
 
 - [ ] Phase 44: EVAL-ON-DUTY -- case generation re-extracts diffs from the
-  LEDGER (prereq Phase 43, merged 8f7cdd6); ~300-450 LOC. Root of the v2.9 lane.
+  LEDGER (prereq Phase 43, merged 14328bb); ~300-450 LOC. Root of the v2.9 lane.
 - [ ] Phase 51: BASIS-DISCLOSE -- add falsification_survived + convergence_rounds
   sub-fields to the basis (pipeline already computes both). Prereq: Phase 43
   (provenance). No prompt change. Pull-forward to post-43 PERMITTED (ledger Q1);

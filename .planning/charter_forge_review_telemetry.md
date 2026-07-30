@@ -10,7 +10,7 @@ the precision / false-positive rates are.
 ## Scope-challenge
 
 (a) Does this need to exist?
-    Mostly it ALREADY does -- Phase 43 LEDGER (merged 8f7cdd6) records
+    Mostly it ALREADY does -- Phase 43 LEDGER (merged 14328bb) records
     per-finding fingerprint/file/line/axis_claim/pass_provenance/
     terminal_state (FIXED / DISPROVED / DUPLICATE / ESCAPED) + base/head
     SHAs. What is missing is MODEL attribution (pass_provenance names the

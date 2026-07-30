@@ -236,7 +236,7 @@ Next: Phase 40 (Honest partial results + convergence). QUEUE (authoritative,
 is now scoped (EVAL-ON-DUTY, v2.9 AMENDMENT 1 rev 2) as the root of the parallel
 v2.9 ENV-GROUNDING lane 44 -> 51 -> 52 -> 53a -> 53b; that lane runs parallel to
 the 45-49 flywheel and does NOT enter the 40 -> 41 -> 42 in-flight queue. 51's
-only hard prereq (Phase 43 provenance) is merged (8f7cdd6), so pulling 51
+only hard prereq (Phase 43 provenance) is merged (14328bb), so pulling 51
 forward to post-43 is PERMITTED -- whether to exercise it is scheduling
 sovereignty, not a map decision. This supersedes the stale "40 -> 44 -> 41 ->
 42" line in the 38.x tail below.
@@ -245,7 +245,7 @@ loop close) + forge doctor phase (productize the recurring UX diagnosis).
 Phase-count RECOUNT (2026-07-09): v2.8 = 11 units (done 9: 37/37.1/38/38.1/38.1-5_6/38.2/38.3/39/43; pending 3: 40/41/42) = 82%. Convention: sub-phases count as units; Phase 43 (LEDGER) is counted ONCE here in v2.8 where it physically landed, though it is logically the v3-arc root (44/51 consume it) -- NOT double-counted in v2.9.
 
 Milestone: v2.8 Onboarding + Throughput (10/11 phases complete)
-Completed: 37 user-config (6fb427e), 37.1 F5+F1 (965c247), 38 setup-mcp (07d0381), 38.1 stale-guard (0a85662), Phase 43 LEDGER (8f7cdd6), 38.2 PDEATHSIG (9f96fd5), 39 parallel-passes (6abb6fb), 38.1-5/6 contract+duration (14b3985), Phase 46 doctor tool-audit (f53bf84)
+Completed: 37 user-config (6fb427e), 37.1 F5+F1 (965c247), 38 setup-mcp (07d0381), 38.1 stale-guard (0a85662), Phase 43 LEDGER (14328bb), 38.2 PDEATHSIG (9f96fd5), 39 parallel-passes (6abb6fb), 38.1-5/6 contract+duration (14b3985), Phase 46 doctor tool-audit (f53bf84)
 Also landed (pre-Phase 39, this session): sig_b OSError (0b94363), output-ceiling (8991129)
 Current: Phase 40 (next in queue)
 Next: Phase 40 (queue: 40 -> 41 -> 42; see the authoritative QUEUE note above -- Phase 44 is the parallel v2.9 lane root, not in-flight)

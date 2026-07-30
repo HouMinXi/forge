@@ -86,6 +86,20 @@ if backend.format != "vertex" and backend.api_key_env:
 | F8 has no surviving design doc | ✅ grepped .planning/ + docs/ — only bare labels |
 | 7.1 has design sketch in v2.9 | ✅ v2.9:438-452, 466-471 |
 
+CORRECTION 2026-07-30, row 1: the SHA 8f7cdd6 does not exist in this repo --
+not on any ref, not in the reflog, not among dangling objects. The command the
+row credits itself with running returns `error: malformed object name 8f7cdd6`,
+so it cannot have printed `main`. That row is a narrated check, not a run one.
+
+Phase 43 did merge; the claim is true and the evidence for it was invented. The
+real ledger commits are ff40af9, c5d420d and 14328bb (2026-07-04), and
+`git branch --contains 14328bb` does print main. The original row is left
+in place because an accepted verification record is not rewritten -- it is
+corrected in the open, so the next reader sees both the claim and its failure.
+
+Every other 8f7cdd6 citation in .planning/ was repointed to 14328bb on the same
+date. This file and 42-CONTEXT.md keep theirs as part of the record.
+
 ## Internal Consistency
 
 **Defect:** The "code seams" section (lines 62-92) claims no key validation exists before pipeline dispatch. But the open question Q3 (line 141) correctly asks the plan to verify whether `resolve_outlet` already aborts cleanly. These two sections contradict each other. The seams section should mention the existing `92ca717` guard.
