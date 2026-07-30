@@ -67,8 +67,10 @@ class LLMInvokeError(Exception):
         self.retryable = retryable
         self.retry_after = retry_after
         # Machine-readable failure class for dispatch decisions.
-        # invoke_sampling sets one of: "truncated", "empty", "stub_model",
-        # "no_json". Matching on kind (not message text) keeps the MCP
+        # invoke_sampling and the api dispatch set one of: "truncated",
+        # "empty", "stub_model", "no_json". Note "empty" covers a response
+        # that carried no usable text, whatever the wording of the message.
+        # Matching on kind (not message text) keeps the MCP
         # fallback routing immune to message rewording and to model output
         # that happens to contain a keyword.
         self.kind = kind
@@ -908,6 +910,39 @@ def _invoke_api(
                 else:
                     raise LLMInvokeError(
                         "unsupported api format: %r" % backend.format
+                    )
+                # All three formats can hand back a response whose content
+                # field is present but unusable -- null, empty, or not a
+                # string at all.  A backend loose enough to send null is
+                # loose enough to send a number, and both reach .strip()
+                # the same way: deepseek sends null intermittently with
+                # finish_reason "stop", and a
+                # proxy can do it on the anthropic/vertex block shape.  The
+                # three extraction sites converge here, inside the retry
+                # loop, so one check covers them and a transient empty
+                # response gets retried instead of ending the run.  A capped
+                # response never reaches this point: each per-format helper
+                # detects its own truncation signal and raises before it
+                # returns, so finish_reason=length still surfaces with the
+                # advice to raise output_ceiling.  Cost of retrying: a
+                # backend that returns null on every call resubmits the
+                # whole prompt max_attempts times before failing.  That is
+                # the price of recovering the intermittent case, which is
+                # the one actually observed.
+                if not isinstance(content, str) or not content.strip():
+                    raise LLMInvokeError(
+                        "%s backend returned no content (format=%s, "
+                        "content type=%s). The request succeeded and the "
+                        "response carried no text, which is usually "
+                        "transient. On the openai shape a refusal or a "
+                        "reasoning-only reply arrives the same way; the "
+                        "block formats surface those as a missing text "
+                        "block instead."
+                        % (
+                            backend.name, backend.format,
+                            type(content).__name__,
+                        ),
+                        kind="empty",
                     )
             except TimeoutError as exc:
                 raise LLMInvokeError(

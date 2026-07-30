@@ -874,6 +874,132 @@ class TestTruncationDetection:
 
 
 
+def _empty_content_backend(tmp_path, fmt="openai"):
+    kf = tmp_path / "key.txt"
+    kf.write_text("sk-test\n")
+    return BackendConfig(
+        name="deepseek", type="api", model="m", format=fmt,
+        base_url="http://x", api_key_file=str(kf),
+    )
+
+
+def _mock_body(payload):
+    resp = Mock()
+    resp.read.return_value = json.dumps(payload).encode("utf-8")
+    resp.__enter__ = Mock(return_value=resp)
+    resp.__exit__ = Mock(return_value=False)
+    return resp
+
+
+def _openai_body(content, finish="stop"):
+    return {
+        "choices": [{"message": {"content": content}, "finish_reason": finish}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 0},
+    }
+
+
+class TestEmptyContentDetection:
+    """A present-but-null content field is an empty response, not bad JSON.
+
+    deepseek returns "content": null with finish_reason "stop" now and then.
+    The value is not a missing key, so the extraction site raises no KeyError
+    and the None travels downstream.  Reaching _strip_fences it used to raise
+    AttributeError; short-circuiting there instead yields "" and the run dies
+    one line past the retry loop reporting invalid JSON, which sends the
+    reader after a format bug that is not there.  Detection belongs in the
+    dispatch, where the retry loop can still act and the backend name is
+    still in hand.
+    """
+
+    def test_openai_null_content_raises_empty(self, tmp_path):
+        backend = _empty_content_backend(tmp_path)
+        resp = _mock_body(_openai_body(None))
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="no content") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=2)
+        assert exc_info.value.kind == "empty"
+        assert "deepseek" in str(exc_info.value)
+
+    def test_openai_empty_string_content_raises_empty(self, tmp_path):
+        """An empty string reaches the same dead end as null."""
+        backend = _empty_content_backend(tmp_path)
+        resp = _mock_body(_openai_body("   "))
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="no content") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=2)
+        assert exc_info.value.kind == "empty"
+
+    def test_null_content_is_retried_and_recovers(self, tmp_path):
+        """The point of the fix: an intermittent empty reply self-heals.
+
+        Downstream of the loop this same response ends the run outright, so
+        this is the assertion that distinguishes the two placements.
+        """
+        backend = _empty_content_backend(tmp_path)
+        # A third response is supplied so that an over-eager retry fails on
+        # the call_count assertion rather than on StopIteration, which would
+        # hide which behaviour actually broke.
+        responses = [
+            _mock_body(_openai_body(None)),
+            _mock_body(_openai_body('{"findings": []}')),
+            _mock_body(_openai_body('{"findings": ["extra call"]}')),
+        ]
+        with patch("urllib.request.urlopen", side_effect=responses) as mock_open, \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=3)
+        assert result.content == {"findings": []}
+        assert mock_open.call_count == 2
+
+    def test_null_content_with_length_still_reports_truncated(self, tmp_path):
+        """Ordering guard: a capped response keeps its actionable message.
+
+        finish_reason=length raises inside _invoke_openai before the dispatch
+        check runs, so the user still gets the output_ceiling advice rather
+        than a generic empty-response error.
+        """
+        backend = _empty_content_backend(tmp_path)
+        resp = _mock_body(_openai_body(None, finish="length"))
+        with patch("urllib.request.urlopen", return_value=resp) as mock_open, \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=2)
+        assert exc_info.value.kind == "truncated"
+        assert "output capacity" in str(exc_info.value)
+        # Truncation is not retryable, so the budget must not be spent
+        # re-submitting a prompt whose cap is already known to be too low.
+        assert mock_open.call_count == 1
+
+    def test_non_string_content_raises_empty(self, tmp_path):
+        """A backend loose enough to send null can send a number.
+
+        Rejecting only None would move the AttributeError rather than
+        remove it, since .strip() is what fails in either case.
+        """
+        backend = _empty_content_backend(tmp_path)
+        resp = _mock_body(_openai_body(123))
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="no content") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=2)
+        assert exc_info.value.kind == "empty"
+
+    def test_anthropic_null_text_raises_empty(self, tmp_path):
+        """The block-shaped formats carry the same hole via "text": null."""
+        backend = _empty_content_backend(tmp_path, fmt="anthropic")
+        resp = _mock_body({
+            "content": [{"type": "text", "text": None}],
+            "usage": {"input_tokens": 10, "output_tokens": 0},
+            "stop_reason": "end_turn",
+        })
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="no content") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=2)
+        assert exc_info.value.kind == "empty"
+
+
 class TestVertexBuildUrl:
     """Unit tests for _build_vertex_url."""
 
