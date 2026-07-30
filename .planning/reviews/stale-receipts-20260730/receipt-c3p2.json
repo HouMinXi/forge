@@ -1,0 +1,24 @@
+{
+  "cycle": 3,
+  "pass": 2,
+  "skill": "code-review-expert",
+  "diff_sha256": "51860eb009ac6908faaf8021243e28c60ee07b65ce627f0a0c672c6313380175",
+  "timestamp": "2026-06-01T08:54:00Z",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [],
+  "covered_line_ranges": [
+    "SKILL.md:45-85",
+    "SKILL.md:320-365",
+    "SKILL.md:675-850",
+    "SKILL.md:1250-1370",
+    "passes/pass1-qodo.md:1-116",
+    "passes/pass2-expert.md:1-123",
+    "passes/pass3-adversarial.md:1-161",
+    "references/code-quality-checklist.md:1-138",
+    "references/security-checklist.md:1-120",
+    "references/solid-checklist.md:1-65",
+    "references/removal-plan.md:1-52"
+  ]
+}

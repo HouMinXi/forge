@@ -1,0 +1,13 @@
+  dead pid 1908303: _pid_alive=False
+  wrote stale lock holding pid 1908303; exists=True
+  STALE  -> acquired anyway, self-healed. content now='1908293' (our pid 1908293)
+  LIVE   -> correctly blocked: another forge process is running (PID 1908293), lock /tmp/locktest/.code-forge/code-forge.lock.
+  Check what it is doing:
+      ps -p 1908293 -o etime=,cmd=
+  A review holds this lock for its whole convergence run, which can
+  take several minutes. Do not delete the lock file: it is released
+  when the holder exits, and removing it while the holder is alive
+  lets two forge runs share one workspace. A lock whose holder has
+  died is reclaimed automatically and never needs deleting. If the
+  holder is genuinely hung, kill it and the lock clears.
+  GARBAGE-> reclaimed, as documented

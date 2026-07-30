@@ -1,0 +1,23 @@
+lock: say what to do when the lock is busy
+
+The message named a PID and a lock file path and stopped there. Read
+cold, that looks like leftover residue with an obvious remedy, and a
+session hitting it went for rm on the lock file.
+
+Deleting it is the one action that breaks what the lock is for. Anything
+that reaches this error has a live holder, because acquire_lock already
+reclaims a lock whose PID is dead -- so there is never a stale file to
+clean up by hand, and unlinking one that is genuinely held puts two
+forge runs on the same workspace and the same state file.
+
+The wait can also be long enough to look like a hang: the lock spans the
+whole convergence run, which is minutes on a slow backend. Nothing in
+the old message let the reader tell a working holder from a wedged one,
+so the message now points at ps and says the holder can simply be
+killed if it is stuck.
+
+The existing coverage only asserted that the PID appeared in the output,
+which the one-line form already satisfied, so nothing would have noticed
+the guidance disappearing again.
+
+Signed-off-by: Minxi Hou <houminxi@gmail.com>

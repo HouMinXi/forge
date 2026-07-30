@@ -1,0 +1,15 @@
+holder pid: 1910736 (alive: yes)
+----------------- what the user sees -----------------
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: another forge process is running (PID 1910736), lock /tmp/lockdemo/.code-forge/code-forge.lock.
+  Check what it is doing:
+      ps -p 1910736 -o etime=,cmd=
+  A review holds this lock for its whole convergence run, which can
+  take several minutes. Do not delete the lock file: it is released
+  when the holder exits, and removing it while the holder is alive
+  lets two forge runs share one workspace. A lock whose holder has
+  died is reclaimed automatically and never needs deleting. If the
+  holder is genuinely hung, kill it and the lock clears.
+------------------------------------------------------
+code-forge exit code: 3 (3 = EXIT_BUSY)

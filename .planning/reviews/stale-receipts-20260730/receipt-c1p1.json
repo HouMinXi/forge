@@ -1,0 +1,67 @@
+{
+  "cycle": 1,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "9a233838f866584f79c74c7442348e95bcd01f19e785c40dd0f9eae623da8f6d",
+  "timestamp": "2026-07-28T02:24:23.025330+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "/home/houminxi/code/forge/src/code_forge/llm_invoke.py",
+      "start_line": 143,
+      "end_line": 145,
+      "content": "    # Stream flag: always send explicitly so servers that default to\n    # SSE when the field is absent (e.g. OmniRoute) respect the setting.\n    body[\"stream\"] = bool(backend.stream)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/home/houminxi/code/forge/tests/test_fast_fail.py",
+      "start_line": 295,
+      "end_line": 297,
+      "content": "    Sharing a helper is not the same as agreeing: the two wrappers\n    once accepted and rejected the same key file, so agreement is\n    asserted here rather than assumed.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/home/houminxi/code/forge/src/code_forge/llm_invoke.py",
+      "start_line": 143,
+      "end_line": 145,
+      "content": "    # Stream flag: always send explicitly so servers that default to\n    # SSE when the field is absent (e.g. OmniRoute) respect the setting.\n    body[\"stream\"] = bool(backend.stream)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/home/houminxi/code/forge/tests/test_fast_fail.py",
+      "start_line": 293,
+      "end_line": 298,
+      "content": "    This is the test that proves _check_backend_credentials and _probe_api\n    agree on every row, not just that they call the same function.\n    Sharing a helper is not the same as agreeing: the two wrappers\n    once accepted and rejected the same key file, so agreement is\n    asserted here rather than assumed.\n    \"\"\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/home/houminxi/code/forge/src/code_forge/llm_invoke.py",
+      "start_line": 148,
+      "end_line": 150,
+      "content": "    # Stream flag: always send explicitly so servers that default to\n    # SSE when the field is absent (e.g. OmniRoute) respect the setting.\n    body[\"stream\"] = bool(backend.stream)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/home/houminxi/code/forge/tests/test_fast_fail.py",
+      "start_line": 293,
+      "end_line": 297,
+      "content": "    This is the test that proves _check_backend_credentials and _probe_api\n    agree on every row, not just that they call the same function.\n    Sharing a helper is not the same as agreeing: the two wrappers\n    once accepted and rejected the same key file, so agreement is\n    asserted here rather than assumed.",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start": 143,
+      "end": 151
+    },
+    {
+      "file": "tests/test_fast_fail.py",
+      "start": 290,
+      "end": 298
+    }
+  ]
+}
