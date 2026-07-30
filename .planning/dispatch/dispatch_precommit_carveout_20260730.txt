@@ -1,0 +1,206 @@
+================================================================
+DISPATCH -- the commit gate cannot express forge's own change taxonomy
+From: forge PM, 2026-07-30. To: executor sub-session.
+Two items in src/code_forge/install_hooks.py. Both measured today.
+================================================================
+
+## RUNS IN PARALLEL WITH THE verify.py ORDER -- READ THIS FIRST
+
+There is a second order in flight,
+.planning/dispatch/dispatch_verify_gate_defects_20260730.txt, covering
+two defects in src/code_forge/verify.py. Both orders are about the same
+gate. They do not overlap and must not be merged:
+
+    that order owns   src/code_forge/verify.py + tests/test_verify*
+    this order owns   src/code_forge/install_hooks.py + its tests
+
+If you find yourself editing verify.py, you have left scope. If that
+order's executor lands first, rebase; do not resolve a conflict in
+their file.
+
+## WHY THIS EXISTS
+
+A change to src/code_forge/lock.py that rewrote nothing but the text of
+an exception message -- zero control-flow change -- could not be
+committed. Every route closed:
+
+    git commit               pre-commit's attestation gate refused
+    git commit --no-verify   a separate guard forbids bypassing hooks
+    code-forge review        refuses to run in a main tree
+
+That change is chore-class by forge's own rule. ~/CLAUDE.md, "Classify
+the change first":
+
+    Config / docs / chore / trivial text takes NO review -- this
+    INCLUDES such a change living inside a .sh/.py/.go file: a
+    comment, a help/error string, a constant, a version bump, a
+    moved line.
+
+The gate cannot see that category. This is not a request to weaken the
+gate; it is a request to make the gate and the document stop
+contradicting each other, in whichever direction survives argument.
+
+## GROUND TRUTH -- measured 2026-07-30 by me
+
+  U1. The carve-out is a filename regex, install_hooks.py:471-486:
+
+        NON_CODE='\.md$|\.txt$|\.yaml$|\.yml$|\.json$|\.toml$|\.cfg$
+                  |\.ini$|\.conf$|(^|/)\.gitignore$|...'
+        STAGED=$(git diff --cached --name-only)
+        NON_MATCH=$(printf '%s\n' "$STAGED" | grep -vE "$NON_CODE")
+        if [ -z "$NON_MATCH" ]; then exit 0; fi
+
+      It sees names, never contents. Any .py file is code.
+
+  U2. The installed hook predates its own generator. Compare:
+
+        .git/hooks/pre-commit:25   code-forge verify --quiet 2>/dev/null || {
+                                       echo "code-forge: receipt verification failed..."
+        install_hooks.py:490-491   VERIFY_OUT=$(code-forge verify 2>&1) || {
+                                       echo "$VERIFY_OUT" >&2
+
+      The generator was changed by e605b26, "hooks: capture verify
+      output and replay on failure", merged in Phase 42. The installed
+      hook never picked it up.
+
+  U3. U2 has a measured cost. The blocked commit above printed only
+      the generic line. The real reason, found by running verify by
+      hand, was:
+
+        verify: FAIL -- corrupt receipt: receipt-c2p1.json:
+        Invalid control character at: line 4 column 24 (char 52)
+
+      Leftover receipts from 2026-06-01 and 2026-07-27, unrelated to
+      the change being committed. e605b26 exists precisely so that
+      reason reaches the committer. It is in src, not deployed, and
+      therefore helped nobody.
+
+## ITEM A -- the carve-out cannot express a chore change inside a code file
+
+Decide, argue, and implement whichever of these survives:
+
+  (a) Keep it filename-based and accept the friction. Then the fix is
+      to ~/CLAUDE.md or to the hook's error message, so that a person
+      hitting this is told the gate cannot see the distinction and what
+      to do instead. This is a LEGITIMATE outcome -- the current
+      problem is silent disagreement between two documents, not that
+      the hook is necessarily wrong.
+
+  (b) Decide from the diff. A staged diff touching only comment lines
+      and string literals is mechanically decidable for Python; a
+      constant change is not, and a "moved line" is not. If you take
+      this route, state exactly which of ~/CLAUDE.md's listed chore
+      forms you can detect and which you cannot, and make the
+      undetectable ones fail closed (treated as code).
+
+  (c) Accept a declaration from the committer. Note before choosing
+      this: a gate that believes the committer's own classification is
+      not a gate against the committer, only against forgetfulness.
+      If you argue for it anyway, say what it still protects.
+
+I am NOT pinning a direction. I am pinning that the answer must be
+argued and that the two documents must agree when you are done.
+
+Do NOT add an env var or flag that simply switches the attestation off.
+
+## ITEM B -- nothing tells a user the installed hook is stale
+
+Per U2, an installed hook can silently be months behind its generator.
+The narrow fix (re-run `code-forge install-hooks`) repairs one machine
+and prevents nothing.
+
+PINNED: a user must be able to find out that their installed hook no
+longer matches what this version of forge would generate, without
+reading the hook. Beyond that the mechanism is yours -- a content hash
+stamped into the hook and compared by `doctor`, a check inside
+install-hooks, or something better.
+
+Weigh and state the blast radius in your reasoning: the confusing error
+message is the cheap half. The expensive half is that a hook installed
+before a security-relevant generator change keeps enforcing the old
+rules, and the repo looks gated while running last month's gate.
+
+## THE TRAP IN THIS ORDER
+
+You are fixing the commit gate, and your own commits go through the
+commit gate. Expect to be blocked by the very thing you are changing.
+
+Do not reach for --no-verify -- a guard blocks it and the guard is
+right. Work in a worktree (forge refuses to review a main tree) and
+produce a real attestation, or if you cannot get a commit through,
+STOP and report the blockage with the exact command and error. A
+report that the gate is unpassable is a useful delivery. Editing the
+gate to let your own commit through, and calling that the fix, is not.
+
+Note also: the corrupt receipts from U3 have been renamed to *.stale
+in .code-forge/receipts/ with copies in
+.planning/reviews/stale-receipts-20260730/. They are not your problem;
+do not restore them.
+
+## SCOPE FENCE
+
+  IN:  src/code_forge/install_hooks.py and its tests. ~/CLAUDE.md and
+       forge's CLAUDE.md if item A lands on option (a).
+  OUT: src/code_forge/verify.py and tests/test_verify* -- the parallel
+       order owns those.
+  OUT: the receipt writer, machine.py, gate.yaml, llm_invoke.py,
+       lock.py. Do not touch the L1 pipeline or what a receipt
+       contains.
+  OUT: the staged-but-uncommitted lock.py change sitting in main's
+       tree. It is deliberate, documented at
+       .planning/reviews/lock-busy-message/STATE.md, and not yours.
+       Do not commit it, do not revert it, do not include it in a
+       worktree.
+
+## EVIDENCE OBLIGATIONS
+
+  a. For each item, a test that FAILS before your change and PASSES
+     after. Prove it: delete your fix, run the test, paste the
+     failure, restore, run again. A test written after the fix and
+     never seen red is not evidence.
+  b. Item A: whichever option you choose, demonstrate it against a
+     REAL commit attempt, not a unit test alone. Stage a
+     comment-only change to a .py file and show what the hook does.
+     Then stage a genuine logic change to the same file and show that
+     it is still gated. Both transcripts, verbatim.
+  c. Item B: show the stale state being detected. Install a hook,
+     change the generator, and demonstrate that whatever you built
+     notices. Bug-inject it: make the two match again and show the
+     detector goes quiet.
+  d. Full suite with counts and exit code. Measure your own baseline
+     before changing anything and report both numbers.
+     tests/test_cli_integration.py makes live `claude -p` calls and
+     will stall the run -- exclude it, say that you excluded it, and
+     report its 37 tests separately or not at all. Do not silently
+     drop them.
+  e. Step 0 on changed files: py_compile, ruff, and
+       git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+     empty. Note that tests/test_lock.py carries 2 pre-existing ruff
+     F841 findings at lines 571 and 595 that are NOT yours.
+
+## OUTPUT CONTRACT
+
+  1. Branch and new tip SHA.
+  2. One section per item: the decision, the argument for it, the
+     test that proves it, and the injection transcript from (a).
+  3. For item A: the two real-commit transcripts from (b).
+  4. Full suite numbers, measured, with the exclusion stated.
+  5. Anything you did NOT do and why.
+  6. Every PM artifact you ran, by path, with its result on its own
+     line.
+
+Do NOT merge, push, or delete the worktree. Commit messages: WHY not
+WHAT, no order IDs, Signed-off-by on each.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+Item A can legitimately end in "keep it filename-based" plus a
+documentation fix and near-zero code. That is a complete delivery, not
+a partial one, provided the argument is made.
+
+If item B cannot be done without a mechanism you consider worse than
+the problem, say which mechanisms you rejected and why, and deliver
+item A alone.
+
+Two consecutive failed attempts on one item: stop that item, report
+both, move on.
