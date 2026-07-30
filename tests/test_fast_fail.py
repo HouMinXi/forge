@@ -290,7 +290,9 @@ class TestWrapperUnion:
 
     This is the test that proves _check_backend_credentials and _probe_api
     agree on every row, not just that they call the same function.
-    Inheritance by structure is what F2 disproved once already.
+    Sharing a helper is not the same as agreeing: the two wrappers
+    once accepted and rejected the same key file, so agreement is
+    asserted here rather than assumed.
     """
 
     @staticmethod
