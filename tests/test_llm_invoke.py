@@ -2146,6 +2146,18 @@ class TestApplyParams:
                       allow_thinking=True, allow_effort=True)
         assert body["stream"] is True
 
+    def test_stream_false_is_sent_explicitly(self):
+        """A non-streaming backend must say so on the wire.
+
+        Leaving the field out lets the server choose, and OmniRoute chooses
+        SSE, which arrives as an unparseable "data: {...}" body.
+        """
+        body = {}
+        _apply_params(body, _cfg(stream=False),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["stream"] is False
+
     def test_params_passthrough(self):
         body = {}
         _apply_params(body, _cfg(params={"top_p": 0.9}),
@@ -2629,6 +2641,43 @@ class TestConnectionErrorHandling:
             with pytest.raises(LLMInvokeError, match="connection error") as exc:
                 llm_invoke("prompt", backend=self._vertex_backend())
             assert exc.value.retryable is True
+
+
+class TestStreamFlagOnTheWire:
+    """stream reaches the request body, not just the params dict.
+
+    _apply_params setting the key proves nothing about what is sent: only
+    reading it back off the captured request does.
+    """
+
+    def test_non_streaming_request_carries_stream_false(self):
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="openai",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=1024, stream=False,
+        )
+        captured_body = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured_body.update(json.loads(req.data.decode()))
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": '{"findings": []}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            }).encode()
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+            return resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            llm_invoke("prompt", backend=backend)
+
+        assert "stream" in captured_body, (
+            "stream omitted; the server picks its own default and "
+            "OmniRoute picks SSE"
+        )
+        assert captured_body["stream"] is False
 
 
 class TestOutputCeiling:

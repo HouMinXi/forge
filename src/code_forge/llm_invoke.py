@@ -143,9 +143,11 @@ def _apply_params(
     if effective_temp >= 0:
         body["temperature"] = effective_temp
 
-    # Stream flag
-    if backend.stream:
-        body["stream"] = True
+    # Stream flag, always sent explicitly.  A server is free to pick its own
+    # default when the field is absent, and OmniRoute picks SSE: omitting
+    # stream on a non-streaming backend gets a "data: {...}" body that
+    # _parse_response_body cannot parse, reported as a non-JSON response.
+    body["stream"] = bool(backend.stream)
 
     # Generic params passthrough (protected keys blocked at parse time)
     for k, v in (backend.params or {}).items():
