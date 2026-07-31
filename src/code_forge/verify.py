@@ -166,6 +166,12 @@ def _load_receipts(rd: Path) -> list[dict]:
             )
         _validate_receipt_schema(obj, f.name)
         receipts.append(obj)
+    # Order by the numbers inside the receipts, not by their filenames. The
+    # glob sorts as text, so once a review passes nine cycles "receipt-c10p1"
+    # sorts ahead of "receipt-c9p1" and the monotonic-timestamp check reads a
+    # correctly written set as out of order. The schema check above has
+    # already proved cycle and pass are integers.
+    receipts.sort(key=lambda r: (r["cycle"], r["pass"]))
     return receipts
 
 
@@ -246,11 +252,9 @@ def run_verify(
     except CorruptedReceiptError as exc:
         return VerifyResult(False, "corrupt receipt: %s" % exc, 1, cp)
 
-    # 1. completeness: 9 receipts, cycle/pass matrix, findings_count
-    # Known design constraint: expects exactly cycles 1-3 x passes 1-3.
-    # Reviews that take >3 total rounds write cycle 4+ receipts and fail
-    # this check. Intended for post-convergence verification only (the last
-    # 3 consecutive clean cycles produce the authoritative 9 receipts).
+    # 1. completeness: last 3 consecutive cycles x passes 1-3, findings_count.
+    # Reviews that take >3 rounds write cycle 4+ receipts; the last 3
+    # consecutive clean cycles are what matters, regardless of their numbers.
     if len(receipts) < 9:
         msg = "missing receipts: %d/9" % len(receipts)
         if len(receipts) == 0:
@@ -268,9 +272,39 @@ def run_verify(
         if r["findings_count"] != len(r["findings"]):
             return VerifyResult(
                 False, "findings_count mismatch c%dp%d" % key, 1, cp)
-    expected = {(c, p) for c in range(1, 4) for p in range(1, 4)}
-    if seen_keys != expected:
-        return VerifyResult(False, "missing cycle/pass combinations", 1, cp)
+    # Verify the LAST 3 consecutive cycles, whatever their numbers.
+    cycles = sorted({r["cycle"] for r in receipts})
+    if len(cycles) < 3:
+        return VerifyResult(
+            False, "fewer than 3 cycles: %d" % len(cycles), 1, cp)
+    last_three = cycles[-3:]
+    for i in range(len(last_three) - 1):
+        if last_three[i + 1] - last_three[i] != 1:
+            return VerifyResult(
+                False,
+                "last 3 cycles not consecutive: %s" % last_three,
+                1, cp)
+    for c in last_three:
+        passes = {p for (cyc, p) in seen_keys if cyc == c}
+        # Exactly the three protocol passes, not merely at least them. Asking
+        # only that 1-3 be present lets a cycle carry a pass 4 or 5, which the
+        # protocol never produces -- three skills run per cycle -- so an extra
+        # one is a receipt nobody wrote for a pass nobody ran. The scope
+        # stops at last_three on purpose: older cycles are not what the gate
+        # attests, so a pass 4 there cannot launder itself into the verdict
+        # and rejecting it would only break historical receipt sets the gate
+        # should still read.
+        missing = {1, 2, 3} - passes
+        if missing:
+            return VerifyResult(
+                False, "missing cycle %d/pass %d" % (c, min(missing)), 1, cp)
+        extra = passes - {1, 2, 3}
+        if extra:
+            return VerifyResult(
+                False,
+                "cycle %d has pass %d, outside the three review passes" % (
+                    c, min(extra)),
+                1, cp)
     cp += 1
 
     # 2. hash
@@ -402,7 +436,7 @@ def run_verify(
         # covered_line_ranges is self-reported, not measured -- audit-only. Ignored here.
         all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
         if all_diff:
-            for c in range(1, 4):
+            for c in last_three:
                 cov = _cycle_excerpt_covered(receipts, c) & all_diff
                 if len(cov) / len(all_diff) < 0.6:
                     return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
@@ -422,7 +456,7 @@ def run_verify(
                 cycle_findings[cyc] = []
             cycle_findings[cyc].extend(r.get("findings", []))
 
-        for a, b in combinations(range(1, 4), 2):
+        for a, b in combinations(last_three, 2):
             if not cycle_findings.get(a) and not cycle_findings.get(b):
                 continue
             cov_a = _cycle_excerpt_covered(receipts, a)
@@ -477,7 +511,7 @@ def run_verify(
         # 6. legacy coverage >= 60% (self-reported covered_line_ranges)
         all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
         if all_diff:
-            for c in range(1, 4):
+            for c in last_three:
                 cov = _cycle_covered(receipts, c) & all_diff
                 if len(cov) / len(all_diff) < 0.6:
                     return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
@@ -492,7 +526,7 @@ def run_verify(
                 cycle_findings[cyc] = []
             cycle_findings[cyc].extend(r.get("findings", []))
 
-        for a, b in combinations(range(1, 4), 2):
+        for a, b in combinations(last_three, 2):
             if not cycle_findings.get(a) and not cycle_findings.get(b):
                 continue
             j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))

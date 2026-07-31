@@ -10,10 +10,13 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+_SKILLS = ["qodo-review", "code-review-expert", "adversarial-qe"]
+
+
 def _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):
     return {
         "cycle": cycle, "pass": pass_n,
-        "skill": ["qodo-review", "code-review-expert", "adversarial-qe"][pass_n - 1],
+        "skill": _SKILLS[(pass_n - 1) % len(_SKILLS)],
         "diff_sha256": diff_sha,
         "timestamp": "2026-05-28T10:%02d:00Z" % (cycle * 3 + pass_n),
         "findings_count": 0, "findings": [],
@@ -670,6 +673,189 @@ class TestInvertedExcerptRange:
     def test_normal_range_accepted(self):
         receipt = _receipt(1, 1, "abc")
         _validate_receipt_schema(receipt, "test.json")
+
+
+def _write_cycles(rd, diff_sha, cycles):
+    """Write receipts for arbitrary cycle numbers (list of ints), 3 passes each.
+    Total receipts = len(cycles) * 3. For <3 cycles this is <9, which
+    triggers the 'missing receipts' check before the cycle check.
+    Coverage range spans the full diff (lines 1-50) to avoid triggering
+    the 60% floor on any cycle."""
+    for c in cycles:
+        for p in range(1, 4):
+            name = "receipt-c%dp%d.json" % (c, p)
+            (rd / name).write_text(json.dumps(
+                _receipt(c, p, diff_sha, 1, 50)
+            ))
+
+
+class TestLastThreeConsecutiveCycles:
+    """ITEM A: verify the LAST 3 consecutive cycles, whatever their numbers."""
+
+    def test_cycles_2_3_4_pass(self, tmp_path):
+        """Cycles 2-4 complete -> PASS (last 3 consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [2, 3, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert r.passed, f"last 3 consecutive should pass, got: {r.reason}"
+
+    def test_cycles_1_2_4_fail(self, tmp_path):
+        """Cycles 1,2,4 -> FAIL (last 3 not consecutive: 2,3,4 missing 3)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 2, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"cycles 1,2,4 should fail, got: {r.reason}"
+        assert "not consecutive" in r.reason
+
+    def test_cycles_1_2_fail(self, tmp_path):
+        """Only cycles 1-2 -> FAIL (fewer than 3 cycles).
+        Need 9+ receipts to pass the length check, but only 2 unique cycles."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        # Write 5 passes per cycle (cycle 1 uses passes 1-5, cycle 2 uses passes 1-5)
+        # to get 10 receipts (>9) but only 2 unique cycles
+        skills = ["qodo-review", "code-review-expert", "adversarial-qe",
+                  "qodo-review", "code-review-expert"]
+        for c in [1, 2]:
+            for p in range(1, 6):
+                name = "receipt-c%dp%d.json" % (c, p)
+                receipt = _receipt(c, p, sha, 1, 50)
+                receipt["skill"] = skills[p - 1]
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"cycles 1,2 should fail, got: {r.reason}"
+        assert "fewer than 3 cycles" in r.reason
+
+    def test_cycles_5_6_7_pass(self, tmp_path):
+        """Cycles 5-7 -> PASS (last 3 consecutive, high numbers)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [5, 6, 7])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed, f"cycles 5-7 should pass, got: {r.reason}"
+
+    def test_cycles_1_2_3_4_pass(self, tmp_path):
+        """Cycles 1-4 -> PASS (last 3 are 2,3,4, consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 2, 3, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed
+
+    def test_cycles_1_3_4_fail(self, tmp_path):
+        """Cycles 1,3,4 -> FAIL (last 3 not consecutive: 2 missing)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 3, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"cycles 1,3,4 should fail, got: {r.reason}"
+        assert "not consecutive" in r.reason
+
+    def test_cycles_2_3_4_missing_pass_fail(self, tmp_path):
+        """Cycles 2-4 consecutive but cycle 4 missing pass 3 -> FAIL."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        # Write cycles 2-3 complete, cycle 4 only passes 1-2 (8 receipts total,
+        # but we need 9+ to pass the length check; add cycle 1 with 3 passes)
+        for c in [1, 2, 3]:
+            for p in range(1, 4):
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(_receipt(c, p, sha, 1, 50)))
+        for p in range(1, 3):  # only passes 1-2 for cycle 4
+            name = "receipt-c4p%d.json" % (p,)
+            (rd / name).write_text(json.dumps(_receipt(4, p, sha, 1, 50)))
+        # 11 receipts total, last 3 cycles are 2,3,4 but 4 is missing pass 3
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"missing pass should fail, got: {r.reason}"
+        assert "missing cycle 4/pass 3" in r.reason
+
+    def test_pass_outside_the_three_review_passes_is_rejected(self, tmp_path):
+        """A counted cycle carrying a pass 4 -> FAIL.
+
+        Three skills run per cycle, so pass 4 is a receipt for a pass nobody
+        ran. Asking only that passes 1-3 be PRESENT accepts it silently, and
+        the extra receipt then feeds every downstream check as if it were
+        real work.
+        """
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [2, 3, 4])
+        (rd / "receipt-c3p4.json").write_text(
+            json.dumps(_receipt(3, 4, sha, 1, 50)))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"pass 4 should fail, got: {r.reason}"
+        assert "outside the three review passes" in r.reason
+
+    def test_two_digit_cycle_numbers_are_not_read_as_out_of_order(self, tmp_path):
+        """Cycles 9-11, written in order -> PASS.
+
+        Receipts used to be ordered by filename, where "receipt-c10p1" sorts
+        ahead of "receipt-c9p1". The monotonic-timestamp check then read a
+        correctly written set as out of order, so a review that went past nine
+        cycles could never be verified -- the one case the last-three rule
+        exists to serve.
+        """
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [9, 10, 11])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed, f"cycles 9-11 should pass, got: {r.reason}"
+
+
+class TestNonConsecutiveEarlierCycles:
+    """ITEM A edge case: non-consecutive earlier cycles with consecutive last 3."""
+
+    def test_gap_before_last_three_pass(self, tmp_path):
+        """Cycles [1,3,5,6,7] -> PASS (last 3 are 5,6,7 consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 3, 5, 6, 7])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert r.passed, f"expected PASS for last 3 consecutive, got: {r.reason}"
+
+    def test_gap_in_last_three_fail(self, tmp_path):
+        """Cycles [1,3,5,7,8] -> FAIL (last 3 are 5,7,8 not consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 3, 5, 7, 8])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed, f"expected FAIL for non-consecutive last 3, got: {r.reason}"
+        assert "not consecutive" in r.reason
 
 
 class TestCoveredStringShape:
