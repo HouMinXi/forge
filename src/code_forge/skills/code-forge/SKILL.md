@@ -1358,11 +1358,41 @@ A complete review produces 9 receipt files: c1p1 through c3p3.
       "rationale": "null dereference if get() returns None"
     }
   ],
+  "context_quotes": [
+    {
+      "file": "src/helpers.py",
+      "content": "def get():\n    ...\n",
+      "rationale": "read to see what get() can return; not verified"
+    }
+  ],
   "covered_line_ranges": [
     {"file": "src/foo.py", "start": 30, "end": 60}
   ]
 }
 ```
+
+`code_excerpts` and `context_quotes` say different things and are not
+interchangeable. An excerpt asserts "I checked these lines"; verify holds it
+to that by requiring it to fall inside a diff hunk and to match the file's
+post-image, and rejects the attestation when it does not. A context quote
+asserts nothing: it is code read for orientation -- a signature above the
+change, a caller in another file -- so it carries no line numbers and verify
+never checks it. Put out-of-hunk reading here. Leaving it in `code_excerpts`
+fails the attestation, and it should: an unconfirmable line sitting next to
+confirmed ones, with nothing in the receipt telling them apart, is how a
+fabricated excerpt travels.
+
+`context_quotes` is optional. Receipts written before the field existed
+remain valid, and a pass that read nothing outside the diff omits it.
+
+Only a hand-written receipt carries it. The automated writer drops the field
+on its way through the pipeline, so an L1 run produces receipts without it
+even when the model supplied one. Nothing is lost that the gate would have
+read -- verify checks the field's shape and never its contents -- but the
+record of what the model read for orientation does not survive that path.
+Wiring it through would widen the provider contract across six modules to
+persist data no reader consumes, so it stays unwired until something needs
+to read it back.
 
 ## Pass-to-skill mapping
 
@@ -1376,7 +1406,12 @@ A complete review produces 9 receipt files: c1p1 through c3p3.
 
 Run `code-forge verify` to validate receipts. Seven checks:
 
-1. **Completeness**: 9 receipts, unique cycle/pass matrix, findings_count matches
+1. **Completeness**: the last three consecutive cycles each carry exactly
+   passes 1, 2 and 3, with matching findings_count. Reviews that take more
+   than three rounds write further receipts; the gate asks only about the
+   most recent three consecutive ones, and older cycles may carry extra
+   pass receipts without failing this check (they are not what verify
+   attests).
 2. **Diff hash**: All receipts reference the current diff SHA256
 3. **Anchor reality**: Anchor files exist in the current diff
 4. **Timestamps**: Monotonically increasing across all receipts

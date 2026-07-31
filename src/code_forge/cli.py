@@ -757,19 +757,11 @@ def _make_subagent_spawn(
 
     def _spawn(pass_name: str, diff_text: str) -> str:
         from .llm_invoke import llm_invoke
+        from .reviewer_json import REVIEW_JSON_CONTRACT
         role = _PASS_ROLES.get(pass_name, "code reviewer")
         prompt = (
             "You are a " + role + ". Review this diff.\n"
-            'Return JSON: {"findings": [{"file": "...", "line": N, '
-            '"severity": "P0"|"P1"|"P2"|"P3", '
-            '"description": "..."}], '
-            '"code_excerpts": [{"file": "...", "start_line": N, '
-            '"end_line": M, "content": "..."}]}\n'
-            "Each diff hunk MUST have at least one code_excerpt.\n"
-            "Even if findings is empty, provide code_excerpts "
-            "covering each changed hunk.\n"
-            "code_excerpts content must be actual source code lines, "
-            "not diff format -- no +/- prefixes, no @@ headers.\n"
+            + REVIEW_JSON_CONTRACT
         )
         if post_image:
             prompt += (
@@ -792,7 +784,8 @@ def _make_subagent_spawn(
                 + "\nPrioritize findings in these areas; in your response, "
                 + "state whether each area was checked.\n"
             )
-        prompt += "\nDiff:\n" + diff_text
+        from .diff import annotated_diff_prompt_block
+        prompt += annotated_diff_prompt_block(diff_text)
         result = llm_invoke(prompt, backend=backend)
         content = result.content
         if isinstance(content, dict):
@@ -870,6 +863,7 @@ def _run_test_assertion_review(
     if not test_files:
         return []
 
+    from .diff import annotated_diff_prompt_block
     prompt = (
         "You are a test-assertion reviewer. Review this diff for test quality.\n"
         "Check: assertion completeness, edge case coverage, mock accuracy, "
@@ -880,7 +874,7 @@ def _run_test_assertion_review(
         '"code_excerpts": [{"file": "...", "start_line": N, '
         '"end_line": M, "content": "..."}]}\n'
         "Each diff hunk MUST have at least one code_excerpt.\n"
-        "\nDiff:\n" + diff_text
+        + annotated_diff_prompt_block(diff_text)
     )
     # H-R3-01: llm_invoke MUST be inside the try block so that
     # network/timeout/auth errors are caught and fail-open.

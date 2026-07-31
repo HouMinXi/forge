@@ -67,8 +67,16 @@ def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
 _STR_FIELDS = ("diff_sha256", "timestamp")
 _INT_FIELDS = ("cycle", "pass", "findings_count")
 _LIST_OF_DICT_FIELDS = ("findings", "anchors", "code_excerpts")
+# context_quotes is where a reviewer puts code it read for orientation but did
+# not verify: a function signature above the change, a caller in another file.
+# That code is not in the diff, so nothing here can check it, and it must not
+# be able to sit in code_excerpts wearing the same clothes as evidence. It is
+# optional because every receipt written before this field existed is still a
+# valid receipt.
+_OPTIONAL_LIST_OF_DICT_FIELDS = ("context_quotes",)
 _NESTED_SCHEMAS = {
     "code_excerpts": {"file": str, "content": str, "start_line": int, "end_line": int},
+    "context_quotes": {"file": str, "content": str},
 }
 _TYPE_LABEL = {str: "a string", int: "an integer"}
 
@@ -110,10 +118,19 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
         if not isinstance(v, list) or not all(isinstance(item, dict) for item in v):
             raise CorruptedReceiptError(
                 "%s: %s must be a list of objects" % (name, field))
-    # Safe only because the loop above already proved every field named in
-    # _NESTED_SCHEMAS is a list of dicts -- otherwise calling .get() on a
-    # non-dict item here would raise the exact crash this function exists
-    # to prevent. Keep the two collections in step when adding a field.
+    for field in _OPTIONAL_LIST_OF_DICT_FIELDS:
+        if field not in obj:
+            continue
+        v = obj[field]
+        if not isinstance(v, list) or not all(isinstance(item, dict) for item in v):
+            raise CorruptedReceiptError(
+                "%s: %s must be a list of objects" % (name, field))
+    # Safe only because the two loops above have proved every field named in
+    # _NESTED_SCHEMAS is either absent or a list of dicts -- otherwise calling
+    # .get() on a non-dict item here would raise the exact crash this function
+    # exists to prevent. Keep the three collections in step when adding a
+    # field: a name in _NESTED_SCHEMAS with no home in either list loop is
+    # unguarded.
     for list_field, subschema in _NESTED_SCHEMAS.items():
         for item in obj.get(list_field, []):
             for subfield, subtype in subschema.items():
@@ -372,6 +389,16 @@ def run_verify(
                     )
 
         # STEP B: excerpt-to-hunk anchoring
+        # An excerpt names lines the reviewer says it checked, so every one has
+        # to land somewhere this can check it -- the diff. Code read for
+        # orientation but outside the diff is real and worth recording, and it
+        # belongs in context_quotes, which claims nothing and is never read
+        # here. Letting it into code_excerpts instead would mean accepting a
+        # line nobody can confirm next to lines that were confirmed, with
+        # nothing in the receipt telling the two apart. Checking it against the
+        # working tree is not the way out: the diff is fixed at verify time and
+        # the tree is not, so the tree can change between the reviewer reading
+        # it and this running.
         for exc in all_excerpts:
             content = exc.get("content", "")
             if not content or not content.strip():
@@ -389,18 +416,18 @@ def run_verify(
             # Exempt files (binary/rename/mode-change) pass without overlap check --
             # they have no hunks in hunk_map, so hunk anchoring cannot be verified.
             # This is intentional: exempt files produce no coverage obligation.
-            if exc["file"] in hunk_map:
-                overlaps = any(
-                    max(exc["start_line"], h["start"]) <= min(exc["end_line"], h["end"])
-                    for h in hunk_map[exc["file"]]
+            if exc["file"] in hunk_map and not any(
+                max(exc["start_line"], h["start"]) <= min(exc["end_line"], h["end"])
+                for h in hunk_map[exc["file"]]
+            ):
+                return VerifyResult(
+                    False,
+                    "excerpt %s:%d-%d is outside every hunk; if the reviewer "
+                    "read it for context rather than checking it, it belongs "
+                    "in context_quotes" % (
+                        exc["file"], exc["start_line"], exc["end_line"]),
+                    5, cp,
                 )
-                if not overlaps and exc["file"] not in exempt_files:
-                    return VerifyResult(
-                        False,
-                        "excerpt %s:%d-%d not in any diff hunk" % (
-                            exc["file"], exc["start_line"], exc["end_line"]),
-                        5, cp,
-                    )
 
         # STEP C: content verification against diff post-image
         # The diff is immutable at verify time -- no TOCTOU with working tree.

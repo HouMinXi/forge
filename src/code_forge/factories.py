@@ -230,6 +230,7 @@ def build_l1_provider(
 
     from .llm_invoke import LLMInvokeError, llm_invoke
     from .reviewer_json import (
+        REVIEW_JSON_CONTRACT,
         _collect_excerpts,
         _json_to_state_findings,
         validate_reviewer_json,
@@ -247,20 +248,13 @@ def build_l1_provider(
         ]
 
         # -- Build all prompts before execution -------------------------
+        from .diff import annotated_diff_prompt_block
+        annotated_diff = annotated_diff_prompt_block(diff_text)
         prompts = []
         for _pn, role in pass_configs:
             prompt = (
                 "You are a " + role + ". Review this diff.\n"
-                'Return JSON: {"findings": [{"file": "...", "line": N, '
-                '"severity": "P0"|"P1"|"P2"|"P3", '
-                '"description": "..."}], '
-                '"code_excerpts": [{"file": "...", "start_line": N, '
-                '"end_line": M, "content": "..."}]}\n'
-                "Each diff hunk MUST have at least one code_excerpt.\n"
-                "Even if findings is empty, provide code_excerpts "
-                "covering each changed hunk.\n"
-                "code_excerpts content must be actual source code lines, "
-                "not diff format -- no +/- prefixes, no @@ headers.\n"
+                + REVIEW_JSON_CONTRACT
             )
             if post_image:
                 prompt += (
@@ -288,7 +282,7 @@ def build_l1_provider(
                     + "\nPrioritize findings in these areas; in your response, "
                     + "state whether each area was checked.\n"
                 )
-            prompt += "\nDiff:\n" + diff_text
+            prompt += annotated_diff
             prompts.append(prompt)
 
         # -- Execute passes ---------------------------------------------
@@ -541,6 +535,7 @@ def build_sampling_l1_provider(
     from .disposition import Disposition
     from .llm_invoke import LLMInvokeError, Usage, invoke_sampling
     from .reviewer_json import (
+        REVIEW_JSON_CONTRACT,
         _collect_excerpts,
         _json_to_state_findings,
         validate_reviewer_json,
@@ -559,20 +554,13 @@ def build_sampling_l1_provider(
         ]
 
         # -- Build all prompts before execution -------------------------
+        from .diff import annotated_diff_prompt_block
+        annotated_diff = annotated_diff_prompt_block(diff_text)
         prompts = []
         for _pn, role in pass_configs:
             prompt = (
                 "You are a " + role + ". Review this diff.\n"
-                'Return JSON: {"findings": [{"file": "...", "line": N, '
-                '"severity": "P0"|"P1"|"P2"|"P3", '
-                '"description": "..."}], '
-                '"code_excerpts": [{"file": "...", "start_line": N, '
-                '"end_line": M, "content": "..."}]}\n'
-                "Each diff hunk MUST have at least one code_excerpt.\n"
-                "Even if findings is empty, provide code_excerpts "
-                "covering each changed hunk.\n"
-                "code_excerpts content must be actual source code lines, "
-                "not diff format -- no +/- prefixes, no @@ headers.\n"
+                + REVIEW_JSON_CONTRACT
             )
             if post_image:
                 prompt += "\n## Post-Image (current file content)\n" + post_image + "\n"
@@ -588,7 +576,7 @@ def build_sampling_l1_provider(
                     + "\nPrioritize findings in these areas; in your response, "
                     + "state whether each area was checked.\n"
                 )
-            prompt += "\nDiff:\n" + diff_text
+            prompt += annotated_diff
             prompts.append(prompt)
 
         # -- Execute passes concurrently via asyncio.gather -------------

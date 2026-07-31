@@ -831,6 +831,190 @@ class TestLastThreeConsecutiveCycles:
         assert r.passed, f"cycles 9-11 should pass, got: {r.reason}"
 
 
+class TestOutOfHunkExcerpts:
+    """ITEM B: out-of-hunk excerpts allowed when STEP A coverage satisfied."""
+
+    def test_context_read_outside_the_diff_passes_in_its_own_field(self, tmp_path):
+        """Code read for orientation, recorded as a context quote -> PASS.
+
+        The case this exists for: a reviewer quotes a few lines near the change
+        to explain it. Those lines are not in the diff, so no check here can
+        confirm them -- which is exactly why they go in context_quotes, where
+        they claim nothing, instead of code_excerpts, where they would be
+        indistinguishable from lines that were confirmed.
+        """
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        # Correct unidiff format
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        # 3 cycles, 3 passes each, excerpt in hunk + 1 stray (lines 10-12, beyond diff)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # The in-hunk excerpt content must match post-image lines 1-2
+                receipt["code_excerpts"][0]["content"] = "def f():\n    return 2"
+                # Read for orientation, outside every hunk, so it goes here
+                # rather than into code_excerpts.
+                receipt["context_quotes"] = [{
+                    "file": "src/f.py",
+                    "content": "# context\n# more context\n# end",
+                    "rationale": "surrounding code, read but not checked"
+                }]
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert r.passed, r.reason
+
+    def test_the_same_lines_left_in_code_excerpts_are_rejected(self, tmp_path):
+        """The counterpart: identical content, wrong field -> FAIL.
+
+        Without this the pair above proves only that context_quotes is
+        tolerated, not that code_excerpts stopped tolerating the same thing.
+        """
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 2\n")
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0]["content"] = "def f():\n    return 2"
+                receipt["code_excerpts"].append({
+                    "file": "src/f.py", "start_line": 10, "end_line": 12,
+                    "content": "# context\n# more context\n# end",
+                    "rationale": "context"
+                })
+                (rd / ("receipt-c%dp%d.json" % (c, p))).write_text(
+                    json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed
+        assert "belongs in context_quotes" in r.reason
+
+    def test_excerpt_content_mismatch_still_fails(self, tmp_path):
+        """Excerpt content that contradicts the post-image must still fail."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0]["content"] = "def f():\n    return 999\n"
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"content mismatch should fail, got: {r.reason}"
+        assert "content mismatch" in r.reason
+
+    def test_unwitnessed_hunk_still_fails(self, tmp_path):
+        """A hunk with no excerpt witness must still fail."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+            "@@ -10,2 +10,2 @@\n"
+            " def g():\n"
+            "-    return 3\n"
+            "+    return 4\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n\ndef g():\n    return 4\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"] = [{
+                    "file": "src/f.py", "start_line": 1, "end_line": 2,
+                    "content": "def f():\n    return 2\n",
+                    "rationale": "checked"
+                }]
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"unwitnessed hunk should fail, got: {r.reason}"
+        assert "unwitnessed hunk" in r.reason
+
+    def test_stray_file_not_in_diff_rejected(self, tmp_path):
+        """Excerpt referencing a file absent from diff -> FAIL (not in diff)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 2\n")
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0]["content"] = "def f():\n    return 2"
+                # Add excerpt for a file that does not appear in the diff at all
+                receipt["code_excerpts"].append({
+                    "file": "src/other.py", "start_line": 1, "end_line": 2,
+                    "content": "x = 1\n",
+                    "rationale": "stray"
+                })
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, "excerpt for file not in diff should fail"
+        assert "not in diff" in r.reason
+
+
 class TestNonConsecutiveEarlierCycles:
     """ITEM A edge case: non-consecutive earlier cycles with consecutive last 3."""
 

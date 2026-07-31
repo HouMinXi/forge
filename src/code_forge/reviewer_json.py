@@ -14,6 +14,34 @@ _FINDING_REQUIRED = {"file", "line", "severity", "description"}
 _EXCERPT_REQUIRED = {"file", "start_line", "end_line", "content"}
 _VALID_SEVERITIES = {"P0", "P1", "P2", "P3"}
 
+# The half of every L1 review prompt that describes the JSON to return. It
+# lives next to the validator that enforces that JSON so the two cannot
+# drift: asking for a shape validate_reviewer_json rejects fails every pass
+# at once. The three L1 sites used to carry byte-identical copies of this
+# text, which gave that drift three places to start from. The test-assertion
+# pass in cli.py deliberately keeps its own shorter variant -- it reads only
+# findings from the response and never collects excerpts, so the excerpt
+# instructions here would ask it for output nobody reads.
+REVIEW_JSON_CONTRACT = (
+    'Return JSON: {"findings": [{"file": "...", "line": N, '
+    '"severity": "P0"|"P1"|"P2"|"P3", '
+    '"description": "..."}], '
+    '"code_excerpts": [{"file": "...", "start_line": N, '
+    '"end_line": M, "content": "..."}]}\n'
+    "Each diff hunk MUST have at least one code_excerpt.\n"
+    "Even if findings is empty, provide code_excerpts "
+    "covering each changed hunk.\n"
+    "code_excerpts content must be actual source code lines, "
+    "not diff format -- no +/- prefixes, no @@ headers.\n"
+    "Every code_excerpt must fall inside a diff hunk. An excerpt is the "
+    "evidence that you checked a changed line, and a line the diff never "
+    "touched is not something that claim can be checked against. Code you "
+    "read for orientation but did not verify -- a signature above the "
+    "change, a caller in another file -- goes in an optional "
+    '"context_quotes": [{"file": "...", "content": "..."}] instead. It '
+    "carries no line numbers because it asserts nothing about them.\n"
+)
+
 
 def validate_reviewer_json(raw: str | dict) -> dict:
     """Validate reviewer output against the receipt schema.
