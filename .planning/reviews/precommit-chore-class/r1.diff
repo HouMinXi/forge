@@ -1,0 +1,329 @@
+diff --git a/docs/setup-vscode.md b/docs/setup-vscode.md
+index 296c7ec..2763e3e 100644
+--- a/docs/setup-vscode.md
++++ b/docs/setup-vscode.md
+@@ -205,6 +205,23 @@ in order:
+    `presubmit:` in `.code-forge/gate.yaml`, run on the staged diff
+    (fail-closed: a configured-but-missing linter blocks the commit).
+ 4. **Test gate (R1)** -- the test suite must introduce no new failures
++
++### Declaring a docs/config/chore/wip class for a code-file commit
++
++The extension carve-out cannot see that a change inside a `.py` file is
++chore-class (a message rewrite, a comment fix). For those, declare the
++class explicitly for this one commit:
++
++```bash
++FORGE_COMMIT_CLASS=chore git commit -m "lock: keep busy message accurate" # chore
++```
++
++Accepted values: `docs`, `config`, `chore`, `wip` -- the same vocabulary
++as the trailing `# class` marker convention. A declared commit skips the
++receipt check, LLM review, and test gate, but the staged-diff scan and
++presubmit linters still run, so the declaration cannot smuggle in text
++that would otherwise be rejected. An unrecognized value is ignored and
++the full gate applies.
+    versus the baseline.
+ 
+ ### The commit message is always checked
+diff --git a/src/code_forge/install_hooks.py b/src/code_forge/install_hooks.py
+index 63009b9..7809790 100644
+--- a/src/code_forge/install_hooks.py
++++ b/src/code_forge/install_hooks.py
+@@ -436,12 +436,20 @@ def generate_hook_content(
+       0a. .git jurisdiction check  -- non-git dirs silently skip
+       0b. planning-leak guard      -- optional, blocks .planning/ and CLAUDE.md
+       1.  carveout block           -- non-code commits exit 0 here
+-      2.  attestation              -- code-forge verify (output captured, shown on failure)
+-      3.  built-in staged-diff     -- non-ASCII + AI-vocab on staged diff
+-      4.  presubmit runner         -- user-configured linters (fail-closed)
+-      5.  LLM review               -- code-forge review (graceful degradation)
+-      6.  chain call               -- existing hook (if chaining)
+-      7.  exec gate-check          -- R1 test gate
++      2.  declared-class block     -- FORGE_COMMIT_CLASS=docs|config|chore|wip
++                                      marks _FORGE_DECLARED; same vocabulary as
++                                      the session-side trailing marker
++      3.  attestation              -- code-forge verify, skipped for declared
++                                      commits (output captured, shown on failure)
++      4.  built-in staged-diff     -- non-ASCII + AI-vocab on staged diff;
++                                      ALSO runs for declared commits
++      5.  presubmit runner         -- user-configured linters (fail-closed);
++                                      also runs for declared commits
++      6.  declared-class exit      -- declared commits exit 0 here: no LLM
++                                      review, no chain, no gate-check
++      7.  LLM review               -- code-forge review (graceful degradation)
++      8.  chain call               -- existing hook (if chaining)
++      9.  exec gate-check          -- R1 test gate
+ 
+     Args:
+         forge_invocation: absolute code-forge path + args
+@@ -485,12 +493,32 @@ def generate_hook_content(
+         'fi\n'
+         '\n'
+     )
++    declared_class_block = (
++        "# declared-class carve-out: a docs/config/chore/wip change inside a code\n"
++        "# file cannot match the extension carve-out above, so the author declares\n"
++        "# the class explicitly with FORGE_COMMIT_CLASS (same vocabulary as the\n"
++        "# session-side trailing marker). The skip covers receipt attestation, LLM\n"
++        "# review, and gate-check; the staged-diff text gates and presubmit linters\n"
++        "# below still run. An unrecognized value falls through to the full gate.\n"
++        "_FORGE_DECLARED=\n"
++        'case "${FORGE_COMMIT_CLASS:-}" in\n'
++        "    docs|config|chore|wip)\n"
++        "        _FORGE_DECLARED=1\n"
++        '        echo "code-forge: declared $FORGE_COMMIT_CLASS commit,'
++        ' skipping verify/review/gate-check" >&2\n'
++        "    ;;\n"
++        "esac\n"
++        "\n"
++    )
+     attestation_block = (
+-        "# code-forge receipt attestation check\n"
+-        "VERIFY_OUT=$(code-forge verify 2>&1) || {\n"
+-        '    echo "$VERIFY_OUT" >&2\n'
+-        "    exit 1\n"
+-        "}\n"
++        "# code-forge receipt attestation check"
++        " (skipped for declared-class commits)\n"
++        'if [ -z "$_FORGE_DECLARED" ]; then\n'
++        "    VERIFY_OUT=$(code-forge verify 2>&1) || {\n"
++        '        echo "$VERIFY_OUT" >&2\n'
++        "        exit 1\n"
++        "    }\n"
++        "fi\n"
+         "\n"
+     )
+     d12_block = _build_d12_precommit_block(non_ascii_mode)
+@@ -498,6 +526,13 @@ def generate_hook_content(
+     effective_entries = presubmit_entries if presubmit_entries else []
+     presubmit_block = _build_presubmit_block(effective_entries)
+ 
++    declared_exit_block = (
++        "# declared-class commits stop after the text gates: matching the\n"
++        "# non-code carve-out above, they skip LLM review, chain, and gate-check.\n"
++        'if [ -n "$_FORGE_DECLARED" ]; then exit 0; fi\n'
++        "\n"
++    )
++
+     review_block = _build_review_block(forge_invocation)
+ 
+     if chain_path is not None:
+@@ -509,9 +544,11 @@ def generate_hook_content(
+             + git_check_block
+             + leak_guard_block
+             + carveout_block
++            + declared_class_block
+             + attestation_block
+             + d12_block
+             + presubmit_block
++            + declared_exit_block
+             + review_block
+             + '"%s" "$@" || exit 1\n' % chain_path
+             + "exec %s\n" % forge_invocation
+@@ -524,9 +561,11 @@ def generate_hook_content(
+             + git_check_block
+             + leak_guard_block
+             + carveout_block
++            + declared_class_block
+             + attestation_block
+             + d12_block
+             + presubmit_block
++            + declared_exit_block
+             + review_block
+             + "exec %s\n" % forge_invocation
+         )
+diff --git a/tests/test_hook_carveout.py b/tests/test_hook_carveout.py
+index 8736717..a904058 100644
+--- a/tests/test_hook_carveout.py
++++ b/tests/test_hook_carveout.py
+@@ -243,3 +243,159 @@ class TestCarveoutExecution:
+             f"carve-out should exit 0 before hitting nonexistent binary: "
+             f"{result.stderr}"
+         )
++
++
++def _make_stub_verify_fails(bin_dir: Path) -> None:
++    """Stub where verify always fails; gate-check and review pass.
++
++    Use this to prove that attestation is what blocked a commit: if the
++    declared-class skip did not happen, the commit cannot succeed.
++    """
++    bin_dir.mkdir(exist_ok=True)
++    stub = bin_dir / "code-forge"
++    stub.write_text(
++        '#!/bin/sh\n'
++        'case "$1" in\n'
++        '  verify) echo "stub: no receipts" >&2; exit 1;;\n'
++        '  *) exit 0;;\n'
++        'esac\n'
++    )
++    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
++
++
++def _install_hook(tmp_path: Path) -> None:
++    """Write the generated hook into tmp_path's .git and make it executable."""
++    content = generate_hook_content("code-forge gate-check", None)
++    hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
++    hook_path.parent.mkdir(parents=True, exist_ok=True)
++    hook_path.write_text(content)
++    hook_path.chmod(hook_path.stat().st_mode | stat.S_IEXEC)
++
++
++def _stage_and_commit(tmp_path: Path, bin_dir: Path, name: str, text: str,
++                      env_extra: dict | None = None) -> subprocess.CompletedProcess:
++    """Stage `name` with `text` in the tmp_path repo and attempt a commit."""
++    (tmp_path / name).write_text(text)
++    subprocess.run(["git", "add", name], cwd=tmp_path,
++                    capture_output=True, check=True)
++    env = os.environ.copy()
++    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
++    env.update(env_extra or {})
++    return subprocess.run(
++        ["git", "-c", "user.email=test@test.com", "-c", "user.name=Test",
++         "commit", "-m", "test commit"],
++        cwd=tmp_path, capture_output=True, text=True, env=env,
++    )
++
++
++class TestDeclaredClassCarveout:
++    """FORGE_COMMIT_CLASS declares docs/config/chore/wip for code-file commits.
++
++    The declared skip covers attestation, LLM review, and gate-check; the
++    staged-diff text gates (non-ASCII, AI vocabulary) still apply.
++    """
++
++    def test_declared_block_between_carveout_and_attestation(self):
++        """(i) declared-class block ordering in generated content."""
++        content = generate_hook_content("code-forge gate-check", None)
++        idx_class = content.index("FORGE_COMMIT_CLASS")
++        idx_carveout = content.index("NON_CODE")
++        idx_attest = content.index("code-forge verify")
++        assert idx_carveout < idx_class < idx_attest
++
++    def test_declared_chore_skips_attestation_for_code_commit(
++            self, tmp_path, monkeypatch):
++        """(j) .py commit with FORGE_COMMIT_CLASS=chore commits despite
++        a stub whose verify always fails."""
++        monkeypatch.setenv(
++            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep,
++        )
++        _init_repo(tmp_path)
++        bin_dir = tmp_path / "bin"
++        _make_stub_verify_fails(bin_dir)
++        _install_hook(tmp_path)
++
++        result = _stage_and_commit(
++            tmp_path, bin_dir, "app.py", "x = 1\n",
++            env_extra={"FORGE_COMMIT_CLASS": "chore"},
++        )
++        assert result.returncode == 0, (
++            f"expected declared chore to pass, got {result.returncode}: "
++            f"{result.stderr}"
++        )
++        assert "declared" in result.stderr
++
++    def test_undeclared_code_commit_blocked_by_verify(
++            self, tmp_path, monkeypatch):
++        """(k) without the env class, the same failing stub still blocks."""
++        monkeypatch.setenv(
++            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep,
++        )
++        _init_repo(tmp_path)
++        bin_dir = tmp_path / "bin"
++        _make_stub_verify_fails(bin_dir)
++        _install_hook(tmp_path)
++
++        result = _stage_and_commit(tmp_path, bin_dir, "app.py", "x = 1\n")
++        assert result.returncode != 0
++        assert "stub: no receipts" in result.stderr
++
++    def test_declared_skips_gate_check(self, tmp_path, monkeypatch):
++        """(l) declared class also skips gate-check: stub has verify passing
++        and gate-check failing, yet the declared commit succeeds."""
++        monkeypatch.setenv(
++            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep,
++        )
++        _init_repo(tmp_path)
++        bin_dir = tmp_path / "bin"
++        _make_stub(bin_dir)
++        _install_hook(tmp_path)
++
++        result = _stage_and_commit(
++            tmp_path, bin_dir, "app.py", "x = 1\n",
++            env_extra={"FORGE_COMMIT_CLASS": "config"},
++        )
++        assert result.returncode == 0, (
++            f"expected declared commit to skip gate-check: {result.stderr}"
++        )
++
++    def test_declared_commit_still_hits_nonascii_gate(
++            self, tmp_path, monkeypatch):
++        """(m) declared class does not bypass the staged-diff text gates:
++        an em dash in the code file still blocks the commit."""
++        monkeypatch.setenv(
++            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep,
++        )
++        _init_repo(tmp_path)
++        bin_dir = tmp_path / "bin"
++        _make_stub(bin_dir)
++        _install_hook(tmp_path)
++
++        code = "x = 1  # plain comment \u2014 with dash\n"
++        result = _stage_and_commit(
++            tmp_path, bin_dir, "app.py", code,
++            env_extra={"FORGE_COMMIT_CLASS": "chore"},
++        )
++        assert result.returncode != 0, (
++            "em dash in a declared-chore commit must still fail the "
++            f"non-ASCII gate; got rc={result.returncode}: {result.stderr}"
++        )
++        assert "non-ASCII" in result.stderr
++
++    def test_invalid_class_falls_through_to_full_gate(
++            self, tmp_path, monkeypatch):
++        """(n) a mistyped class name is not a declaration: the full gate
++        runs and the failing stub blocks the commit."""
++        monkeypatch.setenv(
++            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep,
++        )
++        _init_repo(tmp_path)
++        bin_dir = tmp_path / "bin"
++        _make_stub_verify_fails(bin_dir)
++        _install_hook(tmp_path)
++
++        result = _stage_and_commit(
++            tmp_path, bin_dir, "app.py", "x = 1\n",
++            env_extra={"FORGE_COMMIT_CLASS": "chore-todo"},
++        )
++        assert result.returncode != 0
+diff --git a/tests/test_install_hooks.py b/tests/test_install_hooks.py
+index 77e5f76..e8302b7 100644
+--- a/tests/test_install_hooks.py
++++ b/tests/test_install_hooks.py
+@@ -753,14 +753,14 @@ class TestPresubmitRunner:
+         content = generate_hook_content(
+             "/usr/bin/code-forge gate-check", None, presubmit_entries=[]
+         )
+-        assert "presubmit" not in content.lower()
++        assert "code-forge: presubmit" not in content
+ 
+     def test_none_entries_no_presubmit_block(self):
+         """generate_hook_content with presubmit_entries=None produces no presubmit block."""
+         content = generate_hook_content(
+             "/usr/bin/code-forge gate-check", None, presubmit_entries=None
+         )
+-        assert "presubmit" not in content.lower()
++        assert "code-forge: presubmit" not in content
+ 
+     def test_on_diff_pipes_git_diff_cached(self):
+         """on=diff entry pipes git diff --cached to command."""
+@@ -824,7 +824,7 @@ class TestPresubmitRunner:
+         for i, line in enumerate(lines):
+             if "code-forge: presubmit" in line and presubmit_line == -1:
+                 presubmit_line = i
+-            if "gate-check" in line and not line.strip().startswith("#") and gate_line == -1:
++            if "exec " in line and "gate-check" in line and gate_line == -1:
+                 gate_line = i
+         assert presubmit_line != -1, "presubmit block not found"
+         assert gate_line != -1, "gate-check not found"
