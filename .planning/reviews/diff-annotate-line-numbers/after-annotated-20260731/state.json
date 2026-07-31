@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "f4d845dfe724103dd613a7194feea3635c5cd30d6b95bae1e60b14aa35e3feda",
+  "findings": [
+    {
+      "id": "l1-qodo-f5e46e45b110cf19",
+      "fingerprint": "f5e46e45b110cf19",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/diff.py",
+      "line_range": [
+        377,
+        377
+      ],
+      "description": "[qodo] In `_annotate_hunks()`, `line.value` from unidiff already includes the diff line prefix ('+', '-', or ' '). Using `\"[+%4d] +%s\" % (line.target_line_no, raw)` and `\"[----] -%s\" % raw` prepends an extra '+' or '-' to `raw`, causing added lines to be output as `++` and deleted lines as `--` in annotated diffs. The format strings should be `\"[+%4d] %s\"` and `\"[----] %s\"` without duplicating the prefix character.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-52ddf1f60dc23f2f",
+      "fingerprint": "52ddf1f60dc23f2f",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/diff.py",
+      "line_range": [
+        377,
+        377
+      ],
+      "description": "[adversarial] In `_annotate_hunks`, `line.value` from unidiff already includes the leading diff prefix character (`+`, `-`, or space). Formatting `[+%4d] +%s` and `[----] -%s` prepends an extra `+` or `-`, resulting in duplicate `++` and `--` prefixes in the annotated diff output.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "58ed8389db0049be",
+      "fingerprint": "58ed8389db0049be",
+      "source": "L0",
+      "disposition": "CONFIRMED",
+      "file": "/home/houminxi/code/forge/.worktrees/diff-annotate/src/code_forge/diff.py",
+      "line_range": [
+        349,
+        349
+      ],
+      "description": "Local variable `marker` is assigned to but never used",
+      "error": null,
+      "anchor": null,
+      "evidence_files": [],
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-f5e46e45b110cf19": "UNCERTAIN",
+    "l1-adversarial-52ddf1f60dc23f2f": "UNCERTAIN",
+    "58ed8389db0049be": "CONFIRMED"
+  },
+  "fix_attempts": {
+    "58ed8389db0049be": 1
+  },
+  "verdict": "ESCALATED",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [
+        "58ed8389db0049be"
+      ],
+      "l1_fingerprints": [
+        "f5e46e45b110cf19",
+        "52ddf1f60dc23f2f"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "f5e46e45b110cf19": "UNCERTAIN",
+        "52ddf1f60dc23f2f": "UNCERTAIN",
+        "58ed8389db0049be": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: gate.yaml needs an active 'test' section for the commit gate. Add:\ntest:\n  command: [pytest, -q]   # change to your test runner\n  timeout_seconds: 900",
+    "ESCALATED category=D"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 108829,
+    "total_output_tokens": 30230,
+    "total_duration_s": 21.712655345967505,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 36276,
+        "output": 10076,
+        "duration_s": 7.238
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 36276,
+        "output": 10076,
+        "duration_s": 7.238
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 36276,
+        "output": 10076,
+        "duration_s": 7.238
+      }
+    ]
+  }
+}

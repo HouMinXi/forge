@@ -1,0 +1,189 @@
+{
+  "cycle": 1,
+  "pass": 3,
+  "skill": "adversarial-qe",
+  "diff_sha256": "18e985a004de6d5462169ea09eae608d4a86baccef741b28694aa222239b4853",
+  "timestamp": "2026-07-31T03:40:40.468297+00:00",
+  "pass_status": "completed",
+  "findings_count": 2,
+  "findings": [
+    {
+      "file": "/src/code_forge/diff.py",
+      "line": 369,
+      "description": "[adversarial] In _annotate_hunks, line.value in unidiff already contains the diff prefix (+, -, or space). Prepending '+' or '-' to raw (line.value.rstrip('\\n')) produces double prefixes ('++' and '--') on added and removed lines, corrupting the annotated diff.",
+      "disposition": "UNCERTAIN"
+    },
+    {
+      "file": "/src/code_forge/diff.py",
+      "line": 356,
+      "description": "[adversarial] In _extract_file_mode, pos is computed as diff_text.find(' b/%s' % filepath), which points to the header line diff --git. Slicing diff_text[start:pos] ends before the 'new file mode' / 'deleted file mode' line, so regex searching pattern in chunk will always fail and fall back to '100644'.",
+      "disposition": "UNCERTAIN"
+    }
+  ],
+  "anchors": [
+    {
+      "file": "/src/code_forge/diff.py",
+      "line": 369,
+      "text": ""
+    },
+    {
+      "file": "/src/code_forge/diff.py",
+      "line": 356,
+      "text": ""
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 795,
+      "end_line": 797,
+      "content": "        from .diff import annotate_diff_lines\n        prompt += \"\\nDiff:\\n\" + annotate_diff_lines(diff_text)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 874,
+      "end_line": 885,
+      "content": "    from .diff import annotate_diff_lines\n    prompt = (\n        \"You are a test-assertion reviewer. Review this diff for test quality.\\n\"\n        \"Check: assertion completeness, edge case coverage, mock accuracy, \"\n        \"assertion specificity.\\n\"\n        'Return JSON: {\"findings\": [{\"file\": \"...\", \"line\": N, '\n        '\"severity\": \"P0\"|\"P1\"|\"P2\"|\"P3\", '\n        '\"description\": \"...\"}], '\n        '\"code_excerpts\": [{\"file\": \"...\", \"start_line\": N, '\n        '\"end_line\": M, \"content\": \"...\"}]}\n'\n        \"Each diff hunk MUST have at least one code_excerpt.\\n\"\n        \"\\nDiff:\\n\" + annotate_diff_lines(diff_text)\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/diff.py",
+      "start_line": 340,
+      "end_line": 377,
+      "content": "def _extract_file_mode(\n    diff_text: str, filepath: str, kind: str\n) -> str:\n    \"\"\"Extract file mode from raw diff text for *filepath*.\n\n    *kind* is \"new\" or \"deleted\".  Returns \"100644\" on\n    any parse failure (safe default).\n    \"\"\"\n    import re\n\n    pattern = r\"%s file mode (\\d{6})\" % kind\n    # Search near the file's diff header.\n    marker = \"diff --git\"\n    pos = diff_text.find(\" b/%s\" % filepath)\n    if pos < 0:\n        return \"100644\"\n    # Walk backwards to find the preceding diff --git line.\n    start = diff_text.rfind(marker, 0, pos)\n    if start < 0:\n        return \"100644\"\n    chunk = diff_text[start:pos]\n    m = re.search(pattern, chunk)\n    return m.group(1) if m else \"100644\"\n\n\ndef _annotate_hunks(out: list[str], hunks) -> None:\n    \"\"\"Append annotated hunk content to *out*.\"\"\"\n    for hunk in hunks:\n        out.append(\n            \"@@ -%d,%d +%d,%d @@\"\n            % (hunk.source_start, hunk.source_length,\n               hunk.target_start, hunk.target_length)\n        )\n        for line in hunk:\n            raw = line.value.rstrip(\"\\n\")\n            if line.is_added and line.target_line_no is not None:\n                out.append(\"[+%4d] +%s\" % (line.target_line_no, raw))\n            elif line.is_removed:\n                out.append(\"[----] -%s\" % raw)\n            elif line.target_line_no is not None:\n                out.append(\"[ %4d] %s\" % (line.target_line_no, raw))\n            else:\n                # Special markers like \"\\ No newline at end of file\"\n                out.append(\"[    ] %s\" % raw)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/factories.py",
+      "start_line": 250,
+      "end_line": 294,
+      "content": "        from .diff import annotate_diff_lines\n        annotated_diff = annotate_diff_lines(diff_text)\n        prompts = []\n        for _pn, role in pass_configs:\n            prompt = (\n                \"You are a \" + role + \". Review this diff.\\n\"\n                'Return JSON: {\"findings\": [{\"file\": \"...\", \"line\": N, '\n                '\"severity\": \"P0\"|\"P1\"|\"P2\"|\"P3\", '\n                '\"description\": \"...\"}], '\n                '\"code_excerpts\": [{\"file\": \"...\", \"start_line\": N, '\n                '\"end_line\": M, \"content\": \"...\"}]}\n'\n                \"Each diff hunk MUST have at least one code_excerpt.\\n\"\n                \"Even if findings is empty, provide code_excerpts \"\n                \"covering each changed hunk.\\n\"\n                \"code_excerpts content must be actual source code lines, \"\n                \"not diff format -- no +/- prefixes, no @@ headers.\\n\"\n            )\n            if post_image:\n                prompt += (\n                    \"\\n## Post-Image (current file content)\\n\"\n                    + post_image + \"\\n\"\n                )\n            if conventions_digest:\n                prompt += (\n                    \"\\n## Conventions Digest\\n\"\n                    + conventions_digest + \"\\n\"\n                )\n            if graph_impact_context:\n                prompt += (\n                    \"\\n## Blast Radius Context\\n\"\n                    + graph_impact_context + \"\\n\"\n                )\n            if contract_spec:\n                prompt += (\n                    \"\\n## Design Intent\\n\"\n                    + contract_spec + \"\\n\"\n                )\n            if focus_spec:\n                prompt += (\n                    \"\\n## Review Focus\\n\" + focus_spec\n                    + \"\\nPrioritize findings in these areas; in your response, \"\n                    + \"state whether each area was checked.\\n\"\n                )\n            prompt += \"\\nDiff:\\n\" + annotated_diff\n            prompts.append(prompt)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/factories.py",
+      "start_line": 564,
+      "end_line": 596,
+      "content": "        from .diff import annotate_diff_lines\n        annotated_diff = annotate_diff_lines(diff_text)\n        prompts = []\n        for _pn, role in pass_configs:\n            prompt = (\n                \"You are a \" + role + \". Review this diff.\\n\"\n                'Return JSON: {\"findings\": [{\"file\": \"...\", \"line\": N, '\n                '\"severity\": \"P0\"|\"P1\"|\"P2\"|\"P3\", '\n                '\"description\": \"...\"}], '\n                '\"code_excerpts\": [{\"file\": \"...\", \"start_line\": N, '\n                '\"end_line\": M, \"content\": \"...\"}]}\n'\n                \"Each diff hunk MUST have at least one code_excerpt.\\n\"\n                \"Even if findings is empty, provide code_excerpts \"\n                \"covering each changed hunk.\\n\"\n                \"code_excerpts content must be actual source code lines, \"\n                \"not diff format -- no +/- prefixes, no @@ headers.\\n\"\n            )\n            if post_image:\n                prompt += \"\\n## Post-Image (current file content)\\n\" + post_image + \"\\n\"\n            if conventions_digest:\n                prompt += \"\\n## Conventions Digest\\n\" + conventions_digest + \"\\n\"\n            if graph_impact_context:\n                prompt += \"\\n## Blast Radius Context\\n\" + graph_impact_context + \"\\n\"\n            if contract_spec:\n                prompt += \"\\n## Design Intent\\n\" + contract_spec + \"\\n\"\n            if focus_spec:\n                prompt += (\n                    \"\\n## Review Focus\\n\" + focus_spec\n                    + \"\\nPrioritize findings in these areas; in your response, \"\n                    + \"state whether each area was checked.\\n\"\n                )\n            prompt += \"\\nDiff:\\n\" + annotated_diff\n            prompts.append(prompt)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_diff.py",
+      "start_line": 8,
+      "end_line": 9,
+      "content": "from code_forge.diff import (\n    annotate_diff_lines,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_diff.py",
+      "start_line": 328,
+      "end_line": 341,
+      "content": "class TestAnnotateDiffLines:\n    \"\"\"annotate_diff_lines adds post-image line numbers to diff content.\"\"\"\n\n    def test_added_lines_get_plus_marker(self):\n        result = annotate_diff_lines(ANNOTATE_INPUT)\n        lines = result.splitlines()\n        added = [x for x in lines if x.startswith(\"[+\")]\n        assert len(added) == 1\n        assert added[0] == \"[+  12] +    added1\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/cli.py",
+      "start_line": 794,
+      "end_line": 797,
+      "content": "        from .diff import annotate_diff_lines\n        prompt += \"\\nDiff:\\n\" + annotate_diff_lines(diff_text)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/cli.py",
+      "start_line": 873,
+      "end_line": 886,
+      "content": "    from .diff import annotate_diff_lines\n    prompt = (\n        \"You are a test-assertion reviewer. Review this diff for test quality.\\n\"\n        \"Check: assertion completeness, edge case coverage, mock accuracy, \"\n        \"assertion specificity.\\n\"\n        'Return JSON: {\"findings\": [{\"file\": \"...\", \"line\": N, '\n        '\"severity\": \"P0\"|\"P1\"|\"P2\"|\"P3\", '\n        '\"description\": \"...\"}], '\n        '\"code_excerpts\": [{\"file\": \"...\", \"start_line\": N, '\n        '\"end_line\": M, \"content\": \"...\"}]}\\\\n'\n        \"Each diff hunk MUST have at least one code_excerpt.\\n\"\n        \"\\nDiff:\\n\" + annotate_diff_lines(diff_text)\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/diff.py",
+      "start_line": 343,
+      "end_line": 351,
+      "content": "    pos = diff_text.find(\" b/%s\" % filepath)\n    if pos < 0:\n        return \"100644\"\n    # Walk backwards to find the preceding diff --git line.\n    start = diff_text.rfind(marker, 0, pos)\n    if start < 0:\n        return \"100644\"\n    chunk = diff_text[start:pos]\n    m = re.search(pattern, chunk)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/factories.py",
+      "start_line": 249,
+      "end_line": 252,
+      "content": "        from .diff import annotate_diff_lines\n        annotated_diff = annotate_diff_lines(diff_text)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/factories.py",
+      "start_line": 563,
+      "end_line": 566,
+      "content": "        from .diff import annotate_diff_lines\n        annotated_diff = annotate_diff_lines(diff_text)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/tests/test_diff.py",
+      "start_line": 7,
+      "end_line": 10,
+      "content": "from code_forge.diff import (\n    annotate_diff_lines,\n    count_diff_lines,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/tests/test_diff.py",
+      "start_line": 340,
+      "end_line": 348,
+      "content": "class TestAnnotateDiffLines:\n    \"\"\"annotate_diff_lines adds post-image line numbers to diff content.\"\"\"\n\n    def test_added_lines_get_plus_marker(self):\n        result = annotate_diff_lines(ANNOTATE_INPUT)\n        lines = result.splitlines()\n        added = [x for x in lines if x.startswith(\"[+\")]\n        assert len(added) == 1\n        assert added[0] == \"[+  12] +    added1\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/cli.py",
+      "start_line": 794,
+      "end_line": 798,
+      "content": "        from .diff import annotate_diff_lines\n        prompt += \"\\nDiff:\\n\" + annotate_diff_lines(diff_text)\n        result = llm_invoke(prompt, backend=backend)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/cli.py",
+      "start_line": 873,
+      "end_line": 886,
+      "content": "    from .diff import annotate_diff_lines\n    prompt = (\n        \"You are a test-assertion reviewer. Review this diff for test quality.\\n\"\n        \"Check: assertion completeness, edge case coverage, mock accuracy, \"\n        \"assertion specificity.\\n\"\n        'Return JSON: {\"findings\": [{\"file\": \"...\", \"line\": N, '\n        '\"severity\": \"P0\"|\"P1\"|\"P2\"|\"P3\", '\n        '\"description\": \"...\"}], '\n        '\"code_excerpts\": [{\"file\": \"...\", \"start_line\": N, '\n        '\"end_line\": M, \"content\": \"...\"}]}\n'\n        \"Each diff hunk MUST have at least one code_excerpt.\\n\"\n        \"\\nDiff:\\n\" + annotate_diff_lines(diff_text)\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/diff.py",
+      "start_line": 267,
+      "end_line": 376,
+      "content": "def annotate_diff_lines(diff_text: str) -> str:\n    \"\"\"Annotate unified diff with post-image line numbers.\n\n    Prepends a bracket tag to each content line so the reviewer can read\n    the line number instead of computing it from hunk headers.  File\n    headers (``---``, ``+++``, extended headers like ``rename from``)\n    pass through unchanged.\n\n    Format:\n        [   79]  context line\n        [+  82] +added line\n        [----] -removed line (no post-image number -- deleted lines\n            have no target-side line number in unified diff)\n        [    ]  special marker (e.g. ``\\\\ No newline at end of file``)\n\n    Returns *diff_text* unchanged on empty, None, or unparseable input.\n    \"\"\"\n    if not diff_text or not diff_text.strip():\n        return diff_text or \"\"\n\n    try:\n        patchset = unidiff.PatchSet(diff_text)\n    except unidiff.errors.UnidiffParseError:\n        return diff_text\n\n    out: list[str] = []\n    file_count = 0\n    for pf in patchset:\n        file_count += 1\n        # Build standard git diff headers.  unidiff's source_file/\n        # target_file may be /dev/null for added/removed files;\n        # replace with a/ b/ prefixed paths for the diff --git line.\n        src_raw = pf.source_file or \"a/%s\" % pf.path\n        tgt_raw = pf.target_file or \"b/%s\" % pf.path\n        src = \"a/%s\" % pf.path if src_raw == \"/dev/null\" else src_raw\n        tgt = \"b/%s\" % pf.path if tgt_raw == \"/dev/null\" else tgt_raw\n        out.append(\"diff --git %s %s\" % (src, tgt))\n        if pf.is_rename:\n            # Rename with possible content changes: emit similarity\n            # only when the file has no hunks (pure rename).\n            hunks = list(pf)\n            if not hunks:\n                out.append(\"similarity index 100%\")\n            out.append(\"rename from %s\" % src.removeprefix(\"a/\"))\n            out.append(\"rename to %s\" % tgt.removeprefix(\"b/\"))\n            if hunks:\n                out.append(\"--- %s\" % src)\n                out.append(\"+++ %s\" % tgt)\n                _annotate_hunks(out, hunks)\n            continue\n        elif pf.is_added_file:\n            mode = _extract_file_mode(diff_text, pf.path, \"new\")\n            out.append(\"new file mode %s\" % mode)\n            out.append(\"--- /dev/null\")\n            out.append(\"+++ %s\" % tgt)\n        elif pf.is_removed_file:\n            mode = _extract_file_mode(diff_text, pf.path, \"deleted\")\n            out.append(\"deleted file mode %s\" % mode)\n            out.append(\"--- %s\" % src)\n            out.append(\"+++ /dev/null\")\n        else:\n            out.append(\"--- %s\" % src)\n            out.append(\"+++ %s\" % tgt)\n        _annotate_hunks(out, pf)\n    if file_count == 0:\n        return diff_text\n    return \"\\n\".join(out) + \"\\n\"\n\n\ndef _extract_file_mode(\n    diff_text: str, filepath: str, kind: str\n) -> str:\n    \"\"\"Extract file mode from raw diff text for *filepath*.\n\n    *kind* is ``\"new\"`` or ``\"deleted\"``.  Returns ``\"100644\"`` on\n    any parse failure (safe default).\n    \"\"\"\n    import re\n\n    pattern = r\"%s file mode (\\d{6})\" % kind\n    # Search near the file's diff header.\n    marker = \"diff --git\"\n    pos = diff_text.find(\" b/%s\" % filepath)\n    if pos < 0:\n        return \"100644\"\n    # Walk backwards to find the preceding diff --git line.\n    start = diff_text.rfind(marker, 0, pos)\n    if start < 0:\n        return \"100644\"\n    chunk = diff_text[start:pos]\n    m = re.search(pattern, chunk)\n    return m.group(1) if m else \"100644\"\n\n\ndef _annotate_hunks(out: list[str], hunks) -> None:\n    \"\"\"Append annotated hunk content to *out*.\"\"\"\n    for hunk in hunks:\n        out.append(\n            \"@@ -%d,%d +%d,%d @@\"\n            % (hunk.source_start, hunk.source_length,\n               hunk.target_start, hunk.target_length)\n        )\n        for line in hunk:\n            raw = line.value.rstrip(\"\\n\")\n            if line.is_added and line.target_line_no is not None:\n                out.append(\"[+%4d] +%s\" % (line.target_line_no, raw))\n            elif line.is_removed:\n                out.append(\"[----] -%s\" % raw)\n            elif line.target_line_no is not None:\n                out.append(\"[ %4d] %s\" % (line.target_line_no, raw))\n            else:\n                # Special markers like \"\\ No newline at end of file\"\n                out.append(\"[    ] %s\" % raw)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/factories.py",
+      "start_line": 249,
+      "end_line": 294,
+      "content": "        # -- Build all prompts before execution -------------------------\n        from .diff import annotate_diff_lines\n        annotated_diff = annotate_diff_lines(diff_text)\n        prompts = []\n        for _pn, role in pass_configs:\n            prompt = (\n                \"You are a \" + role + \". Review this diff.\\n\"\n                'Return JSON: {\"findings\": [{\"file\": \"...\", \"line\": N, '\n                '\"severity\": \"P0\"|\"P1\"|\"P2\"|\"P3\", '\n                '\"description\": \"...\"}], '\n                '\"code_excerpts\": [{\"file\": \"...\", \"start_line\": N, '\n                '\"end_line\": M, \"content\": \"...\"}]}\n'\n                \"Each diff hunk MUST have at least one code_excerpt.\\n\"\n                \"Even if findings is empty, provide code_excerpts \"\n                \"covering each changed hunk.\\n\"\n                \"code_excerpts content must be actual source code lines, \"\n                \"not diff format -- no +/- prefixes, no @@ headers.\\n\"\n            )\n            if post_image:\n                prompt += (\n                    \"\\n## Post-Image (current file content)\\n\"\n                    + post_image + \"\\n\"\n                )\n            if conventions_digest:\n                prompt += (\n                    \"\\n## Conventions Digest\\n\"\n                    + conventions_digest + \"\\n\"\n                )\n            if graph_impact_context:\n                prompt += (\n                    \"\\n## Blast Radius Context\\n\"\n                    + graph_impact_context + \"\\n\"\n                )\n            if contract_spec:\n                prompt += (\n                    \"\\n## Design Intent\\n\"\n                    + contract_spec + \"\\n\"\n                )\n            if focus_spec:\n                prompt += (\n                    \"\\n## Review Focus\\n\" + focus_spec\n                    + \"\\nPrioritize findings in these areas; in your response, \"\n                    + \"state whether each area was checked.\\n\"\n                )\n            prompt += \"\\nDiff:\\n\" + annotated_diff\n            prompts.append(prompt)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/src/code_forge/factories.py",
+      "start_line": 563,
+      "end_line": 596,
+      "content": "        # -- Build all prompts before execution -------------------------\n        from .diff import annotate_diff_lines\n        annotated_diff = annotate_diff_lines(diff_text)\n        prompts = []\n        for _pn, role in pass_configs:\n            prompt = (\n                \"You are a \" + role + \". Review this diff.\\n\"\n                'Return JSON: {\"findings\": [{\"file\": \"...\", \"line\": N, '\n                '\"severity\": \"P0\"|\"P1\"|\"P2\"|\"P3\", '\n                '\"description\": \"...\"}], '\n                '\"code_excerpts\": [{\"file\": \"...\", \"start_line\": N, '\n                '\"end_line\": M, \"content\": \"...\"}]}\n'\n                \"Each diff hunk MUST have at least one code_excerpt.\\n\"\n                \"Even if findings is empty, provide code_excerpts \"\n                \"covering each changed hunk.\\n\"\n                \"code_excerpts content must be actual source code lines, \"\n                \"not diff format -- no +/- prefixes, no @@ headers.\\n\"\n            )\n            if post_image:\n                prompt += \"\\n## Post-Image (current file content)\\n\" + post_image + \"\\n\"\n            if conventions_digest:\n                prompt += \"\\n## Conventions Digest\\n\" + conventions_digest + \"\\n\"\n            if graph_impact_context:\n                prompt += \"\\n## Blast Radius Context\\n\" + graph_impact_context + \"\\n\"\n            if contract_spec:\n                prompt += \"\\n## Design Intent\\n\" + contract_spec + \"\\n\"\n            if focus_spec:\n                prompt += (\n                    \"\\n## Review Focus\\n\" + focus_spec\n                    + \"\\nPrioritize findings in these areas; in your response, \"\n                    + \"state whether each area was checked.\\n\"\n                )\n            prompt += \"\\nDiff:\\n\" + annotated_diff\n            prompts.append(prompt)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "/tests/test_diff.py",
+      "start_line": 328,
+      "end_line": 341,
+      "content": "class TestAnnotateDiffLines:\n    \"\"\"annotate_diff_lines adds post-image line numbers to diff content.\"\"\"\n\n    def test_added_lines_get_plus_marker(self):\n        result = annotate_diff_lines(ANNOTATE_INPUT)\n        lines = result.splitlines()\n        added = [x for x in lines if x.startswith(\"[+\")]\n        assert len(added) == 1\n        assert added[0] == \"[+  12] +    added1\"",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "/src/code_forge/diff.py",
+      "start": 359,
+      "end": 379
+    },
+    {
+      "file": "/src/code_forge/diff.py",
+      "start": 346,
+      "end": 366
+    }
+  ]
+}

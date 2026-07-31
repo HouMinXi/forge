@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "CI",
+  "source_hash": "18e985a004de6d5462169ea09eae608d4a86baccef741b28694aa222239b4853",
+  "findings": [
+    {
+      "id": "l1-qodo-cb4fdc83e5194b40",
+      "fingerprint": "cb4fdc83e5194b40",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/diff.py",
+      "line_range": [
+        371,
+        371
+      ],
+      "description": "[qodo] _annotate_hunks duplicates line prefixes (+ and -). In unidiff, line.value already starts with '+' for additions or '-' for deletions. Prepending '+' in '[+%4d] +%s' or '-' in '[----] -%s' results in double prefixes like '++added1' and '--removed1'.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-c3b765676a3103a9",
+      "fingerprint": "c3b765676a3103a9",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/diff.py",
+      "line_range": [
+        346,
+        346
+      ],
+      "description": "[qodo] _extract_file_mode slices diff_text from 'diff --git' to ' b/<filepath>', producing a chunk containing only 'diff --git a/<filepath>'. Because 'new file mode' / 'deleted file mode' lines occur after 'b/<filepath>', re.search always fails and returns the default '100644'.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-af282cc46ec84e06",
+      "fingerprint": "af282cc46ec84e06",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "/src/code_forge/diff.py",
+      "line_range": [
+        348,
+        348
+      ],
+      "description": "[expert] `_extract_file_mode` creates `chunk = diff_text[start:pos]` where `pos` is the index of ' b/filepath' in the 'diff --git' line. Because the mode specification ('new file mode ...' or 'deleted file mode ...') appears on a subsequent line after 'b/filepath', `chunk` only contains 'diff --git a/filepath' and excludes the mode line. `re.search` will always fail to match, causing `_extract_file_mode` to consistently return the default '100644'.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-5463218a8b94a5e8",
+      "fingerprint": "5463218a8b94a5e8",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "/src/code_forge/diff.py",
+      "line_range": [
+        369,
+        369
+      ],
+      "description": "[adversarial] In _annotate_hunks, line.value in unidiff already contains the diff prefix (+, -, or space). Prepending '+' or '-' to raw (line.value.rstrip('\\n')) produces double prefixes ('++' and '--') on added and removed lines, corrupting the annotated diff.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-8c217e5d7fa66d58",
+      "fingerprint": "8c217e5d7fa66d58",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "/src/code_forge/diff.py",
+      "line_range": [
+        356,
+        356
+      ],
+      "description": "[adversarial] In _extract_file_mode, pos is computed as diff_text.find(' b/%s' % filepath), which points to the header line diff --git. Slicing diff_text[start:pos] ends before the 'new file mode' / 'deleted file mode' line, so regex searching pattern in chunk will always fail and fall back to '100644'.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-cb4fdc83e5194b40": "UNCERTAIN",
+    "l1-qodo-c3b765676a3103a9": "UNCERTAIN",
+    "l1-expert-af282cc46ec84e06": "UNCERTAIN",
+    "l1-adversarial-5463218a8b94a5e8": "UNCERTAIN",
+    "l1-adversarial-8c217e5d7fa66d58": "UNCERTAIN"
+  },
+  "fix_attempts": {},
+  "verdict": "PASS",
+  "converged": true,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "cb4fdc83e5194b40",
+        "c3b765676a3103a9",
+        "af282cc46ec84e06",
+        "5463218a8b94a5e8",
+        "8c217e5d7fa66d58"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "cb4fdc83e5194b40": "UNCERTAIN",
+        "c3b765676a3103a9": "UNCERTAIN",
+        "af282cc46ec84e06": "UNCERTAIN",
+        "5463218a8b94a5e8": "UNCERTAIN",
+        "8c217e5d7fa66d58": "UNCERTAIN"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: gate.yaml needs an active 'test' section for the commit gate. Add:\ntest:\n  command: [pytest, -q]   # change to your test runner\n  timeout_seconds: 900"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 102214,
+    "total_output_tokens": 6585,
+    "total_duration_s": 24.989444122009445,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 34071,
+        "output": 2195,
+        "duration_s": 8.33
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 34071,
+        "output": 2195,
+        "duration_s": 8.33
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 34071,
+        "output": 2195,
+        "duration_s": 8.33
+      }
+    ]
+  }
+}
