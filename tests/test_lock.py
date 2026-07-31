@@ -67,6 +67,36 @@ class TestAcquireLivePid:
         assert exc_info.value.pid == os.getpid()
 
 
+class TestBusyMessageTellsTheUserWhatToDo:
+    """The busy error has to steer the reader away from deleting the lock.
+
+    A message that prints only a PID and a path gets read as leftover
+    residue, and the reader reaches for rm -- which is the one action
+    that lets two forge runs share a workspace. These assertions exist
+    so a later trim cannot quietly take the guidance back out.
+    """
+
+    def test_live_holder_message_says_do_not_delete_and_how_to_look(self):
+        msg = str(ForgeLockBusy(4242, Path("/w/.code-forge/code-forge.lock")))
+        assert "4242" in msg
+        assert "/w/.code-forge/code-forge.lock" in msg
+        assert "Do not delete the lock file" in msg
+        assert "ps -p 4242" in msg
+        # The reason deletion is unsafe, not just the prohibition: a
+        # bare "don't" invites working around it.
+        assert "two forge runs share one workspace" in msg
+        # Says the dead-holder case needs no action at all, which is the
+        # belief the reader usually arrives with and gets wrong.
+        assert "reclaimed automatically" in msg
+
+    def test_unknown_holder_drops_the_probe_but_keeps_the_warning(self):
+        """pid < 0 means the holder was lost to a race; ps needs a real PID."""
+        msg = str(ForgeLockBusy(-1, Path("/w/.code-forge/code-forge.lock")))
+        assert "ps -p" not in msg
+        assert "PID -1" not in msg
+        assert "Do not delete the lock file" in msg
+
+
 class TestAcquireAtomicLink:
     """Write-then-link never exposes a transiently-empty lock path."""
 

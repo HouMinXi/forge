@@ -79,14 +79,42 @@ class ForgeLockBusy(Exception):
     """Raised when another live forge process holds the lock.
 
     .pid attribute carries the holder PID for caller logging.
+
+    The message spells out what to do because the short form did not.
+    Naming a PID and a file path and stopping there reads as an
+    invitation to delete the file, and that is the one action that
+    breaks the guarantee this lock exists to provide: acquire_lock
+    already reclaims a lock whose holder is dead, so anything that
+    reaches here has a LIVE holder, and unlinking it puts two forge
+    runs on one workspace. Observed in the field -- a session hit this,
+    read it as leftover residue, and reached for rm.
+
+    pid < 0 means the holder identity was lost to a race (the lock was
+    reclaimed as stale, then recreated before the retry). The advice
+    is the same minus the ps line, which needs a real PID.
     """
 
     def __init__(self, pid: int, path: Path):
         self.pid = pid
         self.path = path
+        if pid < 0:
+            who = "another forge process took the lock while it was being reclaimed"
+            probe = ""
+        else:
+            who = "another forge process is running (PID %d)" % pid
+            probe = (
+                "\n  Check what it is doing:\n"
+                "      ps -p %d -o etime=,cmd=" % pid
+            )
         super().__init__(
-            "another forge process is running (PID %d, lock %s)"
-            % (pid, path)
+            "%s, lock %s.%s\n"
+            "  A review holds this lock for its whole convergence run, which can\n"
+            "  take several minutes. Do not delete the lock file: it is released\n"
+            "  when the holder exits, and removing it while the holder is alive\n"
+            "  lets two forge runs share one workspace. A lock whose holder has\n"
+            "  died is reclaimed automatically and never needs deleting. If the\n"
+            "  holder is genuinely hung, kill it and the lock clears."
+            % (who, path, probe)
         )
 
 
