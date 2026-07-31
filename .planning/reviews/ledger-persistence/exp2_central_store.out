@@ -1,0 +1,57 @@
+
+### Q1: is there ANY existing path override? (env var or config)
+  /home/houminxi/code/forge/src/code_forge/ledger.py:58:def _ledger_path(cwd: Path) -> Path:
+  /home/houminxi/code/forge/src/code_forge/ledger.py:68:    path = _ledger_path(cwd)
+  /home/houminxi/code/forge/src/code_forge/ledger.py:84:    path = _ledger_path(cwd)
+  (only _ledger_path definition/uses above = no override exists)
+
+### Q2 + Q3 + Q4 SETUP: two repos, one with a worktree
+  repo-a, repo-b, and wt-a (a worktree of repo-a) created
+
+### Q2: write from three different places, see what repo_root records
+  wrote from repo-a -> /tmp/ledger_exp2/repo-a
+  wrote from repo-b -> /tmp/ledger_exp2/repo-b
+  wrote from wt-a -> /tmp/ledger_exp2/wt-a
+
+  where the rows actually landed:
+    /tmp/ledger_exp2/repo-a/.code-forge/ledger.jsonl  (1 row/s)
+    /tmp/ledger_exp2/repo-b/.code-forge/ledger.jsonl  (1 row/s)
+    /tmp/ledger_exp2/wt-a/.code-forge/ledger.jsonl  (1 row/s)
+
+  repo_root recorded in each row:
+    esc-from-repo-a        repo_root=/tmp/ledger_exp2/repo-a
+    esc-from-repo-b        repo_root=/tmp/ledger_exp2/repo-b
+    esc-from-wt-a          repo_root=/tmp/ledger_exp2/wt-a
+
+### Q3: simulate a CENTRAL store -- one file, all three sources
+  merged into /tmp/ledger_exp2/central-ledger.jsonl: 3 rows
+  distinct repo_root values:
+    1 row/s  /tmp/ledger_exp2/repo-a
+    1 row/s  /tmp/ledger_exp2/repo-b
+    1 row/s  /tmp/ledger_exp2/wt-a
+
+### Q3b: now remove the worktree -- does the CENTRAL copy survive?
+  per-repo file for wt-a: GONE
+  central file:           PRESENT (3 rows)
+  wt-a's row in central:  1 occurrence/s
+
+### Q4: is append_row atomic enough for concurrent writers?
+  def append_row(cwd: Path, row: LedgerRow) -> None:
+      """Append one row to `<cwd>/.code-forge/ledger.jsonl`.
+  
+      Creates `.code-forge/` if missing. Single write per row, atomic
+      under Linux PIPE_BUF for the row sizes we emit.
+      """
+      path = _ledger_path(cwd)
+      path.parent.mkdir(parents=True, exist_ok=True)
+      payload = asdict(row)
+      payload["terminal_state"] = row.terminal_state.value
+      line = json.dumps(payload, separators=(",", ":")) + "\n"
+      with path.open("a", encoding="utf-8") as fh:
+          fh.write(line)
+  
+  
+  def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
+      """Yield ledger rows from `<cwd>/.code-forge/ledger.jsonl`.
+
+=== EXPERIMENT 2 COMPLETE ===

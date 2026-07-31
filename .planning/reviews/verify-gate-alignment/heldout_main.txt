@@ -1,0 +1,7 @@
+verify.py under test: /home/houminxi/code/forge/src/code_forge/verify.py
+md5: f1b31d4a5dc79bee9fd27362d4aea654
+
+A1 findings survive the last-three window            predicted=PASS got=FAIL   <-- PREDICTION MISSED
+      reason: missing cycle/pass combinations
+A2 fabricated excerpt anchored outside the post-image predicted=PASS got=FAIL   <-- PREDICTION MISSED
+      reason: excerpt src/f.py:40-41 not in any diff hunk

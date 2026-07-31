@@ -1,0 +1,193 @@
+{
+    "cycle": 1,
+    "pass": 1,
+    "skill": "qodo-review",
+    "diff_sha256": "a2829b656c1c4dbec4c973ec6ecad5ba0dbe70fbeca2626790e195fac3afba1a",
+    "timestamp": "2026-07-30T15:00:00.000000Z",
+    "pass_status": "completed",
+    "findings_count": 0,
+    "findings": [],
+    "anchors": [],
+    "code_excerpts": [
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 249,
+            "end_line": 285,
+            "content": "    # 1. completeness: last 3 consecutive cycles x passes 1-3, findings_count.\n    # Reviews that take >3 rounds write cycle 4+ receipts; the last 3\n    # consecutive clean cycles are what matters, regardless of their numbers.\n    if len(receipts) < 9:\n        msg = \"missing receipts: %d/9\" % len(receipts)\n        if len(receipts) == 0:\n            msg += (\n                \" -- no review receipts found. Run 'code-forge review' \"\n                \"on your staged changes first\"\n            )\n        return VerifyResult(False, msg, 1, cp)\n    seen_keys = set()\n    for r in receipts:\n        key = (r[\"cycle\"], r[\"pass\"])\n        if key in seen_keys:\n            return VerifyResult(False, \"duplicate receipt c%dp%d\" % key, 1, cp)\n        seen_keys.add(key)\n        if r[\"findings_count\"] != len(r[\"findings\"]):\n            return VerifyResult(\n                False, \"findings_count mismatch c%dp%d\" % key, 1, cp)\n    # Verify the LAST 3 consecutive cycles, whatever their numbers.\n    cycles = sorted({r[\"cycle\"] for r in receipts})\n    if len(cycles) < 3:\n        return VerifyResult(\n            False, \"fewer than 3 cycles: %d\" % len(cycles), 1, cp)\n    last_three = cycles[-3:]\n    for i in range(len(last_three) - 1):\n        if last_three[i + 1] - last_three[i] != 1:\n            return VerifyResult(\n                False,\n                \"last 3 cycles not consecutive: %s\" % last_three,\n                1, cp)\n    for c in last_three:\n        for p in range(1, 4):\n            if (c, p) not in seen_keys:\n                return VerifyResult(\n                    False, \"missing cycle %d/pass %d\" % (c, p), 1, cp)\n    cp += 1",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 353,
+            "end_line": 379,
+            "content": "        # STEP B: excerpt-to-hunk anchoring\n        # Out-of-hunk excerpts are allowed (not rejected) when STEP A\n        # coverage is satisfied.  They are NOT verified against the working\n        # tree because that introduces TOCTOU (the diff is immutable at\n        # verify time; the working tree is not).  The 60% coverage floor\n        # (check 6) makes padding with out-of-hunk excerpts pointless:\n        # they do not intersect all_diff, so they cannot raise coverage.\n        # Fabrication detection for in-hunk excerpts (STEP C) is unchanged.\n        for exc in all_excerpts:\n            content = exc.get(\"content\", \"\")\n            if not content or not content.strip():\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d has empty content\" % (exc[\"file\"], exc[\"start_line\"]),\n                    5, cp,\n                )\n            if exc[\"file\"] not in hunk_map and exc[\"file\"] not in exempt_files:\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d not in diff\" % (exc[\"file\"], exc[\"start_line\"]),\n                    5, cp,\n                )\n            # Exempt files (binary/rename/mode-change) pass without overlap check --\n            # they have no hunks in hunk_map, so hunk anchoring cannot be verified.\n            # This is intentional: exempt files produce no coverage obligation.\n            # Out-of-hunk excerpts (file in hunk_map but no overlap) are allowed\n            # when STEP A coverage is satisfied.  The 60% floor makes padding\n            # pointless (out-of-hunk lines do not intersect all_diff).",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 413,
+            "end_line": 418,
+            "content": "        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}\n        if all_diff:\n            for c in last_three:\n                cov = _cycle_excerpt_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:\n                    return VerifyResult(False, \"coverage %.0f%% < 60%% cycle %d\" % (",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 433,
+            "end_line": 437,
+            "content": "        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue\n            cov_a = _cycle_excerpt_covered(receipts, a)\n            cov_b = _cycle_excerpt_covered(receipts, b)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 488,
+            "end_line": 493,
+            "content": "        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}\n        if all_diff:\n            for c in last_three:\n                cov = _cycle_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:\n                    return VerifyResult(False, \"coverage %.0f%% < 60%% cycle %d\" % (",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 503,
+            "end_line": 507,
+            "content": "        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue\n            j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 13,
+            "end_line": 22,
+            "content": "_SKILLS = [\"qodo-review\", \"code-review-expert\", \"adversarial-qe\"]\n\n\ndef _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):\n    return {\n        \"cycle\": cycle, \"pass\": pass_n,\n        \"skill\": _SKILLS[(pass_n - 1) % len(_SKILLS)],\n        \"diff_sha256\": diff_sha,\n        \"timestamp\": \"2026-05-28T10:%02d:00Z\" % (cycle * 3 + pass_n),",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 678,
+            "end_line": 700,
+            "content": "def _write_cycles(rd, diff_sha, cycles):\n    \"\"\"Write receipts for arbitrary cycle numbers (list of ints), 3 passes each.\n    Total receipts = len(cycles) * 3. For <3 cycles this is <9, which\n    triggers the 'missing receipts' check before the cycle check.\n    Coverage range spans the full diff (lines 1-50) to avoid triggering\n    the 60% floor on any cycle.\"\"\"\n    for c in cycles:\n        for p in range(1, 4):\n            name = \"receipt-c%dp%d.json\" % (c, p)\n            (rd / name).write_text(json.dumps(\n                _receipt(c, p, diff_sha, 1, 50)\n            ))\n\n\nclass TestLastThreeConsecutiveCycles:\n    \"\"\"ITEM A: verify the LAST 3 consecutive cycles, whatever their numbers.\"\"\"\n\n    def test_cycles_2_3_4_pass(self, tmp_path):\n        \"\"\"Cycles 2-4 complete -> PASS (last 3 consecutive).\"\"\"\n        rd = tmp_path / \".code-forge\" / \"receipts\"\n        rd.mkdir(parents=True)\n        (tmp_path / \"src\").mkdir()\n        (tmp_path / \"src\" / \"f.py\").write_text(\"def f():\\n    return 1\\n\")",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 246,
+            "end_line": 286,
+            "content": "    # 1. completeness: last 3 consecutive cycles x passes 1-3, findings_count.\n    # Reviews that take >3 rounds write cycle 4+ receipts; the last 3\n    # consecutive clean cycles are what matters, regardless of their numbers.\n    if len(receipts) < 9:\n        msg = \"missing receipts: %d/9\" % len(receipts)\n        if len(receipts) == 0:\n            msg += (\n                \" -- no review receipts found. Run 'code-forge review' \"\n                \"on your staged changes first\"\n            )\n        return VerifyResult(False, msg, 1, cp)\n    seen_keys = set()\n    for r in receipts:\n        key = (r[\"cycle\"], r[\"pass\"])\n        if key in seen_keys:\n            return VerifyResult(False, \"duplicate receipt c%dp%d\" % key, 1, cp)\n        seen_keys.add(key)\n        if r[\"findings_count\"] != len(r[\"findings\"]):\n            return VerifyResult(\n                False, \"findings_count mismatch c%dp%d\" % key, 1, cp)\n    # Verify the LAST 3 consecutive cycles, whatever their numbers.\n    cycles = sorted({r[\"cycle\"] for r in receipts})\n    if len(cycles) < 3:\n        return VerifyResult(\n            False, \"fewer than 3 cycles: %d\" % len(cycles), 1, cp)\n    last_three = cycles[-3:]\n    for i in range(len(last_three) - 1):\n        if last_three[i + 1] - last_three[i] != 1:\n            return VerifyResult(\n                False,\n                \"last 3 cycles not consecutive: %s\" % last_three,\n                1, cp)\n    for c in last_three:\n        for p in range(1, 4):\n            if (c, p) not in seen_keys:\n                return VerifyResult(\n                    False, \"missing cycle %d/pass %d\" % (c, p), 1, cp)\n    cp += 1",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 353,
+            "end_line": 379,
+            "content": "        # STEP B: excerpt-to-hunk anchoring\n        # Out-of-hunk excerpts are allowed (not rejected) when STEP A\n        # coverage is satisfied.  They are NOT verified against the working\n        # tree because that introduces TOCTOU (the diff is immutable at\n        # verify time; the working tree is not).  The 60% coverage floor\n        # (check 6) makes padding with out-of-hunk excerpts pointless:\n        # they do not intersect all_diff, so they cannot raise coverage.\n        # Fabrication detection for in-hunk excerpts (STEP C) is unchanged.\n        for exc in all_excerpts:\n            content = exc.get(\"content\", \"\")\n            if not content or not content.strip():\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d has empty content\" % (exc[\"file\"], exc[\"start_line\"]),\n                    5, cp,\n                )\n            if exc[\"file\"] not in hunk_map and exc[\"file\"] not in exempt_files:\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d not in diff\" % (exc[\"file\"], exc[\"start_line\"]),\n                    5, cp,\n                )\n            # Exempt files (binary/rename/mode-change) pass without overlap check --\n            # they have no hunks in hunk_map, so hunk anchoring cannot be verified.\n            # This is intentional: exempt files produce no coverage obligation.\n            # Out-of-hunk excerpts (file in hunk_map but no overlap) are allowed\n            # when STEP A coverage is satisfied.  The 60% floor makes padding\n            # pointless (out-of-hunk lines do not intersect all_diff).",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 412,
+            "end_line": 418,
+            "content": "        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}\n        if all_diff:\n            for c in last_three:\n                cov = _cycle_excerpt_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:\n                    return VerifyResult(False, \"coverage %.0f%% < 60%% cycle %d\" % (\n                        100 * len(cov) / len(all_diff), c), 6, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 432,
+            "end_line": 444,
+            "content": "        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue\n            cov_a = _cycle_excerpt_covered(receipts, a)\n            cov_b = _cycle_excerpt_covered(receipts, b)\n            if not cov_a and not cov_b:\n                return VerifyResult(\n                    False,\n                    \"no excerpt coverage in cycles %d and %d (findings present but excerpts empty)\" % (a, b),\n                    7, cp,\n                )\n            j = _jaccard(cov_a, cov_b)\n            if j > 0.8:\n                return VerifyResult(False, \"Jaccard overlap %.2f > 0.8 c%d-c%d\" % (j, a, b), 7, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 487,
+            "end_line": 493,
+            "content": "        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}\n        if all_diff:\n            for c in last_three:\n                cov = _cycle_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:\n                    return VerifyResult(False, \"coverage %.0f%% < 60%% cycle %d\" % (\n                        100 * len(cov) / len(all_diff), c), 6, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 502,
+            "end_line": 508,
+            "content": "        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue\n            j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))\n            if j > 0.8:\n                return VerifyResult(False, \"Jaccard overlap %.2f > 0.8 c%d-c%d\" % (j, a, b), 7, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 13,
+            "end_line": 22,
+            "content": "_SKILLS = [\"qodo-review\", \"code-review-expert\", \"adversarial-qe\"]\n\n\ndef _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):\n    return {\n        \"cycle\": cycle, \"pass\": pass_n,\n        \"skill\": _SKILLS[(pass_n - 1) % len(_SKILLS)],\n        \"diff_sha256\": diff_sha,\n        \"timestamp\": \"2026-05-28T10:%02d:00Z\" % (cycle * 3 + pass_n),",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 678,
+            "end_line": 700,
+            "content": "def _write_cycles(rd, diff_sha, cycles):\n    \"\"\"Write receipts for arbitrary cycle numbers (list of ints), 3 passes each.\n    Total receipts = len(cycles) * 3. For <3 cycles this is <9, which\n    triggers the 'missing receipts' check before the cycle check.\n    Coverage range spans the full diff (lines 1-50) to avoid triggering\n    the 60% floor on any cycle.\"\"\"\n    for c in cycles:\n        for p in range(1, 4):\n            name = \"receipt-c%dp%d.json\" % (c, p)\n            (rd / name).write_text(json.dumps(\n                _receipt(c, p, diff_sha, 1, 50)\n            ))\n\n\nclass TestLastThreeConsecutiveCycles:\n    \"\"\"ITEM A: verify the LAST 3 consecutive cycles, whatever their numbers.\"\"\"\n\n    def test_cycles_2_3_4_pass(self, tmp_path):\n        \"\"\"Cycles 2-4 complete -> PASS (last 3 consecutive).\"\"\"\n        rd = tmp_path / \".code-forge\" / \"receipts\"\n        rd.mkdir(parents=True)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 249,
+            "end_line": 285,
+            "content": "    # 1. completeness: last 3 consecutive cycles x passes 1-3, findings_count.\n    # Reviews that take >3 rounds write cycle 4+ receipts; the last 3\n    # consecutive clean cycles are what matters, regardless of their numbers.\n    if len(receipts) < 9:\n        msg = \"missing receipts: %d/9\" % len(receipts)\n        if len(receipts) == 0:\n            msg += (\n                \" -- no review receipts found. Run 'code-forge review' \"\n                \"on your staged changes first\"\n            )\n        return VerifyResult(False, msg, 1, cp)\n    seen_keys = set()\n    for r in receipts:\n        key = (r[\"cycle\"], r[\"pass\"])\n        if key in seen_keys:\n            return VerifyResult(False, \"duplicate receipt c%dp%d\" % key, 1, cp)\n        seen_keys.add(key)\n        if r[\"findings_count\"] != len(r[\"findings\"]):\n            return VerifyResult(\n                False, \"findings_count mismatch c%dp%d\" % key, 1, cp)\n    # Verify the LAST 3 consecutive cycles, whatever their numbers.\n    cycles = sorted({r[\"cycle\"] for r in receipts})\n    if len(cycles) < 3:\n        return VerifyResult(\n            False, \"fewer than 3 cycles: %d\" % len(cycles), 1, cp)\n    last_three = cycles[-3:]\n    for i in range(len(last_three) - 1):\n        if last_three[i + 1] - last_three[i] != 1:\n            return VerifyResult(\n                False,\n                \"last 3 cycles not consecutive: %s\" % last_three,\n                1, cp)\n    for c in last_three:\n        for p in range(1, 4):\n            if (c, p) not in seen_keys:\n                return VerifyResult(\n                    False, \"missing cycle %d/pass %d\" % (c, p), 1, cp)\n    cp += 1",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 352,
+            "end_line": 381,
+            "content": "        # STEP B: excerpt-to-hunk anchoring\n        # Out-of-hunk excerpts are allowed (not rejected) when STEP A\n        # coverage is satisfied.  They are NOT verified against the working\n        # tree because that introduces TOCTOU (the diff is immutable at\n        # verify time; the working tree is not).  The 60% coverage floor\n        # (check 6) makes padding with out-of-hunk excerpts pointless:\n        # they do not intersect all_diff, so they cannot raise coverage.\n        # Fabrication detection for in-hunk excerpts (STEP C) is unchanged.\n        for exc in all_excerpts:\n            content = exc.get(\"content\", \"\")\n            if not content or not content.strip():\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d has empty content\" % (exc[\"file\"], exc[\"start_line\"]),\n                    5, cp,\n                )\n            if exc[\"file\"] not in hunk_map and exc[\"file\"] not in exempt_files:\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d not in diff\" % (exc[\"file\"], exc[\"start_line\"]),\n                    5, cp,\n                )\n            # Exempt files (binary/rename/mode-change) pass without overlap check --\n            # they have no hunks in hunk_map, so hunk anchoring cannot be verified.\n            # This is intentional: exempt files produce no coverage obligation.\n            # Out-of-hunk excerpts (file in hunk_map but no overlap) are allowed\n            # when STEP A coverage is satisfied.  The 60% floor makes padding\n            # pointless (out-of-hunk lines do not intersect all_diff).",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 414,
+            "end_line": 418,
+            "content": "        if all_diff:\n            for c in last_three:\n                cov = _cycle_excerpt_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:\n                    return VerifyResult(False, \"coverage %.0f%% < 60%% cycle %d\" % (\n                        100 * len(cov) / len(all_diff), c), 6, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 435,
+            "end_line": 442,
+            "content": "        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue\n            cov_a = _cycle_excerpt_covered(receipts, a)\n            cov_b = _cycle_excerpt_covered(receipts, b)\n            if not cov_a and not cov_b:\n                return VerifyResult(\n                    False,\n                    \"no excerpt coverage in cycles %d and %d (findings present but excerpts empty)\" % (a, b),\n                    7, cp,\n                )\n            j = _jaccard(cov_a, cov_b)\n            if j > 0.8:\n                return VerifyResult(False, \"Jaccard overlap %.2f > 0.8 c%d-c%d\" % (j, a, b), 7, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 489,
+            "end_line": 493,
+            "content": "        if all_diff:\n            for c in last_three:\n                cov = _cycle_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:\n                    return VerifyResult(False, \"coverage %.0f%% < 60%% cycle %d\" % (\n                        100 * len(cov) / len(all_diff), c), 6, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 505,
+            "end_line": 510,
+            "content": "        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue\n            j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))\n            if j > 0.8:\n                return VerifyResult(False, \"Jaccard overlap %.2f > 0.8 c%d-c%d\" % (j, a, b), 7, cp)",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 13,
+            "end_line": 20,
+            "content": "_SKILLS = [\"qodo-review\", \"code-review-expert\", \"adversarial-qe\"]\n\n\ndef _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):\n    return {\n        \"cycle\": cycle, \"pass\": pass_n,\n        \"skill\": _SKILLS[(pass_n - 1) % len(_SKILLS)],\n        \"diff_sha256\": diff_sha,",
+            "rationale": "reviewer-provided"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 678,
+            "end_line": 750,
+            "content": "def _write_cycles(rd, diff_sha, cycles):\n    \"\"\"Write receipts for arbitrary cycle numbers (list of ints), 3 passes each.\n    Total receipts = len(cycles) * 3. For <3 cycles this is <9, which\n    triggers the 'missing receipts' check before the cycle check.\n    Coverage range spans the full diff (lines 1-50) to avoid triggering\n    the 60% floor on any cycle.\"\"\"\n    for c in cycles:\n        for p in range(1, 4):\n            name = \"receipt-c%dp%d.json\" % (c, p)\n            (rd / name).write_text(json.dumps(\n                _receipt(c, p, diff_sha, 1, 50)\n            ))\n\n\nclass TestLastThreeConsecutiveCycles:\n    \"\"\"ITEM A: verify the LAST 3 consecutive cycles, whatever their numbers.\"\"\"\n\n    def test_cycles_2_3_4_pass(self, tmp_path):\n        \"\"\"Cycles 2-4 complete -> PASS (last 3 consecutive).\"\"\"\n        rd = tmp_path / \".code-forge\" / \"receipts\"\n        rd.mkdir(parents=True)\n        (tmp_path / \"src\").mkdir()\n        (tmp_path / \"src\" / \"f.py\").write_text(\"def f():\\n    return 1\\n\")\n        sha = _sha(\"diff\")\n        _write_cycles(rd, sha, [2, 3, 4])\n        r = run_verify(tmp_path, sha, {\"src/f.py\": list(range(1, 50))})\n        assert r.passed, f\"last 3 consecutive should pass, got: {r.reason}\"\n\n    def test_cycles_1_2_4_fail(self, tmp_path):\n        \"\"\"Cycles 1,2,4 -> FAIL (last 3 not consecutive: 2,3,4 missing 3).\"\"\"\n        rd = tmp_path / \".code-forge\" / \"receipts\"\n        rd.mkdir(parents=True)\n        (tmp_path / \"src\").mkdir()\n        (tmp_path / \"src\" / \"f.py\").write_text(\"def f():\\n    return 1\\n\")\n        sha = _sha(\"diff\")\n        _write_cycles(rd, sha, [1, 2, 4])\n        r = run_verify(tmp_path, sha, {\"src/f.py\": list(range(1, 51))})\n        assert not r.passed, f\"cycles 1,2,4 should fail, got: {r.reason}\"\n        assert \"not consecutive\" in r.reason\n\n    def test_cycles_1_2_fail(self, tmp_path):\n        \"\"\"Only cycles 1-2 -> FAIL (fewer than 3 cycles).\n        Need 9+ receipts to pass the length check, but only 2 unique cycles.\"\"\"\n        rd = tmp_path / \".code-forge\" / \"receipts\"\n        rd.mkdir(parents=True)\n        (tmp_path / \"src\").mkdir()\n        (tmp_path / \"src\" / \"f.py\").write_text(\"def f():\\n    return 1\\n\")\n        sha = _sha(\"diff\")\n        # Write 5 passes per cycle (cycle 1 uses passes 1-5, cycle 2 uses passes 1-5)\n        # to get 10 receipts (>9) but only 2 unique cycles\n        skills = [\"qodo-review\", \"code-review-expert\", \"adversarial-qe\",\n                  \"qodo-review\", \"code-review-expert\"]\n        for c in [1, 2]:\n            for p in range(1, 6):\n                name = \"receipt-c%dp%d.json\" % (c, p)\n                receipt = _receipt(c, p, sha, 1, 50)\n                receipt[\"skill\"] = skills[p - 1]\n                (rd / name).write_text(json.dumps(receipt))\n        r = run_verify(tmp_path, sha, {\"src/f.py\": list(range(1, 51))})\n        assert not r.passed, f\"cycles 1,2 should fail, got: {r.reason}\"\n        assert \"fewer than 3 cycles\" in r.reason\n\n    def test_cycles_5_6_7_pass(self, tmp_path):\n        \"\"\"Cycles 5-7 -> PASS (last 3 consecutive, high numbers).\"\"\"\n        rd = tmp_path / \".code-forge\" / \"receipts\"\n        rd.mkdir(parents=True)\n        (tmp_path / \"src\").mkdir()\n        (tmp_path / \"src\" / \"f.py\").write_text(\"def f():\\n    return 1\\n\")\n        sha = _sha(\"diff\")\n        _write_cycles(rd, sha, [5, 6, 7])\n        r = run_verify(tmp_path, sha, {\"src/f.py\": list(range(1, 51))})\n        assert r.passed, f\"cycles 5-7 should pass, got: {r.reason}\"",
+            "rationale": "reviewer-provided"
+        }
+    ],
+    "covered_line_ranges": [
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 246,
+            "end": 508
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start": 10,
+            "end": 965
+        }
+    ]
+}

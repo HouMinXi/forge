@@ -1,0 +1,151 @@
+================================================================
+DISPATCH -- the LEDGER has been empty for 26 days. Find out why.
+From: forge PM, 2026-07-30. To: executor sub-session.
+DIAGNOSIS ONLY. You are not asked to fix anything.
+================================================================
+
+## WHAT THIS IS
+
+Phase 43 shipped an append-only outcome LEDGER on 2026-07-04. Twenty-six
+days later it has never been written to -- not one row, anywhere on this
+machine. Four planned phases (44, 51, 52, 53a) are built on top of it.
+
+Nobody has established WHY. That is your whole job. Do not fix it.
+
+A diagnosis that ends in "this is working as designed and here is the
+design" is a complete, successful delivery. So is "I could not
+determine it." An invented cause is the only failing outcome.
+
+## GROUND TRUTH -- measured by me on 2026-07-30, re-verify anything you rely on
+
+  G1. No ledger file exists anywhere under $HOME:
+        find ~ -name "ledger*.jsonl" -not -path "*/node_modules/*"
+      returns nothing.
+
+  G2. The path is per-repo, ledger.py:59
+        def _ledger_path(cwd: Path) -> Path:
+            return cwd / ".code-forge" / "ledger.jsonl"
+
+  G3. There is exactly ONE automatic writer: _write_ledger_rows,
+      machine.py:1163. It is called from exactly four sites --
+      machine.py:1103, 1123, 1146, 1160 -- and ALL FOUR are inside
+      _finalize_local_terminal (machine.py:1069).
+
+  G4. _write_ledger_rows can return zero silently, machine.py ~1179:
+        base = self.resolved_review.base_sha
+        head = self.resolved_review.head_sha
+        if base is None or head is None:
+            return 0
+
+  G5. Rows are only appended for two dispositions; everything else
+      hits `continue`:
+        if   f.disposition == Disposition.FIXED     -> FIXED
+        elif f.disposition == Disposition.DISMISSED -> DISPROVED
+        else: continue
+
+  G6. cli.py:1314 is a SEPARATE, manual writer (`code-forge ledger
+      mark`). cli.py:1255 carries a comment saying rows normally arrive
+      "via _write_ledger_rows, not from a manual mark."
+
+## THE CANDIDATE EXPLANATIONS
+
+Distinguish these by experiment. They are not equally likely and they
+are not mutually exclusive -- more than one can be true at once, and
+saying which ones are true is the deliverable.
+
+  H1 MODE. _finalize_local_terminal implies LOCAL mode. If reviews here
+     run in CI mode, the writer is never reached at all. Cheap to test
+     and, if true, means the ledger is structurally unreachable for the
+     way forge is actually run -- not a bug in the writer.
+
+  H2 WORKTREE. Rows are written to <cwd>/.code-forge/ledger.jsonl, and
+     this project MANDATES working in linked worktrees which are removed
+     after merge. If cwd is the worktree, every row ever written died
+     with its worktree. Note this repo lost a receipt set to exactly
+     that mechanism earlier today, so the failure mode is proven to
+     exist here.
+
+  H3 EARLY RETURN. base_sha or head_sha is None in practice, so G4
+     returns 0 without writing and without logging.
+
+  H4 DISPOSITION. Findings never actually reach FIXED or DISMISSED, so
+     G5's `continue` skips every one.
+
+  H5 Something else, or a combination.
+
+Do not rank these from reading the code. Rank them from what you
+measured. If an experiment cannot separate two of them, say so rather
+than picking the more plausible one.
+
+## HOW TO WORK
+
+Golden Rule 6 governs this task: run a test that produces data BEFORE
+forming a theory. "The code looks like it would..." is not a finding.
+Every claim in your report needs either a command transcript or a
+file:line you actually opened.
+
+Suggested starting move, not a required one: build a scratch git repo
+outside this project, configure a mock backend, run a real review
+through it in each mode, and look for the file. There is a worked
+example of that setup at
+.planning/reviews/lock-busy-message/smoke_lock_busy.sh -- read it for
+the gate.yaml shape and the FORGE_ALLOW_MAIN trick, then do your own
+thing.
+
+If an experiment needs a real model call, you may skip it and say you
+skipped it. Do not spend real tokens to prove a control-flow question
+that a mock answers.
+
+## SCOPE FENCE -- this is a read-and-measure task
+
+  IN:  Reading any source in this repo. Running experiments in scratch
+       directories you create outside it. Writing your report and
+       evidence files to the paths in the output contract.
+
+  OUT: Changing ANY file under src/ or tests/. This is diagnosis only.
+       If you find a bug, describe it; do not fix it.
+  OUT: Creating .code-forge/ledger.jsonl inside this repo. Your
+       experiments run in scratch dirs. If a stray ledger.jsonl appears
+       in this repo, the experiment leaked and the result is void.
+  OUT: The staged, uncommitted change in this repo's index
+       (src/code_forge/lock.py, tests/test_lock.py). It is deliberate
+       and documented at .planning/reviews/lock-busy-message/STATE.md.
+       Do not commit it, revert it, or stage anything else.
+  OUT: src/code_forge/verify.py and src/code_forge/install_hooks.py --
+       two other orders own those files.
+  OUT: Committing anything at all. Leave HEAD where you found it.
+
+## OUTPUT CONTRACT
+
+Write your report to:
+    .planning/reports/ledger-empty-diagnosis-20260730.md
+
+Write every command transcript to files under:
+    .planning/reports/ledger-diagnosis-evidence/
+
+The report must contain, in this order:
+
+  1. VERDICT: which of H1-H5 hold, which are ruled out, which you could
+     not separate. One line each.
+  2. For each verdict line, the experiment that established it: the
+     command, the output, and the evidence file it lives in.
+  3. Whether the empty ledger is a DEFECT or WORKING AS DESIGNED, and
+     the argument. If it is a defect, say which layer owns it -- do not
+     propose the fix.
+  4. What Phase 44 inherits. Phase 44 (EVAL-ON-DUTY) re-extracts diffs
+     from this ledger; 51/52/53a follow it. State plainly whether that
+     lane has an input source today.
+  5. What you did NOT determine, said plainly.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+I have no stake in any of H1-H5 being the answer. If the ledger turns
+out to work fine and the emptiness has a mundane explanation, that is
+the finding and it is worth the same as a dramatic one.
+
+If you cannot get a review to run at all in a scratch repo, report the
+blockage with the exact command and error. That is a real finding about
+forge's testability, not a failed task.
+
+Two consecutive failed attempts at the same experiment: stop, report
+both attempts, try a different experiment or say you are stuck.

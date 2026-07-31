@@ -1,0 +1,140 @@
+{
+    "cycle": 2,
+    "pass": 1,
+    "skill": "qodo-review",
+    "diff_sha256": "a2829b656c1c4dbec4c973ec6ecad5ba0dbe70fbeca2626790e195fac3afba1a",
+    "timestamp": "2026-07-30T15:03:00.000000Z",
+    "findings_count": 0,
+    "findings": [],
+    "anchors": [
+        {
+            "file": "src/code_forge/verify.py",
+            "line": 269,
+            "text": "last_three"
+        }
+    ],
+    "code_excerpts": [
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 246,
+            "end_line": 251,
+            "content": "    except CorruptedReceiptError as exc:\n        return VerifyResult(False, \"corrupt receipt: %s\" % exc, 1, cp)\n\n    # 1. completeness: last 3 consecutive cycles x passes 1-3, findings_count.\n    # Reviews that take >3 rounds write cycle 4+ receipts; the last 3\n    # consecutive clean cycles are what matters, regardless of their numbers.",
+            "rationale": "verified"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 266,
+            "end_line": 271,
+            "content": "        if r[\"findings_count\"] != len(r[\"findings\"]):\n            return VerifyResult(\n                False, \"findings_count mismatch c%dp%d\" % key, 1, cp)\n    # Verify the LAST 3 consecutive cycles, whatever their numbers.\n    cycles = sorted({r[\"cycle\"] for r in receipts})\n    if len(cycles) < 3:",
+            "rationale": "verified"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 350,
+            "end_line": 355,
+            "content": "                    )\n\n        # STEP B: excerpt-to-hunk anchoring\n        # Out-of-hunk excerpts are allowed (not rejected) when STEP A\n        # coverage is satisfied.  They are NOT verified against the working\n        # tree because that introduces TOCTOU (the diff is immutable at",
+            "rationale": "verified"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 374,
+            "end_line": 379,
+            "content": "            # Exempt files (binary/rename/mode-change) pass without overlap check --\n            # they have no hunks in hunk_map, so hunk anchoring cannot be verified.\n            # This is intentional: exempt files produce no coverage obligation.\n            # Out-of-hunk excerpts (file in hunk_map but no overlap) are allowed\n            # when STEP A coverage is satisfied.  The 60% floor makes padding\n            # pointless (out-of-hunk lines do not intersect all_diff).",
+            "rationale": "verified"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 412,
+            "end_line": 417,
+            "content": "        # covered_line_ranges is self-reported, not measured -- audit-only. Ignored here.\n        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}\n        if all_diff:\n            for c in last_three:\n                cov = _cycle_excerpt_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:",
+            "rationale": "verified"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 432,
+            "end_line": 437,
+            "content": "                cycle_findings[cyc] = []\n            cycle_findings[cyc].extend(r.get(\"findings\", []))\n\n        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue",
+            "rationale": "verified"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 487,
+            "end_line": 492,
+            "content": "        # 6. legacy coverage >= 60% (self-reported covered_line_ranges)\n        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}\n        if all_diff:\n            for c in last_three:\n                cov = _cycle_covered(receipts, c) & all_diff\n                if len(cov) / len(all_diff) < 0.6:",
+            "rationale": "verified"
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start_line": 502,
+            "end_line": 507,
+            "content": "                cycle_findings[cyc] = []\n            cycle_findings[cyc].extend(r.get(\"findings\", []))\n\n        for a, b in combinations(last_three, 2):\n            if not cycle_findings.get(a) and not cycle_findings.get(b):\n                continue",
+            "rationale": "verified"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 10,
+            "end_line": 15,
+            "content": "    return hashlib.sha256(text.encode()).hexdigest()\n\n\n_SKILLS = [\"qodo-review\", \"code-review-expert\", \"adversarial-qe\"]\n\n",
+            "rationale": "verified"
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start_line": 675,
+            "end_line": 680,
+            "content": "        _validate_receipt_schema(receipt, \"test.json\")\n\n\ndef _write_cycles(rd, diff_sha, cycles):\n    \"\"\"Write receipts for arbitrary cycle numbers (list of ints), 3 passes each.\n    Total receipts = len(cycles) * 3. For <3 cycles this is <9, which",
+            "rationale": "verified"
+        }
+    ],
+    "covered_line_ranges": [
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 246,
+            "end": 254
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 266,
+            "end": 288
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 350,
+            "end": 362
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 374,
+            "end": 382
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 412,
+            "end": 418
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 432,
+            "end": 438
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 487,
+            "end": 493
+        },
+        {
+            "file": "src/code_forge/verify.py",
+            "start": 502,
+            "end": 508
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start": 10,
+            "end": 22
+        },
+        {
+            "file": "tests/test_verify.py",
+            "start": 675,
+            "end": 965
+        }
+    ]
+}

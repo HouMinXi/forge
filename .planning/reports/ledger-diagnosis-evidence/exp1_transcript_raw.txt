@@ -1,0 +1,28 @@
+======================================================================
+RUN A: mode=Mode.LOCAL
+======================================================================
+  mode: 'LOCAL'
+  verdict: 'Verdict.PASS'
+  ledger_file_exists: True
+  ledger_row_count: 2
+  ledger_rows: ['fp-modecompare:FIXED', 'fixval-skipped:DISPROVED']
+  finding_disposition_after_run: 'Disposition.FIXED'
+  workdir: '/tmp/claude-1000/-home-houminxi/7d655d1a-14dd-4a57-bdaf-22e8f473370a/scratchpad/ledger-diag/exp1/scratch/local_run'
+
+======================================================================
+RUN B: mode=Mode.CI (identical finding, identical autofixer/falsifier)
+======================================================================
+  mode: 'CI'
+  verdict: 'Verdict.FAIL'
+  ledger_file_exists: False
+  ledger_row_count: 0
+  ledger_rows: []
+  finding_disposition_after_run: 'Disposition.CONFIRMED'
+  workdir: '/tmp/claude-1000/-home-houminxi/7d655d1a-14dd-4a57-bdaf-22e8f473370a/scratchpad/ledger-diag/exp1/scratch/ci_run'
+
+======================================================================
+COMPARISON
+======================================================================
+  LOCAL ledger_file_exists=True rows=2
+  CI    ledger_file_exists=False rows=0
+  CONCLUSION: identical finding/disposition writes a ledger row under LOCAL and writes ZERO rows under CI.

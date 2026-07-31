@@ -1,0 +1,5 @@
+resolve_mode(cli_arg=None, env={}, stdout_isatty=False) -> Mode.CI
+resolve_mode(cli_arg=None, env={}, stdout_isatty=True)  -> Mode.LOCAL
+resolve_mode(cli_arg='local', env={}, stdout_isatty=False) -> Mode.LOCAL
+resolve_mode(cli_arg=None, env={'FORGE_MODE':'local'}, stdout_isatty=False) -> Mode.LOCAL
+isatty when piped through tee: False

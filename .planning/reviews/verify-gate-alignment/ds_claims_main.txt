@@ -1,0 +1,11 @@
+tree: /home/houminxi/code/forge/src/code_forge/verify.py
+md5 : f1b31d4a5dc79bee9fd27362d4aea654
+
+F1 fabricated excerpt just past post-image     FAIL
+                                                 reason: excerpt src/f.py:13-14 not in any diff hunk
+F2 passes 4 and 5 inside the counted cycles    FAIL
+                                                 reason: missing cycle/pass combinations
+F3 cycles 9/10/11 (two-digit filenames)        FAIL
+                                                 reason: missing cycle/pass combinations
+C4 dirty cycle 3 inside a plain [1,2,3] set    FAIL
+                                                 reason: Jaccard overlap 1.00 > 0.8 c1-c3

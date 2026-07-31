@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "CI",
+  "source_hash": "33cb9324851434d8aca6db13d6753a73dee5f627152533c95d053b628f0f82ce",
+  "findings": [
+    {
+      "id": "l1-qodo-invoke-fail",
+      "fingerprint": "invoke-fail-qodo",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: URLError from mock-local backend: [Errno 111] Connection refused",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-invoke-fail",
+      "fingerprint": "invoke-fail-expert",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: URLError from mock-local backend: [Errno 111] Connection refused",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-invoke-fail",
+      "fingerprint": "invoke-fail-adversarial",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: URLError from mock-local backend: [Errno 111] Connection refused",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-invoke-fail": "CONFIRMED",
+    "l1-expert-invoke-fail": "CONFIRMED",
+    "l1-adversarial-invoke-fail": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "FAIL",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "invoke-fail-expert",
+        "invoke-fail-adversarial"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-qodo": "CONFIRMED",
+        "invoke-fail-expert": "CONFIRMED",
+        "invoke-fail-adversarial": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: 'test.command' must be a list"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "total_duration_s": 31.16411794803571,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 10.388
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 10.388
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 10.388
+      }
+    ]
+  }
+}

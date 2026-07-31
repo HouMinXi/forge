@@ -1,0 +1,3 @@
+tree: /home/houminxi/code/forge/.worktrees/fix-verify-gate/src/code_forge/verify.py
+md5 : 040c006c617178ec7afec93d98f8ba16
+tail-fabrication excerpt accepted: YES -- hole confirmed

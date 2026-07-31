@@ -1,0 +1,141 @@
+================================================================
+RESUME -- `ledger mark` field order, second half only
+From: forge PM, 2026-07-30. The first executor hit an API spend
+limit mid-task. Its code survives; its evidence does not.
+================================================================
+
+## WHAT ALREADY EXISTS -- measured by the PM, do not redo it
+
+Worktree: /home/houminxi/code/forge/.worktrees/ledger-fields
+Branch:   feat/ledger-mark-fields
+HEAD:     695f739  <- NOTHING IS COMMITTED. All work is uncommitted
+                      in the working tree.
+
+  src/code_forge/cli.py    +102
+  tests/test_cli_ledger.py +134  (15 -> 25 test functions)
+
+The implementation is done and it works. The PM verified this
+independently: `python3 -m pytest tests/test_cli_ledger.py -q` in
+that worktree gives 25 passed, and the two load-bearing new tests
+(test_mark_new_writes_real_file_and_line,
+test_mark_file_escapes_repo_rejected) pass individually.
+
+A path trap the PM hit, so you do not: `python3 -c "import
+code_forge"` resolves to the MAIN tree's src, not the worktree's.
+pytest does not -- pyproject puts `src` first on sys.path, so
+pytest loads the worktree code. If you invoke the CLI by hand, set
+PYTHONPATH explicitly:
+
+  env PYTHONPATH=/home/houminxi/code/forge/.worktrees/ledger-fields/src \
+      python3 -m code_forge ledger mark ...
+
+What the previous executor chose, read off the code (it never got
+to write this up):
+  (a) required with --new, optional otherwise
+  (b) axis_claim carries the human's own description of the miss
+  (c) not visibly addressed anywhere
+
+## YOUR JOB -- the evidence half, then the commit
+
+1. BUG-INJECTION, at the fix site, not near it.
+   Pick the assertion that proves the row carries its real file and
+   line. Break the LINE THAT MATTERS in cli.py -- the `file=file_value`
+   / `line=args.line ...` assignment at the append, not the argparse
+   declaration -- run the test, paste the FAILURE, restore, run
+   again, paste the PASS. Do the same separately for the --new
+   required-flags guard. Two injections, two transcripts. A test
+   never seen red is not evidence.
+
+2. THE REAL PATH, once, outside pytest.
+   In a scratch repo under $HOME (NOT /tmp, and NOT any real
+   project), with PYTHONPATH as above: mark an escape with
+   --file/--line/--axis-claim, then `ledger list` it, then cat the
+   raw ledger.jsonl row. Paste all three. Check exit codes with an
+   explicit `rc=$?` -- do not pipe through tail and read the pipe's
+   status. That exact mistake produced a confident false verdict in
+   this project earlier today.
+
+   NOTE: a `git commit` in your scratch repo will be blocked by a
+   hook unless the command's LAST token, outside all quotes, is a
+   marker: `git commit -m "..." # chore`. The PM was blocked twice
+   on this. If it still blocks you, say so and move on -- an
+   unrunnable scratch repo is a reportable outcome, not a reason to
+   fight the hook.
+
+3. COMPATIBILITY, demonstrated.
+   Run the OLD form `ledger mark <fp> ESCAPED --new` against the
+   changed code. Paste what happens. It should now fail. Show the
+   error text and state in one sentence whether you agree the break
+   is worth it.
+
+4. ANSWER (c) IN WRITING.
+   machine.py:1170 documents a "no placeholder/empty values"
+   invariant for the AUTOMATIC ledger writer -- it returns 0 rather
+   than write a placeholder SHA. The manual writer in cli.py still
+   writes file="" / line=0 / axis_claim="manual" whenever --new is
+   absent. After this change the two writers still disagree, just
+   more narrowly. Either bring them into line, or argue in writing
+   that the asymmetry is correct and say where that argument should
+   live in the code. Leaving them silently contradictory is the one
+   outcome that is not acceptable.
+
+5. FULL SUITE, measured.
+   timeout 1500 python3 -m pytest -q --ignore=tests/test_cli_integration.py
+   Floor is 2978 (measured on 695f739 in a clean worktree). Report
+   the real number. If it times out, say TIMED OUT -- do not report
+   a number you did not see.
+
+6. STEP 0 on changed files: py_compile, ruff, and
+     git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+   empty. tests/test_lock.py carries 2 pre-existing ruff F841
+   findings at lines 571 and 595 that are NOT yours.
+
+7. COMMIT, in the worktree, on feat/ledger-mark-fields.
+   Human-voiced: WHY not WHAT, no order IDs, no severity labels, no
+   review vocabulary. Signed-off-by: Minxi Hou <houminxi@gmail.com>.
+   Do NOT merge, do NOT push, do NOT remove the worktree.
+
+## THE TRAP
+
+The commit gate in this repo is unreliable and two other orders are
+in flight to repair it. `git commit` may be refused by the
+attestation gate; `--no-verify` is blocked by a separate guard that
+is right to block it. If you cannot get a commit through, STOP and
+report the exact command and the exact error. A report that the
+gate is unpassable is a real delivery. Editing the gate to let your
+own commit through is not, and it is out of scope.
+
+## SCOPE FENCE
+
+  IN:  src/code_forge/cli.py, tests/test_cli_ledger.py, and
+       src/code_forge/ledger.py ONLY if your answer to item 4
+       needs it.
+  OUT: the ledger's storage LOCATION (_ledger_path). Known,
+       separately owned. Do not move the file, do not add a path
+       override.
+  OUT: machine.py, verify.py, install_hooks.py -- other orders own
+       those.
+  OUT: the staged lock.py / tests/test_lock.py pair in MAIN's
+       index. Do not sweep it into your branch, do not touch the
+       index.
+
+## OUTPUT CONTRACT
+
+  1. Branch and new tip SHA (or the exact gate error if blocked).
+  2. Both injection transcripts from item 1.
+  3. The real-path transcript from item 2.
+  4. The compat demonstration from item 3.
+  5. Your written answer to (c).
+  6. Suite numbers, with the exclusion stated.
+  7. Anything you did NOT do, and why.
+
+Write the report to
+.planning/reports/ledger-mark-fields-resume-20260730.md so it
+survives your session, then return it.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+If an injection will not go red, say so -- that means the test does
+not test what it claims and is worth more than a green suite. Two
+consecutive failed attempts on the same approach: stop, report
+both, move on.

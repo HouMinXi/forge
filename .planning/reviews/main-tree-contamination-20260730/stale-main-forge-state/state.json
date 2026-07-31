@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 2,
+  "mode": "LOCAL",
+  "source_hash": "a2829b656c1c4dbec4c973ec6ecad5ba0dbe70fbeca2626790e195fac3afba1a",
+  "findings": [],
+  "dispositions": {},
+  "fix_attempts": {},
+  "verdict": "ESCALATED",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {},
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 1,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {},
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 2,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {},
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: gate.yaml needs an active 'test' section for the commit gate. Add:\ntest:\n  command: [pytest, -q]   # change to your test runner\n  timeout_seconds: 900",
+    "L2: gate.yaml missing or test.command not configured: gate.yaml needs an active 'test' section for the commit gate. Add:\ntest:\n  command: [pytest, -q]   # change to your test runner\n  timeout_seconds: 900",
+    "L2: gate.yaml missing or test.command not configured: gate.yaml needs an active 'test' section for the commit gate. Add:\ntest:\n  command: [pytest, -q]   # change to your test runner\n  timeout_seconds: 900",
+    "ESCALATED category=D"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 3,
+  "cost": {
+    "total_input_tokens": 262101,
+    "total_output_tokens": 85830,
+    "total_duration_s": 16.348233755968977,
+    "passes": 9,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 5.412
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 5.412
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 5.412
+      },
+      {
+        "pass": 1,
+        "cycle": 1,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 2,
+        "cycle": 1,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 3,
+        "cycle": 1,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 1,
+        "cycle": 2,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 2,
+        "cycle": 2,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 3,
+        "cycle": 2,
+        "input": 29122,
+        "output": 9536,
+        "duration_s": 0.019
+      }
+    ]
+  }
+}

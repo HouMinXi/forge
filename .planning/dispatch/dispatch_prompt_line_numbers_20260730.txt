@@ -1,0 +1,183 @@
+================================================================
+DISPATCH -- the reviewer is asked to compute line numbers it
+cannot compute, and the gate rejects it for getting them wrong
+From: forge PM, 2026-07-30. To: executor sub-session.
+================================================================
+
+## WHY THIS EXISTS
+
+forge's commit gate is currently unpassable, and this is the last link in
+the chain. Four other defects behind it are already fixed and waiting on
+this one.
+
+`verify.py` STEP C compares each `code_excerpts` entry against the diff
+post-image, keyed by the `start_line` the reviewer reported. When that
+number is off by one the whole attestation is voided:
+
+    verify: FAIL -- excerpt content mismatch at src/code_forge/receipt.py:98
+
+The quoted content is real and present in the file. Only the line number
+is wrong.
+
+## GROUND TRUTH -- measured 2026-07-30, re-verify anything you rely on
+
+  G1. forge's own arithmetic is NOT the bug. I rebuilt
+      `_extract_post_image_lines(diff_text)` from a real diff and compared
+      every mapped line against the file on disk: 159 lines across 4
+      files, ZERO mismatches. STEP C is comparing correctly. Do not
+      "fix" verify.py.
+
+  G2. The reviewer receives a raw unified diff with no line numbers.
+      factories.py:291 and factories.py:591 both do:
+
+          prompt += "\nDiff:\n" + diff_text
+
+      There is no line-numbering helper anywhere in src/code_forge/.
+
+  G3. So to emit `start_line` the model must read a hunk header such as
+      `@@ -85,14 +88,13 @@`, then walk the body counting ` ` and `+`
+      lines while NOT counting `-` lines -- two counters at once. That is
+      the arithmetic it is worst at, and forge already holds the answer.
+
+  G4. Measured accuracy in one real run: 17 excerpts, 14 exact, 3 off by
+      1-2. The failures cluster in the hunk that carries deletions.
+      Re-running does not shake it loose: three runs, same failure,
+      moving only when the diff's line numbering moved.
+
+  G5. NINE sites embed a diff in a prompt. Not all need line numbers, but
+      more than the two above do -- anything whose output carries a line:
+
+          factories.py:291     L1 passes            code_excerpts
+          factories.py:591     L1 passes (variant)  code_excerpts
+          cli.py:795           spawned L1 passes    code_excerpts
+          cli.py:883           test-assertion pass  code_excerpts (start_line
+                                                    is named in the prompt)
+          cli.py:2088          (identify it)
+          runtime.py:65        RUNTIME axis         findings carry lines
+          daemon_state.py:55   DAEMON-STATE axis    advisory lineRange
+          daemon_state.py:74   DAEMON-STATE axis
+          canary_gen.py:347    canary review        findings carry lines
+
+## THE ITEM
+
+Give the reviewer the line numbers instead of making it count them.
+
+DECIDE AND ARGUE, do not assume:
+
+  (a) The annotation format. It has to be unambiguous to a model, it must
+      not stop the text reading as a diff (the `+`/`-`/` ` markers still
+      carry meaning the reviewer needs), and it has to say something
+      honest about deleted lines, which have NO post-image number at all.
+      Whatever you pick, state what a `-` line shows and why.
+
+  (b) Which sites get it, and how. Nine call sites doing their own string
+      concatenation is the shape that produced this bug; a single shared
+      helper applied where diff_text is prepared is the shape that
+      prevents the next one. Argue your split between "sites whose output
+      carries a line number" and "all of them", and say which sites you
+      touched and which you deliberately did not.
+
+  (c) Whether the token cost is acceptable. Annotating every line of
+      every diff grows the prompt. Measure it on a real diff and say the
+      number; if it is material, say what you would do instead.
+
+## THE TRAP IN THIS ORDER
+
+`canary_gen.py:347` sends `modified_diff`, NOT the original -- it is a
+deliberately mutated diff used to check the reviewer catches a planted
+bug. If you annotate from the unmutated text there, every canary line
+number is wrong and the canary check silently degrades. Annotate from the
+text actually being sent, or leave that site alone and say so.
+
+Second trap: `_extract_post_image_lines` returns only lines present in
+the hunks. It is not a whole-file map. Do not use it as one.
+
+## SCOPE FENCE
+
+  IN:  the prompt-construction sites listed in G5, plus one new shared
+       helper (src/code_forge/diff.py is where the existing diff helpers
+       live) and its tests.
+  OUT: src/code_forge/verify.py. STEP C is correct -- G1 measured it.
+       Relaxing STEP C to a windowed content search would also unblock
+       commits and is the wrong fix: it would accept an excerpt whose
+       location is unknown, which is most of what the check is for.
+  OUT: receipt.py, and the branches defects/receipt-timestamp and
+       defects/verify-gate. Both carry fixes that are already done and
+       waiting; do not merge, rebase, or edit them.
+  OUT: the staged lock.py / tests/test_lock.py pair in MAIN's index.
+       Do not run git add, git stash, or git commit anywhere in the main
+       tree. Work only inside your own worktree. A previous session
+       staged its work into main and stashed that pair away; recovery
+       cost an hour.
+
+## EVIDENCE OBLIGATIONS
+
+  a. A test that FAILS before your change and PASSES after, injected at
+     the annotation itself. Delete your change, run it, paste the
+     failure, restore, run again.
+
+  b. THE MEASUREMENT THAT MATTERS. Before and after, run a real review
+     and measure how many excerpts land on the right line. The
+     before-number on my run was 14/17. Method, which you can copy:
+
+       env PYTHONPATH=$PWD/src python3 -m code_forge review --mode local \
+           --max-total-rounds 3 --backend gemini-omniroute
+
+     then for every excerpt in .code-forge/receipts/*.json, compare
+     content.split('\n')[0] against the real file at start_line. Report
+     exact/total both ways. An after-number that is not better than the
+     before-number means this did not work, and saying so is a valid
+     delivery.
+
+  c. The end-to-end proof: `code-forge verify` on those receipts. It
+     currently fails at STEP C. If it now passes, paste it. If it fails
+     somewhere new, paste that too -- moving the wall forward is real
+     progress and I want to know where it moved to.
+
+  d. Token cost from (c), measured on a real diff, not estimated.
+
+  e. Step 0 on changed files: py_compile, ruff, and
+       git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+     empty. Full suite with counts, excluding tests/test_cli_integration.py
+     (it makes live claude -p calls and stalls). Floor is 2978.
+
+## ENVIRONMENT NOTES THAT COST ME HOURS TODAY
+
+  - A fresh worktree has no .code-forge/gate.yaml (it is untracked). Copy
+    it from the main tree and run `code-forge trust`, or the review
+    silently falls back to user-level config.
+  - The installed `code-forge` binary runs MAIN's src, not your
+    worktree's. To exercise your own code use
+    `env PYTHONPATH=$PWD/src python3 -m code_forge ...`.
+  - `.code-forge/receipts/` has no per-run isolation. Delete
+    receipt-*.json and state.json before every measurement or you will
+    read a previous run's numbers.
+  - LOCAL mode stops at an interactive prompt when a finding survives.
+    Receipts are written before the prompt, so they are still usable.
+  - Do not wait on work with `pgrep -f PAT`: the pattern matches your own
+    shell's command line, so the loop never exits. Watch for the artifact
+    instead.
+
+## OUTPUT CONTRACT
+
+  1. Branch and new tip SHA, or the exact gate error if blocked.
+  2. Your answers to (a), (b) and (c) from THE ITEM, each argued.
+  3. The injection transcript.
+  4. Excerpt accuracy before and after, as exact/total.
+  5. What `code-forge verify` says now.
+  6. Token cost, measured.
+  7. Suite numbers with the exclusion stated.
+  8. Anything you did NOT do and why.
+
+Do NOT merge, push, or delete any worktree. Human-voiced commits, WHY not
+WHAT, no order IDs, Signed-off-by: Minxi Hou <houminxi@gmail.com>.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+If the after-number is no better, say so plainly and stop -- that result
+tells me the model's line numbers are not a counting problem and I need a
+different fix. Do not tune the prompt until a number improves; one honest
+measurement beats a tuned one.
+
+Two consecutive failed attempts on the same approach: stop, report both,
+move on.

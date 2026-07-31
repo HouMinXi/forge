@@ -1,0 +1,129 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: retrying mock-local (2/5, waiting 2.0s)...
+code-forge: retrying mock-local (2/5, waiting 2.2s)...
+code-forge: retrying mock-local (2/5, waiting 2.3s)...
+code-forge: retrying mock-local (3/5, waiting 4.0s)...
+code-forge: retrying mock-local (3/5, waiting 4.3s)...
+code-forge: retrying mock-local (3/5, waiting 4.1s)...
+code-forge: retrying mock-local (4/5, waiting 8.1s)...
+code-forge: retrying mock-local (4/5, waiting 8.3s)...
+code-forge: retrying mock-local (4/5, waiting 8.1s)...
+code-forge: retrying mock-local (5/5, waiting 16.5s)...
+code-forge: retrying mock-local (5/5, waiting 16.0s)...
+code-forge: retrying mock-local (5/5, waiting 16.5s)...
+code-forge: L1 pass 'qodo' failed: URLError from mock-local backend: [Errno 111] Connection refused
+code-forge: L1 pass 'expert' failed: URLError from mock-local backend: [Errno 111] Connection refused
+code-forge: L1 pass 'adversarial' failed: URLError from mock-local backend: [Errno 111] Connection refused
+code-forge: retrying mock-local (2/5, waiting 2.3s)...
+code-forge: retrying mock-local (3/5, waiting 4.4s)...
+code-forge: retrying mock-local (4/5, waiting 8.0s)...
+code-forge: retrying mock-local (5/5, waiting 16.5s)...
+Traceback (most recent call last):
+  File "/usr/lib64/python3.14/urllib/request.py", line 1321, in do_open
+    h.request(req.get_method(), req.selector, req.data, headers,
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              encode_chunked=req.has_header('Transfer-encoding'))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/http/client.py", line 1367, in request
+    self._send_request(method, url, body, headers, encode_chunked)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/http/client.py", line 1413, in _send_request
+    self.endheaders(body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/http/client.py", line 1362, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/http/client.py", line 1122, in _send_output
+    self.send(msg)
+    ~~~~~~~~~^^^^^
+  File "/usr/lib64/python3.14/http/client.py", line 1066, in send
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.14/http/client.py", line 1032, in connect
+    self.sock = self._create_connection(
+                ~~~~~~~~~~~~~~~~~~~~~~~^
+        (self.host,self.port), self.timeout, self.source_address)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/socket.py", line 874, in create_connection
+    raise exceptions[0]
+  File "/usr/lib64/python3.14/socket.py", line 859, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 1050, in _invoke_openai
+    with urllib.request.urlopen(req, timeout=timeout_s) as response:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 187, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 487, in open
+    response = self._open(req, data)
+  File "/usr/lib64/python3.14/urllib/request.py", line 504, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/usr/lib64/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/usr/lib64/python3.14/urllib/request.py", line 1350, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 1324, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 887, in _invoke_api
+    content, usage_data = _invoke_openai(
+                          ~~~~~~~~~~~~~~^
+        prompt, backend, api_key, timeout_s,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 1073, in _invoke_openai
+    raise LLMInvokeError(
+    ...<2 lines>...
+    ) from exc
+code_forge.llm_invoke.LLMInvokeError: URLError from mock-local backend: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/houminxi/.local/bin/code-forge", line 6, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 1441, in main
+    verdict = _run(args, env=os.environ, cwd=Path.cwd())
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 2667, in _run
+    verdict = _run_hold_loop(
+        mode=mode,
+    ...<17 lines>...
+        wall_t0=_wall_t0,
+    )
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 2767, in _run_hold_loop
+    verdict = sm.run()
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 263, in run
+    self._run_advisory_axes()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 1299, in _run_advisory_axes
+    findings = runner.run(diff_text, self.cwd)
+  File "/home/houminxi/code/forge/src/code_forge/runtime.py", line 326, in run
+    result = llm_invoke(prompt, backend=self._backend)
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 676, in llm_invoke
+    return _invoke_api(
+        prompt, backend, timeout_s, expected_keys=expected_keys,
+        max_attempts=max_attempts, initial_delay_s=initial_delay_s,
+    )
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 969, in _invoke_api
+    time.sleep(delay)
+    ~~~~~~~~~~^^^^^^^
+  File "/home/houminxi/code/forge/src/code_forge/lock.py", line 181, in _handler
+    prev(signum, frame)
+    ~~~~^^^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 624, in _handler
+    raise KeyboardInterrupt
+KeyboardInterrupt

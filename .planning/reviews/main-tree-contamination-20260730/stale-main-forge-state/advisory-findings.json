@@ -1,0 +1,123 @@
+[
+  {
+    "id": "graph-triage-1",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      107,
+      370
+    ],
+    "description": "run_verify (impact: 14 downstream) -- top dependents: /home/houminxi/code/forge/src/code_forge/cli.py::main, /home/houminxi/code/forge/tests/test_consecutive_clean.py::TestConsecutiveClean.test_all_clean_run_passes_verify, /home/houminxi/code/forge/tests/test_outlet_c.py::TestExcerptFlowIntegration.test_excerpts_in_receipts_pass_hardened_verify",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-2",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      37,
+      55
+    ],
+    "description": "parse_diff_files (impact: 11 downstream) -- top dependents: /home/houminxi/code/forge/src/code_forge/cli.py::main, /home/houminxi/code/forge/src/code_forge/factories.py::_provider, /home/houminxi/code/forge/src/code_forge/machine.py::StateMachine._execute_round",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-3",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      1,
+      388
+    ],
+    "description": "/home/houminxi/code/forge/src/code_forge/verify.py (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-4",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      30,
+      34
+    ],
+    "description": "VerifyResult (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-5",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      58,
+      61
+    ],
+    "description": "_load_receipts (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-6",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      64,
+      69
+    ],
+    "description": "_covered (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-7",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      72,
+      77
+    ],
+    "description": "_cycle_covered (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-8",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      80,
+      89
+    ],
+    "description": "_excerpt_covered (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-9",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      92,
+      97
+    ],
+    "description": "_cycle_excerpt_covered (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "graph-triage-10",
+    "axis": "GRAPH-TRIAGE",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      100,
+      104
+    ],
+    "description": "_jaccard (impact: 0 downstream)",
+    "attribution": "graph.db (degraded)"
+  },
+  {
+    "id": "daemon-state-heuristic",
+    "axis": "DAEMON-STATE",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis",
+    "attribution": "daemon-state/heuristic"
+  }
+]

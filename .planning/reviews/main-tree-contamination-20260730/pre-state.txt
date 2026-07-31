@@ -1,0 +1,32 @@
+PRE-STATE captured before cleanup, 2026-07-30
+
+== main tree status ==
+M  src/code_forge/verify.py
+M  tests/test_verify.py
+?? .coverage
+?? .mcp.json
+
+== main staged numstat ==
+34	24	src/code_forge/verify.py
+289	1	tests/test_verify.py
+
+== blob identities ==
+src/code_forge/verify.py
+  HEAD          1571e63611774ed97c9f8201f9a46852ade44086
+  main INDEX    2f659a880cf2daadcb0d80baedb8ba2d36c06e2b
+  fvg  INDEX    b5244b6e1acf8eea02fd6bf89857cf2299eb9569
+  fvg  WORKTREE 2f659a880cf2daadcb0d80baedb8ba2d36c06e2b
+tests/test_verify.py
+  HEAD          3ea3d9411da204108c3247c07ffe44783fdffd6c
+  main INDEX    29f7114875f34e3ae2a6e155af7d7097b9864aff
+  fvg  INDEX    8c4e97dbe810e60d2a2e27f9584706b273256cd3
+  fvg  WORKTREE 29f7114875f34e3ae2a6e155af7d7097b9864aff
+
+== lost lock.py change, recoverable from ==
+  dangling stash commit b706554 (2026-07-30 11:21:27)
+    30	2	src/code_forge/lock.py
+    30	0	tests/test_lock.py
+  and .planning/reviews/lock-busy-message/staged-lock-message.patch
+
+== main index mtime ==
+2026-07-30 11:37:20.070777797 -0400

@@ -1,0 +1,33 @@
+tree: /home/houminxi/code/forge/src/code_forge/verify.py
+md5 : f1b31d4a5dc79bee9fd27362d4aea654
+
+control: all three cycles clean
+  fixture diagnostics (must satisfy check 6 >=60%% and check 7 <=0.8):
+    cycle 1 coverage  70.8%  findings=0
+    cycle 2 coverage  70.8%  findings=0
+    cycle 3 coverage  70.8%  findings=0
+    jaccard c1-c2 = 0.55
+    jaccard c1-c3 = 0.55
+    jaccard c2-c3 = 0.55
+  VERDICT: PASS
+
+cycles 2 and 3 carry live findings
+  fixture diagnostics (must satisfy check 6 >=60%% and check 7 <=0.8):
+    cycle 1 coverage  70.8%  findings=0
+    cycle 2 coverage  70.8%  findings=3
+    cycle 3 coverage  70.8%  findings=3
+    jaccard c1-c2 = 0.55
+    jaccard c1-c3 = 0.55
+    jaccard c2-c3 = 0.55
+  VERDICT: PASS
+
+all three counted cycles dirty
+  fixture diagnostics (must satisfy check 6 >=60%% and check 7 <=0.8):
+    cycle 1 coverage  70.8%  findings=3
+    cycle 2 coverage  70.8%  findings=3
+    cycle 3 coverage  70.8%  findings=3
+    jaccard c1-c2 = 0.55
+    jaccard c1-c3 = 0.55
+    jaccard c2-c3 = 0.55
+  VERDICT: PASS
+

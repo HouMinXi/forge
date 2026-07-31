@@ -1,0 +1,172 @@
+================================================================
+DISPATCH -- `ledger mark` cannot record WHERE a bug escaped
+From: forge PM, 2026-07-30. To: executor sub-session.
+One item in src/code_forge/cli.py. Measured today.
+================================================================
+
+## WHY THIS EXISTS
+
+The ledger's whole purpose is to record which findings were real and
+which the review MISSED. An ESCAPED row is the only record forge will
+ever have of a bug its own pipeline failed to catch, and it is not
+reconstructible later -- the review that missed it produced no finding,
+no fingerprint, no anchor. If it is not captured at mark time, it is
+gone.
+
+Today a real ESCAPED row was written end-to-end for the first time. This
+is what came back out (`code-forge ledger list`, verbatim):
+
+    ts                    fingerprint         terminal_state  file:line
+    2026-07-30T12:53:52Z  exp1-escaped-0001   ESCAPED         :0
+
+`file:line` is empty. The row says a bug escaped and says nothing about
+where. That is the defect.
+
+## GROUND TRUTH -- measured 2026-07-30, re-verify anything you rely on
+
+  U1. `ledger mark` accepts two positionals and four options
+      (cli.py ~690-716): fingerprint, terminal_state, --evidence,
+      --new, --base-sha, --head-sha. There is no way to pass a file,
+      a line, or a claim.
+
+  U2. The row is built with three hardcoded placeholders,
+      cli.py:1315-1318:
+
+        file="",
+        line=0,
+        axis_claim="manual",
+        pass_provenance="manual",
+
+  U3. ledger.py performs NO field validation. append_row writes
+      whatever it is handed; there is no raise, no assert, no
+      emptiness check anywhere in the module.
+
+  U4. The codebase documents an invariant that this path violates.
+      machine.py:1170, describing the AUTOMATIC writer:
+
+        non-git runs (where SHAs are unavailable) yield 0 to satisfy
+        the "no placeholder/empty values" invariant.
+
+      So the automatic writer would rather write nothing than write a
+      placeholder, while the manual writer writes three of them. Two
+      writers, one documented invariant, opposite behaviour. Whether
+      that is a second defect or an intended asymmetry is part of what
+      you decide below.
+
+## THE ITEM
+
+Let `ledger mark` record where the escape happened: a file, a line, and
+the claim (what the missed bug actually was).
+
+DECIDE AND ARGUE, do not assume:
+
+  (a) Required or optional? Making them required is the only way to
+      guarantee no future row is placeholder-only, but it breaks the
+      existing two-positional CLI contract and any script using it.
+      Making them optional preserves compatibility and leaves the hole
+      open when they are omitted. A third option exists -- required for
+      ESCAPED/DUPLICATE (the `--new` states, where there is no prior
+      run to inherit from) and optional elsewhere. Argue whichever you
+      pick; I am not pinning it.
+
+  (b) What does `axis_claim` mean for a manual row? For automatic rows
+      it names the review axis that raised the finding. For an escape
+      there was no axis -- that is the point. Decide whether the field
+      carries the human's description of the missed bug, the axis that
+      SHOULD have caught it, or something else, and say why. This
+      choice determines whether the data is useful in a year.
+
+  (c) U4's asymmetry: does your change bring the manual path into line
+      with the documented invariant, or do you argue the asymmetry is
+      correct and the docstring should say so? Either is acceptable
+      with an argument. Silently leaving them contradictory is not.
+
+Validation is yours to design, but a line number that is not a positive
+integer, and a file path that escapes the repo, are the obvious ones.
+
+## SCOPE FENCE
+
+  IN:  src/code_forge/cli.py (the ledger mark parser and handler) and
+       its tests. src/code_forge/ledger.py ONLY if your answer to (c)
+       needs it.
+  OUT: The ledger's storage LOCATION. `_ledger_path` (ledger.py:59)
+       resolves to <cwd>/.code-forge/ledger.jsonl and that is a known,
+       separately-owned problem -- a row written in a worktree is
+       destroyed when the worktree is removed, measured today at
+       .planning/reviews/ledger-persistence/. Do not fix it here. Do
+       not move the file. Do not add a path override.
+  OUT: The automatic writer (machine.py `_write_ledger_rows`) and the
+       mode wiring around it. Separate, larger question.
+  OUT: src/code_forge/verify.py, src/code_forge/install_hooks.py --
+       two other orders own those files.
+  OUT: The staged, uncommitted change in main's index (lock.py,
+       tests/test_lock.py), documented at
+       .planning/reviews/lock-busy-message/STATE.md. Leave the index
+       alone.
+
+## THE TRAP IN THIS ORDER
+
+The commit gate in this repo is currently unreliable and two other
+orders are in flight to repair it. A 60-line chore change has been
+stuck at it since this morning: `git commit` is refused by the
+attestation gate, `--no-verify` is blocked by a separate guard that is
+right to block it, and `code-forge review` refuses to run in a main
+tree.
+
+Work in a linked worktree. If you cannot get a commit through, STOP and
+report the exact command and error. A report that the gate is
+unpassable is a real delivery. Editing the gate to let your own commit
+through is not, and it is out of scope besides.
+
+## EVIDENCE OBLIGATIONS
+
+  a. A test that FAILS before your change and PASSES after. Prove it:
+     delete your change, run the test, paste the failure, restore, run
+     again. A test written after the fix and never seen red is not
+     evidence.
+  b. A REAL end-to-end run, not a unit test alone: in a scratch repo,
+     mark an escape with your new options, then `ledger list` it and
+     paste what comes back. The row must show the file and line. There
+     is a worked scratch-repo harness at
+     .planning/reviews/ledger-persistence/exp1_worktree_vanish.sh --
+     read it for the setup, and note that its first version invented
+     CLI flags that did not exist and still printed a confident
+     verdict. Do not repeat that: check exit codes, and never report a
+     result from a command that failed.
+  c. Backwards compatibility, demonstrated either way: run the OLD
+     two-positional form (`ledger mark <fp> ESCAPED --new`) after your
+     change and show what happens. If you made the new options
+     required, that command now fails -- show the error and argue the
+     break is acceptable. If optional, show it still works.
+  d. Full suite with counts, measured before and after your change.
+     tests/test_cli_integration.py makes live `claude -p` calls and
+     will stall the run -- exclude it, say that you excluded it, and
+     report its 37 tests separately or not at all.
+  e. Step 0 on changed files: py_compile, ruff, and
+       git diff HEAD --diff-filter=AM -U0 | grep '^+' | grep -P '[^\x00-\x7F]'
+     empty. Note that tests/test_lock.py carries 2 pre-existing ruff
+     F841 findings at lines 571 and 595 that are NOT yours.
+
+## OUTPUT CONTRACT
+
+  1. Branch and new tip SHA.
+  2. Your answer to (a), (b) and (c), each with its argument.
+  3. The injection transcript from evidence (a).
+  4. The real end-to-end transcript from (b), showing a row that
+     carries its file and line.
+  5. The compatibility demonstration from (c).
+  6. Full suite numbers, measured, with the exclusion stated.
+  7. Anything you did NOT do and why.
+
+Do NOT merge, push, or delete the worktree. Commit messages: WHY not
+WHAT, no order IDs, Signed-off-by on each.
+
+## HONEST FAILURE IS PRE-AUTHORIZED
+
+If you conclude the right answer to (a) is "required, and the CLI break
+is worth it", say so plainly -- I would rather take a break now, while
+the ledger has zero rows in it, than carry a placeholder-tolerant
+contract forever.
+
+Two consecutive failed attempts on the same approach: stop, report
+both, move on.

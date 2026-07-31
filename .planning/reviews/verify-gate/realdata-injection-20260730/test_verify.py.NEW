@@ -1,0 +1,1000 @@
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+from code_forge.verify import run_verify, parse_diff_files, _validate_receipt_schema
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+_SKILLS = ["qodo-review", "code-review-expert", "adversarial-qe"]
+
+
+def _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):
+    return {
+        "cycle": cycle, "pass": pass_n,
+        "skill": _SKILLS[(pass_n - 1) % len(_SKILLS)],
+        "diff_sha256": diff_sha,
+        "timestamp": "2026-05-28T10:%02d:00Z" % (cycle * 3 + pass_n),
+        "findings_count": 0, "findings": [],
+        "anchors": [{"file": "src/f.py", "line": 1, "text": "def f():"}],
+        "code_excerpts": [
+            {"file": "src/f.py", "start_line": 1, "end_line": 3,
+             "content": "def f():\n    return 1\n",
+             "rationale": "checked"}
+        ],
+        "covered_line_ranges": [
+            {"file": "src/f.py", "start": covered_start, "end": covered_end}
+        ],
+    }
+
+
+def _write_all(rd, diff_sha, vary=True):
+    for c in range(1, 4):
+        off = (c - 1) * 10 if vary else 0
+        for p in range(1, 4):
+            name = "receipt-c%dp%d.json" % (c, p)
+            (rd / name).write_text(json.dumps(
+                _receipt(c, p, diff_sha, 1 + off, 45 + off)
+            ))
+
+
+def _nine_with_one_field_set(tmp_path, field, value):
+    """Write 9 valid receipts, then set one top-level field on c2p1 to
+    value -- which may be any JSON-serializable type, not just the
+    schema-correct one. Proves a schema violation is reported by name,
+    not crashed past and not silently accepted."""
+    rd = tmp_path / ".code-forge" / "receipts"
+    rd.mkdir(parents=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+    sha = _sha("diff")
+    _write_all(rd, sha)
+    bad = _receipt(2, 1, sha)
+    bad[field] = value
+    (rd / "receipt-c2p1.json").write_text(json.dumps(bad))
+    return sha
+
+
+class TestVerifyChecks:
+    def test_pass_complete(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed
+
+    def test_fail_missing(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha("diff")
+        for c in range(1, 4):
+            for p in range(1, 3):
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(_receipt(c, p, sha)))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+
+    def test_fail_stale_hash(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        _write_all(rd, "old-hash")
+        r = run_verify(tmp_path, "new-hash", {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+
+    def test_fail_high_jaccard(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha("diff")
+        _write_all(rd, sha, vary=False)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+
+    def test_fail_low_coverage(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha("diff")
+        for c in range(1, 4):
+            for p in range(1, 4):
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(
+                    _receipt(c, p, sha, covered_start=1, covered_end=5)
+                ))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 201))})
+        assert not r.passed
+
+
+class TestCorruptReceipt:
+    """A receipt that cannot be parsed must fail verify, not crash it.
+
+    The real incident: one receipt held a raw newline inside a JSON
+    string value, so every code commit in the repo aborted on an
+    unhandled JSONDecodeError while the hook reported "receipt
+    verification failed" -- pointing the operator at the review
+    instead of at the file.
+    """
+
+    def _nine_with_one_broken(self, tmp_path, broken_text):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        (rd / "receipt-c2p1.json").write_text(broken_text, encoding="utf-8")
+        return sha
+
+    def test_raw_control_char_reports_the_file(self, tmp_path):
+        # Verbatim shape of the incident: unescaped newline in a value.
+        broken = '{\n  "cycle": 2,\n  "pass": 1,\n  "skill": "qodo-review\ncode-review-expert"\n}\n'
+        sha = self._nine_with_one_broken(tmp_path, broken)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_corrupt_is_not_reported_as_missing(self, tmp_path):
+        # Guards the tempting wrong fix: skipping a bad file would leave
+        # 8 receipts and blame "missing receipts", hiding the corruption.
+        sha = self._nine_with_one_broken(tmp_path, "{ not json at all")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "missing receipts" not in r.reason
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_truncated_json_reports_the_file(self, tmp_path):
+        sha = self._nine_with_one_broken(tmp_path, '{"cycle": 2, "pass":')
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_undecodable_bytes_report_the_file(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        (rd / "receipt-c2p1.json").write_bytes(b"\xff\xfe\x00binary")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_deeply_nested_json_reports_the_file(self, tmp_path):
+        # json.loads raises RecursionError here, a RuntimeError that no
+        # ValueError catch covers. Without naming it the guard leaks the
+        # very crash it exists to prevent.
+        deep = "[" * 100000 + "]" * 100000
+        sha = self._nine_with_one_broken(tmp_path, deep)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_oversized_int_reports_the_file(self, tmp_path):
+        # Past sys.get_int_max_str_digits() json.loads raises a plain
+        # ValueError, not a JSONDecodeError, so catching only the named
+        # subclasses let a single receipt abort verify with a traceback.
+        big = '{"cycle": 2, "pass": 1, "findings_count": ' + "9" * 5000 + "}"
+        sha = self._nine_with_one_broken(tmp_path, big)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    @pytest.mark.parametrize("body", ["[1, 2, 3]", "42", '"a string"', "null", "true"])
+    def test_non_object_json_reports_the_file(self, tmp_path, body):
+        # These parse cleanly, so no exception guard sees them. Every check
+        # downstream then calls .get() on the result and dies with an
+        # AttributeError pointing into verify.py instead of at the file.
+        sha = self._nine_with_one_broken(tmp_path, body)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_unreadable_entry_reports_the_file(self, tmp_path):
+        # glob returns directories too, and read_text on one raises
+        # IsADirectoryError -- an OSError, outside the ValueError branch.
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        (rd / "receipt-c2p1.json").unlink()
+        (rd / "receipt-c2p1.json").mkdir()
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "receipt-c2p1.json" in r.reason
+
+    def test_intact_receipts_still_pass(self, tmp_path):
+        # The guard must not reject a healthy set.
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed
+
+
+class TestReceiptSchema:
+    """A receipt with a field of the wrong type must fail verify by name,
+    not crash it and not silently pass. Schema validation is the single
+    gate every one of the 7 checks in run_verify trusts, instead of each
+    check carrying its own copy of the same defensive guard.
+
+    Two of these are regression guards for mistakes made while building
+    this fix: an early draft replaced a non-list anchors field with []
+    instead of reporting it (turning corrupt data into a false pass), and
+    a later draft derived the schema from the writer rather than from the
+    receipts on disk, so it rejected every real receipt whose
+    covered_line_ranges used the string shape.
+    """
+
+    @pytest.mark.parametrize("field,value,expected", [
+        ("cycle", [2], "cycle must be an integer"),
+        ("cycle", True, "cycle must be an integer"),
+        ("pass", "1", "pass must be an integer"),
+        ("timestamp", None, "timestamp must be a string"),
+        ("timestamp", 123, "timestamp must be a string"),
+        ("diff_sha256", 12345, "diff_sha256 must be a string"),
+        ("findings_count", "0", "findings_count must be an integer"),
+        ("findings", "not a list", "findings must be a list of objects"),
+        ("findings", [1, 2], "findings must be a list of objects"),
+        ("anchors", "not a list", "anchors must be a list of objects"),
+        ("anchors", [1], "anchors must be a list of objects"),
+        ("code_excerpts", "not a list", "code_excerpts must be a list of objects"),
+        ("code_excerpts", [1, 2, 3], "code_excerpts must be a list of objects"),
+    ])
+    def test_malformed_top_level_field_reports_the_file(
+        self, tmp_path, field, value, expected
+    ):
+        sha = _nine_with_one_field_set(tmp_path, field, value)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert expected in r.reason
+
+    @pytest.mark.parametrize("list_field,item,expected", [
+        ("code_excerpts",
+         {"file": 5, "start_line": 1, "end_line": 1, "content": "x"},
+         "code_excerpts.file must be a string"),
+        ("code_excerpts",
+         {"file": "x.py", "start_line": "1", "end_line": 1, "content": "x"},
+         "code_excerpts.start_line must be an integer"),
+        ("code_excerpts",
+         {"file": "x.py", "start_line": 1, "end_line": None, "content": "x"},
+         "code_excerpts.end_line must be an integer"),
+        ("code_excerpts",
+         {"file": "x.py", "start_line": 1, "end_line": 1, "content": 5},
+         "code_excerpts.content must be a string"),
+    ])
+    def test_malformed_nested_field_reports_the_file(
+        self, tmp_path, list_field, item, expected
+    ):
+        sha = _nine_with_one_field_set(tmp_path, list_field, [item])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert expected in r.reason
+
+    def test_malformed_anchors_no_longer_silently_passes(self, tmp_path):
+        sha = _nine_with_one_field_set(tmp_path, "anchors", "not a list")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        # The regression this guards was a silent PASS, so the inequality
+        # below is the point. Assert the positive form too: != "all 7 checks
+        # passed" alone would also be satisfied by an unrelated failure.
+        assert r.reason != "all 7 checks passed"
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert "anchors must be a list of objects" in r.reason
+
+    @pytest.mark.parametrize("field", [
+        "cycle", "pass", "findings_count", "diff_sha256", "timestamp",
+        "findings", "anchors", "code_excerpts",
+    ])
+    def test_absent_top_level_field_reports_the_file(self, tmp_path, field):
+        """A field that is missing entirely, not merely the wrong type.
+        obj.get() returns None for both, but only the wrong-type case was
+        covered -- absence deserves its own case so a future .get(field, X)
+        default cannot quietly reintroduce the gap.
+        """
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        bad = _receipt(2, 1, sha)
+        del bad[field]
+        (rd / "receipt-c2p1.json").write_text(json.dumps(bad))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "receipt-c2p1.json" in r.reason
+        assert field in r.reason
+
+    def test_absent_nested_field_reports_the_file(self, tmp_path):
+        """Same, one level down: a code_excerpts item missing a subfield."""
+        sha = _nine_with_one_field_set(
+            tmp_path, "code_excerpts",
+            [{"start_line": 1, "end_line": 1, "content": "x"}],
+        )
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert "code_excerpts.file must be a string" in r.reason
+
+    @pytest.mark.parametrize("ranges", [
+        [{"file": "src/code_forge/llm_invoke.py", "start": 143, "end": 151}],
+        ["SKILL.md:1-1400"],
+        [],
+    ])
+    def test_real_covered_line_ranges_shapes_are_accepted(self, tmp_path, ranges):
+        """Receipts on disk carry covered_line_ranges in both a dict shape and
+        a "path:start-end" string shape. An earlier draft of the schema
+        asserted the dict shape and rejected 11 of the 14 real receipts in
+        this repo -- turning every commit into a corrupt-receipt failure, the
+        same outage this fix exists to prevent, from the other direction.
+        Nothing on the production path reads the field, so the schema must
+        accept whatever is in it. Asserted against the gate itself: driving
+        this through run_verify without diff_text would take the legacy
+        branch into _covered(), whose crash on the string shape predates
+        this change and is left alone here.
+        """
+        receipt = _receipt(2, 1, "abc")
+        receipt["covered_line_ranges"] = ranges
+        _validate_receipt_schema(receipt, "receipt-c2p1.json")
+
+    def test_intact_receipts_still_pass_schema(self, tmp_path):
+        """The schema gate must not reject a healthy set."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed
+
+
+class TestReceiptVerifyE2E:
+    """End-to-end: receipt writer output must pass verify checks."""
+
+    def test_receipt_writer_output_passes_verify(self, tmp_path):
+        import datetime
+        from unittest.mock import patch
+        from code_forge.receipt import write_receipts
+        from code_forge.disposition import Disposition
+        from code_forge.state import StateFinding
+
+        (tmp_path / "src").mkdir(parents=True)
+        lines = ["line%d\n" % i for i in range(1, 81)]
+        (tmp_path / "src" / "foo.py").write_text("".join(lines))
+        diff_sha = _sha("diff")
+        diff_files = {"src/foo.py": list(range(1, 81))}
+
+        base = datetime.datetime(2026, 5, 28, 10, 0, 0,
+                                 tzinfo=datetime.timezone.utc)
+        cycle_locs = [(10, 30, 50), (20, 40, 60), (30, 50, 70)]
+        passes = ["qodo", "expert", "adversarial"]
+        for round_idx in range(3):
+            fake_now = base + datetime.timedelta(minutes=round_idx * 5)
+            locs = cycle_locs[round_idx]
+            findings = []
+            for pi, pn in enumerate(passes):
+                ln = locs[pi]
+                findings.append(StateFinding(
+                    id="l1-%s-fp%d%d" % (pn, round_idx, pi),
+                    fingerprint="fp%d%d" % (round_idx, pi), source="L1",
+                    disposition=Disposition.UNCERTAIN,
+                    file="src/foo.py",
+                    line_range=[ln, ln],
+                    description="[%s] test finding r%dp%d" % (pn, round_idx, pi),
+                ))
+            with patch("code_forge.receipt.datetime") as mock_dt:
+                mock_dt.datetime.now.return_value = fake_now
+                mock_dt.timedelta = datetime.timedelta
+                mock_dt.timezone = datetime.timezone
+                write_receipts(
+                    receipts_dir=tmp_path / ".code-forge" / "receipts",
+                    round_index=round_idx,
+                    l1_findings=findings,
+                    diff_sha256=diff_sha,
+                    source_files=[Path("src/foo.py")],
+                    cwd=tmp_path,
+                    diff_files=diff_files,
+                )
+
+        r = run_verify(tmp_path, diff_sha, diff_files)
+        assert r.passed, "E2E failed: %s" % r.reason
+
+
+# ---------------------------------------------------------------------------
+# Hardened-verify fixtures
+# ---------------------------------------------------------------------------
+
+# Valid 3-hunk unified diff; parseable by unidiff.
+# foo.py hunks: lines 1-3 (y=2 added) and 6-8 (b=2 added).
+# bar.py hunk: lines 1-3 (q=2 added).
+# parse_diff_files returns foo.py:[1..3,6..8], bar.py:[1..3] = 9 lines total.
+_HARDEN_DIFF = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " x = 1\n"
+    "+y = 2\n"
+    " z = 3\n"
+    "@@ -5,2 +6,3 @@\n"
+    " a = 1\n"
+    "+b = 2\n"
+    " c = 3\n"
+    "diff --git a/bar.py b/bar.py\n"
+    "--- a/bar.py\n"
+    "+++ b/bar.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " p = 1\n"
+    "+q = 2\n"
+    " r = 3\n"
+)
+
+# Excerpts that witness all 3 hunks and match post-image content exactly.
+_EXCERPTS_OK = [
+    {"file": "foo.py", "start_line": 1, "end_line": 3,
+     "content": "x = 1\ny = 2\nz = 3"},
+    {"file": "foo.py", "start_line": 6, "end_line": 8,
+     "content": "a = 1\nb = 2\nc = 3"},
+    {"file": "bar.py", "start_line": 1, "end_line": 3,
+     "content": "p = 1\nq = 2\nr = 3"},
+]
+
+
+def _hreceipt(cycle, pass_n, diff_sha, excerpts=None, findings=None):
+    """Build one receipt for hardened-verify tests."""
+    return {
+        "cycle": cycle,
+        "pass": pass_n,
+        "skill": ["qodo-review", "code-review-expert", "adversarial-qe"][pass_n - 1],
+        "diff_sha256": diff_sha,
+        # Monotonic: cycle*3+pass_n gives 4..12 across (c,p) in file-sort order.
+        "timestamp": "2026-06-07T10:%02d:00Z" % (cycle * 3 + pass_n),
+        "findings_count": len(findings or []),
+        "findings": findings if findings is not None else [],
+        "anchors": [],
+        "code_excerpts": excerpts if excerpts is not None else list(_EXCERPTS_OK),
+        "covered_line_ranges": [],
+    }
+
+
+def _write_hardened(rd, diff_sha, excerpts=None, findings=None):
+    """Write 9 receipts (3 cycles x 3 passes) for hardened-verify tests."""
+    for c in range(1, 4):
+        for p in range(1, 4):
+            (rd / ("receipt-c%dp%d.json" % (c, p))).write_text(
+                json.dumps(_hreceipt(c, p, diff_sha,
+                                     excerpts=excerpts, findings=findings))
+            )
+
+
+class TestHardenedVerify:
+    """Tests that run_verify with diff_text=DIFF enters the hardened branch.
+
+    Every assertion targets a reason string that ONLY the hardened branch
+    produces, so a green assertion proves hardened execution (not legacy).
+    """
+
+    def _rd(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        return rd
+
+    def test_witnessed_pass(self, tmp_path):
+        """Hardened path: all hunks witnessed, correct content, >= 60% coverage."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha)          # _EXCERPTS_OK, findings=[]
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert r.passed, r.reason
+
+    def test_unwitnessed_hunk_fail(self, tmp_path):
+        """STEP A: bar.py hunk has no overlapping excerpt -> unwitnessed hunk."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        # Omit bar.py excerpt entirely -- STEP A must reject.
+        partial = [
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1\ny = 2\nz = 3"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1\nb = 2\nc = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=partial)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "unwitnessed hunk" in r.reason
+
+    def test_diff_marker_content_fail(self, tmp_path):
+        """STEP C (Q2 guard): '+y = 2' in content mismatches post-image 'y = 2'."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        dirty = [
+            # Leading '+' makes line 2 mismatch post-image.
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1\n+y = 2\nz = 3"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1\nb = 2\nc = 3"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1\nq = 2\nr = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=dirty)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "excerpt content mismatch at" in r.reason
+
+    def test_low_coverage_fail(self, tmp_path):
+        """Check 6: per-cycle coverage 3/9 = 33% < 60% -> fail."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        # One excerpt per hunk at context-only lines (1,6,1) -- witnesses all
+        # hunks for STEP A but covers only lines NOT in parse_diff_files output
+        # if parse_diff_files returns added lines only. Even if it returns full
+        # hunk ranges (1-3, 6-8, 1-3), 3 single-line excerpts = 3/9 = 33% < 60%.
+        sparse = [
+            {"file": "foo.py", "start_line": 3, "end_line": 3,
+             "content": "z = 3"},
+            {"file": "foo.py", "start_line": 6, "end_line": 6,
+             "content": "a = 1"},
+            {"file": "bar.py", "start_line": 3, "end_line": 3,
+             "content": "r = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=sparse)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "< 60%" in r.reason
+
+    def test_wide_range_with_thin_content_earns_no_extra_coverage(self, tmp_path):
+        """Check 6 credits only lines an excerpt actually shows.
+
+        Each excerpt below spans a whole hunk but pastes a single line. The
+        content that is present matches the post-image, so the excerpt check
+        passes -- it only compares lines the content actually has. Crediting
+        the declared span would score 9/9 and pass the floor on three lines
+        of evidence; crediting what is shown scores 3/9 and fails.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        inflated = [
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1"},
+        ]
+        _write_hardened(rd, sha, excerpts=inflated)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "< 60%" in r.reason
+
+    def test_repeated_excerpts_still_read_as_rubber_stamp(self, tmp_path):
+        """Check 7 shares _excerpt_covered with check 6.
+
+        Capping credit at the shown lines shrinks what check 7 compares, so
+        pin the case it exists to catch: cycles that paste the same excerpts
+        still produce identical coverage sets and still trip the overlap
+        ceiling. Findings are present because check 7 skips pairs where both
+        cycles came back clean.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "Jaccard" in r.reason
+
+    def test_missing_field_fail(self, tmp_path):
+        """Excerpt with start_line missing is now caught by schema
+        validation at load time, before any of the 7 checks run -- not by
+        STEP 0 inside check 5. STEP 0 stays in place as defense in depth
+        but can no longer be reached by this particular input."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        bad = [
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1\ny = 2\nz = 3"},
+            # Missing start_line -- rejected by schema validation.
+            {"file": "foo.py", "end_line": 8, "content": "a = 1\nb = 2\nc = 3"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1\nq = 2\nr = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=bad)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert r.reason.startswith("corrupt receipt: ")
+        assert "code_excerpts.start_line must be an integer" in r.reason
+
+
+class TestCrossRepoGuard:
+    """cross_repo.py must route through _load_receipts, not bare json.loads.
+    A receipt with a raw unescaped newline inside a JSON string must report
+    the filename, not crash with a traceback."""
+
+    def test_malformed_receipt_reports_filename(self, tmp_path):
+        from code_forge.verify import _load_receipts
+        rd = tmp_path / "receipts"
+        rd.mkdir()
+        # Real corruption: raw newline inside a JSON string value
+        bad = '{"cycle": 1, "pass": 1, "diff_sha256": "abc", ' \
+              '"timestamp": "2026-01-01T00:00:00Z", ' \
+              '"findings_count": 0, "findings": [], "anchors": [], ' \
+              '"code_excerpts": [], "covered_line_ranges": []}\n' \
+              '{"cycle": 2, "pass": 1, "diff_sha256": "abc", ' \
+              '"timestamp": "2026-01-01T00:00:01Z", ' \
+              '"findings_count": 0, "findings": [], "anchors": [], ' \
+              '"code_excerpts": [], "covered_line_ranges": []}'
+        (rd / "receipt-c2p1.json").write_text(bad)
+        from code_forge.errors import CorruptedReceiptError
+        with pytest.raises(CorruptedReceiptError, match="receipt-c2p1.json"):
+            _load_receipts(rd)
+
+
+class TestInvertedExcerptRange:
+    """_validate_receipt_schema must reject start_line > end_line."""
+
+    def test_inverted_range_rejected(self):
+        receipt = _receipt(1, 1, "abc")
+        receipt["code_excerpts"] = [
+            {"file": "src/f.py", "start_line": 10, "end_line": 3,
+             "content": "code", "rationale": "r"}
+        ]
+        from code_forge.errors import CorruptedReceiptError
+        with pytest.raises(CorruptedReceiptError, match="start_line 10 > end_line 3"):
+            _validate_receipt_schema(receipt, "test.json")
+
+    def test_equal_range_accepted(self):
+        receipt = _receipt(1, 1, "abc")
+        receipt["code_excerpts"] = [
+            {"file": "src/f.py", "start_line": 5, "end_line": 5,
+             "content": "line", "rationale": "r"}
+        ]
+        _validate_receipt_schema(receipt, "test.json")
+
+    def test_normal_range_accepted(self):
+        receipt = _receipt(1, 1, "abc")
+        _validate_receipt_schema(receipt, "test.json")
+
+
+def _write_cycles(rd, diff_sha, cycles):
+    """Write receipts for arbitrary cycle numbers (list of ints), 3 passes each.
+    Total receipts = len(cycles) * 3. For <3 cycles this is <9, which
+    triggers the 'missing receipts' check before the cycle check.
+    Coverage range spans the full diff (lines 1-50) to avoid triggering
+    the 60% floor on any cycle."""
+    for c in cycles:
+        for p in range(1, 4):
+            name = "receipt-c%dp%d.json" % (c, p)
+            (rd / name).write_text(json.dumps(
+                _receipt(c, p, diff_sha, 1, 50)
+            ))
+
+
+class TestLastThreeConsecutiveCycles:
+    """ITEM A: verify the LAST 3 consecutive cycles, whatever their numbers."""
+
+    def test_cycles_2_3_4_pass(self, tmp_path):
+        """Cycles 2-4 complete -> PASS (last 3 consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [2, 3, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert r.passed, f"last 3 consecutive should pass, got: {r.reason}"
+
+    def test_cycles_1_2_4_fail(self, tmp_path):
+        """Cycles 1,2,4 -> FAIL (last 3 not consecutive: 2,3,4 missing 3)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 2, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"cycles 1,2,4 should fail, got: {r.reason}"
+        assert "not consecutive" in r.reason
+
+    def test_cycles_1_2_fail(self, tmp_path):
+        """Only cycles 1-2 -> FAIL (fewer than 3 cycles).
+        Need 9+ receipts to pass the length check, but only 2 unique cycles."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        # Write 5 passes per cycle (cycle 1 uses passes 1-5, cycle 2 uses passes 1-5)
+        # to get 10 receipts (>9) but only 2 unique cycles
+        skills = ["qodo-review", "code-review-expert", "adversarial-qe",
+                  "qodo-review", "code-review-expert"]
+        for c in [1, 2]:
+            for p in range(1, 6):
+                name = "receipt-c%dp%d.json" % (c, p)
+                receipt = _receipt(c, p, sha, 1, 50)
+                receipt["skill"] = skills[p - 1]
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"cycles 1,2 should fail, got: {r.reason}"
+        assert "fewer than 3 cycles" in r.reason
+
+    def test_cycles_5_6_7_pass(self, tmp_path):
+        """Cycles 5-7 -> PASS (last 3 consecutive, high numbers)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [5, 6, 7])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed, f"cycles 5-7 should pass, got: {r.reason}"
+
+    def test_cycles_1_2_3_4_pass(self, tmp_path):
+        """Cycles 1-4 -> PASS (last 3 are 2,3,4, consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 2, 3, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert r.passed
+
+    def test_cycles_1_3_4_fail(self, tmp_path):
+        """Cycles 1,3,4 -> FAIL (last 3 not consecutive: 2 missing)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 3, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"cycles 1,3,4 should fail, got: {r.reason}"
+        assert "not consecutive" in r.reason
+
+    def test_cycles_2_3_4_missing_pass_fail(self, tmp_path):
+        """Cycles 2-4 consecutive but cycle 4 missing pass 3 -> FAIL."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        # Write cycles 2-3 complete, cycle 4 only passes 1-2 (8 receipts total,
+        # but we need 9+ to pass the length check; add cycle 1 with 3 passes)
+        for c in [1, 2, 3]:
+            for p in range(1, 4):
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(_receipt(c, p, sha, 1, 50)))
+        for p in range(1, 3):  # only passes 1-2 for cycle 4
+            name = "receipt-c4p%d.json" % (p,)
+            (rd / name).write_text(json.dumps(_receipt(4, p, sha, 1, 50)))
+        # 11 receipts total, last 3 cycles are 2,3,4 but 4 is missing pass 3
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed, f"missing pass should fail, got: {r.reason}"
+        assert "missing cycle 4/pass 3" in r.reason
+
+
+class TestOutOfHunkExcerpts:
+    """ITEM B: out-of-hunk excerpts allowed when STEP A coverage satisfied."""
+
+    def test_u3_receipt_set_passes(self, tmp_path):
+        """1 excerpt in hunk + 1 stray, full hunk coverage -> PASS."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        # Correct unidiff format
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        # 3 cycles, 3 passes each, excerpt in hunk + 1 stray (lines 10-12, beyond diff)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # The in-hunk excerpt content must match post-image lines 1-2
+                receipt["code_excerpts"][0]["content"] = "def f():\n    return 2"
+                # Add a stray excerpt (lines 10-12, outside any hunk)
+                receipt["code_excerpts"].append({
+                    "file": "src/f.py", "start_line": 10, "end_line": 12,
+                    "content": "# context\n# more context\n# end",
+                    "rationale": "context"
+                })
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert r.passed
+
+    def test_excerpt_content_mismatch_still_fails(self, tmp_path):
+        """Excerpt content that contradicts the post-image must still fail."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0]["content"] = "def f():\n    return 999\n"
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"content mismatch should fail, got: {r.reason}"
+        assert "content mismatch" in r.reason
+
+    def test_unwitnessed_hunk_still_fails(self, tmp_path):
+        """A hunk with no excerpt witness must still fail."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+            "@@ -10,2 +10,2 @@\n"
+            " def g():\n"
+            "-    return 3\n"
+            "+    return 4\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n\ndef g():\n    return 4\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"] = [{
+                    "file": "src/f.py", "start_line": 1, "end_line": 2,
+                    "content": "def f():\n    return 2\n",
+                    "rationale": "checked"
+                }]
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"unwitnessed hunk should fail, got: {r.reason}"
+        assert "unwitnessed hunk" in r.reason
+
+    def test_stray_file_not_in_diff_rejected(self, tmp_path):
+        """Excerpt referencing a file absent from diff -> FAIL (not in diff)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 2\n")
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0]["content"] = "def f():\n    return 2"
+                # Add excerpt for a file that does not appear in the diff at all
+                receipt["code_excerpts"].append({
+                    "file": "src/other.py", "start_line": 1, "end_line": 2,
+                    "content": "x = 1\n",
+                    "rationale": "stray"
+                })
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, "excerpt for file not in diff should fail"
+        assert "not in diff" in r.reason
+
+
+class TestNonConsecutiveEarlierCycles:
+    """ITEM A edge case: non-consecutive earlier cycles with consecutive last 3."""
+
+    def test_gap_before_last_three_pass(self, tmp_path):
+        """Cycles [1,3,5,6,7] -> PASS (last 3 are 5,6,7 consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 3, 5, 6, 7])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert r.passed, f"expected PASS for last 3 consecutive, got: {r.reason}"
+
+    def test_gap_in_last_three_fail(self, tmp_path):
+        """Cycles [1,3,5,7,8] -> FAIL (last 3 are 5,7,8 not consecutive)."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 3, 5, 7, 8])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed, f"expected FAIL for non-consecutive last 3, got: {r.reason}"
+        assert "not consecutive" in r.reason
+
+
+class TestCoveredStringShape:
+    """_covered must tolerate both dict and string shapes of
+    covered_line_ranges."""
+
+    def test_dict_shape(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": [
+            {"file": "a.py", "start": 1, "end": 3}
+        ]}
+        result = _covered(receipt)
+        assert result == {("a.py", 1), ("a.py", 2), ("a.py", 3)}
+
+    def test_string_shape(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": ["a.py:1-3"]}
+        result = _covered(receipt)
+        assert result == {("a.py", 1), ("a.py", 2), ("a.py", 3)}
+
+    def test_mixed_shapes(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": [
+            {"file": "a.py", "start": 1, "end": 2},
+            "b.py:5-7",
+        ]}
+        result = _covered(receipt)
+        assert result == {("a.py", 1), ("a.py", 2), ("b.py", 5), ("b.py", 6), ("b.py", 7)}
+
+    def test_malformed_string_skipped(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": ["no-colon-here"]}
+        result = _covered(receipt)
+        assert result == set()
+
+    def test_empty_ranges(self):
+        from code_forge.verify import _covered
+        receipt = {"covered_line_ranges": []}
+        result = _covered(receipt)
+        assert result == set()

@@ -1,0 +1,14 @@
+--- default review invocation: GitRefBaseline(HEAD) + head=WORKING, in a real git repo ---
+base_sha='f189d153ca115bc66dc1302b67f203353c376483' head_sha='f189d153ca115bc66dc1302b67f203353c376483'
+
+--- --whole-file mode: EmptyBaseline + head=WORKING, in a real git repo ---
+base_sha='4b825dc642cb6eb9a060e54bf8d69288fbee4904' head_sha='f189d153ca115bc66dc1302b67f203353c376483'
+
+--- SnapshotBaseline pointing at a MISSING snapshot file, in a real git repo ---
+base_sha=None head_sha=None mode_hint='git'
+
+--- EmptyBaseline with NO head_spec, in a NON-git directory ---
+base_sha=None head_sha=None mode_hint='git'
+is_git_repo(nogit) = False
+EmptyBaseline, head_spec=None, TRULY non-git dir:
+  base_sha=None head_sha=None mode_hint='non-git'

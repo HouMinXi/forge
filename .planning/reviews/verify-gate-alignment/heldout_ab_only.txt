@@ -1,0 +1,3 @@
+
+A1 findings survive the last-three window            predicted=PASS got=PASS
+A2 fabricated excerpt anchored outside the post-image predicted=PASS got=PASS

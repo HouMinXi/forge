@@ -1,0 +1,5 @@
+verify.py under test: /home/houminxi/code/forge/.worktrees/fix-verify-gate/src/code_forge/verify.py
+md5: fd5b77e73d0718dae5f91945a50ea499
+
+A1 findings survive the last-three window            predicted=PASS got=PASS
+A2 fabricated excerpt anchored outside the post-image predicted=PASS got=PASS

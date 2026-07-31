@@ -1,0 +1,30 @@
+
+### SETUP: a scratch repo with a worktree
+main repo : /tmp/ledger_exp1/main-repo
+worktree  : /tmp/ledger_exp1/wt
+
+### STEP 1: write a ledger row FROM INSIDE the worktree
+cwd = /tmp/ledger_exp1/wt
+ledger: marked exp1-escaped-0001 as ESCAPED
+exit: 0
+
+### STEP 2: where did it land?
+  PRESENT  /tmp/ledger_exp1/wt/.code-forge/ledger.jsonl  (1 row/s)
+  ABSENT   /tmp/ledger_exp1/main-repo/.code-forge/ledger.jsonl
+
+### STEP 3: is the row readable back through the CLI, from the worktree?
+ts	fingerprint	terminal_state	evidence_class	file:line	pass_provenance
+2026-07-30T12:53:52Z	exp1-escaped-0001	ESCAPED	manual	:0	manual
+
+### STEP 4: remove the worktree (the routine post-merge action)
+worktree removed. remaining:
+/tmp/ledger_exp1/main-repo f943d31 [master]
+
+### STEP 5: THE VERDICT -- does the row still exist anywhere?
+  NO ledger.jsonl anywhere under /tmp/ledger_exp1
+
+### STEP 6: could git have kept it? (objects are shared across worktrees)
+  branches: feature master 
+  is .code-forge tracked by git here? -> 0 file(s)
+
+=== RESULT: the row DID NOT survive. Centralisation is required. ===

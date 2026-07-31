@@ -1,0 +1,193 @@
+diff --git a/src/code_forge/verify.py b/src/code_forge/verify.py
+index 2f659a8..292f3ab 100644
+--- a/src/code_forge/verify.py
++++ b/src/code_forge/verify.py
+@@ -385,27 +385,59 @@ def run_verify(
+         # post-image but cannot distinguish "covers only context lines" from "covers
+         # actual changed lines." A reviewer can pass STEP C by citing only context
+         # lines around the change. The 60% coverage floor (check 6) mitigates this.
++        def _compare_at(actual_lines, file_lines, first_line, last_line):
++            """Compare an excerpt to the post-image anchored at first_line.
++
++            Returns (True, None) when every overlapping line matches,
++            (False, line) naming the first that does not, and (None, None)
++            when the excerpt and the post-image do not overlap here.
++            """
++            overlap = 0
++            for i, ln in enumerate(range(first_line, last_line + 1)):
++                if i >= len(actual_lines) or ln not in file_lines:
++                    continue
++                overlap += 1
++                if actual_lines[i].rstrip() != file_lines[ln].rstrip():
++                    return False, ln
++            return (True, None) if overlap else (None, None)
++
+         for exc in all_excerpts:
+             actual_lines = exc.get("content", "").splitlines()
+-            excerpt_line_map = {}
+-            for i, ln in enumerate(range(exc["start_line"], exc["end_line"] + 1)):
+-                if i < len(actual_lines):
+-                    excerpt_line_map[ln] = actual_lines[i]
+-
+             file_lines = post_image.get(exc["file"], {})
+-            overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
+ 
+-            if overlap_lines:
+-                def normalize(s):
+-                    return s.rstrip()
+-                for ln in sorted(overlap_lines):
+-                    if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
+-                        return VerifyResult(
+-                            False,
+-                            "excerpt content mismatch at %s:%d (line %d)" % (
+-                                exc["file"], exc["start_line"], ln),
+-                            5, cp,
+-                        )
++            # A reviewer anchors start_line on where the change is but quotes
++            # from where the code starts reading, and a blank line between the
++            # two shifts every comparison below. Measured on a real review:
++            # a third of otherwise faithful excerpts failed this way, none by
++            # more than two lines. So look for the anchor nearby rather than
++            # only at start_line -- content that is not in the file still
++            # matches at no shift at all, which is what this check is for.
++            attempts = [
++                _compare_at(
++                    actual_lines, file_lines,
++                    exc["start_line"] + shift, exc["end_line"] + shift,
++                )
++                for shift in (0, 1, -1, 2, -2, 3, -3)
++            ]
++            if any(ok for ok, _ in attempts):
++                continue
++            # Report the nearest shift that had something to compare. Keying
++            # this on shift 0 alone would let an excerpt sitting just past the
++            # end of the post-image through: shift 0 overlaps nothing, so it
++            # carries no line to report, while the shifts that do reach back
++            # into the file disagree on every line.
++            mismatched = [ln for _, ln in attempts if ln is not None]
++            if not mismatched:
++                # No shift reached the post-image at all, so this check has
++                # nothing to say about the excerpt. Coverage is checks 3 and 6.
++                continue
++            bad_line = mismatched[0]
++            return VerifyResult(
++                False,
++                "excerpt content mismatch at %s:%d (line %d)" % (
++                    exc["file"], exc["start_line"], bad_line),
++                5, cp,
++            )
+         cp += 1
+ 
+         # 6. excerpt-derived coverage >= 60%
+diff --git a/tests/test_verify.py b/tests/test_verify.py
+index 29f7114..ed4d7c9 100644
+--- a/tests/test_verify.py
++++ b/tests/test_verify.py
+@@ -110,6 +110,107 @@ class TestVerifyChecks:
+         assert not r.passed
+ 
+ 
++_SHIFT_DIFF = (
++    "diff --git a/src/f.py b/src/f.py\n"
++    "--- a/src/f.py\n"
++    "+++ b/src/f.py\n"
++    "@@ -1,2 +1,10 @@\n"
++    " def f():\n"
++    "     return 1\n"
++    "+\n"
++    "+\n"
++    "+def g():\n"
++    "+    return 2\n"
++    "+\n"
++    "+\n"
++    "+def h():\n"
++    "+    return 3\n"
++)
++_SHIFT_FILES = {"src/f.py": list(range(1, 11))}
++# Post-image: 1 "def f():"  2 "    return 1"  3 ""  4 ""
++#             5 "def g():"  6 "    return 2"  7 ""  8 ""
++#             9 "def h():" 10 "    return 3"
++_REAL_BLOCK = "def g():\n    return 2\n\n\ndef h():\n    return 3\n"
++# The whole post-image, 1-10, quoted exactly. Used where a test needs an
++# excerpt that witnesses the hunk so the run reaches the content check.
++_WHOLE_BLOCK = ("def f():\n    return 1\n\n\ndef g():\n    return 2\n"
++                "\n\ndef h():\n    return 3\n")
++
++
++class TestExcerptAnchorTolerance:
++    """A reviewer points start_line at the change and quotes from the code.
++
++    Measured on a real review: a third of faithful excerpts named a line one
++    or two above where their content actually began, because the added block
++    opened with the blank lines that separate definitions. Rejecting those
++    voided whole attestations over an alignment convention nobody stated.
++    """
++
++    def _nine(self, tmp_path, start_line, end_line, content, extra=None):
++        rd = tmp_path / ".code-forge" / "receipts"
++        rd.mkdir(parents=True)
++        (tmp_path / "src").mkdir()
++        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
++        sha = _sha(_SHIFT_DIFF)
++        for c in range(1, 4):
++            for p in range(1, 4):
++                r = _receipt(c, p, sha)
++                r["code_excerpts"] = [{
++                    "file": "src/f.py", "start_line": start_line,
++                    "end_line": end_line, "content": content,
++                    "rationale": "checked",
++                }]
++                if extra is not None:
++                    r["code_excerpts"].append(dict(extra))
++                (rd / ("receipt-c%dp%d.json" % (c, p))).write_text(
++                    json.dumps(r))
++        return sha
++
++    def _verify(self, tmp_path, start_line, end_line, content, extra=None):
++        sha = self._nine(tmp_path, start_line, end_line, content, extra)
++        return run_verify(tmp_path, sha, _SHIFT_FILES, diff_text=_SHIFT_DIFF)
++
++    def test_content_two_lines_below_start_line_is_accepted(self, tmp_path):
++        # The block really opens at 5; the reviewer said 3, where the change
++        # opens -- the two lines between them are the blank separator.
++        r = self._verify(tmp_path, 3, 10, _REAL_BLOCK)
++        assert r.passed, r.reason
++
++    def test_content_absent_from_the_file_is_still_rejected(self, tmp_path):
++        # The reason the shift is bounded: invented code matches at no
++        # offset, so tolerating one must not tolerate this.
++        r = self._verify(tmp_path, 3, 4, "def zzz():\n    return 99\n")
++        assert not r.passed
++        assert "excerpt content mismatch" in r.reason
++
++    def test_content_beyond_the_shift_window_is_still_rejected(self, tmp_path):
++        # Real content, but named six lines above where it lives: the pointer
++        # stops being evidence of where the reviewer actually looked.
++        r = self._verify(tmp_path, 3, 4, "def h():\n    return 3\n")
++        assert not r.passed
++        assert "excerpt content mismatch" in r.reason
++
++    def test_invented_content_just_past_the_last_line_is_rejected(self, tmp_path):
++        # The post-image ends at 10. An excerpt claiming 11-12 meets it at no
++        # forward shift and only at the shifts that reach back, so keying the
++        # verdict on shift 0 alone would wave it through for want of a line to
++        # name -- while every shift that does reach the file disagrees. This
++        # is the shape a fabricated excerpt takes when the model guesses a
++        # line past the end, so it has to be rejected on content.
++        #
++        # The first excerpt is real and witnesses the hunk. Without it the
++        # attestation dies earlier, at STEP A, and this test would pass
++        # without ever reaching the content check it exists to pin.
++        r = self._verify(
++            tmp_path, 1, 10, _WHOLE_BLOCK,
++            extra={"file": "src/f.py", "start_line": 11, "end_line": 12,
++                   "content": "def zzz():\n    return 99\n",
++                   "rationale": "invented"},
++        )
++        assert not r.passed
++        assert "excerpt content mismatch" in r.reason
++
++
+ class TestCorruptReceipt:
+     """A receipt that cannot be parsed must fail verify, not crash it.
+ 

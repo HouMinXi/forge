@@ -1,0 +1,9 @@
+tree: /home/houminxi/code/forge/.worktrees/fix-verify-gate/src/code_forge/verify.py
+md5 : 39f3cfac9502297d84bb1bcd7aa78f98
+
+F1 fabricated excerpt just past post-image     PASS
+F2 passes 4 and 5 inside the counted cycles    PASS
+F3 cycles 9/10/11 (two-digit filenames)        FAIL
+                                                 reason: timestamps not monotonic
+C4 dirty cycle 3 inside a plain [1,2,3] set    FAIL
+                                                 reason: Jaccard overlap 1.00 > 0.8 c1-c3
