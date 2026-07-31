@@ -1,0 +1,355 @@
+diff --git a/src/code_forge/cli.py b/src/code_forge/cli.py
+index 55bd7c9..c9db45b 100644
+--- a/src/code_forge/cli.py
++++ b/src/code_forge/cli.py
+@@ -792,7 +792,8 @@ def _make_subagent_spawn(
+                 + "\nPrioritize findings in these areas; in your response, "
+                 + "state whether each area was checked.\n"
+             )
+-        prompt += "\nDiff:\n" + diff_text
++        from .diff import annotate_diff_lines
++        prompt += "\nDiff:\n" + annotate_diff_lines(diff_text)
+         result = llm_invoke(prompt, backend=backend)
+         content = result.content
+         if isinstance(content, dict):
+@@ -870,6 +871,7 @@ def _run_test_assertion_review(
+     if not test_files:
+         return []
+ 
++    from .diff import annotate_diff_lines
+     prompt = (
+         "You are a test-assertion reviewer. Review this diff for test quality.\n"
+         "Check: assertion completeness, edge case coverage, mock accuracy, "
+@@ -880,7 +882,7 @@ def _run_test_assertion_review(
+         '"code_excerpts": [{"file": "...", "start_line": N, '
+         '"end_line": M, "content": "..."}]}\n'
+         "Each diff hunk MUST have at least one code_excerpt.\n"
+-        "\nDiff:\n" + diff_text
++        "\nDiff:\n" + annotate_diff_lines(diff_text)
+     )
+     # H-R3-01: llm_invoke MUST be inside the try block so that
+     # network/timeout/auth errors are caught and fail-open.
+diff --git a/src/code_forge/diff.py b/src/code_forge/diff.py
+index be0e511..495a55b 100644
+--- a/src/code_forge/diff.py
++++ b/src/code_forge/diff.py
+@@ -262,3 +262,123 @@ def _extract_post_image_lines(
+             post_image[pf.path] = file_lines
+ 
+     return post_image
++
++
++def annotate_diff_lines(diff_text: str) -> str:
++    """Annotate unified diff with post-image line numbers.
++
++    Prepends a bracket tag to each content line so the reviewer can read
++    the line number instead of computing it from hunk headers.  File
++    headers (``---``, ``+++``, extended headers like ``rename from``)
++    pass through unchanged.
++
++    Format:
++        [   79]  context line
++        [+  82] +added line
++        [----] -removed line (no post-image number -- deleted lines
++            have no target-side line number in unified diff)
++        [    ]  special marker (e.g. ``\\ No newline at end of file``)
++
++    Returns *diff_text* unchanged on empty, None, or unparseable input.
++    """
++    if not diff_text or not diff_text.strip():
++        return diff_text or ""
++
++    try:
++        patchset = unidiff.PatchSet(diff_text)
++    except unidiff.errors.UnidiffParseError:
++        return diff_text
++
++    out: list[str] = []
++    file_count = 0
++    for pf in patchset:
++        file_count += 1
++        # Build standard git diff headers.  unidiff's source_file/
++        # target_file may be /dev/null for added/removed files;
++        # replace with a/ b/ prefixed paths for the diff --git line.
++        src_raw = pf.source_file or "a/%s" % pf.path
++        tgt_raw = pf.target_file or "b/%s" % pf.path
++        src = "a/%s" % pf.path if src_raw == "/dev/null" else src_raw
++        tgt = "b/%s" % pf.path if tgt_raw == "/dev/null" else tgt_raw
++        out.append("diff --git %s %s" % (src, tgt))
++        if pf.is_rename:
++            # Rename with possible content changes: emit similarity
++            # only when the file has no hunks (pure rename).
++            hunks = list(pf)
++            if not hunks:
++                out.append("similarity index 100%")
++            out.append("rename from %s" % src.removeprefix("a/"))
++            out.append("rename to %s" % tgt.removeprefix("b/"))
++            if hunks:
++                out.append("--- %s" % src)
++                out.append("+++ %s" % tgt)
++                _annotate_hunks(out, hunks)
++            continue
++        elif pf.is_added_file:
++            mode = _extract_file_mode(diff_text, pf.path, "new")
++            out.append("new file mode %s" % mode)
++            out.append("--- /dev/null")
++            out.append("+++ %s" % tgt)
++        elif pf.is_removed_file:
++            mode = _extract_file_mode(diff_text, pf.path, "deleted")
++            out.append("deleted file mode %s" % mode)
++            out.append("--- %s" % src)
++            out.append("+++ /dev/null")
++        else:
++            out.append("--- %s" % src)
++            out.append("+++ %s" % tgt)
++        _annotate_hunks(out, pf)
++    if file_count == 0:
++        return diff_text
++    return "\n".join(out) + "\n"
++
++
++def _extract_file_mode(
++    diff_text: str, filepath: str, kind: str
++) -> str:
++    """Extract file mode from raw diff text for *filepath*.
++
++    *kind* is ``"new"`` or ``"deleted"``.  Returns ``"100644"`` on
++    any parse failure (safe default).
++    """
++    import re
++
++    pattern = r"%s file mode (\d{6})" % kind
++    # Find the diff --git line for this file, then search forward
++    # for the mode line (which appears after the diff --git header).
++    marker = "diff --git"
++    needle = " b/%s\n" % filepath
++    pos = diff_text.find(needle)
++    if pos < 0:
++        # Try without trailing newline (end of string).
++        needle = " b/%s" % filepath
++        pos = diff_text.find(needle)
++    if pos < 0:
++        return "100644"
++    # Search forward from the diff --git line for the mode line.
++    # The mode line appears within ~3 lines after diff --git.
++    end = min(pos + 200, len(diff_text))
++    chunk = diff_text[pos:end]
++    m = re.search(pattern, chunk)
++    return m.group(1) if m else "100644"
++
++
++def _annotate_hunks(out: list[str], hunks) -> None:
++    """Append annotated hunk content to *out*."""
++    for hunk in hunks:
++        out.append(
++            "@@ -%d,%d +%d,%d @@"
++            % (hunk.source_start, hunk.source_length,
++               hunk.target_start, hunk.target_length)
++        )
++        for line in hunk:
++            raw = line.value.rstrip("\n")
++            if line.is_added and line.target_line_no is not None:
++                out.append("[+%4d] +%s" % (line.target_line_no, raw))
++            elif line.is_removed:
++                out.append("[----] -%s" % raw)
++            elif line.target_line_no is not None:
++                out.append("[ %4d] %s" % (line.target_line_no, raw))
++            else:
++                # Special markers like "\ No newline at end of file"
++                out.append("[    ] %s" % raw)
+diff --git a/src/code_forge/factories.py b/src/code_forge/factories.py
+index c6fdc4e..cb31ba1 100644
+--- a/src/code_forge/factories.py
++++ b/src/code_forge/factories.py
+@@ -247,6 +247,8 @@ def build_l1_provider(
+         ]
+ 
+         # -- Build all prompts before execution -------------------------
++        from .diff import annotate_diff_lines
++        annotated_diff = annotate_diff_lines(diff_text)
+         prompts = []
+         for _pn, role in pass_configs:
+             prompt = (
+@@ -288,7 +290,7 @@ def build_l1_provider(
+                     + "\nPrioritize findings in these areas; in your response, "
+                     + "state whether each area was checked.\n"
+                 )
+-            prompt += "\nDiff:\n" + diff_text
++            prompt += "\nDiff:\n" + annotated_diff
+             prompts.append(prompt)
+ 
+         # -- Execute passes ---------------------------------------------
+@@ -559,6 +561,8 @@ def build_sampling_l1_provider(
+         ]
+ 
+         # -- Build all prompts before execution -------------------------
++        from .diff import annotate_diff_lines
++        annotated_diff = annotate_diff_lines(diff_text)
+         prompts = []
+         for _pn, role in pass_configs:
+             prompt = (
+@@ -588,7 +592,7 @@ def build_sampling_l1_provider(
+                     + "\nPrioritize findings in these areas; in your response, "
+                     + "state whether each area was checked.\n"
+                 )
+-            prompt += "\nDiff:\n" + diff_text
++            prompt += "\nDiff:\n" + annotated_diff
+             prompts.append(prompt)
+ 
+         # -- Execute passes concurrently via asyncio.gather -------------
+diff --git a/tests/test_diff.py b/tests/test_diff.py
+index 7bf3b7e..5ebdc38 100644
+--- a/tests/test_diff.py
++++ b/tests/test_diff.py
+@@ -5,6 +5,7 @@
+ import pytest
+ 
+ from code_forge.diff import (
++    annotate_diff_lines,
+     count_diff_lines,
+     extract_changed_lines,
+     get_changed_files,
+@@ -322,3 +323,143 @@ class TestTierThreshold:
+     def test_tier_threshold_boundaries(self, line_count, expected):
+         """Boundary values at tier transitions."""
+         assert tier_threshold(line_count) == expected
++
++
++# -- annotate_diff_lines --
++
++ANNOTATE_INPUT = """\
++diff --git a/test.py b/test.py
++--- a/test.py
+++++ b/test.py
++@@ -10,5 +10,5 @@ def foo():
++     context1
++     context2
+++    added1
++     context3
++-    removed1
++     context4
++"""
++
++
++class TestAnnotateDiffLines:
++    """annotate_diff_lines adds post-image line numbers to diff content."""
++
++    def test_added_lines_get_plus_marker(self):
++        result = annotate_diff_lines(ANNOTATE_INPUT)
++        lines = result.splitlines()
++        added = [x for x in lines if x.startswith("[+")]
++        assert len(added) == 1
++        assert added[0] == "[+  12] +    added1"
++
++    def test_context_lines_get_space_marker(self):
++        result = annotate_diff_lines(ANNOTATE_INPUT)
++        lines = result.splitlines()
++        ctx = [x for x in lines if x.startswith("[ ") and "]" in x]
++        assert len(ctx) == 4
++        assert ctx[0] == "[   10]     context1"
++        assert ctx[1] == "[   11]     context2"
++
++    def test_removed_lines_get_dash_marker(self):
++        result = annotate_diff_lines(ANNOTATE_INPUT)
++        lines = result.splitlines()
++        removed = [x for x in lines if x.startswith("[----]")]
++        assert len(removed) == 1
++        assert removed[0] == "[----] -    removed1"
++
++    def test_hunk_headers_unchanged(self):
++        result = annotate_diff_lines(ANNOTATE_INPUT)
++        assert "@@ -10,5 +10,5 @@" in result
++
++    def test_file_headers_unchanged(self):
++        result = annotate_diff_lines(ANNOTATE_INPUT)
++        assert "--- a/test.py" in result
++        assert "+++ b/test.py" in result
++
++    def test_empty_diff_returns_empty(self):
++        assert annotate_diff_lines("") == ""
++        assert annotate_diff_lines(None) == ""
++
++    def test_parse_failure_returns_original(self):
++        garbage = "not a diff at all"
++        assert annotate_diff_lines(garbage) == garbage
++
++    def test_multiple_hunks(self):
++        multi = """\
++diff --git a/m.py b/m.py
++--- a/m.py
+++++ b/m.py
++@@ -1,3 +1,4 @@
++ a
+++X
++ b
++ c
++@@ -10,3 +11,4 @@
++ d
+++Y
++ e
++ f
++"""
++        result = annotate_diff_lines(multi)
++        assert "[+   2] +X" in result
++        assert "[+  12] +Y" in result
++
++    def test_no_newline_marker_shows_placeholder(self):
++        """'\\ No newline at end of file' has no target_line_no."""
++        diff = (
++            "diff --git a/t.py b/t.py\n"
++            "--- a/t.py\n"
++            "+++ b/t.py\n"
++            "@@ -1,2 +1,2 @@\n"
++            " a\n"
++            "-b\n"
++            "\\ No newline at end of file\n"
++            "+c\n"
++        )
++        result = annotate_diff_lines(diff)
++        assert "[    ]" in result
++        assert "No newline" in result
++
++    def test_rename_headers_preserved(self):
++        diff = (
++            "diff --git a/old.py b/new.py\n"
++            "similarity index 100%\n"
++            "rename from old.py\n"
++            "rename to new.py\n"
++        )
++        result = annotate_diff_lines(diff)
++        assert "rename from old.py" in result
++        assert "rename to new.py" in result
++
++    def test_added_file_headers(self):
++        diff = (
++            "diff --git a/new.py b/new.py\n"
++            "new file mode 100644\n"
++            "--- /dev/null\n"
++            "+++ b/new.py\n"
++            "@@ -0,0 +1,3 @@\n"
++            "+a\n"
++            "+b\n"
++            "+c\n"
++        )
++        result = annotate_diff_lines(diff)
++        assert "new file mode 100644" in result
++        assert "--- /dev/null" in result
++        assert "+++ b/new.py" in result
++        assert "[+   1] +a" in result
++
++    def test_deleted_file_headers(self):
++        diff = (
++            "diff --git a/old.py b/old.py\n"
++            "deleted file mode 100644\n"
++            "--- a/old.py\n"
++            "+++ /dev/null\n"
++            "@@ -1,3 +0,0 @@\n"
++            "-a\n"
++            "-b\n"
++            "-c\n"
++        )
++        result = annotate_diff_lines(diff)
++        assert "deleted file mode 100644" in result
++        assert "--- a/old.py" in result
++        assert "+++ /dev/null" in result
++        assert "[----] -a" in result
