@@ -77,3 +77,12 @@ through to the CLI outlet. That is forge's own documented false-green
 trap #1 living in forge's own test suite: the run is slow,
 non-deterministic, and spends real tokens. Pre-existing, unrelated to
 this change, deliberately not fixed here, and not yet filed.
+
+## Resolution (2026-07-31)
+
+Committed at `1fb3eea` on main through the front door: gate regenerated
+with the FORGE_COMMIT_CLASS declared-carve-out (merged `45e4376`), and the
+commit passed with `FORGE_COMMIT_CLASS=chore`. The receipts that blocked
+the commit in this directory remain renamed `.stale`; they are safe to
+delete. The bootstrap deadlock that this file described is closed for
+commits of this class.
