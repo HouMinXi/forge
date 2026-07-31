@@ -207,6 +207,30 @@ in order:
 4. **Test gate (R1)** -- the test suite must introduce no new failures
    versus the baseline.
 
+### Declaring a docs/config/chore/wip class for a code-file commit
+
+The extension carve-out cannot see that a change inside a `.py` file is
+chore-class (a message rewrite, a comment fix). For those, declare the
+class explicitly for this one commit:
+
+```bash
+FORGE_COMMIT_CLASS=chore git commit -m "lock: keep busy message accurate" # chore
+```
+
+Accepted values: `docs`, `config`, `chore`, `wip` -- the class names the
+session-side trailing `# class` marker convention uses. A declared commit
+skips the receipt check, LLM review, and test gate, but the staged-diff
+scan and presubmit linters still run, so the declaration cannot smuggle
+in text that would otherwise be rejected. An unrecognized value is
+ignored and the full gate applies.
+
+Pass it on the command of that one commit. Do not `export` it into your
+shell profile: an exported value classifies every later commit from that
+shell as chore, including logic-bearing ones. The hook still prints its
+declared-class line on each of those commits, but that line is the same
+whether you declared on purpose or left the variable exported -- nothing
+distinguishes intent from residue.
+
 ### The commit message is always checked
 
 The `commit-msg` hook runs for every commit -- including non-code ones,

@@ -753,14 +753,14 @@ class TestPresubmitRunner:
         content = generate_hook_content(
             "/usr/bin/code-forge gate-check", None, presubmit_entries=[]
         )
-        assert "presubmit" not in content.lower()
+        assert "code-forge: presubmit" not in content
 
     def test_none_entries_no_presubmit_block(self):
         """generate_hook_content with presubmit_entries=None produces no presubmit block."""
         content = generate_hook_content(
             "/usr/bin/code-forge gate-check", None, presubmit_entries=None
         )
-        assert "presubmit" not in content.lower()
+        assert "code-forge: presubmit" not in content
 
     def test_on_diff_pipes_git_diff_cached(self):
         """on=diff entry pipes git diff --cached to command."""
@@ -824,7 +824,7 @@ class TestPresubmitRunner:
         for i, line in enumerate(lines):
             if "code-forge: presubmit" in line and presubmit_line == -1:
                 presubmit_line = i
-            if "gate-check" in line and not line.strip().startswith("#") and gate_line == -1:
+            if "exec " in line and "gate-check" in line and gate_line == -1:
                 gate_line = i
         assert presubmit_line != -1, "presubmit block not found"
         assert gate_line != -1, "gate-check not found"

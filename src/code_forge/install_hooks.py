@@ -436,12 +436,19 @@ def generate_hook_content(
       0a. .git jurisdiction check  -- non-git dirs silently skip
       0b. planning-leak guard      -- optional, blocks .planning/ and CLAUDE.md
       1.  carveout block           -- non-code commits exit 0 here
-      2.  attestation              -- code-forge verify (output captured, shown on failure)
-      3.  built-in staged-diff     -- non-ASCII + AI-vocab on staged diff
-      4.  presubmit runner         -- user-configured linters (fail-closed)
-      5.  LLM review               -- code-forge review (graceful degradation)
-      6.  chain call               -- existing hook (if chaining)
-      7.  exec gate-check          -- R1 test gate
+      2.  declared-class block     -- FORGE_COMMIT_CLASS=docs|config|chore|wip
+                                      marks _FORGE_DECLARED
+      3.  attestation              -- code-forge verify, skipped for declared
+                                      commits (output captured, shown on failure)
+      4.  built-in staged-diff     -- non-ASCII + AI-vocab on staged diff;
+                                      ALSO runs for declared commits
+      5.  presubmit runner         -- user-configured linters (fail-closed);
+                                      also runs for declared commits
+      6.  declared-class exit      -- declared commits exit 0 here: no LLM
+                                      review, no chain, no gate-check
+      7.  LLM review               -- code-forge review (graceful degradation)
+      8.  chain call               -- existing hook (if chaining)
+      9.  exec gate-check          -- R1 test gate
 
     Args:
         forge_invocation: absolute code-forge path + args
@@ -485,18 +492,45 @@ def generate_hook_content(
         'fi\n'
         '\n'
     )
+    declared_class_block = (
+        "# declared-class carve-out: a docs/config/chore/wip change inside a code\n"
+        "# file cannot match the extension carve-out above, so the author declares\n"
+        "# the class explicitly with FORGE_COMMIT_CLASS. One value, one commit:\n"
+        "# verify, LLM review, chain, and gate-check are skipped; the staged-diff\n"
+        "# text gates and presubmit linters below still run. An unrecognized value\n"
+        "# falls through to the full gate.\n"
+        "_FORGE_DECLARED=\n"
+        'case "${FORGE_COMMIT_CLASS:-}" in\n'
+        "    docs|config|chore|wip)\n"
+        "        _FORGE_DECLARED=1\n"
+        '        echo "code-forge: declared $FORGE_COMMIT_CLASS commit,'
+        ' skipping verify/review/chain/gate-check" >&2\n'
+        "    ;;\n"
+        "esac\n"
+        "\n"
+    )
     attestation_block = (
-        "# code-forge receipt attestation check\n"
-        "VERIFY_OUT=$(code-forge verify 2>&1) || {\n"
-        '    echo "$VERIFY_OUT" >&2\n'
-        "    exit 1\n"
-        "}\n"
+        "# code-forge receipt attestation check"
+        " (skipped for declared-class commits)\n"
+        'if [ -z "$_FORGE_DECLARED" ]; then\n'
+        "    VERIFY_OUT=$(code-forge verify 2>&1) || {\n"
+        '        echo "$VERIFY_OUT" >&2\n'
+        "        exit 1\n"
+        "    }\n"
+        "fi\n"
         "\n"
     )
     d12_block = _build_d12_precommit_block(non_ascii_mode)
 
     effective_entries = presubmit_entries if presubmit_entries else []
     presubmit_block = _build_presubmit_block(effective_entries)
+
+    declared_exit_block = (
+        "# declared-class commits stop after the text gates: matching the\n"
+        "# non-code carve-out above, they skip LLM review, chain, and gate-check.\n"
+        'if [ -n "$_FORGE_DECLARED" ]; then exit 0; fi\n'
+        "\n"
+    )
 
     review_block = _build_review_block(forge_invocation)
 
@@ -509,9 +543,11 @@ def generate_hook_content(
             + git_check_block
             + leak_guard_block
             + carveout_block
+            + declared_class_block
             + attestation_block
             + d12_block
             + presubmit_block
+            + declared_exit_block
             + review_block
             + '"%s" "$@" || exit 1\n' % chain_path
             + "exec %s\n" % forge_invocation
@@ -524,9 +560,11 @@ def generate_hook_content(
             + git_check_block
             + leak_guard_block
             + carveout_block
+            + declared_class_block
             + attestation_block
             + d12_block
             + presubmit_block
+            + declared_exit_block
             + review_block
             + "exec %s\n" % forge_invocation
         )
