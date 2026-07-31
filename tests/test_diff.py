@@ -5,6 +5,7 @@
 import pytest
 
 from code_forge.diff import (
+    annotate_diff_lines,
     count_diff_lines,
     extract_changed_lines,
     get_changed_files,
@@ -322,3 +323,442 @@ class TestTierThreshold:
     def test_tier_threshold_boundaries(self, line_count, expected):
         """Boundary values at tier transitions."""
         assert tier_threshold(line_count) == expected
+
+
+# -- annotate_diff_lines --
+
+ANNOTATE_INPUT = """\
+diff --git a/test.py b/test.py
+--- a/test.py
++++ b/test.py
+@@ -10,5 +10,5 @@ def foo():
+     context1
+     context2
++    added1
+     context3
+-    removed1
+     context4
+"""
+
+
+class TestAnnotateDiffLines:
+    """annotate_diff_lines adds post-image line numbers to diff content."""
+
+    def test_added_lines_get_plus_marker(self):
+        result = annotate_diff_lines(ANNOTATE_INPUT)
+        lines = result.splitlines()
+        added = [x for x in lines if x.startswith("[+")]
+        assert len(added) == 1
+        assert added[0] == "[+  12] +    added1"
+
+    def test_context_lines_get_space_marker(self):
+        result = annotate_diff_lines(ANNOTATE_INPUT)
+        lines = result.splitlines()
+        ctx = [x for x in lines if x.startswith("[ ") and "]" in x]
+        assert len(ctx) == 4
+        assert ctx[0] == "[   10]     context1"
+        assert ctx[1] == "[   11]     context2"
+
+    def test_removed_lines_get_dash_marker(self):
+        result = annotate_diff_lines(ANNOTATE_INPUT)
+        lines = result.splitlines()
+        removed = [x for x in lines if x.startswith("[----]")]
+        assert len(removed) == 1
+        assert removed[0] == "[----] -    removed1"
+
+    def test_hunk_headers_unchanged(self):
+        result = annotate_diff_lines(ANNOTATE_INPUT)
+        assert "@@ -10,5 +10,5 @@" in result
+
+    def test_file_headers_unchanged(self):
+        result = annotate_diff_lines(ANNOTATE_INPUT)
+        assert "--- a/test.py" in result
+        assert "+++ b/test.py" in result
+
+    def test_empty_diff_returns_empty(self):
+        assert annotate_diff_lines("") == ""
+        assert annotate_diff_lines(None) == ""
+
+    def test_parse_failure_returns_original(self):
+        garbage = "not a diff at all"
+        assert annotate_diff_lines(garbage) == garbage
+
+    def test_multiple_hunks(self):
+        multi = """\
+diff --git a/m.py b/m.py
+--- a/m.py
++++ b/m.py
+@@ -1,3 +1,4 @@
+ a
++X
+ b
+ c
+@@ -10,3 +11,4 @@
+ d
++Y
+ e
+ f
+"""
+        result = annotate_diff_lines(multi)
+        assert "[+   2] +X" in result
+        assert "[+  12] +Y" in result
+
+    def test_enclosing_function_survives_on_the_hunk_header(self):
+        """git names the enclosing function on @@; rebuilding must keep it.
+
+        Two hunks in different functions: without the section header a
+        reviewer sees two anonymous line ranges and cannot tell which
+        function either edit lands in.
+        """
+        diff = (
+            "diff --git a/m.py b/m.py\n"
+            "--- a/m.py\n"
+            "+++ b/m.py\n"
+            "@@ -1,3 +1,4 @@ def first():\n"
+            " a\n"
+            "+X\n"
+            " b\n"
+            " c\n"
+            "@@ -10,3 +11,4 @@ def second():\n"
+            " d\n"
+            "+Y\n"
+            " e\n"
+            " f\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "@@ -1,3 +1,4 @@ def first():" in result, result
+        assert "@@ -10,3 +11,4 @@ def second():" in result, result
+
+    def test_hunk_header_has_no_trailing_space_without_context(self):
+        """A hunk with no enclosing context keeps a bare @@ line."""
+        diff = (
+            "diff --git a/m.py b/m.py\n"
+            "--- a/m.py\n"
+            "+++ b/m.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " a\n"
+            "+X\n"
+            " b\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "@@ -1,2 +1,3 @@\n" in result, result
+
+    def test_a_binary_file_still_says_it_changed(self):
+        """The only line carrying the change must not be dropped.
+
+        Annotation used to rebuild the diff from a parsed model, which
+        could emit only the header kinds it was taught; a binary file came
+        out as a bare ---/+++ pair and read as untouched.
+        """
+        diff = (
+            "diff --git a/img.png b/img.png\n"
+            "index 1234567..89abcde 100644\n"
+            "Binary files a/img.png and b/img.png differ\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "Binary files a/img.png and b/img.png differ" in result, result
+        assert "index 1234567..89abcde 100644" in result, result
+
+    def test_a_mode_change_still_says_it_changed(self):
+        """chmod-only diffs carry their whole meaning in two header lines."""
+        diff = (
+            "diff --git a/s.sh b/s.sh\n"
+            "old mode 100644\n"
+            "new mode 100755\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "old mode 100644" in result, result
+        assert "new mode 100755" in result, result
+
+    def test_deletion_only_hunk_marks_its_removed_lines(self):
+        """A hunk owing zero post-image lines still has lines to mark."""
+        diff = (
+            "diff --git a/gone.py b/gone.py\n"
+            "deleted file mode 100644\n"
+            "--- a/gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n"
+            "-a\n"
+            "-b\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "[----] -a" in result, result
+        assert "[----] -b" in result, result
+
+    def test_no_newline_marker_keeps_its_backslash(self):
+        """The marker is a literal diff line, not decoration."""
+        diff = (
+            "diff --git a/t.py b/t.py\n"
+            "--- a/t.py\n"
+            "+++ b/t.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " a\n"
+            "-b\n"
+            "\\ No newline at end of file\n"
+            "+c\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "[    ] \\ No newline at end of file" in result, result
+
+    def test_no_newline_marker_is_marked_at_the_end_of_a_hunk(self):
+        """Deleting a file that lacked a final newline is a real git shape.
+
+        The marker consumes neither side's line budget, so a hunk whose last
+        real line spends both would close one line too early and leave the
+        marker unmarked.
+        """
+        for diff in (
+            # deletion-only hunk
+            "diff --git a/g.py b/g.py\n"
+            "deleted file mode 100644\n"
+            "--- a/g.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,1 +0,0 @@\n"
+            "-a\n"
+            "\\ No newline at end of file\n",
+            # addition-only hunk
+            "diff --git a/n.py b/n.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/n.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+a\n"
+            "\\ No newline at end of file\n",
+        ):
+            result = annotate_diff_lines(diff)
+            assert "[    ] \\ No newline at end of file" in result, result
+
+    def test_single_line_hunk_range_is_left_as_written(self):
+        """git writes '@@ -1 +1 @@'; rewriting it to '-1,1 +1,1' is noise."""
+        diff = (
+            "diff --git a/o.py b/o.py\n"
+            "--- a/o.py\n"
+            "+++ b/o.py\n"
+            "@@ -1 +1 @@\n"
+            "-a\n"
+            "+b\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "@@ -1 +1 @@" in result, result
+        assert "[+   1] +b" in result, result
+
+    def test_headers_after_a_hunk_are_not_numbered(self):
+        """The next file's ---/+++ start with -/+ but are not hunk content."""
+        diff = (
+            "diff --git a/x.py b/x.py\n"
+            "--- a/x.py\n"
+            "+++ b/x.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " a\n"
+            "+b\n"
+            "diff --git a/y.py b/y.py\n"
+            "--- a/y.py\n"
+            "+++ b/y.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " c\n"
+            "+d\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "\n--- a/y.py\n" in result, result
+        assert "\n+++ b/y.py\n" in result, result
+        assert "[+   2] +b" in result and "[+   2] +d" in result, result
+
+    def test_prompt_block_omits_the_legend_for_a_binary_only_diff(self):
+        """No bracket column is produced, so no legend should promise one."""
+        from code_forge.diff import annotated_diff_prompt_block
+
+        diff = (
+            "diff --git a/img.png b/img.png\n"
+            "Binary files a/img.png and b/img.png differ\n"
+        )
+        block = annotated_diff_prompt_block(diff)
+        assert "AFTER" not in block, block
+        assert "Binary files" in block, block
+
+    def test_a_missing_trailing_newline_does_not_conjure_a_legend(self):
+        """The legend follows the bracket column, not a text comparison.
+
+        Annotation always ends its output with a newline, so a diff that
+        arrives without one is never byte-equal to its own annotation --
+        which is why "did the text change" was the wrong question to ask.
+        """
+        from code_forge.diff import annotated_diff_prompt_block
+
+        for diff in (
+            "diff --git a/s.sh b/s.sh\nold mode 100644\nnew mode 100755",
+            "diff --git a/i.png b/i.png\nBinary files a/i.png and b/i.png differ",
+            "diff --git a/o.py b/n.py\nsimilarity index 100%\n"
+            "rename from o.py\nrename to n.py",
+        ):
+            block = annotated_diff_prompt_block(diff)
+            assert "AFTER" not in block, block
+
+    def test_an_unannotated_diff_that_looks_like_it_has_brackets(self):
+        """A line starting with '[' in the INPUT is not evidence of annotation.
+
+        "[PATCH] diff --git ..." starts with [, yet annotation never touched
+        it. A guard that reads the output for "[" lines is the third proxy
+        this test exists to say no to.
+        """
+        from code_forge.diff import annotated_diff_prompt_block
+
+        for diff in (
+            "[PATCH] diff --git a/b b/b\nBinary files differ",
+            "[INFO] hello\n[WARN] world",
+        ):
+            block = annotated_diff_prompt_block(diff)
+            assert "AFTER" not in block, block
+
+    def test_a_hunk_with_zero_lines_gets_no_legend(self):
+        """A parseable @@ -1,0 +1,0 @@ carries no body for brackets to tag.
+
+        Header presence is yet another proxy -- the walker must see at
+        least one bracket line leave its loop.
+        """
+        from code_forge.diff import annotated_diff_prompt_block
+
+        diff = (
+            "diff --git a/x.py b/x.py\n"
+            "--- a/x.py\n"
+            "+++ b/x.py\n"
+            "@@ -1,0 +1,0 @@\n"
+        )
+        block = annotated_diff_prompt_block(diff)
+        assert "AFTER" not in block, block
+
+    def test_a_hunk_without_a_trailing_newline_still_gets_the_legend(self):
+        """The counterpart: brackets present, so the legend must appear."""
+        from code_forge.diff import annotated_diff_prompt_block
+
+        diff = (
+            "diff --git a/x.py b/x.py\n"
+            "--- a/x.py\n"
+            "+++ b/x.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " a\n"
+            "+b"
+        )
+        block = annotated_diff_prompt_block(diff)
+        assert "AFTER" in block, block
+        assert "[+   2] +b" in block, block
+
+    def test_headers_of_a_plain_diff_u_are_not_numbered(self):
+        """Without 'diff --git', the next file's ---/+++ follow hunk content.
+
+        Those lines start with - and + but are not hunk content; only the
+        hunk's own line counts can tell them apart.
+        """
+        diff = (
+            "--- a/x.py\t2026-01-01\n"
+            "+++ b/x.py\t2026-01-02\n"
+            "@@ -1,1 +1,2 @@\n"
+            " a\n"
+            "+b\n"
+            "--- a/y.py\t2026-01-01\n"
+            "+++ b/y.py\t2026-01-02\n"
+            "@@ -1,1 +1,2 @@\n"
+            " c\n"
+            "+d\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "\n--- a/y.py\t2026-01-01\n" in result, result
+        assert "\n+++ b/y.py\t2026-01-02\n" in result, result
+        assert "[+   2] +b" in result and "[+   2] +d" in result, result
+
+    def test_in_hunk_content_that_looks_like_a_header_is_still_content(self):
+        """A removed line reading '--- a/z.py' is a deletion, not a header."""
+        diff = (
+            "diff --git a/x.py b/x.py\n"
+            "--- a/x.py\n"
+            "+++ b/x.py\n"
+            "@@ -1,4 +1,2 @@\n"
+            " keep\n"
+            "--- a/z.py\n"
+            "-+++ b/z.py\n"
+            " tail\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "[----] --- a/z.py" in result, result
+        assert "[----] -+++ b/z.py" in result, result
+        assert "[    2] tail" in result, result
+
+    def test_prompt_block_explains_the_bracket_column(self):
+        """The reviewer is told what the numbers mean, before the diff."""
+        from code_forge.diff import annotated_diff_prompt_block
+
+        block = annotated_diff_prompt_block(ANNOTATE_INPUT)
+        assert "AFTER" in block, block
+        assert "start_line/end_line" in block, block
+        # The legend has to arrive before the lines it describes.
+        assert block.index("[+  82] +added line") < block.index(
+            "[+  12] +    added1"), block
+
+    def test_prompt_block_omits_the_legend_when_nothing_was_annotated(self):
+        """Unparseable input keeps its raw text and gets no bracket legend."""
+        from code_forge.diff import annotated_diff_prompt_block
+
+        garbage = "not a diff at all\n"
+        block = annotated_diff_prompt_block(garbage)
+        assert block == "\nDiff:\n" + garbage, block
+        assert annotated_diff_prompt_block("") == "\nDiff:\n"
+
+    def test_no_newline_marker_shows_placeholder(self):
+        """'\\ No newline at end of file' has no target_line_no."""
+        diff = (
+            "diff --git a/t.py b/t.py\n"
+            "--- a/t.py\n"
+            "+++ b/t.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " a\n"
+            "-b\n"
+            "\\ No newline at end of file\n"
+            "+c\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "[    ]" in result
+        assert "No newline" in result
+
+    def test_rename_headers_preserved(self):
+        diff = (
+            "diff --git a/old.py b/new.py\n"
+            "similarity index 100%\n"
+            "rename from old.py\n"
+            "rename to new.py\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "rename from old.py" in result
+        assert "rename to new.py" in result
+
+    def test_added_file_headers(self):
+        diff = (
+            "diff --git a/new.py b/new.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/new.py\n"
+            "@@ -0,0 +1,3 @@\n"
+            "+a\n"
+            "+b\n"
+            "+c\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "new file mode 100644" in result
+        assert "--- /dev/null" in result
+        assert "+++ b/new.py" in result
+        assert "[+   1] +a" in result
+
+    def test_deleted_file_headers(self):
+        diff = (
+            "diff --git a/old.py b/old.py\n"
+            "deleted file mode 100644\n"
+            "--- a/old.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,3 +0,0 @@\n"
+            "-a\n"
+            "-b\n"
+            "-c\n"
+        )
+        result = annotate_diff_lines(diff)
+        assert "deleted file mode 100644" in result
+        assert "--- a/old.py" in result
+        assert "+++ /dev/null" in result
+        assert "[----] -a" in result

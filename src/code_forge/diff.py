@@ -12,6 +12,7 @@ same files. Addresses LAYER0-03 and review Consensus #2.
 """
 
 import logging
+import re
 from pathlib import Path
 
 import unidiff
@@ -262,3 +263,157 @@ def _extract_post_image_lines(
             post_image[pf.path] = file_lines
 
     return post_image
+
+
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def annotate_diff_lines(diff_text: str) -> str:
+    """Annotate a unified diff with post-image line numbers.
+
+    Prepends a bracket tag to each hunk content line so the reviewer can
+    read the line number instead of counting from the hunk header.  Every
+    other byte of the diff -- file headers, ``index``, ``old mode``/``new
+    mode``, ``Binary files ... differ``, ``similarity index``, ``rename
+    from``/``rename to`` -- passes through untouched.
+
+    This annotates the text in place rather than rebuilding it from a
+    parsed model, because a rebuild can only emit the header kinds it was
+    taught, and the ones it was not taught vanish silently.  A binary file
+    or a chmod then reaches the reviewer looking untouched, which is worse
+    than an unannotated diff: it is a diff that lies about its own
+    contents.
+
+    Format:
+        [   79]  context line
+        [+  82] +added line
+        [----] -removed line (no post-image number -- deleted lines
+            have no target-side line number in unified diff)
+        [    ] \\ No newline at end of file
+
+    Returns *diff_text* unchanged on empty, None, or unparseable input.
+    """
+    result = _annotation_walk(diff_text)
+    if result is None:
+        return diff_text or ""
+    text, _wrote_bracket = result
+    # "Parseable" does not imply "wrote a bracket line": an empty hunk
+    # (@@ -1,0 +1,0 @@), a pure rename, a chmod, a binary, a bare
+    # "diff --git" header all walk to zero bracket emissions. Hand those
+    # back as supplied, because the input text is what every other reader
+    # of this function's contract (verify, tests, logs) already speaks.
+    if not _wrote_bracket:
+        return diff_text
+    return text
+
+
+def _annotation_walk(diff_text: str) -> tuple[str, bool] | None:
+    """Walk diff_text once; return (annotated_output, wrote_bracket).
+
+    Returns None when annotation would hand its input back unannotated
+    (empty, unparseable, or a parseable diff with zero hunks). On None,
+    callers should use the input text directly -- annotate_diff_lines's
+    documented contract is "return the input unchanged" in those cases.
+
+    The two are read off the same walk, so they cannot disagree with each
+    other: every "did annotation produce a bracket" probe that asked the
+    OUTPUT has been wrong in a new way each time (strip, byte equality,
+    startswith). Ask the walk that produced the output.
+    """
+    if not diff_text or not diff_text.strip():
+        return None
+    try:
+        if not list(unidiff.PatchSet(diff_text)):
+            return None
+    except unidiff.errors.UnidiffParseError:
+        return None
+
+    out: list[str] = []
+    line_no = None
+    src_left = 0
+    tgt_left = 0
+    wrote_bracket = False
+    for line in diff_text.splitlines():
+        m = _HUNK_HEADER.match(line)
+        if line_no is not None and src_left <= 0 and tgt_left <= 0 \
+                and not line.startswith("\\"):
+            line_no = None
+        if m:
+            src_left = int(m.group(2)) if m.group(2) is not None else 1
+            line_no = int(m.group(3))
+            tgt_left = int(m.group(4)) if m.group(4) is not None else 1
+            out.append(line)
+        elif line_no is None:
+            out.append(line)
+        elif line.startswith("+"):
+            out.append("[+%4d] %s" % (line_no, line))
+            wrote_bracket = True
+            line_no += 1
+            tgt_left -= 1
+        elif line.startswith("-"):
+            out.append("[----] %s" % line)
+            wrote_bracket = True
+            src_left -= 1
+        elif line.startswith("\\"):
+            out.append("[    ] %s" % line)
+            wrote_bracket = True
+        elif line.startswith(" ") or line == "":
+            out.append("[ %4d]%s" % (line_no, line))
+            wrote_bracket = True
+            line_no += 1
+            src_left -= 1
+            tgt_left -= 1
+        else:
+            # Unreachable on any diff the unidiff gate admits: every shape
+            # that would land here (a hunk body line that is neither added
+            # nor removed nor context nor "\ No newline") is rejected before
+            # the walk begins. Kept as the defensive fall-through, not as a
+            # documented degradation path -- the walker's actual degradation
+            # is the `line_no = None` state used elsewhere.
+            line_no = None
+            out.append(line)
+    return ("\n".join(out) + "\n", wrote_bracket)
+
+
+def annotated_diff_prompt_block(diff_text: str) -> str:
+    """The diff as it appears in a review prompt: legend, then annotation.
+
+    The bracket column is only useful to a reviewer that knows what it
+    means. Every caller pairs the two, so they are built together here --
+    a prompt that shows ``[+  82]`` without saying what 82 counts invites
+    the reviewer to read it as part of the source line.
+
+    Used by the L1 review prompts. Two other prompts ask for line numbers
+    and still send a bare diff: the canary review in ``canary_gen`` and the
+    runtime lifecycle question in ``runtime``. Both are deliberate for now --
+    the canary is a gate, so changing what it sends changes what it
+    certifies, and the runtime question has a verbatim mirror in SKILL.md
+    guarded by a drift test. The daemon-state questions never cite lines, so
+    the column would be noise there.
+    """
+    result = _annotation_walk(diff_text)
+    if result is None:
+        return "\nDiff:\n" + (diff_text or "")
+    annotated, wrote_bracket = result
+    # The legend must appear exactly when the walker wrote a bracket line.
+    # Three output-side proxies preceded this (strip, byte equality,
+    # startswith) and each was wrong in a new way: an unannotated diff can
+    # carry a "[" of its own; annotation always adds a trailing newline;
+    # a parseable diff can contain zero hunks. Ask the walk that produced
+    # the output rather than the output it produced.
+    if not wrote_bracket:
+        return "\nDiff:\n" + diff_text
+    return (
+        "\nDiff:\n"
+        "Each line is prefixed with its line number in the file AFTER "
+        "this change is applied. Use those numbers directly in "
+        "start_line/end_line -- do not count lines yourself.\n"
+        "  [  79]  unchanged context line, at line 79\n"
+        "  [+  82] +added line, at line 82\n"
+        "  [----] -removed line: gone after the change, so it has no "
+        "line number and cannot be cited\n"
+        "The bracket is not part of the source. Excerpt content must "
+        "reproduce the code to the right of it, without the bracket and "
+        "without the leading +/- marker.\n\n"
+        + annotated
+    )
