@@ -1,0 +1,493 @@
+diff --git a/src/code_forge/llm_invoke.py b/src/code_forge/llm_invoke.py
+index 819abaa..4db4d6c 100644
+--- a/src/code_forge/llm_invoke.py
++++ b/src/code_forge/llm_invoke.py
+@@ -962,9 +962,23 @@ def _invoke_api(
+             ) + random.uniform(0, 0.5)
+             if exc.retry_after is not None:
+                 delay = max(delay, exc.retry_after)
++            # Carry the cause. Without it this line names a backend and a
++            # delay and nothing else, so a run that retries forever gives the
++            # operator no way to tell a rate limit from a proxy queue drop
++            # from an empty response -- the status, the message, and any
++            # self-diagnosing text the gateway sent all stop here. One such
++            # message ("this is OmniRoute's request queue, not an upstream
++            # timeout") had to be recovered from the proxy's container log
++            # because this line discarded it.
++            #
++            # Read the timing carefully when debugging from this output: the
++            # delay is printed BEFORE the sleep, so the gap between two lines
++            # is the sleep plus the NEXT attempt's duration. The line does not
++            # say how long an attempt took.
++            cause = " ".join(str(exc).split())[:400]
+             sys.stderr.write(
+-                "code-forge: retrying %s (%d/%d, waiting %.1fs)...\n"
+-                % (backend.name, attempt + 2, max_attempts, delay)
++                "code-forge: retrying %s (%d/%d, waiting %.1fs) after %s\n"
++                % (backend.name, attempt + 2, max_attempts, delay, cause)
+             )
+             time.sleep(delay)
+             continue
+diff --git a/src/code_forge/machine.py b/src/code_forge/machine.py
+index c289fc9..7ad8546 100644
+--- a/src/code_forge/machine.py
++++ b/src/code_forge/machine.py
+@@ -62,7 +62,14 @@ L1Provider = Callable[[], tuple[list[StateFinding], list[dict], Usage, float]]
+ 
+ 
+ class TimeoutBreaker(Exception):
+-    """Raised when consecutive timeout threshold is reached."""
++    """Raised when a run provably cannot converge and should stop early.
++
++    Two triggers, both meaning "more rounds cannot help": the consecutive
++    timeout threshold in TimeoutCircuitBreaker, and consecutive rounds where
++    an L1 pass did not complete (_check_l1_can_still_converge). The name
++    predates the second one; cli.py prints the message verbatim, so what the
++    operator reads is the specific reason, not the class name.
++    """
+ 
+ 
+ class TimeoutCircuitBreaker:
+@@ -244,6 +251,7 @@ class StateMachine:
+         self._pass_counter: int = 0
+         self._advisories: "list[AdvisoryFinding]" = []
+         self._preexisting_buf: "list[AdvisoryFinding]" = []
++        self._rounds_with_failed_pass: int = 0
+ 
+     def run(self) -> Verdict:
+         """Dispatch to LOCAL or CI execution per mode."""
+@@ -737,6 +745,52 @@ class StateMachine:
+             l1_findings.append(f)
+         return (l1_findings, l1_excerpts)
+ 
++    def _check_l1_can_still_converge(
++        self, l1_findings: list[StateFinding]
++    ) -> None:
++        """Stop a run that provably cannot reach a clean round.
++
++        A pass that fails leaves a CONFIRMED INFRA finding, which tiers P2 and
++        zeroes consecutive_clean_rounds. Repeat that every round and the
++        threshold is unreachable, so the run walks all the way to
++        max_total_rounds to learn nothing -- on a slow backend, hours of it.
++
++        TimeoutCircuitBreaker cannot see this, for two separate reasons. It
++        only counts timeouts (record_other_error is deliberately a no-op, per
++        its own tests), and it counts per PASS, so the one pass that did
++        succeed calls record_success and zeroes the counter. A round where
++        one of three passes worked looks exactly like a healthy round to it.
++
++        Consecutive rounds, not cumulative: a backend that fails once and
++        recovers is a transient the retry logic already handles, and stopping
++        on that would be worse than the problem.
++        """
++        from .state import derive_pass_outcomes, PassOutcome
++
++        outcomes = derive_pass_outcomes(l1_findings)
++        failed = {
++            name: outcome.value
++            for name, outcome in outcomes.items()
++            if outcome != PassOutcome.COMPLETED
++        }
++        if not failed:
++            self._rounds_with_failed_pass = 0
++            return
++        self._rounds_with_failed_pass += 1
++        self._state.infra_errors.append(
++            "round %d: pass(es) did not complete: %s"
++            % (self._state.round, failed)
++        )
++        if self._rounds_with_failed_pass >= 3:
++            raise TimeoutBreaker(
++                "%d consecutive rounds had a pass that did not complete "
++                "(latest: %s). Each one leaves a CONFIRMED infra finding, "
++                "which resets the clean-round counter, so this review cannot "
++                "converge no matter how many rounds remain. Fix the backend "
++                "or switch to another one rather than waiting."
++                % (self._rounds_with_failed_pass, failed)
++            )
++
+     def _run_l2_phase(self) -> list[StateFinding]:
+         """L2 mutation phase. Runs after L1.
+ 
+@@ -832,6 +886,7 @@ class StateMachine:
+         if self.mode == Mode.LOCAL:
+             self._apply_autofix_loop_to(l0_findings)
+         l1_findings, l1_excerpts = self._run_l1_phase()
++        self._check_l1_can_still_converge(l1_findings)
+         l2_findings = self._run_l2_phase()
+         e2e_findings = self._run_e2e_phase()
+         coverage_findings = self._run_coverage_phase()
+diff --git a/src/code_forge/receipt.py b/src/code_forge/receipt.py
+index a58003f..278ab68 100644
+--- a/src/code_forge/receipt.py
++++ b/src/code_forge/receipt.py
+@@ -108,6 +108,15 @@ def write_receipts(
+                 }
+                 for f in pass_findings
+             ],
++            # An infra finding names a sentinel such as "<llm-invoke>", not a
++            # file: when a backend call fails there is no code to point at.
++            # Anchors are read back as paths that must appear in the diff, so
++            # one sentinel makes the review unattestable -- and permanently,
++            # since receipts are never pruned and that check reads every
++            # cycle, not only the last three. The finding itself stays in
++            # findings above, where the failure is still reported.
++            # covered_line_ranges below needs no such filter: it is
++            # intersected with the diff, so a sentinel entry is inert there.
+             "anchors": [
+                 {
+                     "file": f.file,
+@@ -115,6 +124,7 @@ def write_receipts(
+                     "text": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),
+                 }
+                 for f in pass_findings
++                if f.source != "INFRA"
+             ],
+             "code_excerpts": assembled_excerpts,
+             # self-reported, not measured -- audit-only
+diff --git a/src/code_forge/verify.py b/src/code_forge/verify.py
+index 5fa6ed0..f9342f3 100644
+--- a/src/code_forge/verify.py
++++ b/src/code_forge/verify.py
+@@ -563,6 +563,38 @@ def run_verify(
+                 return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
+         cp += 1
+ 
+-    return VerifyResult(True, "all 7 checks passed", 7, 7)
++    # 8. every pass in the attested window has to have actually run.
++    # derive_pass_outcomes already works this out from the INFRA findings and
++    # receipt.py stores it per receipt as pass_status; until now nothing read
++    # it. A pass that timed out or errored still writes a receipt, and checks
++    # 1-7 can all pass on that receipt: it has a matching hash, a monotonic
++    # timestamp, no anchors to contradict and no excerpts to disprove. The
++    # coverage floor was the only thing in the way, and it unions across the
++    # passes of a cycle, so two healthy passes on a large enough diff carry a
++    # third that never happened.
++    #
++    # Absence is not failure. pass_status is not in SKILL.md, so a reviewer
++    # hand-writing a receipt from the documented shape leaves it out, and
++    # every receipt written before the field existed lacks it too. Refusing on
++    # a missing field would reject good receipts -- which is the exact failure
++    # the schema comment at the top of this file was written about. Measured
++    # before writing this: all 204 receipts on disk carry the field
++    # (189 completed, 12 error, 3 timeout), so the signal is real; the
++    # tolerance is for the writers that are not receipt.py.
++    for r in receipts:
++        if r.get("cycle") not in last_three:
++            continue
++        status = r.get("pass_status")
++        if status is not None and status != "completed":
++            return VerifyResult(
++                False,
++                "pass did not complete: c%dp%d status=%s -- that pass "
++                "contributed no review, so the cycle cannot attest"
++                % (r["cycle"], r["pass"], status),
++                8, cp,
++            )
++    cp += 1
++
++    return VerifyResult(True, "all 8 checks passed", 8, 8)
+ 
+ 
+diff --git a/tests/test_machine_local.py b/tests/test_machine_local.py
+index 890be6f..81b7e17 100644
+--- a/tests/test_machine_local.py
++++ b/tests/test_machine_local.py
+@@ -406,7 +406,11 @@ class TestInfraFindingSkipsFalsifier:
+             registry={},
+             l0_runner=lambda r, f: ([], []),
+             l1_provider=mock_l1,
+-            max_total_rounds=5,
++            # Two rounds, deliberately below the three-consecutive-failed-pass
++            # abort in _check_l1_can_still_converge, so this keeps testing what
++            # it was written to test: the fixpoint blocking, not the abort.
++            # The abort has its own test below.
++            max_total_rounds=2,
+             clean_round_threshold=3,
+         )
+         verdict = machine.run()
+@@ -422,6 +426,95 @@ class TestInfraFindingSkipsFalsifier:
+             assert f.disposition == Disposition.CONFIRMED
+ 
+ 
++class TestUnconvergeableRunStopsEarly:
++    """A pass that keeps failing makes a clean round unreachable.
++
++    Every failed pass leaves a CONFIRMED INFRA finding, which zeroes
++    consecutive_clean_rounds. Repeat that and no number of remaining rounds
++    can help, so the run should say so instead of walking to
++    max_total_rounds. The old behaviour burned every round and reported
++    ESCALATED, which reads as "the review found problems" when in fact the
++    review never ran.
++    """
++
++    @staticmethod
++    def _machine(tmp_path, l1_provider, max_rounds):
++        import json as _json
++        fixture = tmp_path / "falsify.json"
++        fixture.write_text(_json.dumps({"default": "DISMISSED"}))
++        return StateMachine(
++            mode=Mode.LOCAL,
++            falsifier=StubFalsifier(fixture_path=fixture),
++            autofixer=StubAutoFixer(),
++            revert_fn=lambda f: None,
++            resolved_review=_make_resolved(),
++            source_hash="abc",
++            baseline_spec_repr="empty",
++            cwd=tmp_path,
++            registry={},
++            l0_runner=lambda r, f: ([], []),
++            l1_provider=l1_provider,
++            max_total_rounds=max_rounds,
++            clean_round_threshold=3,
++        )
++
++    @staticmethod
++    def _invoke_fail(pass_name="qodo"):
++        return StateFinding(
++            id="l1-%s-invoke-fail" % pass_name,
++            fingerprint="invoke-fail-%s" % pass_name,
++            source="INFRA",
++            disposition=Disposition.CONFIRMED,
++            file="<llm-invoke>",
++            line_range=[0, 0],
++            description="L1 invoke failed: backend said no",
++        )
++
++    def test_three_consecutive_rounds_with_a_failed_pass_stop_the_run(
++        self, tmp_path
++    ):
++        """The breaker counts consecutive ROUNDS each containing a failed
++        pass, not consecutive failed passes in a row. A single round with
++        two healthy passes and one timed-out one is enough to increment;
++        a following fully-clean round resets it to zero.
++        """
++        import pytest
++        from code_forge.machine import TimeoutBreaker
++
++        rounds = []
++
++        def mock_l1():
++            rounds.append(1)
++            return ([self._invoke_fail()], [], Usage(), 0.0)
++
++        machine = self._machine(tmp_path, mock_l1, max_rounds=12)
++        with pytest.raises(TimeoutBreaker, match="cannot converge"):
++            machine.run()
++        # Stopped at the third failing round, not at max_total_rounds. The
++        # whole point is the nine rounds it did not spend.
++        assert len(rounds) == 3
++
++    def test_a_recovered_round_resets_the_counter(self, tmp_path):
++        """Consecutive, not cumulative.
++
++        A backend that fails and recovers is a transient the retry logic
++        already covers. Counting those cumulatively would stop healthy runs,
++        which is worse than the problem being fixed.
++        """
++        script = [True, True, False, True, True]  # True = pass failed
++        calls = []
++
++        def mock_l1():
++            failed = script[len(calls)]
++            calls.append(failed)
++            return ([self._invoke_fail()] if failed else [], [], Usage(), 0.0)
++
++        machine = self._machine(tmp_path, mock_l1, max_rounds=len(script))
++        # No raise: the run never gets three failures in a row.
++        machine.run()
++        assert len(calls) == len(script)
++
++
+ # ---------------------------------------------------------------------------
+ # Severity-tiered _fixpoint_reached guards
+ # ---------------------------------------------------------------------------
+diff --git a/tests/test_verify.py b/tests/test_verify.py
+index e028af8..e4c1daf 100644
+--- a/tests/test_verify.py
++++ b/tests/test_verify.py
+@@ -413,6 +413,184 @@ class TestReceiptVerifyE2E:
+         r = run_verify(tmp_path, diff_sha, diff_files)
+         assert r.passed, "E2E failed: %s" % r.reason
+ 
++    @staticmethod
++    def _run_with_failed_pass(tmp_path, failed_round):
++        """Four rounds where one round's qodo pass never reached the model.
++
++        A timed-out pass returns only the infra finding -- no code finding
++        beside it, which is how it comes back off a real backend deadline.
++
++        Returns the diff arguments so the caller can drive run_verify.
++        """
++        import datetime
++        from unittest.mock import patch
++        from code_forge.receipt import write_receipts
++        from code_forge.disposition import Disposition
++        from code_forge.state import StateFinding
++
++        (tmp_path / "src").mkdir(parents=True)
++        (tmp_path / "src" / "foo.py").write_text(
++            "".join("line%d\n" % i for i in range(1, 81)))
++        diff_sha = _sha("diff")
++        diff_files = {"src/foo.py": list(range(1, 81))}
++
++        base = datetime.datetime(2026, 5, 28, 10, 0, 0,
++                                 tzinfo=datetime.timezone.utc)
++        passes = ["qodo", "expert", "adversarial"]
++        # Spread far enough apart that the last three cycles stay under the
++        # Jaccard similarity ceiling while each still clears the coverage
++        # floor: findings cover +/-10 lines, so three per cycle is 63 of 80.
++        cycle_locs = [(10, 30, 50), (11, 33, 55), (15, 40, 65), (20, 45, 70)]
++        for round_idx in range(4):
++            findings = []
++            for pi, pn in enumerate(passes):
++                if round_idx == failed_round and pn == "qodo":
++                    findings.append(StateFinding(
++                        id="l1-qodo-invoke-fail",
++                        fingerprint="invoke-fail-qodo", source="INFRA",
++                        disposition=Disposition.CONFIRMED,
++                        file="<llm-invoke>", line_range=[0, 0],
++                        description="L1 invoke failed: read deadline",
++                    ))
++                    continue
++                ln = cycle_locs[round_idx][pi]
++                findings.append(StateFinding(
++                    id="l1-%s-fp%d%d" % (pn, round_idx, pi),
++                    fingerprint="fp%d%d" % (round_idx, pi), source="L1",
++                    disposition=Disposition.UNCERTAIN,
++                    file="src/foo.py", line_range=[ln, ln],
++                    description="[%s] finding r%dp%d" % (pn, round_idx, pi),
++                ))
++            with patch("code_forge.receipt.datetime") as mock_dt:
++                mock_dt.datetime.now.return_value = (
++                    base + datetime.timedelta(minutes=round_idx * 5))
++                mock_dt.timedelta = datetime.timedelta
++                mock_dt.timezone = datetime.timezone
++                write_receipts(
++                    receipts_dir=tmp_path / ".code-forge" / "receipts",
++                    round_index=round_idx,
++                    l1_findings=findings,
++                    diff_sha256=diff_sha,
++                    source_files=[Path("src/foo.py")],
++                    cwd=tmp_path,
++                    diff_files=diff_files,
++                )
++        return diff_sha, diff_files
++
++    def test_backend_failure_in_an_early_round_still_verifies(self, tmp_path):
++        """A failed backend call must not cost the review its attestation.
++
++        The pass that fails is recorded as a finding naming "<llm-invoke>",
++        since no file is at fault. That is not a path, so the anchor check
++        rejects it, and receipts are never pruned -- a single failure in
++        round one outlives every clean round after it. Four rounds here, the
++        failure in the first: the last three are spotless and verify still
++        has to accept the set.
++
++        Driven through run_verify rather than read off the receipt, because
++        the anchor list is only wrong in the eyes of its consumer.
++        """
++        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)
++
++        r = run_verify(tmp_path, diff_sha, diff_files)
++        assert r.passed, "backend failure blocked attestation: %s" % r.reason
++
++        # The failure is dropped as an anchor, not silenced: round one still
++        # reports it, or the receipts would claim a pass that never ran.
++        c1p1 = json.loads(
++            (tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json")
++            .read_text())
++        assert any(f["file"] == "<llm-invoke>" for f in c1p1["findings"])
++        assert not any(a["file"] == "<llm-invoke>" for a in c1p1["anchors"])
++
++    def test_backend_failure_inside_the_attested_window_is_refused(
++        self, tmp_path
++    ):
++        """The same failure in an attested cycle must still be refused.
++
++        Dropping the anchor keeps a stale failure from outliving the rounds
++        that followed it. It does not, and must not, make a cycle whose pass
++        never ran look like one that did: that cycle really did read less of
++        the diff, and the coverage floor is what says so. Pinned here so the
++        line between the two cannot move by accident -- letting this through
++        would attest a three-pass cycle that ran two.
++        """
++        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 3)
++
++        r = run_verify(tmp_path, diff_sha, diff_files)
++        assert not r.passed
++        # Coverage is what catches it HERE, because this diff is small enough
++        # that two passes cannot reach the floor alone. That is a property of
++        # the fixture, not a guarantee -- on a larger diff the two healthy
++        # passes clear 60% by themselves and this refusal disappears. The
++        # structural backstop for that case is check 8, isolated in the test
++        # below.
++        assert "coverage" in r.reason, r.reason
++
++    def test_a_pass_that_never_ran_is_refused_even_when_coverage_passes(
++        self, tmp_path
++    ):
++        """The gap the coverage floor cannot close.
++
++        Coverage is unioned across the passes of a cycle, so two passes that
++        read enough of a large diff carry a third that never ran, and every
++        other check is happy: the receipt has a matching hash, a monotonic
++        timestamp, no anchor to contradict and no excerpt to disprove.
++        pass_status is the only thing left that knows, and until check 8
++        nothing read it.
++
++        Built by taking a scenario that verifies clean and flipping one
++        in-window pass_status, so nothing else can be the reason for the
++        refusal.
++        """
++        import json
++        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)
++        assert run_verify(tmp_path, diff_sha, diff_files).passed
++
++        receipts_dir = tmp_path / ".code-forge" / "receipts"
++        target = None
++        for p in sorted(receipts_dir.glob("*.json")):
++            obj = json.loads(p.read_text())
++            if obj["cycle"] == 4 and obj["pass"] == 2:
++                target = (p, obj)
++                break
++        assert target is not None, "fixture shape changed: no c4p2 receipt"
++        p, obj = target
++        assert obj["pass_status"] == "completed"
++        obj["pass_status"] = "timeout"
++        p.write_text(json.dumps(obj))
++
++        r = run_verify(tmp_path, diff_sha, diff_files)
++        assert not r.passed
++        assert "did not complete" in r.reason, r.reason
++        assert "c4p2" in r.reason, r.reason
++
++    def test_a_receipt_without_pass_status_is_still_accepted(self, tmp_path):
++        """Absence is not failure.
++
++        pass_status is not documented in SKILL.md, so a reviewer writing a
++        receipt by hand from the documented shape omits it, and receipts
++        written before the field existed lack it too. A check that refused on
++        a missing field would reject good receipts -- the failure this file's
++        schema comment was written about, and one this project has already
++        shipped once.
++        """
++        import json
++        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)
++        assert run_verify(tmp_path, diff_sha, diff_files).passed
++
++        receipts_dir = tmp_path / ".code-forge" / "receipts"
++        stripped = 0
++        for p in sorted(receipts_dir.glob("*.json")):
++            obj = json.loads(p.read_text())
++            if obj.pop("pass_status", None) is not None:
++                p.write_text(json.dumps(obj))
++                stripped += 1
++        assert stripped > 0, "fixture wrote no pass_status to strip"
++
++        r = run_verify(tmp_path, diff_sha, diff_files)
++        assert r.passed, r.reason
++
+ 
+ # ---------------------------------------------------------------------------
+ # Hardened-verify fixtures

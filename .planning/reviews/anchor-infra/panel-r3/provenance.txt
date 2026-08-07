@@ -1,0 +1,26 @@
+=== engine provenance (PINNED to the worktree under review) ===
+code_forge loaded from: /home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/__init__.py
+engine carries the anchor filter: True
+engine receipt.py md5: 3ac9c65fc5d51236ce0919a24909d172
+
+=== target under review ===
+worktree: /home/houminxi/code/forge/.worktrees/anchor-infra
+branch:   defects/infra-anchor-poison
+HEAD:     888333ad3827e8ec62f1570410f82afbc10b220f
+staged diffstat:
+ src/code_forge/llm_invoke.py |  18 ++++-
+ src/code_forge/machine.py    |  57 +++++++++++++-
+ src/code_forge/receipt.py    |  10 +++
+ src/code_forge/verify.py     |  34 ++++++++-
+ tests/test_machine_local.py  |  88 ++++++++++++++++++++-
+ tests/test_verify.py         | 178 +++++++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 380 insertions(+), 5 deletions(-)
+staged diff sha256: 74a4aa106492534bc829289290b36ad596a7efcbe0740f8f9bab78f510d989bb
+
+=== gate config ===
+gate.yaml md5: e3b1efc0ea02bc26071a2d527bd91df4
+
+=== backend liveness ===
+models endpoint http=200
+models offered (sampled): ['antigravity/gemini-pro-agent', 'agy/gemini-pro-agent', 'agy/gemini-3.1-pro-high']
+target model agy/gemini-3.1-pro-high present: True

@@ -1,0 +1,15 @@
+[opus-omniroute:qodo] 73650 in / 6651 out tokens
+[opus-omniroute:adversarial] 73650 in / 6780 out tokens
+[opus-omniroute:expert] 73650 in / 7268 out tokens
+[opus-omniroute:expert] 73650 in / 7268 out tokens
+[opus-omniroute:qodo] 73650 in / 6651 out tokens
+[opus-omniroute:adversarial] 73650 in / 6780 out tokens
+[opus-omniroute:adversarial] 73650 in / 6780 out tokens
+[opus-omniroute:expert] 73650 in / 7268 out tokens
+[opus-omniroute:qodo] 73650 in / 6651 out tokens
+[opus-omniroute:expert] 73650 in / 7268 out tokens
+[opus-omniroute:qodo] 73650 in / 6651 out tokens
+[opus-omniroute:adversarial] 73650 in / 6780 out tokens
+[opus-omniroute:qodo] 73650 in / 6651 out tokens
+[opus-omniroute:adversarial] 73650 in / 6780 out tokens
+[opus-omniroute:expert] 73650 in / 7268 out tokens

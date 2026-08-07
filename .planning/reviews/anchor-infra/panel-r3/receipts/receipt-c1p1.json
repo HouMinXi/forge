@@ -1,0 +1,276 @@
+{
+  "cycle": 1,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "dedd83c6567a391c32b3a247f6fa5f1ddbd6e2a39cb44aea581c8755a7dd9e84",
+  "timestamp": "2026-08-07T03:53:46.183075+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 978,
+      "end_line": 982,
+      "content": "            sys.stderr.write(\n                \"code-forge: retrying %s (%d/%d, waiting %.1fs) after %s\\n\"\n                % (backend.name, attempt + 2, max_attempts, delay,\n                   str(exc)[:400])\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 64,
+      "end_line": 72,
+      "content": "class TimeoutBreaker(Exception):\n    \"\"\"Raised when a run provably cannot converge and should stop early.\n\n    Two triggers, both meaning \"more rounds cannot help\": the consecutive\n    timeout threshold in TimeoutCircuitBreaker, and consecutive rounds where\n    an L1 pass did not complete (_check_l1_can_still_converge). The name\n    predates the second one; cli.py prints the message verbatim, so what the\n    operator reads is the specific reason, not the class name.\n    \"\"\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 251,
+      "end_line": 254,
+      "content": "        self._pass_counter: int = 0\n        self._advisories: \"list[AdvisoryFinding]\" = []\n        self._preexisting_buf: \"list[AdvisoryFinding]\" = []\n        self._rounds_with_failed_pass: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 748,
+      "end_line": 792,
+      "content": "    def _check_l1_can_still_converge(\n        self, l1_findings: list[StateFinding]\n    ) -> None:\n        \"\"\"Stop a run that provably cannot reach a clean round.\n\n        A pass that fails leaves a CONFIRMED INFRA finding, which tiers P2 and\n        zeroes consecutive_clean_rounds. Repeat that every round and the\n        threshold is unreachable, so the run walks all the way to\n        max_total_rounds to learn nothing -- on a slow backend, hours of it.\n\n        TimeoutCircuitBreaker cannot see this, for two separate reasons. It\n        only counts timeouts (record_other_error is deliberately a no-op, per\n        its own tests), and it counts per PASS, so the one pass that did\n        succeed calls record_success and zeroes the counter. A round where\n        one of three passes worked looks exactly like a healthy round to it.\n\n        Consecutive rounds, not cumulative: a backend that fails once and\n        recovers is a transient the retry logic already handles, and stopping\n        on that would be worse than the problem.\n        \"\"\"\n        from .state import derive_pass_outcomes, PassOutcome\n\n        outcomes = derive_pass_outcomes(l1_findings)\n        failed = {\n            name: outcome.value\n            for name, outcome in outcomes.items()\n            if outcome != PassOutcome.COMPLETED\n        }\n        if not failed:\n            self._rounds_with_failed_pass = 0\n            return\n        self._rounds_with_failed_pass += 1\n        self._state.infra_errors.append(\n            \"round %d: pass(es) did not complete: %s\"\n            % (self._state.round, failed)\n        )\n        if self._rounds_with_failed_pass >= 3:\n            raise TimeoutBreaker(\n                \"%d consecutive rounds had a pass that did not complete \"\n                \"(latest: %s). Each one leaves a CONFIRMED infra finding, \"\n                \"which resets the clean-round counter, so this review cannot \"\n                \"converge no matter how many rounds remain. Fix the backend \"\n                \"or switch to another one rather than waiting.\"\n                % (self._rounds_with_failed_pass, failed)\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 886,
+      "end_line": 890,
+      "content": "        if self.mode == Mode.LOCAL:\n            self._apply_autofix_loop_to(l0_findings)\n        l1_findings, l1_excerpts = self._run_l1_phase()\n        self._check_l1_can_still_converge(l1_findings)\n        l2_findings = self._run_l2_phase()",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 120,
+      "end_line": 128,
+      "content": "            \"anchors\": [\n                {\n                    \"file\": f.file,\n                    \"line\": f.line_range[0] if f.line_range else 0,\n                    \"text\": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),\n                }\n                for f in pass_findings\n                if f.source != \"INFRA\"\n            ],",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 566,
+      "end_line": 598,
+      "content": "    # 8. every pass in the attested window has to have actually run.\n    # derive_pass_outcomes already works this out from the INFRA findings and\n    # receipt.py stores it per receipt as pass_status; until now nothing read\n    # it. A pass that timed out or errored still writes a receipt, and checks\n    # 1-7 can all pass on that receipt: it has a matching hash, a monotonic\n    # timestamp, no anchors to contradict and no excerpts to disprove. The\n    # coverage floor was the only thing in the way, and it unions across the\n    # passes of a cycle, so two healthy passes on a large enough diff carry a\n    # third that never happened.\n    #\n    # Absence is not failure. pass_status is not in SKILL.md, so a reviewer\n    # hand-writing a receipt from the documented shape leaves it out, and\n    # every receipt written before the field existed lacks it too. Refusing on\n    # a missing field would reject good receipts -- which is the exact failure\n    # the schema comment at the top of this file was written about. Measured\n    # before writing this: all 204 receipts on disk carry the field\n    # (189 completed, 12 error, 3 timeout), so the signal is real; the\n    # tolerance is for the writers that are not receipt.py.\n    for r in receipts:\n        if r.get(\"cycle\") not in last_three:\n            continue\n        status = r.get(\"pass_status\")\n        if status is not None and status != \"completed\":\n            return VerifyResult(\n                False,\n                \"pass did not complete: c%dp%d status=%s -- that pass \"\n                \"contributed no review, so the cycle cannot attest\"\n                % (r[\"cycle\"], r[\"pass\"], status),\n                8, cp,\n            )\n    cp += 1\n\n    return VerifyResult(True, \"all 8 checks passed\", 8, 8)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_local.py",
+      "start_line": 408,
+      "end_line": 414,
+      "content": "            l1_provider=mock_l1,\n            # Two rounds, deliberately below the three-consecutive-failed-pass\n            # abort in _check_l1_can_still_converge, so this keeps testing what\n            # it was written to test: the fixpoint blocking, not the abort.\n            # The abort has its own test below.\n            max_total_rounds=2,\n            clean_round_threshold=3,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_local.py",
+      "start_line": 429,
+      "end_line": 508,
+      "content": "class TestUnconvergeableRunStopsEarly:\n    \"\"\"A pass that keeps failing makes a clean round unreachable.\n\n    Every failed pass leaves a CONFIRMED INFRA finding, which zeroes\n    consecutive_clean_rounds. Repeat that and no number of remaining rounds\n    can help, so the run should say so instead of walking to\n    max_total_rounds. The old behaviour burned every round and reported\n    ESCALATED, which reads as \"the review found problems\" when in fact the\n    review never ran.\n    \"\"\"\n\n    @staticmethod\n    def _machine(tmp_path, l1_provider, max_rounds):\n        import json as _json\n        fixture = tmp_path / \"falsify.json\"\n        fixture.write_text(_json.dumps({\"default\": \"DISMISSED\"}))\n        return StateMachine(\n            mode=Mode.LOCAL,\n            falsifier=StubFalsifier(fixture_path=fixture),\n            autofixer=StubAutoFixer(),\n            revert_fn=lambda f: None,\n            resolved_review=_make_resolved(),\n            source_hash=\"abc\",\n            baseline_spec_repr=\"empty\",\n            cwd=tmp_path,\n            registry={},\n            l0_runner=lambda r, f: ([], []),\n            l1_provider=l1_provider,\n            max_total_rounds=max_rounds,\n            clean_round_threshold=3,\n        )\n\n    @staticmethod\n    def _invoke_fail(pass_name=\"qodo\"):\n        return StateFinding(\n            id=\"l1-%s-invoke-fail\" % pass_name,\n            fingerprint=\"invoke-fail-%s\" % pass_name,\n            source=\"INFRA\",\n            disposition=Disposition.CONFIRMED,\n            file=\"<llm-invoke>\",\n            line_range=[0, 0],\n            description=\"L1 invoke failed: backend said no\",\n        )\n\n    def test_three_consecutive_failed_passes_stop_the_run(self, tmp_path):\n        import pytest\n        from code_forge.machine import TimeoutBreaker\n\n        rounds = []\n\n        def mock_l1():\n            rounds.append(1)\n            return ([self._invoke_fail()], [], Usage(), 0.0)\n\n        machine = self._machine(tmp_path, mock_l1, max_rounds=12)\n        with pytest.raises(TimeoutBreaker, match=\"cannot converge\"):\n            machine.run()\n        # Stopped at the third failing round, not at max_total_rounds. The\n        # whole point is the nine rounds it did not spend.\n        assert len(rounds) == 3\n\n    def test_a_recovered_round_resets_the_counter(self, tmp_path):\n        \"\"\"Consecutive, not cumulative.\n\n        A backend that fails and recovers is a transient the retry logic\n        already covers. Counting those cumulatively would stop healthy runs,\n        which is worse than the problem being fixed.\n        \"\"\"\n        script = [True, True, False, True, True]  # True = pass failed\n        calls = []\n\n        def mock_l1():\n            failed = script[len(calls)]\n            calls.append(failed)\n            return ([self._invoke_fail()] if failed else [], [], Usage(), 0.0)\n\n        machine = self._machine(tmp_path, mock_l1, max_rounds=len(script))\n        # No raise: the run never gets three failures in a row.\n        machine.run()\n        assert len(calls) == len(script)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 416,
+      "end_line": 479,
+      "content": "    @staticmethod\n    def _run_with_failed_pass(tmp_path, failed_round):\n        \"\"\"Four rounds where one round's qodo pass never reached the model.\n\n        A timed-out pass returns only the infra finding -- no code finding\n        beside it, which is how it comes back off a real backend deadline.\n\n        Returns the diff arguments so the caller can drive run_verify.\n        \"\"\"\n        import datetime\n        from unittest.mock import patch\n        from code_forge.receipt import write_receipts\n        from code_forge.disposition import Disposition\n        from code_forge.state import StateFinding\n\n        (tmp_path / \"src\").mkdir(parents=True)\n        (tmp_path / \"src\" / \"foo.py\").write_text(\n            \"\".join(\"line%d\\n\" % i for i in range(1, 81)))\n        diff_sha = _sha(\"diff\")\n        diff_files = {\"src/foo.py\": list(range(1, 81))}\n\n        base = datetime.datetime(2026, 5, 28, 10, 0, 0,\n                                 tzinfo=datetime.timezone.utc)\n        passes = [\"qodo\", \"expert\", \"adversarial\"]\n        # Spread far enough apart that the last three cycles stay under the\n        # Jaccard similarity ceiling while each still clears the coverage\n        # floor: findings cover +/-10 lines, so three per cycle is 63 of 80.\n        cycle_locs = [(10, 30, 50), (11, 33, 55), (15, 40, 65), (20, 45, 70)]\n        for round_idx in range(4):\n            findings = []\n            for pi, pn in enumerate(passes):\n                if round_idx == failed_round and pn == \"qodo\":\n                    findings.append(StateFinding(\n                        id=\"l1-qodo-invoke-fail\",\n                        fingerprint=\"invoke-fail-qodo\", source=\"INFRA\",\n                        disposition=Disposition.CONFIRMED,\n                        file=\"<llm-invoke>\", line_range=[0, 0],\n                        description=\"L1 invoke failed: read deadline\",\n                    ))\n                    continue\n                ln = cycle_locs[round_idx][pi]\n                findings.append(StateFinding(\n                    id=\"l1-%s-fp%d%d\" % (pn, round_idx, pi),\n                    fingerprint=\"fp%d%d\" % (round_idx, pi), source=\"L1\",\n                    disposition=Disposition.UNCERTAIN,\n                    file=\"src/foo.py\", line_range=[ln, ln],\n                    description=\"[%s] finding r%dp%d\" % (pn, round_idx, pi),\n                ))\n            with patch(\"code_forge.receipt.datetime\") as mock_dt:\n                mock_dt.datetime.now.return_value = (\n                    base + datetime.timedelta(minutes=round_idx * 5))\n                mock_dt.timedelta = datetime.timedelta\n                mock_dt.timezone = datetime.timezone\n                write_receipts(\n                    receipts_dir=tmp_path / \".code-forge\" / \"receipts\",\n                    round_index=round_idx,\n                    l1_findings=findings,\n                    diff_sha256=diff_sha,\n                    source_files=[Path(\"src/foo.py\")],\n                    cwd=tmp_path,\n                    diff_files=diff_files,\n                )\n        return diff_sha, diff_files",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 480,
+      "end_line": 504,
+      "content": "    def test_backend_failure_in_an_early_round_still_verifies(self, tmp_path):\n        \"\"\"A failed backend call must not cost the review its attestation.\n\n        The pass that fails is recorded as a finding naming \"<llm-invoke>\",\n        since no file is at fault. That is not a path, so the anchor check\n        rejects it, and receipts are never pruned -- a single failure in\n        round one outlives every clean round after it. Four rounds here, the\n        failure in the first: the last three are spotless and verify still\n        has to accept the set.\n\n        Driven through run_verify rather than read off the receipt, because\n        the anchor list is only wrong in the eyes of its consumer.\n        \"\"\"\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, \"backend failure blocked attestation: %s\" % r.reason\n\n        # The failure is dropped as an anchor, not silenced: round one still\n        # reports it, or the receipts would claim a pass that never ran.\n        c1p1 = json.loads(\n            (tmp_path / \".code-forge\" / \"receipts\" / \"receipt-c1p1.json\")\n            .read_text())\n        assert any(f[\"file\"] == \"<llm-invoke>\" for f in c1p1[\"findings\"])\n        assert not any(a[\"file\"] == \"<llm-invoke>\" for a in c1p1[\"anchors\"])",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 506,
+      "end_line": 528,
+      "content": "    def test_backend_failure_inside_the_attested_window_is_refused(\n        self, tmp_path\n    ):\n        \"\"\"The same failure in an attested cycle must still be refused.\n\n        Dropping the anchor keeps a stale failure from outliving the rounds\n        that followed it. It does not, and must not, make a cycle whose pass\n        never ran look like one that did: that cycle really did read less of\n        the diff, and the coverage floor is what says so. Pinned here so the\n        line between the two cannot move by accident -- letting this through\n        would attest a three-pass cycle that ran two.\n        \"\"\"\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 3)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert not r.passed\n        # Coverage is what catches it HERE, because this diff is small enough\n        # that two passes cannot reach the floor alone. That is a property of\n        # the fixture, not a guarantee -- on a larger diff the two healthy\n        # passes clear 60% by themselves and this refusal disappears. The\n        # structural backstop for that case is check 8, isolated in the test\n        # below.\n        assert \"coverage\" in r.reason, r.reason",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 530,
+      "end_line": 566,
+      "content": "    def test_a_pass_that_never_ran_is_refused_even_when_coverage_passes(\n        self, tmp_path\n    ):\n        \"\"\"The gap the coverage floor cannot close.\n\n        Coverage is unioned across the passes of a cycle, so two passes that\n        read enough of a large diff carry a third that never ran, and every\n        other check is happy: the receipt has a matching hash, a monotonic\n        timestamp, no anchor to contradict and no excerpt to disprove.\n        pass_status is the only thing left that knows, and until check 8\n        nothing read it.\n\n        Built by taking a scenario that verifies clean and flipping one\n        in-window pass_status, so nothing else can be the reason for the\n        refusal.\n        \"\"\"\n        import json\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n        assert run_verify(tmp_path, diff_sha, diff_files).passed\n\n        receipts_dir = tmp_path / \".code-forge\" / \"receipts\"\n        target = None\n        for p in sorted(receipts_dir.glob(\"*.json\")):\n            obj = json.loads(p.read_text())\n            if obj[\"cycle\"] == 4 and obj[\"pass\"] == 2:\n                target = (p, obj)\n                break\n        assert target is not None, \"fixture shape changed: no c4p2 receipt\"\n        p, obj = target\n        assert obj[\"pass_status\"] == \"completed\"\n        obj[\"pass_status\"] = \"timeout\"\n        p.write_text(json.dumps(obj))\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert not r.passed\n        assert \"did not complete\" in r.reason, r.reason\n        assert \"c4p2\" in r.reason, r.reason",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 568,
+      "end_line": 592,
+      "content": "    def test_a_receipt_without_pass_status_is_still_accepted(self, tmp_path):\n        \"\"\"Absence is not failure.\n\n        pass_status is not documented in SKILL.md, so a reviewer writing a\n        receipt by hand from the documented shape omits it, and receipts\n        written before the field existed lack it too. A check that refused on\n        a missing field would reject good receipts -- the failure this file's\n        schema comment was written about, and one this project has already\n        shipped once.\n        \"\"\"\n        import json\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n        assert run_verify(tmp_path, diff_sha, diff_files).passed\n\n        receipts_dir = tmp_path / \".code-forge\" / \"receipts\"\n        stripped = 0\n        for p in sorted(receipts_dir.glob(\"*.json\")):\n            obj = json.loads(p.read_text())\n            if obj.pop(\"pass_status\", None) is not None:\n                p.write_text(json.dumps(obj))\n                stripped += 1\n        assert stripped > 0, \"fixture wrote no pass_status to strip\"\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, r.reason",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 965,
+      "end_line": 981,
+      "content": "            # Carry the cause. Without it this line names a backend and a\n            # delay and nothing else, so a run that retries forever gives the\n            # operator no way to tell a rate limit from a proxy queue drop\n            # from an empty response -- the status, the message, and any\n            # self-diagnosing text the gateway sent all stop here. One such\n            # message (\"this is OmniRoute's request queue, not an upstream\n            # timeout\") had to be recovered from the proxy's container log\n            # because this line discarded it.\n            #\n            # Read the timing carefully when debugging from this output: the\n            # delay is printed BEFORE the sleep, so the gap between two lines\n            # is the sleep plus the NEXT attempt's duration. The line does not\n            # say how long an attempt took.\n            sys.stderr.write(\n                \"code-forge: retrying %s (%d/%d, waiting %.1fs) after %s\\n\"\n                % (backend.name, attempt + 2, max_attempts, delay,\n                   str(exc)[:400])\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 65,
+      "end_line": 72,
+      "content": "    \"\"\"Raised when a run provably cannot converge and should stop early.\n\n    Two triggers, both meaning \"more rounds cannot help\": the consecutive\n    timeout threshold in TimeoutCircuitBreaker, and consecutive rounds where\n    an L1 pass did not complete (_check_l1_can_still_converge). The name\n    predates the second one; cli.py prints the message verbatim, so what the\n    operator reads is the specific reason, not the class name.\n    \"\"\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 254,
+      "end_line": 254,
+      "content": "        self._rounds_with_failed_pass: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 748,
+      "end_line": 793,
+      "content": "    def _check_l1_can_still_converge(\n        self, l1_findings: list[StateFinding]\n    ) -> None:\n        \"\"\"Stop a run that provably cannot reach a clean round.\n\n        A pass that fails leaves a CONFIRMED INFRA finding, which tiers P2 and\n        zeroes consecutive_clean_rounds. Repeat that every round and the\n        threshold is unreachable, so the run walks all the way to\n        max_total_rounds to learn nothing -- on a slow backend, hours of it.\n\n        TimeoutCircuitBreaker cannot see this, for two separate reasons. It\n        only counts timeouts (record_other_error is deliberately a no-op, per\n        its own tests), and it counts per PASS, so the one pass that did\n        succeed calls record_success and zeroes the counter. A round where\n        one of three passes worked looks exactly like a healthy round to it.\n\n        Consecutive rounds, not cumulative: a backend that fails once and\n        recovers is a transient the retry logic already handles, and stopping\n        on that would be worse than the problem.\n        \"\"\"\n        from .state import derive_pass_outcomes, PassOutcome\n\n        outcomes = derive_pass_outcomes(l1_findings)\n        failed = {\n            name: outcome.value\n            for name, outcome in outcomes.items()\n            if outcome != PassOutcome.COMPLETED\n        }\n        if not failed:\n            self._rounds_with_failed_pass = 0\n            return\n        self._rounds_with_failed_pass += 1\n        self._state.infra_errors.append(\n            \"round %d: pass(es) did not complete: %s\"\n            % (self._state.round, failed)\n        )\n        if self._rounds_with_failed_pass >= 3:\n            raise TimeoutBreaker(\n                \"%d consecutive rounds had a pass that did not complete \"\n                \"(latest: %s). Each one leaves a CONFIRMED infra finding, \"\n                \"which resets the clean-round counter, so this review cannot \"\n                \"converge no matter how many rounds remain. Fix the backend \"\n                \"or switch to another one rather than waiting.\"\n                % (self._rounds_with_failed_pass, failed)\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 889,
+      "end_line": 889,
+      "content": "        self._check_l1_can_still_converge(l1_findings)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 111,
+      "end_line": 119,
+      "content": "            # An infra finding names a sentinel such as \"<llm-invoke>\", not a\n            # file: when a backend call fails there is no code to point at.\n            # Anchors are read back as paths that must appear in the diff, so\n            # one sentinel makes the review unattestable -- and permanently,\n            # since receipts are never pruned and that check reads every\n            # cycle, not only the last three. The finding itself stays in\n            # findings above, where the failure is still reported.\n            # covered_line_ranges below needs no such filter: it is\n            # intersected with the diff, so a sentinel entry is inert there.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 127,
+      "end_line": 127,
+      "content": "                if f.source != \"INFRA\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 566,
+      "end_line": 598,
+      "content": "    # 8. every pass in the attested window has to have actually run.\n    # derive_pass_outcomes already works this out from the INFRA findings and\n    # receipt.py stores it per receipt as pass_status; until now nothing read\n    # it. A pass that timed out or errored still writes a receipt, and checks\n    # 1-7 can all pass on that receipt: it has a matching hash, a monotonic\n    # timestamp, no anchors to contradict and no excerpts to disprove. The\n    # coverage floor was the only thing in the way, and it unions across the\n    # passes of a cycle, so two healthy passes on a large enough diff carry a\n    # third that never happened.\n    #\n    # Absence is not failure. pass_status is not in SKILL.md, so a reviewer\n    # hand-writing a receipt from the documented shape leaves it out, and\n    # every receipt written before the field existed lacks it too. Refusing on\n    # a missing field would reject good receipts -- which is the exact failure\n    # the schema comment at the top of this file was written about. Measured\n    # before writing this: all 204 receipts on disk carry the field\n    # (189 completed, 12 error, 3 timeout), so the signal is real; the\n    # tolerance is for the writers that are not receipt.py.\n    for r in receipts:\n        if r.get(\"cycle\") not in last_three:\n            continue\n        status = r.get(\"pass_status\")\n        if status is not None and status != \"completed\":\n            return VerifyResult(\n                False,\n                \"pass did not complete: c%dp%d status=%s -- that pass \"\n                \"contributed no review, so the cycle cannot attest\"\n                % (r[\"cycle\"], r[\"pass\"], status),\n                8, cp,\n            )\n    cp += 1\n\n    return VerifyResult(True, \"all 8 checks passed\", 8, 8)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_local.py",
+      "start_line": 409,
+      "end_line": 413,
+      "content": "            # Two rounds, deliberately below the three-consecutive-failed-pass\n            # abort in _check_l1_can_still_converge, so this keeps testing what\n            # it was written to test: the fixpoint blocking, not the abort.\n            # The abort has its own test below.\n            max_total_rounds=2,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_local.py",
+      "start_line": 429,
+      "end_line": 510,
+      "content": "class TestUnconvergeableRunStopsEarly:\n    \"\"\"A pass that keeps failing makes a clean round unreachable.\n\n    Every failed pass leaves a CONFIRMED INFRA finding, which zeroes\n    consecutive_clean_rounds. Repeat that and no number of remaining rounds\n    can help, so the run should say so instead of walking to\n    max_total_rounds. The old behaviour burned every round and reported\n    ESCALATED, which reads as \"the review found problems\" when in fact the\n    review never ran.\n    \"\"\"\n\n    @staticmethod\n    def _machine(tmp_path, l1_provider, max_rounds):\n        import json as _json\n        fixture = tmp_path / \"falsify.json\"\n        fixture.write_text(_json.dumps({\"default\": \"DISMISSED\"}))\n        return StateMachine(\n            mode=Mode.LOCAL,\n            falsifier=StubFalsifier(fixture_path=fixture),\n            autofixer=StubAutoFixer(),\n            revert_fn=lambda f: None,\n            resolved_review=_make_resolved(),\n            source_hash=\"abc\",\n            baseline_spec_repr=\"empty\",\n            cwd=tmp_path,\n            registry={},\n            l0_runner=lambda r, f: ([], []),\n            l1_provider=l1_provider,\n            max_total_rounds=max_rounds,\n            clean_round_threshold=3,\n        )\n\n    @staticmethod\n    def _invoke_fail(pass_name=\"qodo\"):\n        return StateFinding(\n            id=\"l1-%s-invoke-fail\" % pass_name,\n            fingerprint=\"invoke-fail-%s\" % pass_name,\n            source=\"INFRA\",\n            disposition=Disposition.CONFIRMED,\n            file=\"<llm-invoke>\",\n            line_range=[0, 0],\n            description=\"L1 invoke failed: backend said no\",\n        )\n\n    def test_three_consecutive_failed_passes_stop_the_run(self, tmp_path):\n        import pytest\n        from code_forge.machine import TimeoutBreaker\n\n        rounds = []\n\n        def mock_l1():\n            rounds.append(1)\n            return ([self._invoke_fail()], [], Usage(), 0.0)\n\n        machine = self._machine(tmp_path, mock_l1, max_rounds=12)\n        with pytest.raises(TimeoutBreaker, match=\"cannot converge\"):\n            machine.run()\n        # Stopped at the third failing round, not at max_total_rounds. The\n        # whole point is the nine rounds it did not spend.\n        assert len(rounds) == 3\n\n    def test_a_recovered_round_resets_the_counter(self, tmp_path):\n        \"\"\"Consecutive, not cumulative.\n\n        A backend that fails and recovers is a transient the retry logic\n        already covers. Counting those cumulatively would stop healthy runs,\n        which is worse than the problem being fixed.\n        \"\"\"\n        script = [True, True, False, True, True]  # True = pass failed\n        calls = []\n\n        def mock_l1():\n            failed = script[len(calls)]\n            calls.append(failed)\n            return ([self._invoke_fail()] if failed else [], [], Usage(), 0.0)\n\n        machine = self._machine(tmp_path, mock_l1, max_rounds=len(script))\n        # No raise: the run never gets three failures in a row.\n        machine.run()\n        assert len(calls) == len(script)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 416,
+      "end_line": 593,
+      "content": "    @staticmethod\n    def _run_with_failed_pass(tmp_path, failed_round):\n        \"\"\"Four rounds where one round's qodo pass never reached the model.\n\n        A timed-out pass returns only the infra finding -- no code finding\n        beside it, which is how it comes back off a real backend deadline.\n\n        Returns the diff arguments so the caller can drive run_verify.\n        \"\"\"\n        import datetime\n        from unittest.mock import patch\n        from code_forge.receipt import write_receipts\n        from code_forge.disposition import Disposition\n        from code_forge.state import StateFinding\n\n        (tmp_path / \"src\").mkdir(parents=True)\n        (tmp_path / \"src\" / \"foo.py\").write_text(\n            \"\".join(\"line%d\\n\" % i for i in range(1, 81)))\n        diff_sha = _sha(\"diff\")\n        diff_files = {\"src/foo.py\": list(range(1, 81))}\n\n        base = datetime.datetime(2026, 5, 28, 10, 0, 0,\n                                 tzinfo=datetime.timezone.utc)\n        passes = [\"qodo\", \"expert\", \"adversarial\"]\n        # Spread far enough apart that the last three cycles stay under the\n        # Jaccard similarity ceiling while each still clears the coverage\n        # floor: findings cover +/-10 lines, so three per cycle is 63 of 80.\n        cycle_locs = [(10, 30, 50), (11, 33, 55), (15, 40, 65), (20, 45, 70)]\n        for round_idx in range(4):\n            findings = []\n            for pi, pn in enumerate(passes):\n                if round_idx == failed_round and pn == \"qodo\":\n                    findings.append(StateFinding(\n                        id=\"l1-qodo-invoke-fail\",\n                        fingerprint=\"invoke-fail-qodo\", source=\"INFRA\",\n                        disposition=Disposition.CONFIRMED,\n                        file=\"<llm-invoke>\", line_range=[0, 0],\n                        description=\"L1 invoke failed: read deadline\",\n                    ))\n                    continue\n                ln = cycle_locs[round_idx][pi]\n                findings.append(StateFinding(\n                    id=\"l1-%s-fp%d%d\" % (pn, round_idx, pi),\n                    fingerprint=\"fp%d%d\" % (round_idx, pi), source=\"L1\",\n                    disposition=Disposition.UNCERTAIN,\n                    file=\"src/foo.py\", line_range=[ln, ln],\n                    description=\"[%s] finding r%dp%d\" % (pn, round_idx, pi),\n                ))\n            with patch(\"code_forge.receipt.datetime\") as mock_dt:\n                mock_dt.datetime.now.return_value = (\n                    base + datetime.timedelta(minutes=round_idx * 5))\n                mock_dt.timedelta = datetime.timedelta\n                mock_dt.timezone = datetime.timezone\n                write_receipts(\n                    receipts_dir=tmp_path / \".code-forge\" / \"receipts\",\n                    round_index=round_idx,\n                    l1_findings=findings,\n                    diff_sha256=diff_sha,\n                    source_files=[Path(\"src/foo.py\")],\n                    cwd=tmp_path,\n                    diff_files=diff_files,\n                )\n        return diff_sha, diff_files\n\n    def test_backend_failure_in_an_early_round_still_verifies(self, tmp_path):\n        \"\"\"A failed backend call must not cost the review its attestation.\n\n        The pass that fails is recorded as a finding naming \"<llm-invoke>\",\n        since no file is at fault. That is not a path, so the anchor check\n        rejects it, and receipts are never pruned -- a single failure in\n        round one outlives every clean round after it. Four rounds here, the\n        failure in the first: the last three are spotless and verify still\n        has to accept the set.\n\n        Driven through run_verify rather than read off the receipt, because\n        the anchor list is only wrong in the eyes of its consumer.\n        \"\"\"\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, \"backend failure blocked attestation: %s\" % r.reason\n\n        # The failure is dropped as an anchor, not silenced: round one still\n        # reports it, or the receipts would claim a pass that never ran.\n        c1p1 = json.loads(\n            (tmp_path / \".code-forge\" / \"receipts\" / \"receipt-c1p1.json\")\n            .read_text())\n        assert any(f[\"file\"] == \"<llm-invoke>\" for f in c1p1[\"findings\"])\n        assert not any(a[\"file\"] == \"<llm-invoke>\" for a in c1p1[\"anchors\"])\n\n    def test_backend_failure_inside_the_attested_window_is_refused(\n        self, tmp_path\n    ):\n        \"\"\"The same failure in an attested cycle must still be refused.\n\n        Dropping the anchor keeps a stale failure from outliving the rounds\n        that followed it. It does not, and must not, make a cycle whose pass\n        never ran look like one that did: that cycle really did read less of\n        the diff, and the coverage floor is what says so. Pinned here so the\n        line between the two cannot move by accident -- letting this through\n        would attest a three-pass cycle that ran two.\n        \"\"\"\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 3)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert not r.passed\n        # Coverage is what catches it HERE, because this diff is small enough\n        # that two passes cannot reach the floor alone. That is a property of\n        # the fixture, not a guarantee -- on a larger diff the two healthy\n        # passes clear 60% by themselves and this refusal disappears. The\n        # structural backstop for that case is check 8, isolated in the test\n        # below.\n        assert \"coverage\" in r.reason, r.reason\n\n    def test_a_pass_that_never_ran_is_refused_even_when_coverage_passes(\n        self, tmp_path\n    ):\n        \"\"\"The gap the coverage floor cannot close.\n\n        Coverage is unioned across the passes of a cycle, so two passes that\n        read enough of a large diff carry a third that never ran, and every\n        other check is happy: the receipt has a matching hash, a monotonic\n        timestamp, no anchor to contradict and no excerpt to disprove.\n        pass_status is the only thing left that knows, and until check 8\n        nothing read it.\n\n        Built by taking a scenario that verifies clean and flipping one\n        in-window pass_status, so nothing else can be the reason for the\n        refusal.\n        \"\"\"\n        import json\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n        assert run_verify(tmp_path, diff_sha, diff_files).passed\n\n        receipts_dir = tmp_path / \".code-forge\" / \"receipts\"\n        target = None\n        for p in sorted(receipts_dir.glob(\"*.json\")):\n            obj = json.loads(p.read_text())\n            if obj[\"cycle\"] == 4 and obj[\"pass\"] == 2:\n                target = (p, obj)\n                break\n        assert target is not None, \"fixture shape changed: no c4p2 receipt\"\n        p, obj = target\n        assert obj[\"pass_status\"] == \"completed\"\n        obj[\"pass_status\"] = \"timeout\"\n        p.write_text(json.dumps(obj))\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert not r.passed\n        assert \"did not complete\" in r.reason, r.reason\n        assert \"c4p2\" in r.reason, r.reason\n\n    def test_a_receipt_without_pass_status_is_still_accepted(self, tmp_path):\n        \"\"\"Absence is not failure.\n\n        pass_status is not documented in SKILL.md, so a reviewer writing a\n        receipt by hand from the documented shape omits it, and receipts\n        written before the field existed lack it too. A check that refused on\n        a missing field would reject good receipts -- the failure this file's\n        schema comment was written about, and one this project has already\n        shipped once.\n        \"\"\"\n        import json\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n        assert run_verify(tmp_path, diff_sha, diff_files).passed\n\n        receipts_dir = tmp_path / \".code-forge\" / \"receipts\"\n        stripped = 0\n        for p in sorted(receipts_dir.glob(\"*.json\")):\n            obj = json.loads(p.read_text())\n            if obj.pop(\"pass_status\", None) is not None:\n                p.write_text(json.dumps(obj))\n                stripped += 1\n        assert stripped > 0, \"fixture wrote no pass_status to strip\"\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, r.reason",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 965,
+      "end_line": 981,
+      "content": "            # Carry the cause. Without it this line names a backend and a\n            # delay and nothing else, so a run that retries forever gives the\n            # operator no way to tell a rate limit from a proxy queue drop\n            # from an empty response -- the status, the message, and any\n            # self-diagnosing text the gateway sent all stop here. One such\n            # message (\"this is OmniRoute's request queue, not an upstream\n            # timeout\") had to be recovered from the proxy's container log\n            # because this line discarded it.\n            #\n            # Read the timing carefully when debugging from this output: the\n            # delay is printed BEFORE the sleep, so the gap between two lines\n            # is the sleep plus the NEXT attempt's duration. The line does not\n            # say how long an attempt took.\n            sys.stderr.write(\n                \"code-forge: retrying %s (%d/%d, waiting %.1fs) after %s\\n\"\n                % (backend.name, attempt + 2, max_attempts, delay,\n                   str(exc)[:400])",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 65,
+      "end_line": 72,
+      "content": "    \"\"\"Raised when a run provably cannot converge and should stop early.\n\n    Two triggers, both meaning \"more rounds cannot help\": the consecutive\n    timeout threshold in TimeoutCircuitBreaker, and consecutive rounds where\n    an L1 pass did not complete (_check_l1_can_still_converge). The name\n    predates the second one; cli.py prints the message verbatim, so what the\n    operator reads is the specific reason, not the class name.\n    \"\"\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 254,
+      "end_line": 254,
+      "content": "        self._rounds_with_failed_pass: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 748,
+      "end_line": 793,
+      "content": "    def _check_l1_can_still_converge(\n        self, l1_findings: list[StateFinding]\n    ) -> None:\n        \"\"\"Stop a run that provably cannot reach a clean round.\n\n        A pass that fails leaves a CONFIRMED INFRA finding, which tiers P2 and\n        zeroes consecutive_clean_rounds. Repeat that every round and the\n        threshold is unreachable, so the run walks all the way to\n        max_total_rounds to learn nothing -- on a slow backend, hours of it.\n\n        TimeoutCircuitBreaker cannot see this, for two separate reasons. It\n        only counts timeouts (record_other_error is deliberately a no-op, per\n        its own tests), and it counts per PASS, so the one pass that did\n        succeed calls record_success and zeroes the counter. A round where\n        one of three passes worked looks exactly like a healthy round to it.\n\n        Consecutive rounds, not cumulative: a backend that fails once and\n        recovers is a transient the retry logic already handles, and stopping\n        on that would be worse than the problem.\n        \"\"\"\n        from .state import derive_pass_outcomes, PassOutcome\n\n        outcomes = derive_pass_outcomes(l1_findings)\n        failed = {\n            name: outcome.value\n            for name, outcome in outcomes.items()\n            if outcome != PassOutcome.COMPLETED\n        }\n        if not failed:\n            self._rounds_with_failed_pass = 0\n            return\n        self._rounds_with_failed_pass += 1\n        self._state.infra_errors.append(\n            \"round %d: pass(es) did not complete: %s\"\n            % (self._state.round, failed)\n        )\n        if self._rounds_with_failed_pass >= 3:\n            raise TimeoutBreaker(\n                \"%d consecutive rounds had a pass that did not complete \"\n                \"(latest: %s). Each one leaves a CONFIRMED infra finding, \"\n                \"which resets the clean-round counter, so this review cannot \"\n                \"converge no matter how many rounds remain. Fix the backend \"\n                \"or switch to another one rather than waiting.\"\n                % (self._rounds_with_failed_pass, failed)\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 889,
+      "end_line": 889,
+      "content": "        self._check_l1_can_still_converge(l1_findings)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 111,
+      "end_line": 119,
+      "content": "            # An infra finding names a sentinel such as \"<llm-invoke>\", not a\n            # file: when a backend call fails there is no code to point at.\n            # Anchors are read back as paths that must appear in the diff, so\n            # one sentinel makes the review unattestable -- and permanently,\n            # since receipts are never pruned and that check reads every\n            # cycle, not only the last three. The finding itself stays in\n            # findings above, where the failure is still reported.\n            # covered_line_ranges below needs no such filter: it is\n            # intersected with the diff, so a sentinel entry is inert there.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 127,
+      "end_line": 127,
+      "content": "                if f.source != \"INFRA\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 566,
+      "end_line": 598,
+      "content": "    # 8. every pass in the attested window has to have actually run.\n    # derive_pass_outcomes already works this out from the INFRA findings and\n    # receipt.py stores it per receipt as pass_status; until now nothing read\n    # it. A pass that timed out or errored still writes a receipt, and checks\n    # 1-7 can all pass on that receipt: it has a matching hash, a monotonic\n    # timestamp, no anchors to contradict and no excerpts to disprove. The\n    # coverage floor was the only thing in the way, and it unions across the\n    # passes of a cycle, so two healthy passes on a large enough diff carry a\n    # third that never happened.\n    #\n    # Absence is not failure. pass_status is not in SKILL.md, so a reviewer\n    # hand-writing a receipt from the documented shape leaves it out, and\n    # every receipt written before the field existed lacks it too. Refusing on\n    # a missing field would reject good receipts -- which is the exact failure\n    # the schema comment at the top of this file was written about. Measured\n    # before writing this: all 204 receipts on disk carry the field\n    # (189 completed, 12 error, 3 timeout), so the signal is real; the\n    # tolerance is for the writers that are not receipt.py.\n    for r in receipts:\n        if r.get(\"cycle\") not in last_three:\n            continue\n        status = r.get(\"pass_status\")\n        if status is not None and status != \"completed\":\n            return VerifyResult(\n                False,\n                \"pass did not complete: c%dp%d status=%s -- that pass \"\n                \"contributed no review, so the cycle cannot attest\"\n                % (r[\"cycle\"], r[\"pass\"], status),\n                8, cp,\n            )\n    cp += 1\n\n    return VerifyResult(True, \"all 8 checks passed\", 8, 8)",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start": 962,
+      "end": 984
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start": 62,
+      "end": 892
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start": 108,
+      "end": 130
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start": 563,
+      "end": 600
+    },
+    {
+      "file": "tests/test_machine_local.py",
+      "start": 406,
+      "end": 513
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start": 413,
+      "end": 596
+    }
+  ]
+}

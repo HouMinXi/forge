@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 1,
+  "mode": "LOCAL",
+  "source_hash": "dedd83c6567a391c32b3a247f6fa5f1ddbd6e2a39cb44aea581c8755a7dd9e84",
+  "findings": [
+    {
+      "id": "l1-adversarial-incomplete-coverage",
+      "fingerprint": "incomplete-coverage-adversarial",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<coverage-guard>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 pass 'adversarial' returned 0 findings but excerpts do not cover: tests/test_verify.py, tests/test_machine_local.py",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-adversarial-incomplete-coverage": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "incomplete-coverage-adversarial"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "incomplete-coverage-adversarial": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 1,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "incomplete-coverage-adversarial"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "incomplete-coverage-adversarial": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "round 0: pass(es) did not complete: {'adversarial': 'incomplete'}",
+    "round 1: pass(es) did not complete: {'adversarial': 'incomplete'}"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 431666,
+    "total_output_tokens": 26390,
+    "total_duration_s": 155.43596405396238,
+    "passes": 6,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 71944,
+        "output": 4398,
+        "duration_s": 51.791
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 71944,
+        "output": 4398,
+        "duration_s": 51.791
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 71944,
+        "output": 4398,
+        "duration_s": 51.791
+      },
+      {
+        "pass": 1,
+        "cycle": 1,
+        "input": 71944,
+        "output": 4398,
+        "duration_s": 0.021
+      },
+      {
+        "pass": 2,
+        "cycle": 1,
+        "input": 71944,
+        "output": 4398,
+        "duration_s": 0.021
+      },
+      {
+        "pass": 3,
+        "cycle": 1,
+        "input": 71944,
+        "output": 4398,
+        "duration_s": 0.021
+      }
+    ]
+  }
+}
