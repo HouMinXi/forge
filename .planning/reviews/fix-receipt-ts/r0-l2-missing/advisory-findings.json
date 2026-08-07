@@ -1,0 +1,35 @@
+[
+  {
+    "id": "runtime-0",
+    "axis": "RUNTIME",
+    "file": "src/code_forge/receipt.py",
+    "line_range": [
+      80,
+      80
+    ],
+    "description": "Receipt files written to disk rely on wall-clock time (datetime.datetime.now(timezone.utc)). If the system clock steps backward during execution (e.g., via NTP adjustment or leap second), timestamps between consecutive rounds will become non-monotonic, causing run_verify in verify.py to fail timestamp validation at runtime.",
+    "attribution": "runtime-axis/llm"
+  },
+  {
+    "id": "runtime-smoke-summary",
+    "axis": "RUNTIME",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "smoke: 0/1 surfaces verified; NOT VERIFIED: [file side effects]",
+    "attribution": "runtime-axis/smoke-evidence"
+  },
+  {
+    "id": "daemon-state-heuristic",
+    "axis": "DAEMON-STATE",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis",
+    "attribution": "daemon-state/heuristic"
+  }
+]

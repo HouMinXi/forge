@@ -1,0 +1,141 @@
+code-forge: trust invalidated: credential-related fields changed in gate.yaml. Run 'code-forge trust' to re-authorize.
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+/home/houminxi/code/forge/src/code_forge/baseline.py:133: UserWarning: forge: skipped 1 binary untracked file(s) from working-tree diff: ['.coverage']
+  diff = working_tree_diff(baseline_spec.ref, paths, cwd)
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+Traceback (most recent call last):
+  File "/home/houminxi/.local/bin/code-forge", line 6, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 1435, in main
+    verdict = _run(args, env=os.environ, cwd=Path.cwd())
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 2661, in _run
+    verdict = _run_hold_loop(
+        mode=mode,
+    ...<17 lines>...
+        wall_t0=_wall_t0,
+    )
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 2761, in _run_hold_loop
+    verdict = sm.run()
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 263, in run
+    self._run_advisory_axes()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 1299, in _run_advisory_axes
+    findings = runner.run(diff_text, self.cwd)
+  File "/home/houminxi/code/forge/src/code_forge/runtime.py", line 326, in run
+    result = llm_invoke(prompt, backend=self._backend)
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 676, in llm_invoke
+    return _invoke_api(
+        prompt, backend, timeout_s, expected_keys=expected_keys,
+        max_attempts=max_attempts, initial_delay_s=initial_delay_s,
+    )
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 887, in _invoke_api
+    content, usage_data = _invoke_openai(
+                          ~~~~~~~~~~~~~~^
+        prompt, backend, api_key, timeout_s,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 1050, in _invoke_openai
+    with urllib.request.urlopen(req, timeout=timeout_s) as response:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 187, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 487, in open
+    response = self._open(req, data)
+  File "/usr/lib64/python3.14/urllib/request.py", line 504, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/usr/lib64/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/usr/lib64/python3.14/urllib/request.py", line 1369, in https_open
+    return self.do_open(http.client.HTTPSConnection, req,
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        context=self._context)
+                        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 1325, in do_open
+    r = h.getresponse()
+  File "/usr/lib64/python3.14/http/client.py", line 1459, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.14/http/client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.14/http/client.py", line 297, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/socket.py", line 729, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+  File "/usr/lib64/python3.14/ssl.py", line 1304, in recv_into
+    return self.read(nbytes, buffer)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/ssl.py", line 1138, in read
+    return self._sslobj.read(len, buffer)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/src/code_forge/lock.py", line 181, in _handler
+    prev(signum, frame)
+    ~~~~^^^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 624, in _handler
+    raise KeyboardInterrupt
+KeyboardInterrupt

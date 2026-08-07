@@ -1,0 +1,135 @@
+{
+  "cycle": 1,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "795e6f74db9aa487f30902f35f38603e3c37b12a3c50b58979091fe5455bb8c4",
+  "timestamp": "2026-07-31T18:07:04.778170+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 77,
+      "end_line": 79,
+      "content": "    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 97,
+      "end_line": 97,
+      "content": "            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 341,
+      "end_line": 343,
+      "content": "    # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round\n    #    share the round's write time, so tripping this means the set was\n    #    stitched from separate runs or the clock went backwards.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 7,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nfrom code_forge import receipt as receipt_module",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 91,
+      "end_line": 94,
+      "content": "    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"Rounds that finish faster than a pass offset must not invert.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 77,
+      "end_line": 79,
+      "content": "    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 97,
+      "end_line": 97,
+      "content": "            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 341,
+      "end_line": 343,
+      "content": "    # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round\n    #    share the round's write time, so tripping this means the set was\n    #    stitched from separate runs or the clock went backwards.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 7,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nfrom code_forge import receipt as receipt_module",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 91,
+      "end_line": 93,
+      "content": "    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 77,
+      "end_line": 79,
+      "content": "    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 97,
+      "end_line": 97,
+      "content": "            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 341,
+      "end_line": 343,
+      "content": "    # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round\n    #    share the round's write time, so tripping this means the set was\n    #    stitched from separate runs or the clock went backwards.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 7,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nfrom code_forge import receipt as receipt_module",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 90,
+      "end_line": 93,
+      "content": "\n    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start": 74,
+      "end": 100
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start": 338,
+      "end": 346
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start": 1,
+      "end": 168
+    }
+  ]
+}

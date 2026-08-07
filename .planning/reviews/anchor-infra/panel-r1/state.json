@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "78e85b58bd73e1b481a15e8321ee0acfe569532174758f9412be210dc4d53540",
+  "findings": [
+    {
+      "id": "l1-qodo-invoke-fail",
+      "fingerprint": "invoke-fail-qodo",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: deepseek backend exceeded total read deadline",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": true
+    },
+    {
+      "id": "l1-expert-393335500c1d642c",
+      "fingerprint": "393335500c1d642c",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/receipt.py",
+      "line_range": [
+        125,
+        125
+      ],
+      "description": "[expert] Write-time filter only prevents new INFRA anchors. The verifier still reads every historical receipt and rejects anchors whose file is not in the diff; receipts are never pruned, so an already-written '<llm-invoke>' anchor keeps failing forever. The new comment even says so (lines 111-113) but the fix does not address existing receipts. Either make verify tolerate legacy INFRA sentinels or migrate/prune old receipts.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-3d57131e595c285f",
+      "fingerprint": "3d57131e595c285f",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "tests/test_verify.py",
+      "line_range": [
+        482,
+        482
+      ],
+      "description": "[expert] The added test only runs verify against receipts created by the patched writer. It never seeds a pre-existing receipt with an old '<llm-invoke>' anchor before calling run_verify, so the permanent stale-receipt failure described in the docstring is not actually guarded.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-0d263abba887677d",
+      "fingerprint": "0d263abba887677d",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/receipt.py",
+      "line_range": [
+        125,
+        125
+      ],
+      "description": "[adversarial] Filtering INFRA anchors at write time does not repair receipts already on disk. The anchor check reads every cycle and receipts are never pruned, so any existing receipt with a '<llm-invoke>' anchor will still fail verification after this patch. The fix needs a verify-side guard or migration for legacy sentinel anchors, not only a writer-side filter.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-b80234a52b4405c4",
+      "fingerprint": "b80234a52b4405c4",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "tests/test_verify.py",
+      "line_range": [
+        416,
+        416
+      ],
+      "description": "[adversarial] The new E2E always pairs the INFRA finding with a normal L1 finding in the same pass, so it never exercises a pass whose only finding is the INFRA sentinel. In that shape the receipt has empty anchors and its covered_line_ranges is just the inert '<llm-invoke>' range, so the test does not prove the fix generalizes to a complete backend failure.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-invoke-fail": "CONFIRMED",
+    "l1-expert-393335500c1d642c": "CONFIRMED",
+    "l1-expert-3d57131e595c285f": "UNCERTAIN",
+    "l1-adversarial-0d263abba887677d": "UNCERTAIN",
+    "l1-adversarial-b80234a52b4405c4": "UNCERTAIN"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "393335500c1d642c",
+        "3d57131e595c285f",
+        "0d263abba887677d",
+        "b80234a52b4405c4"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-qodo": "CONFIRMED",
+        "393335500c1d642c": "CONFIRMED",
+        "3d57131e595c285f": "UNCERTAIN",
+        "0d263abba887677d": "UNCERTAIN",
+        "b80234a52b4405c4": "UNCERTAIN"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 38406,
+    "total_output_tokens": 56663,
+    "total_duration_s": 600.0015014259843,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 12802,
+        "output": 18887,
+        "duration_s": 200.001
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 12802,
+        "output": 18887,
+        "duration_s": 200.001
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 12802,
+        "output": 18887,
+        "duration_s": 200.001
+      }
+    ]
+  }
+}

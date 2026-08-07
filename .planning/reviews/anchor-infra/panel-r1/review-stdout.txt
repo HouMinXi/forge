@@ -1,0 +1,48 @@
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+[deepseek:expert] 19204 in / 24565 out tokens
+[deepseek:adversarial] 19202 in / 32098 out tokens
+code-forge: L1 pass 'qodo' failed: deepseek backend exceeded total read deadline
+[deepseek:qodo] 19203 in / 23343 out tokens
+[deepseek:expert] 19204 in / 23894 out tokens
+[deepseek:adversarial] 19202 in / 28193 out tokens
+Traceback (most recent call last):
+  File "/home/houminxi/.local/bin/code-forge", line 6, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/cli.py", line 1435, in main
+    verdict = _run(args, env=os.environ, cwd=Path.cwd())
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/cli.py", line 2661, in _run
+    verdict = _run_hold_loop(
+        mode=mode,
+    ...<17 lines>...
+        wall_t0=_wall_t0,
+    )
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/cli.py", line 2761, in _run_hold_loop
+    verdict = sm.run()
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/machine.py", line 255, in run
+    verdict = self._run_local()
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/machine.py", line 570, in _run_local
+    self._execute_round(round_index)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/machine.py", line 834, in _execute_round
+    l1_findings, l1_excerpts = self._run_l1_phase()
+                               ~~~~~~~~~~~~~~~~~~^^
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/machine.py", line 719, in _run_l1_phase
+    l1_candidates, l1_excerpts, usage, duration = self.l1_provider()
+                                                  ~~~~~~~~~~~~~~~~^^
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/factories.py", line 331, in _provider
+    pass_results.append(f.result())
+                        ~~~~~~~~^^
+  File "/usr/lib64/python3.14/concurrent/futures/_base.py", line 449, in result
+    self._condition.wait(timeout)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib64/python3.14/threading.py", line 369, in wait
+    waiter.acquire()
+    ~~~~~~~~~~~~~~^^
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/lock.py", line 181, in _handler
+    prev(signum, frame)
+    ~~~~^^^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/llm_invoke.py", line 624, in _handler
+    raise KeyboardInterrupt
+KeyboardInterrupt

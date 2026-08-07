@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "e7fe3f55cf07caca9ec950d1403867e81726fed7400348318545d9a97761cfed",
+  "findings": [
+    {
+      "id": "l1-expert-83d2cae6d42fbe61",
+      "fingerprint": "83d2cae6d42fbe61",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/receipt.py",
+      "line_range": [
+        125,
+        125
+      ],
+      "description": "[expert] This filter only changes receipts written after the fix. Receipts already on disk are never pruned, and the anchor check reads every cycle, so any existing receipt that still contains a sentinel INFRA anchor will continue to fail attestation forever. The comment at lines 112-113 acknowledges the permanent failure mode, but the fix does not remediate or ignore those existing receipts; add a verifier-side tolerance for non-path sentinels or a one-time migration/cleanup.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-9776f63bc5fc753a",
+      "fingerprint": "9776f63bc5fc753a",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/receipt.py",
+      "line_range": [
+        125,
+        125
+      ],
+      "description": "[expert] Filtering by source label ('INFRA') is broader than the stated problem. If an INFRA finding ever carries a real file path rather than a sentinel, this silently drops its anchor and weakens the audit trail. The predicate should test whether the path is a sentinel (e.g. starts with '<' or is in an explicit sentinel set), not whether the finding source is INFRA.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-b84fde54dfb735ff",
+      "fingerprint": "b84fde54dfb735ff",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/receipt.py",
+      "line_range": [
+        125,
+        125
+      ],
+      "description": "[adversarial] Filtering INFRA findings out of anchors removes the stale sentinel block, but it leaves no per-pass proof that a failed pass actually read the diff. Coverage is computed per cycle, not per receipt: in test_receipt_writer_output_passes_verify, each pass receipt individually covers only ~20-26% of the 80-line diff, yet verify passes when the three passes are unioned. Therefore a cycle whose qodo pass returns only an INFRA finding can still pass if the other two passes cover >=60% of a small diff. The new test only uses an 80-line diff where two passes produce 42/80 (<60%), so it misses this attestation bypass.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-18994c4926389792",
+      "fingerprint": "18994c4926389792",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "tests/test_verify.py",
+      "line_range": [
+        520,
+        520
+      ],
+      "description": "[adversarial] The new backend-failure tests call run_verify without diff_text, so they exercise the legacy branch, not the hardened diff_text path used in production. The asserted 'coverage' failure and the INFRA-anchor filtering behavior are not verified for the hardened branch, so a regression specific to that path would not be caught by these tests.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-expert-83d2cae6d42fbe61": "CONFIRMED",
+    "l1-expert-9776f63bc5fc753a": "UNCERTAIN",
+    "l1-adversarial-b84fde54dfb735ff": "CONFIRMED",
+    "l1-adversarial-18994c4926389792": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "393335500c1d642c",
+        "3d57131e595c285f",
+        "0d263abba887677d",
+        "b80234a52b4405c4"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-qodo": "CONFIRMED",
+        "393335500c1d642c": "CONFIRMED",
+        "3d57131e595c285f": "UNCERTAIN",
+        "0d263abba887677d": "UNCERTAIN",
+        "b80234a52b4405c4": "UNCERTAIN"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "83d2cae6d42fbe61",
+        "9776f63bc5fc753a",
+        "b84fde54dfb735ff",
+        "18994c4926389792"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "83d2cae6d42fbe61": "CONFIRMED",
+        "9776f63bc5fc753a": "UNCERTAIN",
+        "b84fde54dfb735ff": "CONFIRMED",
+        "18994c4926389792": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 97188,
+    "total_output_tokens": 143459,
+    "total_duration_s": 943.4206611040281,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 12802,
+        "output": 18887,
+        "duration_s": 200.001
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 12802,
+        "output": 18887,
+        "duration_s": 200.001
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 12802,
+        "output": 18887,
+        "duration_s": 200.001
+      },
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 19594,
+        "output": 28932,
+        "duration_s": 114.473
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 19594,
+        "output": 28932,
+        "duration_s": 114.473
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 19594,
+        "output": 28932,
+        "duration_s": 114.473
+      }
+    ]
+  }
+}

@@ -1,0 +1,89 @@
+code-forge: trust invalidated: credential-related fields changed in gate.yaml. Run 'code-forge trust' to re-authorize.
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+/home/houminxi/code/forge/src/code_forge/baseline.py:133: UserWarning: forge: skipped 1 binary untracked file(s) from working-tree diff: ['.coverage']
+  diff = working_tree_diff(baseline_spec.ref, paths, cwd)
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+[gemini-pro:expert] 34169 in / 2911 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+[gemini-pro:expert] 34169 in / 2911 out tokens
+[gemini-pro:qodo] 34169 in / 2233 out tokens
+code-forge: L1 pass 'adversarial' failed: gemini-pro backend response truncated (finish_reason=length, input=34167 output=652). Review output truncated: output capacity (65536 tokens) insufficient for this diff. Raise output_ceiling on this backend in gate.yaml or use a higher-output model.
+
+--- Smoke Status ---
+smoke: UNVERIFIED (axis skipped: API response content is not valid JSON -- JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+content[:500]: 'Gemini 3 Pro is no longer available. Please switch to Gemini 3.1 Pro in the latest version of Antigravity.')
+
+--- Advisory ---
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:268-373 - replay_entry (impact: 18 downstream) -- top dependents: /home/houminxi/code/forge/src/code_forge/cli.py::_run_eval, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hooks_called_during_replay, /home/houminxi/code/forge/tests/test_eval_runner.py::TestCloseoutBehaviors.test_base_files_seed_oserror_returns_skipped
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:199-207 - _is_infra_failure (impact: 7 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestInfraFailureDetection.test_api_connection_error_is_infra, /home/houminxi/code/forge/tests/test_eval_runner.py::TestInfraFailureDetection.test_connection_refused_is_infra, /home/houminxi/code/forge/tests/test_eval_runner.py::TestInfraFailureDetection.test_connection_timed_out_is_infra
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:55-66 - AxisHook (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hook_has_post_review, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hook_has_pre_review
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:65-66 - post_review (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:97-104 - post_review (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:130-131 - post_review (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:62-63 - pre_review (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_runtime_eval.py::TestRuntimeAxisHook.test_pre_review_is_noop
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:73-79 - register_axis_hook (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hooks_called_during_replay, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_register_appends_to_list
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:82-104 - FixvalAxisHook (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:94-95 - pre_review (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_runtime_eval.py::TestRuntimeAxisHook.test_pre_review_is_noop
+[DAEMON-STATE] :0-0 - Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis
+[legacy] /home/houminxi/code/forge/tests/test_cli_eval.py:9-9 - [pre-existing] `json` imported but unused [intent: unintended]
+[legacy] /home/houminxi/code/forge/tests/test_cli_eval.py:10-10 - [pre-existing] `sys` imported but unused [intent: unintended]
+[legacy] /home/houminxi/code/forge/tests/test_cli_eval.py:17-17 - [pre-existing] `code_forge.cli.main` imported but unused [intent: unintended]
+[pre-existing-l0] /home/houminxi/code/forge/tests/test_cli_eval.py:9-9 - `json` imported but unused
+[pre-existing-l0] /home/houminxi/code/forge/tests/test_cli_eval.py:10-10 - `sys` imported but unused
+[pre-existing-l0] /home/houminxi/code/forge/tests/test_cli_eval.py:17-17 - `code_forge.cli.main` imported but unused
+code-forge: cost: 2014224 tokens (1863676 in + 150548 out), 60 passes, 323.5s (wall: 238.2s)
+[test-assertion] [test-assertion] `test_skip_message_reports_the_timeout_actually_used` will unconditionally crash with a `FileNotFoundError`. The function `runner._run_single()` expects a `gate.yaml` file to safely load inside `temp_dir` via `gate_path.read_text()` before it executes the mocked `subprocess.run()`. Since `td` is a fresh, empty `TemporaryDirectory`, reading the missing file will crash the test before the timeout behavior can be verified. You should write dummy content `(Path(td) / "gate.yaml").write_text("{}")` before invoking `_run_single`.

@@ -1,0 +1,86 @@
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+[gemini-pro:expert] 35202 in / 1433 out tokens
+code-forge: retrying gemini-pro (2/5, waiting 20.0s)...
+code-forge: retrying gemini-pro (2/5, waiting 30.0s)...
+code-forge: retrying gemini-pro (3/5, waiting 40.0s)...
+code-forge: retrying gemini-pro (3/5, waiting 20.0s)...
+code-forge: retrying gemini-pro (4/5, waiting 8.2s)...
+code-forge: retrying gemini-pro (4/5, waiting 8.2s)...
+code-forge: retrying gemini-pro (5/5, waiting 16.3s)...
+code-forge: retrying gemini-pro (5/5, waiting 40.0s)...
+code-forge: L1 pass 'qodo' failed: code-forge: gemini-pro backend: server error (502). Retry or check provider status page
+code-forge: L1 pass 'adversarial' failed: code-forge: gemini-pro backend: server error (502). Retry or check provider status page
+[gemini-pro:expert] 35202 in / 1433 out tokens
+code-forge: retrying gemini-pro (2/5, waiting 40.0s)...
+code-forge: retrying gemini-pro (2/5, waiting 20.0s)...
+code-forge: retrying gemini-pro (3/5, waiting 67.0s)...
+code-forge: retrying gemini-pro (3/5, waiting 67.0s)...
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+code-forge: retrying gemini-pro (4/5, waiting 20.0s)...
+code-forge: retrying gemini-pro (5/5, waiting 40.0s)...
+code-forge: L1 pass 'qodo' failed: code-forge: gemini-pro backend: server error (502). Retry or check provider status page
+code-forge: retrying gemini-pro (2/5, waiting 44.0s)...
+code-forge: retrying gemini-pro (3/5, waiting 36.0s)...
+code-forge: retrying gemini-pro (4/5, waiting 120.0s)...
+code-forge: retrying gemini-pro (5/5, waiting 40.0s)...
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:expert] 35202 in / 1433 out tokens
+[gemini-pro:qodo] 35202 in / 3505 out tokens
+[gemini-pro:adversarial] 35200 in / 1238 out tokens
+
+--- Smoke Status ---
+smoke: UNVERIFIED (axis skipped: code-forge: gemini-pro backend: HTTP error (400). Check provider documentation)
+
+--- Advisory ---
+[DAEMON-STATE] :0-0 - Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis
+code-forge: cost: 2121748 tokens (2006476 in + 115272 out), 60 passes, 1843.4s (wall: 3183.6s)

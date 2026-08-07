@@ -1,0 +1,953 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 19,
+  "mode": "LOCAL",
+  "source_hash": "17a959483d9ad79e2573b7e70d9bc47a41bbdd8fa52650b454959c80dafe1f53",
+  "findings": [
+    {
+      "id": "l1-qodo-6876bc983a4f7f13",
+      "fingerprint": "6876bc983a4f7f13",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/machine.py",
+      "line_range": [
+        493,
+        493
+      ],
+      "description": "[qodo] Setting `daemon=False` prevents the Python process from returning asynchronously. The interpreter blocks on exit until all non-daemon threads have completed. As a result, the CLI process (and the CI step running it) will hang for the duration of the mutation operation instead of delegating it to the background. Consequently, the mechanism for out-of-band monitoring using `mutation-result.json` is entirely negated. To properly branch off a background job that outlives the current process, a detached subprocess (e.g., via `subprocess.Popen` with appropriate flags to sever it from the session) must be used instead of standard threading.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-ed629c0708660750",
+      "fingerprint": "ed629c0708660750",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "tests/test_machine_mutation_launch.py",
+      "line_range": [
+        81,
+        81
+      ],
+      "description": "[qodo] This test codifies a flawed assumption about Python threading logic. It explicitly tests that the thread is spawned with `daemon=False` based on an incorrect premise that doing so allows it to run asynchronously while the review process returns. As noted, a non-daemon thread will indefinitely block the main interpreter's exit.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-86e900124c145beb",
+      "fingerprint": "86e900124c145beb",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/machine.py",
+      "line_range": [
+        493,
+        493
+      ],
+      "description": "[expert] Using `daemon=False` for the background execution thread causes the CLI process to block indefinitely on exit, as Python's `sys.exit()` joins all non-daemon threads. This completely defeats the architectural intent of an \"async\" measurement and will cause `code-forge review --mode ci` to hang for ~10+ minutes. Furthermore, since threads share the process PID, tracking `os.getpid()` is flawed for detecting whether this background task is still alive across runs, because the PID tracked is just the CLI's PID. You should spawn a completely detached background OS process (e.g., using `subprocess.Popen` with `start_new_session=True` or a double-fork daemonization) rather than trying to outlive the main process with a thread.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-6832a0398019cf10",
+      "fingerprint": "6832a0398019cf10",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "tests/test_machine_mutation_launch.py",
+      "line_range": [
+        81,
+        81
+      ],
+      "description": "[expert] The test explicitly enforces `daemon is False` to ensure the mutation completes, which enforces the bug causing the CLI to hang. When the mutation logic is refactored to spawn a separate OS process, this test will need to be rewritten to assert process detachment constraints (e.g. `start_new_session=True`) rather than thread configuration.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-a74cb9392aede457",
+      "fingerprint": "a74cb9392aede457",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/machine.py",
+      "line_range": [
+        493,
+        493
+      ],
+      "description": "[adversarial] Setting `daemon=False` for the mutation thread blocks the Python interpreter from completely exiting until the thread finishes (which the comment notes can take up to ~12 minutes). This causes the CLI command to hang silently after the main program terminates, directly blocking the shell or CI pipeline that called it, and entirely undermining the intended 'async' / detached launch model. To run a background OS measurement task that survives the CLI exiting without blocking the caller, a detached subprocess (e.g., `subprocess.Popen(..., start_new_session=True)`) must be used instead of an attached Python thread.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-6876bc983a4f7f13": "CONFIRMED",
+    "l1-qodo-ed629c0708660750": "UNCERTAIN",
+    "l1-expert-86e900124c145beb": "UNCERTAIN",
+    "l1-expert-6832a0398019cf10": "UNCERTAIN",
+    "l1-adversarial-a74cb9392aede457": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "ESCALATED",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "invoke-fail-adversarial"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-qodo": "CONFIRMED",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "invoke-fail-adversarial": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 1,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-qodo": "CONFIRMED",
+        "86e900124c145beb": "CONFIRMED",
+        "6832a0398019cf10": "CONFIRMED",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 2,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "CONFIRMED",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "CONFIRMED",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 3,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "CONFIRMED",
+        "ed629c0708660750": "DISMISSED",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "DISMISSED",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 4,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "CONFIRMED",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "CONFIRMED",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 5,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 6,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "CONFIRMED",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 7,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 8,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "DISMISSED",
+        "86e900124c145beb": "CONFIRMED",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 9,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 10,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 11,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 12,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 13,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 14,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "CONFIRMED",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 15,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 16,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 17,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 18,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "UNCERTAIN",
+        "ed629c0708660750": "DISMISSED",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 19,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6876bc983a4f7f13",
+        "ed629c0708660750",
+        "86e900124c145beb",
+        "6832a0398019cf10",
+        "a74cb9392aede457"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6876bc983a4f7f13": "CONFIRMED",
+        "ed629c0708660750": "UNCERTAIN",
+        "86e900124c145beb": "UNCERTAIN",
+        "6832a0398019cf10": "UNCERTAIN",
+        "a74cb9392aede457": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "ESCALATED category=B"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 2006476,
+    "total_output_tokens": 115272,
+    "total_duration_s": 1843.3874809070257,
+    "passes": 60,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 11734,
+        "output": 477,
+        "duration_s": 366.632
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 11734,
+        "output": 477,
+        "duration_s": 366.632
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 11734,
+        "output": 477,
+        "duration_s": 366.632
+      },
+      {
+        "pass": 1,
+        "cycle": 1,
+        "input": 23467,
+        "output": 890,
+        "duration_s": 174.53
+      },
+      {
+        "pass": 2,
+        "cycle": 1,
+        "input": 23467,
+        "output": 890,
+        "duration_s": 174.53
+      },
+      {
+        "pass": 3,
+        "cycle": 1,
+        "input": 23467,
+        "output": 890,
+        "duration_s": 174.53
+      },
+      {
+        "pass": 1,
+        "cycle": 2,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 72.973
+      },
+      {
+        "pass": 2,
+        "cycle": 2,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 72.973
+      },
+      {
+        "pass": 3,
+        "cycle": 2,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 72.973
+      },
+      {
+        "pass": 1,
+        "cycle": 3,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.022
+      },
+      {
+        "pass": 2,
+        "cycle": 3,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.022
+      },
+      {
+        "pass": 3,
+        "cycle": 3,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.022
+      },
+      {
+        "pass": 1,
+        "cycle": 4,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.022
+      },
+      {
+        "pass": 2,
+        "cycle": 4,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.022
+      },
+      {
+        "pass": 3,
+        "cycle": 4,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.022
+      },
+      {
+        "pass": 1,
+        "cycle": 5,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 2,
+        "cycle": 5,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 3,
+        "cycle": 5,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 1,
+        "cycle": 6,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 2,
+        "cycle": 6,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 3,
+        "cycle": 6,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 1,
+        "cycle": 7,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 2,
+        "cycle": 7,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 3,
+        "cycle": 7,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 1,
+        "cycle": 8,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 2,
+        "cycle": 8,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 3,
+        "cycle": 8,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 1,
+        "cycle": 9,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 2,
+        "cycle": 9,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 3,
+        "cycle": 9,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 1,
+        "cycle": 10,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 2,
+        "cycle": 10,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 3,
+        "cycle": 10,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 1,
+        "cycle": 11,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 2,
+        "cycle": 11,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 3,
+        "cycle": 11,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 1,
+        "cycle": 12,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 2,
+        "cycle": 12,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 3,
+        "cycle": 12,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 1,
+        "cycle": 13,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 2,
+        "cycle": 13,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 3,
+        "cycle": 13,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.017
+      },
+      {
+        "pass": 1,
+        "cycle": 14,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 2,
+        "cycle": 14,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 3,
+        "cycle": 14,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 1,
+        "cycle": 15,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 2,
+        "cycle": 15,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 3,
+        "cycle": 15,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.019
+      },
+      {
+        "pass": 1,
+        "cycle": 16,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 2,
+        "cycle": 16,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 3,
+        "cycle": 16,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.02
+      },
+      {
+        "pass": 1,
+        "cycle": 17,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.026
+      },
+      {
+        "pass": 2,
+        "cycle": 17,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.026
+      },
+      {
+        "pass": 3,
+        "cycle": 17,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.026
+      },
+      {
+        "pass": 1,
+        "cycle": 18,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 2,
+        "cycle": 18,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 3,
+        "cycle": 18,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 1,
+        "cycle": 19,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 2,
+        "cycle": 19,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      },
+      {
+        "pass": 3,
+        "cycle": 19,
+        "input": 35201,
+        "output": 2058,
+        "duration_s": 0.018
+      }
+    ]
+  }
+}

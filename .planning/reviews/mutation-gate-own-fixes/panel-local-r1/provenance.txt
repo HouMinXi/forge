@@ -1,0 +1,27 @@
+=== engine provenance (stock main tree, no PYTHONPATH) ===
+code_forge loaded from: /home/houminxi/code/forge/src/code_forge/__init__.py
+engine carries daemon=False        : False
+engine carries unusable-config log : False
+engine carries l2_runner wiring    : False
+engine machine.py md5: 2725540f01800958beae56174dd329ce
+engine cli.py md5:     1765571b8f0adfbcee2c53107f5c8969
+
+=== target under review ===
+worktree: /home/houminxi/code/forge/.worktrees/mutation-gate
+branch:   defects/mutation-gate-nowait
+HEAD:     1fb3eea8f17bb7b171060188ff4656d092093bcb
+staged diffstat:
+ src/code_forge/cli.py                 |  15 +++-
+ src/code_forge/machine.py             |  20 ++++-
+ tests/test_cli_l2_wiring.py           |  70 +++++++++++++++++
+ tests/test_machine_mutation_launch.py | 141 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 243 insertions(+), 3 deletions(-)
+staged diff sha256: 5c6b31f2dccf80cc3c554d3ab9ea29c438e0e56cfa5c78a61e3fff5b05e64bee
+
+=== gate config ===
+gate.yaml md5: 66559a7169866d4a4dd8073ea9788f6f
+test.command: ['python3', '-m', 'pytest', '-q', '--ignore=tests/test_cli_integration.py']
+
+=== backend liveness ===
+models endpoint http=200
+target model onmi-gemini3.6 present: True

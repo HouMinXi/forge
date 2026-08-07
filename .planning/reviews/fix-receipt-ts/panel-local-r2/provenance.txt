@@ -1,0 +1,24 @@
+=== engine provenance ===
+code_forge loaded from: /home/houminxi/code/forge/.worktrees/mutation-gate/src/code_forge/__init__.py
+carries daemon=False        : True
+carries unusable-config log : True
+engine machine.py md5: 4229c71dd71ef9254e598d30ec97836e
+
+=== target under review ===
+worktree: /home/houminxi/code/forge/.worktrees/fix-receipt-ts
+branch:   defects/receipt-timestamp
+HEAD:     1fb3eea8f17bb7b171060188ff4656d092093bcb
+staged diffstat:
+ src/code_forge/receipt.py |   6 +-
+ src/code_forge/verify.py  |   4 +-
+ tests/test_receipt.py     | 149 +++++++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 154 insertions(+), 5 deletions(-)
+staged diff sha256: 8a3b0da38fa6e17db6919b2d73c2ec89e81b4ba71817677cc101002ea0bcf37d
+
+=== gate config ===
+gate.yaml md5: 66559a7169866d4a4dd8073ea9788f6f
+test.command: ['python3', '-m', 'pytest', '-q', '--ignore=tests/test_cli_integration.py']
+
+=== backend liveness ===
+models endpoint http=200
+target model onmi-gemini3.6 present: True

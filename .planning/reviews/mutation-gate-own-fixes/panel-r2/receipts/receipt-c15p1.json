@@ -1,0 +1,196 @@
+{
+  "cycle": 15,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "17a959483d9ad79e2573b7e70d9bc47a41bbdd8fa52650b454959c80dafe1f53",
+  "timestamp": "2026-08-01T06:28:36.237763+00:00",
+  "pass_status": "completed",
+  "findings_count": 2,
+  "findings": [
+    {
+      "file": "src/code_forge/machine.py",
+      "line": 493,
+      "description": "[qodo] Setting `daemon=False` prevents the Python process from returning asynchronously. The interpreter blocks on exit until all non-daemon threads have completed. As a result, the CLI process (and the CI step running it) will hang for the duration of the mutation operation instead of delegating it to the background. Consequently, the mechanism for out-of-band monitoring using `mutation-result.json` is entirely negated. To properly branch off a background job that outlives the current process, a detached subprocess (e.g., via `subprocess.Popen` with appropriate flags to sever it from the session) must be used instead of standard threading.",
+      "disposition": "CONFIRMED"
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "line": 81,
+      "description": "[qodo] This test codifies a flawed assumption about Python threading logic. It explicitly tests that the thread is spawned with `daemon=False` based on an incorrect premise that doing so allows it to run asynchronously while the review process returns. As noted, a non-daemon thread will indefinitely block the main interpreter's exit.",
+      "disposition": "UNCERTAIN"
+    }
+  ],
+  "anchors": [
+    {
+      "file": "src/code_forge/machine.py",
+      "line": 493,
+      "text": "target=_async_mutation, daemon=False"
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "line": 81,
+      "text": "assert captured[\"daemon\"] is False, ("
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 15,
+      "end_line": 21,
+      "content": "import subprocess\nimport sys\nimport time\nfrom collections.abc import Mapping\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Any, Callable, Optional\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 46,
+      "end_line": 57,
+      "content": "from .exit_codes import (\n    EXIT_BUSY,\n    EXIT_CLI_ERROR,\n    EXIT_FAIL,\n    EXIT_PASS,\n    EXIT_TIMEOUT,\n    verdict_to_exit,\n)\nfrom .factories import (\n    build_autofixer,\n    build_falsifier,\n    build_l1_provider,\n    build_l2_runner,\n    build_revert_fn,\n)\nfrom .git import is_git_repo\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2759,
+      "end_line": 2770,
+      "content": "            coverage_l1_active=coverage_l1_active,\n            coverage_exempt_patterns=coverage_exempt_patterns or [],\n            clean_round_threshold=clean_round_threshold,\n            # Without this the state machine falls back to its no-op\n            # default, whose ([], []) is byte-identical to a mutation run\n            # that found no survivors -- the CLI reported a gate it never\n            # ran. build_l2_runner degrades to MUTATION_SKIPPED when mutmut\n            # is absent, so this costs nothing where it cannot measure.\n            l2_runner=build_l2_runner(),\n            advisory_runners=[\n                _taint_runner, _runtime_runner,\n                _graph_triage_runner, _daemon_state_runner,\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 410,
+      "end_line": 427,
+      "content": "                    self.cwd / \".code-forge\" / \"gate.yaml\"\n                )\n                baseline_cmd = config[\"test\"][\"command\"]\n            except Exception as exc:  # noqa: BLE001\n                baseline_cmd = None\n                # Both sibling skips below say why they skipped. Without\n                # this one the gate simply never launches: no finding, no\n                # error, and a PASS indistinguishable from a run where\n                # mutation actually measured something. A worktree carries\n                # its own gitignored gate.yaml, so an incomplete one is the\n                # common case rather than a rare misconfiguration.\n                self._state.infra_errors.append(\n                    \"CI: mutation skipped -- gate.yaml missing or \"\n                    \"test.command not configured: %s\" % exc\n                )\n\n            if baseline_cmd is not None:\n                from .mutation import run_mutation\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 483,
+      "end_line": 496,
+      "content": "                        except OSError:\n                            pass\n\n                # Not a daemon: the interpreter joins non-daemon threads at\n                # exit. As a daemon it was killed the instant the review\n                # process returned, so it never wrote past its own \"running\"\n                # marker, and every later round read a dead PID and dismissed\n                # the gate instead of measuring anything. run_mutation bounds\n                # itself (120s baseline + 600s mutmut + 10s results).\n                thread = threading.Thread(\n                    target=_async_mutation, daemon=False\n                )\n                thread.start()\n        elif not py_files:\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_cli_l2_wiring.py",
+      "start_line": 1,
+      "end_line": 70,
+      "content": "\"\"\"The CLI must hand the state machine a real mutation runner.\n\nStateMachine's l2_runner default returns ([], []). That is byte-identical\nto a mutation run that found no surviving mutants, so a CLI that forgets to\npass one reports a gate it never ran. build_l2_runner is the real one; it\ndegrades to a MUTATION_SKIPPED finding when mutmut is absent, so wiring it\nis safe even where it cannot measure.\n\nThe assertion is on what the CLI passes rather than on a mutation result,\nbecause invoking the captured runner here would start mutmut against the\nwhole repo.\n\"\"\"\nfrom __future__ import annotations\n\nfrom pathlib import Path\n\nfrom code_forge import cli as cli_module\nfrom code_forge.autofix import StubAutoFixer\nfrom code_forge.baseline import ResolvedReview\nfrom code_forge.falsify import StubFalsifier\nfrom code_forge.llm_invoke import Usage\nfrom code_forge.machine import StateMachine\nfrom code_forge.state import Mode, Verdict\n\n_DEFAULT_L2 = StateMachine.__dataclass_fields__[\"l2_runner\"].default\n\n\nclass TestCliL2Wiring:\n    def test_cli_passes_a_real_l2_runner(self, tmp_path, monkeypatch):\n        captured = {}\n\n        class _RecordingMachine:\n            def __init__(self, **kw):\n                captured.update(kw)\n\n            def run(self):\n                return Verdict.PASS\n\n        monkeypatch.setattr(cli_module, \"StateMachine\", _RecordingMachine)\n\n        cli_module._run_hold_loop(\n            mode=Mode.LOCAL,\n            falsifier=StubFalsifier(),\n            autofixer=StubAutoFixer(),\n            revert_fn=lambda f: None,\n            l1_provider=lambda: ([], [], Usage(), 0.0),\n            resolved=ResolvedReview(\n                source_files=[Path(\"test.py\")],\n                baseline_content=None,\n                git_diff=\"diff --git a/test.py b/test.py\\n\",\n                mode_hint=\"git\",\n            ),\n            source_hash=\"abc\",\n            baseline_repr=\"empty\",\n            cwd=tmp_path,\n            registry={},\n            max_rounds=1,\n            max_fix_attempts=1,\n            state_path=tmp_path / \"state.json\",\n        )\n\n        assert \"l2_runner\" in captured, (\n            \"the CLI built its StateMachine without l2_runner. The machine \"\n            \"then falls back to a no-op default returning ([], []), which \"\n            \"reads exactly like a mutation run that found no survivors.\"\n        )\n        assert captured[\"l2_runner\"] is not _DEFAULT_L2, (\n            \"l2_runner was passed, but it is the machine's own no-op \"\n            \"default rather than a runner that can measure anything.\"\n        )\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "start_line": 1,
+      "end_line": 141,
+      "content": "\"\"\"The async mutation run must outlive the review process that starts it.\n\nA daemon thread is killed the moment the interpreter's main thread exits.\nThe review process is short-lived, so a daemon-launched mutation run never\ngot past the \"running\" marker it writes on entry: the next round then read\na dead PID and dismissed the gate. Mutation never measured anything.\n\nThis is asserted on the thread's daemon flag rather than on an end-to-end\nrun because the defect cannot reproduce inside pytest -- the test process\nstays alive, so a daemon thread finishes normally here and an end-to-end\nassertion would pass either way.\n\"\"\"\nfrom __future__ import annotations\n\nimport shutil\nfrom pathlib import Path\n\nfrom code_forge import machine as machine_module\nfrom code_forge.autofix import StubAutoFixer\nfrom code_forge.baseline import ResolvedReview\nfrom code_forge.falsify import StubFalsifier\nfrom code_forge.machine import StateMachine\nfrom code_forge.state import Mode\n\n\ndef _make_ci_sm(tmp_path):\n    return StateMachine(\n        mode=Mode.CI,\n        falsifier=StubFalsifier(),\n        autofixer=StubAutoFixer(),\n        revert_fn=lambda f: None,\n        resolved_review=ResolvedReview(\n            source_files=[Path(\"test.py\")],\n            baseline_content=None,\n            git_diff=\"diff --git a/test.py b/test.py\\n\",\n            mode_hint=\"git\",\n        ),\n        source_hash=\"abc\",\n        baseline_spec_repr=\"empty\",\n        cwd=tmp_path,\n        registry={},\n        l0_runner=lambda reg, files: ([], []),\n    )\n\n\nclass TestAsyncMutationLaunch:\n    def test_mutation_thread_is_not_a_daemon(self, tmp_path, monkeypatch):\n        captured = {}\n\n        class _RecordingThread:\n            def __init__(self, target=None, daemon=None, **kw):\n                captured[\"daemon\"] = daemon\n                captured[\"target\"] = target\n\n            def start(self):\n                captured[\"started\"] = True\n\n        monkeypatch.setattr(\n            machine_module.threading, \"Thread\", _RecordingThread\n        )\n        # machine.py does `import shutil` inside the function, which binds\n        # the same module object patched here.\n        monkeypatch.setattr(\n            shutil, \"which\", lambda name: \"/usr/bin/\" + name\n        )\n        monkeypatch.setattr(\n            \"code_forge.gate_check.load_gate_config\",\n            lambda p: {\"test\": {\"command\": [\"pytest\", \"-q\"]}},\n        )\n        monkeypatch.setattr(\n            StateMachine, \"_execute_round\", lambda self, round_index: None\n        )\n\n        sm = _make_ci_sm(tmp_path)\n        sm._run_ci()\n\n        assert captured.get(\"started\") is True, (\n            \"mutation thread was never started; the launch path did not run \"\n            \"and this test asserts nothing\"\n        )\n        assert captured[\"daemon\"] is False, (\n            \"mutation thread was launched with daemon=%r. A daemon thread is \"\n            \"killed when the review process exits, so the run dies before \"\n            \"writing its result and the gate silently degrades to SKIPPED.\"\n            % captured[\"daemon\"]\n        )\n\n    def test_unusable_gate_config_is_recorded_not_swallowed(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"A gate.yaml without test.command must not skip mutation silently.\n\n        This is the shape a worktree actually carries: .code-forge/ is\n        gitignored per directory, so a worktree gate.yaml can hold outlet\n        and backends while missing the test section entirely.\n        \"\"\"\n        gate_dir = tmp_path / \".code-forge\"\n        gate_dir.mkdir()\n        (gate_dir / \"gate.yaml\").write_text(\n            \"outlet: subprocess\\n\"\n            \"backends:\\n\"\n            \"  some-backend:\\n\"\n            \"    type: api\\n\",\n            encoding=\"utf-8\",\n        )\n\n        captured = {}\n\n        class _RecordingThread:\n            def __init__(self, target=None, daemon=None, **kw):\n                captured[\"daemon\"] = daemon\n\n            def start(self):\n                captured[\"started\"] = True\n\n        monkeypatch.setattr(\n            machine_module.threading, \"Thread\", _RecordingThread\n        )\n        monkeypatch.setattr(\n            shutil, \"which\", lambda name: \"/usr/bin/\" + name\n        )\n        monkeypatch.setattr(\n            StateMachine, \"_execute_round\", lambda self, round_index: None\n        )\n\n        sm = _make_ci_sm(tmp_path)\n        sm._run_ci()\n\n        assert \"started\" not in captured, (\n            \"mutation launched despite an unusable gate config; this test \"\n            \"no longer exercises the skip path it claims to\"\n        )\n        assert any(\n            \"test.command not configured\" in e\n            for e in sm._state.infra_errors\n        ), (\n            \"mutation was skipped for an unusable gate.yaml and left no \"\n            \"trace: infra_errors=%r. The verdict then reads identically to \"\n            \"one where the mutation gate actually ran.\"\n            % sm._state.infra_errors\n        )\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 50,
+      "end_line": 56,
+      "content": "from .factories import (\n    build_autofixer,\n    build_falsifier,\n    build_l1_provider,\n    build_l2_runner,\n    build_revert_fn,\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2762,
+      "end_line": 2767,
+      "content": "            # Without this the state machine falls back to its no-op\n            # default, whose ([], []) is byte-identical to a mutation run\n            # that found no survivors -- the CLI reported a gate it never\n            # ran. build_l2_runner degrades to MUTATION_SKIPPED when mutmut\n            # is absent, so this costs nothing where it cannot measure.\n            l2_runner=build_l2_runner(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 415,
+      "end_line": 424,
+      "content": "                # Both sibling skips below say why they skipped. Without\n                # this one the gate simply never launches: no finding, no\n                # error, and a PASS indistinguishable from a run where\n                # mutation actually measured something. A worktree carries\n                # its own gitignored gate.yaml, so an incomplete one is the\n                # common case rather than a rare misconfiguration.\n                self._state.infra_errors.append(\n                    \"CI: mutation skipped -- gate.yaml missing or \"\n                    \"test.command not configured: %s\" % exc\n                )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 486,
+      "end_line": 494,
+      "content": "                # Not a daemon: the interpreter joins non-daemon threads at\n                # exit. As a daemon it was killed the instant the review\n                # process returned, so it never wrote past its own \"running\"\n                # marker, and every later round read a dead PID and dismissed\n                # the gate instead of measuring anything. run_mutation bounds\n                # itself (120s baseline + 600s mutmut + 10s results).\n                thread = threading.Thread(\n                    target=_async_mutation, daemon=False\n                )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_cli_l2_wiring.py",
+      "start_line": 62,
+      "end_line": 69,
+      "content": "        assert \"l2_runner\" in captured, (\n            \"the CLI built its StateMachine without l2_runner. The machine \"\n            \"then falls back to a no-op default returning ([], []), which \"\n            \"reads exactly like a mutation run that found no survivors.\"\n        )\n        assert captured[\"l2_runner\"] is not _DEFAULT_L2, (\n            \"l2_runner was passed, but it is the machine's own no-op \"\n            \"default rather than a runner that can measure anything.\"\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "start_line": 81,
+      "end_line": 86,
+      "content": "        assert captured[\"daemon\"] is False, (\n            \"mutation thread was launched with daemon=%r. A daemon thread is \"\n            \"killed when the review process exits, so the run dies before \"\n            \"writing its result and the gate silently degrades to SKIPPED.\"\n            % captured[\"daemon\"]\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "start_line": 133,
+      "end_line": 141,
+      "content": "        assert any(\n            \"test.command not configured\" in e\n            for e in sm._state.infra_errors\n        ), (\n            \"mutation was skipped for an unusable gate.yaml and left no \"\n            \"trace: infra_errors=%r. The verdict then reads identically to \"\n            \"one where the mutation gate actually ran.\"\n            % sm._state.infra_errors\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 50,
+      "end_line": 56,
+      "content": "from .factories import (\n    build_autofixer,\n    build_falsifier,\n    build_l1_provider,\n    build_l2_runner,\n    build_revert_fn,\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2762,
+      "end_line": 2767,
+      "content": "            # Without this the state machine falls back to its no-op\n            # default, whose ([], []) is byte-identical to a mutation run\n            # that found no survivors -- the CLI reported a gate it never\n            # ran. build_l2_runner degrades to MUTATION_SKIPPED when mutmut\n            # is absent, so this costs nothing where it cannot measure.\n            l2_runner=build_l2_runner(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 413,
+      "end_line": 424,
+      "content": "            except Exception as exc:  # noqa: BLE001\n                baseline_cmd = None\n                # Both sibling skips below say why they skipped. Without\n                # this one the gate simply never launches: no finding, no\n                # error, and a PASS indistinguishable from a run where\n                # mutation actually measured something. A worktree carries\n                # its own gitignored gate.yaml, so an incomplete one is the\n                # common case rather than a rare misconfiguration.\n                self._state.infra_errors.append(\n                    \"CI: mutation skipped -- gate.yaml missing or \"\n                    \"test.command not configured: %s\" % exc\n                )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 486,
+      "end_line": 494,
+      "content": "                # Not a daemon: the interpreter joins non-daemon threads at\n                # exit. As a daemon it was killed the instant the review\n                # process returned, so it never wrote past its own \"running\"\n                # marker, and every later round read a dead PID and dismissed\n                # the gate instead of measuring anything. run_mutation bounds\n                # itself (120s baseline + 600s mutmut + 10s results).\n                thread = threading.Thread(\n                    target=_async_mutation, daemon=False\n                )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_cli_l2_wiring.py",
+      "start_line": 62,
+      "end_line": 66,
+      "content": "        assert \"l2_runner\" in captured, (\n            \"the CLI built its StateMachine without l2_runner. The machine \"\n            \"then falls back to a no-op default returning ([], []), which \"\n            \"reads exactly like a mutation run that found no survivors.\"\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "start_line": 81,
+      "end_line": 86,
+      "content": "        assert captured[\"daemon\"] is False, (\n            \"mutation thread was launched with daemon=%r. A daemon thread is \"\n            \"killed when the review process exits, so the run dies before \"\n            \"writing its result and the gate silently degrades to SKIPPED.\"\n            % captured[\"daemon\"]\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "start_line": 133,
+      "end_line": 141,
+      "content": "        assert any(\n            \"test.command not configured\" in e\n            for e in sm._state.infra_errors\n        ), (\n            \"mutation was skipped for an unusable gate.yaml and left no \"\n            \"trace: infra_errors=%r. The verdict then reads identically to \"\n            \"one where the mutation gate actually ran.\"\n            % sm._state.infra_errors\n        )",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/machine.py",
+      "start": 483,
+      "end": 503
+    },
+    {
+      "file": "tests/test_machine_mutation_launch.py",
+      "start": 71,
+      "end": 91
+    }
+  ]
+}

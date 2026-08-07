@@ -1,0 +1,46 @@
+[
+  {
+    "id": "runtime-0",
+    "axis": "RUNTIME",
+    "file": "src/code_forge/receipt.py",
+    "line_range": [
+      97,
+      97
+    ],
+    "description": "Variable name capitalization mismatch: line 79 defines `Now = datetime.datetime.now(...)` while line 97 accesses `now.isoformat()`. When `write_receipts` is invoked at runtime, this will raise `NameError: name 'now' is not defined` when constructing receipt file payloads.",
+    "attribution": "runtime-axis/llm"
+  },
+  {
+    "id": "runtime-1",
+    "axis": "RUNTIME",
+    "file": "src/code_forge/verify.py",
+    "line_range": [
+      343,
+      343
+    ],
+    "description": "Timestamp monotonicity check depends on receipt files being read in chronological (cycle, pass) order. Because filenames use unpadded cycle indices (`receipt-c{cycle}p{pass}.json`), standard alphabetical file sorting (e.g., via glob) orders `receipt-c10...` before `receipt-c2...`. When cycle count reaches 10 or higher, cycle 10's timestamp will precede cycle 2's timestamp in the evaluated list, causing `ts != sorted(ts)` to fail at runtime with 'timestamps not monotonic'.",
+    "attribution": "runtime-axis/llm"
+  },
+  {
+    "id": "runtime-smoke-summary",
+    "axis": "RUNTIME",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "smoke: 0/1 surfaces verified; NOT VERIFIED: [file side effects]",
+    "attribution": "runtime-axis/smoke-evidence"
+  },
+  {
+    "id": "daemon-state-heuristic",
+    "axis": "DAEMON-STATE",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis",
+    "attribution": "daemon-state/heuristic"
+  }
+]

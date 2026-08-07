@@ -1,0 +1,98 @@
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+[gemini-omniroute:adversarial] 35200 in / 1164 out tokens
+[gemini-omniroute:expert] 35202 in / 1166 out tokens
+[gemini-omniroute:qodo] 35202 in / 1141 out tokens
+code-forge: retrying gemini-omniroute (2/5, waiting 2.5s)...
+code-forge: retrying gemini-omniroute (3/5, waiting 4.0s)...
+code-forge: retrying gemini-omniroute (4/5, waiting 8.0s)...
+code-forge: retrying gemini-omniroute (5/5, waiting 16.1s)...
+code-forge: retrying gemini-omniroute (2/5, waiting 2.0s)...
+code-forge: retrying gemini-omniroute (3/5, waiting 4.4s)...
+code-forge: retrying gemini-omniroute (4/5, waiting 8.5s)...
+Traceback (most recent call last):
+  File "/home/houminxi/.local/bin/code-forge", line 6, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 1435, in main
+    verdict = _run(args, env=os.environ, cwd=Path.cwd())
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 2661, in _run
+    verdict = _run_hold_loop(
+        mode=mode,
+    ...<17 lines>...
+        wall_t0=_wall_t0,
+    )
+  File "/home/houminxi/code/forge/src/code_forge/cli.py", line 2761, in _run_hold_loop
+    verdict = sm.run()
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 255, in run
+    verdict = self._run_local()
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 570, in _run_local
+    self._execute_round(round_index)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 834, in _execute_round
+    l1_findings, l1_excerpts = self._run_l1_phase()
+                               ~~~~~~~~~~~~~~~~~~^^
+  File "/home/houminxi/code/forge/src/code_forge/machine.py", line 730, in _run_l1_phase
+    f.disposition = self.falsifier.falsify(f)
+                    ~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/home/houminxi/code/forge/src/code_forge/falsify_real.py", line 44, in falsify
+    result = llm_invoke(
+        prompt,
+        backend=self._backend,
+        expected_keys=frozenset({"verdict", "reasoning"}),
+    )
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 676, in llm_invoke
+    return _invoke_api(
+        prompt, backend, timeout_s, expected_keys=expected_keys,
+        max_attempts=max_attempts, initial_delay_s=initial_delay_s,
+    )
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 887, in _invoke_api
+    content, usage_data = _invoke_openai(
+                          ~~~~~~~~~~~~~~^
+        prompt, backend, api_key, timeout_s,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 1050, in _invoke_openai
+    with urllib.request.urlopen(req, timeout=timeout_s) as response:
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 187, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 487, in open
+    response = self._open(req, data)
+  File "/usr/lib64/python3.14/urllib/request.py", line 504, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/usr/lib64/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/usr/lib64/python3.14/urllib/request.py", line 1369, in https_open
+    return self.do_open(http.client.HTTPSConnection, req,
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        context=self._context)
+                        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/urllib/request.py", line 1325, in do_open
+    r = h.getresponse()
+  File "/usr/lib64/python3.14/http/client.py", line 1459, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.14/http/client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib64/python3.14/http/client.py", line 297, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/socket.py", line 729, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+  File "/usr/lib64/python3.14/ssl.py", line 1304, in recv_into
+    return self.read(nbytes, buffer)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.14/ssl.py", line 1138, in read
+    return self._sslobj.read(len, buffer)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/src/code_forge/lock.py", line 181, in _handler
+    prev(signum, frame)
+    ~~~~^^^^^^^^^^^^^^^
+  File "/home/houminxi/code/forge/src/code_forge/llm_invoke.py", line 624, in _handler
+    raise KeyboardInterrupt
+KeyboardInterrupt

@@ -1,0 +1,20 @@
+[gemini-omniroute:adversarial] 15751 in / 5665 out tokens
+[gemini-omniroute:expert] 15753 in / 4720 out tokens
+[gemini-omniroute:qodo] 15753 in / 5479 out tokens
+[gemini-omniroute:expert] 15753 in / 4720 out tokens
+[gemini-omniroute:qodo] 15753 in / 5479 out tokens
+[gemini-omniroute:adversarial] 15751 in / 5665 out tokens
+[gemini-omniroute:qodo] 15753 in / 5479 out tokens
+[gemini-omniroute:expert] 15753 in / 4720 out tokens
+[gemini-omniroute:adversarial] 15751 in / 5665 out tokens
+
+--- Smoke Status ---
+smoke: 0/1 surfaces verified; NOT VERIFIED: [file side effects]
+
+--- Advisory ---
+[RUNTIME] src/code_forge/receipt.py:97-97 - Variable name capitalization mismatch: line 79 defines `Now = datetime.datetime.now(...)` while line 97 accesses `now.isoformat()`. When `write_receipts` is invoked at runtime, this will raise `NameError: name 'now' is not defined` when constructing receipt file payloads.
+[RUNTIME] src/code_forge/verify.py:343-343 - Timestamp monotonicity check depends on receipt files being read in chronological (cycle, pass) order. Because filenames use unpadded cycle indices (`receipt-c{cycle}p{pass}.json`), standard alphabetical file sorting (e.g., via glob) orders `receipt-c10...` before `receipt-c2...`. When cycle count reaches 10 or higher, cycle 10's timestamp will precede cycle 2's timestamp in the evaluated list, causing `ts != sorted(ts)` to fail at runtime with 'timestamps not monotonic'.
+[DAEMON-STATE] :0-0 - Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis
+code-forge: cost: 189363 tokens (141771 in + 47592 out), 9 passes, 17.1s (wall: 392.7s)
+[test-assertion] [test-assertion] Missing negative test case for timestamp monotonicity verification. The added tests verify that non-decreasing timestamps across fast back-to-back rounds pass verification, but there is no test covering the failure case where timestamps go backwards or are out of order across cycles/passes to ensure `run_verify` correctly detects and rejects non-monotonic timestamps.
+[test-assertion] [test-assertion] Potential AttributeError in assertion failure message: `% (result.checks_run, result.reason)` references `result.checks_run` instead of `result.checks_passed`. If check 3 fails, formatting the error message will raise an AttributeError instead of displaying the intended failure context.

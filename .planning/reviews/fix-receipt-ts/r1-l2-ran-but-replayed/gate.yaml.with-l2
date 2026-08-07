@@ -1,0 +1,23 @@
+outlet: subprocess
+backends:
+  mock-local:
+    type: api
+    format: anthropic
+    base_url: "http://127.0.0.1:"
+    api_key_env: FORGE_MOCK_KEY
+    model: mock-1
+    max_tokens: 16384
+  gemini-omniroute:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: onmi-gemini3.6
+    max_tokens: 65536
+    timeout_s: 300
+    stream: true
+    default: true
+
+test:
+  command: [python3, -m, pytest, -q, --ignore=tests/test_cli_integration.py]
+  timeout_seconds: 900

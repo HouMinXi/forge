@@ -1,0 +1,45 @@
+code-forge: trust invalidated: credential-related fields changed in gate.yaml. Run 'code-forge trust' to re-authorize.
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+/home/houminxi/code/forge/src/code_forge/baseline.py:133: UserWarning: forge: skipped 1 binary untracked file(s) from working-tree diff: ['.coverage']
+  diff = working_tree_diff(baseline_spec.ref, paths, cwd)
+[gemini-pro:expert] 33542 in / 3336 out tokens
+[gemini-pro:adversarial] 33540 in / 3552 out tokens
+[gemini-pro:qodo] 33542 in / 3594 out tokens
+[gemini-pro:qodo] 33542 in / 3594 out tokens
+[gemini-pro:expert] 33542 in / 3336 out tokens
+[gemini-pro:adversarial] 33540 in / 3552 out tokens
+[gemini-pro:adversarial] 33540 in / 3552 out tokens
+[gemini-pro:qodo] 33542 in / 3594 out tokens
+[gemini-pro:expert] 33542 in / 3336 out tokens
+[gemini-pro:qodo] 33542 in / 3594 out tokens
+[gemini-pro:expert] 33542 in / 3336 out tokens
+[gemini-pro:adversarial] 33540 in / 3552 out tokens
+
+--- Smoke Status ---
+smoke: 0/2 surfaces verified; NOT VERIFIED: [subprocess calls, environment variables]
+
+--- Advisory ---
+[RUNTIME] /src/code_forge/eval/runner.py:476-476 - Lifecycle/Side-effect risks: Increasing the subprocess timeout limit from 300s to 1800s (30 minutes) alongside `capture_output=True` risks causing an Out-Of-Memory (OOM) fatal event in the parent Python process if a runaway child process spams stdout/stderr, as output is buffered completely in RAM. Additionally, this longer lifespan significantly increases the risk that an external CI job timeout or global hypervisor scheduler abruptly SIGKILLs the whole runner before this local timeout even fires, thereby masking the error and dropping logs. Finally, `subprocess.run` timeout handling only terminates the direct child; if `code-forge` delegates to other binaries, they may be left as orphaned zombie processes leaking resources.
+
+Smoke test: Execute the runner with a mocked `code-forge review` script that deeply nests a child process and loops infinite stdout printing. Configure a short `FORGE_EVAL_REVIEW_TIMEOUT_S=2`. Verify it catches the TimeoutExpired gracefully, does not OOM the parent process, and successfully reaps all descendant processes.
+
+Concurrent/Stateful dependencies: Interacts directly with the OS's process lifecycle/memory manager and external CI supervisor job boundaries (which can independently drop or interrupt the runner without warning). Further, it indirectly depends on remote network backends doing the LLM review, which are the main cause for hangs. Gated by the environment variable flag: `FORGE_EVAL_REVIEW_TIMEOUT_S`. All possible values at call time: None/Unset (defaults to 1800), unparseable strings (e.g. "invalid", catches ValueError/TypeError and defaults to 1800), integers <= 0 (e.g. "0" or "-10", defaults to 1800), and valid integers > 0 (successfully overrides the timeout in seconds).
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:268-373 - replay_entry (impact: 18 downstream) -- top dependents: /home/houminxi/code/forge/src/code_forge/cli.py::_run_eval, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hooks_called_during_replay, /home/houminxi/code/forge/tests/test_eval_runner.py::TestCloseoutBehaviors.test_base_files_seed_oserror_returns_skipped
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:199-207 - _is_infra_failure (impact: 7 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestInfraFailureDetection.test_api_connection_error_is_infra, /home/houminxi/code/forge/tests/test_eval_runner.py::TestInfraFailureDetection.test_connection_refused_is_infra, /home/houminxi/code/forge/tests/test_eval_runner.py::TestInfraFailureDetection.test_connection_timed_out_is_infra
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:55-66 - AxisHook (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hook_has_post_review, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hook_has_pre_review
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:65-66 - post_review (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:97-104 - post_review (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:130-131 - post_review (impact: 4 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:62-63 - pre_review (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_runtime_eval.py::TestRuntimeAxisHook.test_pre_review_is_noop
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:73-79 - register_axis_hook (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_hooks_called_during_replay, /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_register_appends_to_list
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:82-104 - FixvalAxisHook (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_ignores_non_fixval_entry, /home/houminxi/code/forge/tests/test_fixval_integration.py::TestEvalFixvalScoresBugP1201.test_eval_fixval_scores_bug_p12_01
+[GRAPH-TRIAGE] src/code_forge/eval/runner.py:94-95 - pre_review (impact: 2 downstream) -- top dependents: /home/houminxi/code/forge/tests/test_eval_runner.py::TestAxisHook.test_default_methods_are_noop, /home/houminxi/code/forge/tests/test_runtime_eval.py::TestRuntimeAxisHook.test_pre_review_is_noop
+[DAEMON-STATE] :0-0 - Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis
+[legacy] /home/houminxi/code/forge/tests/test_cli_eval.py:9-9 - [pre-existing] `json` imported but unused [intent: unintended]
+[legacy] /home/houminxi/code/forge/tests/test_cli_eval.py:10-10 - [pre-existing] `sys` imported but unused [intent: unintended]
+[legacy] /home/houminxi/code/forge/tests/test_cli_eval.py:17-17 - [pre-existing] `code_forge.cli.main` imported but unused [intent: unintended]
+[pre-existing-l0] /home/houminxi/code/forge/tests/test_cli_eval.py:9-9 - `json` imported but unused
+[pre-existing-l0] /home/houminxi/code/forge/tests/test_cli_eval.py:10-10 - `sys` imported but unused
+[pre-existing-l0] /home/houminxi/code/forge/tests/test_cli_eval.py:17-17 - `code_forge.cli.main` imported but unused
+code-forge: cost: 544584 tokens (496916 in + 47668 out), 12 passes, 204.0s (wall: 145.4s)
+[test-assertion] [test-assertion] Tests should assert against the code's runtime behavior, not inspect strings in its source code. Using `inspect.getsource()` violates assertion specificity by making the test extremely brittle to purely stylistic changes (like variable renaming, whitespace modification, or substituting `%d` for f-strings). Additionally, `getsource` can fail completely by raising an `OSError` in environments where source code `.py` files are stripped. Instead, you should `@patch('code_forge.eval.runner.subprocess.run')` to mock a `subprocess.TimeoutExpired` exception, then call `_run_single(...)` and assert directly on the returned tuple and `mock_run.call_args` to verify the keyword arguments.

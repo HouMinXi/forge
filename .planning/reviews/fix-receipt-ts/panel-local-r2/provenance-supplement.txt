@@ -1,0 +1,16 @@
+Supplementary provenance, added after provenance.txt was already written
+(S2b: accepted artifacts immutable, so this is a separate file, not an edit).
+
+Gap: provenance.txt records machine.py's md5 (where the daemon +
+unusable-config fixes live) but not cli.py's (where the l2_runner wiring
+fix lives). This run is the first to depend on the cli.py fix, so record
+it here.
+
+engine cli.py md5 (mutation-gate worktree, at time of this panel run):
+e34c530434b331a7a2a26cafb4f0f33b
+
+Confirms l2_runner=build_l2_runner() and the Mapping import were both
+present in the reviewed engine binary for this run -- consistent with
+state.json showing the mutation gate actually launching (3x
+mutation-baseline-timeout DISMISSED) rather than silently defaulting to
+([], []).

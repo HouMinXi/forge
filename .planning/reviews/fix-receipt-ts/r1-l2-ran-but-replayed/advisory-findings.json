@@ -1,0 +1,35 @@
+[
+  {
+    "id": "runtime-0",
+    "axis": "RUNTIME",
+    "file": "src/code_forge/receipt.py",
+    "line_range": [
+      79,
+      79
+    ],
+    "description": "1. Affected surface: File side effects (writing receipt JSON files to receipts_dir with system wall-clock timestamps).\n2. Lifecycle/side-effect risks:\n   - System Clock Non-Monotonicity: `datetime.datetime.now(datetime.timezone.utc)` queries host wall-clock time rather than a monotonic clock. If an external system daemon (e.g., NTP via `chronyd` or `systemd-timesyncd`) steps the host clock backwards between rounds, subsequent receipts will receive timestamps earlier than prior rounds. `run_verify` in `verify.py` checks `ts != sorted(ts)`, causing runtime verification failures despite syntactically valid code and passed unit tests.\n   - Unlocked File IO / Partial Writes: Writing receipt JSON files directly into `receipts_dir` without file locks or atomic write-and-rename patterns can lead to race conditions if `run_verify` or a concurrent worker accesses `receipts_dir` while files are being written.\n3. Smoke tests required:\n   - File IO smoke test: Execute back-to-back `write_receipts` cycles to actual disk storage and run `run_verify` against the generated receipt directory to ensure files write completely and pass timestamp monotonicity check.\n   - Clock drift smoke test: Execute consecutive rounds with a backward time step to verify how system clock adjustments impact receipt verification.\n4. Stateful subsystem dependencies & call-time flags:\n   - Stateful subsystems: Host system clock daemon (NTP/chrony) and the local filesystem (`receipts_dir`). The NTP daemon can step system wall-clock backwards at any time, interfering with non-decreasing timestamp verification.\n   - Gating flags and parameters for `write_receipts` at call time:\n     - `receipts_dir`: Path (must be writable directory path)\n     - `round_index`: int (non-negative integer representing cycle - 1)\n     - `l1_findings`: list (findings to split by pass)\n     - `diff_sha256`: str (hex hash of current diff)\n     - `source_files`: list of Path objects\n     - `cwd`: Path\n     - `pass_outcomes`: dict or None (maps pass names to PassOutcome enum values)\n     - `pass_names`: list or None (names of passes to record)\n     - `skill_names`: list or None (names of skills per pass)",
+    "attribution": "runtime-axis/llm"
+  },
+  {
+    "id": "runtime-smoke-summary",
+    "axis": "RUNTIME",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "smoke: 0/1 surfaces verified; NOT VERIFIED: [file side effects]",
+    "attribution": "runtime-axis/smoke-evidence"
+  },
+  {
+    "id": "daemon-state-heuristic",
+    "axis": "DAEMON-STATE",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis",
+    "attribution": "daemon-state/heuristic"
+  }
+]

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "runtime-skipped",
+    "axis": "RUNTIME",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "RUNTIME axis SKIPPED: code-forge: gemini-pro backend: HTTP error (400). Check provider documentation",
+    "attribution": "runtime-axis/infra-error"
+  },
+  {
+    "id": "daemon-state-heuristic",
+    "axis": "DAEMON-STATE",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis",
+    "attribution": "daemon-state/heuristic"
+  }
+]

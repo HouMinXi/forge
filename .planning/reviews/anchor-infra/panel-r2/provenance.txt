@@ -1,0 +1,22 @@
+=== engine provenance (PINNED to the worktree under review) ===
+code_forge loaded from: /home/houminxi/code/forge/.worktrees/anchor-infra/src/code_forge/__init__.py
+engine carries the anchor filter: True
+engine receipt.py md5: 859cd2697fff0c504e78a57ce314959d
+
+=== target under review ===
+worktree: /home/houminxi/code/forge/.worktrees/anchor-infra
+branch:   defects/infra-anchor-poison
+HEAD:     1fb3eea8f17bb7b171060188ff4656d092093bcb
+staged diffstat:
+ src/code_forge/receipt.py |  10 +++++
+ tests/test_verify.py      | 108 ++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 118 insertions(+)
+staged diff sha256: b87e37015cc7b658ffb2e278359c407efb329fc6bdb3eb15726b6e04f822c9d6
+
+=== gate config ===
+gate.yaml md5: ff299fc797c7df75d3f8a99e2e3086c0
+
+=== backend liveness ===
+models endpoint http=200
+models offered: ['deepseek-v4-flash', 'deepseek-v4-pro']
+target model deepseek-v4-flash present: True

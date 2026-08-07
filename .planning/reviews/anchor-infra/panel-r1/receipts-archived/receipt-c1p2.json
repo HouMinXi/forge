@@ -1,0 +1,91 @@
+{
+  "cycle": 1,
+  "pass": 2,
+  "skill": "code-review-expert",
+  "diff_sha256": "78e85b58bd73e1b481a15e8321ee0acfe569532174758f9412be210dc4d53540",
+  "timestamp": "2026-08-01T08:42:01.563143+00:00",
+  "pass_status": "completed",
+  "findings_count": 2,
+  "findings": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "line": 125,
+      "description": "[expert] Write-time filter only prevents new INFRA anchors. The verifier still reads every historical receipt and rejects anchors whose file is not in the diff; receipts are never pruned, so an already-written '<llm-invoke>' anchor keeps failing forever. The new comment even says so (lines 111-113) but the fix does not address existing receipts. Either make verify tolerate legacy INFRA sentinels or migrate/prune old receipts.",
+      "disposition": "CONFIRMED"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "line": 482,
+      "description": "[expert] The added test only runs verify against receipts created by the patched writer. It never seeds a pre-existing receipt with an old '<llm-invoke>' anchor before calling run_verify, so the permanent stale-receipt failure described in the docstring is not actually guarded.",
+      "disposition": "UNCERTAIN"
+    }
+  ],
+  "anchors": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "line": 125,
+      "text": "if f.source != \"INFRA\""
+    },
+    {
+      "file": "tests/test_verify.py",
+      "line": 482,
+      "text": "r = run_verify(tmp_path, diff_sha, diff_files)"
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 109,
+      "end_line": 118,
+      "content": "            # An infra finding names a sentinel such as \"<llm-invoke>\", not a\n            # file: when a backend call fails there is no code to point at.\n            # Anchors are read back as paths that must appear in the diff, so\n            # one sentinel makes the review unattestable -- and permanently,\n            # since receipts are never pruned and that check reads every\n            # cycle, not only the last three. The finding itself stays in\n            # findings above, where the failure is still reported.\n            # covered_line_ranges below needs no such filter: it is\n            # intersected with the diff, so a sentinel entry is inert there.\n            \"anchors\": [",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 122,
+      "end_line": 126,
+      "content": "                    \"text\": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),\n                }\n                for f in pass_findings\n                if f.source != \"INFRA\"\n            ],",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 416,
+      "end_line": 491,
+      "content": "    def test_backend_failure_in_an_early_round_still_verifies(self, tmp_path):\n        \"\"\"A failed backend call must not cost the review its attestation.\n\n        The pass that fails is recorded as a finding naming \"<llm-invoke>\",\n        since no file is at fault. That is not a path, so the anchor check\n        rejects it, and receipts are never pruned -- a single failure in\n        round one outlives every clean round after it. Four rounds here, the\n        failure in the first: the last three are spotless and verify still\n        has to accept the set.\n\n        Driven through run_verify rather than read off the receipt, because\n        the anchor list is only wrong in the eyes of its consumer.\n        \"\"\"\n        import datetime\n        from unittest.mock import patch\n        from code_forge.receipt import write_receipts\n        from code_forge.disposition import Disposition\n        from code_forge.state import StateFinding\n\n        (tmp_path / \"src\").mkdir(parents=True)\n        (tmp_path / \"src\" / \"foo.py\").write_text(\n            \"\".join(\"line%d\\n\" % i for i in range(1, 81)))\n        diff_sha = _sha(\"diff\")\n        diff_files = {\"src/foo.py\": list(range(1, 81))}\n\n        base = datetime.datetime(2026, 5, 28, 10, 0, 0,\n                                 tzinfo=datetime.timezone.utc)\n        passes = [\"qodo\", \"expert\", \"adversarial\"]\n        # Spread far enough apart that the last three cycles stay under the\n        # Jaccard similarity ceiling while each still clears the coverage\n        # floor: findings cover +/-10 lines, so three per cycle is 63 of 80.\n        cycle_locs = [(10, 30, 50), (11, 33, 55), (15, 40, 65), (20, 45, 70)]\n        for round_idx in range(4):\n            findings = []\n            for pi, pn in enumerate(passes):\n                ln = cycle_locs[round_idx][pi]\n                findings.append(StateFinding(\n                    id=\"l1-%s-fp%d%d\" % (pn, round_idx, pi),\n                    fingerprint=\"fp%d%d\" % (round_idx, pi), source=\"L1\",\n                    disposition=Disposition.UNCERTAIN,\n                    file=\"src/foo.py\", line_range=[ln, ln],\n                    description=\"[%s] finding r%dp%d\" % (pn, round_idx, pi),\n                ))\n            if round_idx == 0:\n                findings.append(StateFinding(\n                    id=\"l1-qodo-invoke-fail\",\n                    fingerprint=\"invoke-fail-qodo\", source=\"INFRA\",\n                    disposition=Disposition.CONFIRMED,\n                    file=\"<llm-invoke>\", line_range=[0, 0],\n                    description=\"L1 invoke failed: 502 server error\",\n                ))\n            with patch(\"code_forge.receipt.datetime\") as mock_dt:\n                mock_dt.datetime.now.return_value = (\n                    base + datetime.timedelta(minutes=round_idx * 5))\n                mock_dt.timedelta = datetime.timedelta\n                mock_dt.timezone = datetime.timezone\n                write_receipts(\n                    receipts_dir=tmp_path / \".code-forge\" / \"receipts\",\n                    round_index=round_idx,\n                    l1_findings=findings,\n                    diff_sha256=diff_sha,\n                    source_files=[Path(\"src/foo.py\")],\n                    cwd=tmp_path,\n                    diff_files=diff_files,\n                )\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, \"backend failure blocked attestation: %s\" % r.reason\n\n        # The failure is dropped as an anchor, not silenced: round one still\n        # reports it, or the receipts would claim a pass that never ran.\n        c1p1 = json.loads(\n            (tmp_path / \".code-forge\" / \"receipts\" / \"receipt-c1p1.json\")\n            .read_text())\n        assert any(f[\"file\"] == \"<llm-invoke>\" for f in c1p1[\"findings\"])\n        assert not any(a[\"file\"] == \"<llm-invoke>\" for a in c1p1[\"anchors\"])",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 109,
+      "end_line": 117,
+      "content": "            # An infra finding names a sentinel such as \"<llm-invoke>\", not a\n            # file: when a backend call fails there is no code to point at.\n            # Anchors are read back as paths that must appear in the diff, so\n            # one sentinel makes the review unattestable -- and permanently,\n            # since receipts are never pruned and that check reads every\n            # cycle, not only the last three. The finding itself stays in\n            # findings above, where the failure is still reported.\n            # covered_line_ranges below needs no such filter: it is\n            # intersected with the diff, so a sentinel entry is inert there.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 122,
+      "end_line": 126,
+      "content": "                    \"text\": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),\n                }\n                for f in pass_findings\n                if f.source != \"INFRA\"\n            ],",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 459,
+      "end_line": 491,
+      "content": "            if round_idx == 0:\n                findings.append(StateFinding(\n                    id=\"l1-qodo-invoke-fail\",\n                    fingerprint=\"invoke-fail-qodo\", source=\"INFRA\",\n                    disposition=Disposition.CONFIRMED,\n                    file=\"<llm-invoke>\", line_range=[0, 0],\n                    description=\"L1 invoke failed: 502 server error\",\n                ))\n            with patch(\"code_forge.receipt.datetime\") as mock_dt:\n                mock_dt.datetime.now.return_value = (\n                    base + datetime.timedelta(minutes=round_idx * 5))\n                mock_dt.timedelta = datetime.timedelta\n                mock_dt.timezone = datetime.timezone\n                write_receipts(\n                    receipts_dir=tmp_path / \".code-forge\" / \"receipts\",\n                    round_index=round_idx,\n                    l1_findings=findings,\n                    diff_sha256=diff_sha,\n                    source_files=[Path(\"src/foo.py\")],\n                    cwd=tmp_path,\n                    diff_files=diff_files,\n                )\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, \"backend failure blocked attestation: %s\" % r.reason\n\n        # The failure is dropped as an anchor, not silenced: round one still\n        # reports it, or the receipts would claim a pass that never ran.\n        c1p1 = json.loads(\n            (tmp_path / \".code-forge\" / \"receipts\" / \"receipt-c1p1.json\")\n            .read_text())\n        assert any(f[\"file\"] == \"<llm-invoke>\" for f in c1p1[\"findings\"])\n        assert not any(a[\"file\"] == \"<llm-invoke>\" for a in c1p1[\"anchors\"])",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start": 115,
+      "end": 135
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start": 472,
+      "end": 492
+    }
+  ]
+}

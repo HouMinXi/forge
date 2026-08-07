@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 2,
+  "mode": "LOCAL",
+  "source_hash": "d70ee57821c3a01b541100c74497da08386076262e900d7820570e9dc5b5b73d",
+  "findings": [
+    {
+      "id": "MUTATION_SKIPPED",
+      "fingerprint": "mutation-baseline-timeout",
+      "source": "MUTANT",
+      "disposition": "DISMISSED",
+      "file": "",
+      "line_range": [],
+      "description": "baseline tests timed out (flaky guard)",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "MUTATION_SKIPPED": "DISMISSED"
+  },
+  "fix_attempts": {},
+  "verdict": "PASS",
+  "converged": true,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [
+        "mutation-baseline-timeout"
+      ],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "mutation-baseline-timeout": "DISMISSED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 1,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [
+        "mutation-baseline-timeout"
+      ],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "mutation-baseline-timeout": "DISMISSED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 2,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [
+        "mutation-baseline-timeout"
+      ],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "mutation-baseline-timeout": "DISMISSED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "flaky guard: baseline timeout on run 1",
+    "flaky guard: baseline timeout on run 1",
+    "flaky guard: baseline timeout on run 1"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 3,
+  "cost": {
+    "total_input_tokens": 141771,
+    "total_output_tokens": 47592,
+    "total_duration_s": 17.107352315972093,
+    "passes": 9,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 5.607
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 5.607
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 5.607
+      },
+      {
+        "pass": 1,
+        "cycle": 1,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 0.072
+      },
+      {
+        "pass": 2,
+        "cycle": 1,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 0.072
+      },
+      {
+        "pass": 3,
+        "cycle": 1,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 0.072
+      },
+      {
+        "pass": 1,
+        "cycle": 2,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 0.023
+      },
+      {
+        "pass": 2,
+        "cycle": 2,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 0.023
+      },
+      {
+        "pass": 3,
+        "cycle": 2,
+        "input": 15752,
+        "output": 5288,
+        "duration_s": 0.023
+      }
+    ]
+  }
+}

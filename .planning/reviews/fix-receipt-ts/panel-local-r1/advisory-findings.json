@@ -1,0 +1,35 @@
+[
+  {
+    "id": "runtime-0",
+    "axis": "RUNTIME",
+    "file": "src/code_forge/receipt.py",
+    "line_range": [
+      80,
+      80
+    ],
+    "description": "datetime.datetime.now(datetime.timezone.utc) relies on system wall-clock time rather than a monotonic clock. If system time is adjusted backward by NTP daemons (e.g., systemd-timesyncd, chronyd) between execution rounds, or if concurrent worker processes write receipts to receipts_dir without file-level locking, newly written receipt timestamps will regress relative to earlier rounds. When run_verify subsequently reads these receipt files from disk, ts != sorted(ts) will evaluate to True and cause runtime verification failures ('timestamps not monotonic'). Smoke test: Execute sequential rounds while simulating negative NTP clock adjustments and concurrent process writes, then execute run_verify to ensure file side effects stay strictly monotonic on disk.",
+    "attribution": "runtime-axis/llm"
+  },
+  {
+    "id": "runtime-smoke-summary",
+    "axis": "RUNTIME",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "smoke: 0/1 surfaces verified; NOT VERIFIED: [file side effects]",
+    "attribution": "runtime-axis/smoke-evidence"
+  },
+  {
+    "id": "daemon-state-heuristic",
+    "axis": "DAEMON-STATE",
+    "file": "",
+    "line_range": [
+      0,
+      0
+    ],
+    "description": "Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis",
+    "attribution": "daemon-state/heuristic"
+  }
+]

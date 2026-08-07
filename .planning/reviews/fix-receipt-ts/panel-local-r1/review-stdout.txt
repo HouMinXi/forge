@@ -1,0 +1,18 @@
+[gemini-omniroute:adversarial] 13837 in / 4483 out tokens
+[gemini-omniroute:qodo] 13839 in / 4205 out tokens
+[gemini-omniroute:expert] 13839 in / 3467 out tokens
+[gemini-omniroute:expert] 13839 in / 3467 out tokens
+[gemini-omniroute:qodo] 13839 in / 4205 out tokens
+[gemini-omniroute:adversarial] 13837 in / 4483 out tokens
+[gemini-omniroute:expert] 13839 in / 3467 out tokens
+[gemini-omniroute:qodo] 13839 in / 4205 out tokens
+[gemini-omniroute:adversarial] 13837 in / 4483 out tokens
+
+--- Smoke Status ---
+smoke: 0/1 surfaces verified; NOT VERIFIED: [file side effects]
+
+--- Advisory ---
+[RUNTIME] src/code_forge/receipt.py:80-80 - datetime.datetime.now(datetime.timezone.utc) relies on system wall-clock time rather than a monotonic clock. If system time is adjusted backward by NTP daemons (e.g., systemd-timesyncd, chronyd) between execution rounds, or if concurrent worker processes write receipts to receipts_dir without file-level locking, newly written receipt timestamps will regress relative to earlier rounds. When run_verify subsequently reads these receipt files from disk, ts != sorted(ts) will evaluate to True and cause runtime verification failures ('timestamps not monotonic'). Smoke test: Execute sequential rounds while simulating negative NTP clock adjustments and concurrent process writes, then execute run_verify to ensure file side effects stay strictly monotonic on disk.
+[DAEMON-STATE] :0-0 - Detected stateful subsystem keywords; enable daemon_state in gate.yaml for deeper analysis
+code-forge: cost: 161010 tokens (124545 in + 36465 out), 9 passes, 0.7s (wall: 14.0s)
+[test-assertion] [test-assertion] The test verifies that written receipt files have non-decreasing timestamps directly on disk, but does not execute `run_verify()` to validate end-to-end integration and ensure `run_verify()` succeeds when multiple pass receipts share identical timestamps within a round.

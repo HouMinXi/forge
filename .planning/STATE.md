@@ -385,6 +385,19 @@ Open 38.x tail:
 
 ### Pending Todos
 
+- **USER-DECIDE: review pipeline self-attestation gaps** (2026-08-01) --
+  charter_review_pipeline_gaps.md. 6 items found while main-session
+  verifying fix-receipt-ts (accepted on direct evidence, not blocked on
+  these): mutation-gate engine's own stale receipt.py, e2e_runner CLI
+  wiring (l2_runner's sibling gap, same shape, now fixed for l2 only),
+  mutation baseline's hardcoded 120s timeout vs gate.yaml's configured
+  900s, an unresolved intra-run cache-replay mechanism (cycles 2-3 of a
+  3-cycle LOCAL review returned byte-identical output at cache speed),
+  a missing negative test for timestamp rejection, and a coverage-floor
+  calibration question for test-heavy diffs. Not numbered into any lane
+  (checked against 45-50 and 51-53b, no collision) -- needs user
+  slotting decision before a plan.
+
 - ~~**USER-DECIDE: merge three ready branches**~~ -- **RESOLVED** (2026-06-11).
   All three (forge/p18-ai-smell 05508e7, forge/p18.1-test-isolation 9411e9c,
   docs/readme-r1-install 05b936f) merged to main and pushed clean to public

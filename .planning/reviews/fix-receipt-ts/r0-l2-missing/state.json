@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "CI",
+  "source_hash": "795e6f74db9aa487f30902f35f38603e3c37b12a3c50b58979091fe5455bb8c4",
+  "findings": [],
+  "dispositions": {},
+  "fix_attempts": {},
+  "verdict": "PASS",
+  "converged": true,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {},
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: gate.yaml needs an active 'test' section for the commit gate. Add:\ntest:\n  command: [pytest, -q]   # change to your test runner\n  timeout_seconds: 900"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 41515,
+    "total_output_tokens": 12155,
+    "total_duration_s": 10.42011398699833,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 13838,
+        "output": 4051,
+        "duration_s": 3.473
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 13838,
+        "output": 4051,
+        "duration_s": 3.473
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 13838,
+        "output": 4051,
+        "duration_s": 3.473
+      }
+    ]
+  }
+}

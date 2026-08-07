@@ -1,0 +1,126 @@
+{
+  "cycle": 1,
+  "pass": 3,
+  "skill": "adversarial-qe",
+  "diff_sha256": "e7fe3f55cf07caca9ec950d1403867e81726fed7400348318545d9a97761cfed",
+  "timestamp": "2026-08-01T09:44:36.240740+00:00",
+  "pass_status": "completed",
+  "findings_count": 2,
+  "findings": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "line": 125,
+      "description": "[adversarial] Filtering INFRA findings out of anchors removes the stale sentinel block, but it leaves no per-pass proof that a failed pass actually read the diff. Coverage is computed per cycle, not per receipt: in test_receipt_writer_output_passes_verify, each pass receipt individually covers only ~20-26% of the 80-line diff, yet verify passes when the three passes are unioned. Therefore a cycle whose qodo pass returns only an INFRA finding can still pass if the other two passes cover >=60% of a small diff. The new test only uses an 80-line diff where two passes produce 42/80 (<60%), so it misses this attestation bypass.",
+      "disposition": "CONFIRMED"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "line": 520,
+      "description": "[adversarial] The new backend-failure tests call run_verify without diff_text, so they exercise the legacy branch, not the hardened diff_text path used in production. The asserted 'coverage' failure and the INFRA-anchor filtering behavior are not verified for the hardened branch, so a regression specific to that path would not be caught by these tests.",
+      "disposition": "CONFIRMED"
+    }
+  ],
+  "anchors": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "line": 125,
+      "text": "if f.source != \"INFRA\""
+    },
+    {
+      "file": "tests/test_verify.py",
+      "line": 520,
+      "text": "r = run_verify(tmp_path, diff_sha, diff_files)"
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 109,
+      "end_line": 120,
+      "content": "            # An infra finding names a sentinel such as \"<llm-invoke>\", not a\n            # file: when a backend call fails there is no code to point at.\n            # Anchors are read back as paths that must appear in the diff, so\n            # one sentinel makes the review unattestable -- and permanently,\n            # since receipts are never pruned and that check reads every\n            # cycle, not only the last three. The finding itself stays in\n            # findings above, where the failure is still reported.\n            # covered_line_ranges below needs no such filter: it is\n            # intersected with the diff, so a sentinel entry is inert there.\n            \"anchors\": [\n                {\n                    \"file\": f.file,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 122,
+      "end_line": 126,
+      "content": "                    \"text\": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),\n                }\n                for f in pass_findings\n                if f.source != \"INFRA\"\n            ],",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 447,
+      "end_line": 463,
+      "content": "                if round_idx == failed_round and pn == \"qodo\":\n                    findings.append(StateFinding(\n                        id=\"l1-qodo-invoke-fail\",\n                        fingerprint=\"invoke-fail-qodo\", source=\"INFRA\",\n                        disposition=Disposition.CONFIRMED,\n                        file=\"<llm-invoke>\", line_range=[0, 0],\n                        description=\"L1 invoke failed: read deadline\",\n                    ))\n                    continue\n                ln = cycle_locs[round_idx][pi]\n                findings.append(StateFinding(\n                    id=\"l1-%s-fp%d%d\" % (pn, round_idx, pi),\n                    fingerprint=\"fp%d%d\" % (round_idx, pi), source=\"L1\",\n                    disposition=Disposition.UNCERTAIN,\n                    file=\"src/foo.py\", line_range=[ln, ln],\n                    description=\"[%s] finding r%dp%d\" % (pn, round_idx, pi),\n                ))",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 493,
+      "end_line": 504,
+      "content": "        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, \"backend failure blocked attestation: %s\" % r.reason\n\n        # The failure is dropped as an anchor, not silenced: round one still\n        # reports it, or the receipts would claim a pass that never ran.\n        c1p1 = json.loads(\n            (tmp_path / \".code-forge\" / \"receipts\" / \"receipt-c1p1.json\")\n            .read_text())\n        assert any(f[\"file\"] == \"<llm-invoke>\" for f in c1p1[\"findings\"])\n        assert not any(a[\"file\"] == \"<llm-invoke>\" for a in c1p1[\"anchors\"])",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 518,
+      "end_line": 522,
+      "content": "        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 3)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert not r.passed\n        assert \"coverage\" in r.reason, r.reason",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 109,
+      "end_line": 118,
+      "content": "            # An infra finding names a sentinel such as \"<llm-invoke>\", not a\n            # file: when a backend call fails there is no code to point at.\n            # Anchors are read back as paths that must appear in the diff, so\n            # one sentinel makes the review unattestable -- and permanently,\n            # since receipts are never pruned and that check reads every\n            # cycle, not only the last three. The finding itself stays in\n            # findings above, where the failure is still reported.\n            # covered_line_ranges below needs no such filter: it is\n            # intersected with the diff, so a sentinel entry is inert there.\n            \"anchors\": [",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 122,
+      "end_line": 126,
+      "content": "                    \"text\": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),\n                }\n                for f in pass_findings\n                if f.source != \"INFRA\"\n            ],",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 480,
+      "end_line": 522,
+      "content": "    def test_backend_failure_in_an_early_round_still_verifies(self, tmp_path):\n        \"\"\"A failed backend call must not cost the review its attestation.\n\n        The pass that fails is recorded as a finding naming \"<llm-invoke>\",\n        since no file is at fault. That is not a path, so the anchor check\n        rejects it, and receipts are never pruned -- a single failure in\n        round one outlives every clean round after it. Four rounds here, the\n        failure in the first: the last three are spotless and verify still\n        has to accept the set.\n\n        Driven through run_verify rather than read off the receipt, because\n        the anchor list is only wrong in the eyes of its consumer.\n        \"\"\"\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert r.passed, \"backend failure blocked attestation: %s\" % r.reason\n\n        # The failure is dropped as an anchor, not silenced: round one still\n        # reports it, or the receipts would claim a pass that never ran.\n        c1p1 = json.loads(\n            (tmp_path / \".code-forge\" / \"receipts\" / \"receipt-c1p1.json\")\n            .read_text())\n        assert any(f[\"file\"] == \"<llm-invoke>\" for f in c1p1[\"findings\"])\n        assert not any(a[\"file\"] == \"<llm-invoke>\" for a in c1p1[\"anchors\"])\n\n    def test_backend_failure_inside_the_attested_window_is_refused(\n        self, tmp_path\n    ):\n        \"\"\"The same failure in an attested cycle must still be refused.\n\n        Dropping the anchor keeps a stale failure from outliving the rounds\n        that followed it. It does not, and must not, make a cycle whose pass\n        never ran look like one that did: that cycle really did read less of\n        the diff, and the coverage floor is what says so. Pinned here so the\n        line between the two cannot move by accident -- letting this through\n        would attest a three-pass cycle that ran two.\n        \"\"\"\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 3)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert not r.passed\n        assert \"coverage\" in r.reason, r.reason",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 106,
+      "end_line": 118,
+      "content": "                }\n                for f in pass_findings\n            ],\n            # An infra finding names a sentinel such as \"<llm-invoke>\", not a\n            # file: when a backend call fails there is no code to point at.\n            # Anchors are read back as paths that must appear in the diff, so\n            # one sentinel makes the review unattestable -- and permanently,\n            # since receipts are never pruned and that check reads every\n            # cycle, not only the last three. The finding itself stays in\n            # findings above, where the failure is still reported.\n            # covered_line_ranges below needs no such filter: it is\n            # intersected with the diff, so a sentinel entry is inert there.\n            \"anchors\": [",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 122,
+      "end_line": 126,
+      "content": "                    \"text\": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),\n                }\n                for f in pass_findings\n                if f.source != \"INFRA\"\n            ],",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 506,
+      "end_line": 522,
+      "content": "    def test_backend_failure_inside_the_attested_window_is_refused(\n        self, tmp_path\n    ):\n        \"\"\"The same failure in an attested cycle must still be refused.\n\n        Dropping the anchor keeps a stale failure from outliving the rounds\n        that followed it. It does not, and must not, make a cycle whose pass\n        never ran look like one that did: that cycle really did read less of\n        the diff, and the coverage floor is what says so. Pinned here so the\n        line between the two cannot move by accident -- letting this through\n        would attest a three-pass cycle that ran two.\n        \"\"\"\n        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 3)\n\n        r = run_verify(tmp_path, diff_sha, diff_files)\n        assert not r.passed\n        assert \"coverage\" in r.reason, r.reason",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start": 115,
+      "end": 135
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start": 510,
+      "end": 530
+    }
+  ]
+}

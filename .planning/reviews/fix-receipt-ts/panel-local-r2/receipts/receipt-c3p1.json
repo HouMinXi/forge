@@ -1,0 +1,135 @@
+{
+  "cycle": 3,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "d70ee57821c3a01b541100c74497da08386076262e900d7820570e9dc5b5b73d",
+  "timestamp": "2026-08-01T03:48:52.146359+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 77,
+      "end_line": 79,
+      "content": "    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 97,
+      "end_line": 97,
+      "content": "            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 341,
+      "end_line": 343,
+      "content": "    # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round\n    #    share the round's write time, so tripping this means the set was\n    #    stitched from separate runs or the clock went backwards.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 11,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nfrom code_forge import receipt as receipt_module\nfrom code_forge.disposition import Disposition\nfrom code_forge.receipt import write_receipts\nfrom code_forge.state import StateFinding\nfrom code_forge.verify import run_verify",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 91,
+      "end_line": 96,
+      "content": "\n    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"Rounds that finish faster than a pass offset must not invert.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 77,
+      "end_line": 79,
+      "content": "    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 97,
+      "end_line": 97,
+      "content": "            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 341,
+      "end_line": 343,
+      "content": "    # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round\n    #    share the round's write time, so tripping this means the set was\n    #    stitched from separate runs or the clock went backwards.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 11,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nfrom code_forge import receipt as receipt_module\nfrom code_forge.disposition import Disposition\nfrom code_forge.receipt import write_receipts\nfrom code_forge.state import StateFinding\nfrom code_forge.verify import run_verify",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 91,
+      "end_line": 96,
+      "content": "\n    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"Rounds that finish faster than a pass offset must not invert.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 77,
+      "end_line": 79,
+      "content": "    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 97,
+      "end_line": 97,
+      "content": "            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 341,
+      "end_line": 343,
+      "content": "    # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round\n    #    share the round's write time, so tripping this means the set was\n    #    stitched from separate runs or the clock went backwards.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 11,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nfrom code_forge import receipt as receipt_module\nfrom code_forge.disposition import Disposition\nfrom code_forge.receipt import write_receipts\nfrom code_forge.state import StateFinding\nfrom code_forge.verify import run_verify",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 91,
+      "end_line": 97,
+      "content": "\n    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"Rounds that finish faster than a pass offset must not invert.\n\n        run_verify reads receipt-*.json in sorted filename order and fails",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start": 74,
+      "end": 100
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start": 338,
+      "end": 346
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start": 1,
+      "end": 233
+    }
+  ]
+}

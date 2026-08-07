@@ -1,0 +1,168 @@
+{
+  "cycle": 3,
+  "pass": 3,
+  "skill": "adversarial-qe",
+  "diff_sha256": "9d52496557d8805c4727ed777d7cf7c5383d1f62c1ac00ce4814c67e5292abd8",
+  "timestamp": "2026-07-30T17:34:57.153041+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 74,
+      "end_line": 98,
+      "content": "    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.\n    now = datetime.datetime.now(datetime.timezone.utc)\n    written = []\n\n    assembled_excerpts = _build_excerpts(reviewer_excerpts)\n    pass_outcomes = derive_pass_outcomes(l1_findings)\n\n    for pass_idx, (pass_name, skill_name) in enumerate(\n        zip(_PASS_NAMES, _SKILL_NAMES)\n    ):\n        pass_num = pass_idx + 1\n        pass_findings = by_pass.get(pass_name, [])\n\n        receipt = {\n            \"cycle\": cycle,\n            \"pass\": pass_num,\n            \"skill\": skill_name,\n            \"diff_sha256\": diff_sha256,\n            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 164,
+      "end_line": 172,
+      "content": "        _validate_receipt_schema(obj, f.name)\n        receipts.append(obj)\n    # Order by the numbers the checks index into, not by filename: \"c10\"\n    # precedes \"c2\" as text, so a review past nine rounds handed the\n    # timestamp check a sequence that ran backwards. Schema-checked ints.\n    return sorted(receipts, key=lambda r: (r[\"cycle\"], r[\"pass\"]))",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 12,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nimport pytest\n\nfrom code_forge import receipt as receipt_module\nfrom code_forge.disposition import Disposition\nfrom code_forge.receipt import write_receipts\nfrom code_forge.state import StateFinding",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 92,
+      "end_line": 115,
+      "content": "    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"Rounds that finish faster than a pass offset must not invert.\n\n        run_verify reads receipt-*.json in sorted filename order and fails\n        the run unless the timestamps are non-decreasing in that order. A\n        fast backend finishes a round in well under a second, so anything\n        added within a round has to stay ordered against the round that\n        follows it.\n\n        The clock is driven rather than read: rounds 50ms apart are the\n        condition that inverts a per-pass offset, and a test that waited on\n        the real clock would go green on a loaded machine whose rounds\n        happen to land seconds apart.\n        \"\"\"\n        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)\n        round_starts = iter(\n            [base + datetime.timedelta(milliseconds=50 * i) for i in range(3)]\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 1,
+      "end_line": 10,
+      "content": "import hashlib\nimport json\nfrom pathlib import Path\n\nimport pytest\nfrom code_forge.verify import (\n    run_verify, parse_diff_files, _validate_receipt_schema, _load_receipts\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 61,
+      "end_line": 86,
+      "content": "class TestLoadReceiptsOrdering:\n    def test_orders_by_cycle_number_not_filename_text(self, tmp_path):\n        \"\"\"A tenth cycle must not sort ahead of a second one.\n\n        Receipts are named receipt-cNpM.json, and \"c10\" precedes \"c2\" as\n        text. The timestamp check reads whatever order this returns, so a\n        review that ran past nine rounds was handed a sequence that ran\n        backwards and was rejected while being perfectly valid. Rounds can\n        reach ten: the local loop is bounded at twenty.\n        \"\"\"\n        rd = tmp_path / \"receipts\"\n        rd.mkdir()\n        sha = _sha(\"diff\")\n        for cycle in (2, 10):\n            for pass_n in range(1, 4):\n                (rd / (\"receipt-c%dp%d.json\" % (cycle, pass_n))).write_text(\n                    json.dumps(_receipt(cycle, pass_n, sha))\n                )\n\n        loaded = _load_receipts(rd)\n        assert [(r[\"cycle\"], r[\"pass\"]) for r in loaded] == [\n            (2, 1), (2, 2), (2, 3), (10, 1), (10, 2), (10, 3)\n        ]\n        stamps = [r[\"timestamp\"] for r in loaded]\n        assert stamps == sorted(stamps), (\n            \"cycle 10 read before cycle 2: %s\" % stamps\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 75,
+      "end_line": 82,
+      "content": "    cycle = round_index + 1\n    # One write time for the whole round. A per-pass offset is not ordered\n    # against the next round, and rounds finish faster than it spans, so it\n    # inverted the sequence verify reads and failed a converged review.\n    now = datetime.datetime.now(datetime.timezone.utc)\n    written = []\n\n    assembled_excerpts = _build_excerpts(reviewer_excerpts)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 91,
+      "end_line": 98,
+      "content": "        receipt = {\n            \"cycle\": cycle,\n            \"pass\": pass_num,\n            \"skill\": skill_name,\n            \"diff_sha256\": diff_sha256,\n            \"timestamp\": now.isoformat(),\n            \"pass_status\": pass_outcomes.get(",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 166,
+      "end_line": 171,
+      "content": "        _validate_receipt_schema(obj, f.name)\n        receipts.append(obj)\n    # Order by the numbers the checks index into, not by filename: \"c10\"\n    # precedes \"c2\" as text, so a review past nine rounds handed the\n    # timestamp check a sequence that ran backwards. Schema-checked ints.\n    return sorted(receipts, key=lambda r: (r[\"cycle\"], r[\"pass\"]))",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 12,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nimport pytest\n\nfrom code_forge import receipt as receipt_module\nfrom code_forge.disposition import Disposition\nfrom code_forge.receipt import write_receipts\nfrom code_forge.state import StateFinding",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 90,
+      "end_line": 139,
+      "content": "    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"Rounds that finish faster than a pass offset must not invert.\n\n        run_verify reads receipt-*.json in sorted filename order and fails\n        the run unless the timestamps are non-decreasing in that order. A\n        fast backend finishes a round in well under a second, so anything\n        added within a round has to stay ordered against the round that\n        follows it.\n\n        The clock is driven rather than read: rounds 50ms apart are the\n        condition that inverts a per-pass offset, and a test that waited on\n        the real clock would go green on a loaded machine whose rounds\n        happen to land seconds apart.\n        \"\"\"\n        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)\n        round_starts = iter(\n            [base + datetime.timedelta(milliseconds=50 * i) for i in range(3)]\n        )\n\n        class _Clock:\n            @staticmethod\n            def now(tz=None):\n                return next(round_starts)\n\n        monkeypatch.setattr(\n            receipt_module,\n            \"datetime\",\n            types.SimpleNamespace(\n                datetime=_Clock,\n                timezone=datetime.timezone,\n                timedelta=datetime.timedelta,\n            ),\n        )\n\n        rd = tmp_path / \".code-forge\" / \"receipts\"\n        diff_sha = hashlib.sha256(b\"diff\").hexdigest()\n        for round_index in range(3):\n            write_receipts(\n                receipts_dir=rd,\n                round_index=round_index,\n                l1_findings=[],\n                diff_sha256=diff_sha,\n                source_files=[Path(\"src/foo.py\")],\n                cwd=tmp_path,\n            )\n\n        names = [f.name for f in sorted(rd.glob(\"receipt-*.json\"))]\n        assert names == [\n            \"receipt-c1p1.json\", \"receipt-c1p2.json\", \"receipt-c1p3.json\",\n            \"receipt-c2p1.json\", \"receipt-c2p2.json\", \"receipt-c3p1.json\",\n            \"receipt-c3p1.json\", \"receipt-c3p2.json\", \"receipt-c3p3.json\",\n        ]\n        stamps = [\n            json.loads(f.read_text())[\"timestamp\"]\n            for f in sorted(rd.glob(\"receipt-*.json\"))\n        ]\n        assert stamps == sorted(stamps), (\n            \"timestamps invert between rounds: %s\" % stamps\n        )\n        for start in range(0, 9, 3):\n            round_stamps = stamps[start:start + 3]\n            assert len(set(round_stamps)) == 1, (\n                \"passes in one round should share the round's write time, \"\n                \"got %s\" % round_stamps\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 4,
+      "end_line": 8,
+      "content": "from code_forge.verify import (\n    run_verify, parse_diff_files, _validate_receipt_schema, _load_receipts\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 58,
+      "end_line": 87,
+      "content": "class TestLoadReceiptsOrdering:\n    def test_orders_by_cycle_number_not_filename_text(self, tmp_path):\n        \"\"\"A tenth cycle must not sort ahead of a second one.\n\n        Receipts are named receipt-cNpM.json, and \"c10\" precedes \"c2\" as\n        text. The timestamp check reads whatever order this returns, so a\n        review that ran past nine rounds was handed a sequence that ran\n        backwards and was rejected while being perfectly valid. Rounds can\n        reach ten: the local loop is bounded at twenty.\n        \"\"\"\n        rd = tmp_path / \"receipts\"\n        rd.mkdir()\n        sha = _sha(\"diff\")\n        for cycle in (2, 10):\n            for pass_n in range(1, 4):\n                (rd / (\"receipt-c%dp%d.json\" % (cycle, pass_n))).write_text(\n                    json.dumps(_receipt(cycle, pass_n, sha))\n                )\n\n        loaded = _load_receipts(rd)\n        assert [(r[\"cycle\"], r[\"pass\"]) for r in loaded] == [\n            (2, 1), (2, 2), (2, 3), (10, 1), (10, 2), (10, 3)\n        ]\n        stamps = [r[\"timestamp\"] for r in loaded]\n        assert stamps == sorted(stamps), (\n            \"cycle 10 read before cycle 2: %s\" % stamps\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 74,
+      "end_line": 97,
+      "content": "    now = datetime.datetime.now(datetime.timezone.utc)\n    written = []\n\n    assembled_excerpts = _build_excerpts(reviewer_excerpts)\n    pass_outcomes = derive_pass_outcomes(l1_findings)\n\n    for pass_idx, (pass_name, skill_name) in enumerate(\n        zip(_PASS_NAMES, _SKILL_NAMES)\n    ):\n        pass_num = pass_idx + 1\n        pass_findings = by_pass.get(pass_name, [])\n\n        receipt = {\n            \"cycle\": cycle,\n            \"pass\": pass_num,\n            \"skill\": skill_name,\n            \"diff_sha256\": diff_sha256,\n            \"timestamp\": now.isoformat(),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 166,
+      "end_line": 170,
+      "content": "        _validate_receipt_schema(obj, f.name)\n        receipts.append(obj)\n    # Order by the numbers the checks index into, not by filename: \"c10\"\n    # precedes \"c2\" as text, so a review past nine rounds handed the\n    # timestamp check a sequence that ran backwards. Schema-checked ints.\n    return sorted(receipts, key=lambda r: (r[\"cycle\"], r[\"pass\"]))",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 1,
+      "end_line": 10,
+      "content": "import datetime\nimport hashlib\nimport json\nimport types\nfrom pathlib import Path\n\nimport pytest\n\nfrom code_forge import receipt as receipt_module\nfrom code_forge.disposition import Disposition",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 93,
+      "end_line": 110,
+      "content": "    def test_timestamps_stay_ordered_across_back_to_back_rounds(\n        self, tmp_path, monkeypatch\n    ):\n        \"\"\"Rounds that finish faster than a pass offset must not invert.\n\n        run_verify reads receipt-*.json in sorted filename order and fails\n        the run unless the timestamps are non-decreasing in that order. A\n        fast backend finishes a round in well under a second, so anything\n        added within a round has to stay ordered against the round that\n        follows it.\n\n        The clock is driven rather than read: rounds 50ms apart are the\n        condition that inverts a per-pass offset, and a test that waited on\n        the real clock would go green on a loaded machine whose rounds\n        happen to land seconds apart.\n        \"\"\"\n        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 3,
+      "end_line": 8,
+      "content": "import pytest\nfrom code_forge.verify import (\n    run_verify, parse_diff_files, _validate_receipt_schema, _load_receipts\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 61,
+      "end_line": 75,
+      "content": "class TestLoadReceiptsOrdering:\n    def test_orders_by_cycle_number_not_filename_text(self, tmp_path):\n        \"\"\"A tenth cycle must not sort ahead of a second one.\n\n        Receipts are named receipt-cNpM.json, and \"c10\" precedes \"c2\" as\n        text. The timestamp check reads whatever order this returns, so a\n        review that ran past nine rounds was handed a sequence that ran\n        backwards and was rejected while being perfectly valid. Rounds can\n        reach ten: the local loop is bounded at twenty.\n        \"\"\"\n        rd = tmp_path / \"receipts\"",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/receipt.py",
+      "start": 74,
+      "end": 100
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start": 166,
+      "end": 175
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start": 1,
+      "end": 159
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start": 3,
+      "end": 92
+    }
+  ]
+}
