@@ -406,7 +406,12 @@ class TestInfraFindingSkipsFalsifier:
             registry={},
             l0_runner=lambda r, f: ([], []),
             l1_provider=mock_l1,
-            max_total_rounds=5,
+            # Two rounds, deliberately below the
+            # three-consecutive-rounds-each-with-a-failed-pass abort in
+            # _check_l1_can_still_converge, so this keeps testing what
+            # it was written to test: the fixpoint blocking, not the abort.
+            # The abort has its own test below.
+            max_total_rounds=2,
             clean_round_threshold=3,
         )
         verdict = machine.run()
@@ -420,6 +425,95 @@ class TestInfraFindingSkipsFalsifier:
         assert len(infra_in_state) > 0
         for f in infra_in_state:
             assert f.disposition == Disposition.CONFIRMED
+
+
+class TestUnconvergeableRunStopsEarly:
+    """A pass that keeps failing makes a clean round unreachable.
+
+    Every failed pass leaves a CONFIRMED INFRA finding, which zeroes
+    consecutive_clean_rounds. Repeat that and no number of remaining rounds
+    can help, so the run should say so instead of walking to
+    max_total_rounds. The old behaviour burned every round and reported
+    ESCALATED, which reads as "the review found problems" when in fact the
+    review never ran.
+    """
+
+    @staticmethod
+    def _machine(tmp_path, l1_provider, max_rounds):
+        import json as _json
+        fixture = tmp_path / "falsify.json"
+        fixture.write_text(_json.dumps({"default": "DISMISSED"}))
+        return StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(fixture_path=fixture),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=lambda r, f: ([], []),
+            l1_provider=l1_provider,
+            max_total_rounds=max_rounds,
+            clean_round_threshold=3,
+        )
+
+    @staticmethod
+    def _invoke_fail(pass_name="qodo"):
+        return StateFinding(
+            id="l1-%s-invoke-fail" % pass_name,
+            fingerprint="invoke-fail-%s" % pass_name,
+            source="INFRA",
+            disposition=Disposition.CONFIRMED,
+            file="<llm-invoke>",
+            line_range=[0, 0],
+            description="L1 invoke failed: backend said no",
+        )
+
+    def test_three_consecutive_rounds_with_a_failed_pass_stop_the_run(
+        self, tmp_path
+    ):
+        """The breaker counts consecutive ROUNDS each containing a failed
+        pass, not consecutive failed passes in a row. A single round with
+        two healthy passes and one timed-out one is enough to increment;
+        a following fully-clean round resets it to zero.
+        """
+        import pytest
+        from code_forge.machine import TimeoutBreaker
+
+        rounds = []
+
+        def mock_l1():
+            rounds.append(1)
+            return ([self._invoke_fail()], [], Usage(), 0.0)
+
+        machine = self._machine(tmp_path, mock_l1, max_rounds=12)
+        with pytest.raises(TimeoutBreaker, match="cannot converge"):
+            machine.run()
+        # Stopped at the third failing round, not at max_total_rounds. The
+        # whole point is the nine rounds it did not spend.
+        assert len(rounds) == 3
+
+    def test_a_recovered_round_resets_the_counter(self, tmp_path):
+        """Consecutive, not cumulative.
+
+        A backend that fails and recovers is a transient the retry logic
+        already covers. Counting those cumulatively would stop healthy runs,
+        which is worse than the problem being fixed.
+        """
+        script = [True, True, False, True, True]  # True = pass failed
+        calls = []
+
+        def mock_l1():
+            failed = script[len(calls)]
+            calls.append(failed)
+            return ([self._invoke_fail()] if failed else [], [], Usage(), 0.0)
+
+        machine = self._machine(tmp_path, mock_l1, max_rounds=len(script))
+        # No raise: the run never gets three failures in a row.
+        machine.run()
+        assert len(calls) == len(script)
 
 
 # ---------------------------------------------------------------------------

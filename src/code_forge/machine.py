@@ -62,7 +62,14 @@ L1Provider = Callable[[], tuple[list[StateFinding], list[dict], Usage, float]]
 
 
 class TimeoutBreaker(Exception):
-    """Raised when consecutive timeout threshold is reached."""
+    """Raised when a run provably cannot converge and should stop early.
+
+    Two triggers, both meaning "more rounds cannot help": the consecutive
+    timeout threshold in TimeoutCircuitBreaker, and consecutive rounds where
+    an L1 pass did not complete (_check_l1_can_still_converge). The name
+    predates the second one; cli.py prints the message verbatim, so what the
+    operator reads is the specific reason, not the class name.
+    """
 
 
 class TimeoutCircuitBreaker:
@@ -244,6 +251,7 @@ class StateMachine:
         self._pass_counter: int = 0
         self._advisories: "list[AdvisoryFinding]" = []
         self._preexisting_buf: "list[AdvisoryFinding]" = []
+        self._rounds_with_failed_pass: int = 0
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -737,6 +745,52 @@ class StateMachine:
             l1_findings.append(f)
         return (l1_findings, l1_excerpts)
 
+    def _check_l1_can_still_converge(
+        self, l1_findings: list[StateFinding]
+    ) -> None:
+        """Stop a run that provably cannot reach a clean round.
+
+        A pass that fails leaves a CONFIRMED INFRA finding, which tiers P2 and
+        zeroes consecutive_clean_rounds. Repeat that every round and the
+        threshold is unreachable, so the run walks all the way to
+        max_total_rounds to learn nothing -- on a slow backend, hours of it.
+
+        TimeoutCircuitBreaker cannot see this, for two separate reasons. It
+        only counts timeouts (record_other_error is deliberately a no-op, per
+        its own tests), and it counts per PASS, so the one pass that did
+        succeed calls record_success and zeroes the counter. A round where
+        one of three passes worked looks exactly like a healthy round to it.
+
+        Consecutive rounds, not cumulative: a backend that fails once and
+        recovers is a transient the retry logic already handles, and stopping
+        on that would be worse than the problem.
+        """
+        from .state import derive_pass_outcomes, PassOutcome
+
+        outcomes = derive_pass_outcomes(l1_findings)
+        failed = {
+            name: outcome.value
+            for name, outcome in outcomes.items()
+            if outcome != PassOutcome.COMPLETED
+        }
+        if not failed:
+            self._rounds_with_failed_pass = 0
+            return
+        self._rounds_with_failed_pass += 1
+        self._state.infra_errors.append(
+            "round %d: pass(es) did not complete: %s"
+            % (self._state.round, failed)
+        )
+        if self._rounds_with_failed_pass >= 3:
+            raise TimeoutBreaker(
+                "%d consecutive rounds had a pass that did not complete "
+                "(latest: %s). Each one leaves a CONFIRMED infra finding, "
+                "which resets the clean-round counter, so this review cannot "
+                "converge no matter how many rounds remain. Fix the backend "
+                "or switch to another one rather than waiting."
+                % (self._rounds_with_failed_pass, failed)
+            )
+
     def _run_l2_phase(self) -> list[StateFinding]:
         """L2 mutation phase. Runs after L1.
 
@@ -832,6 +886,7 @@ class StateMachine:
         if self.mode == Mode.LOCAL:
             self._apply_autofix_loop_to(l0_findings)
         l1_findings, l1_excerpts = self._run_l1_phase()
+        self._check_l1_can_still_converge(l1_findings)
         l2_findings = self._run_l2_phase()
         e2e_findings = self._run_e2e_phase()
         coverage_findings = self._run_coverage_phase()
