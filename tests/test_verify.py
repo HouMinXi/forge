@@ -413,6 +413,184 @@ class TestReceiptVerifyE2E:
         r = run_verify(tmp_path, diff_sha, diff_files)
         assert r.passed, "E2E failed: %s" % r.reason
 
+    @staticmethod
+    def _run_with_failed_pass(tmp_path, failed_round):
+        """Four rounds where one round's qodo pass never reached the model.
+
+        A timed-out pass returns only the infra finding -- no code finding
+        beside it, which is how it comes back off a real backend deadline.
+
+        Returns the diff arguments so the caller can drive run_verify.
+        """
+        import datetime
+        from unittest.mock import patch
+        from code_forge.receipt import write_receipts
+        from code_forge.disposition import Disposition
+        from code_forge.state import StateFinding
+
+        (tmp_path / "src").mkdir(parents=True)
+        (tmp_path / "src" / "foo.py").write_text(
+            "".join("line%d\n" % i for i in range(1, 81)))
+        diff_sha = _sha("diff")
+        diff_files = {"src/foo.py": list(range(1, 81))}
+
+        base = datetime.datetime(2026, 5, 28, 10, 0, 0,
+                                 tzinfo=datetime.timezone.utc)
+        passes = ["qodo", "expert", "adversarial"]
+        # Spread far enough apart that the last three cycles stay under the
+        # Jaccard similarity ceiling while each still clears the coverage
+        # floor: findings cover +/-10 lines, so three per cycle is 63 of 80.
+        cycle_locs = [(10, 30, 50), (11, 33, 55), (15, 40, 65), (20, 45, 70)]
+        for round_idx in range(4):
+            findings = []
+            for pi, pn in enumerate(passes):
+                if round_idx == failed_round and pn == "qodo":
+                    findings.append(StateFinding(
+                        id="l1-qodo-invoke-fail",
+                        fingerprint="invoke-fail-qodo", source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<llm-invoke>", line_range=[0, 0],
+                        description="L1 invoke failed: read deadline",
+                    ))
+                    continue
+                ln = cycle_locs[round_idx][pi]
+                findings.append(StateFinding(
+                    id="l1-%s-fp%d%d" % (pn, round_idx, pi),
+                    fingerprint="fp%d%d" % (round_idx, pi), source="L1",
+                    disposition=Disposition.UNCERTAIN,
+                    file="src/foo.py", line_range=[ln, ln],
+                    description="[%s] finding r%dp%d" % (pn, round_idx, pi),
+                ))
+            with patch("code_forge.receipt.datetime") as mock_dt:
+                mock_dt.datetime.now.return_value = (
+                    base + datetime.timedelta(minutes=round_idx * 5))
+                mock_dt.timedelta = datetime.timedelta
+                mock_dt.timezone = datetime.timezone
+                write_receipts(
+                    receipts_dir=tmp_path / ".code-forge" / "receipts",
+                    round_index=round_idx,
+                    l1_findings=findings,
+                    diff_sha256=diff_sha,
+                    source_files=[Path("src/foo.py")],
+                    cwd=tmp_path,
+                    diff_files=diff_files,
+                )
+        return diff_sha, diff_files
+
+    def test_backend_failure_in_an_early_round_still_verifies(self, tmp_path):
+        """A failed backend call must not cost the review its attestation.
+
+        The pass that fails is recorded as a finding naming "<llm-invoke>",
+        since no file is at fault. That is not a path, so the anchor check
+        rejects it, and receipts are never pruned -- a single failure in
+        round one outlives every clean round after it. Four rounds here, the
+        failure in the first: the last three are spotless and verify still
+        has to accept the set.
+
+        Driven through run_verify rather than read off the receipt, because
+        the anchor list is only wrong in the eyes of its consumer.
+        """
+        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)
+
+        r = run_verify(tmp_path, diff_sha, diff_files)
+        assert r.passed, "backend failure blocked attestation: %s" % r.reason
+
+        # The failure is dropped as an anchor, not silenced: round one still
+        # reports it, or the receipts would claim a pass that never ran.
+        c1p1 = json.loads(
+            (tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json")
+            .read_text())
+        assert any(f["file"] == "<llm-invoke>" for f in c1p1["findings"])
+        assert not any(a["file"] == "<llm-invoke>" for a in c1p1["anchors"])
+
+    def test_backend_failure_inside_the_attested_window_is_refused(
+        self, tmp_path
+    ):
+        """The same failure in an attested cycle must still be refused.
+
+        Dropping the anchor keeps a stale failure from outliving the rounds
+        that followed it. It does not, and must not, make a cycle whose pass
+        never ran look like one that did: that cycle really did read less of
+        the diff, and the coverage floor is what says so. Pinned here so the
+        line between the two cannot move by accident -- letting this through
+        would attest a three-pass cycle that ran two.
+        """
+        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 3)
+
+        r = run_verify(tmp_path, diff_sha, diff_files)
+        assert not r.passed
+        # Coverage is what catches it HERE, because this diff is small enough
+        # that two passes cannot reach the floor alone. That is a property of
+        # the fixture, not a guarantee -- on a larger diff the two healthy
+        # passes clear 60% by themselves and this refusal disappears. The
+        # structural backstop for that case is check 8, isolated in the test
+        # below.
+        assert "coverage" in r.reason, r.reason
+
+    def test_a_pass_that_never_ran_is_refused_even_when_coverage_passes(
+        self, tmp_path
+    ):
+        """The gap the coverage floor cannot close.
+
+        Coverage is unioned across the passes of a cycle, so two passes that
+        read enough of a large diff carry a third that never ran, and every
+        other check is happy: the receipt has a matching hash, a monotonic
+        timestamp, no anchor to contradict and no excerpt to disprove.
+        pass_status is the only thing left that knows, and until check 8
+        nothing read it.
+
+        Built by taking a scenario that verifies clean and flipping one
+        in-window pass_status, so nothing else can be the reason for the
+        refusal.
+        """
+        import json
+        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)
+        assert run_verify(tmp_path, diff_sha, diff_files).passed
+
+        receipts_dir = tmp_path / ".code-forge" / "receipts"
+        target = None
+        for p in sorted(receipts_dir.glob("*.json")):
+            obj = json.loads(p.read_text())
+            if obj["cycle"] == 4 and obj["pass"] == 2:
+                target = (p, obj)
+                break
+        assert target is not None, "fixture shape changed: no c4p2 receipt"
+        p, obj = target
+        assert obj["pass_status"] == "completed"
+        obj["pass_status"] = "timeout"
+        p.write_text(json.dumps(obj))
+
+        r = run_verify(tmp_path, diff_sha, diff_files)
+        assert not r.passed
+        assert "did not complete" in r.reason, r.reason
+        assert "c4p2" in r.reason, r.reason
+
+    def test_a_receipt_without_pass_status_is_still_accepted(self, tmp_path):
+        """Absence is not failure.
+
+        pass_status is not documented in SKILL.md, so a reviewer writing a
+        receipt by hand from the documented shape omits it, and receipts
+        written before the field existed lack it too. A check that refused on
+        a missing field would reject good receipts -- the failure this file's
+        schema comment was written about, and one this project has already
+        shipped once.
+        """
+        import json
+        diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)
+        assert run_verify(tmp_path, diff_sha, diff_files).passed
+
+        receipts_dir = tmp_path / ".code-forge" / "receipts"
+        stripped = 0
+        for p in sorted(receipts_dir.glob("*.json")):
+            obj = json.loads(p.read_text())
+            if obj.pop("pass_status", None) is not None:
+                p.write_text(json.dumps(obj))
+                stripped += 1
+        assert stripped > 0, "fixture wrote no pass_status to strip"
+
+        r = run_verify(tmp_path, diff_sha, diff_files)
+        assert r.passed, r.reason
+
 
 # ---------------------------------------------------------------------------
 # Hardened-verify fixtures

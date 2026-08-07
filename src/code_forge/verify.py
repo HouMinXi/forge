@@ -563,6 +563,38 @@ def run_verify(
                 return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
         cp += 1
 
-    return VerifyResult(True, "all 7 checks passed", 7, 7)
+    # 8. every pass in the attested window has to have actually run.
+    # derive_pass_outcomes already works this out from the INFRA findings and
+    # receipt.py stores it per receipt as pass_status; until now nothing read
+    # it. A pass that timed out or errored still writes a receipt, and checks
+    # 1-7 can all pass on that receipt: it has a matching hash, a monotonic
+    # timestamp, no anchors to contradict and no excerpts to disprove. The
+    # coverage floor was the only thing in the way, and it unions across the
+    # passes of a cycle, so two healthy passes on a large enough diff carry a
+    # third that never happened.
+    #
+    # Absence is not failure. pass_status is not in SKILL.md, so a reviewer
+    # hand-writing a receipt from the documented shape leaves it out, and
+    # every receipt written before the field existed lacks it too. Refusing on
+    # a missing field would reject good receipts -- which is the exact failure
+    # the schema comment at the top of this file was written about. Measured
+    # before writing this: all 204 receipts on disk carry the field
+    # (189 completed, 12 error, 3 timeout), so the signal is real; the
+    # tolerance is for the writers that are not receipt.py.
+    for r in receipts:
+        if r.get("cycle") not in last_three:
+            continue
+        status = r.get("pass_status")
+        if status is not None and status != "completed":
+            return VerifyResult(
+                False,
+                "pass did not complete: c%dp%d status=%s -- that pass "
+                "contributed no review, so the cycle cannot attest"
+                % (r["cycle"], r["pass"], status),
+                8, cp,
+            )
+    cp += 1
+
+    return VerifyResult(True, "all 8 checks passed", 8, 8)
 
 

@@ -108,6 +108,15 @@ def write_receipts(
                 }
                 for f in pass_findings
             ],
+            # An infra finding names a sentinel such as "<llm-invoke>", not a
+            # file: when a backend call fails there is no code to point at.
+            # Anchors are read back as paths that must appear in the diff, so
+            # one sentinel makes the review unattestable -- and permanently,
+            # since receipts are never pruned and that check reads every
+            # cycle, not only the last three. The finding itself stays in
+            # findings above, where the failure is still reported.
+            # covered_line_ranges below needs no such filter: it is
+            # intersected with the diff, so a sentinel entry is inert there.
             "anchors": [
                 {
                     "file": f.file,
@@ -115,6 +124,7 @@ def write_receipts(
                     "text": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),
                 }
                 for f in pass_findings
+                if f.source != "INFRA"
             ],
             "code_excerpts": assembled_excerpts,
             # self-reported, not measured -- audit-only
