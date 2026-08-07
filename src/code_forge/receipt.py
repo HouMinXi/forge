@@ -74,6 +74,9 @@ def write_receipts(
     receipts_dir.mkdir(parents=True, exist_ok=True)
     by_pass = _split_by_pass(l1_findings)
     cycle = round_index + 1
+    # One write time for the whole round. A per-pass offset is not ordered
+    # against the next round, and rounds finish faster than it spans, so it
+    # inverted the sequence verify reads and failed a converged review.
     now = datetime.datetime.now(datetime.timezone.utc)
     written = []
 
@@ -85,14 +88,13 @@ def write_receipts(
     ):
         pass_num = pass_idx + 1
         pass_findings = by_pass.get(pass_name, [])
-        ts = now + datetime.timedelta(seconds=pass_idx)
 
         receipt = {
             "cycle": cycle,
             "pass": pass_num,
             "skill": skill_name,
             "diff_sha256": diff_sha256,
-            "timestamp": ts.isoformat(),
+            "timestamp": now.isoformat(),
             "pass_status": pass_outcomes.get(
                 pass_name, PassOutcome.COMPLETED
             ).value,

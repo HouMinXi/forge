@@ -338,7 +338,9 @@ def run_verify(
                 return VerifyResult(False, "anchor file %s not in diff" % afile, 3, cp)
     cp += 1
 
-    # 4. timestamps: monotonic (no 30s gap -- receipt writer uses 1s offsets)
+    # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round
+    #    share the round's write time, so tripping this means the set was
+    #    stitched from separate runs or the clock went backwards.
     ts = [r.get("timestamp", "") for r in receipts]
     if ts != sorted(ts):
         return VerifyResult(False, "timestamps not monotonic", 4, cp)

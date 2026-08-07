@@ -1,12 +1,14 @@
+import datetime
 import hashlib
 import json
+import types
 from pathlib import Path
 
-import pytest
-
+from code_forge import receipt as receipt_module
 from code_forge.disposition import Disposition
 from code_forge.receipt import write_receipts
 from code_forge.state import StateFinding
+from code_forge.verify import run_verify
 
 
 def _finding(pass_name, fp, file="src/foo.py", line=42, desc="test"):
@@ -86,3 +88,146 @@ class TestWriteReceipts:
         assert len(files) == 3
         r = json.loads(sorted(files)[0].read_text())
         assert r["findings_count"] == 0
+
+    def test_timestamps_stay_ordered_across_back_to_back_rounds(
+        self, tmp_path, monkeypatch
+    ):
+        """Rounds that finish faster than a pass offset must not invert.
+
+        run_verify reads receipt-*.json in sorted filename order and fails
+        the run unless the timestamps are non-decreasing in that order. A
+        fast backend finishes a round in well under a second, so anything
+        added within a round has to stay ordered against the round that
+        follows it.
+
+        The clock is driven rather than read: rounds 50ms apart are the
+        condition that inverts a per-pass offset, and a test that waited on
+        the real clock would go green on a loaded machine whose rounds
+        happen to land seconds apart.
+        """
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        round_starts = iter(
+            [base + datetime.timedelta(milliseconds=50 * i) for i in range(3)]
+        )
+
+        class _Clock:
+            @staticmethod
+            def now(tz=None):
+                return next(round_starts)
+
+        monkeypatch.setattr(
+            receipt_module,
+            "datetime",
+            types.SimpleNamespace(
+                datetime=_Clock,
+                timezone=datetime.timezone,
+                timedelta=datetime.timedelta,
+            ),
+        )
+
+        rd = tmp_path / ".code-forge" / "receipts"
+        diff_sha = hashlib.sha256(b"diff").hexdigest()
+        for round_index in range(3):
+            write_receipts(
+                receipts_dir=rd,
+                round_index=round_index,
+                l1_findings=[],
+                diff_sha256=diff_sha,
+                source_files=[Path("src/foo.py")],
+                cwd=tmp_path,
+            )
+
+        # Verify file side effects: all 9 receipt files landed on disk.
+        files_on_disk = sorted(rd.glob("receipt-*.json"))
+        assert len(files_on_disk) == 9, (
+            "expected 9 receipt files, got %d" % len(files_on_disk)
+        )
+        for f in files_on_disk:
+            obj = json.loads(f.read_text())
+            assert "timestamp" in obj, "missing timestamp in %s" % f.name
+            assert "cycle" in obj, "missing cycle in %s" % f.name
+            assert "pass" in obj, "missing pass in %s" % f.name
+
+        names = [f.name for f in files_on_disk]
+        assert names == [
+            "receipt-c1p1.json", "receipt-c1p2.json", "receipt-c1p3.json",
+            "receipt-c2p1.json", "receipt-c2p2.json", "receipt-c2p3.json",
+            "receipt-c3p1.json", "receipt-c3p2.json", "receipt-c3p3.json",
+        ]
+        stamps = [
+            json.loads(f.read_text())["timestamp"]
+            for f in sorted(rd.glob("receipt-*.json"))
+        ]
+        assert stamps == sorted(stamps), (
+            "timestamps invert between rounds: %s" % stamps
+        )
+        for start in range(0, 9, 3):
+            round_stamps = stamps[start:start + 3]
+            assert len(set(round_stamps)) == 1, (
+                "passes in one round should share the round's write time, "
+                "got %s" % round_stamps
+            )
+
+    def test_run_verify_accepts_a_full_set_this_writer_produced(
+        self, tmp_path, monkeypatch
+    ):
+        """The consumer, not just the files, has to accept what we write.
+
+        The test above reads the timestamps back off disk itself. That
+        cannot catch a disagreement between the writer and run_verify,
+        which is the code that actually rejects a review: its check 4
+        compares timestamps in (cycle, pass) order and fails the whole run
+        with "timestamps not monotonic". Asserting through run_verify keeps
+        the two sides pinned together.
+
+        Same driven clock as above, for the same reason: 50ms rounds are
+        the condition that inverts a per-pass offset.
+        """
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        round_starts = iter(
+            [base + datetime.timedelta(milliseconds=50 * i) for i in range(3)]
+        )
+
+        class _Clock:
+            @staticmethod
+            def now(tz=None):
+                return next(round_starts)
+
+        monkeypatch.setattr(
+            receipt_module,
+            "datetime",
+            types.SimpleNamespace(
+                datetime=_Clock,
+                timezone=datetime.timezone,
+                timedelta=datetime.timedelta,
+            ),
+        )
+
+        diff_sha = hashlib.sha256(b"diff").hexdigest()
+        diff_files = {"src/foo.py": [1, 2, 3]}
+        for round_index in range(3):
+            write_receipts(
+                receipts_dir=tmp_path / ".code-forge" / "receipts",
+                round_index=round_index,
+                l1_findings=[],
+                diff_sha256=diff_sha,
+                source_files=[Path("src/foo.py")],
+                cwd=tmp_path,
+                diff_files=diff_files,
+            )
+
+        result = run_verify(tmp_path, diff_sha, diff_files)
+
+        # checks_passed counts the checks that passed, in order. Checks 1-3
+        # (completeness, diff hash, anchors) come first, so anything below 3
+        # means run_verify gave up before it ever compared a timestamp and
+        # this test would otherwise pass while asserting nothing.
+        assert result.checks_passed >= 3, (
+            "run_verify stopped at check %d (%s) before reaching the "
+            "timestamp gate, so this test asserts nothing about ordering"
+            % (result.checks_run, result.reason)
+        )
+        assert result.checks_passed >= 4, (
+            "the timestamp gate rejected a receipt set this very writer "
+            "produced: %s" % result.reason
+        )
