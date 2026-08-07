@@ -962,9 +962,23 @@ def _invoke_api(
             ) + random.uniform(0, 0.5)
             if exc.retry_after is not None:
                 delay = max(delay, exc.retry_after)
+            # Carry the cause. Without it this line names a backend and a
+            # delay and nothing else, so a run that retries forever gives the
+            # operator no way to tell a rate limit from a proxy queue drop
+            # from an empty response -- the status, the message, and any
+            # self-diagnosing text the gateway sent all stop here. One such
+            # message ("this is OmniRoute's request queue, not an upstream
+            # timeout") had to be recovered from the proxy's container log
+            # because this line discarded it.
+            #
+            # Read the timing carefully when debugging from this output: the
+            # delay is printed BEFORE the sleep, so the gap between two lines
+            # is the sleep plus the NEXT attempt's duration. The line does not
+            # say how long an attempt took.
+            cause = " ".join(str(exc).split())[:400]
             sys.stderr.write(
-                "code-forge: retrying %s (%d/%d, waiting %.1fs)...\n"
-                % (backend.name, attempt + 2, max_attempts, delay)
+                "code-forge: retrying %s (%d/%d, waiting %.1fs) after %s\n"
+                % (backend.name, attempt + 2, max_attempts, delay, cause)
             )
             time.sleep(delay)
             continue
