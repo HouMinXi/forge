@@ -605,14 +605,23 @@ class TestRealPathSmoke:
         reason="machine.py not found (CI portability)",
     )
     def test_detector_on_real_source(self) -> None:
-        """machine.py line 32 is inside if TYPE_CHECKING -- detector says dead.
+        """machine.py TYPE_CHECKING import is dead -- detector says dead.
 
-        Line 32 creates an IMPORTS_FROM edge, not a CALLS edge, so the
+        That line creates an IMPORTS_FROM edge, not a CALLS edge, so the
         advisory axes do not surface it.  This test validates the
         DETECTOR, not the full pipeline.
         """
-        # Line 32 is inside if TYPE_CHECKING: block.
-        assert _is_dead_call_site(str(_MACHINE_PY), 32) is True
+        # The TYPE_CHECKING import sits two lines below the import block.
+        # Shift it if the import count changes.
+        with open(_MACHINE_PY) as f:
+            lines = f.readlines()
+        tc_line = None
+        for i, line in enumerate(lines, 1):
+            if line.strip() == "if TYPE_CHECKING:":
+                tc_line = i + 1  # the import inside the block
+                break
+        assert tc_line is not None, "if TYPE_CHECKING: block not found"
+        assert _is_dead_call_site(str(_MACHINE_PY), tc_line) is True
         # Line 1 (SPDX comment) is live code.
         assert _is_dead_call_site(str(_MACHINE_PY), 1) is False
 

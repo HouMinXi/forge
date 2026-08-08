@@ -46,7 +46,14 @@ from .exit_codes import (
     EXIT_TIMEOUT,
     verdict_to_exit,
 )
-from .factories import build_autofixer, build_falsifier, build_l1_provider, build_revert_fn
+from .factories import (
+    build_autofixer,
+    build_falsifier,
+    build_l1_provider,
+    build_l2_runner,
+    build_e2e_checker,
+    build_revert_fn,
+)
 from .git import is_git_repo
 from .hold import HoldAborted, run_hold_ui
 from .lock import ForgeLock, ForgeLockBusy
@@ -2752,6 +2759,13 @@ def _run_hold_loop(
             coverage_l1_active=coverage_l1_active,
             coverage_exempt_patterns=coverage_exempt_patterns or [],
             clean_round_threshold=clean_round_threshold,
+            # Without this the state machine falls back to its no-op
+            # default, whose ([], []) is byte-identical to a mutation run
+            # that found no survivors -- the CLI reported a gate it never
+            # ran. build_l2_runner degrades to MUTATION_SKIPPED when mutmut
+            # is absent, so this costs nothing where it cannot measure.
+            l2_runner=build_l2_runner(),
+            e2e_runner=build_e2e_checker(),
             advisory_runners=[
                 _taint_runner, _runtime_runner,
                 _graph_triage_runner, _daemon_state_runner,

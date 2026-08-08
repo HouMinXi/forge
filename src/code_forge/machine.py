@@ -18,9 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sys
-import threading
 import time
 from enum import Enum
 import traceback
@@ -43,6 +41,7 @@ from .disposition import (
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
 )
 from .falsify import Falsifier
+from .mutation import launch_detached_mutation
 from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
 from .hold import check_escalated_frozen
 from .llm_invoke import Usage
@@ -345,7 +344,26 @@ class StateMachine:
                             return Verdict.FAIL
                     elif status == "running":
                         pid = result_data.get("pid")
-                        if pid is not None:
+                        if pid is None or (
+                            isinstance(pid, int) and pid <= 0
+                        ):
+                            # Child has not yet written its PID.
+                            # If the file is stale (>120s), the child
+                            # likely crashed before writing -- unlink and
+                            # fall through to re-launch.
+                            started = result_data.get("started_at", 0)
+                            if not isinstance(started, (int, float)):
+                                started = 0
+                            if time.time() - started > 120:
+                                self._state.infra_errors.append(
+                                    "CI: mutation-result.json stale "
+                                    "(pid not set after 120s); "
+                                    "re-launching"
+                                )
+                                self._unlink_mutation_result(result_path)
+                            else:
+                                return Verdict.PENDING
+                        elif pid is not None:
                             from .lock import _pid_alive
 
                             if _pid_alive(pid):
@@ -375,12 +393,6 @@ class StateMachine:
                                 )
                                 self._state.findings.append(finding)
                                 self._unlink_mutation_result(result_path)
-                        else:
-                            self._state.infra_errors.append(
-                                "CI: mutation-result.json status=running "
-                                "missing pid field"
-                            )
-                            self._unlink_mutation_result(result_path)
                     elif status == "error":
                         # A crashed mutation run is an infra problem,
                         # not a review result: report it and consume the
@@ -418,73 +430,44 @@ class StateMachine:
                     self.cwd / ".code-forge" / "gate.yaml"
                 )
                 baseline_cmd = config["test"]["command"]
-            except Exception:  # noqa: BLE001
+                test_config = config.get("test", {})
+                baseline_timeout = test_config.get("timeout_seconds", 120)
+            except FileNotFoundError as exc:
                 baseline_cmd = None
+                baseline_timeout = 120
+                self._state.infra_errors.append(
+                    "CI: mutation skipped -- gate.yaml not found: %s"
+                    % exc
+                )
+            except Exception as exc:  # noqa: BLE001
+                baseline_cmd = None
+                baseline_timeout = 120
+                # Both sibling skips below say why they skipped. Without
+                # this one the gate simply never launches: no finding, no
+                # error, and a PASS indistinguishable from a run where
+                # mutation actually measured something. A worktree carries
+                # its own gitignored gate.yaml, so an incomplete one is the
+                # common case rather than a rare misconfiguration.
+                self._state.infra_errors.append(
+                    "CI: mutation skipped -- gate.yaml lacking "
+                    "test.command or other config error: %s" % exc
+                )
 
             if baseline_cmd is not None:
-                from .mutation import run_mutation
-
-                cwd_ref = self.cwd
-
-                def _async_mutation():
-                    # Write initial status
-                    initial_data = {
-                        "pid": os.getpid(),
-                        "started_at": time.time(),
-                        "status": "running",
-                        "survivors": [],
-                    }
-                    try:
-                        with open(
-                            result_path, "w", encoding="utf-8"
-                        ) as f:
-                            json.dump(initial_data, f)
-                    except OSError:
-                        return
-
-                    try:
-                        mm_findings, _infra = run_mutation(
-                            diff_files=diff_files,
-                            baseline_cmd=baseline_cmd,
-                            cwd=cwd_ref,
-                        )
-                        survivor_list = [
-                            f.id
-                            for f in mm_findings
-                            if f.source == "MUTANT"
-                            and f.disposition == Disposition.CONFIRMED
-                            and f.id != "MUTATION_ERROR"
-                        ]
-                        # f.id is "mutant-{mutant_name}" for survivors
-                        done_data = {
-                            "pid": os.getpid(),
-                            "started_at": initial_data["started_at"],
-                            "status": "done",
-                            "survivors": survivor_list,
-                        }
-                        with open(
-                            result_path, "w", encoding="utf-8"
-                        ) as f:
-                            json.dump(done_data, f)
-                    except Exception as e:  # noqa: BLE001
-                        error_data = {
-                            "pid": os.getpid(),
-                            "started_at": initial_data["started_at"],
-                            "status": "error",
-                            "message": str(e),
-                        }
-                        try:
-                            with open(
-                                result_path, "w", encoding="utf-8"
-                            ) as f:
-                                json.dump(error_data, f)
-                        except OSError:
-                            pass
-
-                thread = threading.Thread(
-                    target=_async_mutation, daemon=True
-                )
-                thread.start()
+                try:
+                    pid = launch_detached_mutation(
+                        diff_files, baseline_cmd, self.cwd,
+                        result_path, baseline_timeout,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    pid = None
+                    self._state.infra_errors.append(
+                        "CI: mutation launch error: %s" % exc
+                    )
+                if pid is None:
+                    self._state.infra_errors.append(
+                        "CI: mutation subprocess failed to start"
+                    )
         elif not py_files:
             # DISMISSED, not a file write: visible in this same run's
             # findings/summary instead of silently deferred to a file

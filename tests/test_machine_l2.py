@@ -495,7 +495,7 @@ class TestCIMutationResultNotSticky:
         machine = self._machine(tmp_path)
         assert machine.run() == Verdict.PASS
         assert any(
-            "missing pid field" in e for e in machine._state.infra_errors
+            "pid not set" in e for e in machine._state.infra_errors
         )
         assert not result_path.exists()
 

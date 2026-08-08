@@ -150,6 +150,7 @@ def _run_baseline_guard(
     repo_root: str,
     *,
     allow_strip_retry: bool,
+    timeout: int = 120,
 ) -> tuple[str, list[StateFinding], list[str]]:
     """Run the 3x flaky baseline guard and report the outcome.
 
@@ -177,7 +178,7 @@ def _run_baseline_guard(
                 env=run_env,
                 capture_output=True,
                 text=True, encoding="utf-8", errors="replace",
-                timeout=120,
+                timeout=timeout,
                 check=False,
                 cwd=repo_root,
             )
@@ -256,6 +257,7 @@ def run_mutation(
     baseline_cmd: list[str],
     timeout: int = 600,
     cwd: Path | None = None,
+    baseline_timeout: int = 120,
 ) -> tuple[list[StateFinding], list[str]]:
     """Run mutation testing on diff-scoped files.
 
@@ -321,13 +323,13 @@ def run_mutation(
     run_env["PYTHONPATH"] = pythonpath
 
     status, guard_findings, guard_infra = _run_baseline_guard(
-        baseline_cmd, run_env, repo_root, allow_strip_retry=True,
+        baseline_cmd, run_env, repo_root, allow_strip_retry=True, timeout=baseline_timeout
     )
     if status == "needs_strip_retry":
         run_env = _strip_venv_from_env(run_env)
         run_env["PYTHONPATH"] = pythonpath
         status, guard_findings, guard_infra = _run_baseline_guard(
-            baseline_cmd, run_env, repo_root, allow_strip_retry=False,
+            baseline_cmd, run_env, repo_root, allow_strip_retry=False, timeout=baseline_timeout
         )
     if status == "skip":
         return (guard_findings, guard_infra)
@@ -514,3 +516,112 @@ def run_mutation(
         shutil.rmtree(mutants_dir, ignore_errors=True)
 
     return (findings, infra_errors)
+
+def launch_detached_mutation(
+    diff_files: list[str],
+    baseline_cmd: list[str],
+    cwd: "Path",
+    result_path: "Path",
+    baseline_timeout: int = 120,
+) -> int | None:
+    """Launch the mutation run in a detached process group, returning its PID."""
+    import subprocess
+    import sys
+    import json
+    import os
+    import time
+
+    # Write initial data BEFORE launching the child so we never overwrite
+    # the child's "done" status. pid=None means "not yet started"; the
+    # reader guards against non-positive pids so None is safe.
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    initial_data = {
+        "pid": None,
+        "started_at": time.time(),
+        "status": "running",
+        "survivors": [],
+    }
+    with open(result_path, "w", encoding="utf-8") as f:
+        json.dump(initial_data, f)
+
+    forge_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+    script = f"""
+import os
+import sys
+import json
+import time
+from pathlib import Path
+
+# Add src to path so code_forge is importable if run from source
+sys.path.insert(0, {repr(forge_src)})
+try:
+    from code_forge.mutation import run_mutation
+    from code_forge.disposition import Disposition
+except ImportError:
+    # Installed package layout: the cwd itself may be the package root
+    import os as _os
+    _os.chdir(str(Path({repr(str(cwd))})))
+    sys.path.insert(0, str(Path({repr(str(cwd))})))
+    from code_forge.mutation import run_mutation
+    from code_forge.disposition import Disposition
+
+result_path = Path({repr(str(result_path))})
+cwd_ref = Path({repr(str(cwd))})
+diff_files = {repr(diff_files)}
+baseline_cmd = {repr(baseline_cmd)}
+
+try:
+    with open(result_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    data = {{"started_at": time.time(), "status": "running", "survivors": []}}
+
+data["pid"] = os.getpid()
+try:
+    with open(result_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+except Exception:
+    pass
+
+try:
+    mm_findings, _infra = run_mutation(
+        diff_files=diff_files,
+        baseline_cmd=baseline_cmd,
+        cwd=cwd_ref,
+        baseline_timeout=int({baseline_timeout}),
+    )
+    survivor_list = [
+        f.id
+        for f in mm_findings
+        if f.source == "MUTANT"
+        and f.disposition == Disposition.CONFIRMED
+        and f.id != "MUTATION_ERROR"
+    ]
+    data["status"] = "done"
+    data["survivors"] = survivor_list
+    with open(result_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+except Exception as e:
+    data["status"] = "error"
+    data["error"] = str(e)
+    try:
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+"""
+    try:
+        p = subprocess.Popen(
+            [sys.executable, "-c", script],
+            start_new_session=True,
+            close_fds=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=cwd,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+    return p.pid
