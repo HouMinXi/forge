@@ -420,3 +420,164 @@ def test_smoke_no_backends(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "no backends configured" in out
     assert "FAIL" in out
+
+
+# -- _check_hook_drift --
+
+
+def _init_repo(path: Path) -> None:
+    import subprocess
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    gate_dir = path / ".code-forge"
+    gate_dir.mkdir(exist_ok=True)
+    (gate_dir / "gate.yaml").write_text(textwrap.dedent("""\
+        test:
+          command: [pytest, -q]
+          timeout_seconds: 900
+    """))
+
+
+def _install(path: Path) -> Path:
+    import io
+
+    from code_forge.install_hooks import run_install_hooks
+    rc = run_install_hooks(
+        args=None, env={}, cwd=path,
+        stdout=io.StringIO(), stderr=io.StringIO())
+    assert rc == 0
+    return path / ".git" / "hooks"
+
+
+def _by_hook(results):
+    return dict((msg.split(":")[0], ok) for ok, msg in results)
+
+
+def test_hook_drift_current_is_silent(tmp_path):
+    from code_forge.doctor import _check_hook_drift
+    _init_repo(tmp_path)
+    _install(tmp_path)
+    results = _check_hook_drift(tmp_path)
+    assert [ok for ok, _ in results] == [True, True]
+    assert all("current" in msg for _, msg in results)
+
+
+def test_hook_drift_stale_pre_commit_fails(tmp_path):
+    from code_forge.doctor import _check_hook_drift
+    _init_repo(tmp_path)
+    hooks = _install(tmp_path)
+    hook = hooks / "pre-commit"
+    # The e605b26 regression verbatim: verify's real reason swallowed and
+    # replaced by a generic line.
+    text = hook.read_text()
+    assert 'VERIFY_OUT=$(code-forge verify 2>&1)' in text
+    hook.write_text(text.replace(
+        '    VERIFY_OUT=$(code-forge verify 2>&1) || {\n'
+        '        echo "$VERIFY_OUT" >&2\n',
+        '    code-forge verify --quiet 2>/dev/null || {\n'
+        '        echo "code-forge: receipt verification failed." >&2\n'))
+
+    results = _by_hook(_check_hook_drift(tmp_path))
+    assert results["pre-commit"] is False
+    # Only the changed hook is reported: a check that flags everything has
+    # no negatives, so it can never report a false one.
+    assert results["commit-msg"] is True
+
+
+def test_hook_drift_stale_commit_msg_fails(tmp_path):
+    from code_forge.doctor import _check_hook_drift
+    _init_repo(tmp_path)
+    hooks = _install(tmp_path)
+    hook = hooks / "commit-msg"
+    hook.write_text(hook.read_text().replace("head -5", "head -3"))
+
+    results = _by_hook(_check_hook_drift(tmp_path))
+    assert results["commit-msg"] is False
+    assert results["pre-commit"] is True
+
+
+def test_hook_drift_missing_hook_skips(tmp_path):
+    from code_forge.doctor import _check_hook_drift
+    _init_repo(tmp_path)
+    hooks = _install(tmp_path)
+    (hooks / "pre-commit").unlink()
+    results = _by_hook(_check_hook_drift(tmp_path))
+    assert results["pre-commit"] is None
+    assert results["commit-msg"] is True
+
+
+def test_hook_drift_foreign_hook_skips(tmp_path):
+    from code_forge.doctor import _check_hook_drift
+    _init_repo(tmp_path)
+    hooks = _install(tmp_path)
+    (hooks / "pre-commit").write_text("#!/bin/sh\n# a hook forge did not write\n")
+    results = _by_hook(_check_hook_drift(tmp_path))
+    assert results["pre-commit"] is None
+
+
+def test_hook_drift_chained_hook_is_current(tmp_path):
+    """A hook chaining a backup is current, not drift."""
+    from code_forge.doctor import _check_hook_drift
+    _init_repo(tmp_path)
+    hooks_dir = tmp_path / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    (hooks_dir / "pre-commit").write_text("#!/bin/sh\necho existing\n")
+    (hooks_dir / "commit-msg").write_text("#!/bin/sh\necho existing\n")
+    _install(tmp_path)
+    assert (hooks_dir / "pre-commit.code-forge-backup").exists()
+    results = _check_hook_drift(tmp_path)
+    assert [ok for ok, _ in results] == [True, True]
+
+
+def test_hook_drift_non_git_is_silent(tmp_path):
+    from code_forge.doctor import _check_hook_drift
+    gate_dir = tmp_path / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text("test:\n  section: true\n")
+    assert _check_hook_drift(tmp_path) == []
+
+
+def test_hook_drift_ungeneratable_gate_fails(tmp_path):
+    """A forge hook is installed but gate.yaml can no longer produce one."""
+    from code_forge.doctor import _check_hook_drift
+    _init_repo(tmp_path)
+    _install(tmp_path)
+    (tmp_path / ".code-forge" / "gate.yaml").write_text("backends: {}\n")
+    results = _check_hook_drift(tmp_path)
+    assert any(ok is False and "cannot regenerate" in msg
+               for ok, msg in results)
+    # The multi-line gate.yaml error must not shred the diagnostic table.
+    assert all("\n" not in msg for _, msg in results)
+
+
+def test_doctor_reports_hook_drift(tmp_path, capsys):
+    """run_doctor surfaces a stale hook as a FAIL row and exit 1."""
+    _init_repo(tmp_path)
+    hooks = _install(tmp_path)
+    hook = hooks / "pre-commit"
+    hook.write_text(hook.read_text().replace(
+        "exec ", "# drifted\nexec ", 1))
+    (tmp_path / ".code-forge" / "gate.yaml").write_text(textwrap.dedent("""\
+        test:
+          command: [pytest, -q]
+          timeout_seconds: 900
+        backends:
+          demo:
+            type: api
+            model: test-model
+            format: openai
+            base_url: https://api.example.com/v1
+            api_key_env: DEMO_API_KEY
+        outlet: subprocess
+    """))
+    with patch("code_forge.doctor._check_handshake",
+               return_value=(True, "code-forge-mcp")), \
+         patch("code_forge.doctor._check_registries",
+               return_value=[]), \
+         patch("code_forge.trust.trust_status") as mt:
+        mt.return_value = MagicMock(trusted=True)
+        rc = run_doctor(cwd=tmp_path, env={"DEMO_API_KEY": "k"})
+    out = capsys.readouterr().out
+    assert "hooks:" in out
+    assert "run code-forge install-hooks" in out
+    assert rc == 1

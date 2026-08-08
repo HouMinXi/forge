@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import IO, Callable, Mapping, Optional
+from typing import IO, Callable, Mapping, NamedTuple, Optional
 
 from .exit_codes import EXIT_FAIL, EXIT_PASS
 from .gate_check import load_gate_config
@@ -616,6 +616,50 @@ def generate_commit_msg_hook_content(
     )
 
 
+class HookInputs(NamedTuple):
+    """Everything the hook generators read besides the chain path.
+
+    Assembled once so install-hooks and any consumer that needs to know
+    what the hook SHOULD look like read the same inputs. A new generator
+    input added here reaches both callers instead of only the installer.
+    """
+
+    forge_invocation: str
+    presubmit_entries: list[dict] | None
+    non_ascii_mode: str
+    planning_leak_guard: bool
+
+
+def collect_hook_inputs(cwd: Path) -> HookInputs:
+    """Read the hook generator inputs for a repo.
+
+    Raises:
+        ValueError: if gate.yaml presubmit config is malformed
+        RuntimeError: if no code-forge executable can be resolved
+    """
+    presubmit_entries = None
+    non_ascii_mode = "ai-smell"
+    try:
+        gate_config = load_gate_config(cwd / ".code-forge" / "gate.yaml")
+        non_ascii_mode = gate_config.get("non_ascii", "ai-smell")
+        if "presubmit" in gate_config:
+            presubmit_entries = gate_config["presubmit"]
+    except FileNotFoundError:
+        # No gate.yaml is valid: no presubmit entries, default non_ascii mode
+        pass
+
+    # Forge's own repo gets the planning-leak guard: .planning/ and
+    # CLAUDE.md must never enter its history.
+    is_forge_repo = (cwd / "src" / "code_forge" / "__init__.py").is_file()
+
+    return HookInputs(
+        forge_invocation=resolve_forge_path(),
+        presubmit_entries=presubmit_entries,
+        non_ascii_mode=non_ascii_mode,
+        planning_leak_guard=is_forge_repo,
+    )
+
+
 def ensure_claude_worktree_hook(cwd: Path) -> None:
     """Register check_worktree.sh in .claude/settings.local.json.
 
@@ -745,21 +789,10 @@ def run_install_hooks(
                 "code-forge hook will chain after existing hooks."
             )
 
-        # Step d: resolve code-forge absolute path
-        forge_invocation = resolve_forge_path()
-
-        # Step d.5: load gate.yaml for presubmit config and non_ascii mode
-        presubmit_entries = None
-        non_ascii_mode = "ai-smell"
-        gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+        # Step d: resolve code-forge path, gate.yaml presubmit/non_ascii
+        # config, and forge-repo detection
         try:
-            gate_config = load_gate_config(gate_yaml_path)
-            non_ascii_mode = gate_config.get("non_ascii", "ai-smell")
-            if "presubmit" in gate_config:
-                presubmit_entries = gate_config["presubmit"]
-        except FileNotFoundError:
-            # No gate.yaml is valid: no presubmit entries, default non_ascii mode
-            pass
+            hook_inputs = collect_hook_inputs(cwd)
         except ValueError as e:
             # Malformed presubmit config: fail-closed.
             # Silently proceeding would generate a hook that omits configured
@@ -769,6 +802,7 @@ def run_install_hooks(
                 file=stderr,
             )
             return EXIT_FAIL
+        non_ascii_mode = hook_inputs.non_ascii_mode
 
         # Step e: check for existing pre-commit hook
         hook_path = hooks_dir / "pre-commit"
@@ -818,17 +852,12 @@ def run_install_hooks(
                     )
                 chain_path = backup_path
 
-        # Step e.5: detect forge repo for planning-leak guard
-        # If src/code_forge/__init__.py exists relative to cwd, this is forge
-        # itself and the planning-leak guard should be enabled automatically.
-        is_forge_repo: bool = (cwd / "src" / "code_forge" / "__init__.py").is_file()
-
         # Step f: generate pre-commit hook content
         hook_content = generate_hook_content(
-            forge_invocation, chain_path,
-            presubmit_entries=presubmit_entries,
+            hook_inputs.forge_invocation, chain_path,
+            presubmit_entries=hook_inputs.presubmit_entries,
             non_ascii_mode=non_ascii_mode,
-            planning_leak_guard=is_forge_repo,
+            planning_leak_guard=hook_inputs.planning_leak_guard,
         )
 
         # Step g: write pre-commit hook file

@@ -258,6 +258,113 @@ def _check_registries(home: Path) -> list[tuple[str, str]]:
     return results
 
 
+# -- Installed hook drift --------------------------------------------------
+
+
+# Header markers the installer itself uses to recognize its own hooks.
+_HOOK_MARKERS = {
+    "pre-commit": (
+        "code-forge gate-check",
+        "installed by code-forge install-hooks",
+    ),
+    "commit-msg": ("code-forge commit-msg",),
+}
+
+
+def _flat(exc: Exception) -> str:
+    """One-line form of an exception message.
+
+    Diagnostic rows are a fixed-width table; a multi-line message (gate.yaml
+    validation errors embed a YAML snippet) would shred it.
+    """
+    return " ".join(str(exc).split())
+
+
+def _check_hook_drift(
+    workspace: Path,
+) -> list[tuple[Optional[bool], str]]:
+    """Compare installed git hooks against what install-hooks writes now.
+
+    A hook installed before a generator change keeps enforcing the old
+    rules, and until now nothing said so: the repo looks gated while
+    running last month's gate.
+
+    Returns (ok, message) tuples where ok=None means SKIP.
+    """
+    from code_forge.install_hooks import (
+        collect_hook_inputs,
+        generate_commit_msg_hook_content,
+        generate_hook_content,
+        resolve_hooks_dir,
+    )
+
+    try:
+        hooks_dir = resolve_hooks_dir(workspace)
+    except RuntimeError:
+        # Not a git repo: git hooks are not a concept here, so say nothing
+        # rather than report a row the user cannot act on.
+        return []
+
+    inputs = None
+    results: list[tuple[Optional[bool], str]] = []
+    for name, markers in _HOOK_MARKERS.items():
+        path = hooks_dir / name
+        try:
+            installed = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            results.append((None, "%s: not installed" % name))
+            continue
+        except (OSError, UnicodeDecodeError) as exc:
+            results.append((False, "%s: %s" % (name, _flat(exc))))
+            continue
+
+        header = "".join(installed.splitlines(keepends=True)[:3])
+        if not any(m in header for m in markers):
+            results.append((None, "%s: not code-forge generated" % name))
+            continue
+
+        # Deferred until a forge hook is actually present: a repo whose
+        # gate.yaml cannot produce a hook has nothing to compare against.
+        if inputs is None:
+            try:
+                inputs = collect_hook_inputs(workspace)
+            except Exception as exc:
+                # A forge hook is installed and we cannot tell whether it
+                # is current. Fail rather than imply it was checked.
+                return results + [
+                    (False, "cannot regenerate: %s" % _flat(exc))]
+
+        backup = hooks_dir / ("%s.code-forge-backup" % name)
+        # Chaining alone is not drift: a re-install over a forge hook drops
+        # the chain, so both forms are accepted as current.
+        if name == "pre-commit":
+            expected = [
+                generate_hook_content(
+                    inputs.forge_invocation, chain,
+                    presubmit_entries=inputs.presubmit_entries,
+                    non_ascii_mode=inputs.non_ascii_mode,
+                    planning_leak_guard=inputs.planning_leak_guard,
+                )
+                for chain in (None, backup)
+            ]
+        else:
+            expected = [
+                generate_commit_msg_hook_content(
+                    chain, non_ascii_mode=inputs.non_ascii_mode)
+                for chain in (None, backup)
+            ]
+
+        if installed in expected:
+            results.append((True, "%s: current" % name))
+        else:
+            results.append((
+                False,
+                "%s: differs from generated"
+                " -- run code-forge install-hooks" % name,
+            ))
+    return results
+
+
 # -- Tool audit -----------------------------------------------------------
 
 
@@ -332,7 +439,7 @@ def run_doctor(
     if not ok_ws:
         has_fail = True
         for label in ("gate.yaml", "trust", "backend", "outlet",
-                       "tool-audit"):
+                       "tool-audit", "hooks"):
             _line(label, "", None)
     else:
         ok_gy, msg_gy, gate_data = _check_gate_yaml(workspace)
@@ -370,6 +477,11 @@ def run_doctor(
     if workspace is not None:
         for ok, msg in _audit_tools(workspace):
             _line("tool-audit", msg, ok)
+            if ok is False:
+                has_fail = True
+
+        for ok, msg in _check_hook_drift(workspace):
+            _line("hooks", msg, ok)
             if ok is False:
                 has_fail = True
 
