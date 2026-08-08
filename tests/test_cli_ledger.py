@@ -66,6 +66,20 @@ def test_parser_ledger_mark_args():
     assert args.terminal_state == "FIXED"
     assert args.evidence == "manual-ruling"
     assert args.is_new is True
+    assert args.file is None
+    assert args.line is None
+    assert args.axis_claim is None
+
+
+def test_parser_ledger_mark_location_args():
+    args = _parse([
+        "ledger", "mark", "fp-1", "ESCAPED", "--new",
+        "--file", "src/thing.py", "--line", "42",
+        "--axis-claim", "SQL injection via string-concatenated query",
+    ])
+    assert args.file == "src/thing.py"
+    assert args.line == 42
+    assert args.axis_claim == "SQL injection via string-concatenated query"
 
 
 def test_parser_ledger_list_args():
@@ -112,6 +126,7 @@ def test_mark_head_sha_without_base_sha_returns_cli_error(tmp_path):
     _git_init(tmp_path)
     result = _run(
         tmp_path, "ledger", "mark", "fp-x", "ESCAPED", "--new",
+        "--file", "x.py", "--line", "1", "--axis-claim", "n/a",
         "--head-sha", "b" * 40,
     )
     assert result.returncode != 0
@@ -122,6 +137,7 @@ def test_mark_invalid_sha_format_returns_cli_error(tmp_path):
     _git_init(tmp_path)
     result = _run(
         tmp_path, "ledger", "mark", "fp-x", "ESCAPED", "--new",
+        "--file", "x.py", "--line", "1", "--axis-claim", "n/a",
         "--base-sha", "not-a-sha", "--head-sha", "b" * 40,
     )
     assert result.returncode != 0
@@ -147,7 +163,9 @@ def test_mark_writes_new_row(tmp_path):
     """`code-forge ledger mark --new` writes a row visible to iter_rows."""
     _git_init(tmp_path)
     rc = _call(tmp_path, "ledger", "mark", "fp-cli-1", "DUPLICATE",
-               "--evidence", "manual", "--new")
+               "--evidence", "manual", "--new",
+               "--file", "src/dup.py", "--line", "7",
+               "--axis-claim", "duplicate of fp-cli-0")
     assert rc == 0, _run(tmp_path, "ledger", "list").stderr
     rows = list((tmp_path / ".code-forge" / "ledger.jsonl").open())
     assert len(rows) == 1
@@ -155,6 +173,120 @@ def test_mark_writes_new_row(tmp_path):
     assert data["fingerprint"] == "fp-cli-1"
     assert data["terminal_state"] == "DUPLICATE"
     assert data["evidence_class"] == "manual"
+    assert data["file"] == "src/dup.py"
+    assert data["line"] == 7
+    assert data["axis_claim"] == "duplicate of fp-cli-0"
+
+
+def test_mark_new_without_location_fails(tmp_path):
+    """The pre-fix two-positional `--new` form (no --file/--line/
+    --axis-claim) now fails: a --new row has no prior run to inherit a
+    location or claim from, so omitting them would write a
+    placeholder-only row -- exactly the defect this change closes."""
+    _git_init(tmp_path)
+    result = _run(tmp_path, "ledger", "mark", "exp1-escaped-0001",
+                  "ESCAPED", "--new")
+    assert result.returncode != 0
+    assert "--file" in result.stderr
+    assert "--line" in result.stderr
+    assert "--axis-claim" in result.stderr
+    assert "required with --new" in result.stderr
+    assert not (tmp_path / ".code-forge" / "ledger.jsonl").exists()
+
+
+def test_mark_new_partial_location_fails(tmp_path):
+    """--new with only one of --file/--line/--axis-claim still fails,
+    naming just the flag actually missing (not --file/--line, which
+    were both provided)."""
+    _git_init(tmp_path)
+    result = _run(tmp_path, "ledger", "mark", "fp-partial", "ESCAPED",
+                  "--new", "--file", "src/a.py", "--line", "3")
+    assert result.returncode != 0
+    assert "--axis-claim required with --new" in result.stderr
+    assert "--file required" not in result.stderr
+    assert "--line required" not in result.stderr
+
+
+def test_mark_file_without_line_rejected(tmp_path):
+    """--file and --line travel together even outside the --new path."""
+    _git_init(tmp_path)
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-existing-2",
+        repo_root=str(tmp_path),
+        base_sha="a" * 40, head_sha="b" * 40,
+        file="x.py", line=1, axis_claim="review", pass_provenance="L1",
+        terminal_state=TerminalState.FIXED,
+        evidence_class="fix_applied", ts="2026-07-04T00:00:00Z",
+    ))
+    result = _run(tmp_path, "ledger", "mark", "fp-existing-2", "DUPLICATE",
+                  "--file", "src/b.py")
+    assert result.returncode != 0
+    assert "--file and --line must be provided together" in result.stderr
+
+
+def test_mark_line_zero_rejected(tmp_path):
+    _git_init(tmp_path)
+    result = _run(tmp_path, "ledger", "mark", "fp-zero", "ESCAPED", "--new",
+                  "--file", "src/z.py", "--line", "0",
+                  "--axis-claim", "off by one")
+    assert result.returncode != 0
+    assert "positive integer" in result.stderr
+
+
+def test_mark_line_negative_rejected(tmp_path):
+    _git_init(tmp_path)
+    result = _run(tmp_path, "ledger", "mark", "fp-neg", "ESCAPED", "--new",
+                  "--file", "src/z.py", "--line", "-1",
+                  "--axis-claim", "off by one")
+    assert result.returncode != 0
+    assert "positive integer" in result.stderr
+
+
+def test_mark_axis_claim_empty_rejected(tmp_path):
+    _git_init(tmp_path)
+    result = _run(tmp_path, "ledger", "mark", "fp-empty-claim", "ESCAPED",
+                  "--new", "--file", "src/z.py", "--line", "1",
+                  "--axis-claim", "   ")
+    assert result.returncode != 0
+    assert "--axis-claim must not be empty" in result.stderr
+
+
+def test_mark_file_absolute_rejected(tmp_path):
+    _git_init(tmp_path)
+    result = _run(tmp_path, "ledger", "mark", "fp-abs", "ESCAPED", "--new",
+                  "--file", "/etc/passwd", "--line", "1",
+                  "--axis-claim", "should not matter")
+    assert result.returncode != 0
+    assert "must be relative" in result.stderr
+
+
+def test_mark_file_escapes_repo_rejected(tmp_path):
+    _git_init(tmp_path)
+    result = _run(tmp_path, "ledger", "mark", "fp-escape", "ESCAPED",
+                  "--new", "--file", "../../../etc/passwd", "--line", "1",
+                  "--axis-claim", "should not matter")
+    assert result.returncode != 0
+    assert "escapes repo root" in result.stderr
+
+
+def test_mark_new_writes_real_file_and_line(tmp_path):
+    """The end-to-end shape of the defect this change closes: a real
+    ESCAPED row carries a real file and line, not `:0`."""
+    _git_init(tmp_path)
+    rc = _call(tmp_path, "ledger", "mark", "exp-escaped-1", "ESCAPED",
+               "--new", "--file", "src/code_forge/auth.py", "--line", "88",
+               "--axis-claim",
+               "auth bypass when the token header is present but empty")
+    assert rc == 0
+    result = _run(tmp_path, "ledger", "list")
+    assert "src/code_forge/auth.py:88" in result.stdout
+    result_json = _run(tmp_path, "ledger", "list", "--json")
+    payload = json.loads(result_json.stdout)
+    assert payload[0]["file"] == "src/code_forge/auth.py"
+    assert payload[0]["line"] == 88
+    assert payload[0]["axis_claim"] == (
+        "auth bypass when the token header is present but empty"
+    )
 
 
 def test_mark_new_with_fixed_or_disproved_refuses(tmp_path):

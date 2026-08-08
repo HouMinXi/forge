@@ -692,7 +692,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ledger_subs = ledger_parser.add_subparsers(dest='ledger_command')
 
-    # ledger mark <fingerprint> <terminal_state> [--evidence "..."] [--new] [--note "..."]
+    # ledger mark <fingerprint> <terminal_state> [--evidence "..."] [--new]
+    #   [--file "..."] [--line N] [--axis-claim "..."]
     mark_parser = ledger_subs.add_parser(
         'mark',
         help='append a manual ruling for a fingerprint',
@@ -720,6 +721,20 @@ def _build_parser() -> argparse.ArgumentParser:
     mark_parser.add_argument(
         "--head-sha", default=None,
         help="head SHA for escape rows; defaults to current HEAD (must be provided together with --base-sha for non-HEAD base)",
+    )
+    mark_parser.add_argument(
+        "--file", default=None,
+        help="repo-relative path where it happened; required with --new "
+             "(a --new row has no prior run to inherit a location from)",
+    )
+    mark_parser.add_argument(
+        "--line", type=int, default=None,
+        help="1-based line number where it happened; required with --new",
+    )
+    mark_parser.add_argument(
+        "--axis-claim", default=None,
+        help="what the missed bug actually was, in the human's own "
+             "words; required with --new",
     )
 
     # ledger list [--json] [--fingerprint FP]
@@ -1274,6 +1289,100 @@ def _run_ledger(args, cwd: Path) -> int:
                 )
                 return EXIT_CLI_ERROR
 
+        # --file and --line travel together: a half-specified location
+        # is worse than none (same shape as the base-sha/head-sha pair
+        # below).
+        if (args.file is None) != (args.line is None):
+            print(
+                "code-forge ledger mark: --file and --line must be "
+                "provided together (or both omitted)",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        # A --new row (DUPLICATE/ESCAPED) has no prior ledger entry to
+        # inherit a location or claim from, so this is the one point
+        # where omitting them loses the data permanently. A re-ruling
+        # on an existing fingerprint already has that data on an
+        # earlier row, so it stays optional there.
+        #
+        # Reconciling with machine.py's _write_ledger_rows, which
+        # returns 0 rows rather than write a placeholder SHA (the "no
+        # placeholder/empty values" invariant in its docstring): that
+        # guards against fabricating a fact that isn't true, a commit
+        # relationship that never happened. A re-ruling below that
+        # omits --file/--line/--axis-claim still writes file=""/
+        # line=0/axis_claim="manual", but fabricates nothing new: the
+        # ledger is append-only and `ledger list` prints every row, so
+        # the real location and claim already live on the row that
+        # first created this fingerprint (always real now, either
+        # through this --new path or through machine.py's own
+        # f.file/derive_claim_type). A re-ruling row's payload is the
+        # state transition, not the location, so it has nothing real
+        # of its own to add there.
+        if args.is_new:
+            missing = [
+                flag for flag, val in (
+                    ("--file", args.file),
+                    ("--line", args.line),
+                    ("--axis-claim", args.axis_claim),
+                )
+                if val is None
+            ]
+            if missing:
+                print(
+                    "code-forge ledger mark: %s required with --new (an "
+                    "escape/duplicate row has no prior run to inherit a "
+                    "location or claim from)" % ", ".join(missing),
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+
+        if args.line is not None and args.line <= 0:
+            print(
+                "code-forge ledger mark: --line must be a positive "
+                "integer, got: %d" % args.line,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        if args.axis_claim is not None and not args.axis_claim.strip():
+            print(
+                "code-forge ledger mark: --axis-claim must not be empty",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        # --file must resolve inside the repo (same traversal guard as
+        # --whole-file, applied to a single path here).
+        file_value = ""
+        if args.file is not None:
+            file_arg = Path(args.file)
+            if file_arg.is_absolute():
+                print(
+                    "code-forge ledger mark: --file must be relative, "
+                    "got: %s" % args.file,
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+            resolved = (cwd / file_arg).resolve()
+            try:
+                rel = resolved.relative_to(cwd.resolve())
+            except ValueError:
+                print(
+                    "code-forge ledger mark: --file escapes repo root: "
+                    "%s" % args.file,
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+            if str(rel) == ".":
+                print(
+                    "code-forge ledger mark: --file must not be empty",
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+            file_value = rel.as_posix()
+
         # Resolve SHAs: both explicit OR neither (defaults to HEAD/HEAD).
         # Asymmetric --head-sha without --base-sha is rejected to keep
         # Phase 44 diff extraction meaningful (empty base..head diff).
@@ -1317,9 +1426,9 @@ def _run_ledger(args, cwd: Path) -> int:
             repo_root=str(cwd.resolve()),
             base_sha=base_sha,
             head_sha=head_sha,
-            file="",
-            line=0,
-            axis_claim="manual",
+            file=file_value,
+            line=args.line if args.line is not None else 0,
+            axis_claim=args.axis_claim if args.axis_claim is not None else "manual",
             pass_provenance="manual",
             terminal_state=state,
             evidence_class=args.evidence,
