@@ -244,6 +244,619 @@ class TestLLMInvoke:
         assert "Bearer sk-test" in req.headers["Authorization"]
         assert req.full_url == "https://api.deepseek.com/v1/chat/completions"
 
+    def test_a_configured_header_reaches_the_request(self):
+        """Some gateways take per-request options as headers.
+
+        Nothing else in the backend config can express one, so a backend
+        that needs it has no way to be configured at all without this.
+        """
+        backend = BackendConfig(
+            name="deepseek",
+            type="api",
+            model="deepseek-chat",
+            format="openai",
+            base_url="https://api.deepseek.com/v1",
+            api_key_env="DEEPSEEK_API_KEY",
+            headers={"x-omniroute-compression": "off"},
+        )
+        mock_response = Mock()
+        mock_response.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"result": "pass"}'}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }).encode("utf-8")
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen",
+                   return_value=mock_response) as mock_urlopen:
+            llm_invoke("prompt", backend=backend)
+
+        req = mock_urlopen.call_args[0][0]
+        # urllib capitalises the first letter of every name it stores.
+        folded = {k.lower(): v for k, v in req.headers.items()}
+        assert folded.get("x-omniroute-compression") == "off"
+        assert folded.get("authorization") == "Bearer sk-test"
+
+    def test_anthropic_carries_a_configured_header(self):
+        """Each format builds its own header dict, so each needs wiring.
+
+        This one is not a copy of the openai case for the sake of
+        symmetry. Removing the merge from this call site alone broke no
+        test until this existed, while the same removal at either of the
+        other two was caught -- three sites that looked equally covered
+        were not, and only injecting at each separately said so.
+
+        Its base headers are also the odd ones out: the credential is
+        x-api-key rather than Authorization, and anthropic-version is
+        protocol framing with no equivalent elsewhere.
+        """
+        backend = BackendConfig(
+            name="claude-api",
+            type="api",
+            model="claude-sonnet-4-20250514",
+            format="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key_env="ANTHROPIC_API_KEY",
+            headers={"x-omniroute-compression": "off"},
+        )
+        mock_response = Mock()
+        mock_response.read.return_value = json.dumps({
+            "content": [{"text": '{"result": "pass"}'}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }).encode("utf-8")
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}), \
+             patch("urllib.request.urlopen",
+                   return_value=mock_response) as mock_urlopen:
+            llm_invoke("prompt", backend=backend)
+
+        req = mock_urlopen.call_args[0][0]
+        folded = {k.lower(): v for k, v in req.headers.items()}
+        assert folded.get("x-omniroute-compression") == "off"
+        assert folded.get("x-api-key") == "sk-ant-test"
+        assert folded.get("anthropic-version") == "2023-06-01"
+
+    def test_every_header_a_call_site_sends_is_a_protected_name(self):
+        """The premise the collision assertion rests on.
+
+        Every name a call site puts in `base` has to be one the config
+        parser already refuses. When that holds, a configured header can
+        never collide, and the assertion below is unreachable -- which
+        is the state we want it in.
+
+        Read off the real call sites rather than typed out here, because
+        a hand-copied list stops tracking the code the moment a format
+        gains a header, which is the exact event this is here to catch.
+        """
+        import inspect
+        import re
+        from code_forge import llm_invoke as mod
+        from code_forge.backend import is_protected_header
+
+        src = inspect.getsource(mod)
+        blocks = re.findall(r"_request_headers\(\{(.*?)\}", src, re.S)
+        assert len(blocks) >= 3, (
+            "found %d _request_headers call sites, expected the three "
+            "format dispatchers -- if a call site changed shape this "
+            "test stopped reading it" % len(blocks)
+        )
+
+        names = {n for b in blocks for n in re.findall(r'"([^"]+)":', b)}
+        assert "Content-Type" in names, (
+            "the regex matched %r, which does not look like header "
+            "names -- it is reading the wrong thing" % sorted(names)
+        )
+
+        unlisted = sorted(n for n in names if not is_protected_header(n))
+        assert not unlisted, (
+            "call sites send %s, which PROTECTED_HEADER_KEYS does not "
+            "list. A backend could configure one, config load would "
+            "accept it, and the wire would overwrite it. Add it to the "
+            "list." % unlisted
+        )
+
+    def test_a_collision_here_is_reported_not_absorbed(self):
+        """The assertion itself, forced to fire.
+
+        It cannot fire through any real call site -- the test above is
+        what keeps that true. So the collision is staged here with a
+        base header the protected list does not know, which is exactly
+        the situation the assertion exists to announce: a format that
+        gained a header nobody added to the list.
+
+        It has to be loud. Dropping the configured value would leave
+        the config saying one thing and the wire doing another, and
+        would discard the only signal that the list needs updating.
+        """
+        from code_forge.llm_invoke import _request_headers, LLMInvokeError
+        from code_forge.backend import is_protected_header
+
+        backend = BackendConfig(
+            name="deepseek",
+            type="api",
+            model="deepseek-chat",
+            format="openai",
+            base_url="https://api.deepseek.com/v1",
+            api_key_env="DEEPSEEK_API_KEY",
+            headers={
+                "x-tenant-id": "acme",
+                "x-omniroute-compression": "off",
+            },
+        )
+        # Stands in for a header some future format sends and nobody
+        # listed. Asserted unlisted, so that the day it IS listed this
+        # test says so instead of passing for the wrong reason.
+        base = {
+            "Authorization": "Bearer sk-real",
+            "x-tenant-id": "forge",
+        }
+        assert not is_protected_header("x-tenant-id"), (
+            "x-tenant-id became a protected name, so check_headers now "
+            "refuses it first and this no longer reaches the assertion"
+        )
+
+        with pytest.raises(LLMInvokeError) as exc:
+            _request_headers(base, backend)
+
+        msg = str(exc.value)
+        assert "deepseek" in msg
+        assert "'x-tenant-id'" in msg
+        assert "PROTECTED_HEADER_KEYS" in msg, (
+            "whoever fixes forge needs to be told which list is short"
+        )
+        assert exc.value.retryable is False, (
+            "a gate.yaml does not change between attempts, so retrying "
+            "this only spends the backoff budget on the same answer"
+        )
+
+    def test_a_collision_is_not_retried(self):
+        """The flag above is only worth asserting if the loop honours it.
+
+        Measured before the flag was set: five attempts over 31.5s of
+        exponential backoff, and the same unfixable line logged four
+        times, for every pass of every review. LLMInvokeError defaults
+        to retryable, so this is what omitting one keyword buys.
+
+        The sleep is mocked, which is not only for speed. What a
+        non-retryable raise means is that the loop never reaches its
+        backoff at all, so "no sleep was requested" says the thing
+        directly, where a count of attempts only implies it. Left
+        unmocked, this test would still catch the regression -- after
+        sitting through the whole 31.5s to do it.
+        """
+        from code_forge.llm_invoke import LLMInvokeError
+        import code_forge.llm_invoke as mod
+
+        backend = BackendConfig(
+            name="deepseek",
+            type="api",
+            model="deepseek-chat",
+            format="openai",
+            base_url="https://api.deepseek.com/v1",
+            api_key_env="DEEPSEEK_API_KEY",
+            # Constructed straight, skipping the parser that refuses
+            # this name -- which is what check_headers then catches on
+            # the way out. Any of its refusals would do; what is being
+            # pinned is that the loop does not retry one.
+            headers={"content-type": "text/plain"},
+        )
+
+        # Spy, not stand-in: the real _request_headers has to be the one
+        # that raises, or this would still pass with the flag deleted
+        # from it. It raises before any socket is touched, so the real
+        # _invoke_openai can run and no network mock is needed.
+        real = mod._request_headers
+        attempts = []
+        slept = []
+
+        def counting(base, be):
+            attempts.append(1)
+            return real(base, be)
+
+        with patch.object(mod, "_request_headers", counting), \
+             patch.object(mod.time, "sleep", slept.append), \
+             patch.dict(os.environ, {"DEEPSEEK_API_KEY": "k"}):
+            with pytest.raises(LLMInvokeError, match="forge controls"):
+                mod.llm_invoke("prompt", backend, timeout_s=5)
+
+        assert slept == [], (
+            "the loop backed off %r before giving the same answer" % (slept,)
+        )
+        assert len(attempts) == 1, (
+            "a config error was attempted %d times" % len(attempts)
+        )
+
+    def test_a_header_of_its_own_still_gets_through(self):
+        """A header that breaks no rule has to survive all of them.
+
+        Without this, a check that refused everything would satisfy
+        every refusal test above and take the whole feature with it.
+        """
+        from code_forge.llm_invoke import _request_headers
+
+        backend = BackendConfig(
+            name="deepseek",
+            type="api",
+            model="deepseek-chat",
+            format="openai",
+            base_url="https://api.deepseek.com/v1",
+            api_key_env="DEEPSEEK_API_KEY",
+            headers={"x-omniroute-compression": "off"},
+        )
+        base = {
+            "Authorization": "Bearer sk-real",
+            "Content-Type": "application/json",
+        }
+
+        merged = _request_headers(base, backend)
+
+        assert merged["x-omniroute-compression"] == "off"
+        assert merged["Authorization"] == "Bearer sk-real"
+        assert merged["Content-Type"] == "application/json"
+
+    def test_headers_that_are_not_a_mapping_fail_as_a_config_error(self):
+        """A code-built backend skips the parser's type check.
+
+        Without the guard inside check_headers, .items() raises
+        AttributeError -- naming neither the backend nor the field, from
+        inside the retry loop, where the default is to retry. The type
+        has to be reported the way every other bad header is.
+        """
+        from code_forge.llm_invoke import _request_headers
+
+        # Both halves of the truth table. The first three are truthy and
+        # were all this test originally covered; the empty containers are
+        # falsy, and an earlier `backend.headers or {}` sent them down
+        # the no-headers branch, skipping the very check this asserts.
+        # Picking only non-empty wrong types is the natural mistake --
+        # "wrong type" brings examples with content to mind.
+        for bad in ([("X-A", "v")], "X-A: v", 42,
+                    [], (), "", False, 0):
+            backend = BackendConfig(
+                name="built-in-code",
+                type="api",
+                model="m",
+                format="openai",
+                base_url="https://x/v1",
+                api_key_env="K",
+                headers=bad,
+            )
+            with pytest.raises(LLMInvokeError, match="must be a mapping"):
+                _request_headers({"Authorization": "Bearer k"}, backend)
+
+    def test_a_cli_backend_carrying_headers_is_refused_not_ignored(self):
+        """A subprocess sends no HTTP, so headers could only be dropped.
+
+        Config load refuses the field on a cli backend by name; a
+        backend built in code reaches neither that nor any request.
+        Without this the field is discarded in silence -- the one
+        outcome the whole feature exists to prevent.
+
+        Empty dict is included deliberately: it is not None, so it must
+        be refused too. The guard has to read "not None", not "truthy",
+        or it repeats the `or {}` bug this file already pins.
+        """
+        from code_forge import llm_invoke as mod
+
+        for hv in ({"X-A": "v"}, {}):
+            backend = BackendConfig(
+                name="cli-with-headers",
+                type="cli",
+                model="m",
+                command="echo",
+                headers=hv,
+            )
+            with pytest.raises(LLMInvokeError, match="sends no HTTP"):
+                mod.llm_invoke("prompt", backend, timeout_s=5)
+
+    def test_header_values_stay_out_of_the_repr(self):
+        """The values are the reason the field exists, and are secrets.
+
+        A gateway option is often a token. A dataclass repr reaches
+        tracebacks and debug logs without anyone choosing to put it
+        there, so the field carries repr=False and this pins it.
+        """
+        backend = BackendConfig(
+            name="gw",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="https://x/v1",
+            api_key_env="K",
+            headers={"X-Gw-Token": "s3cret-value"},
+        )
+
+        text = repr(backend)
+        assert "s3cret-value" not in text, (
+            "repr leaked a header value: %s" % text
+        )
+        assert "gw" in text, (
+            "repr lost the backend name too -- the field was dropped "
+            "rather than its value hidden"
+        )
+        assert backend.headers == {"X-Gw-Token": "s3cret-value"}, (
+            "the value must still be readable; only the repr is hidden"
+        )
+
+    def test_param_values_stay_out_of_the_repr_too(self):
+        """params holds the same class of value and gets the same shield.
+
+        Kept separate from the headers case rather than parametrised
+        over the two fields: they are shielded for the same reason but
+        by two independent field declarations, and one test covering
+        both would still pass with either declaration reverted.
+        """
+        backend = BackendConfig(
+            name="gw",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="https://x/v1",
+            api_key_env="K",
+            params={"x_gw_token": "s3cret-param"},
+        )
+
+        text = repr(backend)
+        assert "s3cret-param" not in text, (
+            "repr leaked a param value: %s" % text
+        )
+        assert "gw" in text, (
+            "repr lost the backend name too -- the field was dropped "
+            "rather than its value hidden"
+        )
+        assert backend.params == {"x_gw_token": "s3cret-param"}, (
+            "the value must still be readable; only the repr is hidden"
+        )
+
+    def test_params_that_are_not_a_mapping_fail_even_when_falsy(self):
+        """`or {}` turns every empty container into "none configured".
+
+        This is the second time on this branch: the headers path was
+        written with `or {}`, fixed to `is not None`, and params then
+        reproduced the bug one line above the check meant to catch it.
+        Both halves of the truth table are asserted for that reason --
+        a test using only non-empty wrong types passes with `or {}`
+        still in place, which is exactly how it survived the first fix.
+        """
+        from code_forge.llm_invoke import _apply_params
+
+        def _cfg(params):
+            return BackendConfig(
+                name="code-built", type="api", model="m",
+                format="openai", base_url="https://x/v1",
+                api_key_env="K", max_tokens=100, params=params,
+            )
+
+        for bad in ([("a", "b")], "a=b", 42, [], (), "", 0, False):
+            with pytest.raises(LLMInvokeError, match="must be a mapping"):
+                _apply_params(
+                    {"model": "m"}, _cfg(bad), outcap_key="max_tokens",
+                    allow_thinking=False, allow_effort=False,
+                )
+
+        for ok in (None, {}):
+            body = {"model": "m"}
+            _apply_params(
+                body, _cfg(ok), outcap_key="max_tokens",
+                allow_thinking=False, allow_effort=False,
+            )
+            assert body["max_tokens"] == 100
+
+    def test_params_cannot_reach_the_nested_effort_key(self):
+        """reasoning_effort lands in body["output_config"]["effort"].
+
+        The typed field writes that dict and the generic params copy
+        runs afterwards, so a params entry named output_config replaces
+        the whole thing -- the typed field would appear to be ignored
+        with nothing saying why. Protected by name rather than by
+        merging the two, because a config that half-overrides a typed
+        field is not a case worth supporting.
+        """
+        from code_forge.llm_invoke import _apply_params
+
+        backend = BackendConfig(
+            name="code-built", type="api", model="m",
+            format="openai", base_url="https://x/v1", api_key_env="K",
+            max_tokens=100, reasoning_effort="high",
+            params={"output_config": {"effort": "HIJACKED"}},
+        )
+        body = {"model": "m"}
+        with pytest.raises(LLMInvokeError, match="output_config"):
+            _apply_params(
+                body, backend, outcap_key="max_tokens",
+                allow_thinking=False, allow_effort="output_config",
+            )
+
+    def test_a_cli_backend_carrying_params_is_refused_too(self):
+        """params is as API-only as headers, and as silently dropped.
+
+        The guard reads a two-name tuple rather than _API_ONLY_FIELDS
+        because only these two say "unset" as None. The last case pins
+        that: a cli backend with neither field must still run, so a
+        guard widened to the sentinel-carrying fields would fail here.
+        """
+        from code_forge import llm_invoke as mod
+
+        for field in ("headers", "params"):
+            for value in ({"a": "b"}, {}):
+                backend = BackendConfig(
+                    name="cli-with-%s" % field, type="cli", model="m",
+                    command="echo", **{field: value},
+                )
+                with pytest.raises(LLMInvokeError, match="sends no HTTP"):
+                    mod.llm_invoke("prompt", backend, timeout_s=5)
+
+        clean = BackendConfig(
+            name="cli-clean", type="cli", model="m", command="echo",
+        )
+        with pytest.raises(LLMInvokeError) as caught:
+            mod.llm_invoke("prompt", clean, timeout_s=5)
+        assert "sends no HTTP" not in str(caught.value), (
+            "a cli backend configuring neither field was refused: the "
+            "guard is reading something other than these two"
+        )
+
+    def test_a_code_built_config_cannot_override_a_protected_param(self):
+        """The send path is the only thing between code and the wire.
+
+        Config load refuses these by name, so nothing parsed from yaml
+        reaches here -- which is exactly why the guard is worth having:
+        a BackendConfig constructed in code skips the parser entirely.
+
+        Asserted through _apply_params rather than check_params: the
+        guard lives at the call site, and a test that calls the
+        validator directly stays green with that call deleted.
+
+        The body is checked afterwards because a raise is not the point
+        -- the point is that the resolved cap and model this function
+        spent forty lines computing are still the ones it computed.
+        """
+        from code_forge.llm_invoke import _apply_params
+
+        for key, value in (
+            ("model", "HIJACKED"),
+            ("max_tokens", 1),
+            ("stream", True),
+            ("messages", []),
+        ):
+            backend = BackendConfig(
+                name="code-built",
+                type="api",
+                model="real-model",
+                format="openai",
+                base_url="https://x/v1",
+                api_key_env="K",
+                max_tokens=4096,
+                params={key: value},
+            )
+            body = {"model": backend.model, "messages": [{"role": "user"}]}
+            with pytest.raises(LLMInvokeError, match="protected key"):
+                _apply_params(
+                    body, backend, outcap_key="max_tokens",
+                    allow_thinking=False, allow_effort=False,
+                )
+            assert body["model"] == "real-model", (
+                "param %r reached the body before the guard ran" % key
+            )
+
+    def test_a_protected_param_is_not_retried(self):
+        """Nothing about a config changes between attempts.
+
+        The retry default is retryable, and _apply_params runs inside
+        the loop, so without this the whole backoff budget is spent
+        reaching the same unfixable answer.
+        """
+        from code_forge.llm_invoke import _apply_params
+
+        backend = BackendConfig(
+            name="code-built",
+            type="api",
+            model="real-model",
+            format="openai",
+            base_url="https://x/v1",
+            api_key_env="K",
+            max_tokens=4096,
+            params={"model": "HIJACKED"},
+        )
+        with pytest.raises(LLMInvokeError) as caught:
+            _apply_params(
+                {"model": "real-model"}, backend, outcap_key="max_tokens",
+                allow_thinking=False, allow_effort=False,
+            )
+        assert caught.value.retryable is False
+
+    def test_ordinary_params_still_reach_the_body(self):
+        """The guard refuses a named few, not the feature.
+
+        Without this the strictest possible guard -- refuse everything
+        -- would pass every other test in this group.
+        """
+        from code_forge.llm_invoke import _apply_params
+
+        backend = BackendConfig(
+            name="gw",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="https://x/v1",
+            api_key_env="K",
+            max_tokens=8192,
+            params={"top_p": 0.9, "response_format": {"type": "json_object"}},
+        )
+        body = {"model": "m", "messages": []}
+        _apply_params(
+            body, backend, outcap_key="max_tokens",
+            allow_thinking=False, allow_effort=False,
+        )
+
+        assert body["top_p"] == 0.9
+        assert body["response_format"] == {"type": "json_object"}
+        assert body["max_tokens"] == 8192
+
+    def test_a_reserved_name_is_refused_even_when_nothing_collides(self):
+        """Reserved names that this request does not itself send.
+
+        The collision check cannot see these: a request carrying neither
+        Host nor Cookie has nothing for them to collide with, so they
+        would go out on the wire. Config load refuses them by name, and
+        is the only thing that fills the field today -- this is what
+        keeps that true for a backend built in code instead.
+
+        One name per protection mechanism, since they are separate
+        lookups: the frozenset, and the prefix tuple.
+        """
+        from code_forge.llm_invoke import _request_headers
+
+        base = {
+            "Authorization": "Bearer sk-real",
+            "Content-Type": "application/json",
+        }
+        for hk in ("Host", "Cookie", "Sec-Fetch-Mode",
+                   "Proxy-Authorization"):
+            backend = BackendConfig(
+                name="built-in-code",
+                type="api",
+                model="m",
+                format="openai",
+                base_url="https://x/v1",
+                api_key_env="K",
+                headers={hk: "v"},
+            )
+            assert hk.lower() not in {k.lower() for k in base}, (
+                "%s collides with base, so this test would pass via the "
+                "collision check and prove nothing" % hk
+            )
+            with pytest.raises(LLMInvokeError, match="forge controls"):
+                _request_headers(base, backend)
+
+    def test_two_spellings_of_one_name_are_refused_at_send_time(self):
+        """Config load refuses these; a code-built backend skips that.
+
+        Both spellings reach urllib, which folds them into one line and
+        keeps whichever was written last -- so the value that survives
+        is decided by dict order, and the other is dropped silently.
+        """
+        from code_forge.llm_invoke import _request_headers
+
+        backend = BackendConfig(
+            name="built-in-code",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="https://x/v1",
+            api_key_env="K",
+            headers={"X-Note": "one", "x-note": "two"},
+        )
+
+        with pytest.raises(LLMInvokeError, match="HTTP treats"):
+            _request_headers(
+                base={"Authorization": "Bearer sk-real"},
+                backend=backend,
+            )
+
     def test_api_dispatch_anthropic(self):
         """api backend with anthropic format makes HTTP call and returns LLMResult."""
         backend = BackendConfig(
@@ -1130,6 +1743,38 @@ class TestVertexInvoke:
         assert auth.startswith("Bearer ")
         assert "x-api-key" not in {k.lower() for k in captured_headers}
         assert "anthropic-version" not in {k.lower() for k in captured_headers}
+
+    def test_vertex_carries_a_configured_header(self, monkeypatch):
+        """The third of the three formats has to be wired too.
+
+        Each format builds its own header dict, so a merge added to one
+        of them says nothing about the other two.
+        """
+        from code_forge.llm_invoke import _invoke_vertex
+        backend = _make_vertex_backend()
+        object.__setattr__(
+            backend, "headers", {"x-omniroute-compression": "off"}
+        )
+
+        captured_headers = {}
+        mock_creds = MagicMock()
+        mock_creds.token = "my-bearer-token"
+
+        def fake_urlopen(req, timeout=None):
+            captured_headers.update(req.headers)
+            return _vertex_mock_response(json.dumps({"findings": []}))
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            _invoke_vertex("prompt", backend, 30)
+
+        folded = {k.lower(): v for k, v in captured_headers.items()}
+        assert folded.get("x-omniroute-compression") == "off"
+        # exact, not a prefix: the token is mocked to a known value just
+        # above, so a prefix check would pass on a truncated or
+        # doubled-up credential too
+        assert folded.get("authorization") == "Bearer my-bearer-token"
 
     def test_vertex_returns_real_usage(self, monkeypatch):
         """Vertex response returns real token usage."""

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -45,13 +46,79 @@ PROTECTED_PARAM_KEYS = frozenset({
     "model", "messages", "stream", "anthropic_version",
     "temperature", "thinking", "reasoning_effort",
     "max_completion_tokens", "max_tokens", "output_ceiling",
+    # The wire key reasoning_effort takes on the formats that nest it:
+    # _apply_params writes body["output_config"]["effort"], and the
+    # generic params copy that follows replaces the whole dict. Without
+    # this, a config could set the very field the typed one above it
+    # just wrote, and the typed field would appear to be ignored.
+    "output_config",
 })
 
-# ADR-0005 fields that only make sense on api backends
+# A configured header is checked for two different things, and keeping them
+# apart is what makes either one checkable for completeness. Whether the
+# string is a header at all is grammar, and RFC 7230 answers it with no
+# judgement left over. Whether forge will let a config own it is a
+# permission question, and the answer is a list, which means it can be
+# wrong -- so it is a list somebody else publishes and we can be held to.
+
+# RFC 7230: field-name is a token. The '+' refuses the empty name and the
+# character class refuses everything else in one clause, which matters
+# because urllib is only a partial backstop here. Measured 2026-08-07 on
+# CPython 3.14: http.client raises on an empty name and on CR/LF in a
+# name, but a name with a SPACE in it is sent verbatim, so "X Opt: v"
+# leaves on the socket for the far side to interpret however it likes.
+# That one is refused here or nowhere.
+_HEADER_NAME_RE = re.compile(r"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
+
+# RFC 7230 field-value, narrowed to printable ASCII with runs of space or
+# tab between words but never at either end. Same measurement: urllib
+# does raise on CR/LF in a value, so injection has a backstop -- but it
+# passes control bytes and obs-text (0x80-0xFF) through untouched, and
+# anything above U+00FF dies in its latin-1 encode as a UnicodeEncodeError
+# with no backend name in it. The RFC permits obs-text and we do not:
+# these carry gateway options, which are ASCII.
+_HEADER_VALUE_RE = re.compile(r"(?:[\x21-\x7e]+(?:[ \t]+[\x21-\x7e]+)*)?")
+
+# Names a config may not set. Two sources, deliberately one set:
+#
+#   - The credential and framing our own three wire formats send. If a
+#     config could name one, it would sit in the same dict as the real one
+#     and which the far side honoured would stop being forge's decision.
+#   - The WHATWG Fetch forbidden request-header list, for the reason that
+#     standard gives: "these are forbidden so the user agent remains in
+#     full control over them". Here forge is the user agent. Measured
+#     2026-08-07: a configured Content-Length of 3 replaced urllib's own
+#     13, leaving ten body bytes in the connection for the next request to
+#     be parsed out of -- a smuggling primitive, not a theoretical one.
+#     The X-*-Method-Override family is in the same list and rewrites the
+#     method at any gateway that honours it.
+#
+# Compared case-folded because HTTP header names are case-insensitive
+# while a dict is not.
+PROTECTED_HEADER_KEYS = frozenset({
+    # forge's own credential and framing
+    "authorization", "x-api-key", "content-type", "anthropic-version",
+    # WHATWG Fetch forbidden request-header names
+    "accept-charset", "accept-encoding", "access-control-request-headers",
+    "access-control-request-method", "connection", "content-length",
+    "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
+    "origin", "referer", "set-cookie", "te", "trailer",
+    "transfer-encoding", "upgrade", "via",
+    # method override, same list
+    "x-http-method", "x-http-method-override", "x-method-override",
+})
+
+# Also from that list. Proxy-Authorization is a credential and Sec- is
+# reserved so new headers can be minted that config cannot reach.
+PROTECTED_HEADER_PREFIXES = ("proxy-", "sec-")
+
+# Fields that describe an HTTP request and so mean nothing to a cli
+# backend, which spawns a subprocess and sends none. Configured on one,
+# they would be silently ignored, so they are refused instead.
 _API_ONLY_FIELDS = (
     "temperature", "max_completion_tokens", "thinking_type",
     "thinking_budget", "reasoning_effort", "stream",
-    "outcap_key", "output_ceiling", "params",
+    "outcap_key", "output_ceiling", "params", "headers",
 )
 
 DEFAULT_AUTH_TIMEOUT = 20          # generous cap
@@ -104,8 +171,28 @@ class BackendConfig:
     stream: bool = False                   # true = SSE, reassembled to one response
     timeout_s: int = 0                     # 0 = use default timeout chain
     outcap_key: str = ""                   # "" = format default cap key name
-    params: Optional[dict] = field(default=None, compare=False)
-    # compare=False keeps BackendConfig hashable despite the dict
+    params: Optional[dict] = field(
+        default=None, compare=False, repr=False
+    )
+    headers: Optional[dict] = field(
+        default=None, compare=False, repr=False
+    )
+    # extra request body params, and extra request headers for gateways
+    # that take per-request options there rather than in the body.
+    #
+    # repr=False on both because the values are the reason the fields
+    # exist: a gateway option is often a token, and a dataclass repr
+    # goes into tracebacks and debug logs without anyone choosing to put
+    # it there. The two fields hold the same class of value and are
+    # shielded the same way -- one of them shielded and the other not
+    # would read as a judgement that one is safe to print.
+    #
+    # compare=False on both: a frozen dataclass derives __hash__ from its
+    # compared fields, and a dict is unhashable, so with these compared
+    # the class could not be hashed at all. The cost is that two configs
+    # differing only in params or headers are equal and hash alike --
+    # accepted because nothing compares or hashes these, and the
+    # alternative is a class that cannot go in a set.
 
     # CLI backend child-process env overrides
     env_unset: Tuple[str, ...] = ()        # var names to remove from child env
@@ -127,6 +214,141 @@ DEFAULT_BACKEND = BackendConfig(
 
 
 # -- Config parsing ---------------------------------------------------
+
+
+def is_protected_header(name: str) -> bool:
+    """Whether forge reserves this header name for itself.
+
+    Case-folded, because HTTP does not distinguish spellings. Kept as a
+    function rather than left as two inline lookups so config load and
+    the send-time check ask the question the same way: two copies of the
+    same predicate drift, and the one that drifts is the one nobody is
+    looking at.
+    """
+    folded = name.lower()
+    return (folded in PROTECTED_HEADER_KEYS
+            or folded.startswith(PROTECTED_HEADER_PREFIXES))
+
+
+def check_headers(headers: dict, name: str, fail) -> None:
+    """Grammar, then permission, then uniqueness. Raises via `fail`.
+
+    Config load runs this on the way in, where the error can name the
+    backend and be fixed before anything runs; the send path runs it
+    again on the way out, where it is the only thing standing between a
+    backend built in code and the wire. Same three questions, same
+    order, same messages -- `fail` supplies the exception type, since
+    one caller reports a config error and the other a request error.
+
+    Not one of the three can be left to urllib. Measured off a socket:
+    urllib refuses a value carrying CRLF and refuses an empty name, and
+    sends everything else verbatim -- 'X foo: v' goes out as 'X Foo: v',
+    a tab in a name goes out as 'X\\tA: v', a control byte in a value
+    goes out unremarked. Nor does urllib know that a name is reserved,
+    or that two spellings of one name are one header.
+
+    The mapping check belongs here rather than in the yaml wrapper: a
+    backend built in code reaches the send path without passing the
+    parser at all, and `headers` as a list of pairs would otherwise
+    surface as AttributeError from .items() -- an error naming neither
+    the backend nor the field, raised inside the retry loop, where the
+    default is to retry it.
+    """
+    if not isinstance(headers, dict):
+        raise fail(
+            "backend %r: headers must be a mapping of name to string, "
+            "not %s" % (name, type(headers).__name__)
+        )
+    seen: dict = {}
+    for hk, hv in headers.items():
+        if not isinstance(hk, str) or not isinstance(hv, str):
+            raise fail(
+                "backend %r: header %r must have a string name and a "
+                "string value" % (name, hk)
+            )
+        if not _HEADER_NAME_RE.fullmatch(hk):
+            raise fail(
+                "backend %r: header name %r is not a valid HTTP field "
+                "name (letters, digits and -!#$%%&'*+.^_`|~ only, and "
+                "not empty)" % (name, hk)
+            )
+        if not _HEADER_VALUE_RE.fullmatch(hv):
+            raise fail(
+                "backend %r: value of header %r is not a valid HTTP "
+                "field value (printable ASCII, no leading or trailing "
+                "blanks, no line breaks)" % (name, hk)
+            )
+        folded = hk.lower()
+        if is_protected_header(hk):
+            raise fail(
+                "backend %r: headers must not set %r -- forge controls "
+                "that header (it carries the credential, the request "
+                "framing, or the method)" % (name, hk)
+            )
+        # Header names are case-insensitive, so two spellings of one name
+        # are one header carrying two values, and a dict cannot say which
+        # was meant. Measured off a socket: urllib folds both into a
+        # single line, keeps the value written LAST, and titlecases the
+        # name, so 'x-note: one' then 'X-Note: two' sends 'X-Note: two'
+        # and the reverse order sends 'X-Note: one'. Which value survives
+        # is decided by the order of lines in a yaml file, and the other
+        # is dropped without a word. Refusing is the only answer here
+        # that is not a guess at which one was meant.
+        if folded in seen:
+            raise fail(
+                "backend %r: headers set %r and %r, which HTTP treats as "
+                "one header -- only one of the two values would be sent, "
+                "and which one depends on the order they appear in"
+                % (name, seen[folded], hk)
+            )
+        seen[folded] = hk
+
+
+def check_params(params: dict, name: str, fail) -> None:
+    """Mapping, then permission. Raises via `fail`.
+
+    The params twin of check_headers, and run in the same two places for
+    the same reason: config load catches the yaml case where the error
+    can name the backend, and the send path catches the backend built in
+    code, which reaches the wire without passing the parser at all.
+
+    Two of check_headers' three questions are missing here rather than
+    forgotten. There is no grammar to check because a param is a JSON
+    value, and any value json.dumps accepts is one. There is no
+    case-folded uniqueness check because JSON object keys are
+    case-sensitive: 'Model' and 'model' are two distinct fields, and
+    only the lowercase one is ours. Folding here would refuse a
+    perfectly ordinary gateway param on a collision that does not exist.
+
+    Keys are compared exactly for that same reason -- which does mean a
+    gateway honouring a case-insensitive 'Model' would slip past. No
+    such gateway is known, and refusing every capitalisation of every
+    protected name would cost more than it buys.
+    """
+    if not isinstance(params, dict):
+        raise fail(
+            "backend %r: params must be a mapping of name to value, "
+            "not %s" % (name, type(params).__name__)
+        )
+    # Iterating the config's own keys rather than the protected set: a
+    # frozenset has no order, so with two protected keys present the
+    # error would name whichever one the hash landed on first, and the
+    # message would differ between runs on the same file.
+    for pk in sorted(k for k in params if k in PROTECTED_PARAM_KEYS):
+        raise fail(
+            "backend %r: params must not contain protected "
+            "key %r (use the dedicated config field instead)"
+            % (name, pk)
+        )
+
+
+def _parse_headers(entry: dict, name: str) -> Optional[dict]:
+    """Validate a backend's configured headers, or return None."""
+    headers = entry.get("headers")
+    if headers is None:
+        return None
+    check_headers(headers, name, CliError)
+    return headers
 
 
 def _parse_provider_fields(entry: dict, name: str) -> dict:
@@ -175,14 +397,10 @@ def _parse_provider_fields(entry: dict, name: str) -> dict:
     # params: reject protected keys
     params = entry.get("params")
     if params is not None:
-        for pk in PROTECTED_PARAM_KEYS:
-            if pk in params:
-                raise CliError(
-                    "backend %r: params must not contain protected "
-                    "key %r (use the dedicated config field instead)"
-                    % (name, pk)
-                )
+        check_params(params, name, CliError)
     kw["params"] = params
+
+    kw["headers"] = _parse_headers(entry, name)
 
     # Reject cli-only env fields on api/vertex
     if "env" in entry:

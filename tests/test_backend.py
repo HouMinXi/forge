@@ -20,6 +20,7 @@ import pytest
 
 from code_forge.backend import (
     DEFAULT_BACKEND,
+    PROTECTED_HEADER_KEYS,
     BackendConfig,
     ProbeResult,
     _parse_backend_entry,
@@ -1507,6 +1508,318 @@ class TestParseProviderFields:
                     self._api_entry(params={key: "x"})
                 )
 
+    def test_two_protected_params_always_name_the_same_one(self):
+        """The message must not depend on the interpreter's hash seed.
+
+        Measured over twelve fresh interpreters: iterating the protected
+        frozenset named 'max_tokens', 'model' or 'stream' for one config,
+        so a user who fixed the key the error named could be shown a
+        different one on the next run and read it as the fix failing.
+        Hash randomisation is per-process, so this is checked with a
+        subprocess rather than a loop -- an in-process loop reports one
+        stable answer and proves nothing.
+        """
+        import code_forge
+        import os
+        import pathlib
+        import subprocess
+        import sys
+
+        prog = (
+            "from code_forge.backend import check_params\n"
+            "from code_forge.errors import CliError\n"
+            "try:\n"
+            "    check_params(\n"
+            "        {'model': 'a', 'stream': True, 'max_tokens': 1},\n"
+            "        'b', CliError)\n"
+            "except CliError as exc:\n"
+            "    print(exc)\n"
+        )
+        # Derived from the imported package, not from cwd or a hardcoded
+        # path: an editable install can resolve code_forge to a different
+        # checkout than the one under test, and a subprocess that picked
+        # its own would be measuring the wrong tree while looking fine.
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(
+            pathlib.Path(code_forge.__file__).parent.parent
+        )
+        seen = set()
+        for _ in range(8):
+            done = subprocess.run(
+                [sys.executable, "-c", prog],
+                capture_output=True, text=True, check=True, env=env,
+            )
+            seen.add(done.stdout.strip())
+
+        assert len(seen) == 1, (
+            "the reported key varies between runs: %s" % sorted(seen)
+        )
+        assert "max_tokens" in seen.pop(), (
+            "expected the alphabetically first protected key present"
+        )
+
+    # -- headers: grammar --
+
+    def test_headers_benign_name_stored(self):
+        cfg = _parse_backend_entry(
+            self._api_entry(headers={"x-omniroute-compression": "off"})
+        )
+        assert cfg.headers == {"x-omniroute-compression": "off"}
+
+    def test_headers_value_may_hold_inner_blanks(self):
+        """A field value is words separated by blanks, not one word.
+
+        The grammar refuses blanks only at the ends, and a rule written
+        as "no whitespace" would take a perfectly ordinary value with it.
+        """
+        cfg = _parse_backend_entry(
+            self._api_entry(headers={"x-note": "two words"})
+        )
+        assert cfg.headers == {"x-note": "two words"}
+
+    def test_headers_malformed_name_rejected(self):
+        """One rule for two different failures, because urllib has a gap.
+
+        Measured 2026-08-07 against a socket that recorded the bytes,
+        CPython 3.14. Six of these nine do get stopped, but only on the
+        call: five as a bare ValueError naming neither the backend nor
+        the header, and the non-ASCII one as a UnicodeEncodeError from
+        the ascii codec -- all of them halfway through a review, after
+        the diff is built and the credential is loaded. Names are
+        encoded ascii while values are encoded latin-1, which is why
+        the same 0xE9 that rides through a value dies in a name.
+
+        The other three are sent: 'x-foo ' leaves as 'X-Foo : v',
+        'x foo' as 'X Foo: v', and 'x\\tfoo' as 'X\\tFoo: v' with the tab
+        raw on the wire. All three are malformed under RFC 7230, which
+        allows no blank of any kind inside a field-name or before the
+        colon. What a far side does with a header it cannot parse is
+        its own business, and two hops need not agree. For those three
+        this check is not an earlier error, it is the only one.
+        """
+        for spelling in ("", "   ", " x-foo", "x-foo ", "x foo", "x\tfoo",
+                         "x-foo\r\nX-Evil", "x:foo", "x-foo\xe9"):
+            with pytest.raises(CliError, match="not a valid HTTP field name"):
+                _parse_backend_entry(
+                    self._api_entry(headers={spelling: "v"})
+                )
+
+    def test_headers_malformed_value_rejected(self):
+        """CR and LF need no rule of their own; the grammar has them.
+
+        Same measurement, value side. urllib does refuse CR and LF, so
+        no configured value splits a request today -- but it refuses on
+        the call, with a ValueError naming neither backend nor header.
+
+        The other four it sends verbatim, recorded off the socket:
+        'X-Opt: nul\\x00byte' with the NUL intact, the obs-text byte as
+        raw 0xE9, and leading and trailing blanks preserved. Whether a
+        given far side then strips, keeps, or rejects those was not
+        measured and is not forge's to assume, which is the argument
+        for not sending them.
+        """
+        # The last is obs-text (0xE9), which RFC 7230 permits in a field
+        # value and this deliberately does not -- these carry gateway
+        # options, which are ASCII. Spelled as an escape so the source
+        # stays ASCII while the value under test does not.
+        for value in ("a\r\nX-Evil: 1", "a\nb", "a\r", " leading",
+                      "trailing ", "nul\x00byte", "caf\xe9"):
+            with pytest.raises(CliError,
+                               match="not a valid HTTP field value"):
+                _parse_backend_entry(
+                    self._api_entry(headers={"x-foo": value})
+                )
+
+    def test_headers_non_string_value_rejected(self):
+        """yaml types a bare number, and urllib cannot send one.
+
+        Left to the wire this fails on the call, mid-review, with an
+        error naming neither the backend nor the header.
+        """
+        with pytest.raises(CliError, match="string"):
+            _parse_backend_entry(
+                self._api_entry(headers={"x-retries": 3})
+            )
+
+    def test_headers_non_string_name_rejected(self):
+        """The key side of the same yaml problem, and its own branch.
+
+        'timeout: 30' under headers gives a str key, but '30: x' gives an
+        int one -- yaml types bare scalars on both sides of the colon.
+        An int key reaches .lower() and raises AttributeError rather than
+        anything an operator can act on.
+        """
+        with pytest.raises(CliError, match="string"):
+            _parse_backend_entry(
+                self._api_entry(headers={42: "v"})
+            )
+
+    def test_headers_empty_is_not_an_error(self):
+        """Absent and empty are different, and neither is a failure.
+
+        A block someone commented the contents out of should behave as
+        no headers at all, not as a config error.
+        """
+        cfg = _parse_backend_entry(self._api_entry(headers={}))
+        assert cfg.headers == {}
+
+    def test_headers_empty_value_is_allowed(self):
+        """RFC 7230 permits an empty field-value, and so does this.
+
+        The trailing '?' on _HEADER_VALUE_RE is what allows it. Some
+        gateways read the presence of a header as the signal and ignore
+        what it says, so refusing this would refuse a real usage for no
+        stated reason -- and it is the one empty string the grammar
+        deliberately accepts, next to a name where it deliberately does
+        not.
+        """
+        cfg = _parse_backend_entry(
+            self._api_entry(headers={"x-debug": ""})
+        )
+        assert cfg.headers == {"x-debug": ""}
+
+    def test_headers_not_a_mapping_rejected(self):
+        with pytest.raises(CliError, match="mapping"):
+            _parse_backend_entry(
+                self._api_entry(headers=["x-foo: bar"])
+            )
+
+    # -- headers: permission --
+
+    def test_headers_protected_name_rejected(self):
+        for name in PROTECTED_HEADER_KEYS:
+            with pytest.raises(CliError, match="forge controls"):
+                _parse_backend_entry(
+                    self._api_entry(headers={name: "x"})
+                )
+
+    def test_headers_protected_name_rejected_whatever_the_case(self):
+        """HTTP does not distinguish these spellings and a dict does.
+
+        A check that only knows the canonical form lets the others past,
+        and each one then sits in the outgoing dict NEXT TO the real
+        header rather than replacing it -- two Authorization lines on the
+        wire, with the far side choosing which to honour.
+        """
+        for spelling in ("Authorization", "AUTHORIZATION", "AuThOrIzAtIoN",
+                         "X-API-Key", "Content-Type", "Host",
+                         "Content-Length", "Transfer-Encoding"):
+            with pytest.raises(CliError, match="forge controls"):
+                _parse_backend_entry(
+                    self._api_entry(headers={spelling: "x"})
+                )
+
+    def test_the_forbidden_list_did_not_quietly_shrink(self):
+        """The check above iterates this set, so it cannot see a deletion.
+
+        Remove a name from PROTECTED_HEADER_KEYS and that loop simply
+        stops asking about it, the same blind spot the cli-field loop
+        has. Measured: of the names in the set, only seven appear as a
+        literal anywhere in this suite, so the rest are pinned by
+        nothing. Spelled out here so a deletion has somewhere to fail.
+
+        Only the WHATWG Fetch forbidden request-header names are
+        listed. The ones forge adds on its own account -- the
+        credential and the per-format framing -- are pinned by the
+        case-spelling and smuggling tests, which assert something those
+        names MEAN rather than only that they are present.
+
+        The send-time check is no backstop for these: it compares
+        against the headers forge itself sends, and forge sends none of
+        them. This set is the only thing between a config and an Origin
+        or a Cookie on forge's own outbound requests.
+        """
+        whatwg = {
+            "accept-charset", "accept-encoding",
+            "access-control-request-headers",
+            "access-control-request-method", "connection", "content-length",
+            "cookie", "cookie2", "date", "dnt", "expect", "host",
+            "keep-alive", "origin", "referer", "set-cookie", "te",
+            "trailer", "transfer-encoding", "upgrade", "via",
+            "x-http-method", "x-http-method-override", "x-method-override",
+        }
+        missing = sorted(whatwg - set(PROTECTED_HEADER_KEYS))
+        assert not missing, (
+            "no longer refused at config load: %s" % ", ".join(missing)
+        )
+
+    def test_headers_protected_prefixes_rejected(self):
+        """Proxy- carries a credential and Sec- is reserved for new ones."""
+        for name in ("proxy-authorization", "Proxy-Connection",
+                     "sec-fetch-mode", "Sec-Anything-Minted-Later"):
+            with pytest.raises(CliError, match="forge controls"):
+                _parse_backend_entry(
+                    self._api_entry(headers={name: "x"})
+                )
+
+    def test_headers_framing_names_are_a_smuggling_primitive(self):
+        """Why the framing names are on the list, stated as a test.
+
+        Measured 2026-08-07 against a socket that recorded the bytes: a
+        configured 'Content-Length: 3' REPLACED urllib's own
+        'Content-Length: 13'. The server reads three bytes of a
+        thirteen-byte body and the remaining ten stay in the connection
+        to be parsed as the start of the next request.
+        'Transfer-Encoding: chunked' dropped the Content-Length line
+        entirely while the body was still sent unchunked, and a
+        configured Host replaced the real one outright.
+        """
+        for name in ("content-length", "transfer-encoding", "host"):
+            with pytest.raises(CliError, match="forge controls"):
+                _parse_backend_entry(
+                    self._api_entry(headers={name: "3"})
+                )
+
+    def test_a_protected_name_wearing_a_blank_is_still_refused(self):
+        """The permission check does no stripping, and need not.
+
+        'authorization ' is protected in intent and malformed in fact.
+        It is refused as malformed, which is the message an operator
+        sees, and that is fine -- what matters is that it is refused.
+
+        The dependency here is on the grammar check EXISTING, not on it
+        running first. Folded but unstripped, this name does not match
+        anything in the protected set, so with the grammar check gone it
+        would sail through as some header of its own and reach the wire
+        as 'authorization : x'. Deleting that check is what breaks this
+        test; reordering the two is not, which was measured rather than
+        assumed.
+        """
+        with pytest.raises(CliError, match="not a valid HTTP field name"):
+            _parse_backend_entry(
+                self._api_entry(headers={"authorization ": "x"})
+            )
+
+    def test_two_spellings_of_one_name_are_refused(self):
+        """Both pass every other check, and collide on the wire anyway.
+
+        Neither name is protected and both are well-formed, so grammar
+        and permission let them through individually. HTTP does not
+        distinguish them. Measured off a socket, through the same
+        Request(headers=...) form the call sites use: urllib folds the
+        pair into one line, keeps the value written last, and titlecases
+        the name -- 'x-note: one' then 'X-Note: two' sends
+        'X-Note: two', and reversing the two yaml lines sends
+        'X-Note: one'. A config that says two things and sends one of
+        them, chosen by line order, is worth a parse error.
+        """
+        for pair in (("x-note", "X-Note"), ("X-Note", "x-note"),
+                     ("x-trace-id", "X-Trace-Id")):
+            with pytest.raises(CliError, match="HTTP treats as one header"):
+                _parse_backend_entry(
+                    self._api_entry(headers={pair[0]: "one", pair[1]: "two"})
+                )
+
+    def test_one_spelling_used_twice_is_not_a_collision(self):
+        """yaml gives us a dict, so the duplicate is already gone.
+
+        Guards the check against being written as a count of the
+        original lines rather than of the folded names: two identical
+        keys never reach it, and one key must not report itself.
+        """
+        cfg = _parse_backend_entry(self._api_entry(headers={"x-note": "one"}))
+        assert cfg.headers == {"x-note": "one"}
+
     # -- env rejection on api/vertex --
 
     def test_env_on_api_rejected(self):
@@ -1562,18 +1875,50 @@ class TestParseCliEnvFields:
     # -- 0005 fields rejected on cli --
 
     def test_0005_fields_on_cli_rejected(self):
-        reject_fields = [
-            ("temperature", 0.5), ("max_completion_tokens", 1000),
-            ("thinking_type", "enabled"), ("thinking_budget", 1000),
-            ("reasoning_effort", "high"), ("stream", True),
-            ("outcap_key", "max_tokens"), ("output_ceiling", 65536),
-            ("params", {"a": 1}),
-        ]
-        for field_name, val in reject_fields:
+        """Driven from the tuple, so a new field cannot be added untested.
+
+        This used to carry its own copy of the list, and the copy went
+        stale the moment 'headers' was added to _API_ONLY_FIELDS -- a new
+        field arrived with no coverage and nothing said so. Reading the
+        real tuple means the loop below grows on its own; the sample
+        values are the only thing left to maintain, and a missing one
+        fails loudly rather than skipping the field.
+        """
+        from code_forge.backend import _API_ONLY_FIELDS
+
+        sample = {
+            "temperature": 0.5, "max_completion_tokens": 1000,
+            "thinking_type": "enabled", "thinking_budget": 1000,
+            "reasoning_effort": "high", "stream": True,
+            "outcap_key": "max_tokens", "output_ceiling": 65536,
+            "params": {"a": 1}, "headers": {"x-note": "v"},
+        }
+        missing = [f for f in _API_ONLY_FIELDS if f not in sample]
+        assert not missing, (
+            "_API_ONLY_FIELDS gained %r with no sample value here, so it "
+            "would have gone untested" % (missing,)
+        )
+
+        for field_name in _API_ONLY_FIELDS:
             with pytest.raises(CliError, match=field_name):
                 _parse_backend_entry(
-                    self._cli_entry(**{field_name: val})
+                    self._cli_entry(**{field_name: sample[field_name]})
                 )
+
+    def test_headers_on_a_cli_backend_rejected(self):
+        """Named on purpose, because the loop above cannot cover this.
+
+        That loop reads _API_ONLY_FIELDS, so it tests whatever the tuple
+        says and cannot notice a field being REMOVED from it -- measured:
+        deleting 'headers' there leaves it green. A cli backend spawns a
+        subprocess and sends no HTTP request, so headers configured on
+        one would be silently ignored, which is the config-lies-about-
+        the-wire failure this whole field exists to avoid.
+        """
+        with pytest.raises(CliError, match="headers"):
+            _parse_backend_entry(
+                self._cli_entry(headers={"x-note": "v"})
+            )
 
     # -- env parsing --
 

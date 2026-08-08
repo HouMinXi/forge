@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .backend import BackendConfig, DEFAULT_BACKEND
+from .backend import (
+    BackendConfig, DEFAULT_BACKEND, check_headers, check_params,
+)
 from .errors import CliError
 
 
@@ -79,6 +81,78 @@ class LLMInvokeError(Exception):
 DEFAULT_TIMEOUT_S = 1800  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
 _CLI_TIMEOUT_CAP_S = 300  # CLI subprocesses cap; only applies when no explicit timeout is set
 _API_TIMEOUT_CAP_S = 600  # API backends cap; prevents 30-minute hangs on dead endpoints
+
+
+def _request_headers(base: dict, backend: "BackendConfig") -> dict:
+    """The format's own headers, plus whatever the backend configures.
+
+    Some gateways take per-request options as headers rather than in the
+    body, and a backend that needs one has nowhere else to put it. What it
+    must not do is reach the credential or the protocol's framing.
+
+    Config load already refuses that by name, and that is where the good
+    error lives -- it knows the backend and can be fixed before anything
+    runs. But it compares against a written-down list, and a list of what
+    a format sends is a second copy of something that already exists: it
+    goes stale the day a format gains a header and nobody remembers to
+    add it.
+
+    So the whole of it is asked again here, on the way out, plus one
+    question config load cannot ask.
+
+    The repeat is check_headers, the same function config load runs.
+    Today config load is the only thing that fills this field, so the
+    repeat catches nothing that exists -- it is what keeps that true
+    for a backend built in code instead of parsed from yaml, rather
+    than something every future construction site has to remember.
+    Leaving it to urllib was measured and does not hold: urllib refuses
+    CRLF in a value and an empty name, and sends the rest verbatim, so
+    'X foo' reaches the wire as 'X Foo'.
+
+    What follows the repeat is not a third check but an assertion, and
+    it is written to fail loudly rather than to catch anything. Every
+    header a call site puts in `base` today is a protected name, so
+    check_headers has already refused any configured header that could
+    collide and this can never fire. The day it does fire, `base` has
+    grown a header that PROTECTED_HEADER_KEYS does not list -- config
+    would be accepting a name the wire then silently overwrites, and
+    this is the only place that discrepancy becomes visible. Keeping it
+    costs a set comprehension over a dict of at most a few entries.
+
+    Names are compared case-folded because HTTP does not distinguish
+    them while a dict does. They need no stripping: check_headers has
+    just refused any name that is not an RFC 7230 token, so a name with
+    a blank in it never reaches the comparison.
+    """
+    # `or {}` would read as "none configured" but means "falsy", and
+    # every empty container is falsy: headers=[] would take this branch
+    # and skip the mapping check below, which is the one case that
+    # check runs for. Only None means none.
+    configured = backend.headers if backend.headers is not None else {}
+    # This runs inside the retry loop, and the default is retryable.
+    # Nothing about a config file changes between attempts, so retrying
+    # spends the whole backoff budget reaching the same answer:
+    # measured 5 attempts over 31.5s, logging the same unfixable line
+    # four times, per pass.
+    def _fail(msg: str) -> LLMInvokeError:
+        return LLMInvokeError(msg, retryable=False)
+
+    check_headers(configured, backend.name, _fail)
+    reserved = {k.lower() for k in base}
+    clash = sorted(k for k in configured if k.lower() in reserved)
+    if clash:
+        raise _fail(
+            "backend %r: configured header(s) %s collide with what this "
+            "request already sends, and were not refused by name -- so "
+            "PROTECTED_HEADER_KEYS is missing %s. That is a forge bug: "
+            "config accepts a header the wire then overwrites."
+            % (backend.name,
+               ", ".join(repr(k) for k in clash),
+               ", ".join(repr(k) for k in clash))
+        )
+    # base last states the ordering; after the check above there is
+    # nothing left for it to overwrite.
+    return {**configured, **base}
 
 
 def _apply_params(
@@ -151,8 +225,32 @@ def _apply_params(
     # _parse_response_body cannot parse, reported as a non-JSON response.
     body["stream"] = bool(backend.stream)
 
-    # Generic params passthrough (protected keys blocked at parse time)
-    for k, v in (backend.params or {}).items():
+    # Generic params passthrough. Asked again here, on the way out, for
+    # the reason the headers path is: config load is the only thing that
+    # fills this field today, so the repeat catches nothing that exists
+    # -- it is what keeps that true for a backend built in code rather
+    # than parsed from yaml, which reaches this line without passing the
+    # parser at all.
+    #
+    # This one matters more than its header twin. There the merge is
+    # {**configured, **base}, so a configured name that slipped through
+    # would lose to forge's own; here it is a plain assignment into the
+    # body forty lines of this function just finished computing, so a
+    # protected key wins and takes the resolved cap, the model, or the
+    # stream flag with it.
+    #
+    # `or {}` would read as "none configured" and mean "falsy", and
+    # every empty container is falsy: params=[] would become {} here,
+    # one line above the check whose whole purpose is to refuse it.
+    # Measured: [], "", 0, False and () all reached the wire silently
+    # while the identical values on the headers path were refused.
+    # Only None means none.
+    configured = backend.params if backend.params is not None else {}
+    check_params(
+        configured, backend.name,
+        lambda msg: LLMInvokeError(msg, retryable=False),
+    )
+    for k, v in configured.items():
         body[k] = v
 
     return cap
@@ -671,6 +769,31 @@ def llm_invoke(
     timeout_s = effective_invoke_timeout_s(backend, timeout_s)
 
     if backend.type == "cli":
+        # The mirror of the checks _request_headers and _apply_params
+        # run for api backends. Config load refuses these fields on a
+        # cli backend by name; a backend built in code reaches neither
+        # that nor any request, and _invoke_cli spawns a subprocess
+        # that sends no HTTP at all -- so the field would be dropped in
+        # silence, which is the one outcome this whole feature exists
+        # to make impossible. Here rather than inside _invoke_cli so a
+        # config error is not reported after a PATH lookup fails first.
+        #
+        # Two fields, not the ten in _API_ONLY_FIELDS, because only
+        # these two say "unset" in a way that can be read back. The
+        # other eight carry in-band sentinels -- stream defaults to
+        # False, max_completion_tokens to 0, outcap_key to "" -- and a
+        # user who configures those exact values is indistinguishable
+        # from one who configured nothing, so a loop over all ten would
+        # either refuse untouched defaults or learn nothing.
+        for field in ("headers", "params"):
+            if getattr(backend, field) is not None:
+                raise LLMInvokeError(
+                    "backend %r: type 'cli' spawns a subprocess and "
+                    "sends no HTTP request, so its %s could not be "
+                    "applied. Remove them, or make this an api backend."
+                    % (backend.name, field),
+                    retryable=False,
+                )
         return _invoke_cli(prompt, backend, timeout_s)
     elif backend.type == "api":
         return _invoke_api(
@@ -1039,10 +1162,10 @@ def _invoke_openai(
 ) -> tuple[str, dict]:
     """OpenAI-format API call. Returns (content_str, usage_dict)."""
     url = backend.base_url + "/chat/completions"
-    headers = {
+    headers = _request_headers({
         "Authorization": "Bearer " + api_key,
         "Content-Type": "application/json",
-    }
+    }, backend)
     body = {
         "model": backend.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -1146,11 +1269,11 @@ def _invoke_anthropic(
             "use format: openai" % (backend.name, backend.format)
         )
     url = backend.base_url + "/v1/messages"
-    headers = {
+    headers = _request_headers({
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
-    }
+    }, backend)
     body = {
         "model": backend.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -1321,10 +1444,10 @@ def _invoke_vertex(
     url = _build_vertex_url(
         backend.project_id, backend.region or "global", backend.model
     )
-    headers = {
+    headers = _request_headers({
         "Authorization": "Bearer " + creds.token,
         "Content-Type": "application/json",
-    }
+    }, backend)
     body = {
         "anthropic_version": "vertex-2023-10-16",
         "messages": [{"role": "user", "content": prompt}],
