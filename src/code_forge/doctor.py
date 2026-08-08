@@ -202,8 +202,9 @@ def _check_handshake() -> tuple[bool, str]:
                         if result.serverInfo else "unknown")
                 return (True, name)
 
+    coro = _async()
     try:
-        return asyncio.run(_async())
+        return asyncio.run(coro)
     except ImportError:
         return (False,
                 "mcp not installed -- pip install code-forge[mcp]")
@@ -211,6 +212,11 @@ def _check_handshake() -> tuple[bool, str]:
         return (False, "handshake timed out after 15s")
     except Exception as exc:
         return (False, str(exc))
+    finally:
+        # asyncio.run may raise before it ever awaits the coroutine
+        # (mocked in tests, or event-loop setup fails). Close it so it
+        # does not surface later as "coroutine was never awaited".
+        coro.close()
 
 
 def _check_registries(home: Path) -> list[tuple[str, str]]:
