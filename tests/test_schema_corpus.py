@@ -13,6 +13,7 @@ diverging from the actual loader behaviour as new fields are added.
 """
 from __future__ import annotations
 
+import ast
 import importlib.resources
 import json
 import os
@@ -23,6 +24,7 @@ import jsonschema
 import pytest
 from jsonschema import Draft202012Validator
 
+from code_forge import backend as backend_module
 from code_forge.backend import load_backend_configs
 from code_forge.errors import CliError
 from code_forge.gate_check import load_gate_config
@@ -295,6 +297,58 @@ def test_valid_extra_field_tolerated() -> None:
         "    extra_unknown_field: tolerated\n"
     )
     assert _loader_accepts(yaml_text) is True
+
+
+def test_schema_covers_every_parser_field() -> None:
+    """Every backend field the loader reads is declared in backendEntry.
+
+    backendEntry sets additionalProperties:false, so a field the loader
+    honours but the schema omits is flagged as an error in the editor
+    while working perfectly at runtime. That happened: the schema listed
+    11 properties against 23 the loader reads, and this repo's own
+    gate.yaml was reported invalid over stream and timeout_s.
+
+    The parser reads every field as a literal entry.get("<name>"), so the
+    accepted set is recovered exactly by walking the AST rather than
+    maintaining a second hand-written list that drifts the same way.
+    """
+    source = pathlib.Path(backend_module.__file__).read_text(
+        encoding="utf-8"
+    )
+    read_fields = set()
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "entry"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            read_fields.add(node.args[0].value)
+
+    # Guard the extraction itself: if a refactor stops using literal
+    # entry.get(), an empty set would make this test vacuously pass.
+    assert len(read_fields) > 15, (
+        "AST extraction found only %d entry.get() fields -- the parser "
+        "no longer reads config with literal keys, so this test can no "
+        "longer see what it accepts and must be rewritten"
+        % len(read_fields)
+    )
+
+    # 'name' is injected by load_backend_configs before dispatching to
+    # _parse_backend_entry, never authored by a user in gate.yaml.
+    read_fields.discard("name")
+
+    declared = set(SCHEMA["$defs"]["backendEntry"]["properties"])
+    missing = sorted(read_fields - declared)
+    assert not missing, (
+        "backendEntry omits field(s) the loader accepts: %s -- "
+        "additionalProperties:false makes each one an editor error on a "
+        "config that works" % ", ".join(missing)
+    )
 
 
 # ===========================================================================

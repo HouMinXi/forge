@@ -259,7 +259,11 @@
         },
         "api_key_env": {
           "type": "string",
-          "description": "Name of the environment variable holding the API key. Required for format=anthropic or format=openai. Never put the key value here."
+          "description": "Name of the environment variable holding the API key. Set this or api_key_file for format=anthropic or format=openai, never both. Never put the key value here."
+        },
+        "api_key_file": {
+          "type": "string",
+          "description": "Path to a file whose contents are the API key. Alternative to api_key_env; setting both is an error. Never put the key value here."
         },
         "project_id": {
           "type": "string",
@@ -276,6 +280,75 @@
         "default": {
           "type": "boolean",
           "description": "Mark this backend as the config default. At most one entry may set this to true."
+        },
+        "max_completion_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Output token cap sent under the max_completion_tokens key. For type=api only. 0 falls back to max_tokens; at least one of the two must be positive."
+        },
+        "output_ceiling": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Hard upper bound on the requested output cap. For type=api only. 0 means use max_tokens unchanged."
+        },
+        "outcap_key": {
+          "type": "string",
+          "enum": ["max_tokens", "max_completion_tokens", ""],
+          "description": "Request key name carrying the output cap, for providers that disagree. For type=api only. Empty picks the format default."
+        },
+        "temperature": {
+          "type": "number",
+          "description": "Sampling temperature. For type=api only. Negative omits the field from the request."
+        },
+        "thinking_type": {
+          "type": "string",
+          "enum": ["enabled", "adaptive", "disabled", ""],
+          "description": "Extended-thinking mode. For type=api only. Empty omits the field."
+        },
+        "thinking_budget": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Token budget for extended thinking. For type=api only. Above 0 sends thinking.budget_tokens."
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "description": "Provider reasoning-effort level, e.g. low/medium/high. For type=api only. Empty omits the field."
+        },
+        "stream": {
+          "type": "boolean",
+          "description": "Request an SSE stream and reassemble it into one response. For type=api only."
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Per-request timeout in seconds. 0 uses the default timeout chain. A single review pass has been measured above 400s, so a small value here kills the run on the clock."
+        },
+        "params": {
+          "type": "object",
+          "description": "Extra provider parameters merged into the request body. For type=api only. Keys owned by typed fields above (model, messages, stream, temperature, thinking, reasoning_effort, max_tokens, max_completion_tokens, output_ceiling, anthropic_version) are rejected by the loader.",
+          "additionalProperties": true
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Extra HTTP headers sent on every api call. For type=api only; an cli backend spawns a subprocess and sends no HTTP, so configuring one there is refused. Names pass RFC 7230 grammar, a list forge reserves (credentials, the framing our own wire types send, and the WHATWG Fetch forbidden request-header names), and a two-spellings-of-one-name check. Values must be printable strings."
+        },
+        "env": {
+          "type": "object",
+          "description": "Child-process environment overrides. For type=cli only.",
+          "additionalProperties": false,
+          "properties": {
+            "unset": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Variable names removed from the child environment."
+            },
+            "set": {
+              "type": "object",
+              "description": "Variables set in the child environment. Values are stringified.",
+              "additionalProperties": true
+            }
+          }
         }
       },
       "allOf": [
@@ -297,7 +370,11 @@
             "required": ["type", "format"]
           },
           "then": {
-            "required": ["base_url", "api_key_env"]
+            "required": ["base_url"],
+            "anyOf": [
+              {"required": ["api_key_env"]},
+              {"required": ["api_key_file"]}
+            ]
           }
         },
         {
