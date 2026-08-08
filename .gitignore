@@ -44,8 +44,9 @@ aicc.conf
 # Dogfood verification (local only, never commit)
 dogfood/
 
-# Model eval pilot data (contains surflare internal scripts)
-eval/
+# Model eval pilot data (contains surflare internal scripts). Anchored: an
+# unanchored eval/ also matches tests/eval/, which is the tracked corpus.
+/eval/
 
 # code-forge runtime receipts (local artifacts, not tracked)
 .code-forge/

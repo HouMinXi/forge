@@ -1,0 +1,22 @@
+diff --git a/preflight.sh b/preflight.sh
+index 86a6af4..b328d30 100644
+--- a/preflight.sh
++++ b/preflight.sh
+@@ -27,6 +27,17 @@ check_shebang() {
+     fi
+ }
+ 
++check_non_ascii() {
++    # Reject typographic characters (em dash, smart quotes) in changed files.
++    if grep -qP '[^\x00-\x7F]' $CHANGED; then
++        grep -nP '[^\x00-\x7F]' $CHANGED
++        echo "FAIL non-ascii"; rc=1
++    else
++        echo "PASS non-ascii"
++    fi
++}
++
+ check_trailing_ws
+ check_shebang
++check_non_ascii
+ exit "$rc"

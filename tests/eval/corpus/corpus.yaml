@@ -75,3 +75,50 @@ entries:
     expected_verdict: PASS
     axis_tags: [DAEMON-STATE]
     expected_advisory: ["nftables", "mark", "killswitch", "conflict"]
+
+  # X-series: "the check that cannot fail". Each X entry carries a bug whose
+  # code reads as a working guard but whose outcome is fixed, and each is
+  # paired with an Xc control: the same file, the same lines touched, correct
+  # code. The pair is the measurement. A buggy entry that is flagged proves
+  # nothing on its own -- forge flags plenty of diffs -- so the entry counts
+  # only when its control is NOT flagged in the same run.
+  #
+  # expected_advisory is deliberately absent. It scores advisory-findings.json
+  # (the RUNTIME / GRAPH-TRIAGE / DAEMON-STATE axes) and never sees the three
+  # L1 review passes, which is where these bugs have to be caught. Scoring is
+  # by verdict: "caught" means the review exited non-zero.
+  #
+  # Every X fixture was executed before being committed, buggy side and
+  # control side, and the observed difference is recorded in
+  # PRE-REGISTRATION.md. A fixture nobody ran is a fixture that might contain
+  # no bug -- the first draft of X2 was exactly that.
+
+  - name: X1-guard-always-false
+    diff_file: diffs/X1-guard-always-false.diff
+    expected_verdict: HOLD
+    axis_tags: [L1-SEMANTIC]
+
+  - name: X1c-guard-always-false-control
+    diff_file: diffs/X1c-guard-always-false-control.diff
+    expected_verdict: PASS
+    axis_tags: [L1-SEMANTIC]
+
+  - name: X2-pipeline-exit-mask
+    diff_file: diffs/X2-pipeline-exit-mask.diff
+    expected_verdict: HOLD
+    axis_tags: [L1-SEMANTIC]
+
+  - name: X2c-pipeline-exit-mask-control
+    diff_file: diffs/X2c-pipeline-exit-mask-control.diff
+    expected_verdict: PASS
+    axis_tags: [L1-SEMANTIC]
+
+  - name: X3-noop-handler
+    diff_file: diffs/X3-noop-handler.diff
+    expected_verdict: HOLD
+    axis_tags: [L1-SEMANTIC]
+
+  - name: X3c-noop-handler-control
+    diff_file: diffs/X3c-noop-handler-control.diff
+    expected_verdict: PASS
+    axis_tags: [L1-SEMANTIC]

@@ -37,6 +37,11 @@ import yaml
 
 from code_forge.eval.corpus import CorpusEntry
 from code_forge.eval.scorer import EvalResult, advisory_caught
+from code_forge.proc import (
+    group_of,
+    kill_group_or_child,
+    terminate_group_or_child,
+)
 from code_forge.trust import record_trust
 
 
@@ -47,6 +52,177 @@ DETERMINISTIC_TAGS: frozenset[str] = frozenset({"TRUST", "SEC", "FIXVAL"})
 
 _DEFAULT_LLM_RUNS = 3
 """Default run count for LLM-reviewed axes (RUNTIME, LEGACY, INTENT)."""
+
+_DEFAULT_REVIEW_TIMEOUT_S = 1800
+"""Wall clock a single eval review may take before it is abandoned.
+
+Raised from 300s, which was below the floor for a real multi-round review
+and so turned slow backends into skipped entries rather than results. One
+call on a reasoning model measured 77-295s here, three passes run per
+round, and a review runs several rounds: 300s could not fit even one round
+on that backend, and a skip reads as "no data", not as "missed the bug" --
+the entry silently leaves the numerator and the denominator.
+
+This bounds a hang, not the work. Set FORGE_EVAL_REVIEW_TIMEOUT_S to
+override; values that do not parse as a positive int fall back here.
+"""
+
+_STDERR_TAIL_BYTES = 64 * 1024
+"""How much of a review's stderr is read back after it exits.
+
+The caller matches infra-failure keywords against this and then keeps 200
+characters, so the only thing a larger number buys is the chance to turn
+an unbounded file into an unbounded string. 64 KB holds a Python
+traceback and a gateway error body several times over.
+"""
+
+_TEARDOWN_GRACE_S = 10
+"""How long an abandoned review gets to tear itself down after SIGTERM.
+
+Longer than the five seconds the MCP-side teardown allows, because what
+has to finish inside this window is itself a SIGTERM, a five-second wait
+and then a SIGKILL -- the review signalling the backend CLI it started in
+a session this one cannot reach. Five here would end the review in the
+middle of that, leaving exactly the process the SIGTERM was for.
+
+Ten seconds against a review already abandoned after half an hour is not
+a cost worth tuning.
+"""
+
+_REAP_TIMEOUT_S = 5
+"""How long to wait for a child that has already been sent SIGKILL.
+
+A reaped child costs nothing and an unreaped one is a zombie for the rest
+of the run, so the wait is worth making -- but it is worth bounding, and
+the thing it is bounded against is the one child SIGKILL does not reach:
+a process stopped in the kernel, in uninterruptible sleep on a mount that
+is not answering. That child stays unkillable for as long as the mount
+does, and an unbounded wait for it does not fail, it hangs, taking every
+review after it in a run that is hundreds long.
+
+So the trade is one leaked zombie against a whole run, and it is not
+close. Matching the five the async teardown already allows for the same
+wait, because the question is the same and a second number would only
+invite the two to drift.
+"""
+
+
+def _review_timeout_s() -> int:
+    """Resolve the per-review timeout, honouring FORGE_EVAL_REVIEW_TIMEOUT_S."""
+    raw = os.environ.get("FORGE_EVAL_REVIEW_TIMEOUT_S")
+    if raw is None:
+        return _DEFAULT_REVIEW_TIMEOUT_S
+    try:
+        value = int(raw)
+    except (ValueError, TypeError):
+        return _DEFAULT_REVIEW_TIMEOUT_S
+    return value if value > 0 else _DEFAULT_REVIEW_TIMEOUT_S
+
+
+def _run_review(cmd: list[str], cwd: str, env: dict, timeout_s: int):
+    """Run one review to completion or abandon it, leaving nothing behind.
+
+    Returns (returncode, stderr_text), or raises subprocess.TimeoutExpired.
+
+    Two things this does that subprocess.run with capture_output cannot.
+
+    Output goes to unlinked temp files rather than pipes. capture_output
+    accumulates the child's stream in the parent's memory for as long as
+    the child runs, so the ceiling on that buffer is whatever the child
+    emits in the timeout window -- a child emitting continuously grew the
+    parent by 6.5 GB in two seconds, on a host with less RAM than that, and
+    the window is now half an hour rather than five minutes. Disk absorbs
+    it instead. The files carry no directory entry, so the kernel reclaims
+    them when the handles close whether or not the cleanup path runs.
+
+    The child gets its own process group, which is what makes it safe to
+    aim a signal at a group at all: without that, the group is ours and
+    the signal comes home. What the group does not buy is reach past the
+    review. A review shells out to its backend CLI and starts that CLI in
+    a session of its own, so the process actually holding the connection
+    is outside the group by the time the timeout fires. Getting to it
+    means asking the review to do it, which is why the teardown opens
+    with SIGTERM rather than SIGKILL.
+
+    Only the tail of stderr comes back. Reading all of it would undo the
+    first half of this: a file the child was free to grow without bound
+    becomes a Python string of the same size the moment it is read. The
+    tail is the useful end -- a traceback's exception line and a gateway's
+    error body both land there -- and the caller classifies the failure by
+    keyword and then keeps 200 characters of it.
+    """
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, stdout=out, stderr=err, env=env,
+            start_new_session=True,
+        )
+        try:
+            returncode = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            raise
+        size = err.seek(0, os.SEEK_END)
+        err.seek(max(0, size - _STDERR_TAIL_BYTES))
+        return returncode, err.read().decode("utf-8", errors="replace")
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Ask the abandoned review to tear down, then insist, then reap it.
+
+    The signal that matters is the first one, and it is SIGTERM rather
+    than SIGKILL for a reason the process group cannot express. A review
+    shells out to the backend CLI, and it starts that CLI in a session of
+    its own -- deliberately, so that its own teardown can signal the CLI
+    together with the shell wrapper around it. The effect here is that
+    the CLI is no longer in the group this signals, so a group signal
+    reaches the review and nothing beneath it. Measured: killpg returns
+    success while the escaped grandchild keeps running, reparented to
+    init, holding the backend connection the timeout existed to end.
+    Nothing raises, nothing is logged, and the leak is invisible.
+
+    SIGTERM reaches the review's own handler, installed when it imports
+    the invoke module, and that handler signals the CLI's group where
+    this one cannot. SIGKILL cannot be caught, so it does the opposite of
+    what it looks like: the more forceful signal is the one that leaves
+    the connection open.
+
+    The grace is longer than the five seconds the async teardown allows,
+    because what runs inside it is itself a SIGTERM followed by a
+    five-second wait and then a SIGKILL. Cutting that off at five would
+    end the review in the middle of its own escalation.
+
+    A review too wedged to run its handler still gets SIGKILL, and that
+    case still leaks the grandchild -- there is nothing left to reach it
+    with from here, short of walking the process tree.
+
+    The final wait is what reaps the child; without it the direct child
+    stays a zombie for the life of the eval run, and an eval run is
+    hundreds of reviews. It is bounded anyway, because a child SIGKILL
+    cannot reach would otherwise hang the run rather than cost it one
+    zombie.
+
+    Which of the group and the child receives each signal is decided in
+    proc.py, alongside the async teardown that has to answer the same
+    question. What cannot travel with it is the liveness check below:
+    Popen.returncode stays None until something calls poll or wait, so
+    the test the async side spells as returncode has to be poll here.
+    """
+    if proc.poll() is not None:
+        return
+
+    pgid = group_of(proc)
+    terminate_group_or_child(proc, pgid)
+    try:
+        proc.wait(timeout=_TEARDOWN_GRACE_S)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    kill_group_or_child(proc, pgid)
+    try:
+        proc.wait(timeout=_REAP_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 # -- Axis hook seam ------------------------------------
@@ -443,21 +619,16 @@ def _run_single(
     gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
     record_trust(gate_path, gate_data, config_dir=xdg_dir)
 
+    timeout_s = _review_timeout_s()
     try:
-        review_result = subprocess.run(
+        returncode, stderr_text = _run_review(
             ["code-forge", "review", "--backend", backend_name],
-            cwd=temp_dir, timeout=300,
-            capture_output=True, check=False,
-            env=eval_env,
+            temp_dir, eval_env, timeout_s,
         )
     except subprocess.TimeoutExpired:
-        return False, "infra: code-forge review timeout after 300s"
+        return False, "infra: code-forge review timeout after %ds" % timeout_s
 
-    stderr_text = review_result.stderr
-    if isinstance(stderr_text, bytes):
-        stderr_text = stderr_text.decode("utf-8", errors="replace")
-
-    if review_result.returncode != 0 and _is_infra_failure(stderr_text):
+    if returncode != 0 and _is_infra_failure(stderr_text):
         return False, "infra: backend failure: %s" % stderr_text[:200]
 
-    return review_result.returncode != 0, ""
+    return returncode != 0, ""

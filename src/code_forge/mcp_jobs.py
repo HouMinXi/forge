@@ -15,13 +15,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import signal
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
+from code_forge.proc import (
+    group_of,
+    kill_group_or_child,
+    terminate_group_or_child,
+)
 
 log = logging.getLogger(__name__)
 
@@ -138,25 +143,18 @@ async def _terminate_and_reap(
 
     Unified subprocess teardown used by the watchdog, cleanup_all,
     and mcp_server._kill_and_reap call sites.
+
+    Which of the group and the child gets each signal is decided in
+    proc.py, because the eval runner has to make the same decision and
+    cannot import this module: pydantic above is not a runtime
+    dependency. Only the liveness checks and the awaiting stay here --
+    returncode reads as a live child on this type and as a constant on
+    Popen, so it does not travel.
     """
     if proc.returncode is not None:
         return
-    try:
-        pgid = os.getpgid(proc.pid)
-    except OSError:
-        pgid = None
-    try:
-        if pgid is not None and pgid == proc.pid:
-            os.killpg(pgid, signal.SIGTERM)
-        else:
-            proc.terminate()
-    except OSError:
-        # killpg or terminate failed (process may have exited
-        # between the returncode check and the signal).
-        try:
-            proc.terminate()
-        except OSError:
-            pass
+    pgid = group_of(proc)
+    terminate_group_or_child(proc, pgid)
     try:
         await asyncio.wait_for(proc.wait(), timeout=grace)
     except asyncio.TimeoutError:
@@ -170,16 +168,7 @@ async def _terminate_and_reap(
             exc_info=True,
         )
     if proc.returncode is None:
-        try:
-            if pgid is not None and pgid == proc.pid:
-                os.killpg(pgid, signal.SIGKILL)
-            else:
-                proc.kill()
-        except OSError:
-            try:
-                proc.kill()
-            except OSError:
-                pass
+        kill_group_or_child(proc, pgid)
         try:
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except Exception:

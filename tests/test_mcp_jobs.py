@@ -577,6 +577,45 @@ async def test_terminate_and_reap_sigkill_both_fail_no_raise():
         await _terminate_and_reap(proc)
 
 
+@pytest.mark.asyncio
+async def test_terminate_and_reap_on_windows_names_no_absent_signal(
+        monkeypatch):
+    """SIGKILL is missing on Windows and a call site reads it eagerly.
+
+    The helper declines to use a group signal when there is no group,
+    which is always the case there -- but an argument is evaluated while
+    the call is being assembled, so a call site spelling signal.SIGKILL
+    raises AttributeError before that helper runs. Escaping here leaves
+    the job unfinalised, since this is the teardown that records it.
+
+    Deleting the name is the test, and it goes through _terminate_and_reap
+    rather than the helper because the call site is where the defect was.
+    """
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 12345
+    call_count = 0
+
+    async def _wait_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.TimeoutError
+        proc.returncode = -9
+        return None
+
+    proc.wait = AsyncMock(side_effect=_wait_side_effect)
+    from code_forge.mcp_jobs import _terminate_and_reap
+
+    monkeypatch.setattr("code_forge.mcp_jobs.os.name", "nt")
+    monkeypatch.delattr(signal, "SIGKILL")
+
+    await _terminate_and_reap(proc)
+
+    proc.terminate.assert_called_once()
+    proc.kill.assert_called_once()
+
+
 # -- watchdog --
 
 

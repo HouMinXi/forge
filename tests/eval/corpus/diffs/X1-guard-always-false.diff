@@ -1,0 +1,13 @@
+diff --git a/jobstate.js b/jobstate.js
+index cf0ccfd..9d1ecaf 100644
+--- a/jobstate.js
++++ b/jobstate.js
+@@ -59,7 +59,7 @@ class Job {
+   doExpire(free) {
+     // A job that outlives its deadline is failed here. The state has to be
+     // advanced to EXECUTING first, because _assertStatus below demands it.
+-    if (this._states.jobStatus(this.options.id) === "RUNNING") {
++    if (this._states.jobStatus(this.options.id === "RUNNING")) {
+       this._states.next(this.options.id);
+     }
+     this._assertStatus("EXECUTING");

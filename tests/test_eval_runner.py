@@ -50,25 +50,17 @@ class TestDeterministicTags:
 class TestReplayEntry:
     """replay_entry function tests."""
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_returns_eval_result(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_review: MagicMock, tmp_path: Path,
     ) -> None:
         """replay_entry returns EvalResult with correct caught_count."""
-        # git init succeeds, git apply succeeds, code-forge review exits 1 (HOLD)
+        # git init and git apply succeed; the review exits 1 (HOLD).
         mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
-        # Override for code-forge review call (non-zero = flagged)
-        def side_effect(cmd, **kwargs):
-            m = MagicMock()
-            if cmd[0] == "code-forge":
-                m.returncode = 1
-            else:
-                m.returncode = 0
-            m.stderr = b""
-            m.stdout = b""
-            return m
-        mock_run.side_effect = side_effect
+        mock_review.return_value = (1, "")
 
         diff_dir = tmp_path / "corpus"
         diff_dir.mkdir()
@@ -111,23 +103,16 @@ class TestReplayEntry:
         assert result.actual_verdict == "SKIPPED"
         assert "apply failed" in result.skipped_reason
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_skipped_on_timeout(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_review: MagicMock, tmp_path: Path,
     ) -> None:
         """subprocess.TimeoutExpired = SKIPPED result."""
-        call_count = [0]
-        def side_effect(cmd, **kwargs):
-            call_count[0] += 1
-            m = MagicMock()
-            if cmd[0] == "code-forge":
-                raise subprocess.TimeoutExpired(cmd, 300)
-            m.returncode = 0
-            m.stderr = b""
-            m.stdout = b""
-            return m
-        mock_run.side_effect = side_effect
+        mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        mock_review.side_effect = subprocess.TimeoutExpired("code-forge", 1800)
 
         diff_dir = tmp_path / "corpus"
         diff_dir.mkdir()
@@ -219,10 +204,12 @@ class TestAxisHook:
         hook.pre_review(entry)
         hook.post_review(entry, result)
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_hooks_called_during_replay(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_review: MagicMock, tmp_path: Path,
     ) -> None:
         """register_axis_hook: pre_review and post_review called during replay."""
         import code_forge.eval.runner as runner_mod
@@ -236,6 +223,7 @@ class TestAxisHook:
             mock_run.return_value = MagicMock(
                 returncode=0, stderr=b"", stdout=b"",
             )
+            mock_review.return_value = (0, "")
 
             diff_dir = tmp_path / "corpus"
             diff_dir.mkdir()
@@ -305,24 +293,22 @@ class TestCloseoutBehaviors:
         assert "from-diff" in loaded["backends"], "diff-created backend must be preserved"
         assert "harness-backend" in loaded["backends"], "harness backend must be added"
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_forge_skip_worktree_check_in_subprocess_env(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_review: MagicMock, tmp_path: Path,
     ) -> None:
-        """FORGE_SKIP_WORKTREE_CHECK=1 is in the env passed to code-forge review."""
+        """FORGE_SKIP_WORKTREE_CHECK=1 is in the env passed to the review."""
         captured_envs: list[dict] = []
 
-        def side_effect(cmd, **kwargs):
-            if cmd and cmd[0] == "code-forge":
-                captured_envs.append(dict(kwargs.get("env") or {}))
-            m = MagicMock()
-            m.returncode = 0
-            m.stderr = b""
-            m.stdout = b""
-            return m
+        def review(cmd, cwd, env, timeout_s):
+            captured_envs.append(dict(env or {}))
+            return 0, ""
 
-        mock_run.side_effect = side_effect
+        mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        mock_review.side_effect = review
 
         diff_dir = tmp_path / "corpus"
         (diff_dir / "diffs").mkdir(parents=True)
@@ -333,10 +319,12 @@ class TestCloseoutBehaviors:
         assert captured_envs, "code-forge subprocess must be called"
         assert captured_envs[0].get("FORGE_SKIP_WORKTREE_CHECK") == "1"
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_diff_applied_before_record_trust(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_review: MagicMock, tmp_path: Path,
     ) -> None:
         """git apply is invoked before record_trust (prevents gate.yaml collision)."""
         call_order: list[str] = []
@@ -351,6 +339,7 @@ class TestCloseoutBehaviors:
             return m
 
         mock_run.side_effect = run_side
+        mock_review.return_value = (0, "")
         mock_trust.side_effect = lambda *a, **kw: call_order.append("record_trust")
 
         diff_dir = tmp_path / "corpus"
@@ -363,12 +352,13 @@ class TestCloseoutBehaviors:
         assert "record_trust" in call_order
         assert call_order.index("apply") < call_order.index("record_trust")
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.shutil.copytree")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_base_files_seeded_before_apply(
         self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_copytree: MagicMock, tmp_path: Path,
+        mock_copytree: MagicMock, mock_review: MagicMock, tmp_path: Path,
     ) -> None:
         """When base_files/<entry> exists, copytree runs before git apply."""
         call_order: list[str] = []
@@ -383,6 +373,7 @@ class TestCloseoutBehaviors:
             return m
 
         mock_run.side_effect = run_side
+        mock_review.return_value = (0, "")
         mock_copytree.side_effect = lambda *a, **kw: call_order.append("copytree")
 
         diff_dir = tmp_path / "corpus"
@@ -400,15 +391,17 @@ class TestCloseoutBehaviors:
         assert "apply" in call_order
         assert call_order.index("copytree") < call_order.index("apply")
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.shutil.copytree")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_base_files_seed_oserror_returns_skipped(
         self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_copytree: MagicMock, tmp_path: Path,
+        mock_copytree: MagicMock, mock_review: MagicMock, tmp_path: Path,
     ) -> None:
         """OSError during seed copytree -> SKIPPED, not crash."""
         mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        mock_review.return_value = (0, "")
         mock_copytree.side_effect = OSError("Permission denied")
 
         diff_dir = tmp_path / "corpus"
@@ -456,23 +449,16 @@ class TestInfraFailureDetection:
         from code_forge.eval.runner import _is_infra_failure
         assert not _is_infra_failure("WARNING: timeout parameter was ignored")
 
+    @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_infra_failure_returns_skipped(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self, mock_trust: MagicMock, mock_run: MagicMock,
+        mock_review: MagicMock, tmp_path: Path,
     ) -> None:
         """Backend down during review -> SKIPPED, not HOLD."""
-        def side_effect(cmd, **kwargs):
-            m = MagicMock()
-            if cmd and cmd[0] == "code-forge":
-                m.returncode = 1
-                m.stderr = b"ConnectionRefusedError: [Errno 111]"
-            else:
-                m.returncode = 0
-                m.stderr = b""
-            m.stdout = b""
-            return m
-        mock_run.side_effect = side_effect
+        mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        mock_review.return_value = (1, "ConnectionRefusedError: [Errno 111]")
 
         diff_dir = tmp_path / "corpus"
         (diff_dir / "diffs").mkdir(parents=True)

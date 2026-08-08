@@ -1,0 +1,35 @@
+diff --git a/breaker.py b/breaker.py
+index aa68335..3dbc3c5 100644
+--- a/breaker.py
++++ b/breaker.py
+@@ -21,9 +21,30 @@ class CircuitBreaker:
+                 % (self._consecutive, self.threshold)
+             )
+ 
++    def record_timeout(self) -> None:
++        self.record_failure()
++
++    def record_other_error(self) -> None:
++        self.record_failure()
++
+     def record_success(self) -> None:
+         self._consecutive = 0
+ 
+     @property
+     def count(self) -> int:
+         return self._consecutive
++
++
++def run_pass(pass_name, invoke, breaker):
++    """Run one review pass, reporting the outcome to the breaker."""
++    try:
++        return invoke(pass_name)
++    except TimeoutError:
++        breaker.record_timeout()
++        return None
++    except ValueError:
++        breaker.record_other_error()
++        return None
++    except ConnectionError:
++        breaker.record_other_error()
++        return None
