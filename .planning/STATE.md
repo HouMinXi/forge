@@ -74,16 +74,31 @@ Todo-state correction: the block below the fold still says three subagent
 tasks (#49, #57, #59) failed with 503 and await resume. #49 and #57 have since
 LANDED on main (6e5650f, 6b05a6e). Only #59 (detect a reviewer ignoring the
 annotated line numbers) is still pending, alongside #50, #53, #54, #55, #58,
-#60, #61.
+#60, #61. #53 and #59 are not untouched, though: their implementation is
+sitting uncommitted in the agent worktree described under Cleanup below.
 
 Cleanup owed, all user-owned (`protect_git_worktree.sh` blocks the AI):
 
-- Worktree `.claude/worktrees/agent-a7835ea5f5c306467` @ bd9e268 still exists
-  and its branch is merged. It is also the cause of the pytest
-  `ImportPathMismatchError` on a bare `pytest` run, and very likely the
-  `mutation-flaky` advisory seen in two reviews -- the collection error makes
-  the baseline look unstable. Remove the worktree, then
-  `git branch -d worktree-agent-a7835ea5f5c306467`.
+- Worktree `.claude/worktrees/agent-a7835ea5f5c306467` @ bd9e268 still exists.
+  It is the cause of the pytest `ImportPathMismatchError` on a bare `pytest`
+  run, and very likely the `mutation-flaky` advisory seen in two reviews --
+  the collection error makes the baseline look unstable.
+
+  **Do not force-remove it.** Its branch is merged, which is what makes this
+  dangerous: `git worktree remove` refused with "contains modified or
+  untracked files", and the files in question are six STAGED modifications
+  carrying 315 lines of real work -- excerpt-fabrication preflight in
+  `receipt.py` (+61), refusal logic in `verify.py` (+44), and six new tests
+  including `test_fabricated_excerpt_lines_refused` and
+  `test_mismatch_names_failing_line_not_excerpt_start`. That is the
+  implementation of #53 and #59, neither of which is on main. Branch
+  merged-ness says nothing about an uncommitted working tree; only the
+  worktree guard stood between this and deletion.
+
+  Sequence: commit it onto a branch of its own first, then remove the worktree,
+  then `git branch -d worktree-agent-a7835ea5f5c306467`. The work is
+  logic-bearing, so it needs a forge review before it lands anywhere real -- a
+  wip-class commit is only to stop it evaporating.
 - `defects/infra-anchor-poison` and `fix/receipt-followups` are both merged
   into main and deletable.
 - `fix/rebase-msg` is 1 commit ahead of main -- inspect before deleting.
