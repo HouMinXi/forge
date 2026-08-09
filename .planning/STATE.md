@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.8
 milestone_name: Onboarding + Throughput
 status: active
-stopped_at: Router batch F1 merged (695f739); F3 + F4-live-probe + F2/F5 docs remain
-last_updated: "2026-07-30T07:30:00.000Z"
+stopped_at: main @ c72ff06, pushed. Router batch F1 merged (695f739); F3 + F4-live-probe + F2/F5 docs remain, SSE parse tolerance still deferred
+last_updated: "2026-08-09T00:00:00.000Z"
 progress:
   total_phases: 17
   completed_phases: 11
@@ -15,16 +15,85 @@ progress:
 
 # State: Forge
 
-**Last updated:** 2026-07-05
+**Last updated:** 2026-08-09
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** No code ships without surviving three consecutive clean review cycles; a green verdict is honest or declares what it did not verify
-**Current focus:** Router onboarding compat batch, F1 LANDED 2026-07-30 (695f739). Remaining batch items: F3 trust path, F4 live probe, F2/F5 docs. Phase 42 MERGED (933032d, 2026-07-29). Windows wave-2 parked until gpu-win evidence
+**Current focus:** No phase in flight as of 2026-08-09, main @ c72ff06. Working queue is the eight pending todos + Phase 43.1 (charter ratified 08-08) + the Router batch remainder (F3 trust path, F4 live probe, F2/F5 docs; F1 landed 695f739, SSE parse tolerance deferred on a stated trigger). Phase 42 MERGED (933032d, 2026-07-29). Windows wave-2 parked until gpu-win evidence
+
+**CHARTER RATIFIED 2026-08-08.** `charter_review_pipeline_gaps` accepted,
+placed in v2.8 tail as Phase 43.1. 10 defect items + the
+silent-failure-signature process change (adopted in forge phase planning
+only, not promoted to ~/CLAUDE.md global per the charter's own route).
+Backlog mapping (charter item <-> todo #) recorded in the charter file.
+Five todos fall outside this charter (#49, #50, #55, #57, #61) and
+remain independent. Headers commit a3abdf3 landed on
+feat/backend-custom-headers (user --no-verify; 17 review rounds could not
+reach three-clean-cycles on this backend/diff, three real findings fixed,
+one refuted by WHATWG spec). Three subagent tasks (#49, #57, #59)
+failed with 503 upstream-inactive; worktrees and partial progress on
+disk, pending resume. **Superseded 2026-08-09:** #49 and #57 landed on
+main (6e5650f, 6b05a6e); only #59 is still open. See the 08-09 reconcile.
 
 ## Current Position
+
+**RECONCILE 2026-08-09 (authoritative main pointer; supersedes the F1 block
+below, whose scope narrative stays valid).** main @ c72ff06, pushed,
+`origin/main..main` empty. Eighteen commits landed since 695f739; the F1 block
+below described the tree as of the first of them.
+
+Full suite at c72ff06: 3135 passed, 3 skipped, 239.89s. The 3010/9 figure in
+the F1 block is the 695f739 measurement and is not a regression.
+
+What those eighteen closed, by todo number where one applies:
+
+- Verify/receipt chain: #46 (e29f9f4 count the last three consecutive cycles),
+  #51 (1cc45b0 annotate the diff in place so excerpt line numbers are
+  post-image), #52 + the infra-anchor defect (73d6c9e refuse a cycle whose pass
+  never ran, stop anchoring failures), 888333a one timestamp per round --
+  which is charter item 1, landed on main rather than on
+  defects/receipt-timestamp.
+- Gate wiring: 8f745dd makes the mutation gate measure something (the
+  daemon-thread + l2_runner pair from the charter's process-change section),
+  373710c stops a run that provably cannot converge.
+- Config/backends: a3abdf3 per-backend request headers, #57 (6b05a6e
+  gate.schema describes the fields the loader reads), a1b6943 retry log carries
+  the cause.
+- Tooling/DX: #48 (45e4376 pre-commit declared-class carve-out), #49 (6e5650f
+  stale-hook detection), 9bc8b3a handshake coroutine closed, 1fb3eea busy-lock
+  guidance, 7b6101a ledger location + claim.
+- Eval runner: #56 (8da83a5 signal the process group, not only the child),
+  c72ff06 keeps both ends of a child's stderr so an infra error written before
+  a flood of later output still reaches the classifier. bd9e268 is the
+  gitignore chore beside it.
+
+Todo-state correction: the block below the fold still says three subagent
+tasks (#49, #57, #59) failed with 503 and await resume. #49 and #57 have since
+LANDED on main (6e5650f, 6b05a6e). Only #59 (detect a reviewer ignoring the
+annotated line numbers) is still pending, alongside #50, #53, #54, #55, #58,
+#60, #61.
+
+Cleanup owed, all user-owned (`protect_git_worktree.sh` blocks the AI):
+
+- Worktree `.claude/worktrees/agent-a7835ea5f5c306467` @ bd9e268 still exists
+  and its branch is merged. It is also the cause of the pytest
+  `ImportPathMismatchError` on a bare `pytest` run, and very likely the
+  `mutation-flaky` advisory seen in two reviews -- the collection error makes
+  the baseline look unstable. Remove the worktree, then
+  `git branch -d worktree-agent-a7835ea5f5c306467`.
+- `defects/infra-anchor-poison` and `fix/receipt-followups` are both merged
+  into main and deletable.
+- `fix/rebase-msg` is 1 commit ahead of main -- inspect before deleting.
+
+Counter question left open, not guessed at: the frontmatter reads 11/17 phases
+= 64%, while the 07-25 block below says v2.8 is 16/18 (89%) and the 07-25
+reconcile says 16/17 (94%). Three different bases (all phases vs v2.8-only vs
+plans) are in play and none is labelled. A recount needs the Wrap-Up
+Protocol's basis decision first; the numbers are left as found rather than
+replaced by a fourth unlabelled one.
 
 **F1 LANDED 2026-07-30, main @ 695f739 (fast-forward from 933032d).** Two
 commits: a47d888 sends the stream flag explicitly on every api request, 695f739
@@ -41,12 +110,23 @@ mechanism than the triage recommended, and the difference decides what is left:
   (192.168.100.10:20128, onmi-gemini3.6): stream omitted returns a
   `data: {...,"object":"chat.completion.chunk"}` event stream; `stream: false`
   returns a `chat.completion` JSON object. Through forge's own llm_invoke the
-  call succeeds; re-injecting the old conditional at llm_invoke.py:152 reproduces
-  the exact F1 error and restoring it byte-identically passes again.
+  call succeeds; re-injecting the old conditional reproduces the exact F1 error
+  and restoring it byte-identically passes again. The injection site was
+  llm_invoke.py:152 when this was written and is llm_invoke.py:226 as of
+  2026-08-09 (`body["stream"] = bool(backend.stream)`, with the reason in the
+  comment three lines above it).
 - What is therefore NOT covered: a router that returns SSE despite being told
   not to. `_parse_response_body` still has no SSE tolerance and the three
   non-streaming parse sites are untouched. If such a router shows up, the
   triage's shared-path fix is still the right answer -- it is deferred, not done.
+  Re-grepped 2026-08-09: the function is at llm_invoke.py:1135 and its three
+  call sites are :1197 openai, :1295 anthropic, :1469 vertex. Do not reuse the
+  triage's 1023/1121/1295 -- 1295 appears in both lists and means a different
+  site now (vertex then, anthropic today), so a stale number here resolves to a
+  real call of the same function and reads as correct while pointing at the
+  wrong provider. `_read_sse` exists (:326) but is reached only when
+  `backend.stream` is true (guards at :1188, :1266, :1386), so it is the opt-in
+  streaming path, not tolerance on the non-streaming one.
 - F4's live probe was scoped as F1's acceptance test. That rationale now needs
   restating: the acceptance test already exists as the real-path check above,
   so F4 has to justify itself on its own value (faster debug loop), or shrink.
@@ -385,6 +465,14 @@ Open 38.x tail:
 
 ### Pending Todos
 
+- ~~**USER-DECIDE: review pipeline self-attestation gaps**~~ -- **RATIFIED**
+  2026-08-08, placed in the v2.8 tail as Phase 43.1; the "needs user slotting"
+  line below is closed. Charter item 1 (receipt timestamp) landed on main as
+  888333a and the mutation/l2_runner pair as 8f745dd, so the scope the charter
+  ratified is smaller than the charter text describes -- read the charter's
+  backlog-mapping table against the 08-09 reconcile before planning. Original
+  entry kept below for the item descriptions.
+
 - **USER-DECIDE: review pipeline self-attestation gaps** (2026-08-01) --
   charter_review_pipeline_gaps.md. 6 items found while main-session
   verifying fix-receipt-ts (accepted on direct evidence, not blocked on
@@ -423,10 +511,20 @@ SEC-01 resolved in Phase 17 (trust gate shipped).
 
 ## Session Continuity
 
-Last session: 2026-07-23 (execution session)
-Stopped at: Phase 47 merged (ca0d860, fix/invoke-error-visibility, fast-forward to main)
-Resume: Phase 41 (review focus, scope expanded with P4, pre-CP1); queue 41 -> 42
+Last session: 2026-08-09 (defect-batch session)
+Stopped at: main @ c72ff06, pushed. Eighteen commits since 695f739; the stderr
+both-ends fix is the last of them.
+Resume: no phase in flight. The open queue is the eight pending todos (#50,
+#53, #54, #55, #58, #59, #60, #61) plus Phase 43.1 (charter, ratified 08-08,
+scope now smaller -- see the 08-09 reconcile) and the Router batch remainder
+(F3 trust path, F4 live probe, F2/F5 docs; SSE parse tolerance deferred on a
+stated trigger). #54 carries [BLOCKS DEPLOYMENT].
+Cleanup first: the merged agent worktree is breaking bare `pytest` collection
+and is the likeliest source of the mutation-flaky advisory.
 F-3 binding: DISCHARGED
+
+Superseded entry (2026-07-23): Phase 47 merged (ca0d860); resume was Phase 41,
+queue 41 -> 42. Both phases have since merged.
 
 ---
 *State initialized: 2026-06-09 (v2.4 roadmap created)*

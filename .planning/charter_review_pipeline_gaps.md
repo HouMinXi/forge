@@ -1,4 +1,4 @@
-# Charter: review pipeline self-attestation gaps (PROPOSED, NOT YET RATIFIED)
+# Charter: review pipeline self-attestation gaps (RATIFIED 2026-08-08)
 
 Slot: unassigned. Does not overlap the v3.x sketch lane (45-50,
 learning-loop flywheel) or the ENV-GROUNDING lane (51-53b) -- checked by
@@ -9,6 +9,44 @@ or the run_verify coverage floor. Numbering (which lane, which slot) is
 a scheduling decision left to the user -- do not assign a phase number
 without that decision (STATE.md's own precedent: "scheduling sovereignty,
 not a map decision").
+
+**Ratified 2026-08-08 by user.** Scope (items 1-10), the process change
+(silent-failure signature at plan time, adopted in forge phase planning
+first per the charter's own promotion route -- not promoted to
+~/CLAUDE.md global until it catches something in a second project beyond
+forge and OmniRoute), and the review proportionality rules in the
+Process section below are all accepted. Phase number unassigned, pending
+user scheduling decision.
+
+## Backlog mapping (added at ratification)
+
+The charter's 10 items overlap the existing todo list (#45-#62) in
+places and stand alone in others. This table is the contract between the
+charter and the todos so a later session can see which item a todo serves
+without re-deriving it.
+
+| charter item | todo #        | status                |
+|--------------|---------------|-----------------------|
+| 1 (mutation receipt.py timestamp)  | (none -- on defects/receipt-timestamp branch) | branch exists, unmerged |
+| 2 (e2e_runner CLI wiring)          | (none) | not started |
+| 3 (mutation baseline timeout)      | (none) | not started |
+| 4 (source_hash cache-replay, investigative) | #53, #58 (partial -- these are symptoms; item 4 is the root cause) | #53 pending, #58 pending |
+| 5 (negative test for timestamp rejection) | (none) | not started |
+| 6 (check 6 coverage-floor calibration) | (none) | not started |
+| 7 (backend routing for security reviews) | #54, #60 | #54 pending [BLOCKS DEPLOYMENT], #60 pending (now unblocked) |
+| 8 (detach mutation run)            | #56 | in_progress |
+| 9 (excerpt line numbers from hunk header) | #59, #51 (done) | #59 pending, #51 completed |
+| 10 (checks 2-4 read every cycle)   | (none) | not started |
+
+Todos NOT in this charter (independent or separate chains):
+
+| todo # | subject                          | belongs to                  |
+|--------|----------------------------------|-----------------------------|
+| #49    | stale git hook detection         | independent (onboarding DX) |
+| #50    | claude -p fallthrough            | independent (verdict trust) |
+| #55    | canary/runtime annotated diff    | #51 extension               |
+| #57    | gate.schema.json field drift     | independent -> #61 chain    |
+| #61    | api-only fields null semantics   | #57 chain                   |
 
 Origin: 2026-07-31/08-01, main-session verification of the fix-receipt-ts
 delivery (branch defects/receipt-timestamp) and adjacent work on
