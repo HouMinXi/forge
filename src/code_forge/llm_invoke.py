@@ -308,6 +308,13 @@ def _apply_params(
     # stream on a non-streaming backend gets a "data: {...}" body that
     # _parse_response_body cannot parse, reported as a non-JSON response.
     body["stream"] = bool(backend.stream)
+    if body["stream"]:
+        # SSE carries no token counts unless they are asked for, and the
+        # miss is silent: usage stays zero, so the per-pass "N in / N out"
+        # line never prints (it is guarded on a nonzero count) and the
+        # cost totals accumulate nothing. Zero reads as "nothing to
+        # report" rather than "the numbers were never sent".
+        body["stream_options"] = {"include_usage": True}
 
     # Generic params passthrough. Asked again here, on the way out, for
     # the reason the headers path is: config load is the only thing that

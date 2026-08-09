@@ -4094,6 +4094,28 @@ class TestApplyParams:
                       allow_thinking=True, allow_effort=True)
         assert body["stream"] is False
 
+    def test_stream_asks_for_token_counts(self):
+        """SSE sends no usage unless the request asks for it.
+
+        Measured against llama.cpp 2026-08-09: the same prompt returns no
+        usage block without this field and prompt/completion counts with
+        it. Without it every streaming pass reports zero tokens, which
+        reads as "nothing to report" rather than "never sent".
+        """
+        body = {}
+        _apply_params(body, _cfg(stream=True),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert body["stream_options"] == {"include_usage": True}
+
+    def test_no_stream_options_when_not_streaming(self):
+        """A non-streaming request has a usage block already."""
+        body = {}
+        _apply_params(body, _cfg(stream=False),
+                      outcap_key="max_completion_tokens",
+                      allow_thinking=True, allow_effort=True)
+        assert "stream_options" not in body
+
     def test_params_passthrough(self):
         body = {}
         _apply_params(body, _cfg(params={"top_p": 0.9}),
@@ -4274,6 +4296,56 @@ class TestReadSSE:
             result = _read_sse(resp, backend_name="test")
             assert "error" in result
             mock_emit.assert_not_called()
+
+    def test_usage_chunk_is_kept(self):
+        """The counts arrive in a trailing chunk that carries no content.
+
+        This is the shape llama.cpp sends once the request asks for usage:
+        the last chunk has an empty choices list and the whole usage block.
+        Dropping it costs the run its only record of what the pass spent.
+        """
+        resp = _sse_lines(
+            {"choices": [{"delta": {"content": "hi"}}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 15,
+                                      "completion_tokens": 105,
+                                      "total_tokens": 120}},
+        )
+        result = _read_sse(resp)
+        assert result["choices"][0]["message"]["content"] == "hi"
+        assert result["usage"]["prompt_tokens"] == 15
+        assert result["usage"]["completion_tokens"] == 105
+
+    def test_streamed_usage_reaches_the_result(self):
+        """End to end: counts from the stream land on LLMResult.usage.
+
+        The assembly step keeping usage is worth nothing if the mapping to
+        input_tokens/output_tokens only runs on the non-streaming path.
+        """
+        backend = BackendConfig(
+            name="local", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K", stream=True,
+        )
+        payload = {
+            "model": "m",
+            "choices": [{"message": {"role": "assistant",
+                                     "content": '{"verdict": "PASS"}'},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 15, "completion_tokens": 105},
+        }
+        with patch.dict(os.environ, {"K": "sk-test"}):
+            with patch("code_forge.llm_invoke._read_sse",
+                       return_value=payload) as read_sse:
+                with patch(
+                    "code_forge.llm_invoke.urllib.request.urlopen"
+                ) as uo:
+                    uo.return_value.__enter__.return_value = MagicMock()
+                    result = llm_invoke("p", backend=backend)
+        assert read_sse.called, "streaming backend did not take the SSE path"
+        assert result.usage.input_tokens == 15, (
+            "streamed prompt_tokens never reached LLMResult"
+        )
+        assert result.usage.output_tokens == 105
 
     def test_stream_on_anthropic_raises(self):
         from code_forge.llm_invoke import _invoke_anthropic
