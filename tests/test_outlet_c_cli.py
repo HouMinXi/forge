@@ -120,7 +120,8 @@ class TestInlineCanaryEnvPassthrough:
             "subprocess.run",
             return_value=fake_diff_result,
         ):
-            _dispatch_inline_canary("inline", args, env, {}, gate_data, tmp_path)
+            result = _dispatch_inline_canary(
+                "inline", args, env, {}, gate_data, tmp_path)
 
             # resolve_backend was called with env.
             assert mock_resolve.called, (
@@ -136,6 +137,15 @@ class TestInlineCanaryEnvPassthrough:
             # is alive (backend=None would yield 0 calls).
             assert mock_llm.call_count >= 1, (
                 "llm_invoke was never called -- canary is silently dead"
+            )
+            # None is a legal return here -- it means "not my outlet, go
+            # run the subprocess path".  For inline that answer is wrong,
+            # and wrong quietly: the caller would fall through and review
+            # the diff a second time.
+            from code_forge.state import Verdict
+            assert isinstance(result, Verdict), (
+                "inline returned %s, so the caller falls through to the "
+                "subprocess path" % type(result).__name__
             )
 
     def test_sampling_raises_clierror(self, tmp_path):
