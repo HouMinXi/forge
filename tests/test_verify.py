@@ -716,6 +716,130 @@ class TestHardenedVerify:
         assert not r.passed
         assert "excerpt content mismatch at" in r.reason
 
+    def test_mismatch_names_failing_line_not_excerpt_start(self, tmp_path):
+        """STEP C: overlapping excerpts -- the reason leads with the bad line.
+
+        foo.py lines 1-3 are covered twice: an earlier excerpt (1-3) that is
+        correct, and a later one (2-3) whose line 3 is wrong. Reporting the
+        excerpt's start_line first sends the reader to line 2, which the
+        earlier excerpt already matched, while the actual defect sits at 3.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        overlapping = [
+            # Correct, and covers the line the later excerpt gets wrong.
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1\ny = 2\nz = 3"},
+            # Starts at 2, correct there, wrong at line 3.
+            {"file": "foo.py", "start_line": 2, "end_line": 3,
+             "content": "y = 2\nWRONG"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1\nb = 2\nc = 3"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1\nq = 2\nr = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=overlapping)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "excerpt content mismatch at foo.py:3" in r.reason, r.reason
+        # Line 2 is correct here; naming it as the location is the defect.
+        assert "foo.py:2" not in r.reason, r.reason
+        assert "excerpt covering 2-3" in r.reason, r.reason
+
+    def test_fabricated_excerpt_lines_refused(self, tmp_path):
+        """STEP C: lines outside the diff post-image are refused.
+
+        The post-image of foo.py has lines 1-3 and 6-8.  An excerpt that
+        spans lines 3-5 puts line 3 (real) next to lines 4-5 (fabricated).
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        fabricated = [
+            {"file": "foo.py", "start_line": 3, "end_line": 5,
+             "content": "z = 3\nFABRICATED 1\nFABRICATED 2"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1\nb = 2\nc = 3"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1\nq = 2\nr = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=fabricated)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "not in diff post-image" in r.reason, r.reason
+        assert "4, 5" in r.reason, r.reason
+
+    def test_excerpt_tail_lines_outside_post_image_refused(self, tmp_path):
+        """STEP C: excerpt tail lines outside post-image are refused.
+
+        foo.py post-image has lines 1-3 and 6-8.  An excerpt at 7-10
+        overlaps hunk 6-8 at lines 7-8, but lines 9-10 are fabricated.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        outside = [
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1\ny = 2\nz = 3"},
+            {"file": "foo.py", "start_line": 7, "end_line": 10,
+             "content": "b = 2\nc = 3\nFAB 1\nFAB 2"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1\nq = 2\nr = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=outside)
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "not in diff post-image" in r.reason, r.reason
+        assert "9, 10" in r.reason, r.reason
+
+    def test_exempt_file_excerpt_is_not_read_as_fabricated(self, tmp_path):
+        """An excerpt against a binary file must survive the fabricated check.
+
+        A binary, rename, or mode-change file produces no post-image, so
+        every line of an excerpt against one is absent from it. Treating
+        absence as fabrication fails every review that touches an image.
+        """
+        diff = _HARDEN_DIFF + (
+            "diff --git a/logo.png b/logo.png\n"
+            "index 1111111..2222222 100644\n"
+            "Binary files a/logo.png and b/logo.png differ\n"
+        )
+        rd = self._rd(tmp_path)
+        sha = _sha(diff)
+        with_exempt = _EXCERPTS_OK + [
+            {"file": "logo.png", "start_line": 1, "end_line": 1,
+             "content": "<binary blob>"},
+        ]
+        _write_hardened(rd, sha, excerpts=with_exempt)
+        r = run_verify(tmp_path, sha, parse_diff_files(diff), diff_text=diff)
+        assert r.passed, r.reason
+
+    def test_fabricated_line_list_is_capped(self, tmp_path):
+        """end_line comes from the reviewer, so the named list needs a bound.
+
+        An excerpt claiming 1-100000 would otherwise put every missing line
+        into the failure reason.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        huge = [
+            {"file": "foo.py", "start_line": 1, "end_line": 100000,
+             "content": "x = 1\ny = 2\nz = 3"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1\nb = 2\nc = 3"},
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1\nq = 2\nr = 3"},
+        ]
+        _write_hardened(rd, sha, excerpts=huge)
+        r = run_verify(tmp_path, sha, parse_diff_files(_HARDEN_DIFF),
+                       diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "not in diff post-image" in r.reason, r.reason
+        assert ", ... not in diff post-image" in r.reason, r.reason
+        # 100 named lines, not 99994.
+        assert r.reason.count(",") == 100, r.reason
+
     def test_low_coverage_fail(self, tmp_path):
         """Check 6: per-cycle coverage 3/9 = 33% < 60% -> fail."""
         rd = self._rd(tmp_path)
@@ -1045,6 +1169,7 @@ class TestOutOfHunkExcerpts:
                 receipt = _receipt(c, p, sha)
                 # The in-hunk excerpt content must match post-image lines 1-2
                 receipt["code_excerpts"][0]["content"] = "def f():\n    return 2"
+                receipt["code_excerpts"][0]["end_line"] = 2
                 # Read for orientation, outside every hunk, so it goes here
                 # rather than into code_excerpts.
                 receipt["context_quotes"] = [{

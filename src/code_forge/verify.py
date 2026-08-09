@@ -20,7 +20,11 @@ from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
-from .diff import _extract_post_image_lines, parse_diff_hunks
+from .diff import (
+    _extract_post_image_lines,
+    describe_fabricated_lines,
+    parse_diff_hunks,
+)
 from .errors import CorruptedReceiptError
 
 logger = logging.getLogger(__name__)
@@ -445,7 +449,10 @@ def run_verify(
                 if i < len(actual_lines):
                     excerpt_line_map[ln] = actual_lines[i]
 
-            file_lines = post_image.get(exc["file"], {})
+            file_lines = post_image.get(exc["file"])
+            # Exempt files (binary/rename/mode-change) have no post-image.
+            if file_lines is None:
+                continue
             overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
 
             if overlap_lines:
@@ -455,10 +462,27 @@ def run_verify(
                     if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
                         return VerifyResult(
                             False,
-                            "excerpt content mismatch at %s:%d (line %d)" % (
-                                exc["file"], exc["start_line"], ln),
+                            "excerpt content mismatch at %s:%d "
+                            "(excerpt covering %d-%d)" % (
+                                exc["file"], ln,
+                                exc["start_line"], exc["end_line"]),
                             5, cp,
                         )
+            # Refuse an excerpt covering lines the diff never produced.
+            # Matching content on the lines it does cover is not enough:
+            # the reviewer can pad a real excerpt with invented tail lines
+            # and the overlap comparison above would never look at them.
+            fabricated = describe_fabricated_lines(
+                file_lines, exc["start_line"], exc["end_line"])
+            if fabricated:
+                return VerifyResult(
+                    False,
+                    "excerpt %s:%d-%d references lines %s not in diff"
+                    " post-image" % (
+                        exc["file"], exc["start_line"], exc["end_line"],
+                        fabricated),
+                    5, cp,
+                )
         cp += 1
 
         # 6. excerpt-derived coverage >= 60%

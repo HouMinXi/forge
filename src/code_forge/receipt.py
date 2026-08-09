@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from pathlib import Path
 
+from .diff import (
+    _extract_post_image_lines,
+    describe_fabricated_lines,
+    parse_diff_hunks,
+)
 from .state import (
     StateFinding,
     PassOutcome,
@@ -81,6 +87,48 @@ def write_receipts(
     written = []
 
     assembled_excerpts = _build_excerpts(reviewer_excerpts)
+    # assembled_excerpts is built ONCE from the round's combined reviewer
+    # output and written into all three pass receipts identically.  This is
+    # NOT a cache-replay signal -- it reflects what the round read, not
+    # which pass read it.
+    # Pre-flight: verify refuses excerpts that cover lines the diff never
+    # produced, and it runs long after this point.  Saying so here gives
+    # the reviewer the same answer while the round can still act on it.
+    if diff_text and assembled_excerpts:
+        log = logging.getLogger(__name__)
+        try:
+            post_image = _extract_post_image_lines(diff_text)
+            _, exempt_files = parse_diff_hunks(diff_text)
+        except Exception as err:
+            log.debug("pre-flight: post-image extraction failed: %s", err)
+            post_image, exempt_files = {}, []
+        for excerpt in assembled_excerpts:
+            start = excerpt.get("start_line")
+            end = excerpt.get("end_line")
+            if not isinstance(start, int) or not isinstance(end, int):
+                continue
+            fname = excerpt.get("file", "")
+            # Binary, rename, and mode-change files have no post-image, so
+            # every line of an excerpt against one would read as invented.
+            # Verify exempts them; this has to agree or it cries wolf on
+            # every review that touches an image.
+            if fname in exempt_files:
+                continue
+            file_lines = post_image.get(fname)
+            if file_lines is None:
+                log.warning(
+                    "pre-flight: excerpt %s:%d-%d references file %s "
+                    "not in the diff; verify will refuse this",
+                    fname, start, end, fname,
+                )
+                continue
+            fabricated = describe_fabricated_lines(file_lines, start, end)
+            if fabricated:
+                log.warning(
+                    "pre-flight: excerpt %s:%d-%d references lines %s "
+                    "not in diff post-image; verify will refuse this",
+                    fname, start, end, fabricated,
+                )
     pass_outcomes = derive_pass_outcomes(l1_findings)
 
     for pass_idx, (pass_name, skill_name) in enumerate(

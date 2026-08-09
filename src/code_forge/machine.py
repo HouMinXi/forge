@@ -888,6 +888,11 @@ class StateMachine:
         self._state.cost_total_input += self._round_input_tokens
         self._state.cost_total_output += self._round_output_tokens
         self._state.cost_total_duration += self._round_duration
+        # cost_per_pass divides the round total equally across 3 passes, so
+        # all three entries come out identical -- tokens and duration alike.
+        # That sameness is arithmetic, not evidence of a cached replay, and
+        # nothing in here can tell the two apart.  The only real per-pass
+        # numbers are the [model:pass] in/out counts on stderr.
         for i in range(3):
             self._pass_counter += 1
             self._state.cost_per_pass.append({

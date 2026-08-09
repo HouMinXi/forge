@@ -231,3 +231,144 @@ class TestWriteReceipts:
             "the timestamp gate rejected a receipt set this very writer "
             "produced: %s" % result.reason
         )
+
+
+class TestPreflightWarning:
+    """Pre-flight excerpt check logs a warning for fabricated lines."""
+
+    def test_preflight_warns_on_fabricated_excerpt(self, tmp_path, caplog):
+        """An excerpt referencing lines outside the diff post-image triggers
+        a warning log before the receipt is written."""
+        import logging
+        diff_text = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " x = 1\n"
+            "+y = 2\n"
+            " z = 3\n"
+        )
+        diff_sha = "abc123"
+        excerpts = [
+            {"file": "foo.py", "start_line": 3, "end_line": 5,
+             "content": "z = 3\nFAB 1\nFAB 2"},
+        ]
+        with caplog.at_level(logging.WARNING, logger="code_forge.receipt"):
+            write_receipts(
+                receipts_dir=tmp_path / "r",
+                round_index=0,
+                l1_findings=[],
+                diff_sha256=diff_sha,
+                source_files=[],
+                cwd=tmp_path,
+                diff_text=diff_text,
+                reviewer_excerpts=excerpts,
+            )
+        assert any("pre-flight" in r.message and "4, 5" in r.message
+                    for r in caplog.records), caplog.text
+
+    def test_preflight_silent_on_valid_excerpt(self, tmp_path, caplog):
+        """Valid excerpts produce no pre-flight warning."""
+        import logging
+        diff_text = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " x = 1\n"
+            "+y = 2\n"
+            " z = 3\n"
+        )
+        diff_sha = "abc123"
+        excerpts = [
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1\ny = 2\nz = 3"},
+        ]
+        with caplog.at_level(logging.WARNING, logger="code_forge.receipt"):
+            write_receipts(
+                receipts_dir=tmp_path / "r",
+                round_index=0,
+                l1_findings=[],
+                diff_sha256=diff_sha,
+                source_files=[],
+                cwd=tmp_path,
+                diff_text=diff_text,
+                reviewer_excerpts=excerpts,
+            )
+        assert not any("pre-flight" in r.message for r in caplog.records), (
+            "unexpected pre-flight warning on valid excerpt"
+        )
+
+    def test_preflight_warns_when_file_absent_from_post_image(
+        self, tmp_path, caplog
+    ):
+        """An excerpt referencing a file not in the diff post-image triggers
+        a warning."""
+        import logging
+        diff_text = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " x = 1\n"
+            "+y = 2\n"
+            " z = 3\n"
+        )
+        diff_sha = "abc123"
+        excerpts = [
+            {"file": "bar.py", "start_line": 1, "end_line": 3,
+             "content": "p = 1\nq = 2\nr = 3"},
+        ]
+        with caplog.at_level(logging.WARNING, logger="code_forge.receipt"):
+            write_receipts(
+                receipts_dir=tmp_path / "r",
+                round_index=0,
+                l1_findings=[],
+                diff_sha256=diff_sha,
+                source_files=[],
+                cwd=tmp_path,
+                diff_text=diff_text,
+                reviewer_excerpts=excerpts,
+            )
+        assert any("not in the diff" in r.message
+                    for r in caplog.records), caplog.text
+
+    def test_preflight_silent_on_exempt_file(self, tmp_path, caplog):
+        """A binary file has no post-image, and verify exempts it.
+
+        Warning here would fire on every review that touches an image, a
+        rename, or a mode change -- and point at a refusal verify never
+        makes.
+        """
+        import logging
+        diff_text = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " x = 1\n"
+            "+y = 2\n"
+            " z = 3\n"
+            "diff --git a/logo.png b/logo.png\n"
+            "index 1111111..2222222 100644\n"
+            "Binary files a/logo.png and b/logo.png differ\n"
+        )
+        excerpts = [
+            {"file": "logo.png", "start_line": 1, "end_line": 1,
+             "content": "<binary blob>"},
+        ]
+        with caplog.at_level(logging.WARNING, logger="code_forge.receipt"):
+            write_receipts(
+                receipts_dir=tmp_path / "r",
+                round_index=0,
+                l1_findings=[],
+                diff_sha256="abc123",
+                source_files=[],
+                cwd=tmp_path,
+                diff_text=diff_text,
+                reviewer_excerpts=excerpts,
+            )
+        assert not any("pre-flight" in r.message for r in caplog.records), (
+            "pre-flight warned about an exempt file verify accepts"
+        )

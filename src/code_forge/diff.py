@@ -265,6 +265,48 @@ def _extract_post_image_lines(
     return post_image
 
 
+def describe_fabricated_lines(
+    file_lines: dict[int, str],
+    start_line: int,
+    end_line: int,
+    cap: int = 100,
+) -> str:
+    """Name the lines in start_line..end_line the post-image does not have.
+
+    ``file_lines`` is one file's entry from :func:`_extract_post_image_lines`.
+    A line the diff never produced cannot have been read from it, so an
+    excerpt covering one is fabricated.  Returns them comma-separated, or
+    "" when every line in the range is present.
+
+    Two shapes land here: a line falling in the gap between two hunks, and
+    a line past the last one the diff produced.  Both are simply absent
+    from ``file_lines``.  At most ``cap`` are named, with a trailing "..."
+    when more were left out -- ``end_line`` comes from the reviewer and is
+    bounded by nothing on disk.
+
+    Callers that also hold the diff's exempt files must skip those first:
+    binary, rename, and mode-change entries have no post-image at all, and
+    every line of an excerpt against one would read as fabricated here.
+    """
+    fabricated: list[int] = []
+    truncated = False
+
+    for ln in range(start_line, end_line + 1):
+        if ln in file_lines:
+            continue
+        if len(fabricated) >= cap:
+            truncated = True
+            break
+        fabricated.append(ln)
+
+    if not fabricated:
+        return ""
+    named = ", ".join(str(ln) for ln in fabricated)
+    if truncated:
+        named += ", ..."
+    return named
+
+
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
