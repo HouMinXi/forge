@@ -6,6 +6,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.coverage
+.coverage.*
 
 # Forge per-project runtime data (findings, review state)
 # Ignore everything inside .forge/ except committed config (tools.yaml, gate.yaml)
