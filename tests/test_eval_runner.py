@@ -1,7 +1,9 @@
 """Tests for eval pipeline replay runner (runner.py)."""
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +11,10 @@ import pytest
 
 from code_forge.eval.corpus import CorpusEntry
 from code_forge.eval.runner import (
+    _STDERR_TAIL_BYTES,
     DETERMINISTIC_TAGS,
+    _is_infra_failure,
+    _run_review,
     AxisHook,
     register_axis_hook,
     replay_entry,
@@ -468,3 +473,85 @@ class TestInfraFailureDetection:
         result = replay_entry(entry, diff_dir, "test-backend")
         assert result.actual_verdict == "SKIPPED"
         assert "infra" in result.skipped_reason.lower()
+
+
+class TestStderrCapture:
+    """What _run_review brings back from a child that wrote a lot."""
+
+    def test_infra_error_before_a_flood_of_output_still_comes_back(
+        self, tmp_path: Path,
+    ) -> None:
+        """A backend error is not always the last thing a review writes.
+
+        One that fails to connect, retries, logs its way through the rest
+        of the run and exits non-zero leaves that error at the start of a
+        long stderr. Reading only the end reports no infra failure and
+        the run is scored as findings.
+        """
+        script = tmp_path / "noisy.py"
+        script.write_text(
+            "import sys\n"
+            "sys.stderr.write('ConnectionRefusedError: [Errno 111]\\n')\n"
+            "sys.stderr.write('x' * (256 * 1024))\n"
+            "sys.exit(1)\n"
+        )
+        returncode, stderr = _run_review(
+            [sys.executable, str(script)], str(tmp_path), dict(os.environ), 60
+        )
+        assert returncode == 1
+        assert _is_infra_failure(stderr)
+
+    def test_a_cut_mid_character_does_not_leave_a_broken_one(
+        self, tmp_path: Path,
+    ) -> None:
+        """The cut is a byte offset; characters are not one byte wide.
+
+        Landing inside a multi-byte character puts a replacement
+        character exactly where a reader looks for the error.
+        """
+        import tempfile
+
+        from code_forge.eval.runner import _read_both_ends
+
+        def build(pad: int) -> bytes:
+            return b"a" * pad + "\u4e2d".encode() + b"z" * (200 * 1024)
+
+        # The cut depends on file size and the size depends on the pad,
+        # so solve for a pad that puts the cut one byte into the char.
+        pad = 32000
+        for _ in range(10):
+            size = len(build(pad))
+            reserve = len("\n...[%d bytes omitted]...\n" % size)
+            half = (_STDERR_TAIL_BYTES - reserve) // 2
+            if pad < half < pad + 3:
+                break
+            pad = half - 1
+        assert pad < half < pad + 3, "failed to straddle the cut"
+
+        with tempfile.TemporaryFile() as fh:
+            fh.write(build(pad))
+            out = _read_both_ends(fh)
+
+        assert "\ufffd" not in out
+
+    def test_a_short_stderr_comes_back_whole(self, tmp_path: Path) -> None:
+        """Below the budget there is no gap, so nothing claims one."""
+        script = tmp_path / "quiet.py"
+        script.write_text(
+            "import sys\nsys.stderr.write('just this\\n')\nsys.exit(1)\n"
+        )
+        _, stderr = _run_review(
+            [sys.executable, str(script)], str(tmp_path), dict(os.environ), 60
+        )
+        assert stderr == "just this\n"
+
+    def test_what_comes_back_stays_bounded(self, tmp_path: Path) -> None:
+        """The point of not reading it whole."""
+        script = tmp_path / "loud.py"
+        script.write_text(
+            "import sys\nsys.stderr.write('y' * (4 * 1024 * 1024))\n"
+        )
+        _, stderr = _run_review(
+            [sys.executable, str(script)], str(tmp_path), dict(os.environ), 60
+        )
+        assert len(stderr) <= _STDERR_TAIL_BYTES

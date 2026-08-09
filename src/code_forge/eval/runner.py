@@ -144,12 +144,17 @@ def _run_review(cmd: list[str], cwd: str, env: dict, timeout_s: int):
     means asking the review to do it, which is why the teardown opens
     with SIGTERM rather than SIGKILL.
 
-    Only the tail of stderr comes back. Reading all of it would undo the
-    first half of this: a file the child was free to grow without bound
-    becomes a Python string of the same size the moment it is read. The
-    tail is the useful end -- a traceback's exception line and a gateway's
-    error body both land there -- and the caller classifies the failure by
-    keyword and then keeps 200 characters of it.
+    Both ends of stderr come back, not the whole of it. Reading it whole
+    would undo the first half of this: a file the child was free to grow
+    without bound becomes a Python string of the same size the moment it
+    is read.
+
+    The tail alone is not enough, because the caller classifies the
+    failure by keyword and a connection error does not have to be the
+    last thing written. A review that fails to reach its backend, retries,
+    logs its way through the rest of the run and then exits non-zero puts
+    that error at the START of a long stderr, where a tail-only window
+    reports no infra failure and the run is scored as findings.
     """
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(
@@ -161,9 +166,74 @@ def _run_review(cmd: list[str], cwd: str, env: dict, timeout_s: int):
         except subprocess.TimeoutExpired:
             _kill_process_group(proc)
             raise
-        size = err.seek(0, os.SEEK_END)
-        err.seek(max(0, size - _STDERR_TAIL_BYTES))
-        return returncode, err.read().decode("utf-8", errors="replace")
+        return returncode, _read_both_ends(err)
+
+
+def _read_both_ends(fh) -> str:
+    """Head and tail of a file, bounded, with the gap marked.
+
+    A file smaller than the budget comes back whole and unmarked -- the
+    common case, and one where a marker would be a lie.
+
+    The marker is sized before the halves are, and its own length comes
+    out of the budget: it is part of what the caller receives, so a
+    budget that ignores it is not the bound it claims to be.
+
+    Each cut is walked back to a character boundary. Cutting a file at a
+    byte offset lands inside a multi-byte character often enough to
+    matter, and the replacement character that follows sits exactly where
+    a reader is looking for the error.
+    """
+    size = fh.seek(0, os.SEEK_END)
+    if size <= _STDERR_TAIL_BYTES:
+        fh.seek(0)
+        return fh.read().decode("utf-8", errors="replace")
+
+    # Sized against the whole file first: the omitted count that ends up
+    # in the marker is smaller, so its own text can only be shorter than
+    # what the budget was cut by, never longer.
+    reserve = len("\n...[%d bytes omitted]...\n" % size)
+    half = (_STDERR_TAIL_BYTES - reserve) // 2
+    fh.seek(0)
+    head_bytes = _trim_to_char_boundary(fh.read(half), at_start=False)
+    fh.seek(size - half)
+    tail_bytes = _trim_to_char_boundary(fh.read(half), at_start=True)
+    omitted = size - len(head_bytes) - len(tail_bytes)
+    return (head_bytes.decode("utf-8", errors="replace")
+            + "\n...[%d bytes omitted]...\n" % omitted
+            + tail_bytes.decode("utf-8", errors="replace"))
+
+
+def _trim_to_char_boundary(chunk: bytes, at_start: bool) -> bytes:
+    """Drop a partial UTF-8 character left at one end of a byte slice.
+
+    A continuation byte is 0b10xxxxxx and never starts a character, so
+    the boundary is the first byte at the cut end that is not one. At
+    most three are dropped -- the longest character UTF-8 encodes is four
+    bytes -- and a slice that is entirely continuation bytes is not
+    text this can repair, so it comes back untouched for the decoder to
+    replace.
+    """
+    limit = min(3, len(chunk))
+    if at_start:
+        for i in range(limit):
+            if chunk[i] & 0xC0 != 0x80:
+                return chunk[i:]
+        return chunk
+
+    # Walking back from the end: continuation bytes belong to a character
+    # whose lead byte is further back, so keep walking. The first
+    # non-continuation byte is that lead -- and a lead byte sitting at the
+    # cut end means its character is cut short, so it goes too. A plain
+    # ASCII byte is a whole character and stays.
+    for i in range(limit):
+        byte = chunk[len(chunk) - 1 - i]
+        if byte & 0xC0 == 0x80:
+            continue
+        if byte & 0x80 == 0:
+            return chunk[:len(chunk) - i]
+        return chunk[:len(chunk) - i - 1]
+    return chunk
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
