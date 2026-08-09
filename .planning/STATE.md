@@ -45,7 +45,9 @@ below, whose scope narrative stays valid).** main @ c72ff06, pushed,
 `origin/main..main` empty. Eighteen commits landed since 695f739; the F1 block
 below described the tree as of the first of them.
 
-Full suite at c72ff06: 3135 passed, 3 skipped, 239.89s. The 3010/9 figure in
+Full suite at c72ff06: 3135 passed, 3 skipped, 239.89s, run with
+`--ignore=.claude`. Collection after the worktree removal is 3175, a gap of 37
+that is NOT explained by that flag -- see Cleanup below. The 3010/9 figure in
 the F1 block is the 695f739 measurement and is not a regression.
 
 What those eighteen closed, by todo number where one applies:
@@ -74,34 +76,56 @@ Todo-state correction: the block below the fold still says three subagent
 tasks (#49, #57, #59) failed with 503 and await resume. #49 and #57 have since
 LANDED on main (6e5650f, 6b05a6e). Only #59 (detect a reviewer ignoring the
 annotated line numbers) is still pending, alongside #50, #53, #54, #55, #58,
-#60, #61. #53 and #59 are not untouched, though: their implementation is
-sitting uncommitted in the agent worktree described under Cleanup below.
+#60, #61. #53 and #59 are not untouched, though: their implementation exists
+on `fix/excerpt-fabrication-guard` @ e755156, rescued from an agent worktree
+and unreviewed -- see Cleanup below.
 
-Cleanup owed, all user-owned (`protect_git_worktree.sh` blocks the AI):
+Cleanup DONE 2026-08-09. The worktree
+`.claude/worktrees/agent-a7835ea5f5c306467` is removed and
+`worktree-agent-a7835ea5f5c306467`, `defects/infra-anchor-poison`,
+`fix/receipt-followups` are deleted (all three merged). How close that came to
+destroying work is the part worth keeping:
 
-- Worktree `.claude/worktrees/agent-a7835ea5f5c306467` @ bd9e268 still exists.
-  It is the cause of the pytest `ImportPathMismatchError` on a bare `pytest`
-  run, and very likely the `mutation-flaky` advisory seen in two reviews --
-  the collection error makes the baseline look unstable.
+`git worktree remove` refused with "contains modified or untracked files".
+Those files were six STAGED modifications carrying 315 lines -- an
+excerpt-fabrication preflight in `receipt.py` (+61), refusal logic in
+`verify.py` (+44), and six new tests including
+`test_fabricated_excerpt_lines_refused` and
+`test_mismatch_names_failing_line_not_excerpt_start`. That is the
+implementation of #53 and #59, and none of it was on main. The branch it sat
+on WAS merged, so `git branch -d` would have taken it without a word: `-d`
+asks whether a branch's commits exist elsewhere and cannot see a working tree
+at all. The worktree guard was the only thing in the way, and `--force`
+removes precisely that guard.
 
-  **Do not force-remove it.** Its branch is merged, which is what makes this
-  dangerous: `git worktree remove` refused with "contains modified or
-  untracked files", and the files in question are six STAGED modifications
-  carrying 315 lines of real work -- excerpt-fabrication preflight in
-  `receipt.py` (+61), refusal logic in `verify.py` (+44), and six new tests
-  including `test_fabricated_excerpt_lines_refused` and
-  `test_mismatch_names_failing_line_not_excerpt_start`. That is the
-  implementation of #53 and #59, neither of which is on main. Branch
-  merged-ness says nothing about an uncommitted working tree; only the
-  worktree guard stood between this and deletion.
+Rescued to `fix/excerpt-fabrication-guard` @ e755156, committed under
+`FORGE_COMMIT_CLASS=wip` -- which skips verify/review/chain/gate-check while
+still running the non-ASCII and AI-vocab text gates, so it is narrower than
+`--no-verify`, which runs none of them. Being unmerged, that branch now
+refuses `git branch -d` on its own. The work is logic-bearing and needs a full
+forge review before it lands anywhere real.
 
-  Sequence: commit it onto a branch of its own first, then remove the worktree,
-  then `git branch -d worktree-agent-a7835ea5f5c306467`. The work is
-  logic-bearing, so it needs a forge review before it lands anywhere real -- a
-  wip-class commit is only to stop it evaporating.
-- `defects/infra-anchor-poison` and `fix/receipt-followups` are both merged
-  into main and deletable.
-- `fix/rebase-msg` is 1 commit ahead of main -- inspect before deleting.
+Removing the worktree fixed collection: bare `pytest` used to die on
+`ImportPathMismatchError` raised by that worktree's own `tests/conftest.py`,
+and now collects 3175 tests in ~1.2s. That worktree is also the likeliest
+source of the `mutation-flaky` advisory in two reviews, since a collection
+error makes the mutation baseline look unstable.
+
+An unexplained gap sits beside that, recorded as open rather than as a
+diagnosis. This session's full runs reported 3135 passed + 3 skipped = 3138,
+using `--ignore=.claude` to get past the collection error. Current collection
+is 3175, a 37-test difference. The obvious explanation -- that the flag was
+excluding 37 tests -- is DISPROVED by direct measurement: with the worktree
+gone, `--ignore=.claude` and no flag both collect exactly 3175. There are no
+`addopts` and no marker-based deselection in `pyproject.toml`. The 3138 state
+cannot be reproduced now that the worktree is deleted, so the cause is
+undetermined; a conftest-identity collision altering collection of the main
+`tests/` tree is a candidate, not a finding. Treat 3175 as the first
+reproducible count and 3138 as an unexplained earlier reading, not as evidence
+that anything was skipped.
+
+Still owed: `fix/rebase-msg` is 1 commit ahead of main -- inspect before
+deleting.
 
 Counter question left open, not guessed at: the frontmatter reads 11/17 phases
 = 64%, while the 07-25 block below says v2.8 is 16/18 (89%) and the 07-25
