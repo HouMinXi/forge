@@ -94,6 +94,36 @@ def _sem_has_index(repo_root: Path) -> bool:
     validity (empty stdin always returns non-zero) -- not index
     presence.  The probe was dead on every platform.
     """
+    # .semcode.db was dropped in sem v0.21.0. Modern sem is fast enough
+    # on misses that we do not need to prevent invocation when unindexed.
+    # Older versions (0.10.x) would hang for 15s without an index.
+    try:
+        r = subprocess.run(
+            ["sem", "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2,
+            check=False,
+        )
+        if r.returncode == 0:
+            version_str = r.stdout.strip()
+            # expecting "sem 0.21.0" or similar
+            parts = version_str.split()
+            if len(parts) >= 2:
+                v = parts[1].lstrip('v')
+                major_minor = v.split('.')[:2]
+                if len(major_minor) >= 2:
+                    try:
+                        major, minor = int(major_minor[0]), int(major_minor[1].split('-')[0])
+                        if major > 0 or minor >= 21:
+                            return True
+                    except ValueError:
+                        pass
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.debug("sem version check failed: %s", e)
+
     return (repo_root / ".semcode.db").exists()
 
 
