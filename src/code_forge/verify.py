@@ -21,9 +21,126 @@ from itertools import combinations
 from pathlib import Path
 
 from .diff import _extract_post_image_lines, parse_diff_hunks
-from .errors import CorruptedReceiptError
+from .errors import CorruptedReceiptError, UnreadableGateError
 
 logger = logging.getLogger(__name__)
+
+# A cycle is three receipts because three skills run -- qodo, expert,
+# adversarial -- and that number is not a threshold to tune. It is the
+# count of distinct perspectives, so lowering it does not make review
+# cheaper, it makes a whole class of defect unlooked-for: drop
+# adversarial and nothing is hunting edge cases, drop expert and nothing
+# is reading architecture. The completeness check below enforces exactly
+# passes 1-3 per cycle for the same reason. Do not give this a knob.
+PASSES_PER_CYCLE = 3
+
+# How many consecutive clean cycles the gate demands, on the other hand,
+# is a real tradeoff and configurable through gate.yaml. Three is the
+# convergence claim: a cycle that finds something resets the counter, so
+# the gate watches the fix get re-reviewed. Fewer buys a shorter wait
+# with that evidence.
+DEFAULT_REQUIRED_CYCLES = 3
+
+
+def read_required_cycles(cwd: Path) -> int:
+    """How many consecutive clean cycles this repo's gate demands.
+
+    Reads verify.required_cycles from gate.yaml. Deliberately not
+    load_gate_config: that one raises unless the file carries a full
+    'test' section, and a repo that has not configured a test runner
+    should still be able to run verify.
+
+    No gate.yaml and no verify section both fall back to
+    DEFAULT_REQUIRED_CYCLES -- a repo that never stated a policy. A
+    verify section that is present but null (verify: / verify:~) or not
+    a mapping (verify: 5, verify: "5") raises: the key is there, and
+    reading a written-down invalid policy as "no policy" silently relaxes
+    what the author asked for.
+
+    A required_cycles key that is present but not a positive int raises
+    for the same reason: a repo that wrote required_cycles: "5" meant
+    five cycles and is being asked for three; the typo reads as weaker,
+    so defaulting there would silently relax what was written down.
+
+    A gate.yaml that exists but cannot be read raises too. That case is
+    different in kind: the file is a policy we cannot see, so the
+    fallback would be guessing at it, and the guess is lower than what a
+    repo demanding five cycles wrote down. Failing loudly there costs a
+    confusing error; defaulting costs a gate that quietly stopped
+    enforcing what it was configured to enforce.
+    """
+    path = cwd / ".code-forge" / "gate.yaml"
+    import yaml
+    # Trust model: gate.yaml is local repo config the user controls,
+    # not untrusted external input.  Unlike backend credentials (which
+    # _load_gate_backends guards behind is_trusted), verify.required_cycles
+    # is a gate-tightening knob -- the user chose it.  An untrusted repo
+    # cannot weaken the local gate below the CLI's --required-cycles,
+    # which is the caller's floor.
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        # The one absent case is a path that is not there at all. A
+        # dangling symlink is present and unreadable: the file the policy
+        # lives in is a broken link, which is not the same as the repo
+        # never having configured one, so it raises like any other
+        # unreadable gate instead of masquerading as "no policy".
+        if path.is_symlink():
+            raise UnreadableGateError(
+                "%s is a dangling symlink; cannot read the policy" % path
+            ) from None
+        if path.parent.is_symlink() and not path.parent.exists():
+            raise UnreadableGateError(
+                "%s is inside a dangling symlink; cannot read the policy"
+                % path
+            ) from None
+        return DEFAULT_REQUIRED_CYCLES
+    except Exception as exc:
+        # FileNotFoundError is handled above, so everything that lands
+        # here is a policy we cannot read. The import sits outside the
+        # try so a missing PyYAML surfaces as an environment error, not
+        # as this gate blaming the file.
+        raise UnreadableGateError(
+            "%s exists but could not be parsed: %s" % (path, exc)
+        ) from exc
+    if data is None or not isinstance(data, dict):
+        # An empty file, or a parse that yielded no mapping: no policy
+        # stated.
+        return DEFAULT_REQUIRED_CYCLES
+    if "verify" not in data:
+        return DEFAULT_REQUIRED_CYCLES
+    section = data["verify"]
+    if section is None:
+        raise UnreadableGateError(
+            "%s verify section is present but null; "
+            "a written-down policy must be a mapping or absent"
+            % path
+        )
+    if not isinstance(section, dict):
+        raise UnreadableGateError(
+            "%s verify section is %r; must be a mapping" % (path, section)
+        )
+    unknown = set(section) - {"required_cycles"}
+    if unknown:
+        raise UnreadableGateError(
+            "%s verify section has unknown key(s): %s; a misspelled knob "
+            "would read as absent and silently open the gate"
+            % (path, ", ".join(sorted(str(k) for k in unknown)))
+        )
+    if "required_cycles" not in section:
+        return DEFAULT_REQUIRED_CYCLES
+    n = section["required_cycles"]
+    if n is None:
+        raise UnreadableGateError(
+            "%s verify.required_cycles must be an integer; got null/blank"
+            % path
+        )
+    if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+        raise UnreadableGateError(
+            "%s verify.required_cycles is %r; must be a positive int"
+            % (path, n)
+        )
+    return n
 
 
 @dataclass
@@ -262,26 +379,75 @@ def run_verify(
     diff_files: dict[str, list[int]],
     hardened: bool = True,
     diff_text: str | None = None,
+    required_cycles: int | None = None,
 ) -> VerifyResult:
     cp = 0
+    # Validated here rather than at the CLI, because this is the public
+    # entry point and the CLI is only one of its callers. Zero is the
+    # sharp value: required becomes 0 so the count check passes
+    # vacuously, and cycles[-0:] is cycles[0:], so the slice widens to
+    # every cycle instead of narrowing to none -- an invalid argument
+    # that reads as the most permissive one. bool is an int subclass, so
+    # False arrives here as a zero that isinstance would wave through.
+    if required_cycles is not None and (
+            not isinstance(required_cycles, int)
+            or isinstance(required_cycles, bool)
+            or required_cycles < 1):
+        return VerifyResult(
+            False,
+            "required_cycles must be an integer >= 1, got %r"
+            % (required_cycles,),
+            1, cp)
+    # The argument raises the bar the repo set; it never lowers it. The
+    # floor belongs here and not in the CLI branch that used to hold it,
+    # because a caller who can pass required_cycles=1 to a repo whose
+    # gate.yaml demands 3 does not become trustworthy by arriving through
+    # a different door -- and every non-CLI caller (the MCP server, a
+    # test, an editor plugin) comes through one.
+    try:
+        floor = read_required_cycles(cwd)
+    except UnreadableGateError as exc:
+        return VerifyResult(False, "unreadable gate: %s" % exc, 1, cp)
+    required_cycles = (
+        floor if required_cycles is None else max(required_cycles, floor)
+    )
+    required = required_cycles * PASSES_PER_CYCLE
     try:
         receipts = _load_receipts(cwd / ".code-forge" / "receipts")
     except CorruptedReceiptError as exc:
         return VerifyResult(False, "corrupt receipt: %s" % exc, 1, cp)
 
-    # 1. completeness: last 3 consecutive cycles x passes 1-3, findings_count.
-    # Reviews that take >3 rounds write cycle 4+ receipts; the last 3
-    # consecutive clean cycles are what matters, regardless of their numbers.
-    if len(receipts) < 9:
-        msg = "missing receipts: %d/9" % len(receipts)
+    # 1. completeness: the last N consecutive cycles x passes 1-3, and
+    # findings_count. Reviews that take more rounds write later cycle
+    # numbers; the last N consecutive clean cycles are what matters,
+    # regardless of what those numbers are.
+    if len(receipts) < required:
+        msg = "missing receipts: %d/%d" % (len(receipts), required)
         if len(receipts) == 0:
             msg += (
                 " -- no review receipts found. Run 'code-forge review' "
                 "on your staged changes first"
             )
         return VerifyResult(False, msg, 1, cp)
+    # Only the attested window may vouch. Compute last_n first,
+    # then scope every structural check to those cycles.
+    cycles = sorted({r["cycle"] for r in receipts})
+    if len(cycles) < required_cycles:
+        return VerifyResult(
+            False, "fewer than %d cycles: %d" % (required_cycles, len(cycles)),
+            1, cp)
+    last_n = cycles[-required_cycles:]
+    for i in range(len(last_n) - 1):
+        if last_n[i + 1] - last_n[i] != 1:
+            return VerifyResult(
+                False,
+                "last %d cycles not consecutive: %s" % (required_cycles,
+                                                        last_n),
+                1, cp)
+    attested = [r for r in receipts if r["cycle"] in last_n]
+
     seen_keys = set()
-    for r in receipts:
+    for r in attested:
         key = (r["cycle"], r["pass"])
         if key in seen_keys:
             return VerifyResult(False, "duplicate receipt c%dp%d" % key, 1, cp)
@@ -289,28 +455,12 @@ def run_verify(
         if r["findings_count"] != len(r["findings"]):
             return VerifyResult(
                 False, "findings_count mismatch c%dp%d" % key, 1, cp)
-    # Verify the LAST 3 consecutive cycles, whatever their numbers.
-    cycles = sorted({r["cycle"] for r in receipts})
-    if len(cycles) < 3:
-        return VerifyResult(
-            False, "fewer than 3 cycles: %d" % len(cycles), 1, cp)
-    last_three = cycles[-3:]
-    for i in range(len(last_three) - 1):
-        if last_three[i + 1] - last_three[i] != 1:
-            return VerifyResult(
-                False,
-                "last 3 cycles not consecutive: %s" % last_three,
-                1, cp)
-    for c in last_three:
+    for c in last_n:
         passes = {p for (cyc, p) in seen_keys if cyc == c}
         # Exactly the three protocol passes, not merely at least them. Asking
         # only that 1-3 be present lets a cycle carry a pass 4 or 5, which the
         # protocol never produces -- three skills run per cycle -- so an extra
-        # one is a receipt nobody wrote for a pass nobody ran. The scope
-        # stops at last_three on purpose: older cycles are not what the gate
-        # attests, so a pass 4 there cannot launder itself into the verdict
-        # and rejecting it would only break historical receipt sets the gate
-        # should still read.
+        # one is a receipt nobody wrote for a pass nobody ran.
         missing = {1, 2, 3} - passes
         if missing:
             return VerifyResult(
@@ -325,13 +475,13 @@ def run_verify(
     cp += 1
 
     # 2. hash
-    for r in receipts:
+    for r in attested:
         if r.get("diff_sha256") != diff_sha256:
             return VerifyResult(False, "diff hash mismatch c%dp%d" % (r["cycle"], r["pass"]), 2, cp)
     cp += 1
 
     # 3. anchors: file must be in diff
-    for r in receipts:
+    for r in attested:
         for a in r["anchors"]:
             afile = a.get("file", "")
             if afile not in diff_files:
@@ -341,7 +491,7 @@ def run_verify(
     # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round
     #    share the round's write time, so tripping this means the set was
     #    stitched from separate runs or the clock went backwards.
-    ts = [r.get("timestamp", "") for r in receipts]
+    ts = [r.get("timestamp", "") for r in attested]
     if ts != sorted(ts):
         return VerifyResult(False, "timestamps not monotonic", 4, cp)
     cp += 1
@@ -356,9 +506,16 @@ def run_verify(
         if diff_text.strip() and not hunk_map and not exempt_files:
             return VerifyResult(False, "diff parse failed -- cannot verify excerpts", 5, cp)
 
+        # Only the attested window may vouch. Excerpts from a cycle
+        # outside last_n are evidence of what this repo used to demand,
+        # not of what this gate is attesting: with required_cycles=1 an
+        # older receipt would let STEP A/B/C pass on a diff the attested
+        # cycle never reviewed. The count and matrix checks already
+        # scope to last_n; the excerpt checks must too.
         all_excerpts = []
         for r in receipts:
-            all_excerpts.extend(r.get("code_excerpts", []))
+            if r.get("cycle") in last_n:
+                all_excerpts.extend(r.get("code_excerpts", []))
 
         # STEP 0: excerpt field validation (before any field access)
         for exc in all_excerpts:
@@ -465,7 +622,7 @@ def run_verify(
         # covered_line_ranges is self-reported, not measured -- audit-only. Ignored here.
         all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
         if all_diff:
-            for c in last_three:
+            for c in last_n:
                 cov = _cycle_excerpt_covered(receipts, c) & all_diff
                 if len(cov) / len(all_diff) < 0.6:
                     return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
@@ -485,7 +642,7 @@ def run_verify(
                 cycle_findings[cyc] = []
             cycle_findings[cyc].extend(r.get("findings", []))
 
-        for a, b in combinations(last_three, 2):
+        for a, b in combinations(last_n, 2):
             if not cycle_findings.get(a) and not cycle_findings.get(b):
                 continue
             cov_a = _cycle_excerpt_covered(receipts, a)
@@ -505,8 +662,12 @@ def run_verify(
         if hardened and diff_text is None:
             logger.info("hardened=True but diff_text=None, using legacy checks")
 
-        # 5. legacy excerpt verification (working tree)
-        for r in receipts:
+        # 5. legacy excerpt verification (working tree). Only the attested
+        #    window may vouch here too: an older cycle's excerpts are not
+        #    evidence for what this gate attests, same rule as the hardened
+        #    path, or a stale receipt could fail -- or pass -- the check for
+        #    a diff the attested cycle never reviewed.
+        for r in attested:
             for exc in r.get("code_excerpts", []):
                 fp = cwd / exc["file"]
                 if not fp.exists():
@@ -540,7 +701,7 @@ def run_verify(
         # 6. legacy coverage >= 60% (self-reported covered_line_ranges)
         all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
         if all_diff:
-            for c in last_three:
+            for c in last_n:
                 cov = _cycle_covered(receipts, c) & all_diff
                 if len(cov) / len(all_diff) < 0.6:
                     return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
@@ -555,7 +716,7 @@ def run_verify(
                 cycle_findings[cyc] = []
             cycle_findings[cyc].extend(r.get("findings", []))
 
-        for a, b in combinations(last_three, 2):
+        for a, b in combinations(last_n, 2):
             if not cycle_findings.get(a) and not cycle_findings.get(b):
                 continue
             j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))
@@ -582,7 +743,7 @@ def run_verify(
     # (189 completed, 12 error, 3 timeout), so the signal is real; the
     # tolerance is for the writers that are not receipt.py.
     for r in receipts:
-        if r.get("cycle") not in last_three:
+        if r.get("cycle") not in last_n:
             continue
         status = r.get("pass_status")
         if status is not None and status != "completed":

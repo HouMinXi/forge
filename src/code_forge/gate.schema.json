@@ -221,6 +221,19 @@
           "description": "Initial delay in seconds before first retry. Doubles each attempt."
         }
       }
+    },
+    "verify": {
+      "type": "object",
+      "description": "Commit-gate strictness. Omit to demand the default three consecutive clean review cycles.",
+      "additionalProperties": false,
+      "properties": {
+        "required_cycles": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3,
+          "description": "Consecutive clean review cycles a commit must show, at three receipts each. Three is the convergence claim: a cycle that finds something resets the counter, so the gate sees the fix re-reviewed. Lowering this trades that evidence for a shorter wait, and 1 drops it entirely. 1 also disables Jaccard rubber-stamp detection (check 7), since it compares excerpts across cycles and there is only one."
+        }
+      }
     }
   },
   "$defs": {
