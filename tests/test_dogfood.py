@@ -144,11 +144,12 @@ class TestDogfood:
         # receipt that doesn't exist in a scratch repo. The test exercises
         # the gate-check path specifically (the end-to-end mechanism that
         # blocks new test failures).
+        src_dir = Path(__file__).resolve().parent.parent / "src"
         hook_script = textwrap.dedent("""\
             #!/bin/sh
             # dogfood test hook: gate-check only
-            exec %s -m code_forge gate-check
-        """) % sys.executable
+            PYTHONPATH=%s exec %s -m code_forge gate-check
+        """) % (src_dir, sys.executable)
 
         # Step 6: write hook and make executable
         hook_path = tmp_path / ".git" / "hooks" / "pre-commit"

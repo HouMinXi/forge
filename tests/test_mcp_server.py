@@ -1480,6 +1480,124 @@ class TestForgeInitHomeGuard:
                 await forge_init()
 
 
+class TestRootUriToPath:
+    """A root URI becomes a path the platform actually recognizes.
+
+    The Windows branch is forced with monkeypatch rather than asserted
+    per-platform, because a test that only checks what this machine does
+    would leave the drive-letter strip unexecuted everywhere it matters:
+    the bug is Windows-only and the suite runs on Linux.
+    """
+
+    def _nt(self, monkeypatch):
+        """Force the Windows branch, and with it Windows Path semantics.
+
+        Path.__new__ reads os.name on every instantiation to pick its
+        flavour, so patching it gives a real WindowsPath on Linux. That
+        is what makes .drive meaningful below: the defect is precisely
+        that a drive letter stops being read as one.
+        """
+        monkeypatch.setattr(os, "name", "nt")
+
+    def _posix(self, monkeypatch):
+        monkeypatch.setattr(os, "name", "posix")
+
+    def test_windows_drive_uri_yields_a_real_drive(self, monkeypatch):
+        """The whole fix, stated as what Windows sees rather than a string.
+
+        Unfixed, this URI produced drive='' and parts ('\\\\', 'C:', ...)
+        -- the drive letter demoted to a directory name under the current
+        drive's root. That directory does not exist, and is_file() on it
+        raises WinError 267 instead of returning False.
+        """
+        from code_forge.mcp_server import _root_uri_to_path
+        self._nt(monkeypatch)
+        p = _root_uri_to_path("file:///C:/Users/x")
+        assert p.drive == "C:", (p.drive, p.parts)
+        assert p.parts == ("C:\\", "Users", "x"), p.parts
+
+    def test_windows_drive_uri_untouched_on_posix(self, monkeypatch):
+        """POSIX behavior is unchanged, including for a URI it will never see."""
+        from code_forge.mcp_server import _root_uri_to_path
+        self._posix(monkeypatch)
+        p = _root_uri_to_path("file:///C:/Users/x")
+        assert str(p) == "/C:/Users/x", str(p)
+
+    def test_posix_absolute_uri_survives_the_windows_branch(self, monkeypatch):
+        """A real POSIX path has no colon at index 2, so it is never stripped.
+
+        This is the false-positive side: were the guard looser, an
+        absolute path would silently lose its root and become relative.
+        """
+        from code_forge.mcp_server import _root_uri_to_path
+        self._nt(monkeypatch)
+        p = _root_uri_to_path("file:///src/app.py")
+        assert p.parts == ("\\", "src", "app.py"), p.parts
+
+    @pytest.mark.parametrize("uri", ["file:///", "file:///a", "file:///ab"])
+    def test_short_paths_do_not_index_out_of_range(self, monkeypatch, uri):
+        """The len guard is load-bearing: raw[2] on '/a' would raise."""
+        from code_forge.mcp_server import _root_uri_to_path
+        self._nt(monkeypatch)
+        _root_uri_to_path(uri)
+
+    def test_percent_escapes_still_decode_on_windows(self, monkeypatch):
+        from code_forge.mcp_server import _root_uri_to_path
+        self._nt(monkeypatch)
+        p = _root_uri_to_path("file:///C:/Users/a%20b")
+        assert p.parts[-1] == "a b", p.parts
+
+    def test_percent_escapes_still_decode_on_posix(self, monkeypatch):
+        from code_forge.mcp_server import _root_uri_to_path
+        self._posix(monkeypatch)
+        p = _root_uri_to_path("file:///src/a%20b.py")
+        assert p.parts[-1] == "a b.py", p.parts
+
+    def test_a_colon_deeper_in_the_path_is_not_a_drive(self, monkeypatch):
+        """Only position 1-2 counts; a colon further along means nothing."""
+        from code_forge.mcp_server import _root_uri_to_path
+        self._nt(monkeypatch)
+        p = _root_uri_to_path("file:///srv/we%3Aird/x")
+        assert p.drive == "", (p.drive, p.parts)
+        assert p.parts == ("\\", "srv", "we:ird", "x"), p.parts
+
+    @pytest.mark.asyncio
+    async def test_workspace_for_routes_through_the_converter(self, tmp_path):
+        """The converter has to be what _workspace_for calls.
+
+        Without this the fix can be reverted at the call site -- back to
+        the inline urlparse -- and every test above still passes, because
+        they all reach the function directly.
+        """
+        import code_forge.mcp_server as mod
+        from mcp.types import Root
+
+        project = tmp_path / "proj"
+        (project / ".code-forge").mkdir(parents=True)
+        (project / ".code-forge" / "gate.yaml").write_text("outlet: subprocess\n")
+
+        root = Root(uri="file://" + str(project), name="test")
+        result = MagicMock()
+        result.roots = [root]
+
+        ctx = MagicMock()
+        caps = MagicMock()
+        caps.roots = True
+        ctx.session.client_params.capabilities = caps
+        ctx.session.list_roots = AsyncMock(return_value=result)
+
+        mod._cached_session_ref = None
+        mod._cached_workspace = None
+
+        with patch.object(
+            mod, "_root_uri_to_path", wraps=mod._root_uri_to_path,
+        ) as spy:
+            ws = await mod._workspace_for(ctx)
+
+        spy.assert_called_once_with("file://" + str(project))
+        assert ws == project
+
+
 class TestWorkspaceFor:
     """T1 bug-inject tests for _workspace_for resolver."""
 
