@@ -544,15 +544,25 @@ def _build_parser() -> argparse.ArgumentParser:
         'verify',
         help='validate review receipts',
         description=(
-            'Validates review receipts: completeness (9 receipts, cycle/pass '
-            'matrix), diff hash, anchor reality, timestamp monotonicity, '
-            'excerpt verbatim match, coverage >=60%, Jaccard overlap <0.8. '
-            'Exit codes: 0=PASS, 1=FAIL.'
+            'Validates review receipts: completeness (3 receipts per cycle '
+            'over the required consecutive cycles, cycle/pass matrix), diff '
+            'hash, anchor reality, timestamp monotonicity, excerpt verbatim '
+            'match, coverage >=60%, Jaccard overlap <0.8. '
+            'Exit codes: 0=PASS, 1=FAIL, 2=CLI_ERROR.'
         ),
     )
     verify_parser.add_argument(
         "--quiet", action="store_true",
         help="exit code only, no output",
+    )
+    verify_parser.add_argument(
+        "--required-cycles", type=int, default=None, metavar="N",
+        help=(
+            "raise the number of consecutive clean cycles demanded. This "
+            "can only tighten the repo's own policy: a value below "
+            "verify.required_cycles in gate.yaml is raised to it. Omit to "
+            "use gate.yaml alone, which falls back to 3 when unset"
+        ),
     )
 
     # --- DETECT subcommand: toolchain auto-detection ---
@@ -1598,7 +1608,8 @@ def main() -> int:
 
     elif args.subcommand == 'verify':
         from .source import compute_source_hash
-        from .verify import run_verify, parse_diff_files
+        from .errors import UnreadableGateError
+        from .verify import run_verify, parse_diff_files, read_required_cycles
         import subprocess
         cwd = Path.cwd()
         try:
@@ -1620,7 +1631,34 @@ def main() -> int:
         diff_text = diff_result.stdout
         diff_sha = compute_source_hash(git_diff=diff_text)
         diff_f = parse_diff_files(diff_text)
-        vr = run_verify(cwd, diff_sha, diff_f, diff_text=diff_text)
+        req = getattr(args, "required_cycles", None)
+        if req is not None and req < 1:
+            print(
+                "code-forge: verify: --required-cycles must be at least 1",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+        # run_verify owns the floor; this read is only so a user who asked
+        # for less than the repo demands hears about it instead of
+        # watching a number they did not choose come back in the failure.
+        # Reading gate.yaml twice cannot weaken the gate, because the read
+        # that decides is the one inside run_verify. The warning is quiet
+        # when --quiet is set: that flag's contract is "exit code only, no
+        # output", so even a hint at why the gate tightened would break it.
+        if req is not None and not args.quiet:
+            try:
+                floor = read_required_cycles(cwd)
+            except UnreadableGateError:
+                floor = None
+            if floor is not None and req < floor:
+                print(
+                    "code-forge: verify: --required-cycles %d is below the "
+                    "required %d; using %d"
+                    % (req, floor, floor),
+                    file=sys.stderr,
+                )
+        vr = run_verify(cwd, diff_sha, diff_f, diff_text=diff_text,
+                        required_cycles=req)
         if not args.quiet:
             print("verify: %s -- %s" % ("PASS" if vr.passed else "FAIL", vr.reason))
         return EXIT_PASS if vr.passed else EXIT_FAIL

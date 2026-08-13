@@ -455,6 +455,24 @@ def test_invalid_inline_api_key() -> None:
     assert _backends_accept(data) is False
 
 
+def test_invalid_verify_unknown_key() -> None:
+    """A misspelled verify knob is a schema error, not silent fallback.
+
+    verify.required_cycles is read with .get() and falls back to the
+    default when the key is absent, so verify.required_cycle (no s)
+    would silently open a gate the author asked to tighten. The verify
+    section is additionalProperties:false so the typo surfaces as an
+    editor error instead.
+    """
+    with pytest.raises(jsonschema.ValidationError):
+        _schema_validate({"verify": {"required_cycle": 1}})
+
+
+def test_valid_verify_section() -> None:
+    """The spelled-right knob still passes -- false is not over-tightening."""
+    _schema_validate({"verify": {"required_cycles": 1}})
+
+
 def test_invalid_test_command_string() -> None:
     """test.command as a string (not a list) is rejected by loader."""
     yaml_text = "test:\n  command: 'pytest'\n  timeout_seconds: 60\n"

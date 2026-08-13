@@ -101,9 +101,7 @@ def _sem_has_index(repo_root: Path) -> bool:
         r = subprocess.run(
             ["sem", "--version"],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=True, encoding="utf-8", errors="replace",
             timeout=2,
             check=False,
         )
