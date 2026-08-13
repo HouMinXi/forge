@@ -632,7 +632,8 @@ _EXCERPTS_OK = [
 ]
 
 
-def _hreceipt(cycle, pass_n, diff_sha, excerpts=None, findings=None):
+def _hreceipt(cycle, pass_n, diff_sha, excerpts=None, findings=None,
+              covered_line_ranges=None):
     """Build one receipt for hardened-verify tests."""
     return {
         "cycle": cycle,
@@ -645,7 +646,8 @@ def _hreceipt(cycle, pass_n, diff_sha, excerpts=None, findings=None):
         "findings": findings if findings is not None else [],
         "anchors": [],
         "code_excerpts": excerpts if excerpts is not None else list(_EXCERPTS_OK),
-        "covered_line_ranges": [],
+        "covered_line_ranges": (covered_line_ranges
+                                if covered_line_ranges is not None else []),
     }
 
 
@@ -801,6 +803,77 @@ class TestHardenedVerify:
         assert not r.passed
         assert r.reason.startswith("corrupt receipt: ")
         assert "code_excerpts.start_line must be an integer" in r.reason
+
+    def test_excerpts_outside_the_attested_window_do_not_vouch(self, tmp_path):
+        """Check 5 must see only the attested window's excerpts.
+
+        With required_cycles=1 and an older full-coverage cycle still on
+        disk, only cycle 2 is being attested. If cycle 1's excerpts could
+        witness hunks, verify would PASS on a diff the attested cycle
+        never reviewed -- the window that did the reviewing is not the
+        window the gate is vouching for.
+        """
+        rd = self._rd(tmp_path)
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(
+            "verify:\n  required_cycles: 1\n")
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        partial = [
+            {"file": "foo.py", "start_line": 1, "end_line": 3,
+             "content": "x = 1\ny = 2\nz = 3"},
+            {"file": "foo.py", "start_line": 6, "end_line": 8,
+             "content": "a = 1\nb = 2\nc = 3"},
+        ]
+        for p in range(1, 4):
+            (rd / ("receipt-c1p%d.json" % p)).write_text(
+                json.dumps(_hreceipt(1, p, sha)))  # full coverage, older cycle
+        for p in range(1, 4):
+            (rd / ("receipt-c2p%d.json" % p)).write_text(
+                json.dumps(_hreceipt(2, p, sha, excerpts=partial)))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "unwitnessed hunk" in r.reason, r.reason
+
+    def test_legacy_excerpts_outside_the_attested_window_do_not_vouch(
+        self, tmp_path,
+    ):
+        """Legacy (working-tree) check 5 must scope to last_n too.
+
+        The hardened path only lets the attested window's excerpts
+        vouch; the legacy path had the same hole -- a stale cycle's
+        excerpts could fail or pass the check for a diff the attested
+        cycle never reviewed. Cycle 1's content deliberately does not
+        match the working tree: if it were checked, verify would fail
+        on it instead of attesting cycle 2.
+        """
+        rd = self._rd(tmp_path)
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(
+            "verify:\n  required_cycles: 1\n")
+        src = tmp_path / "src"
+        src.mkdir()
+        lines = ["line%d" % i for i in range(1, 11)]
+        (src / "f.py").write_text("\n".join(lines) + "\n")
+        sha = _sha("diff")
+        diff_files = {"src/f.py": list(range(1, 11))}
+        stale = [
+            {"file": "src/f.py", "start_line": 1, "end_line": 3,
+             "content": "WRONG\ncontent\nhere"},
+        ]
+        good = [
+            {"file": "src/f.py", "start_line": 1, "end_line": 6,
+             "content": "\n".join(lines[:6])},
+        ]
+        full_cover = [{"file": "src/f.py", "start": 1, "end": 10}]
+        for p in range(1, 4):
+            (rd / ("receipt-c1p%d.json" % p)).write_text(
+                json.dumps(_hreceipt(1, p, sha, excerpts=stale,
+                                     covered_line_ranges=full_cover)))
+        for p in range(1, 4):
+            (rd / ("receipt-c2p%d.json" % p)).write_text(
+                json.dumps(_hreceipt(2, p, sha, excerpts=good,
+                                     covered_line_ranges=full_cover)))
+        r = run_verify(tmp_path, sha, diff_files)
+        assert r.passed, r.reason
 
 
 class TestCrossRepoGuard:
@@ -1258,3 +1331,440 @@ class TestCoveredStringShape:
         receipt = {"covered_line_ranges": []}
         result = _covered(receipt)
         assert result == set()
+
+
+class TestRequiredCyclesKnob:
+    """How many consecutive clean cycles the gate demands is configurable.
+
+    Three passes per cycle is not: three skills run, so a cycle is three
+    receipts. What a repo can choose is how much convergence evidence a
+    commit has to wait for.
+    """
+
+    def _repo(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        return rd
+
+    def _gate(self, tmp_path, text):
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(text)
+
+    def test_one_cycle_fails_under_the_default(self, tmp_path):
+        """Without the knob nothing changes: one cycle is still three of nine."""
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed
+        assert "3/9" in r.reason, r.reason
+
+    def test_one_cycle_passes_when_the_gate_asks_for_one(self, tmp_path):
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1])
+        self._gate(tmp_path, "verify:\n  required_cycles: 1\n")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert r.passed, r.reason
+
+    def test_the_count_in_the_message_follows_the_knob(self, tmp_path):
+        """A gate demanding two cycles must not report a shortfall out of 9."""
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1])
+        self._gate(tmp_path, "verify:\n  required_cycles: 2\n")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed
+        assert "3/6" in r.reason, r.reason
+
+    def test_it_is_the_LAST_n_cycles_that_are_checked(self, tmp_path):
+        """With the knob at 1, an older broken cycle is not what the gate reads."""
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 7])
+        self._gate(tmp_path, "verify:\n  required_cycles: 1\n")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert r.passed, r.reason
+
+    def test_the_argument_cannot_go_under_the_file(self, tmp_path):
+        """A caller asking for less than the repo demands gets the repo's number.
+
+        run_verify is the public entry point and the CLI is only one of
+        its callers, so a floor enforced anywhere else is a floor with a
+        door beside it.
+        """
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1])
+        self._gate(tmp_path, "verify:\n  required_cycles: 3\n")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))},
+                       required_cycles=1)
+        assert not r.passed
+        assert "3/9" in r.reason, r.reason
+
+    def test_the_argument_can_go_over_the_file(self, tmp_path):
+        """Tightening is the direction that is allowed."""
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1])
+        self._gate(tmp_path, "verify:\n  required_cycles: 1\n")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))},
+                       required_cycles=2)
+        assert not r.passed
+        assert "3/6" in r.reason, r.reason
+
+    def test_the_argument_matching_the_file_changes_nothing(self, tmp_path):
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1])
+        self._gate(tmp_path, "verify:\n  required_cycles: 1\n")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))},
+                       required_cycles=1)
+        assert r.passed, r.reason
+
+    def test_no_gate_file_leaves_the_argument_free_to_tighten(self, tmp_path):
+        """With no policy on disk the default is the floor, not zero."""
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))},
+                       required_cycles=1)
+        assert not r.passed
+        assert "3/9" in r.reason, r.reason
+
+    def test_an_unreadable_gate_fails_instead_of_defaulting(self, tmp_path):
+        """A policy we cannot read is not a policy we get to guess at.
+
+        Defaulting here would take a repo that asked for five cycles and
+        quietly run it at three, and the run would report PASS.
+        """
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        _write_cycles(rd, sha, [1, 2, 3])
+        self._gate(tmp_path, "verify:\n  required_cycles: [unclosed\n")
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed
+        assert "unreadable gate" in r.reason, r.reason
+
+
+class TestReadRequiredCycles:
+    """An unstated knob falls back. An unreadable one raises.
+
+    The line between them is whether the file is there: a repo with no
+    gate.yaml never stated a policy, while a repo whose gate.yaml will
+    not parse stated one we cannot see.
+    """
+
+    def _write(self, tmp_path, text):
+        (tmp_path / ".code-forge").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(text)
+
+    def test_no_gate_file_at_all(self, tmp_path):
+        from code_forge.verify import read_required_cycles
+        assert read_required_cycles(tmp_path) == 3
+
+    def test_gate_without_a_verify_section(self, tmp_path):
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "backends:\n  x:\n    type: api\n")
+        assert read_required_cycles(tmp_path) == 3
+
+    def test_malformed_yaml_raises(self, tmp_path):
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  required_cycles: [unclosed\n")
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    def test_an_unreadable_file_raises(self, tmp_path):
+        """Permission, not syntax -- the same verdict for the same reason."""
+        import os
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  required_cycles: 5\n")
+        p = tmp_path / ".code-forge" / "gate.yaml"
+        p.chmod(0o000)
+        try:
+            if os.access(p, os.R_OK):
+                pytest.skip("running as a user that ignores file mode")
+            with pytest.raises(UnreadableGateError):
+                read_required_cycles(tmp_path)
+        finally:
+            p.chmod(0o644)
+
+    def test_an_unreadable_directory_raises(self, tmp_path):
+        """The only absent case is FileNotFoundError.
+
+        A .code-forge directory without search permission makes read_text
+        raise PermissionError: a policy we cannot see, not an absent one.
+        The old code called path.exists() first, so a stat() failure there
+        escaped as a raw OSError that run_verify could not catch.
+        """
+        import os
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        d = tmp_path / ".code-forge"
+        d.mkdir()
+        (d / "gate.yaml").write_text("verify:\n  required_cycles: 5\n")
+        d.chmod(0o000)
+        try:
+            if os.access(d, os.R_OK):
+                pytest.skip("running as a user that ignores file mode")
+            with pytest.raises(UnreadableGateError):
+                read_required_cycles(tmp_path)
+        finally:
+            d.chmod(0o755)
+
+    def test_a_gate_with_no_test_section_is_still_read(self, tmp_path):
+        """load_gate_config would raise here; this reader must not.
+
+        A repo that has not configured a test runner still gets to run
+        verify, so the knob cannot ride on that loader.
+        """
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  required_cycles: 2\n")
+        assert read_required_cycles(tmp_path) == 2
+
+    @pytest.mark.parametrize("value", ["0", "-1", "1.5", "true", '"2"'])
+    def test_values_that_are_not_a_positive_int_raise(self, tmp_path, value):
+        """Written-down intent must not silently read as weaker.
+
+        A repo that wrote required_cycles: 0 or required_cycles: "5"
+        meant something by it, and that something is not "verify at the
+        default". Falling back would quietly relax a gate the author asked
+        to tighten, so the value raises instead. true is the sharp one:
+        bool subclasses int, so True would read as 1.
+        """
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  required_cycles: %s\n" % value)
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    @pytest.mark.parametrize("value", ["null", "~"])
+    def test_a_null_value_raises(self, tmp_path, value):
+        """null is not "no value"; the schema says integer, and integer
+        does not include null. A repo that wrote required_cycles: has
+        declared a policy that is invalid, not absent -- failing closed
+        is the only answer consistent with the schema, because
+        defaulting would silently open a gate the author tried to close
+        but typed wrong.
+        """
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  required_cycles: %s\n" % value)
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    def test_a_null_verify_section_raises(self, tmp_path):
+        """verify: with no value is a present key with a null value.
+
+        The repo wrote the key down; reading null as "no policy"
+        silently relaxes what was intended.
+        """
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  # just a comment\n")
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    def test_an_empty_file_falls_back(self, tmp_path):
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "")
+        assert read_required_cycles(tmp_path) == 3
+
+    def test_a_non_mapping_top_level_falls_back(self, tmp_path):
+        """A list cannot express a policy; treat it as not configured."""
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "- a\n- b\n")
+        assert read_required_cycles(tmp_path) == 3
+
+    @pytest.mark.parametrize("value", ["5", '"5"', "- a\n- b"])
+    def test_a_non_mapping_verify_section_raises(self, tmp_path, value):
+        """verify: 5 wrote a policy down, and it is not "no policy".
+
+        The top level may fall back -- a list cannot express a verify
+        knob at all -- but a verify section that is present and not a
+        mapping is a written-down intent that reads as weaker. It raises,
+        exactly like a bad required_cycles does.
+        """
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify: %s\n" % value)
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    def test_missing_pyyaml_raises_import_error_not_gate_error(
+        self, tmp_path, monkeypatch,
+    ):
+        """A missing PyYAML is an environment error, not a broken gate.
+
+        The import sits outside the try so its ImportError propagates
+        instead of being relabelled "gate.yaml could not be read" -- a
+        message that would send someone hunting through the file for a
+        problem that is really a missing dependency.
+        """
+        import builtins
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  required_cycles: 1\n")
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "yaml":
+                raise ImportError("No module named 'yaml'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        with pytest.raises(ImportError):
+            read_required_cycles(tmp_path)
+
+    def test_a_dangling_symlink_raises(self, tmp_path):
+        """A broken link is present and unreadable, not absent.
+
+        is_symlink() does not follow the link, so it can tell a dangling
+        symlink apart from a path that was never there -- and the former
+        is a policy the repo pointed at but cannot read, which must fail
+        rather than fall back to the default.
+        """
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        d = tmp_path / ".code-forge"
+        d.mkdir()
+        (d / "gate.yaml").symlink_to(tmp_path / "no-such-policy.yaml")
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    def test_an_unknown_verify_key_raises(self, tmp_path):
+        """verify.required_cycle (no s) is a typo, and typos must close.
+
+        The schema rejects it with additionalProperties:false; the
+        runtime reader must enforce the same rule, or a misspelled knob
+        would read as absent and silently open a gate the author asked
+        to tighten.
+        """
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        self._write(tmp_path, "verify:\n  required_cycle: 1\n")
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    def test_a_non_string_verify_key_raises(self, tmp_path):
+        """YAML mapping keys can be non-strings; coerce before sorting.
+
+        A gate.yaml with verify: {1: 2} has a numeric key. The unknown-
+        key check sorts keys for its error message, and sorted() on a
+        mixed int/str set raises TypeError. Coercing to str first
+        produces a clean UnreadableGateError instead.
+        """
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        (tmp_path / ".code-forge").mkdir(parents=True)
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(
+            "verify:\n  1: 2\n  required_cycles: 5\n")
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+    def test_a_dangling_parent_symlink_raises(self, tmp_path):
+        """A dangling .code-forge symlink is present and unreadable.
+
+        path.is_symlink() only checks the final component. If .code-forge
+        itself is a broken symlink, gate.yaml reports as missing (not as
+        a dangling link), and the old code silently fell back to the
+        default 3 -- which is the exact fail-open the check was designed
+        to catch.
+        """
+        import shutil
+        from code_forge.errors import UnreadableGateError
+        from code_forge.verify import read_required_cycles
+        (tmp_path / "dead").mkdir()
+        (tmp_path / "dead" / "gate.yaml").write_text(
+            "verify:\n  required_cycles: 5\n")
+        (tmp_path / ".code-forge").symlink_to(tmp_path / "dead")
+        shutil.rmtree(tmp_path / "dead")
+        with pytest.raises(UnreadableGateError):
+            read_required_cycles(tmp_path)
+
+
+class TestThreePerspectivesSurviveTheKnob:
+    """Lowering required_cycles must not lower how many skills run.
+
+    The two numbers look alike and are not alike. Cycles are a threshold
+    -- how much convergence evidence to demand -- while three passes is
+    the count of distinct perspectives, so a cycle short one pass has a
+    whole class of defect nobody looked for. These pin that the knob
+    reaches one and not the other.
+    """
+
+    def _repo(self, tmp_path, required_cycles=1):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(
+            "verify:\n  required_cycles: %d\n" % required_cycles)
+        return rd
+
+    def _write_passes(self, rd, sha, cycle, passes):
+        for p in passes:
+            (rd / ("receipt-c%dp%d.json" % (cycle, p))).write_text(
+                json.dumps(_receipt(cycle, p, sha, 1, 50)))
+
+    def test_a_cycle_missing_a_perspective_still_fails(self, tmp_path):
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        self._write_passes(rd, sha, 1, [1, 2])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed
+        assert "2/3" in r.reason, r.reason
+
+    def test_a_fourth_pass_nobody_ran_still_fails(self, tmp_path):
+        """Four receipts clears the count; the pass matrix is what rejects it."""
+        rd = self._repo(tmp_path)
+        sha = _sha("diff")
+        self._write_passes(rd, sha, 1, [1, 2, 3, 4])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed
+        assert "outside the three review passes" in r.reason, r.reason
+
+    def test_the_required_count_is_cycles_times_three(self, tmp_path):
+        """Two cycles means six receipts, never four."""
+        rd = self._repo(tmp_path, required_cycles=2)
+        sha = _sha("diff")
+        self._write_passes(rd, sha, 1, [1, 2])
+        self._write_passes(rd, sha, 2, [1, 2])
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
+        assert not r.passed
+        assert "4/6" in r.reason, r.reason
+
+
+class TestRequiredCyclesIsValidatedAtTheEntryPoint:
+    """run_verify is public; the CLI is one caller, not the only door.
+
+    Zero is the value that matters. required becomes 0 so the count
+    check passes with nothing on disk, and cycles[-0:] is cycles[0:] --
+    Python has no negative zero -- so the slice widens to every cycle
+    instead of narrowing to none. An invalid argument that behaves as
+    the most permissive one is the shape a gate must not have.
+    """
+
+    def _empty_repo(self, tmp_path):
+        (tmp_path / ".code-forge" / "receipts").mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("x = 1\n")
+        return _sha("diff")
+
+    @pytest.mark.parametrize("value", [0, -1, False, True, 1.0, "3", None.__class__])
+    def test_a_bad_value_cannot_attest_an_empty_receipt_set(self, tmp_path, value):
+        """True is in here on purpose: bool is an int subclass, so a bare
+        isinstance check would let it through as 1."""
+        sha = self._empty_repo(tmp_path)
+        r = run_verify(tmp_path, sha, {"src/f.py": [1]}, required_cycles=value)
+        assert not r.passed, "%r attested an empty receipt dir" % (value,)
+        assert "required_cycles" in r.reason, r.reason
+
+    def test_none_still_means_read_the_gate(self, tmp_path):
+        """The default path must not be caught by the new guard."""
+        sha = self._empty_repo(tmp_path)
+        r = run_verify(tmp_path, sha, {"src/f.py": [1]}, required_cycles=None)
+        assert not r.passed
+        assert "missing receipts" in r.reason, r.reason

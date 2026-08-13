@@ -33,6 +33,16 @@ class CorruptedReceiptError(Exception):
     """
 
 
+class UnreadableGateError(Exception):
+    """Raised when gate.yaml exists but cannot be read or parsed.
+
+    A missing gate.yaml is not this: a repo that never configured one has
+    no policy to lose, and falls back to the default. But a file that is
+    present and unreadable is a policy we cannot see, and defaulting there
+    would silently relax a repo that asked for more.
+    """
+
+
 class CliError(Exception):
     """Raised on invalid CLI args or env values.
 
