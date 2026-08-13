@@ -175,6 +175,36 @@ _cached_session_ref = None   # session object, identity-compared
 _cached_workspace = None     # resolved Path
 
 
+def _root_uri_to_path(uri: str) -> Path:
+    """Convert an MCP root URI to a filesystem path.
+
+    POSIX file URIs parse cleanly: file:///src/app.py has a path of
+    /src/app.py and Path takes it as is. A Windows one does not.
+    file:///C:/Users/x parses to /C:/Users/x -- a slash in front of the
+    drive letter -- and Path keeps it, so the result is read as the
+    current drive's root followed by a directory literally named "C:".
+    No such directory exists, and asking Windows about it raises
+    WinError 267 rather than returning False, so the caller's is_file()
+    check does not merely miss, it throws.
+
+    The strip is guarded on os.name so POSIX stays byte-for-byte as it
+    was, and the shape it looks for -- slash, one letter, colon -- cannot
+    match a POSIX absolute path, which has no colon in that position.
+    """
+    from urllib.parse import unquote, urlparse
+
+    raw = unquote(urlparse(uri).path)
+    if (
+        os.name == "nt"
+        and len(raw) >= 3
+        and raw[0] == "/"
+        and raw[1].isalpha()
+        and raw[2] == ":"
+    ):
+        raw = raw[1:]
+    return Path(raw)
+
+
 async def _workspace_for(ctx, project_dir: str = "") -> Path:
     """Resolve workspace from MCP roots, env, or walk-up.
 
@@ -210,11 +240,9 @@ async def _workspace_for(ctx, project_dir: str = "") -> Path:
             return _resolve_workspace()
 
         if result.roots:
-            from urllib.parse import unquote, urlparse
-
             candidates = []
             for root in result.roots:
-                p = Path(unquote(urlparse(str(root.uri)).path))
+                p = _root_uri_to_path(str(root.uri))
                 if (p / ".code-forge" / "gate.yaml").is_file():
                     _cached_session_ref = ctx.session
                     _cached_workspace = p
