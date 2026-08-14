@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from . import __version__
 from .runner import capture_tool_version
@@ -201,6 +201,83 @@ def _merge_user_into(
         return cfgs
     cfgs.extend(extra)
     return cfgs
+
+
+def probe_backend_with_fallback(
+    backend: "BackendConfig",
+    cfgs: list["BackendConfig"],
+    project_names: set[str],
+    env: Mapping[str, str] | None = None,
+):
+    """Probe the resolved backend, falling back to project backends.
+
+    A user-level backend (from XDG config) that fails its probe must not
+    take the whole review down: the probe walks the project backends and
+    returns the first reachable one. When the resolved backend IS a
+    project backend, its failure stands -- falling back would silently
+    swap a deliberately configured backend for a sibling.
+    """
+    from .backend import probe_backend
+
+    result = probe_backend(backend, env=env)
+    if result.ok:
+        return result
+    if backend.name in project_names:
+        return result
+    for cfg in cfgs:
+        if cfg.name in project_names:
+            r2 = probe_backend(cfg, env=env)
+            if r2.ok:
+                log.warning(
+                    "User backend %r unreachable, "
+                    "falling back to project backend %r",
+                    backend.name, cfg.name,
+                )
+                return r2
+    return result
+
+
+def resolve_backend_with_fallback(
+    backend: "BackendConfig",
+    cfgs: list["BackendConfig"],
+    project_names: set[str],
+    env: Mapping[str, str] | None = None,
+) -> "BackendConfig":
+    """Resolve the backend the review must actually use.
+
+    probe_backend_with_fallback only reports reachability; the review
+    path needs the backend object itself, or the probe would pass on a
+    fallback while the review still called the unreachable user backend.
+    """
+    from .backend import probe_backend
+
+    if backend.name in project_names:
+        return backend
+    result = probe_backend(backend, env=env)
+    if result.ok:
+        return backend
+    for cfg in cfgs:
+        if cfg.name in project_names:
+            if probe_backend(cfg, env=env).ok:
+                log.warning(
+                    "User backend %r unreachable, "
+                    "falling back to project backend %r",
+                    backend.name, cfg.name,
+                )
+                return cfg
+    return backend
+
+
+def _project_backend_names(gate_data: dict[str, Any]) -> set[str]:
+    """The set of project backend names from gate.yaml's backends block.
+
+    A non-dict backends block names no backends: set() over a list would
+    treat list elements as names and misroute the fallback.
+    """
+    raw = gate_data.get("backends", {}) or {}
+    if isinstance(raw, dict):
+        return set(raw)
+    return set()
 
 
 def _load_canary_config(args: argparse.Namespace, gate_data: dict) -> dict | None:
@@ -2508,7 +2585,13 @@ def _run(args, env, cwd: Path) -> Verdict:
             configs=cfgs,
             cli_value=_backend_arg,
         )
-        return probe_backend(backend, env=env)
+        if _backend_arg is not None or env.get("FORGE_BACKEND"):
+            return probe_backend(backend, env=env)
+        return probe_backend_with_fallback(
+            backend, cfgs,
+            project_names=_project_backend_names(gate_data),
+            env=env,
+        )
 
     outlet = resolve_outlet(
         env,
@@ -2552,6 +2635,16 @@ def _run(args, env, cwd: Path) -> Verdict:
                 configs=cfgs,
                 cli_value=getattr(args, 'backend', None),
             )
+            # An explicitly selected backend (--backend or
+            # FORGE_BACKEND) is the user's deliberate choice; fallback
+            # only rescues the default resolution.
+            if getattr(args, 'backend', None) is None \
+                    and not env.get("FORGE_BACKEND"):
+                backend = resolve_backend_with_fallback(
+                    backend, cfgs,
+                    project_names=_project_backend_names(gate_data),
+                    env=env,
+                )
         except CliError:
             raise
 
@@ -2920,8 +3013,11 @@ def _run_hold_loop(
             ],
         )
         verdict = sm.run()
-        if verdict != Verdict.PENDING:
+        if True:
             # CLI-08 B6: load final state from disk for cost fields.
+            # PENDING is not exempt: a CI run that ended PENDING with
+            # UNCERTAIN findings still spent tokens, and the cost line
+            # is the only place they are reported.
             from .state import load_state as _load_cost_state
             final_state = _load_cost_state(state_path)
             if final_state is not None and final_state.cost_passes > 0:
@@ -2953,6 +3049,12 @@ def _run_hold_loop(
         loaded = load_state(state_path)
         if loaded is None:
             return Verdict.ESCALATED
+        if mode == Mode.CI:
+            # GATE-01b: CI never enters HOLD -- there is no human at
+            # the keyboard to answer it. Return PENDING so the caller
+            # sees the UNCERTAIN findings in state.json instead of
+            # hanging on a prompt that never gets input.
+            return Verdict.PENDING
         try:
             run_hold_ui(
                 loaded, state_path,
