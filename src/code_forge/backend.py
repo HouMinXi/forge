@@ -458,6 +458,12 @@ def _parse_cli_env(entry: dict, name: str) -> dict:
 
 def _parse_backend_entry(entry: dict) -> BackendConfig:
     """Parse and validate a single backend config entry."""
+    # One rule for null: it means absent. Strip null-valued keys so
+    # every field falls back to its own default or sentinel instead of
+    # storing None into a typed attribute (or crashing in max(0, None)
+    # before validation can name it). The caller's dict is left
+    # untouched -- a shallow copy keeps its other values shared.
+    entry = {k: v for k, v in entry.items() if v is not None}
     name = entry.get("name", "<unnamed>")
 
     # Reject inline secrets (never allow raw keys in config)
@@ -597,6 +603,10 @@ def load_backend_configs(
                 "backend %r: entry must be a dict, got %s"
                 % (name, type(entry).__name__)
             )
+        # Null handling and caller-dict isolation live in
+        # _parse_backend_entry; the name is injected on a copy so the
+        # caller's entry dict is never mutated.
+        entry = dict(entry)
         entry["name"] = name
         configs.append(_parse_backend_entry(entry))
     # multiple default: true entries raise CliError

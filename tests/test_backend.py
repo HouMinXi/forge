@@ -1464,6 +1464,32 @@ class TestParseProviderFields:
         cfg = _parse_backend_entry(self._api_entry(outcap_key=None))
         assert cfg.outcap_key == ""
 
+    @pytest.mark.parametrize("field", [
+        "temperature", "max_completion_tokens", "thinking_type",
+        "thinking_budget", "reasoning_effort", "stream",
+        "outcap_key", "output_ceiling", "params", "headers",
+    ])
+    def test_null_means_absent_for_every_api_only_field(self, field):
+        """One rule for null across _API_ONLY_FIELDS: a null-valued
+        field parses exactly like an absent one. Nothing stores None
+        into a typed attribute and nothing crashes."""
+        absent = _parse_backend_entry(self._api_entry())
+        nulled = _parse_backend_entry(self._api_entry(**{field: None}))
+        assert getattr(absent, field) == getattr(nulled, field), (
+            "field %s: absent=%r null=%r" % (
+                field, getattr(absent, field), getattr(nulled, field),
+            )
+        )
+
+    def test_null_cli_side_is_not_a_rejection(self):
+        """A null-valued api-only key on a cli backend parses as absent
+        instead of tripping the key-presence rejection."""
+        from code_forge.backend import load_backend_configs
+        entry = _cli_entry()
+        entry["headers"] = None
+        cfgs = load_backend_configs({"backends": {"c": entry}})
+        assert len(cfgs) == 1
+
     def test_outcap_key_invalid_rejected(self):
         with pytest.raises(CliError, match="outcap_key"):
             _parse_backend_entry(
