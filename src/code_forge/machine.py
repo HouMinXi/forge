@@ -553,7 +553,6 @@ class StateMachine:
         receipts_dir = self.cwd / ".code-forge" / "receipts"
         if not receipts_dir.is_dir():
             return 0
-        max_cycle_this_diff = 0
         max_cycle_any_diff = 0
         for f in receipts_dir.glob("receipt-*.json"):
             try:
@@ -574,15 +573,12 @@ class StateMachine:
                 # silently shift where the next round lands.
                 continue
             max_cycle_any_diff = max(max_cycle_any_diff, cycle)
-            if data.get("diff_sha256") == self.source_hash:
-                max_cycle_this_diff = max(max_cycle_this_diff, cycle)
-        # The next cycle must sit above everything on disk, not above
-        # this diff alone. Diff A writing cycles 1-2, diff B cycle 3,
-        # then A re-run: continuing A's own sequence would resume at 3
-        # and overwrite B's receipts, since filenames carry no diff
-        # identity. The maximum of both tracks is the only value whose
-        # next cycle collides with nothing.
-        return max(max_cycle_this_diff, max_cycle_any_diff)
+        # The next cycle must sit above everything on disk. Diff A
+        # writing cycles 1-2, diff B cycle 3, then A re-run: resuming
+        # A's own sequence would collide with B's receipts, since
+        # filenames carry no diff identity. The global maximum is the
+        # only value whose next cycle collides with nothing.
+        return max_cycle_any_diff
 
     def _run_local(self) -> Verdict:
         """LOCAL: loop until fixpoint / HOLD / MAX_TOTAL_ROUNDS.
