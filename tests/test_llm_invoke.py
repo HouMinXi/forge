@@ -2620,6 +2620,97 @@ class TestApiNoJsonDiagnostic:
         assert "weather is nice" in exc_info.value.stderr
 
 
+class TestBadJsonRetry:
+    """An HTTP-200 reply whose body is not valid JSON is retried.
+
+    A model embedding source code in a JSON string must double every
+    backslash, and on backslash-dense diffs it gets that wrong often
+    enough that the old parse-outside-the-loop shape voided every cycle
+    of the run. The parse now lives inside the retry loop, so a bad
+    sample draws a fresh attempt bounded by max_attempts like every
+    other retry; the embedded-JSON fallback still rescues a reply that
+    wraps intact JSON in prose without spending an attempt.
+
+    Bug-injection proof: move the parse back below the loop (or set
+    retryable=False on the no_json raise) -- the success test must FAIL
+    with the first bad reply raising straight out instead of retrying.
+    """
+
+    def test_bad_json_response_retries_and_succeeds(self):
+        from code_forge.llm_invoke import _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        calls = [0]
+
+        def _mock_openai_bad_then_good(*args, **kwargs):
+            calls[0] += 1
+            if calls[0] == 1:
+                # Unbalanced JSON: json.loads fails and the embedded-JSON
+                # fallback finds no balanced object either.
+                return '{"findings": [{"unterminated', {
+                    "prompt_tokens": 10, "completion_tokens": 5,
+                }
+            return '{"findings": [{"ok": true}]}', {
+                "prompt_tokens": 20, "completion_tokens": 8,
+            }
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_mock_openai_bad_then_good), \
+             patch("time.sleep"):
+            result = _invoke_api(
+                "prompt", backend, timeout_s=10, max_attempts=5,
+            )
+
+        assert result.content == {"findings": [{"ok": True}]}
+        assert calls[0] == 2, "bad JSON must draw a fresh attempt"
+        assert result.usage.output_tokens == 8
+
+    def test_persistent_bad_json_exhausts_attempts_with_kind(self):
+        from code_forge.llm_invoke import _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        calls = [0]
+
+        def _mock_openai_always_bad(*args, **kwargs):
+            calls[0] += 1
+            return '{"broken', {"prompt_tokens": 10, "completion_tokens": 5}
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_mock_openai_always_bad), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError) as exc_info:
+                _invoke_api(
+                    "prompt", backend, timeout_s=10, max_attempts=3,
+                )
+
+        assert calls[0] == 3, "every attempt parses its own reply"
+        assert exc_info.value.kind == "no_json"
+
+    def test_prose_wrapped_json_is_rescued_without_a_retry(self):
+        from code_forge.llm_invoke import _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        calls = [0]
+
+        def _mock_openai_prose_wrapped(*args, **kwargs):
+            calls[0] += 1
+            return 'Here you go: {"findings": []}', {
+                "prompt_tokens": 10, "completion_tokens": 5,
+            }
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_mock_openai_prose_wrapped):
+            result = _invoke_api(
+                "prompt", backend, timeout_s=10, max_attempts=5,
+            )
+
+        assert result.content == {"findings": []}
+        assert calls[0] == 1, "the fallback rescues without spending an attempt"
+
+
 class TestCliNoJsonDiagnostic:
     """CLI path must surface subprocess stdout in str(exc) when JSON parsing
     fails.
