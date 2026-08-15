@@ -1091,7 +1091,8 @@ class TestDurationWallClock:
         with patch("code_forge.llm_invoke.llm_invoke",
                     return_value=good_resp), \
              patch("code_forge.factories.time.monotonic",
-                    side_effect=clock):
+                    side_effect=clock), \
+             patch("code_forge.factories.progress.emit"):
             provider = build_l1_provider("real", resolved,
                                          backend=backend)
             _, _, _, duration = provider()
