@@ -28,6 +28,8 @@ REVIEW_JSON_CONTRACT = (
     '"description": "..."}], '
     '"code_excerpts": [{"file": "...", "start_line": N, '
     '"end_line": M, "content": "..."}]}\n'
+    "Reply with the JSON object only -- no markdown code fences, no "
+    "surrounding text. Raw JSON on the first line.\n"
     "Each diff hunk MUST have at least one code_excerpt.\n"
     "Even if findings is empty, provide code_excerpts "
     "covering each changed hunk.\n"
@@ -43,17 +45,57 @@ REVIEW_JSON_CONTRACT = (
 )
 
 
+def _strip_fence(raw: str) -> str:
+    """Strip a complete markdown fence envelope if one wraps the reply.
+
+    Models routed through some gateways wrap their JSON in ```json
+    fences. Only a full envelope is stripped -- an opening fence line
+    and a closing fence line with nothing outside -- because that is
+    the only shape that is unambiguously formatting rather than
+    content. Anything else is returned unchanged so validation still
+    fails closed on it.
+    """
+    if not isinstance(raw, str):
+        # Non-string input reaches json.loads as before, whose
+        # TypeError the caller converts to ValueError -- this helper
+        # must not raise an AttributeError ahead of that contract.
+        return raw
+    text = raw.strip()
+    if not text.startswith("```"):
+        return text
+    first_nl = text.find("\n")
+    if first_nl == -1:
+        # A lone fence line is not an envelope.
+        return text
+    opener = text[:first_nl].strip().lower()
+    if opener not in ("```", "```json"):
+        return text
+    if not text.endswith("```"):
+        return text
+    tail = text[:-3]
+    last_nl = tail.rfind("\n")
+    if last_nl == -1 or tail[last_nl + 1:].strip():
+        # The closing fence must sit on its own line; only indentation
+        # may precede it. A ``` that terminates a JSON string is
+        # content, not a fence -- cutting it would amputate the string
+        # and the parse fails anyway, but "the fence line" is only
+        # ever a fence when it is one.
+        return text
+    return text[first_nl + 1:-3].strip()
+
+
 def validate_reviewer_json(raw: str | dict) -> dict:
     """Validate reviewer output against the receipt schema.
 
     Accepts either a JSON string or an already-parsed dict.
-    Raises ValueError on any schema violation (fail-closed).
+    A markdown fence envelope around a JSON string is stripped before
+    parsing. Raises ValueError on any schema violation (fail-closed).
     """
     if isinstance(raw, dict):
         data = raw
     else:
         try:
-            data = json.loads(raw)
+            data = json.loads(_strip_fence(raw))
         except (json.JSONDecodeError, TypeError) as e:
             raise ValueError("not valid JSON: %s" % e) from e
 
