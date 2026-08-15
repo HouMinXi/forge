@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
-from code_forge.canary import Canary, evaluate_canary_coverage
+from code_forge.canary import evaluate_canary_coverage
 from code_forge.canary_gen import (
-    CanaryProvider,
     CanarySkip,
     dispatch_canary_review,
     generate_canaries,
@@ -298,8 +296,14 @@ def test_cite_reverify_on_real_only():
         import re
         findings = []
         # Match appended canary hunk headers: +++ b/<file> followed by @@ ...
+        # run_inline_canary always builds its prompt from the annotated
+        # diff, where every added line carries a "[+  1] " prefix. The
+        # prefix is mandatory here: accepting bare '+' lines would match
+        # hunks that can never be canary snippets and would drift from
+        # the format the implementation actually generates.
         for m in re.finditer(
-            r'\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@\n((?:\+.*\n?)+)',
+            r'\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@\n'
+            r'((?:\[\+\s*\d+\] \+.*\n?)+)',
             prompt,
         ):
             fname = m.group(1)
@@ -437,7 +441,6 @@ def test_threshold_ratio_zero_clamped():
 def test_no_tree_mutation():
     """run_inline_canary never opens files for writing (string-only manipulation)."""
     import builtins
-    import io
 
     real_open = builtins.open
     write_calls = []

@@ -231,3 +231,90 @@ class TestWriteReceipts:
             "the timestamp gate rejected a receipt set this very writer "
             "produced: %s" % result.reason
         )
+
+
+class TestBuildExcerpts:
+    """_build_excerpts: content normalization for reviewer-supplied
+    excerpts, and the fail-closed handling of shapes that must NOT be
+    laundered into a plausible-looking string."""
+
+    def test_list_of_lines_joined_into_string(self):
+        from code_forge.receipt import _build_excerpts
+
+        out = _build_excerpts([{
+            "file": "src/foo.py", "start_line": 1, "end_line": 2,
+            "content": ["line one", "line two"],
+        }])
+        assert out[0]["content"] == "line one\nline two"
+
+    def test_list_with_non_string_lines_left_unconverted(self):
+        """A list containing a non-string element stays a list so the
+        downstream schema check rejects it: joining with str(ln) would
+        launder None into the string "None", the same fail-open trap
+        the scalar case avoids."""
+        from code_forge.receipt import _build_excerpts
+
+        out = _build_excerpts([{
+            "file": "src/foo.py", "start_line": 1, "end_line": 1,
+            "content": [1, None, "x"],
+        }])
+        assert out[0]["content"] == [1, None, "x"]
+
+    def test_string_content_left_unchanged(self):
+        from code_forge.receipt import _build_excerpts
+
+        out = _build_excerpts([{
+            "file": "src/foo.py", "start_line": 1, "end_line": 1,
+            "content": "def foo():\n    pass",
+        }])
+        assert out[0]["content"] == "def foo():\n    pass"
+
+    def test_null_content_not_stringified_into_the_word_none(self):
+        """A None content must stay None so the downstream receipt
+        schema check rejects it -- str(None) == "None" is a valid
+        string and would pass the isinstance(content, str) gate as a
+        fabricated excerpt nobody wrote."""
+        from code_forge.receipt import _build_excerpts
+
+        out = _build_excerpts([{
+            "file": "src/foo.py", "start_line": 1, "end_line": 1,
+            "content": None,
+        }])
+        assert out[0]["content"] is None
+        assert out[0]["content"] != "None"
+
+    def test_null_content_receipt_fails_schema_validation(self):
+        """End-to-end: a null-content excerpt must make the receipt
+        schema check reject the receipt, not silently validate it."""
+        from code_forge.receipt import write_receipts
+        from code_forge.verify import CorruptedReceiptError, _load_receipts
+
+        diff_sha = hashlib.sha256(b"diff").hexdigest()
+        receipts_dir = Path("dummy")
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            receipts_dir = tdp / ".code-forge" / "receipts"
+            write_receipts(
+                receipts_dir=receipts_dir,
+                round_index=0,
+                l1_findings=[],
+                diff_sha256=diff_sha,
+                source_files=[Path("src/foo.py")],
+                cwd=tdp,
+                diff_files={"src/foo.py": [1]},
+                reviewer_excerpts=[{
+                    "file": "src/foo.py", "start_line": 1, "end_line": 1,
+                    "content": None,
+                }],
+            )
+            try:
+                _load_receipts(receipts_dir)
+                raised = False
+            except CorruptedReceiptError:
+                raised = True
+            assert raised, (
+                "a null-content excerpt must be rejected by receipt "
+                "schema validation, not silently accepted"
+            )

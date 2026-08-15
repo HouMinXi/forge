@@ -47,16 +47,32 @@ def _build_excerpts(
 ) -> list[dict]:
     if not reviewer_excerpts:
         return []
-    return [
-        {
+    out = []
+    for exc in reviewer_excerpts:
+        content = exc.get("content", "")
+        # Some reviewers emit content as a list of lines instead of a
+        # string; the schema downstream requires a string. Any other
+        # non-string shape (null, a dict, a number) is left as-is rather
+        # than stringified: str(None) is the string "None", which passes
+        # the downstream isinstance(content, str) schema check as if it
+        # were genuine reviewer output. Leaving it unconverted lets
+        # _validate_receipt_schema reject the receipt instead of
+        # laundering a missing excerpt into a fabricated one.
+        if isinstance(content, list):
+            # Only an all-string list is joined. A non-string element
+            # (None, a number) stays in the list, which the schema
+            # check rejects: str(ln) would launder None into "None",
+            # the same trap the scalar case above avoids.
+            if all(isinstance(ln, str) for ln in content):
+                content = "\n".join(content)
+        out.append({
             "file": exc.get("file", ""),
             "start_line": exc.get("start_line", 0),
             "end_line": exc.get("end_line", 0),
-            "content": exc.get("content", ""),
+            "content": content,
             "rationale": "reviewer-provided",
-        }
-        for exc in reviewer_excerpts
-    ]
+        })
+    return out
 
 
 def write_receipts(

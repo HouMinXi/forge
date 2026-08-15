@@ -853,7 +853,9 @@ def _make_subagent_spawn(
     and pass role -- no implementer session context.
 
     Args:
-        backend: BackendConfig for llm_invoke, or None for default.
+        backend: BackendConfig for llm_invoke. None is not accepted:
+            llm_invoke raises LLMInvokeError rather than falling
+            through to an implicit default backend.
         conv_digest: conventions digest string, may be "".
         post_image: post-image content of changed files, may be "".
         contract_spec: cross-repo contract reference, may be "".
@@ -3013,36 +3015,36 @@ def _run_hold_loop(
             ],
         )
         verdict = sm.run()
-        if True:
-            # CLI-08 B6: load final state from disk for cost fields.
-            # PENDING is not exempt: a CI run that ended PENDING with
-            # UNCERTAIN findings still spent tokens, and the cost line
-            # is the only place they are reported.
-            from .state import load_state as _load_cost_state
-            final_state = _load_cost_state(state_path)
-            if final_state is not None and final_state.cost_passes > 0:
-                total_tokens = (
-                    final_state.cost_total_input
-                    + final_state.cost_total_output
+        # CLI-08 B6: load final state from disk for cost fields.
+        # PENDING is not exempt: a CI run that ended PENDING with
+        # UNCERTAIN findings still spent tokens, and the cost line
+        # is the only place they are reported.
+        from .state import load_state as _load_cost_state
+        final_state = _load_cost_state(state_path)
+        if final_state is not None and final_state.cost_passes > 0:
+            total_tokens = (
+                final_state.cost_total_input
+                + final_state.cost_total_output
+            )
+            if total_tokens > 0:
+                token_str = "%d tokens (%d in + %d out)" % (
+                    total_tokens,
+                    final_state.cost_total_input,
+                    final_state.cost_total_output,
                 )
-                if total_tokens > 0:
-                    token_str = "%d tokens (%d in + %d out)" % (
-                        total_tokens,
-                        final_state.cost_total_input,
-                        final_state.cost_total_output,
-                    )
-                else:
-                    token_str = "tokens: N/A (cli backend)"
-                cost_line = "code-forge: cost: %s, %d passes, %.1fs" % (
-                    token_str,
-                    final_state.cost_passes,
-                    final_state.cost_total_duration,
+            else:
+                token_str = "tokens: N/A (cli backend)"
+            cost_line = "code-forge: cost: %s, %d passes, %.1fs" % (
+                token_str,
+                final_state.cost_passes,
+                final_state.cost_total_duration,
+            )
+            if wall_t0 is not None:
+                cost_line += " (wall: %.1fs)" % (
+                    time.monotonic() - wall_t0
                 )
-                if wall_t0 is not None:
-                    cost_line += " (wall: %.1fs)" % (
-                        time.monotonic() - wall_t0
-                    )
-                print(cost_line, file=sys.stderr)
+            print(cost_line, file=sys.stderr)
+        if verdict != Verdict.PENDING:
             return verdict
         # M3: load state from disk (public API, not sm._state).
         from .state import load_state

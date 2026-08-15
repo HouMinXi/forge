@@ -3,13 +3,10 @@
 """HOLD entry + UX + re-run cycle tests."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from code_forge.llm_invoke import Usage
-from code_forge.cli import MAX_HOLD_CYCLES, _run_hold_loop
+from code_forge.cli import _run_hold_loop
 from code_forge.hold import HoldAborted
 from code_forge.state import (
     Disposition,
@@ -183,6 +180,61 @@ class TestMaxHoldCyclesExhaustion:
         assert data["converged"] is False
 
 
+class TestPendingContinuesToHold:
+    """PENDING is not terminal: the cost line prints and the loop
+    continues into the HOLD branch instead of returning early."""
+
+    def test_pending_prints_cost_and_enters_hold(self, tmp_path, capsys):
+        state_path = tmp_path / ".code-forge" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        s = _make_state_with_finding()
+        s.cost_passes = 6
+        s.cost_total_input = 1000
+        s.cost_total_output = 500
+        s.cost_total_duration = 12.5
+        save_state(s, state_path)
+
+        def mock_sm_run(self_sm):
+            return Verdict.PENDING
+
+        hold_called = [False]
+
+        def hold_spy(loaded, path, input_fn=None, output_fn=None):
+            hold_called[0] = True
+
+        with patch(
+            "code_forge.cli.StateMachine.run", mock_sm_run
+        ), patch(
+            "code_forge.cli.run_hold_ui", side_effect=hold_spy,
+        ):
+            _run_hold_loop(
+                mode=Mode.LOCAL,
+                falsifier=MagicMock(),
+                autofixer=MagicMock(),
+                revert_fn=MagicMock(),
+                resolved=MagicMock(),
+                source_hash="abc123",
+                baseline_repr="git:HEAD",
+                cwd=tmp_path,
+                registry={},
+                max_rounds=20,
+                max_fix_attempts=3,
+                state_path=state_path,
+                l1_provider=lambda: ([], [], Usage(), 0.0),
+                input_fn=lambda p: "q",
+                output_fn=lambda m: None,
+            )
+
+        assert hold_called[0] is True, (
+            "a PENDING verdict must continue into the HOLD branch, "
+            "not return early"
+        )
+        captured = capsys.readouterr()
+        assert "code-forge: cost:" in captured.err, (
+            "a PENDING run spends tokens; its cost line must still print"
+        )
+
+
 class TestMaxHoldNoneStateFallback:
     """SC-49 R4-L3: load_state returns None at MAX -> fresh State."""
 
@@ -205,9 +257,12 @@ class TestMaxHoldNoneStateFallback:
 
         def patched_load(path):
             load_call_count[0] += 1
-            # First call (inside loop body) returns real state.
-            # Second call (at MAX exhaustion) returns None.
-            if load_call_count[0] == 1:
+            # One loop iteration loads state twice before the
+            # exhaustion path: once for the cost line (CLI-08 B6,
+            # which PENDING is no longer exempt from) and once for
+            # the HOLD branch. Only the exhaustion-path load
+            # simulates state.json deleted mid-run.
+            if load_call_count[0] <= 2:
                 return real_load(path)
             return None
 

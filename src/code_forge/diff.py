@@ -383,13 +383,9 @@ def annotated_diff_prompt_block(diff_text: str) -> str:
     a prompt that shows ``[+  82]`` without saying what 82 counts invites
     the reviewer to read it as part of the source line.
 
-    Used by the L1 review prompts. Two other prompts ask for line numbers
-    and still send a bare diff: the canary review in ``canary_gen`` and the
-    runtime lifecycle question in ``runtime``. Both are deliberate for now --
-    the canary is a gate, so changing what it sends changes what it
-    certifies, and the runtime question has a verbatim mirror in SKILL.md
-    guarded by a drift test. The daemon-state questions never cite lines, so
-    the column would be noise there.
+    Used by the L1 review prompts, the canary review in ``canary_gen``,
+    and the runtime lifecycle question in ``runtime``. The daemon-state
+    questions never cite lines, so the column would be noise there.
     """
     result = _annotation_walk(diff_text)
     if result is None:

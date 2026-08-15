@@ -315,13 +315,35 @@ class RuntimeRunner:
             List of AdvisoryFinding. Advisory only -- never blocks verdict.
         """
         self.infra_errors.clear()
+        # Every early exit below (empty diff, missing backend, LLM or
+        # parse failure) must not leave the previous run's surfaces
+        # behind: daemon_state reads last_surfaces for cross-axis data
+        # and would inject stale ones into its prompt. The successful
+        # path overwrites this with the parsed surfaces.
+        self.last_surfaces = []
         if not diff_text or not diff_text.strip():
             return []
+        if self._backend is None:
+            self.infra_errors.append(
+                "RUNTIME axis skipped: no backend configured"
+            )
+            return [_build_skipped_finding("no backend configured")]
 
         diff_hash = compute_source_hash(git_diff=diff_text)
 
+        # The receipt key hashes the raw diff (stable), while the prompt
+        # shows the annotated diff so the reviewer reads post-image line
+        # numbers instead of counting from hunk headers -- the same
+        # presentation the L1 passes get. The block carries its own
+        # "\nDiff:\n" prefix; the template already says "Diff:", so drop
+        # the block's prefix and keep its legend.
+        from .diff import annotated_diff_prompt_block
+
+        prompt_diff = annotated_diff_prompt_block(diff_text)
+        if prompt_diff.startswith("\nDiff:\n"):
+            prompt_diff = prompt_diff[len("\nDiff:\n"):]
         # str.replace NOT str.format: diffs can contain literal { or }.
-        prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", diff_text)
+        prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", prompt_diff)
         try:
             result = llm_invoke(prompt, backend=self._backend)
         except LLMInvokeError as exc:

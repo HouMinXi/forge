@@ -57,7 +57,7 @@ class TestLLMInvoke:
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
              patch("code_forge.llm_invoke._kill_tree"):
             with pytest.raises(LLMInvokeError, match="timed out") as exc:
-                llm_invoke("prompt", timeout_s=120)
+                llm_invoke("prompt", backend=DEFAULT_BACKEND, timeout_s=120)
             assert exc.value.is_timeout is True
 
     def test_raises_on_nonzero_exit(self):
@@ -65,26 +65,26 @@ class TestLLMInvoke:
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
             with pytest.raises(LLMInvokeError, match="exited with code 1"):
-                llm_invoke("prompt")
+                llm_invoke("prompt", backend=DEFAULT_BACKEND)
 
     def test_raises_on_invalid_json(self):
         mock_proc = _make_mock_proc(stdout="not json at all")
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
             with pytest.raises(LLMInvokeError, match="non-JSON"):
-                llm_invoke("prompt")
+                llm_invoke("prompt", backend=DEFAULT_BACKEND)
 
     def test_raises_when_claude_not_found(self):
         with patch("shutil.which", return_value=None):
             with pytest.raises(LLMInvokeError, match="not found"):
-                llm_invoke("prompt")
+                llm_invoke("prompt", backend=DEFAULT_BACKEND)
 
     def test_respects_forge_llm_model_env(self):
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch.dict(os.environ, {"FORGE_LLM_MODEL": "opus-4-7"}):
-            llm_invoke("prompt")
+            llm_invoke("prompt", backend=DEFAULT_BACKEND)
             cmd = mock_popen.call_args[0][0]
             assert "opus-4-7" in cmd
 
@@ -93,7 +93,7 @@ class TestLLMInvoke:
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            result = llm_invoke(large_prompt)
+            result = llm_invoke(large_prompt, backend=DEFAULT_BACKEND)
         assert result.content == {"ok": True}
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "sh"
@@ -103,7 +103,7 @@ class TestLLMInvoke:
         mock_proc = _make_mock_proc(stdout='```json\n{"key": "value"}\n```')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
-            result = llm_invoke("prompt")
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
         assert result.content == {"key": "value"}
 
     def test_raises_on_oserror(self):
@@ -112,17 +112,25 @@ class TestLLMInvoke:
             side_effect=OSError("No such file or directory"),
         ):
             with pytest.raises(LLMInvokeError, match="subprocess failed"):
-                llm_invoke("prompt")
+                llm_invoke("prompt", backend=DEFAULT_BACKEND)
 
-    def test_cli_dispatch_default_backend(self):
-        """backend=None uses DEFAULT_BACKEND cli path."""
+    def test_cli_dispatch_explicit_default_backend(self):
+        """An explicitly passed DEFAULT_BACKEND still dispatches to the
+        cli path -- distinct from backend=None, which now raises rather
+        than falling through to this same backend implicitly."""
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            result = llm_invoke("prompt")
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
         assert result.content == {"ok": True}
         cmd = mock_popen.call_args[0][0]
         assert "claude" in cmd[0]
+
+    def test_backend_none_raises_instead_of_implicit_fallthrough(self):
+        """backend=None must fail closed, not silently spawn the old
+        implicit claude -p subprocess via DEFAULT_BACKEND."""
+        with pytest.raises(LLMInvokeError, match="no backend"):
+            llm_invoke("prompt", backend=None)
 
     def test_cli_dispatch_custom_command(self):
         """cli backend with custom command uses specified binary."""
@@ -155,7 +163,7 @@ class TestLLMInvoke:
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            llm_invoke("prompt")
+            llm_invoke("prompt", backend=DEFAULT_BACKEND)
         kwargs = mock_popen.call_args[1]
         assert kwargs.get("start_new_session") is True
 
@@ -164,7 +172,7 @@ class TestLLMInvoke:
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
-            result = llm_invoke("prompt")
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
         assert result.usage.input_tokens == 0
         assert result.usage.output_tokens == 0
         assert result.content == {"ok": True}
@@ -181,7 +189,7 @@ class TestLLMInvoke:
         mock_proc = _make_mock_proc(stdout=envelope)
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
-            result = llm_invoke("prompt")
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
         assert result.usage.input_tokens == 350
         assert result.usage.output_tokens == 120
         assert result.content == {"findings": []}
@@ -198,7 +206,7 @@ class TestLLMInvoke:
         mock_proc = _make_mock_proc(stdout=json.dumps(events))
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
-            result = llm_invoke("prompt")
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
 
         assert result.content == {"surfaces": ["nftables"], "findings": []}
         assert result.usage.input_tokens == 100
@@ -210,7 +218,7 @@ class TestLLMInvoke:
         mock_proc = _make_mock_proc(stdout=json.dumps(events))
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
-            result = llm_invoke("prompt")
+            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
 
         assert isinstance(result.content, list)
 
@@ -1209,7 +1217,7 @@ class TestSubprocessCleanup:
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
              patch("code_forge.llm_invoke._kill_tree", side_effect=mock_kill_tree):
             with pytest.raises(LLMInvokeError, match="timed out") as exc:
-                llm_invoke("test", timeout_s=1)
+                llm_invoke("test", backend=DEFAULT_BACKEND, timeout_s=1)
             assert exc.value.is_timeout is True
 
         assert len(kill_called) == 1, "_kill_tree must be called exactly once on timeout"
@@ -1221,7 +1229,7 @@ class TestSubprocessCleanup:
         mock_proc = _make_mock_proc(stdout='{"ok": true}')
 
         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
-            llm_invoke("prompt")
+            llm_invoke("prompt", backend=DEFAULT_BACKEND)
 
         assert m._active_proc is None
 
@@ -1434,6 +1442,107 @@ class TestTruncationDetection:
         with patch("urllib.request.urlopen", return_value=resp):
             content, usage = _invoke_openai("p", backend, api_key="k", timeout_s=10)
             assert "findings" in content
+
+    def test_openai_length_below_ceiling_names_the_backend_clamp(self):
+        """When output lands below the configured ceiling, the backend
+        clamped on its own; the message must say so instead of telling
+        the user to raise output_ceiling (which would change nothing)."""
+        from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K", max_tokens=32768,
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"find'}, "finish_reason": "length"}],
+            # 16384 = the SenseNova-family hard clamp, well below 32768.
+            "usage": {"prompt_tokens": 800, "completion_tokens": 16384},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+            assert "clamped below" in str(exc_info.value)
+            assert "will not help" in str(exc_info.value)
+            # Callers branch on the structured fields, not the message.
+            assert exc_info.value.kind == "truncated"
+            assert exc_info.value.retryable is False
+
+    def test_openai_length_at_ceiling_uses_the_generic_path(self):
+        """out_tok == the configured cap is the ordinary full-capacity
+        truncation: the message tells the user to raise output_ceiling,
+        not that the backend clamped on its own."""
+        from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K", max_tokens=32768,
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"find'}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 800, "completion_tokens": 32768},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+            assert "clamped below" not in str(exc_info.value)
+            assert "output capacity" in str(exc_info.value)
+            assert exc_info.value.kind == "truncated"
+
+    def test_openai_length_with_zero_output_uses_the_generic_path(self):
+        """out_tok == 0 is the empty-content case, not a clamp."""
+        from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K", max_tokens=32768,
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"find'}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 800, "completion_tokens": 0},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+            assert "clamped below" not in str(exc_info.value)
+            assert "output capacity" in str(exc_info.value)
+
+    def test_openai_length_without_a_usable_cap_names_the_missing_knob(self):
+        """max_tokens: 0 is the config's absence marker, not a capacity:
+        the message must say no usable cap is set instead of reporting
+        'capacity (0 tokens)' and telling the user to raise it."""
+        from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K", max_tokens=0,
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"find'}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 800, "completion_tokens": 1200},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+            assert "no usable output cap" in str(exc_info.value)
+            assert "output capacity" not in str(exc_info.value)
+            assert "Set max_tokens" in str(exc_info.value)
+            assert exc_info.value.kind == "truncated"
 
 
     def test_vertex_stop_reason_max_tokens(self):
