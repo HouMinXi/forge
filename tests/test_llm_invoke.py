@@ -1,5 +1,6 @@
 import http.client
 import json
+import re
 import os
 import ssl
 import subprocess
@@ -10,7 +11,13 @@ from unittest.mock import patch, MagicMock, Mock
 
 import pytest
 
-from code_forge.llm_invoke import llm_invoke, LLMInvokeError, LLMResult, Usage
+from code_forge.llm_invoke import (
+    llm_invoke,
+    LLMInvokeError,
+    LLMResult,
+    Usage,
+    _read_with_deadline,
+)
 from code_forge.backend import BackendConfig, DEFAULT_BACKEND
 
 
@@ -31,6 +38,48 @@ class TestLLMInvokeError:
     def test_is_timeout_can_be_set_true(self):
         err = LLMInvokeError("test", is_timeout=True)
         assert err.is_timeout is True
+
+
+class TestReadWithDeadlineIdle:
+    """The idle bound catches a connection that stops producing bytes,
+    which the caller's slow-pass timeout cannot: a non-streaming backend
+    generates the whole answer before the first body byte, so a slow
+    pass and a hung connection look identical to the socket until one
+    of them is much too late."""
+
+    @staticmethod
+    def _fake_response(read_side_effect=None):
+        resp = MagicMock()
+        if read_side_effect is not None:
+            resp.read.side_effect = read_side_effect
+        return resp
+
+    def test_installs_idle_timeout_on_socket(self):
+        resp = self._fake_response()
+        _read_with_deadline(resp, time.monotonic() + 30, "test-backend")
+        # The bound is clamped to the remaining deadline, so a path
+        # whose total budget is already tighter than the idle window
+        # keeps the deadline as the guard.
+        resp.fp.raw._sock.settimeout.assert_called_once()
+        installed = resp.fp.raw._sock.settimeout.call_args[0][0]
+        assert 29.9 <= installed <= 30.0
+
+    def test_silent_socket_raises_llm_invoke_error(self):
+        resp = self._fake_response(read_side_effect=TimeoutError("timed out"))
+        with pytest.raises(LLMInvokeError, match="went silent") as exc:
+            _read_with_deadline(resp, time.monotonic() + 30, "test-backend")
+        assert exc.value.is_timeout is True
+        # The message reports the bound actually installed (clamped to
+        # the remaining deadline), not the module constant.
+        assert re.search(r"for \d+s", str(exc.value))
+        # Clamped scenario: the remaining deadline (~30s) is far below
+        # the idle constant, so the message must not report 900.
+        assert "for 900s" not in str(exc.value)
+
+    def test_other_read_errors_pass_through(self):
+        resp = self._fake_response(read_side_effect=OSError("reset"))
+        with pytest.raises(OSError):
+            _read_with_deadline(resp, time.monotonic() + 30, "test-backend")
 
 
 class TestLLMInvoke:
