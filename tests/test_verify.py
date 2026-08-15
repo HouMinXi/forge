@@ -3,7 +3,11 @@ import json
 from pathlib import Path
 
 import pytest
-from code_forge.verify import run_verify, parse_diff_files, _validate_receipt_schema
+import re
+from code_forge.verify import (
+    run_verify, parse_diff_files, _validate_receipt_schema,
+    _coverage_failure_detail,
+)
 
 
 def _sha(text: str) -> str:
@@ -739,6 +743,15 @@ class TestHardenedVerify:
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert not r.passed
         assert "< 60%" in r.reason
+        # The failure must name where the missing coverage is, not
+        # only a percentage. Of the nine diff lines, the three sparse
+        # excerpts cover 2 in foo.py and 1 in bar.py, leaving 4 and 2
+        # uncovered; the exact substring pins the order (foo.py leads)
+        # and the line counts together.
+        assert "largest uncovered: foo.py (4 lines), bar.py (2 lines)" \
+            in r.reason
+        # The message keeps its percentage prefix in front of the detail.
+        assert re.match(r"coverage \d+% < 60% cycle \d+", r.reason)
 
     def test_wide_range_with_thin_content_earns_no_extra_coverage(self, tmp_path):
         """Check 6 credits only lines an excerpt actually shows.
@@ -2068,3 +2081,87 @@ class TestRequiredCyclesIsValidatedAtTheEntryPoint:
         r = run_verify(tmp_path, sha, {"src/f.py": [1]}, required_cycles=None)
         assert not r.passed
         assert "missing receipts" in r.reason, r.reason
+
+
+class TestCoverageFailureDetail:
+    """Direct tests for _coverage_failure_detail, the helper behind the
+    actionable check-6 message. The review of the check-6 change asked
+    for these: the integration test only checks substring presence."""
+
+    @staticmethod
+    def _detail(cov, all_diff):
+        return _coverage_failure_detail(cov, all_diff)
+
+    def test_empty_uncovered_returns_none(self):
+        cov = {("a.py", 1), ("a.py", 2), ("b.py", 5)}
+        assert self._detail(cov, cov) == "none"
+
+    def test_largest_count_leads_with_line_counts(self):
+        # Two uncovered files with differing counts: z.py 5, a.py 1.
+        # By count z.py must lead; by name a.py would. cov holds one
+        # covered line from inside all_diff, so the subtraction that
+        # excludes covered lines is part of what this measures.
+        all_diff = set()
+        for ln in range(1, 6):
+            all_diff.add(("z.py", ln))
+        all_diff.add(("a.py", 1))
+        all_diff.add(("m.py", 1))
+        cov = {("m.py", 1)}  # covered; must not appear as uncovered
+        detail = self._detail(cov, all_diff)
+        assert detail == "z.py (5 lines), a.py (1 line)"
+        assert "m.py" not in detail
+
+    def test_tie_breaks_by_name(self):
+        cov = {("x.py", 1)}
+        all_diff = {
+            ("x.py", 1),
+            ("b.py", 1), ("b.py", 2),
+            ("a.py", 1), ("a.py", 2),
+        }
+        detail = self._detail(cov, all_diff)
+        assert detail.startswith("a.py (2 lines), b.py (2 lines)")
+        assert "x.py" not in detail  # covered, excluded by subtraction
+
+    def test_top_five_truncation(self):
+        cov = set()
+        all_diff = set()
+        for name in ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py"]:
+            for ln in range(1, 4):  # 3 uncovered lines each
+                all_diff.add((name, ln))
+        detail = self._detail(cov, all_diff)
+        assert detail == (
+            "a.py (3 lines), b.py (3 lines), c.py (3 lines), "
+            "d.py (3 lines), e.py (3 lines)")
+
+
+class TestLegacyCheck6Coverage:
+    """Legacy check 6 (self-reported covered_line_ranges) carries the
+    same actionable message as the hardened path, so the failure points
+    at the gap on both sides of the branch."""
+
+    @staticmethod
+    def _rd(tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        return rd
+
+    def test_low_coverage_fail_names_uncovered_files(self, tmp_path):
+        rd = self._rd(tmp_path)
+        (tmp_path / ".code-forge" / "gate.yaml").write_text(
+            "verify:\n  required_cycles: 1\n")
+        src = tmp_path / "src"
+        src.mkdir()
+        lines = ["line%d" % i for i in range(1, 11)]
+        (src / "f.py").write_text("\n".join(lines) + "\n")
+        sha = _sha("diff")
+        diff_files = {"src/f.py": list(range(1, 11))}
+        sparse_cover = [{"file": "src/f.py", "start": 1, "end": 3}]
+        for p in range(1, 4):
+            (rd / ("receipt-c1p%d.json" % p)).write_text(
+                json.dumps(_hreceipt(1, p, sha, excerpts=[],
+                                     covered_line_ranges=sparse_cover)))
+        r = run_verify(tmp_path, sha, diff_files)
+        assert not r.passed
+        assert "< 60%" in r.reason
+        assert "largest uncovered: src/f.py (7 lines)" in r.reason
+        assert re.match(r"coverage \d+% < 60% cycle \d+", r.reason)

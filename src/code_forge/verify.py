@@ -367,6 +367,26 @@ def _cycle_excerpt_covered(receipts: list[dict], cycle: int) -> set[tuple[str, i
     return u
 
 
+def _coverage_failure_detail(
+    cov: set[tuple[str, int]], all_diff: set[tuple[str, int]],
+) -> str:
+    """Name the files a failed coverage check is missing, so the
+    failure points at the gap rather than only at a percentage.
+    """
+    uncovered = all_diff - cov
+    by_file: dict[str, int] = {}
+    for f, _ln in uncovered:
+        by_file[f] = by_file.get(f, 0) + 1
+    top = sorted(by_file.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    if not top:
+        return "none"
+
+    def _fmt(f: str, n: int) -> str:
+        return "%s (%d %s)" % (f, n, "line" if n == 1 else "lines")
+
+    return ", ".join(_fmt(f, n) for f, n in top)
+
+
 def _jaccard(a: set, b: set) -> float:
     if not a and not b:
         return 1.0
@@ -724,14 +744,26 @@ def run_verify(
         cp += 1
 
         # 6. excerpt-derived coverage >= 60%
+        # The floor deliberately counts test lines: tests do not test
+        # themselves, so a test-heavy diff is exactly where a reviewer
+        # must show they read the test body. This is review-evidence
+        # coverage, not test-execution coverage (charter item 6,
+        # 43.1-DECISIONS-20260815.md).
         # covered_line_ranges is self-reported, not measured -- audit-only. Ignored here.
         all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
         if all_diff:
             for c in last_n:
                 cov = _cycle_excerpt_covered(receipts, c) & all_diff
                 if len(cov) / len(all_diff) < 0.6:
-                    return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
-                        100 * len(cov) / len(all_diff), c), 6, cp)
+                    # The prefix before ';' is the stable format a
+                    # consumer may match; the suffix is human guidance.
+                    return VerifyResult(
+                        False,
+                        "coverage %.0f%% < 60%% cycle %d; "
+                        "largest uncovered: %s" % (
+                            100 * len(cov) / len(all_diff), c,
+                            _coverage_failure_detail(cov, all_diff)),
+                        6, cp)
         cp += 1
 
         # 7. Jaccard overlap > 0.8 = rubber stamp.
@@ -809,8 +841,14 @@ def run_verify(
             for c in last_n:
                 cov = _cycle_covered(receipts, c) & all_diff
                 if len(cov) / len(all_diff) < 0.6:
-                    return VerifyResult(False, "coverage %.0f%% < 60%% cycle %d" % (
-                        100 * len(cov) / len(all_diff), c), 6, cp)
+                    # Same format contract as the excerpt-derived check 6.
+                    return VerifyResult(
+                        False,
+                        "coverage %.0f%% < 60%% cycle %d; "
+                        "largest uncovered: %s" % (
+                            100 * len(cov) / len(all_diff), c,
+                            _coverage_failure_detail(cov, all_diff)),
+                        6, cp)
         cp += 1
 
         # 7. legacy Jaccard
