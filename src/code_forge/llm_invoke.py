@@ -1075,6 +1075,36 @@ def _invoke_api(
                         ),
                         kind="empty",
                     )
+                # Strip fences and parse JSON inside the retry loop; fall
+                # back to embedded-JSON extraction.  A response that
+                # arrives HTTP-200 but carries unparseable JSON is
+                # nondeterministic model output, not a broken request:
+                # the same prompt can draw a parseable reply on the next
+                # attempt.  Retrying is bounded by max_attempts like
+                # every other retry, and the fallback still rescues JSON
+                # wrapped in prose or fences without spending an attempt.
+                # A backslash-dense diff makes models emit invalid JSON
+                # escapes often enough that the old parse-outside-the-loop
+                # shape could void every cycle of the run.
+                content = _strip_fences(content)
+                try:
+                    parsed_content = json.loads(content)
+                except json.JSONDecodeError as exc:
+                    parsed_content = _extract_json_from_text(
+                        content, expected_keys=expected_keys
+                    )
+                    if parsed_content is None:
+                        diag = "JSONDecodeError: %s\ncontent[:500]: %r" % (
+                            exc, content[:500],
+                        )
+                        raise LLMInvokeError(
+                            "API response content is not valid JSON -- %s"
+                            % diag,
+                            exit_code=0,
+                            stderr=diag,
+                            duration_s=time.monotonic() - start,
+                            kind="no_json",
+                        ) from exc
             except TimeoutError as exc:
                 raise LLMInvokeError(
                     "%s backend timed out after %ds"
@@ -1116,26 +1146,6 @@ def _invoke_api(
         break  # success
 
     duration = time.monotonic() - start
-
-    # Strip fences and parse JSON; fall back to embedded-JSON extraction.
-    content = _strip_fences(content)
-    try:
-        parsed_content = json.loads(content)
-    except json.JSONDecodeError as exc:
-        # Some models (e.g. mimo-pro) prepend prose before the JSON or wrap
-        # it in a code fence with trailing text.  Try to locate the first
-        # balanced JSON object/array in the raw text as a fallback.
-        parsed_content = _extract_json_from_text(content, expected_keys=expected_keys)
-        if parsed_content is None:
-            diag = "JSONDecodeError: %s\ncontent[:500]: %r" % (
-                exc, content[:500],
-            )
-            raise LLMInvokeError(
-                "API response content is not valid JSON -- %s" % diag,
-                exit_code=0,
-                stderr=diag,
-                duration_s=duration,
-            ) from exc
 
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
 
