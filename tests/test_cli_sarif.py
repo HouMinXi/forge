@@ -260,35 +260,34 @@ class TestForgeLockHeldDuringEmission:
 
 
 class TestPendingCIDefensivePath:
-    """(i) PENDING through CI defensive path.
+    """(i) PENDING through CI output path.
 
-    Setup requires TWO monkeypatches:
-    1. load_state -> State with PENDING verdict
-    2. Simulates GATE-01b violation
+    CI PENDING is legitimate: UNCERTAIN findings with no human at the
+    keyboard land in state.json and the SARIF summary carries PENDING.
     """
 
-    def test_pending_raises_valueerror(self, state_dir, mock_registry):
+    def test_pending_ci_emits_sarif_with_pending_summary(
+        self, state_dir, mock_registry,
+    ):
         state_path = state_dir / "state.json"
-        # Create a valid state file (will be overridden by monkeypatch)
         state = _make_state(Verdict.PASS, [])
         save_state(state, state_path)
 
-        # Monkeypatch load_state to return PENDING state
         pending_state = _make_state(Verdict.PENDING, [])
 
         stdout = StringIO()
+        stderr = StringIO()
 
         with patch("code_forge.cli._load_state", return_value=pending_state), \
              patch("sys.stdout", stdout), \
-             patch("sys.stderr", StringIO()), \
+             patch("sys.stderr", stderr), \
              patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
-            with pytest.raises(ValueError) as exc_info:
-                _emit_ci_output(state_path, mock_registry)
+            _emit_ci_output(state_path, mock_registry)
 
-        # Verify no SARIF on stdout
-        assert stdout.getvalue() == ""
-        # Verify GATE-01b in error message
-        assert "GATE-01b" in str(exc_info.value)
+        # SARIF on stdout, PENDING summary on stderr -- no crash.
+        log = json.loads(stdout.getvalue())
+        assert log["runs"]
+        assert "code-forge: PENDING" in stderr.getvalue()
 
 
 class TestLoadStateNoneDefensive:

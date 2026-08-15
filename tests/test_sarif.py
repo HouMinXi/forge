@@ -413,20 +413,38 @@ class TestPendingVerdictRaises:
     """(o, o2) PENDING verdict raises ValueError."""
 
     def test_build_sarif_log_pending_raises(self):
-        """(o) build_sarif_log raises on PENDING."""
+        """(o) build_sarif_log raises on LOCAL PENDING."""
         state = _make_state(Verdict.PENDING, [])
         with pytest.raises(ValueError) as exc_info:
             build_sarif_log(state, {}, "2.0.0a1")
 
-        assert "GATE-01b" in str(exc_info.value)
+        assert "LOCAL" in str(exc_info.value)
+
+    def test_build_sarif_log_pending_ci_does_not_raise(self):
+        """(o2) CI PENDING is a legitimate terminal state: UNCERTAIN
+        findings with no human at the keyboard. It must produce a log,
+        not a crash."""
+        from code_forge.state import Mode
+        state = _make_state(Verdict.PENDING, [])
+        state.mode = Mode.CI
+        log = build_sarif_log(state, {}, "2.0.0a1")
+        assert log["runs"]
 
     def test_format_summary_pending_raises(self):
-        """(o2) format_summary raises on PENDING."""
+        """(o2) format_summary raises on LOCAL PENDING."""
         state = _make_state(Verdict.PENDING, [])
         with pytest.raises(ValueError) as exc_info:
             format_summary(state)
 
-        assert "GATE-01b" in str(exc_info.value)
+        assert "LOCAL" in str(exc_info.value)
+
+    def test_format_summary_pending_ci_passes(self):
+        """CI PENDING is a legitimate terminal state."""
+        from code_forge.state import Mode
+        state = _make_state(Verdict.PENDING, [])
+        state.mode = Mode.CI
+        line = format_summary(state)
+        assert line.startswith("code-forge: PENDING")
 
 
 class TestMixedFindings:

@@ -305,7 +305,9 @@ class StateMachine:
         case left in place -- a "running" marker whose PID has died, or
         never had one, is also consumed.
         """
-        self._execute_round(round_index=0)
+        self._execute_round(
+            round_index=self._continuation_round_index(),
+        )
 
         # Check for prior mutation result
         result_path = self.cwd / ".code-forge" / "mutation-result.json"
@@ -524,6 +526,63 @@ class StateMachine:
         self._state.converged = (verdict == Verdict.PASS)
         self._persist_state()
         return verdict
+
+    def _continuation_round_index(self) -> int:
+        """The round index CI should start from.
+
+        CI restarts at round 0 on every invocation, which made every
+        separate `code-forge review` call overwrite receipt-c1p{1,2,3}
+        -- three clean rounds across three invocations were three
+        files' worth of evidence. When existing receipts carry the same
+        diff_sha256, the tree did not move between them, so this run
+        continues the cycle count instead of clobbering: the next cycle
+        number after the highest one on disk, whether this diff or
+        another one wrote it.
+
+        receipt-c{cycle}p{pass}.json carries no diff identity in its own
+        filename -- only the diff_sha256 field inside it does. If a
+        changed diff restarted at cycle 0 (as an earlier version of this
+        method did), its first round would overwrite whatever diff last
+        held that same low cycle number: diff A writes cycles 1-2, diff B
+        arrives, restarts at 0, and B's cycle-1 write clobbers A's
+        receipt-c1p*.json still sitting on disk. A changed diff instead
+        continues from the highest cycle number found on disk for ANY
+        diff, so its own cycle numbers can never collide with a file an
+        earlier diff already wrote.
+        """
+        receipts_dir = self.cwd / ".code-forge" / "receipts"
+        if not receipts_dir.is_dir():
+            return 0
+        max_cycle_this_diff = 0
+        max_cycle_any_diff = 0
+        for f in receipts_dir.glob("receipt-*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (ValueError, OSError, RecursionError):
+                # ValueError covers json.JSONDecodeError; matches the
+                # same class of receipt-corruption handling in
+                # verify.py's _load_receipts, which additionally guards
+                # against invalid-UTF-8 (UnicodeDecodeError, a ValueError
+                # subclass) and pathologically deep JSON.
+                continue
+            if not isinstance(data, dict):
+                continue
+            cycle = data.get("cycle", 0)
+            if not isinstance(cycle, int) or isinstance(cycle, bool):
+                # bool is an int subclass, so a receipt carrying
+                # cycle: true would otherwise count as cycle 1 and
+                # silently shift where the next round lands.
+                continue
+            max_cycle_any_diff = max(max_cycle_any_diff, cycle)
+            if data.get("diff_sha256") == self.source_hash:
+                max_cycle_this_diff = max(max_cycle_this_diff, cycle)
+        # The next cycle must sit above everything on disk, not above
+        # this diff alone. Diff A writing cycles 1-2, diff B cycle 3,
+        # then A re-run: continuing A's own sequence would resume at 3
+        # and overwrite B's receipts, since filenames carry no diff
+        # identity. The maximum of both tracks is the only value whose
+        # next cycle collides with nothing.
+        return max(max_cycle_this_diff, max_cycle_any_diff)
 
     def _run_local(self) -> Verdict:
         """LOCAL: loop until fixpoint / HOLD / MAX_TOTAL_ROUNDS.

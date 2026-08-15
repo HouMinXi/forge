@@ -30,8 +30,6 @@ from uuid import uuid4
 
 from .canary import (
     Canary,
-    CanaryGateResult,
-    CanaryPartition,
     evaluate_canary_coverage,
     partition_canary_findings,
 )
@@ -339,12 +337,17 @@ def dispatch_canary_review(
     The prompt has no author narrative, no prior findings, no conventions
     digest to prevent anchoring bias in the fresh-context review.
     """
+    from .diff import annotated_diff_prompt_block
+
+    prompt_diff = annotated_diff_prompt_block(modified_diff)
+    if prompt_diff.startswith("\nDiff:\n"):
+        prompt_diff = prompt_diff[len("\nDiff:\n"):]
     prompt = (
         "You are a code reviewer. Review this diff for bugs, security "
         "issues, and code quality problems.\n"
         "Return JSON: {\"findings\": [...]}\n"
         "Each finding needs: file, line, severity, description.\n\n"
-        "Diff:\n" + modified_diff
+        "Diff:\n" + prompt_diff
     )
     raw = provider(prompt)
 

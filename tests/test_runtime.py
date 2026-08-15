@@ -83,22 +83,22 @@ class TestRuntimeRunnerProtocol:
 
     def test_is_advisory_true(self):
         from code_forge.runtime import RuntimeRunner
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         assert runner.is_advisory is True
 
     def test_has_run_method(self):
         from code_forge.runtime import RuntimeRunner
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         assert callable(runner.run)
 
     def test_infra_errors_initialized_empty(self):
         from code_forge.runtime import RuntimeRunner
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         assert runner.infra_errors == []
 
     def test_source_files_initialized_none(self):
         from code_forge.runtime import RuntimeRunner
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         assert runner.source_files is None
 
 
@@ -112,15 +112,53 @@ class TestRuntimeRunnerEmptyDiff:
 
     def test_empty_string_returns_empty(self, tmp_path):
         from code_forge.runtime import RuntimeRunner
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         result = runner.run("", tmp_path)
         assert result == []
 
     def test_whitespace_only_returns_empty(self, tmp_path):
         from code_forge.runtime import RuntimeRunner
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         result = runner.run("   \n  \t  ", tmp_path)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# run() with backend=None (RUNTIME is always-on, no gate.yaml opt-out --
+# a missing backend must produce a SKIPPED finding, never a silent [])
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeRunnerNoBackend:
+    def test_no_backend_returns_skipped_finding(self, tmp_path):
+        from code_forge.runtime import RuntimeRunner
+        runner = RuntimeRunner(backend=None)
+        diff = "diff --git a/a.py b/a.py\n+x = 1"
+        result = runner.run(diff, tmp_path)
+
+        assert len(result) == 1
+        assert result[0].axis == "RUNTIME"
+        assert "no backend configured" in result[0].description.lower()
+
+    def test_no_backend_does_not_call_llm(self, tmp_path):
+        from code_forge.runtime import RuntimeRunner
+        runner = RuntimeRunner(backend=None)
+        diff = "diff --git a/a.py b/a.py\n+x = 1"
+
+        with patch("code_forge.runtime.llm_invoke") as mock_llm:
+            runner.run(diff, tmp_path)
+        mock_llm.assert_not_called()
+
+    def test_no_backend_records_infra_error(self, tmp_path):
+        from code_forge.runtime import RuntimeRunner
+        runner = RuntimeRunner(backend=None)
+        diff = "diff --git a/a.py b/a.py\n+x = 1"
+        runner.run(diff, tmp_path)
+
+        assert any(
+            "no backend configured" in e.lower()
+            for e in runner.infra_errors
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +176,7 @@ class TestRuntimeRunnerLLMCall:
         valid_response.content = {"surfaces": [], "findings": []}
 
         with patch("code_forge.runtime.llm_invoke", return_value=valid_response) as mock_invoke:
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             runner.run(diff, tmp_path)
             assert mock_invoke.called
             prompt_arg = mock_invoke.call_args[0][0]
@@ -155,7 +193,7 @@ class TestRuntimeRunnerLLMCall:
         valid_response.content = {"surfaces": [], "findings": []}
 
         with patch("code_forge.runtime.llm_invoke", return_value=valid_response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             # Must not raise KeyError
             result = runner.run(diff, tmp_path)
             assert isinstance(result, list)
@@ -173,7 +211,7 @@ class TestRuntimeRunnerJSONParsing:
         from code_forge.runtime import RuntimeRunner
         response = MagicMock()
         response.content = content
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         return runner, response
 
     def test_valid_json_with_surfaces_produces_findings(self, tmp_path):
@@ -191,7 +229,7 @@ class TestRuntimeRunnerJSONParsing:
             ],
         }
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
         assert isinstance(result, list)
         # At least the finding from LLM
@@ -213,7 +251,7 @@ class TestRuntimeRunnerJSONParsing:
             ],
         }
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
         for finding in result:
             assert finding.axis == "RUNTIME"
@@ -226,7 +264,7 @@ class TestRuntimeRunnerJSONParsing:
             "findings": [],
         }
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
         for item in result:
             assert isinstance(item, AdvisoryFinding)
@@ -246,7 +284,7 @@ class TestRuntimeRunnerLLMError:
 
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=LLMInvokeError("connection refused")):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         assert len(result) == 1
@@ -263,7 +301,7 @@ class TestRuntimeRunnerLLMError:
 
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=LLMInvokeError("timeout")):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         assert len(runner.infra_errors) > 0
@@ -275,7 +313,7 @@ class TestRuntimeRunnerLLMError:
 
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=LLMInvokeError("auth failed")):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         assert len(result) > 0
@@ -297,7 +335,7 @@ class TestRuntimeRunnerMalformedJSON:
         response.content = "this is not json at all"
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         assert len(result) >= 1
@@ -313,7 +351,7 @@ class TestRuntimeRunnerMalformedJSON:
         response.content = {"bad_key": "no surfaces here"}
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         skipped = [f for f in result if f.id == "runtime-skipped"]
@@ -327,7 +365,7 @@ class TestRuntimeRunnerMalformedJSON:
         response.content = None
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         skipped = [f for f in result if f.id == "runtime-skipped"]
@@ -340,7 +378,7 @@ class TestRuntimeRunnerMalformedJSON:
         response.content = "not json"
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         assert len(runner.infra_errors) > 0
@@ -353,7 +391,7 @@ class TestRuntimeRunnerMalformedJSON:
         response.content = [{"surfaces": ["nftables", "systemd"], "findings": []}]
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
 
         skipped = [f for f in result if f.id == "runtime-skipped"]
@@ -373,7 +411,7 @@ class TestRuntimeRunnerMalformedJSON:
         ]
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
 
         skipped = [f for f in result if f.id == "runtime-skipped"]
@@ -387,7 +425,7 @@ class TestRuntimeRunnerMalformedJSON:
         response.content = []
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
 
         skipped = [f for f in result if f.id == "runtime-skipped"]
@@ -434,7 +472,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = self._mock_response(surfaces=["nftables", "systemd"])
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
 
         # Should have a summary finding indicating unverified surfaces
@@ -460,7 +498,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = self._mock_response(surfaces=["nftables", "systemd"], findings=[])
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
 
         # summary finding should show 1/2 verified
@@ -482,7 +520,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = self._mock_response(surfaces=["nftables"], findings=[])
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
 
         # Receipt is invalid -> surface is UNVERIFIED
@@ -505,7 +543,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = self._mock_response(surfaces=["nftables"], findings=[])
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
 
         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
@@ -521,7 +559,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = self._mock_response(surfaces=[], findings=[])
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
 
         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
@@ -542,7 +580,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = self._mock_response(surfaces=["nftables"], findings=[])
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
 
         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
@@ -559,7 +597,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = self._mock_response(surfaces=["nftables"], findings=[])
 
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
 
         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
@@ -571,7 +609,7 @@ class TestRuntimeRunnerSmokeReceipts:
         from code_forge.llm_invoke import LLMInvokeError
         from code_forge.runtime import RuntimeRunner
 
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         # First run: LLM error
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=LLMInvokeError("err1")):
@@ -596,7 +634,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = MagicMock()
         response.content = {"surfaces": None, "findings": []}
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run("diff --git a/f b/f\n+c", tmp_path)
         ids = {f.id for f in result}
         assert "runtime-skipped" not in ids, "surfaces=null must not return SKIPPED"
@@ -614,7 +652,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = MagicMock()
         response.content = {"surfaces": ["nftables-filter"], "findings": []}
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
         assert summary is not None
@@ -634,7 +672,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = MagicMock()
         response.content = {"surfaces": ["nftables rules"], "findings": []}
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
         assert summary is not None
@@ -653,7 +691,7 @@ class TestRuntimeRunnerSmokeReceipts:
         response = MagicMock()
         response.content = {"surfaces": ["nftables rules"], "findings": []}
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             result = runner.run(diff, tmp_path)
         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
         assert summary is not None
@@ -671,10 +709,10 @@ class TestRuntimeRunnerLastSurfaces:
     """RuntimeRunner stores last_surfaces after run() for cross-axis sharing."""
 
     def test_last_surfaces_empty_on_init(self):
-        """RuntimeRunner().last_surfaces equals [] on initialization."""
+        """RuntimeRunner(backend=MagicMock()).last_surfaces equals [] on initialization."""
         from code_forge.runtime import RuntimeRunner
 
-        runner = RuntimeRunner()
+        runner = RuntimeRunner(backend=MagicMock())
         assert runner.last_surfaces == []
 
     def test_last_surfaces_stored(self, tmp_path):
@@ -687,7 +725,7 @@ class TestRuntimeRunnerLastSurfaces:
             "findings": [],
         }
         with patch("code_forge.runtime.llm_invoke", return_value=response):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             runner.run("diff --git a/f b/f\n+change", tmp_path)
 
         assert runner.last_surfaces == ["nftables rules", "systemd units"]
@@ -708,8 +746,64 @@ class TestRuntimeRunnerLastSurfaces:
         }
         with patch("code_forge.runtime.llm_invoke",
                    side_effect=[response1, response2]):
-            runner = RuntimeRunner()
+            runner = RuntimeRunner(backend=MagicMock())
             runner.run("diff --git a/f b/f\n+change1", tmp_path)
             runner.run("diff --git a/f b/f\n+change2", tmp_path)
 
         assert runner.last_surfaces == ["cron jobs"]
+
+    def test_last_surfaces_cleared_on_empty_diff(self, tmp_path):
+        """A successful run followed by an empty-diff run must not leave
+        the previous surfaces behind: daemon_state reads last_surfaces
+        and would inject stale ones into its prompt."""
+        from code_forge.runtime import RuntimeRunner
+
+        response = MagicMock()
+        response.content = {
+            "surfaces": ["nftables rules"],
+            "findings": [],
+        }
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner(backend=MagicMock())
+            runner.run("diff --git a/f b/f\n+change", tmp_path)
+            runner.run("", tmp_path)
+
+        assert runner.last_surfaces == []
+
+    def test_last_surfaces_cleared_on_llm_failure(self, tmp_path):
+        """A successful run followed by a failed one must not leave the
+        previous surfaces behind for cross-axis consumers."""
+        from code_forge.llm_invoke import LLMInvokeError
+        from code_forge.runtime import RuntimeRunner
+
+        response = MagicMock()
+        response.content = {
+            "surfaces": ["nftables rules"],
+            "findings": [],
+        }
+        with patch("code_forge.runtime.llm_invoke",
+                   side_effect=[response, LLMInvokeError("connection refused")]):
+            runner = RuntimeRunner(backend=MagicMock())
+            runner.run("diff --git a/f b/f\n+change1", tmp_path)
+            runner.run("diff --git a/f b/f\n+change2", tmp_path)
+
+        assert runner.last_surfaces == []
+
+    def test_last_surfaces_cleared_when_backend_missing(self, tmp_path):
+        """A run that exits before the LLM call (backend unset) must not
+        leave the previous surfaces behind."""
+        from code_forge.runtime import RuntimeRunner
+
+        response = MagicMock()
+        response.content = {
+            "surfaces": ["nftables rules"],
+            "findings": [],
+        }
+        with patch("code_forge.runtime.llm_invoke", return_value=response):
+            runner = RuntimeRunner(backend=MagicMock())
+            runner.run("diff --git a/f b/f\n+change", tmp_path)
+
+        runner._backend = None
+        runner.run("diff --git a/f b/f\n+change2", tmp_path)
+
+        assert runner.last_surfaces == []

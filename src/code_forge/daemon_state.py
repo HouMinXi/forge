@@ -397,6 +397,14 @@ class DaemonStateRunner:
             "runtime_surfaces": runtime_ctx,
         }
 
+        if self._backend is None:
+            self.infra_errors.append(
+                "DAEMON-STATE axis skipped: no backend configured"
+            )
+            return static_findings + [_build_skipped_finding(
+                "no backend configured"
+            )]
+
         try:
             q1_result = llm_invoke(
                 q1_prompt,

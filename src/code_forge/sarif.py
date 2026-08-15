@@ -14,6 +14,7 @@ from .state import (
     State,
     StateFinding,
     Verdict,
+    Mode,
     PassOutcome,
     derive_pass_outcomes,
     _PASS_NAMES,
@@ -79,13 +80,17 @@ def build_sarif_log(
     CLI backends pass backend_name=None so tokenCost is omitted.
 
     Raises:
-        ValueError: state.verdict is PENDING. CI never PENDINGs (no HOLD
-            in CI per GATE-01b); reaching this is a caller bug.
+        ValueError: state.verdict is PENDING and mode is LOCAL -- a
+            local run enters the interactive HOLD UX instead, so a
+            PENDING state reaching the SARIF writer is a caller bug.
+            CI never enters HOLD (GATE-01b) but CAN legitimately finish
+            PENDING with UNCERTAIN findings: there is no human at the
+            keyboard, so the findings land in state.json.
     """
-    if state.verdict == Verdict.PENDING:
+    if state.verdict == Verdict.PENDING and state.mode == Mode.LOCAL:
         raise ValueError(
-            "build_sarif_log called with PENDING verdict; CI mode does "
-            "not enter HOLD (GATE-01b). Caller bug."
+            "build_sarif_log called with PENDING verdict on a LOCAL "
+            "run; HOLD UX should have resolved it. Caller bug."
         )
     run = _build_run(state, tool_versions, forge_version)
     if backend_name is not None and state.cost_passes > 0:
@@ -252,15 +257,17 @@ def format_summary(state: State, advisory_count: int = 0) -> str:
     """One-line stderr summary per LAYER0-07.
 
     Format matches regex:
-      ^code-forge: (PASS|FAIL|ESCALATED) findings=\\d+ confirmed=\\d+
+      ^code-forge: (PASS|FAIL|ESCALATED|PENDING) findings=\\d+ confirmed=\\d+
       uncertain=\\d+ dismissed=\\d+ fixed=\\d+( infra=\\d+)?( advisory=\\d+)?$
 
-    Verdict.PENDING is rejected (CI never PENDINGs; caller guards).
+    LOCAL PENDING is rejected (the HOLD UX resolves it; caller guards).
+    CI PENDING is legitimate: UNCERTAIN findings with no human at the
+    keyboard (GATE-01b).
     """
-    if state.verdict == Verdict.PENDING:
+    if state.verdict == Verdict.PENDING and state.mode == Mode.LOCAL:
         raise ValueError(
-            "format_summary called with PENDING verdict; CI mode does "
-            "not enter HOLD (GATE-01b). Caller bug."
+            "format_summary called with PENDING verdict on a LOCAL "
+            "run; HOLD UX should have resolved it. Caller bug."
         )
     counts = {
         Disposition.CONFIRMED: 0,

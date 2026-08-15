@@ -25,9 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from .backend import (
-    BackendConfig, DEFAULT_BACKEND, check_headers, check_params,
-)
+from .backend import BackendConfig, check_headers, check_params
 from .errors import CliError
 
 
@@ -745,7 +743,8 @@ def llm_invoke(
 
     Args:
         prompt: LLM prompt text
-        backend: Backend config (defaults to DEFAULT_BACKEND)
+        backend: Backend config. Required -- None raises LLMInvokeError
+            rather than falling through to DEFAULT_BACKEND (see below).
         timeout_s: Timeout in seconds. None (default) or a non-positive value
             resolves FORGE_LLM_TIMEOUT_S at call time, falling back to
             DEFAULT_TIMEOUT_S.
@@ -765,7 +764,16 @@ def llm_invoke(
         LLMInvokeError: on timeout, nonzero exit, HTTP error, or JSON parse failure
     """
     if backend is None:
-        backend = DEFAULT_BACKEND
+        # Fail closed: the old fallthrough to DEFAULT_BACKEND spawned an
+        # implicit claude -p subprocess (session-default cli backend),
+        # which bills the main session account and nests a subprocess the
+        # caller never asked for. Advisory axes construct their runners
+        # with a backend; a None here means wiring forgot it.
+        raise LLMInvokeError(
+            "llm_invoke called with no backend; an implicit "
+            "claude -p fallthrough is disabled",
+            retryable=False,
+        )
     timeout_s = effective_invoke_timeout_s(backend, timeout_s)
 
     if backend.type == "cli":
@@ -1242,13 +1250,46 @@ def _invoke_openai(
     if finish == "length":
         in_tok = usage_data.get("prompt_tokens", "?")
         out_tok = usage_data.get("completion_tokens", "?")
+        # Name the limit that actually truncated, not the one in the
+        # config. When output landed below the configured ceiling the
+        # backend clamped on its own (a hard model/plan cap), so
+        # telling the user to raise output_ceiling would change nothing.
+        # Zero output tokens is the empty-content case, not a clamp.
+        if isinstance(out_tok, (int, float)) \
+                and isinstance(resolved_cap, int) \
+                and 0 < out_tok < resolved_cap:
+            raise LLMInvokeError(
+                "%s backend response truncated at %s output tokens "
+                "(finish_reason=length, input=%s). The configured "
+                "output cap is %d, so the backend clamped below it "
+                "on its own; raising the configured cap will not help "
+                "-- use a backend/model with a higher hard output limit."
+                % (backend.name, out_tok, in_tok, resolved_cap),
+                kind="truncated",
+                retryable=False,
+            )
+        if isinstance(resolved_cap, int) and resolved_cap > 0:
+            raise LLMInvokeError(
+                "%s backend response truncated (finish_reason=length, "
+                "input=%s output=%s). Review output truncated: output "
+                "capacity (%d tokens) insufficient for this diff. Raise "
+                "output_ceiling on this backend in gate.yaml or use a "
+                "higher-output model."
+                % (backend.name, in_tok, out_tok, resolved_cap),
+                kind="truncated",
+                retryable=False,
+            )
+        # A backend configured with max_tokens: 0 has no usable cap to
+        # raise; the number is the config's absence marker, not a
+        # capacity, so reporting "capacity (0 tokens)" would send the
+        # user to raise a knob that was never set.
         raise LLMInvokeError(
             "%s backend response truncated (finish_reason=length, "
-            "input=%s output=%s). Review output truncated: output "
-            "capacity (%d tokens) insufficient for this diff. Raise "
-            "output_ceiling on this backend in gate.yaml or use a "
-            "higher-output model."
-            % (backend.name, in_tok, out_tok, resolved_cap),
+            "input=%s output=%s). Review output truncated: no usable "
+            "output cap is configured for this backend, so its own "
+            "limit ended the response. Set max_tokens or "
+            "output_ceiling on this backend in gate.yaml."
+            % (backend.name, in_tok, out_tok),
             kind="truncated",
             retryable=False,
         )

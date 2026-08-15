@@ -374,6 +374,51 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(u) if u else 1.0
 
 
+def _constant_offset(
+    excerpt_line_map: dict[int, str],
+    file_lines: dict[int, str],
+    lo: int,
+    hi: int,
+) -> int | None:
+    """Return the shift that makes every excerpt line match the file,
+    or None when no single offset explains the mismatch.
+
+    A misnumbered excerpt (the reviewer ignored the annotated column)
+    matches the post-image at a constant delta; a fabricated one matches
+    at no delta. Offsets are searched in the inclusive range lo..hi.
+    A single-line excerpt is too weak a signal: one line can coincide
+    with any shifted position, so it must not convict as misnumbering.
+    """
+    if len(excerpt_line_map) < 2:
+        return None
+
+    def norm(s):
+        return s.rstrip()
+
+    for delta in range(lo, hi + 1):
+        if delta == 0:
+            continue
+        matches = 0
+        compared = 0
+        for claimed, content in excerpt_line_map.items():
+            actual = file_lines.get(claimed + delta)
+            if actual is None:
+                continue
+            compared += 1
+            if norm(content) == norm(actual):
+                matches += 1
+        # Every claimed line must match at this delta, and every one
+        # must be comparable: a line whose shifted position falls
+        # outside the post-image cannot vouch for the shift, so a
+        # partial comparison convicting on the comparable subset would
+        # call a fabricated tail "misnumbered". The single-line guard
+        # above already ensures len >= 2, so this also keeps the
+        # two-comparable-line floor.
+        if compared == len(excerpt_line_map) and matches == compared:
+            return delta
+    return None
+
+
 def run_verify(
     cwd: Path, diff_sha256: str,
     diff_files: dict[str, list[int]],
@@ -566,6 +611,20 @@ def run_verify(
                     "excerpt %s:%d has empty content" % (exc["file"], exc["start_line"]),
                     5, cp,
                 )
+            # The declared range must carry exactly the lines the
+            # excerpt claims to have checked. Content beyond the range
+            # maps to no line number, so STEP C would never compare it
+            # against the post-image -- a fabricated tail rides along
+            # unchecked.
+            claimed = exc["end_line"] - exc["start_line"] + 1
+            if claimed > 0 and len(content.splitlines()) > claimed:
+                return VerifyResult(
+                    False,
+                    "excerpt %s:%d-%d declares %d lines but carries %d" % (
+                        exc["file"], exc["start_line"], exc["end_line"],
+                        claimed, len(content.splitlines())),
+                    5, cp,
+                )
             if exc["file"] not in hunk_map and exc["file"] not in exempt_files:
                 return VerifyResult(
                     False,
@@ -605,17 +664,63 @@ def run_verify(
             file_lines = post_image.get(exc["file"], {})
             overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
 
+            # Exempt files (binary/rename/mode-only) have no hunks and
+            # therefore no post-image lines; every claimed line would
+            # read as outside. They are checked at STEP B and skipped
+            # here by design.
+            if exc["file"] in exempt_files:
+                continue
+
             if overlap_lines:
                 def normalize(s):
                     return s.rstrip()
                 for ln in sorted(overlap_lines):
                     if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
+                        # Distinguish a misnumbered excerpt from a fabricated
+                        # one. A reviewer that ignored the annotated line
+                        # numbers produces content that matches the file at a
+                        # constant offset; a fabricated excerpt matches at no
+                        # offset at all. Report the offset so the diagnosis
+                        # does not point at the wrong line.
+                        offset = _constant_offset(
+                            excerpt_line_map, file_lines, -64, 65,
+                        )
+                        if offset is not None:
+                            return VerifyResult(
+                                False,
+                                "excerpt misnumbered by %+d at %s:%d-%d "
+                                "(claims %s:%d, actually %s:%d)" % (
+                                    offset, exc["file"],
+                                    exc["start_line"], exc["end_line"],
+                                    exc["file"], ln,
+                                    exc["file"], ln + offset),
+                                5, cp,
+                            )
                         return VerifyResult(
                             False,
-                            "excerpt content mismatch at %s:%d (line %d)" % (
-                                exc["file"], exc["start_line"], ln),
+                            "excerpt content mismatch at %s:%d-%d (line %d)" % (
+                                exc["file"], exc["start_line"],
+                                exc["end_line"], ln),
                             5, cp,
                         )
+
+            # Every claimed line must land in the post-image. A line
+            # outside it is content nobody can check -- the tail of a
+            # genuine excerpt can carry invented lines and the receipt
+            # would read as "the reviewer verified these" while they were
+            # never compared against anything. This runs after the
+            # misnumber check so a shifted excerpt reports its offset
+            # rather than a bare outside-the-diff line.
+            outside = set(excerpt_line_map.keys()) - set(file_lines.keys())
+            if outside:
+                return VerifyResult(
+                    False,
+                    "excerpt %s:%d-%d claims line %d outside the diff "
+                    "post-image; it cannot be verified" % (
+                        exc["file"], exc["start_line"], exc["end_line"],
+                        min(outside)),
+                    5, cp,
+                )
         cp += 1
 
         # 6. excerpt-derived coverage >= 60%

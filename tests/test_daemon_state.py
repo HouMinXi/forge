@@ -23,12 +23,8 @@ Covers all DaemonStateRunner behaviors:
 """
 from __future__ import annotations
 
-import io
-import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 
 from code_forge.advisory import AdvisoryFinding
@@ -45,13 +41,13 @@ class TestDaemonStateProtocol:
     def test_is_advisory(self):
         from code_forge.daemon_state import DaemonStateRunner
 
-        runner = DaemonStateRunner()
+        runner = DaemonStateRunner(backend=MagicMock())
         assert runner.is_advisory is True
 
     def test_run_returns_list(self, tmp_path):
         from code_forge.daemon_state import DaemonStateRunner
 
-        runner = DaemonStateRunner()
+        runner = DaemonStateRunner(backend=MagicMock())
         result = runner.run("", tmp_path)
         assert isinstance(result, list)
 
@@ -67,14 +63,14 @@ class TestDaemonStateEmptyDiff:
     def test_empty_diff(self, tmp_path):
         from code_forge.daemon_state import DaemonStateRunner
 
-        runner = DaemonStateRunner()
+        runner = DaemonStateRunner(backend=MagicMock())
         result = runner.run("", tmp_path)
         assert result == []
 
     def test_empty_whitespace_diff(self, tmp_path):
         from code_forge.daemon_state import DaemonStateRunner
 
-        runner = DaemonStateRunner()
+        runner = DaemonStateRunner(backend=MagicMock())
         result = runner.run("  \n  ", tmp_path)
         assert result == []
 
@@ -92,7 +88,7 @@ class TestDaemonStateHeuristicFallback:
         from code_forge.daemon_state import DaemonStateRunner
 
         # No .code-forge/gate.yaml at all
-        runner = DaemonStateRunner()
+        runner = DaemonStateRunner(backend=MagicMock())
         diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter input drop"
         result = runner.run(diff, tmp_path)
 
@@ -106,7 +102,7 @@ class TestDaemonStateHeuristicFallback:
         """Heuristic advisory finding uses axis='DAEMON-STATE'."""
         from code_forge.daemon_state import DaemonStateRunner
 
-        runner = DaemonStateRunner()
+        runner = DaemonStateRunner(backend=MagicMock())
         diff = "diff --git a/fw.sh b/fw.sh\n+iptables -A INPUT -j DROP"
         result = runner.run(diff, tmp_path)
 
@@ -117,10 +113,114 @@ class TestDaemonStateHeuristicFallback:
         """Diff with no stateful keywords + no gate.yaml -> []."""
         from code_forge.daemon_state import DaemonStateRunner
 
-        runner = DaemonStateRunner()
+        runner = DaemonStateRunner(backend=MagicMock())
         diff = "diff --git a/hello.py b/hello.py\n+print('hello world')"
         result = runner.run(diff, tmp_path)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# backend=None: paths that need no LLM must still run
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonStateNoBackend:
+    """A None backend must only skip the LLM steps, not the
+    no-LLM-required heuristic/disabled/static-rule branches."""
+
+    def test_no_backend_heuristic_still_fires(self, tmp_path):
+        """No gate.yaml + no backend: the keyword heuristic runs
+        entirely without a backend and must not be replaced by a
+        skipped finding."""
+        from code_forge.daemon_state import DaemonStateRunner
+
+        runner = DaemonStateRunner(backend=None)
+        diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter input drop"
+        result = runner.run(diff, tmp_path)
+
+        assert len(result) == 1
+        assert result[0].id == "daemon-state-heuristic"
+
+    def test_no_backend_disabled_config_returns_empty(self, tmp_path):
+        """daemon_state.enabled: false + no backend -> [], not a
+        skipped finding -- disabled means disabled."""
+        from code_forge.daemon_state import DaemonStateRunner
+
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        (gate_dir / "gate.yaml").write_text(yaml.safe_dump({
+            "test": {"command": ["python3", "-m", "pytest"]},
+            "daemon_state": {"enabled": False},
+        }))
+
+        runner = DaemonStateRunner(backend=None)
+        diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter input drop"
+        result = runner.run(diff, tmp_path)
+        assert result == []
+        assert runner.infra_errors == [], (
+            "disabled means disabled: no backend warning belongs on a "
+            "path that never reaches the backend"
+        )
+
+    def test_no_backend_static_rules_still_match_then_skip_llm(self, tmp_path):
+        """Configured + enabled + no backend: static conflict rules
+        still match (no LLM needed), and the LLM steps degrade to a
+        single skipped finding appended after them -- not a total
+        skip that silently drops the static findings."""
+        from code_forge.daemon_state import DaemonStateRunner
+
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        gate_yaml = gate_dir / "gate.yaml"
+        gate_yaml.write_text(yaml.safe_dump({
+            "test": {"command": ["python3", "-m", "pytest"]},
+            "daemon_state": {
+                "enabled": True,
+                "subsystems": ["nftables"],
+                "patterns": [],
+                "conflicts": [
+                    {
+                        "subsystem": "killswitch",
+                        "mutates": "nft mark",
+                        "interferes_with": "health check outbound probes",
+                    },
+                ],
+            },
+        }))
+
+        runner = DaemonStateRunner(backend=None)
+        diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
+        with patch("code_forge.daemon_state.llm_invoke") as mock_invoke:
+            result = runner.run(diff, tmp_path)
+
+        static_findings = [
+            f for f in result
+            if "killswitch" in f.description.lower()
+            or "nft mark" in f.description.lower()
+        ]
+        assert len(static_findings) >= 1
+        assert any(
+            "no backend configured" in f.description.lower()
+            for f in result
+        )
+        assert "DAEMON-STATE axis skipped: no backend configured" \
+            in runner.infra_errors
+        mock_invoke.assert_not_called(), (
+            "a None backend must skip the LLM call, not fall through "
+            "to an implicit default"
+        )
+
+    def test_no_backend_empty_diff_returns_empty_without_llm(self, tmp_path):
+        """Empty diff exits before the backend branch entirely: []
+        and no LLM call, not a skipped finding."""
+        from code_forge.daemon_state import DaemonStateRunner
+
+        runner = DaemonStateRunner(backend=None)
+        with patch("code_forge.daemon_state.llm_invoke") as mock_invoke:
+            result = runner.run("", tmp_path)
+        assert result == []
+        mock_invoke.assert_not_called()
+        assert runner.infra_errors == []
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +266,7 @@ class TestDaemonStateTwoStepLLM:
         with patch("code_forge.daemon_state.llm_invoke",
                    side_effect=[q1_response, q2q3_response]) as mock_llm, \
              patch("code_forge.daemon_state._grep_repo", return_value=""):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter"
             runner.run(diff, tmp_path)
 
@@ -221,7 +321,7 @@ class TestDaemonStateStaticRules:
         with patch("code_forge.daemon_state.llm_invoke",
                    side_effect=[q1_response, q2q3_response]), \
              patch("code_forge.daemon_state._grep_repo", return_value=""):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
             result = runner.run(diff, tmp_path)
 
@@ -263,7 +363,7 @@ class TestDaemonStateStaticRules:
         with patch("code_forge.daemon_state.llm_invoke",
                    side_effect=[q1_response, q2q3_response]) as mock_llm, \
              patch("code_forge.daemon_state._grep_repo", return_value=""):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
             runner.run(diff, tmp_path)
 
@@ -358,7 +458,7 @@ class TestDaemonStateQ1Empty:
                    side_effect=[q1_response, q2q3_response]), \
              patch("code_forge.daemon_state._grep_repo",
                    return_value="") as mock_grep:
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             runner.run(diff, tmp_path)
 
@@ -398,7 +498,7 @@ class TestDaemonStateQ1Malformed:
 
         with patch("code_forge.daemon_state.llm_invoke",
                    return_value=q1_response):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             result = runner.run(diff, tmp_path)
 
@@ -435,7 +535,7 @@ class TestDaemonStateLLMFailure:
 
         with patch("code_forge.daemon_state.llm_invoke",
                    side_effect=LLMInvokeError("connection timeout")):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             result = runner.run(diff, tmp_path)
 
@@ -481,7 +581,7 @@ class TestDaemonStateRuntimeSurfaces:
         with patch("code_forge.daemon_state.llm_invoke",
                    side_effect=[q1_response, q2q3_response]) as mock_llm, \
              patch("code_forge.daemon_state._grep_repo", return_value=""):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             runner._runtime_runner = mock_runtime
             diff = "diff --git a/f b/f\n+nft add rule"
             runner.run(diff, tmp_path)
@@ -514,7 +614,7 @@ class TestDaemonStateRuntimeSurfaces:
         with patch("code_forge.daemon_state.llm_invoke",
                    side_effect=[q1_response, q2q3_response]), \
              patch("code_forge.daemon_state._grep_repo", return_value=""):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             # _runtime_runner is None by default
             diff = "diff --git a/f b/f\n+nft add rule"
             result = runner.run(diff, tmp_path)
@@ -538,7 +638,7 @@ class TestDaemonStateUnconfigured:
 
         # No gate.yaml at all
         with patch("code_forge.daemon_state.llm_invoke") as mock_llm:
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule inet filter"
             result = runner.run(diff, tmp_path)
 
@@ -583,7 +683,7 @@ class TestDaemonStateConflictsFileMissing:
         with patch("code_forge.daemon_state.llm_invoke",
                    side_effect=[q1_response, q2q3_response]), \
              patch("code_forge.daemon_state._grep_repo", return_value=""):
-            runner = DaemonStateRunner()
+            runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             runner.run(diff, tmp_path)
 

@@ -1166,6 +1166,306 @@ class TestOutOfHunkExcerpts:
         assert not r.passed
         assert "belongs in context_quotes" in r.reason
 
+    def test_excerpt_inverted_range_fails_at_schema(self, tmp_path):
+        """start_line > end_line is nonsense and fails at schema load."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0]["start_line"] = 5
+                receipt["code_excerpts"][0]["end_line"] = 2
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"inverted range should fail, got: {r.reason}"
+        assert "start_line 5 > end_line 2" in r.reason
+
+    def test_excerpt_tail_outside_the_post_image_is_rejected(self, tmp_path):
+        """A genuine excerpt whose tail claims lines beyond the post-image
+        must fail: those lines were never compared against anything, and a
+        receipt that carries them reads as 'the reviewer verified these'.
+        The head matches the post-image verbatim so only the smuggled tail
+        can convict."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # Lines 1-2 match the post-image verbatim; line 3 does not
+                # exist in the two-line post-image, so the excerpt smuggles
+                # one line nobody can check.
+                receipt["code_excerpts"][0] = {
+                    "file": "src/f.py", "start_line": 1, "end_line": 3,
+                    "content": "def f():\n    return 2\n    extra()",
+                    "rationale": "checked",
+                }
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"tail outside post-image should fail, got: {r.reason}"
+        assert "outside the diff" in r.reason
+        assert "cannot be verified" in r.reason
+
+    def test_excerpt_content_beyond_the_declared_range_is_rejected(self, tmp_path):
+        """Content lines that map to no claimed line number are never
+        compared against the post-image, so an excerpt declaring one
+        line but carrying two must fail even when the first line is
+        verbatim."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # Declares one line; the second content line rides along
+                # unchecked without the range guard.
+                receipt["code_excerpts"][0] = {
+                    "file": "src/f.py", "start_line": 1, "end_line": 1,
+                    "content": "def f():\n    fabricated()",
+                    "rationale": "checked",
+                }
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"extra content should fail, got: {r.reason}"
+        assert "declares 1 lines but carries 2" in r.reason
+
+    def test_misnumbered_excerpt_reports_the_offset(self, tmp_path):
+        """A reviewer that ignored the annotated line numbers produces
+        content matching the file at a constant offset. The failure must
+        name that offset instead of a bare content mismatch, so the
+        diagnosis does not point at the wrong line."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,4 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    x = 1\n"
+            "+    return 2\n"
+            "+    return 3\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    x = 1\n    return 2\n    return 3\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # Content is verbatim for lines 2-4 but claims 3-5: a
+                # constant +1 misnumbering, exactly the reviewer failure.
+                receipt["code_excerpts"][0] = {
+                    "file": "src/f.py", "start_line": 3, "end_line": 5,
+                    "content": "    x = 1\n    return 2\n    return 3",
+                }
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed, f"misnumbered excerpt should fail, got: {r.reason}"
+        assert "misnumbered by" in r.reason
+        assert "-1" in r.reason
+
+    def test_misnumbered_excerpt_reports_positive_offset(self, tmp_path):
+        """The offset search is symmetric, so the +N direction needs its
+        own pin: content claimed at 1-2 that actually sits at 2-3."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " def f():\n"
+            "+    x = 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    x = 1\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # Claims lines 1-2 but carries lines 2-3 verbatim: a
+                # constant +1 misnumbering, the mirror of the -1 case.
+                receipt["code_excerpts"][0] = {
+                    "file": "src/f.py", "start_line": 1, "end_line": 2,
+                    "content": "    x = 1\n    return 2",
+                }
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed
+        assert "misnumbered by" in r.reason
+        assert "+1" in r.reason
+
+    def test_partial_shift_match_is_not_called_misnumbered(self, tmp_path):
+        """A shift must be vouched for by every claimed line. Two lines
+        matching at +1 while the third's shifted position falls outside
+        the post-image is a fabricated tail, not a misnumbering."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " def f():\n"
+            "+    x = 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    x = 1\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # Lines 1-2 match at +1 (they are lines 2-3's text); the
+                # third line has no post-image position at any delta.
+                receipt["code_excerpts"][0] = {
+                    "file": "src/f.py", "start_line": 1, "end_line": 3,
+                    "content": "    x = 1\n    return 2\n    fabricated",
+                }
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed
+        assert "misnumbered" not in r.reason, (
+            "a partial shift match must not convict as misnumbering: %s"
+            % r.reason
+        )
+
+    def test_fabricated_excerpt_reports_mismatch_not_offset(self, tmp_path):
+        """Content that matches at no offset is fabrication, not
+        misnumbering; the message must stay a content mismatch."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f():\n"
+            "-    return 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0]["content"] = (
+                    "def f():\n    return 999\n"
+                )
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed
+        assert "content mismatch" in r.reason
+        assert "misnumbered" not in r.reason
+
+    def test_single_line_excerpt_never_reports_misnumbered(self, tmp_path):
+        """One excerpt line matching at a shifted position is a
+        coincidence, not evidence of misnumbering. A single-line
+        excerpt whose content happens to sit at line+1 must fail as a
+        plain content mismatch -- the offset diagnosis needs at least
+        two lines before it can convict."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        diff_content = (
+            "diff --git a/src/f.py b/src/f.py\n"
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,1 +1,3 @@\n"
+            " def f():\n"
+            "+    x = 1\n"
+            "+    return 2\n"
+        )
+        (tmp_path / "src" / "f.py").write_text(
+            "def f():\n    x = 1\n    return 2\n"
+        )
+        sha = _sha(diff_content)
+        diff_files = parse_diff_files(diff_content)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                # Claims line 2 but carries line 3's text: matches at
+                # exactly +1, which a two-line excerpt would convict as
+                # misnumbering. One line must not.
+                receipt["code_excerpts"][0] = {
+                    "file": "src/f.py", "start_line": 2, "end_line": 2,
+                    "content": "    return 2",
+                }
+                name = "receipt-c%dp%d.json" % (c, p)
+                (rd / name).write_text(json.dumps(receipt))
+        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
+        assert not r.passed
+        assert "misnumbered" not in r.reason, (
+            "a single coincidental line must not convict as misnumbering: %s"
+            % r.reason
+        )
+        assert "content mismatch" in r.reason
+
     def test_excerpt_content_mismatch_still_fails(self, tmp_path):
         """Excerpt content that contradicts the post-image must still fail."""
         rd = tmp_path / ".code-forge" / "receipts"
