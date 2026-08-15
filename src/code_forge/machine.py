@@ -285,7 +285,11 @@ class StateMachine:
         if self.mode == Mode.CI:
             if state_path.exists():
                 logging.getLogger("code_forge").warning(
-                    "ignoring prior state.json in CI mode (STATE-09)"
+                    "ignoring prior state.json in CI mode (STATE-09) -- "
+                    "each CI run starts fresh and cannot accumulate "
+                    "dispositions, so repeated runs on an unchanged diff "
+                    "report the same findings; run LOCAL mode for "
+                    "iterative multi-round review"
                 )
             return
         if state_path.exists():
