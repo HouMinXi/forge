@@ -1656,6 +1656,26 @@ def main() -> int:
             )
             traceback.print_exc(file=sys.stderr)
             return EXIT_FAIL
+        except SystemExit as exc:
+            # A SystemExit escaping the pipeline is a forge internal bug,
+            # not a legitimate review outcome: it exits silently with
+            # its own code (1 reads like FAIL) and leaves no receipts.
+            # Convert it to a visible internal error with the traceback
+            # showing the raise site.
+            import traceback
+            print(
+                "code-forge: internal error: SystemExit(%s) escaped "
+                "the review pipeline"
+                % (exc.code if exc.code is not None else 0,),
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            return EXIT_CLI_ERROR
+        except KeyboardInterrupt:
+            print("code-forge: interrupted", file=sys.stderr)
+            # Exit with the conventional SIGINT code (130) without an
+            # interpreter traceback; a bare re-raise would print one.
+            raise SystemExit(130)
 
         # B2: PENDING guard before verdict_to_exit.
         if verdict == Verdict.PENDING:
@@ -2469,6 +2489,124 @@ def _check_backend_credentials(
         raise CliError(err)
 
 
+def _repo_display_name(cwd: Path) -> str:
+    """Basename of the git top-level, falling back to the cwd name.
+
+    The banner must name the repository, not the directory the user
+    happens to be in: a review launched from a subdirectory would
+    otherwise print the subdirectory's name.
+    """
+    top = ""
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", cwd=cwd, check=False, timeout=5,
+        ).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        # OSError covers a missing git binary (FileNotFoundError is an
+        # OSError, not a SubprocessError); the banner must survive a
+        # git-less machine and fall back to the directory name.
+        pass
+    name = Path(top).name if top else ""
+    name = name if name else cwd.name
+    # The name lands on a stderr line: strip control characters so a
+    # hostile directory name cannot corrupt the terminal or forge log
+    # lines (same policy as the timeout env value in the banner).
+    return "".join(c for c in name if c.isprintable())
+
+
+def _banner_timeout_note(
+    backend, env_raw: str | None
+) -> str:
+    """Suffix for the banner timeout, explaining env involvement only.
+
+    effective_invoke_timeout_s prefers backend.timeout_s over the env
+    variable, so FORGE_LLM_TIMEOUT_S can be silently ignored. The
+    banner says so in the two cases where the env var matters: it
+    determined the value (from FORGE_LLM_TIMEOUT_S), or it was set
+    but overridden by the backend (ignored). When the env var is
+    absent or invalid there is nothing env-related to explain, so the
+    suffix is empty and the plain value stands on its own.
+    """
+    if env_raw is None:
+        return ""
+    env_raw = env_raw.strip()
+    if not env_raw:
+        # An empty or whitespace-only value falls back to the default
+        # in the resolver (int() fails); the banner must not claim an
+        # override the resolution chain did not honor.
+        return ""
+    try:
+        env_value = int(env_raw)
+    except ValueError:
+        return ""
+    if env_value <= 0:
+        # Mirror the resolver: only a positive integer is honored.
+        return ""
+    # Strip control characters: the value is embedded in a stderr line,
+    # and an env var can carry ANSI escapes that would corrupt the
+    # terminal or forge log lines.
+    clean_raw = "".join(c for c in env_raw if c.isprintable())
+    backend_wins = (
+        backend is not None
+        and (backend.timeout_s or 0) > 0
+    )
+    if backend_wins:
+        return (
+            " (FORGE_LLM_TIMEOUT_S=%s ignored: backend timeout wins)"
+            % clean_raw
+        )
+    return " (from FORGE_LLM_TIMEOUT_S)"
+
+
+def _startup_banner_line(
+    repo_name: str,
+    sha: str,
+    diff_count: int | None,
+    mode: str,
+    backend_name: str,
+    timeout_s: int | None,
+    timeout_note: str = "",
+) -> str:
+    """One stderr line stating what review is about to run.
+
+    Prints repo@sha, diff size, mode, backend, and the effective LLM
+    timeout. timeout_note is the suffix produced by
+    _banner_timeout_note: it names FORGE_LLM_TIMEOUT_S only when the
+    resolution chain actually honored (or provably ignored) it.
+    """
+    # Backend names come from config, not the CLI author: strip control
+    # characters like the other embedded values. Same policy for sha:
+    # it is normally git-resolved hex, but it flows from a user-facing
+    # --head argument and the banner never embeds unsanitized input.
+    sha = "".join(c for c in sha if c.isprintable())
+    if sha:
+        target = "%s @ %s" % (repo_name, sha)
+    else:
+        target = repo_name
+    if diff_count is None:
+        diff_str = "n/a"
+    else:
+        diff_str = "%d file%s" % (
+            diff_count, "" if diff_count == 1 else "s"
+        )
+    if timeout_s is not None:
+        timeout_str = "%ds%s" % (timeout_s, timeout_note)
+    else:
+        timeout_str = "n/a"
+    # Backend names come from config, not the CLI author: strip control
+    # characters like the other embedded values.
+    backend_name = "".join(
+        c for c in backend_name if c.isprintable()
+    )
+    return (
+        "code-forge: reviewing %s (diff: %s); mode: %s; backend: %s; "
+        "LLM timeout: %s"
+        % (target, diff_str, mode, backend_name, timeout_str)
+    )
+
+
 def _run(args, env, cwd: Path) -> Verdict:
     """Main pipeline body. Returns Verdict."""
     _wall_t0 = time.monotonic()
@@ -2903,6 +3041,50 @@ def _run(args, env, cwd: Path) -> Verdict:
     )
     if _cv is not None:
         return _cv
+
+    # Startup banner: state the review target and effective timeout
+    # before the first LLM call (or lock wait) so a wrong cwd or a
+    # surprise timeout budget is visible immediately. Every input is
+    # defensive: the banner is diagnostics and must never become a
+    # crash surface of its own.
+    _banner_timeout = None
+    if backend is not None:
+        try:
+            from .llm_invoke import effective_invoke_timeout_s
+            _banner_timeout = effective_invoke_timeout_s(backend, None)
+        except Exception:  # noqa: BLE001
+            pass
+    # The resolved review carries the target head sha (git mode), so
+    # the banner labels the actual review target -- --head <sha>,
+    # WORKING, or INDEX included -- instead of unconditionally HEAD.
+    # No extra git call; the only probe is _repo_display_name's
+    # toplevel lookup.
+    _banner_sha = (
+        str(resolved.head_sha)[:8] if resolved.head_sha else ""
+    )
+    _banner_diff_count = None
+    if resolved.git_diff:
+        try:
+            from .verify import parse_diff_files
+            _banner_diff_count = len(
+                parse_diff_files(resolved.git_diff)
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    print(
+        _startup_banner_line(
+            repo_name=_repo_display_name(cwd),
+            sha=_banner_sha,
+            diff_count=_banner_diff_count,
+            mode=mode.value.lower(),
+            backend_name=backend.name if backend is not None else "none",
+            timeout_s=_banner_timeout,
+            timeout_note=_banner_timeout_note(
+                backend, env.get("FORGE_LLM_TIMEOUT_S")
+            ),
+        ),
+        file=sys.stderr,
+    )
 
     # Step 7: lock + run
     try:
