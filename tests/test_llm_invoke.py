@@ -3328,6 +3328,37 @@ class TestReadSSE:
         result = _read_sse(resp)
         assert "error" in result
 
+    def test_first_token_emit(self):
+        """First content delta emits exactly one first-token progress event."""
+        with patch("code_forge.llm_invoke.progress.emit") as mock_emit:
+            # Zero events while only role/reasoning deltas are consumed.
+            preamble = _sse_lines(
+                {"choices": [{"delta": {"role": "assistant"}}]},
+                {"choices": [{"delta": {"reasoning_content": "think..."}}]},
+            )
+            _read_sse(preamble, backend_name="test")
+            assert mock_emit.call_count == 0
+
+            resp = _sse_lines(
+                {"choices": [{"delta": {"content": "Hello"}}]},
+                {"choices": [{"delta": {"content": " world"}}]},
+            )
+            result = _read_sse(resp, backend_name="test")
+            assert result["choices"][0]["message"]["content"] == "Hello world"
+            assert mock_emit.call_count == 1
+            assert mock_emit.call_args[0][0] == "backend test: first token"
+
+    def test_no_emit_without_content(self):
+        """Reasoning-only + error stream emits nothing; error dict returned."""
+        with patch("code_forge.llm_invoke.progress.emit") as mock_emit:
+            resp = _sse_lines(
+                {"choices": [{"delta": {"reasoning_content": "think..."}}]},
+                {"error": {"message": "rate limit", "code": 429}},
+            )
+            result = _read_sse(resp, backend_name="test")
+            assert "error" in result
+            mock_emit.assert_not_called()
+
     def test_stream_on_anthropic_raises(self):
         from code_forge.llm_invoke import _invoke_anthropic
 

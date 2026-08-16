@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 from .backend import BackendConfig, check_headers, check_params
 from .errors import CliError
+from . import progress
 
 
 @dataclass(frozen=True)
@@ -384,6 +385,12 @@ def _read_sse(response, deadline=None, backend_name="") -> dict:
     finish_reason = ""
     usage: dict = {}
     last_error: dict | None = None
+    # One first-token event per call, on the first non-empty content
+    # delta. A streamed pass otherwise assembles in silence until the
+    # whole body arrives, which reads as a stall; the event makes the
+    # stream's first user-visible output observable through the same
+    # stderr channel as every other pass-level message.
+    first_emitted = False
 
     for raw_line in response:
         if deadline is not None and time.monotonic() > deadline:
@@ -415,6 +422,9 @@ def _read_sse(response, deadline=None, backend_name="") -> dict:
         for choice in chunk.get("choices", []):
             delta = choice.get("delta", {})
             if delta.get("content"):
+                if not first_emitted:
+                    first_emitted = True
+                    progress.emit("backend %s: first token" % backend_name)
                 content_parts.append(delta["content"])
             # reasoning_content intentionally dropped
             if choice.get("finish_reason"):
