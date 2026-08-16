@@ -109,8 +109,10 @@ class TruncationBreakerError(LLMInvokeError):
     def __init__(self, count, threshold):
         super().__init__(
             "backend hit %d truncations (>=%d) this run; review output "
-            "keeps hitting the provider cap. Raise output_ceiling or "
-            "switch backends." % (count, threshold),
+            "keeps hitting the provider cap, which the backend may "
+            "already clamp below the configured ceiling. Raise "
+            "output_ceiling only if the configured cap is the limit; "
+            "otherwise switch backends." % (count, threshold),
             kind="truncated",
             retryable=False,
         )
@@ -123,8 +125,13 @@ class TruncationBreaker:
     read takes the lock; the timeout breaker is main-thread-only and
     cannot be reused here. record_truncation() increments and performs
     the trip check, so the event that crosses the threshold raises
-    immediately. A tripped breaker stays tripped -- every later record
-    or check raises too, which turns a systematically under-capped
+    immediately.
+
+    The count is monotonic: there is deliberately no reset. A breaker
+    that cleared on a clean pass could be evaded by truncate/clean
+    alternation across parallel passes, and a reset after the trip
+    would let a tripped run recover silently; once tripped, every
+    later record or check raises, turning a systematically under-capped
     backend into a fail-fast stop instead of repeated recoveries.
     """
 
@@ -138,10 +145,6 @@ class TruncationBreaker:
             self._count += 1
             if self._count >= self.threshold:
                 raise TruncationBreakerError(self._count, self.threshold)
-
-    def record_success(self) -> None:
-        with self._lock:
-            self._count = 0
 
     @property
     def count(self) -> int:
@@ -1115,6 +1118,11 @@ CONTINUE_PROMPT = (
     "<partial>\n%s\n</partial>"
 )
 
+# Fixed delay between continuation attempts (beyond the first): the
+# requests are independent, but a gateway that just clamped output is
+# often rate-limiting too, and an immediate retry adds nothing.
+_CONTINUE_DELAY_S = 2.0
+
 
 def _continue_truncated(
     prompt: str,
@@ -1139,6 +1147,7 @@ def _continue_truncated(
     deterministic per prompt: replaying the original prompt cannot
     help, while a continuation is a different, smaller request.
     """
+    last_failure = ""
     try:
         # The entry event is recorded before the zero-output guard so
         # every truncation counts toward the run breaker, recovered or
@@ -1150,9 +1159,21 @@ def _continue_truncated(
                 or not truncated.content.strip() \
                 or "{" not in truncated.content:
             return None
-        tail = truncated.content[-2000:]
+        # The tail re-enters a prompt as fenced data; strip the fence
+        # tokens themselves so a partial that echoes them cannot close
+        # the data block early or smuggle a nested one.
+        tail = truncated.content.replace(
+            "</partial>", "",
+        ).replace("<partial>", "")[-2000:]
         prompt_c = CONTINUE_PROMPT % tail
+        keys = (
+            expected_keys
+            if expected_keys is not None
+            else _REVIEW_ENVELOPE_KEYS
+        )
         for _attempt in range(budget):
+            if _attempt > 0:
+                time.sleep(_CONTINUE_DELAY_S)
             try:
                 if backend.format == "openai":
                     cont, usage_c = _invoke_openai(
@@ -1166,18 +1187,20 @@ def _continue_truncated(
                     cont, usage_c = _invoke_vertex(
                         prompt_c, backend, timeout_s,
                     )
-            except _TruncatedResponse:
+            except _TruncatedResponse as exc:
                 # A truncated continuation is a failed attempt, and the
                 # event still counts. A trip raised here leaves the
                 # inner try and reaches the outer clauses below.
+                last_failure = " ".join(str(exc).split())[:400]
                 if breaker is not None:
                     breaker.record_truncation()
                 continue
-            except LLMInvokeError:
+            except LLMInvokeError as exc:
                 # A non-truncation invoke error (HTTP status, timeout)
                 # is a failed attempt against this budget; it must not
                 # escape to the caller's max_attempts retry loop, which
                 # would replay the original truncating prompt.
+                last_failure = " ".join(str(exc).split())[:400]
                 continue
             if not isinstance(cont, str):
                 cont = ""
@@ -1190,7 +1213,15 @@ def _continue_truncated(
                     cleaned, expected_keys=expected_keys,
                 )
                 if parsed is None:
+                    last_failure = "combined output is not valid JSON"
                     continue
+            # Completing the JSON is not enough: the combined shape must
+            # pass the same expected-keys envelope check the normal
+            # path applies, or the continuation is a failed attempt.
+            if not isinstance(parsed, dict) \
+                    or not (parsed.keys() & keys):
+                last_failure = "combined output is not a forge envelope"
+                continue
             if backend.format == "openai":
                 in_key, out_key = "prompt_tokens", "completion_tokens"
             else:
@@ -1215,7 +1246,8 @@ def _continue_truncated(
         pass
     raise LLMInvokeError(
         "output truncated at provider cap; continuation exhausted "
-        "after %d attempts" % budget,
+        "after %d attempts; last failure: %s"
+        % (budget, last_failure or "unknown"),
         kind="truncated",
         retryable=False,
     )

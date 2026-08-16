@@ -425,14 +425,10 @@ def build_l1_provider(
 
             if breaker is not None:
                 breaker.record_success()
-            # A recovered truncation still costs the run roughly double
-            # the tokens of a clean pass, so it must NOT reset the
-            # truncation breaker -- a backend that always truncates but
-            # always recovers still needs operator action. Only a clean,
-            # non-truncated pass resets the count.
-            if continuation_breaker is not None \
-                    and not result.is_truncated:
-                continuation_breaker.record_success()
+            # The truncation breaker is monotonic by design: the fold
+            # never resets it, so a backend that always truncates but
+            # always recovers still trips the run-level threshold and
+            # gets operator attention.
 
             all_excerpts.extend(_collect_excerpts(validated))
 

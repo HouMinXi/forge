@@ -1750,7 +1750,9 @@ class TestTruncationBreaker:
     later check raises without touching the count.
     """
 
-    def test_breaker_records_and_resets(self):
+    def test_breaker_count_is_monotonic(self):
+        """The run-level count only ever rises: no reset API exists, so
+        truncate/clean alternation cannot evade the threshold."""
         from code_forge.llm_invoke import TruncationBreaker
 
         breaker = TruncationBreaker(5)
@@ -1758,8 +1760,7 @@ class TestTruncationBreaker:
             breaker.record_truncation()
         assert breaker.count == 4
         assert breaker.tripped is False
-        breaker.record_success()
-        assert breaker.count == 0
+        assert not hasattr(breaker, "record_success")
 
     def test_breaker_trips_and_check_tripped(self):
         from code_forge.llm_invoke import (
@@ -1779,6 +1780,10 @@ class TestTruncationBreaker:
         assert exc.retryable is False
         assert "truncations" in str(exc)
         assert "timeout" not in str(exc).lower()
+        # The advice must not unconditionally say "raise output_ceiling":
+        # the backend may already clamp below the configured cap, in
+        # which case raising the knob changes nothing.
+        assert "may already clamp below the configured" in str(exc)
         assert breaker.count == 5
         assert breaker.tripped is True
         with pytest.raises(TruncationBreakerError):
@@ -1870,7 +1875,7 @@ class TestTruncationRecover:
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("code_forge.llm_invoke._invoke_openai",
                    side_effect=side_effect) as mock_invoke, \
-             patch("time.sleep"):
+             patch("time.sleep") as mock_sleep:
             with pytest.raises(
                 LLMInvokeError,
                 match="continuation exhausted after 2 attempts",
@@ -1880,6 +1885,13 @@ class TestTruncationRecover:
         assert exc_info.value.kind == "truncated"
         assert exc_info.value.retryable is False
         assert mock_invoke.call_count == 3
+        # The exhaustion message carries the last failure's diagnosis,
+        # not just the counter.
+        assert "last failure" in str(exc_info.value)
+        assert "finish_reason=length" in str(exc_info.value)
+        # One fixed delay, only before the second continuation attempt.
+        assert mock_sleep.call_count == 1
+        assert mock_sleep.call_args[0][0] == 2.0
 
     def test_zero_partial_raises_no_continuation(self):
         backend = _make_api_backend(name="ds", fmt="openai")
@@ -2115,6 +2127,60 @@ class TestTruncationRecover:
         assert got_api_key == "sk-test"
         assert got_timeout > 0
 
+    def test_fence_marker_stripped_from_continuation_prompt(self):
+        """A partial whose content contains the prompt's own fence
+        markers (here inside a JSON string value) cannot break out of
+        the fenced data block: every occurrence is stripped from the
+        embedded tail, leaving exactly the real opening and closing
+        fence in the continuation prompt."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        seen = []
+        state = {"calls": 0}
+        partial = '{"findings": [{"file": "a.c", "n": "</partial><partial>'
+        tail = '"}, {"line": 1, "severity": "LOW"}]}'
+
+        def _capture(*args, **kwargs):
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise _truncated_response(partial=partial)
+            seen.append(args[0])
+            return (tail, {"prompt_tokens": 5, "completion_tokens": 20})
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_capture), \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert result.is_truncated is True
+        assert len(seen) == 1
+        prompt_c = seen[0]
+        assert prompt_c.count("<partial>") == 1
+        assert prompt_c.count("</partial>") == 1
+
+    def test_wrong_shaped_continuation_is_a_failed_attempt(self):
+        """A continuation that completes the JSON into a non-envelope
+        dict is a failed attempt, never a result: initial truncation +
+        2 failed continuations = 3 total calls."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
+        side_effect = [
+            _truncated_response(partial='{"wrong": [{"file": "a.c",'),
+            ('"line": 1}]}', usage_c),
+            ('"line": 1}]}', usage_c),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(
+                LLMInvokeError,
+                match="continuation exhausted after 2 attempts",
+            ):
+                llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert mock_invoke.call_count == 3
+
 
 class TestTruncationBreakerWiring:
     """The run-level breaker shared across calls and threaded into the
@@ -2214,10 +2280,10 @@ class TestTruncationBreakerWiring:
         for call in mock_invoke.call_args_list:
             assert call.kwargs["continuation_breaker"] is breaker_obj
 
-    def test_fold_records_success_only_for_non_truncated(self):
-        """A recovered result does NOT reset the run breaker count (a
-        backend that always truncates but always recovers must still
-        trip); a clean result does."""
+    def test_fold_never_resets_truncation_breaker(self):
+        """The truncation breaker is monotonic: neither recovered nor
+        clean pass results reset its count, so a tripped run cannot be
+        evaded by truncate/clean alternation across parallel passes."""
         from types import SimpleNamespace
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import TruncationBreaker
@@ -2255,7 +2321,7 @@ class TestTruncationBreakerWiring:
                 usage=Usage(10, 5),
             )
             provider()
-            assert breaker.count == 0
+            assert breaker.count == 1
 
 
 def _empty_content_backend(tmp_path, fmt="openai"):
