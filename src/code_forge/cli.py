@@ -3003,6 +3003,8 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     from .machine import TimeoutCircuitBreaker
     breaker = TimeoutCircuitBreaker(threshold=5)
+    from .llm_invoke import TruncationBreaker
+    truncation_breaker = TruncationBreaker(threshold=5)
 
     l1_provider = build_l1_provider(
         engine_choice, resolved, backend=backend,
@@ -3011,6 +3013,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         graph_impact_context=_graph_impact_context,
         contract_spec=_contract_spec_a,
         breaker=breaker,
+        continuation_breaker=truncation_breaker,
         max_attempts=retry_cfg.get("max_attempts", 5),
         initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
     )

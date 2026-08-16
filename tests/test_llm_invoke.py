@@ -2116,6 +2116,148 @@ class TestTruncationRecover:
         assert got_timeout > 0
 
 
+class TestTruncationBreakerWiring:
+    """The run-level breaker shared across calls and threaded into the
+    review provider.
+
+    Calls 1-4 each survive one truncation and recover (one truncation
+    event each); call 5's truncation event trips the breaker before a
+    continuation can run, and the pre-dispatch check makes call 6 fail
+    before any network call. The provider test patches the SOURCE name
+    before build_l1_provider runs its lazy from-import, which is the
+    only seam that intercepts the closure the pass runner calls.
+    """
+
+    def test_breaker_trips_across_calls(self):
+        from code_forge.llm_invoke import (
+            TruncationBreaker,
+            TruncationBreakerError,
+        )
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        breaker = TruncationBreaker(5)
+
+        def _alternating(*args, **kwargs):
+            mock_invoke.inc += 1
+            if mock_invoke.inc % 2 == 1:
+                raise _truncated_response()
+            return (_TAIL, {"prompt_tokens": 5, "completion_tokens": 20})
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_alternating) as mock_invoke, \
+             patch("time.sleep"):
+            mock_invoke.inc = 0
+            for _ in range(4):
+                result = llm_invoke(
+                    "p", backend=backend, continuation_breaker=breaker,
+                )
+                assert result.is_truncated is True
+            assert mock_invoke.call_count == 8
+            with pytest.raises(TruncationBreakerError):
+                llm_invoke(
+                    "p", backend=backend, continuation_breaker=breaker,
+                )
+            assert mock_invoke.call_count == 9
+            with pytest.raises(TruncationBreakerError):
+                llm_invoke(
+                    "p", backend=backend, continuation_breaker=breaker,
+                )
+            assert mock_invoke.call_count == 9
+
+    def test_breaker_default_fresh_per_call(self):
+        """Without a shared breaker each call gets a fresh instance, so
+        two truncation-and-recovery calls never accumulate a trip."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [
+            _truncated_response(),
+            (_TAIL, {"prompt_tokens": 5, "completion_tokens": 20}),
+            _truncated_response(),
+            (_TAIL, {"prompt_tokens": 5, "completion_tokens": 20}),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            first = llm_invoke("p", backend=backend, max_attempts=5)
+            second = llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert first.is_truncated is True
+        assert second.is_truncated is True
+        assert mock_invoke.call_count == 4
+
+    def test_provider_passes_breaker(self):
+        from types import SimpleNamespace
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import TruncationBreaker
+
+        breaker_obj = TruncationBreaker(5)
+        fake_resolved = SimpleNamespace(git_diff="x")
+        with patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
+            mock_invoke.return_value = LLMResult(
+                content={
+                    "findings": [],
+                    "code_excerpts": [{
+                        "file": "a.py", "start_line": 1, "end_line": 2,
+                        "content": "x = 1",
+                    }],
+                },
+                usage=Usage(10, 5),
+            )
+            provider = build_l1_provider(
+                "auto", fake_resolved, backend=None,
+                continuation_breaker=breaker_obj,
+            )
+            provider()
+
+        assert mock_invoke.call_count == 3
+        for call in mock_invoke.call_args_list:
+            assert call.kwargs["continuation_breaker"] is breaker_obj
+
+    def test_fold_records_success_only_for_non_truncated(self):
+        """A recovered result does NOT reset the run breaker count (a
+        backend that always truncates but always recovers must still
+        trip); a clean result does."""
+        from types import SimpleNamespace
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import TruncationBreaker
+
+        breaker = TruncationBreaker(5)
+        breaker.record_truncation()
+        fake_resolved = SimpleNamespace(git_diff="x")
+        with patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
+            mock_invoke.return_value = LLMResult(
+                content={
+                    "findings": [],
+                    "code_excerpts": [{
+                        "file": "a.py", "start_line": 1, "end_line": 2,
+                        "content": "x = 1",
+                    }],
+                },
+                usage=Usage(10, 5),
+                is_truncated=True,
+            )
+            provider = build_l1_provider(
+                "auto", fake_resolved, backend=None,
+                continuation_breaker=breaker,
+            )
+            provider()
+            assert breaker.count == 1
+
+            mock_invoke.return_value = LLMResult(
+                content={
+                    "findings": [],
+                    "code_excerpts": [{
+                        "file": "a.py", "start_line": 1, "end_line": 2,
+                        "content": "x = 1",
+                    }],
+                },
+                usage=Usage(10, 5),
+            )
+            provider()
+            assert breaker.count == 0
+
+
 def _empty_content_backend(tmp_path, fmt="openai"):
     kf = tmp_path / "key.txt"
     kf.write_text("sk-test\n")

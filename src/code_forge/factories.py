@@ -212,6 +212,7 @@ def build_l1_provider(
     breaker=None,
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
+    continuation_breaker=None,
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -301,6 +302,7 @@ def build_l1_provider(
                 prompts[idx], backend=backend,
                 max_attempts=max_attempts,
                 initial_delay_s=initial_delay_s,
+                continuation_breaker=continuation_breaker,
             )
             if (r.usage.input_tokens > 0
                     or r.usage.output_tokens > 0):
@@ -423,6 +425,14 @@ def build_l1_provider(
 
             if breaker is not None:
                 breaker.record_success()
+            # A recovered truncation still costs the run roughly double
+            # the tokens of a clean pass, so it must NOT reset the
+            # truncation breaker -- a backend that always truncates but
+            # always recovers still needs operator action. Only a clean,
+            # non-truncated pass resets the count.
+            if continuation_breaker is not None \
+                    and not result.is_truncated:
+                continuation_breaker.record_success()
 
             all_excerpts.extend(_collect_excerpts(validated))
 
