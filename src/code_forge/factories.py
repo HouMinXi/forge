@@ -19,6 +19,7 @@ from .autofix import AutoFixer, FixOutcome, NoChangeAutoFixer
 from .baseline import ResolvedReview
 from .disposition import Disposition
 from .falsify import Falsifier, StubFalsifier
+from . import progress
 from .e2e_check import run_e2e_check
 from .mutation import run_mutation
 from .state import StateFinding
@@ -292,6 +293,10 @@ def build_l1_provider(
 
         def _run_pass(idx):
             pn = pass_configs[idx][0]
+            progress.emit(
+                "pass %s: calling %s"
+                % (pn, backend.name if backend else "unknown")
+            )
             r = llm_invoke(
                 prompts[idx], backend=backend,
                 max_attempts=max_attempts,

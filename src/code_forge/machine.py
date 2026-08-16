@@ -46,6 +46,7 @@ from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
 from .hold import check_escalated_frozen
 from .llm_invoke import Usage
 from .parsers.base import Finding, ToolError
+from . import progress
 from .state import (
     Mode,
     State,
@@ -254,6 +255,8 @@ class StateMachine:
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
+        progress.reset()
+        progress.emit("run start: mode=%s" % self.mode.value)
         self._maybe_load_prior_state()
         self._state.mode = self.mode
         self._state.source_hash = self.source_hash
@@ -272,6 +275,12 @@ class StateMachine:
         self._preexisting_buf.clear()
         self._serialize_advisories()
         self._display_advisories()
+        progress.emit(
+            "run done: verdict=%s findings=%d confirmed=%d"
+            % (verdict.value,
+               len(self._state.findings),
+               self._count(Disposition.CONFIRMED))
+        )
         return verdict
 
     def _maybe_load_prior_state(self) -> None:
@@ -772,18 +781,42 @@ class StateMachine:
         self._round_output_tokens += usage.output_tokens
         self._round_duration += duration
         l1_findings: list[StateFinding] = []
-        for f in l1_candidates:
+        total = len(l1_candidates)
+        for i, f in enumerate(l1_candidates, 1):
             if f.source == "INFRA":
                 l1_findings.append(f)
                 continue
+            progress.emit(
+                "falsify %d/%d: %s:%s (%s)"
+                % (i, total, f.file, f.line_range, f.fingerprint)
+            )
+            t_falsify = time.monotonic()
             try:
                 f.disposition = self.falsifier.falsify(f)
+                progress.emit(
+                    "falsify %d/%d: done %s (%.1fs)"
+                    % (i, total, f.disposition,
+                       time.monotonic() - t_falsify)
+                )
             except RuntimeError as exc:
                 f.disposition = Disposition.UNCERTAIN
                 f.error = "falsify() raised: %s" % exc
                 self._state.infra_errors.append(
                     "falsify exception on %s: %s" % (f.fingerprint, exc)
                 )
+                progress.emit(
+                    "falsify %d/%d: failed (%.1fs)"
+                    % (i, total, time.monotonic() - t_falsify)
+                )
+            except Exception:
+                # Close the event pair before re-raising: whatever
+                # escapes falsify must not leave the stream looking
+                # like the falsify is still running.
+                progress.emit(
+                    "falsify %d/%d: failed (%.1fs)"
+                    % (i, total, time.monotonic() - t_falsify)
+                )
+                raise
             l1_findings.append(f)
         return (l1_findings, l1_excerpts)
 
@@ -853,6 +886,7 @@ class StateMachine:
 
         diff_files = [str(f) for f in self._source_files()]
 
+        progress.emit("mutation: running baseline")
         try:
             l2_findings, l2_infra = self.l2_runner(diff_files, baseline_cmd)
             self._state.infra_errors.extend(l2_infra)
@@ -924,6 +958,7 @@ class StateMachine:
           CI:    L0 detect -> L1 -> L2 -> E2E (no autofix loop per STATE-03)
         """
         self._state.round = round_index
+        progress.emit("round %d start" % round_index)
         l0_findings = self._run_l0_phase()
         if self.mode == Mode.LOCAL:
             self._apply_autofix_loop_to(l0_findings)
