@@ -1807,6 +1807,315 @@ class TestTruncationBreaker:
         assert breaker.count == 80
 
 
+# Truncation continuation fixtures: partial + tail concatenate to a
+# valid forge envelope; the usage pair mirrors a clamped response plus
+# a short continuation request.
+_PARTIAL = '{"findings": [{"file": "a.c",'
+_TAIL = '"line": 1, "severity": "LOW"}]}'
+
+
+def _truncated_response(partial=_PARTIAL, usage_data=None, **kw):
+    from code_forge.llm_invoke import _TruncatedResponse
+
+    return _TruncatedResponse(
+        "ds backend response truncated (finish_reason=length)",
+        content=partial,
+        usage_data=usage_data if usage_data is not None else {
+            "prompt_tokens": 800, "completion_tokens": 16384,
+        },
+        resolved_cap=65536,
+        kind="truncated",
+        retryable=False,
+        **kw,
+    )
+
+
+class TestTruncationRecover:
+    """Bounded continuation turns a truncated reply into a result.
+
+    The recovery dispatch is patched at the module seam
+    (code_forge.llm_invoke._invoke_openai), which both the retry loop
+    and the continuation helper call, so one side_effect list covers
+    the original attempt plus every continuation request.
+    """
+
+    def test_continuation_success(self):
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [
+            _truncated_response(),
+            (_TAIL, {"prompt_tokens": 5, "completion_tokens": 20}),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert result.content == {
+            "findings": [{"file": "a.c", "line": 1, "severity": "LOW"}],
+        }
+        assert result.usage == Usage(805, 16404)
+        assert result.is_truncated is True
+        assert mock_invoke.call_count == 2
+
+    def test_continuation_exhausted(self):
+        """Initial truncation + 2 continuation attempts (budget=2
+        exhausted, both truncated again) = 3 total _invoke_openai calls."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [
+            _truncated_response(),
+            _truncated_response('{"findings": [{"file": "b.c",'),
+            _truncated_response('{"findings": [{"file": "c.c",'),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(
+                LLMInvokeError,
+                match="continuation exhausted after 2 attempts",
+            ) as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert exc_info.value.kind == "truncated"
+        assert exc_info.value.retryable is False
+        assert mock_invoke.call_count == 3
+
+    def test_zero_partial_raises_no_continuation(self):
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [_truncated_response(partial=None)]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert exc_info.value.kind == "truncated"
+        assert mock_invoke.call_count == 1
+
+    def test_no_brace_partial_raises_no_continuation(self):
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [_truncated_response(partial="prose with no JSON")]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert exc_info.value.kind == "truncated"
+        assert mock_invoke.call_count == 1
+
+    def test_combined_parse_failure_counts_as_attempt(self):
+        """Initial truncation + 2 continuation attempts whose combined
+        output never parses (budget=2 exhausted) = 3 total _invoke_openai
+        calls."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
+        side_effect = [
+            _truncated_response(),
+            ("plain prose continuation, no json at all", usage_c),
+            ("more plain prose, still no json", usage_c),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(
+                LLMInvokeError,
+                match="continuation exhausted after 2 attempts",
+            ):
+                llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert mock_invoke.call_count == 3
+
+    def test_continuation_does_not_consume_max_attempts(self):
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [
+            _truncated_response(),
+            (_TAIL, {"prompt_tokens": 5, "completion_tokens": 20}),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=2)
+
+        assert result.content == {
+            "findings": [{"file": "a.c", "line": 1, "severity": "LOW"}],
+        }
+        assert mock_invoke.call_count == 2
+
+    def test_pre_tripped_breaker_raises_before_dispatch(self):
+        from code_forge.llm_invoke import (
+            TruncationBreaker,
+            TruncationBreakerError,
+        )
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        breaker = TruncationBreaker(5)
+        with pytest.raises(TruncationBreakerError):
+            for _ in range(5):
+                breaker.record_truncation()
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai") as mock_invoke:
+            with pytest.raises(TruncationBreakerError) as exc_info:
+                llm_invoke(
+                    "p", backend=backend, continuation_breaker=breaker,
+                )
+
+        assert exc_info.value.kind == "truncated"
+        assert mock_invoke.call_count == 0
+
+    def test_vertex_continuation(self):
+        """The vertex format recovers through the same helper, dispatching
+        without an api_key and summing input/output token keys."""
+        backend = _make_vertex_backend()
+        side_effect = [
+            _truncated_response(usage_data={
+                "input_tokens": 600, "output_tokens": 8192,
+            }),
+            (_TAIL, {"input_tokens": 5, "output_tokens": 20}),
+        ]
+        with patch("code_forge.llm_invoke._invoke_vertex",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert result.content == {
+            "findings": [{"file": "a.c", "line": 1, "severity": "LOW"}],
+        }
+        assert result.usage == Usage(605, 8212)
+        assert result.is_truncated is True
+        assert mock_invoke.call_count == 2
+
+    def test_non_str_partial_raises_no_continuation(self):
+        """A truthy non-str partial (content=123) hits the isinstance
+        guard: original raise, exactly one call, no AttributeError."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [_truncated_response(partial=123)]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert exc_info.value.kind == "truncated"
+        assert mock_invoke.call_count == 1
+
+    def test_trip_propagates_not_budgeted(self):
+        """A continuation-request truncation that trips the breaker
+        propagates the trip: no further network call is issued and the
+        trip is never converted into a budgeted failure."""
+        from code_forge.llm_invoke import (
+            TruncationBreaker,
+            TruncationBreakerError,
+        )
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        breaker = TruncationBreaker(5)
+        for _ in range(3):
+            breaker.record_truncation()
+        side_effect = [
+            _truncated_response(),
+            _truncated_response('{"findings": [{"file": "b.c",'),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(TruncationBreakerError) as exc_info:
+                llm_invoke(
+                    "p", backend=backend, continuation_breaker=breaker,
+                )
+
+        assert exc_info.value.kind == "truncated"
+        assert mock_invoke.call_count == 2
+
+    def test_usage_none_normalized(self):
+        """usage_data=None on the truncated payload and usage=None on the
+        continuation sum to (0,0) with no AttributeError."""
+        from code_forge.llm_invoke import _TruncatedResponse
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [
+            _TruncatedResponse(
+                "ds backend response truncated (finish_reason=length)",
+                content=_PARTIAL, usage_data=None, resolved_cap=65536,
+                kind="truncated", retryable=False,
+            ),
+            (_TAIL, None),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert result.content == {
+            "findings": [{"file": "a.c", "line": 1, "severity": "LOW"}],
+        }
+        assert result.usage == Usage(0, 0)
+        assert result.is_truncated is True
+        assert mock_invoke.call_count == 2
+
+    def test_non_str_continuation_normalized(self):
+        """A continuation returning content=123 counts as a failed
+        attempt (budget decrement) and never raises TypeError."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [
+            _truncated_response(),
+            (123, {"prompt_tokens": 5, "completion_tokens": 20}),
+            (_TAIL, {"prompt_tokens": 5, "completion_tokens": 20}),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert result.content == {
+            "findings": [{"file": "a.c", "line": 1, "severity": "LOW"}],
+        }
+        assert mock_invoke.call_count == 3
+
+    def test_anthropic_continuation_passes_api_key(self):
+        """The anthropic dispatch hands the resolved api_key to the
+        continuation request and sums input/output token keys."""
+        backend = _make_api_backend(name="anthrop", fmt="anthropic")
+        state = {"calls": 0}
+        seen = []
+
+        def _alternate(*args, **kwargs):
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise _truncated_response(usage_data={
+                    "input_tokens": 500, "output_tokens": 16384,
+                })
+            seen.append(args)
+            return (_TAIL, {"input_tokens": 5, "output_tokens": 20})
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_anthropic",
+                   side_effect=_alternate), \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert result.content == {
+            "findings": [{"file": "a.c", "line": 1, "severity": "LOW"}],
+        }
+        assert result.usage == Usage(505, 16404)
+        assert len(seen) == 1
+        prompt_c, got_backend, got_api_key, got_timeout = seen[0]
+        assert "Continue the JSON output" in prompt_c
+        assert got_backend is backend
+        assert got_api_key == "sk-test"
+        assert got_timeout > 0
+
+
 def _empty_content_backend(tmp_path, fmt="openai"):
     kf = tmp_path / "key.txt"
     kf.write_text("sk-test\n")

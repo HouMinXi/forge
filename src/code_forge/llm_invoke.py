@@ -880,6 +880,7 @@ def llm_invoke(
     expected_keys: frozenset[str] | None = None,
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
+    continuation_breaker: "TruncationBreaker | None" = None,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
@@ -898,6 +899,9 @@ def llm_invoke(
             Ignored for cli backends (those do not use _extract_json_from_text).
         max_attempts: Maximum retry attempts for API backends (default 5).
         initial_delay_s: Initial backoff delay in seconds (default 2.0).
+        continuation_breaker: Run-level TruncationBreaker shared across
+            calls; None gives each api call a fresh breaker (stateless).
+            Ignored for cli backends.
 
     Returns:
         LLMResult with content, usage (tokens), and duration_s
@@ -949,6 +953,7 @@ def llm_invoke(
         return _invoke_api(
             prompt, backend, timeout_s, expected_keys=expected_keys,
             max_attempts=max_attempts, initial_delay_s=initial_delay_s,
+            continuation_breaker=continuation_breaker,
         )
     else:
         raise LLMInvokeError(
@@ -1103,6 +1108,119 @@ def _invoke_cli(
     )
 
 
+CONTINUE_PROMPT = (
+    "The JSON output below was cut off by an output token limit. "
+    "Continue the JSON output from where it was cut off. "
+    "Emit ONLY the continuation; no recap; no preamble.\n"
+    "<partial>\n%s\n</partial>"
+)
+
+
+def _continue_truncated(
+    prompt: str,
+    backend: BackendConfig,
+    api_key: str,
+    timeout_s: int,
+    truncated: "_TruncatedResponse",
+    expected_keys: frozenset[str] | None,
+    budget: int = 2,
+    breaker: "TruncationBreaker | None" = None,
+):
+    """Recover a truncated reply with a bounded continuation.
+
+    Sends a fresh short request -- the cut-off tail fenced as data, not
+    the original prompt -- asking for only the continuation, then
+    concatenates and re-parses through the same strip/extract pipeline
+    as a normal reply. Returns (parsed, summed_usage) on success or
+    None when the partial is not worth continuing; raises the
+    exhaustion error when every attempt fails.
+
+    The budget is separate from max_attempts because truncation is
+    deterministic per prompt: replaying the original prompt cannot
+    help, while a continuation is a different, smaller request.
+    """
+    try:
+        # The entry event is recorded before the zero-output guard so
+        # every truncation counts toward the run breaker, recovered or
+        # not, and a trip here stops the call before any further
+        # request is issued.
+        if breaker is not None:
+            breaker.record_truncation()
+        if not isinstance(truncated.content, str) \
+                or not truncated.content.strip() \
+                or "{" not in truncated.content:
+            return None
+        tail = truncated.content[-2000:]
+        prompt_c = CONTINUE_PROMPT % tail
+        for _attempt in range(budget):
+            try:
+                if backend.format == "openai":
+                    cont, usage_c = _invoke_openai(
+                        prompt_c, backend, api_key, timeout_s,
+                    )
+                elif backend.format == "anthropic":
+                    cont, usage_c = _invoke_anthropic(
+                        prompt_c, backend, api_key, timeout_s,
+                    )
+                else:
+                    cont, usage_c = _invoke_vertex(
+                        prompt_c, backend, timeout_s,
+                    )
+            except _TruncatedResponse:
+                # A truncated continuation is a failed attempt, and the
+                # event still counts. A trip raised here leaves the
+                # inner try and reaches the outer clauses below.
+                if breaker is not None:
+                    breaker.record_truncation()
+                continue
+            except LLMInvokeError:
+                # A non-truncation invoke error (HTTP status, timeout)
+                # is a failed attempt against this budget; it must not
+                # escape to the caller's max_attempts retry loop, which
+                # would replay the original truncating prompt.
+                continue
+            if not isinstance(cont, str):
+                cont = ""
+            combined = truncated.content + cont
+            cleaned = _strip_fences(combined)
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError:
+                parsed = _extract_json_from_text(
+                    cleaned, expected_keys=expected_keys,
+                )
+                if parsed is None:
+                    continue
+            if backend.format == "openai":
+                in_key, out_key = "prompt_tokens", "completion_tokens"
+            else:
+                in_key, out_key = "input_tokens", "output_tokens"
+            return parsed, Usage(
+                input_tokens=(
+                    (truncated.usage_data or {}).get(in_key, 0)
+                    + (usage_c or {}).get(in_key, 0)
+                ),
+                output_tokens=(
+                    (truncated.usage_data or {}).get(out_key, 0)
+                    + (usage_c or {}).get(out_key, 0)
+                ),
+            )
+    except TruncationBreakerError:
+        raise
+    except LLMInvokeError:
+        # Defensive: per-attempt handling above covers every invoke
+        # error a continuation request can raise. Anything that still
+        # escapes is folded into the same exhausted outcome below --
+        # never an escape to the caller's retry loop.
+        pass
+    raise LLMInvokeError(
+        "output truncated at provider cap; continuation exhausted "
+        "after %d attempts" % budget,
+        kind="truncated",
+        retryable=False,
+    )
+
+
 def _invoke_api(
     prompt: str,
     backend: BackendConfig,
@@ -1110,6 +1228,7 @@ def _invoke_api(
     expected_keys: frozenset[str] | None = None,
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
+    continuation_breaker: "TruncationBreaker | None" = None,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
     # Look up API key (not needed for vertex which uses OAuth2)
@@ -1149,11 +1268,25 @@ def _invoke_api(
 
     start = time.monotonic()
 
+    # A fresh per-call breaker when the caller passed none: direct
+    # callers stay stateless, and the threshold cannot trip within a
+    # single call (one initial truncation plus at most `budget`
+    # continuation truncations) so the default never changes behavior.
+    breaker = (
+        continuation_breaker
+        if continuation_breaker is not None
+        else TruncationBreaker()
+    )
+
     # Retry loop with exponential backoff + jitter.
     # Inner try catches TimeoutError (socket.timeout alias on Python 3.12+).
     # Outer except catches LLMInvokeError from both the format dispatch and
     # the converted TimeoutError, applying retry logic.
     for attempt in range(max_attempts):
+        # Fail fast before any network call once the run-level breaker
+        # has tripped: further passes would only repeat the same
+        # truncation-and-recover cycle against a capped backend.
+        breaker.check_tripped()
         try:
             try:
                 if backend.format == "openai":
@@ -1257,6 +1390,18 @@ def _invoke_api(
                     retryable=False,  # socket timeout is not transient
                 ) from exc
         except LLMInvokeError as exc:
+            if isinstance(exc, _TruncatedResponse):
+                recovered = _continue_truncated(
+                    prompt, backend, api_key, timeout_s, exc,
+                    expected_keys, breaker=breaker,
+                )
+                if recovered is not None:
+                    parsed, usage = recovered
+                    return LLMResult(
+                        content=parsed, usage=usage,
+                        duration_s=time.monotonic() - start,
+                        is_truncated=True,
+                    )
             if not exc.retryable or attempt == max_attempts - 1:
                 raise
             delay = min(
