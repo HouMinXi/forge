@@ -20,10 +20,15 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from code_forge.eval.corpus import CorpusEntry
+from code_forge.eval.corpus import (
+    CorpusEntry,
+    ExpectedFinding,
+    valid_line_range,
+)
 
 
 def advisory_caught(advisory_text: str, keywords: list[str]) -> bool:
@@ -49,6 +54,121 @@ def advisory_caught(advisory_text: str, keywords: list[str]) -> bool:
     return False
 
 
+def finding_hit(actual: dict, expected: ExpectedFinding) -> bool:
+    """Match one actual finding against one findings-level answer.
+
+    Rules (deterministic, documented for the bank's consumers):
+      1. The file must match exactly.
+      2. When both sides carry a valid two-int line range, the ranges
+         must overlap by at least one line.
+      3. When either side lacks a valid range, descriptions must share
+         at least two significant tokens (lowercased alphanumeric runs
+         of length >= 4).
+
+    A malformed actual line_range is treated as absent (falls through
+    to the description rule) -- the harness must never crash on the
+    state.json of an arbitrary run.
+    """
+    if actual.get("file") != expected.file:
+        return False
+    actual_range = actual.get("line_range")
+    if (
+        valid_line_range(expected.line_range)
+        and valid_line_range(actual_range)
+    ):
+        exp_lo, exp_hi = expected.line_range
+        act_lo, act_hi = actual_range[0], actual_range[1]
+        return max(exp_lo, act_lo) <= min(exp_hi, act_hi)
+
+    def _tokens(text: str) -> set[str]:
+        return {
+            t for t in re.findall(r"[a-z0-9_]+", (text or "").lower())
+            if len(t) >= 4
+        }
+
+    actual_description = actual.get("description")
+    actual_text = (
+        actual_description if isinstance(actual_description, str)
+        else str(actual_description or "")
+    )
+    expected_tokens = _tokens(expected.description)
+    actual_tokens = _tokens(actual_text)
+    shared = len(expected_tokens & actual_tokens)
+    if not expected_tokens:
+        # No significant token at all in the answer key ("RCE bug"):
+        # fall back to any shared alphanumeric token of any length,
+        # so a valid key is never permanently un-hittable.
+        def _any_tokens(text: str) -> set[str]:
+            return set(re.findall(r"[a-z0-9_]+", (text or "").lower()))
+        return bool(
+            _any_tokens(expected.description) & _any_tokens(actual_text)
+        )
+    if len(expected_tokens) < 2:
+        # A concise answer key (one significant token) can only ever
+        # demand one shared token; requiring two would make it
+        # permanently un-hittable.
+        return shared >= 1
+    return shared >= 2
+
+
+
+def score_findings(
+    entry: CorpusEntry, confirmed: list[dict]
+) -> tuple[int, int, int]:
+    """(hits, misses, fps) for one run against the entry's answer key.
+
+    Maximum bipartite matching (Kuhn's augmenting paths): each actual
+    finding can hit at most one expected finding, so one actual cannot
+    inflate the hit count across duplicated or overlapping answer
+    entries, and no greedy first-match choice can under-count. An actual
+    finding matching no expected finding counts as a false positive.
+    Entries without an answer key score (0, 0, 0).
+    """
+    expected = entry.expected_findings
+    if not expected:
+        return (0, 0, 0)
+    # Maximum bipartite matching (Kuhn's augmenting paths): the
+    # greedy first-match pass can under-count when one actual could
+    # satisfy several expected findings and choices interact. Sets
+    # are tiny (bank sizes), so O(V*E) DFS is free.
+    match_actual = [-1] * len(confirmed)
+    used = []
+
+    def _try_match(ei: int) -> bool:
+        for ai, a in enumerate(confirmed):
+            if used[ai] or not finding_hit(a, expected[ei]):
+                continue
+            used[ai] = True
+            if (
+                match_actual[ai] == -1
+                or _try_match(match_actual[ai])
+            ):
+                match_actual[ai] = ei
+                return True
+        return False
+
+    hits = 0
+    for ei in range(len(expected)):
+        used = [False] * len(confirmed)
+        if _try_match(ei):
+            hits += 1
+    fps = len(confirmed) - hits
+    return (hits, len(expected) - hits, fps)
+
+
+def pick_best_findings(
+    per_run: list[tuple[int, int, int]],
+) -> tuple[int, int, int]:
+    """Best-run findings aggregation across a multi-run replay.
+
+    Most hits wins; ties break toward fewest false positives; further
+    ties keep the first run. Empty input is (0, 0, 0).
+    """
+    if not per_run:
+        return (0, 0, 0)
+    return max(per_run, key=lambda t: (t[0], -t[2]))
+
+
 @dataclass(frozen=True)
 class EvalResult:
     """Result of running one corpus entry through the pipeline.
@@ -70,6 +190,10 @@ class EvalResult:
     caught_count: int
     skipped_reason: str
     advisory_caught_count: int = 0
+    finding_hits: int = 0
+    finding_misses: int = 0
+    finding_fps: int = 0
+    findings_evidence: bool = True
 
 
 @dataclass(frozen=True)
@@ -97,6 +221,10 @@ class EvalSummary:
     advisory_caught: int
     advisory_missed: int
     results: list[EvalResult]
+    findings_expected: int = 0
+    findings_hit: int = 0
+    findings_misses: int = 0
+    findings_fp: int = 0
 
 
 def _is_pure_runtime_advisory(result: EvalResult) -> bool:
@@ -171,6 +299,17 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
             else:
                 false_positive += 1
 
+    findings_expected = 0
+    findings_hit = 0
+    findings_fp = 0
+    for r in results:
+        if r.skipped_reason:
+            continue
+        if r.entry.expected_findings and r.findings_evidence:
+            findings_expected += len(r.entry.expected_findings)
+            findings_hit += r.finding_hits
+            findings_fp += r.finding_fps
+
     return EvalSummary(
         total=len(results),
         caught=caught,
@@ -180,6 +319,10 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
         skipped=skipped,
         advisory_caught=adv_caught,
         advisory_missed=adv_missed,
+        findings_expected=findings_expected,
+        findings_hit=findings_hit,
+        findings_misses=findings_expected - findings_hit,
+        findings_fp=findings_fp,
         results=results,
     )
 
@@ -255,6 +398,19 @@ def format_table(summary: EvalSummary) -> str:
 
     lines.append(" | ".join(summary_parts))
 
+    if summary.findings_expected > 0:
+        findings_total = summary.findings_expected
+        lines.append("")
+        lines.append(
+            "Findings-level: hit %d/%d (missed %d), false positives %d"
+            % (
+                summary.findings_hit,
+                findings_total,
+                findings_total - summary.findings_hit,
+                summary.findings_fp,
+            )
+        )
+
     return "\n".join(lines)
 
 
@@ -274,6 +430,10 @@ def write_json_report(summary: EvalSummary, output_path: Path) -> None:
         "skipped": summary.skipped,
         "advisory_caught": summary.advisory_caught,
         "advisory_missed": summary.advisory_missed,
+        "findings_expected": summary.findings_expected,
+        "findings_hit": summary.findings_hit,
+        "findings_misses": summary.findings_misses,
+        "findings_fp": summary.findings_fp,
         "results": [
             {
                 "entry": {
@@ -282,12 +442,27 @@ def write_json_report(summary: EvalSummary, output_path: Path) -> None:
                     "expected_verdict": r.entry.expected_verdict,
                     "axis_tags": r.entry.axis_tags,
                     "expected_advisory": r.entry.expected_advisory,
+                    "expected_findings": [
+                        {
+                            "file": f.file,
+                            "description": f.description,
+                            "line_range": (
+                                list(f.line_range)
+                                if f.line_range is not None
+                                else None
+                            ),
+                        }
+                        for f in r.entry.expected_findings
+                    ],
                 },
                 "actual_verdict": r.actual_verdict,
                 "runs": r.runs,
                 "caught_count": r.caught_count,
                 "skipped_reason": r.skipped_reason,
                 "advisory_caught_count": r.advisory_caught_count,
+                "finding_hits": r.finding_hits,
+                "finding_misses": r.finding_misses,
+                "finding_fps": r.finding_fps,
             }
             for r in summary.results
         ],

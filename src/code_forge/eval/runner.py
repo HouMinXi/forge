@@ -35,7 +35,11 @@ from typing import Optional
 
 import yaml
 
-from code_forge.eval.corpus import CorpusEntry
+from code_forge.eval.corpus import CorpusEntry, valid_line_range
+from code_forge.eval.scorer import (
+    pick_best_findings,
+    score_findings,
+)
 from code_forge.eval.scorer import EvalResult, advisory_caught
 from code_forge.proc import (
     group_of,
@@ -401,6 +405,54 @@ def _read_advisory_findings(temp_dir: str) -> list[dict]:
         return []
 
 
+def _read_confirmed_findings(temp_dir: str) -> list[dict] | None:
+    """CONFIRMED findings from the run's state.json.
+
+    Returns a list of {file, line_range, description} dicts. Returns
+    None when the file is absent or malformed -- distinguishable from
+    a run that genuinely produced zero confirmed findings, so a run
+    without state evidence never participates in findings scoring.
+    Called BEFORE temp dir cleanup in the per-run loop, mirroring
+    _read_advisory_findings.
+    """
+    state_path = Path(temp_dir) / ".code-forge" / "state.json"
+    if not state_path.exists():
+        return None
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw_findings = data.get("findings")
+    if not isinstance(raw_findings, list):
+        return None
+    confirmed = []
+    for f in raw_findings:
+        if not isinstance(f, dict):
+            continue
+        if f.get("disposition") != "CONFIRMED":
+            continue
+        file = f.get("file")
+        if not isinstance(file, str) or not file.strip():
+            # A confirmed finding with no file can never match an
+            # answer key; keeping it would only inflate false
+            # positives.
+            continue
+        raw_range = f.get("line_range")
+        line_range = raw_range if valid_line_range(raw_range) else None
+        description = f.get("description")
+        confirmed.append({
+            "file": file.strip(),
+            "line_range": line_range,
+            "description": description if isinstance(
+                description, str
+            ) else "",
+        })
+    return confirmed
+
+
+
 def _concat_advisory_text(findings: list[dict]) -> str:
     """Concatenate advisory finding descriptions, excluding runtime-smoke-summary.
 
@@ -556,6 +608,7 @@ def replay_entry(
     num_runs = runs if runs is not None else _default_runs(entry)
     caught_count = 0
     advisory_hit_count = 0
+    per_run_findings: list[tuple[int, int, int]] = []
 
     # Call pre_review hooks
     for hook in _AXIS_HOOKS:
@@ -591,6 +644,16 @@ def replay_entry(
                 if advisory_caught(concat_text, entry.expected_advisory):
                     advisory_hit_count += 1
 
+            # Findings-level scoring: read CONFIRMED findings BEFORE
+            # cleanup and score against the entry's answer key. A run
+            # without state evidence (None) does not participate.
+            if entry.expected_findings:
+                confirmed = _read_confirmed_findings(temp_dir)
+                if confirmed is not None:
+                    per_run_findings.append(
+                        score_findings(entry, confirmed)
+                    )
+
             if flagged:
                 caught_count += 1
         finally:
@@ -603,6 +666,16 @@ def replay_entry(
     else:
         actual_verdict = "PASS"
 
+    # Findings-level aggregation across runs: use the best run.
+    finding_hits, finding_misses, finding_fps = pick_best_findings(
+        per_run_findings
+    )
+
+    # Evidence flag: an entry whose answer key never saw a single
+    # run's state evidence must not be counted as all-missed -- the
+    # infra loss is not the model's performance.
+    findings_evidence = bool(per_run_findings)
+
     eval_result = EvalResult(
         entry=entry,
         actual_verdict=actual_verdict,
@@ -610,6 +683,10 @@ def replay_entry(
         caught_count=caught_count,
         skipped_reason="",
         advisory_caught_count=advisory_hit_count,
+        finding_hits=finding_hits,
+        finding_misses=finding_misses,
+        finding_fps=finding_fps,
+        findings_evidence=findings_evidence,
     )
 
     # Call post_review hooks
