@@ -11,6 +11,7 @@ Public types: Usage, LLMResult, LLMInvokeError
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import shlex
@@ -254,6 +255,21 @@ def _apply_params(
     return cap
 
 
+# A response that has gone silent for this many seconds is treated as
+# hung.  urlopen() installs a socket timeout of timeout_s (1200-2400s),
+# which is sized for a legitimate slow pass -- a non-streaming backend
+# generates the whole answer before the first body byte, so a slow pass
+# reads as one long zero-byte wait (411.7s measured).  That same window
+# also means a hung connection ties up the round for 20-40 minutes
+# before anyone notices.  This shorter idle bound fails a silent
+# connection fast while staying above the measured slow pass with
+# margin; if a future backend legitimately generates past it, the pass
+# fails without same-call retries (same policy as the total read
+# deadline) and the round records the failure -- cheaper than a
+# 40-minute stall, and a fresh round retries the whole pass anyway.
+_IDLE_READ_TIMEOUT_S = 900
+
+
 def _read_with_deadline(response, deadline, backend_name):
     """Read response body, enforcing a total-wall deadline.
 
@@ -263,6 +279,10 @@ def _read_with_deadline(response, deadline, backend_name):
     body in a daemon thread and joins with a timeout; if the join
     expires, the socket is shut down to interrupt the blocking recv(),
     and a timeout error is raised.
+
+    The socket additionally gets the idle timeout above, shorter than
+    the caller's timeout_s, so a connection that stops producing bytes
+    entirely (as opposed to dripping them slowly) is caught early.
     """
     import socket as _socket
 
@@ -276,9 +296,21 @@ def _read_with_deadline(response, deadline, backend_name):
     result = [None]
     error = [None]
 
+    # The bound actually installed: the idle window clamped to the
+    # remaining deadline, so a path whose budget is tighter than the
+    # idle window reports the number that fired, not the constant.
+    idle_installed = min(_IDLE_READ_TIMEOUT_S, remaining)
+
     def _worker():
         try:
             result[0] = response.read()
+        except TimeoutError:
+            error[0] = LLMInvokeError(
+                "%s backend went silent for %ds mid-response"
+                % (backend_name, idle_installed),
+                is_timeout=True,
+                retryable=False,
+            )
         except Exception as exc:
             error[0] = exc
 
@@ -290,6 +322,25 @@ def _read_with_deadline(response, deadline, backend_name):
         sock = response.fp.raw._sock
     except Exception:
         pass
+    if sock is not None:
+        # Tighten the idle bound: urlopen() set timeout_s on this
+        # socket, which makes a silent connection wait out the whole
+        # slow-pass budget.  A socket that answers nothing for the idle
+        # window raises socket.timeout from read(), which the worker
+        # converts above.  min() with the remaining deadline keeps the
+        # bound meaningful on every path: where the effective timeout
+        # is already shorter than the idle window (the API cap), the
+        # deadline is the tighter guard and wins on its own.
+        # The socket handle itself is a best-effort layer: when the
+        # response object does not expose a raw socket, the idle bound
+        # is skipped and the deadline join above remains the guard.
+        try:
+            sock.settimeout(idle_installed)
+        except Exception as exc:
+            logging.warning(
+                "could not install idle timeout on %s socket: %s",
+                backend_name, exc,
+            )
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
