@@ -78,6 +78,87 @@ class LLMInvokeError(Exception):
         self.kind = kind
 
 
+class _TruncatedResponse(LLMInvokeError):
+    """A truncation raise that carries the partial payload.
+
+    The three per-format helpers detect finish_reason=length /
+    stop_reason=max_tokens while the truncated content and usage are
+    still in hand. The recovery path in _invoke_api needs the partial
+    JSON, the usage dict, and the resolved cap to run a continuation;
+    a bare LLMInvokeError discards all three. kind, retryable, and the
+    message are unchanged from the plain raises this replaces, so
+    callers that branch on those fields see the same error.
+    """
+
+    def __init__(self, message, content, usage_data, resolved_cap, **kw):
+        super().__init__(message, **kw)
+        self.content = content
+        self.usage_data = usage_data
+        self.resolved_cap = resolved_cap
+
+
+class TruncationBreakerError(LLMInvokeError):
+    """Raised when a run's truncation events cross the threshold.
+
+    An LLMInvokeError with kind="truncated" so the CLI fold routes it
+    to the INFRA branch like every other invoke failure -- the run
+    records an actionable finding and drops the pass instead of
+    aborting.
+    """
+
+    def __init__(self, count, threshold):
+        super().__init__(
+            "backend hit %d truncations (>=%d) this run; review output "
+            "keeps hitting the provider cap. Raise output_ceiling or "
+            "switch backends." % (count, threshold),
+            kind="truncated",
+            retryable=False,
+        )
+
+
+class TruncationBreaker:
+    """Run-level counter of truncation events, thread-safe.
+
+    Review passes run in parallel worker threads, so every mutation and
+    read takes the lock; the timeout breaker is main-thread-only and
+    cannot be reused here. record_truncation() increments and performs
+    the trip check, so the event that crosses the threshold raises
+    immediately. A tripped breaker stays tripped -- every later record
+    or check raises too, which turns a systematically under-capped
+    backend into a fail-fast stop instead of repeated recoveries.
+    """
+
+    def __init__(self, threshold: int = 5):
+        self.threshold = threshold
+        self._count = 0
+        self._lock = threading.Lock()
+
+    def record_truncation(self) -> None:
+        with self._lock:
+            self._count += 1
+            if self._count >= self.threshold:
+                raise TruncationBreakerError(self._count, self.threshold)
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._count = 0
+
+    @property
+    def count(self) -> int:
+        with self._lock:
+            return self._count
+
+    @property
+    def tripped(self) -> bool:
+        with self._lock:
+            return self._count >= self.threshold
+
+    def check_tripped(self) -> None:
+        with self._lock:
+            if self._count >= self.threshold:
+                raise TruncationBreakerError(self._count, self.threshold)
+
+
 DEFAULT_TIMEOUT_S = 1800  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
 _CLI_TIMEOUT_CAP_S = 300  # CLI subprocesses cap; only applies when no explicit timeout is set
 _API_TIMEOUT_CAP_S = 600  # API backends cap; prevents 30-minute hangs on dead endpoints
@@ -1329,24 +1410,30 @@ def _invoke_openai(
         if isinstance(out_tok, (int, float)) \
                 and isinstance(resolved_cap, int) \
                 and 0 < out_tok < resolved_cap:
-            raise LLMInvokeError(
+            raise _TruncatedResponse(
                 "%s backend response truncated at %s output tokens "
                 "(finish_reason=length, input=%s). The configured "
                 "output cap is %d, so the backend clamped below it "
                 "on its own; raising the configured cap will not help "
                 "-- use a backend/model with a higher hard output limit."
                 % (backend.name, out_tok, in_tok, resolved_cap),
+                content=content,
+                usage_data=usage_data,
+                resolved_cap=resolved_cap,
                 kind="truncated",
                 retryable=False,
             )
         if isinstance(resolved_cap, int) and resolved_cap > 0:
-            raise LLMInvokeError(
+            raise _TruncatedResponse(
                 "%s backend response truncated (finish_reason=length, "
                 "input=%s output=%s). Review output truncated: output "
                 "capacity (%d tokens) insufficient for this diff. Raise "
                 "output_ceiling on this backend in gate.yaml or use a "
                 "higher-output model."
                 % (backend.name, in_tok, out_tok, resolved_cap),
+                content=content,
+                usage_data=usage_data,
+                resolved_cap=resolved_cap,
                 kind="truncated",
                 retryable=False,
             )
@@ -1354,13 +1441,16 @@ def _invoke_openai(
         # raise; the number is the config's absence marker, not a
         # capacity, so reporting "capacity (0 tokens)" would send the
         # user to raise a knob that was never set.
-        raise LLMInvokeError(
+        raise _TruncatedResponse(
             "%s backend response truncated (finish_reason=length, "
             "input=%s output=%s). Review output truncated: no usable "
             "output cap is configured for this backend, so its own "
             "limit ended the response. Set max_tokens or "
             "output_ceiling on this backend in gate.yaml."
             % (backend.name, in_tok, out_tok),
+            content=content,
+            usage_data=usage_data,
+            resolved_cap=resolved_cap,
             kind="truncated",
             retryable=False,
         )
@@ -1454,13 +1544,16 @@ def _invoke_anthropic(
     if stop == "max_tokens":
         in_tok = usage_data.get("input_tokens", "?")
         out_tok = usage_data.get("output_tokens", "?")
-        raise LLMInvokeError(
+        raise _TruncatedResponse(
             "%s backend response truncated (stop_reason=max_tokens, "
             "input=%s output=%s). Review output truncated: output "
             "capacity (%d tokens) insufficient for this diff. Raise "
             "output_ceiling on this backend in gate.yaml or use a "
             "higher-output model."
             % (backend.name, in_tok, out_tok, resolved_cap),
+            content=content,
+            usage_data=usage_data,
+            resolved_cap=resolved_cap,
             kind="truncated",
             retryable=False,
         )
@@ -1616,13 +1709,16 @@ def _invoke_vertex(
     if stop == "max_tokens":
         in_tok = usage_data.get("input_tokens", "?")
         out_tok = usage_data.get("output_tokens", "?")
-        raise LLMInvokeError(
+        raise _TruncatedResponse(
             "vertex backend response truncated (stop_reason=max_tokens, "
             "input=%s output=%s). Review output truncated: output "
             "capacity (%d tokens) insufficient for this diff. Raise "
             "output_ceiling on this backend in gate.yaml or use a "
             "higher-output model."
             % (in_tok, out_tok, resolved_cap),
+            content=content,
+            usage_data=usage_data,
+            resolved_cap=resolved_cap,
             kind="truncated",
             retryable=False,
         )

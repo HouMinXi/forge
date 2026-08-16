@@ -1644,6 +1644,168 @@ class TestTruncationDetection:
             assert "findings" in content
 
 
+class TestTruncationCarrier:
+    """The three truncation raises carry the partial payload.
+
+    kind/retryable/message behavior is unchanged from the plain raises
+    these replaced (TestTruncationDetection); what the carrier adds is
+    the partial content, the usage dict, and the resolved cap, which the
+    recovery path needs and the old raises discarded.
+    """
+
+    def test_openai_truncation_carries_partial(self):
+        from code_forge.llm_invoke import _invoke_openai, _TruncatedResponse
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K", max_tokens=8192,
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "choices": [{
+                "message": {"content": '{"findings": [{"fil'},
+                "finish_reason": "length",
+            }],
+            "usage": {"prompt_tokens": 800, "completion_tokens": 8192},
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                _invoke_openai("p", backend, api_key="k", timeout_s=10)
+            exc = exc_info.value
+            assert exc.content == '{"findings": [{"fil'
+            assert exc.usage_data == {
+                "prompt_tokens": 800, "completion_tokens": 8192,
+            }
+            assert exc.resolved_cap == 8192
+            assert exc.kind == "truncated"
+            assert exc.retryable is False
+
+    def test_anthropic_truncation_carries_partial(self):
+        from code_forge.llm_invoke import _invoke_anthropic, _TruncatedResponse
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": [{"type": "text", "text": '{"findings": [{"fil'}],
+            "usage": {"input_tokens": 500, "output_tokens": 16384},
+            "stop_reason": "max_tokens",
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+            exc = exc_info.value
+            assert exc.content == '{"findings": [{"fil'
+            assert exc.usage_data == {
+                "input_tokens": 500, "output_tokens": 16384,
+            }
+            assert exc.resolved_cap == 16384
+            assert exc.kind == "truncated"
+            assert exc.retryable is False
+
+    def test_vertex_truncation_carries_partial(self):
+        from code_forge.llm_invoke import _invoke_vertex, _TruncatedResponse
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        resp_data = {
+            "content": [{"type": "text", "text": '{"findings": [{"fil'}],
+            "usage": {"input_tokens": 600, "output_tokens": 8192},
+            "stop_reason": "max_tokens",
+        }
+        resp = Mock()
+        resp.read.return_value = json.dumps(resp_data).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                _invoke_vertex("p", backend, timeout_s=10)
+            exc = exc_info.value
+            assert exc.content == '{"findings": [{"fil'
+            assert exc.usage_data == {
+                "input_tokens": 600, "output_tokens": 8192,
+            }
+            assert exc.resolved_cap == 8192
+            assert exc.kind == "truncated"
+            assert exc.retryable is False
+
+
+class TestTruncationBreaker:
+    """The run-level truncation counter: threshold trip and reset.
+
+    Review passes run in parallel worker threads, so every mutation and
+    read is lock-protected; a tripped breaker stays tripped and every
+    later check raises without touching the count.
+    """
+
+    def test_breaker_records_and_resets(self):
+        from code_forge.llm_invoke import TruncationBreaker
+
+        breaker = TruncationBreaker(5)
+        for _ in range(4):
+            breaker.record_truncation()
+        assert breaker.count == 4
+        assert breaker.tripped is False
+        breaker.record_success()
+        assert breaker.count == 0
+
+    def test_breaker_trips_and_check_tripped(self):
+        from code_forge.llm_invoke import (
+            LLMInvokeError,
+            TruncationBreaker,
+            TruncationBreakerError,
+        )
+
+        breaker = TruncationBreaker(5)
+        for _ in range(4):
+            breaker.record_truncation()
+        with pytest.raises(TruncationBreakerError) as exc_info:
+            breaker.record_truncation()
+        exc = exc_info.value
+        assert isinstance(exc, LLMInvokeError)
+        assert exc.kind == "truncated"
+        assert exc.retryable is False
+        assert "truncations" in str(exc)
+        assert "timeout" not in str(exc).lower()
+        assert breaker.count == 5
+        assert breaker.tripped is True
+        with pytest.raises(TruncationBreakerError):
+            breaker.check_tripped()
+        assert breaker.count == 5
+
+    def test_breaker_thread_safe_increments(self):
+        from code_forge.llm_invoke import TruncationBreaker
+
+        breaker = TruncationBreaker(threshold=100)
+        errors = []
+
+        def _hammer():
+            try:
+                for _ in range(10):
+                    breaker.record_truncation()
+            except Exception as exc:  # noqa: BLE001 -- collected for assert
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_hammer) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not errors
+        assert breaker.count == 80
+
 
 def _empty_content_backend(tmp_path, fmt="openai"):
     kf = tmp_path / "key.txt"
