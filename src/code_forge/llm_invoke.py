@@ -1125,6 +1125,32 @@ CONTINUE_PROMPT = (
 _CONTINUE_DELAY_S = 2.0
 
 
+def _is_forge_envelope(parsed, expected_keys):
+    """The recovery path's acceptance test for a parsed dict.
+
+    A forge review envelope carries both findings and code_excerpts;
+    recovering a one-key dict would only be schema-rejected one step
+    later. Callers that pass explicit expected_keys accept full
+    coverage of their own key set instead.
+    """
+    if not isinstance(parsed, dict):
+        return False
+    if expected_keys is not None:
+        return parsed.keys() >= expected_keys
+    return "findings" in parsed and "code_excerpts" in parsed
+
+
+def _exhaustion_error(budget, last_failure):
+    """The exhaustion LLMInvokeError for a spent continuation budget."""
+    return LLMInvokeError(
+        "output truncated at provider cap; continuation exhausted "
+        "after %d attempts; last failure: %s"
+        % (budget, last_failure or "unknown"),
+        kind="truncated",
+        retryable=False,
+    )
+
+
 def _continue_truncated(
     prompt: str,
     backend: BackendConfig,
@@ -1158,11 +1184,6 @@ def _continue_truncated(
             breaker.record_truncation()
         if not isinstance(truncated.content, str):
             return None
-        keys = (
-            expected_keys
-            if expected_keys is not None
-            else _REVIEW_ENVELOPE_KEYS
-        )
         if backend.format == "openai":
             in_key, out_key = "prompt_tokens", "completion_tokens"
         else:
@@ -1179,8 +1200,7 @@ def _continue_truncated(
             parsed_partial = _extract_json_from_text(
                 cleaned_partial, expected_keys=expected_keys,
             )
-        if isinstance(parsed_partial, dict) \
-                and parsed_partial.keys() & keys:
+        if _is_forge_envelope(parsed_partial, expected_keys):
             return parsed_partial, Usage(
                 input_tokens=(
                     (truncated.usage_data or {}).get(in_key, 0)
@@ -1219,6 +1239,11 @@ def _continue_truncated(
                     cont, usage_c = _invoke_vertex(
                         prompt_c, backend, timeout_s,
                     )
+            except TruncationBreakerError:
+                # A trip raised during the dispatch itself must
+                # propagate: the broad invoke-error clause below would
+                # otherwise fold it into a budgeted failure.
+                raise
             except _TruncatedResponse as exc:
                 # A truncated continuation is a failed attempt, and the
                 # event still counts. A trip raised here leaves the
@@ -1253,11 +1278,10 @@ def _continue_truncated(
                 if parsed is None:
                     last_failure = "combined output is not valid JSON"
                     continue
-            # Completing the JSON is not enough: the combined shape must
-            # pass the same expected-keys envelope check the normal
-            # path applies, or the continuation is a failed attempt.
-            if not isinstance(parsed, dict) \
-                    or not (parsed.keys() & keys):
+            # Completing the JSON is not enough: the combined shape
+            # must be a full forge envelope, or the continuation is a
+            # failed attempt.
+            if not _is_forge_envelope(parsed, expected_keys):
                 last_failure = "combined output is not a forge envelope"
                 continue
             return parsed, Usage(
@@ -1272,19 +1296,14 @@ def _continue_truncated(
             )
     except TruncationBreakerError:
         raise
-    except LLMInvokeError:
+    except LLMInvokeError as exc:
         # Defensive: per-attempt handling above covers every invoke
         # error a continuation request can raise. Anything that still
-        # escapes is folded into the same exhausted outcome below --
-        # never an escape to the caller's retry loop.
-        pass
-    raise LLMInvokeError(
-        "output truncated at provider cap; continuation exhausted "
-        "after %d attempts; last failure: %s"
-        % (budget, last_failure or "unknown"),
-        kind="truncated",
-        retryable=False,
-    )
+        # escapes is folded into the exhausted outcome, with the
+        # original chained as the cause so the real failure stays
+        # traceable.
+        raise _exhaustion_error(budget, last_failure) from exc
+    raise _exhaustion_error(budget, last_failure)
 
 
 def _invoke_api(
