@@ -153,6 +153,53 @@ version of the same work:
 exists so a future session that finds the dangling commit does not mistake
 it for lost work.
 
+**Branch audit 2026-08-17, prompted by that near-miss.** fix/rebase-msg
+proved a branch name can be actively misleading, so all six remaining fix/*
+branches were checked by CONTENT, not by name or by ahead-count. Method:
+`git cherry main <branch>` for a patch-id first pass, then grep main for the
+actual symbols each commit introduces -- because both directions of that
+first pass lie. Results:
+
+SAFE TO DELETE (work is on main):
+- `fix/silent-exit-visible` -- no unique commits; merged as dec413e
+- `fix/xdg-backend-fallback` -- name is misleading (nothing XDG in it). All
+  three substantive commits show as `-` in git cherry and are confirmed on
+  main by symbol: sem v0.21 indexless detection (graph_triage.py:97/110),
+  required_cycles (verify.py:45 read_required_cycles, 27 occurrences matching
+  the branch exactly), Windows drive-letter root URIs (mcp_server.py). NOTE:
+  charter item 10 and the 08-15 status update both cite "RESOLVED by 0309c55"
+  and "main @ 835115d" -- NEITHER SHA is on main. The work is; the SHAs are
+  not. Same class as the 13 dead SHAs above
+- `fix/mapping-import` -- git cherry reports `+` (unmerged), and that is a
+  FALSE POSITIVE. The commit's whole content is one line, and cli.py:19 on
+  main is that line verbatim (`from typing import TYPE_CHECKING, Any,
+  Callable, Mapping, Optional`). patch-id differs only because main changed
+  the surrounding context. git cherry compares patches, not end states
+
+GENUINELY UNMERGED (verified absent from main by symbol):
+- `fix/canary-verdict-type` @ 2d43202 -- +11 lines pinning the inline
+  canary's RETURN TYPE, not just its side effects. main has no
+  `isinstance(result, Verdict)` assertion in test_outlet_c_cli.py. The bug it
+  guards: a None return means "not my outlet", so an inline canary returning
+  None makes the caller fall through and review the diff a second time,
+  quietly
+- `fix/post-image-window` @ b2c1dd6 -- +274 lines (cli.py +74,
+  test_post_image_window.py +203, a file main does not have). Sends the
+  reviewer the code around each change instead of whole files
+- `fix/stream-usage` @ bf1be2a -- +79 lines. **This one fixes a live defect
+  and is worth reading first.** It adds
+  `body["stream_options"] = {"include_usage": True}` on the streaming path.
+  main's `_read_sse` ALREADY consumes usage (llm_invoke.py:504
+  `if chunk.get("usage")`) but nothing ever asks for it, so usage stays zero,
+  the per-pass "N in / N out" line never prints (guarded on nonzero), and
+  cost totals accumulate nothing -- zero reading as "nothing to report"
+  rather than "never sent". This is exactly the producer-shipped /
+  consumer-missing signature the 43.1 charter names at charter:377, and
+  Phase 48 hardened this same `_read_sse` path last week without catching it
+
+The three unmerged branches are logic-bearing and unreviewed. None can land
+without a full forge review.
+
 **RECONCILE 2026-08-09 (authoritative main pointer; supersedes the F1 block
 below, whose scope narrative stays valid).** main @ c72ff06, pushed,
 `origin/main..main` empty. Eighteen commits landed since 695f739; the F1 block
