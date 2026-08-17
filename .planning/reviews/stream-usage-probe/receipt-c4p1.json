@@ -1,0 +1,62 @@
+{
+  "cycle": 4,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "af10f5246c5debecbc4393e529d0102e4a09bd4e27cd25a459a2f02459a444ec",
+  "timestamp": "2026-08-17T19:11:30.490590+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4720,
+      "end_line": 4723,
+      "content": "        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4762,
+      "end_line": 4775,
+      "content": "        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20\n        # Usage counting and content assembly are independent paths off the\n        # same stream: a regression that mangles delta.content leaves the\n        # counts intact and passes everything above. llm_invoke parses the\n        # streamed text as JSON, so content arrives as a dict, not a string.\n        assert result.content == {\"findings\": []}\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4720,
+      "end_line": 4775,
+      "content": "        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )\n\n    def test_streaming_request_asks_for_usage(self):\n        \"\"\"A streaming request carries stream_options.include_usage.\n\n        Reading usage back out of the stream proves nothing if nothing\n        asked for it: llama.cpp sends no usage block unless the request\n        says it wants one, and the miss is silent -- counts stay zero,\n        the per-pass token line is guarded on nonzero so it never\n        prints, and the totals accumulate nothing that looks wrong.\n        \"\"\"\n        backend = BackendConfig(\n            name=\"test\", type=\"api\", model=\"m\", format=\"openai\",\n            base_url=\"https://example.com\", api_key_env=\"TEST_KEY\",\n            max_tokens=1024, stream=True,\n        )\n        captured_body = {}\n\n        def fake_urlopen(req, timeout=None):\n            captured_body.update(json.loads(req.data.decode()))\n            # MagicMock, not Mock: the response must answer both the\n            # iterator protocol and the context-manager protocol, and\n            # MagicMock is the variant that provides them.\n            resp = MagicMock()\n            resp.__iter__.return_value = iter([\n                b'data: {\"choices\": [{\"delta\": '\n                b'{\"content\": \"{\\\\\"findings\\\\\": []}\"}}]}\\n',\n                b'data: {\"choices\": [], \"usage\": '\n                b'{\"prompt_tokens\": 10, \"completion_tokens\": 20}}\\n',\n                b'data: [DONE]\\n',\n            ])\n            resp.__enter__.return_value = resp\n            resp.__exit__.return_value = False\n            return resp\n\n        with patch.dict(os.environ, {\"TEST_KEY\": \"sk-test\"}), \\\n             patch(\"urllib.request.urlopen\", side_effect=fake_urlopen):\n            result = llm_invoke(\"prompt\", backend=backend)\n\n        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20\n        # Usage counting and content assembly are independent paths off the\n        # same stream: a regression that mangles delta.content leaves the\n        # counts intact and passes everything above. llm_invoke parses the\n        # streamed text as JSON, so content arrives as a dict, not a string.\n        assert result.content == {\"findings\": []}\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4719,
+      "end_line": 4723,
+      "content": "        assert captured_body[\"stream\"] is False\n        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4725,
+      "end_line": 4747,
+      "content": "    def test_streaming_request_asks_for_usage(self):\n        \"\"\"A streaming request carries stream_options.include_usage.\n\n        Reading usage back out of the stream proves nothing if nothing\n        asked for it: llama.cpp sends no usage block unless the request\n        says it wants one, and the miss is silent -- counts stay zero,\n        the per-pass token line is guarded on nonzero so it never\n        prints, and the totals accumulate nothing that looks wrong.\n        \"\"\"\n        backend = BackendConfig(\n            name=\"test\", type=\"api\", model=\"m\", format=\"openai\",\n            base_url=\"https://example.com\", api_key_env=\"TEST_KEY\",\n            max_tokens=1024, stream=True,\n        )\n        captured_body = {}\n\n        def fake_urlopen(req, timeout=None):\n            captured_body.update(json.loads(req.data.decode()))\n            # MagicMock, not Mock: the response must answer both the\n            # iterator protocol and the context-manager protocol, and\n            # MagicMock is the variant that provides them.\n            resp = MagicMock()\n            resp.__iter__.return_value = iter([",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4758,
+      "end_line": 4775,
+      "content": "        with patch.dict(os.environ, {\"TEST_KEY\": \"sk-test\"}), \\\n             patch(\"urllib.request.urlopen\", side_effect=fake_urlopen):\n            result = llm_invoke(\"prompt\", backend=backend)\n\n        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20\n        # Usage counting and content assembly are independent paths off the\n        # same stream: a regression that mangles delta.content leaves the\n        # counts intact and passes everything above. llm_invoke parses the\n        # streamed text as JSON, so content arrives as a dict, not a string.\n        assert result.content == {\"findings\": []}",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start": 4717,
+      "end": 4778
+    }
+  ]
+}

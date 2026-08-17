@@ -1,0 +1,5 @@
+backend model: sn-deepseek-flash
+  A  stream:true, no stream_options              SSE-chunks=7    usage={"prompt_tokens": 126, "completion_tokens": 17, "total_tokens": 143, "completion_tokens_details": {"reasoning_tokens": 16, "accepted_prediction_tokens": 0, "rejected_prediction_tokens": 0, "audio_tokens": 0}, "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 0}}
+  B  stream:true, include_usage:true             SSE-chunks=7    usage={"prompt_tokens": 126, "completion_tokens": 17, "total_tokens": 143, "completion_tokens_details": {"reasoning_tokens": 16, "accepted_prediction_tokens": 0, "rejected_prediction_tokens": 0, "audio_tokens": 0}, "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 0}}
+  C  stream:false (control)                      SSE-chunks=0    usage=ABSENT
+     first 160 chars: {"error":{"message":"Upstream response failed quality validation: reasoning consumed 16/17 tokens — no content output","type":"server_error","code":"bad_gateway

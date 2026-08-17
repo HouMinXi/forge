@@ -1,0 +1,76 @@
+{
+  "cycle": 1,
+  "pass": 2,
+  "skill": "code-review-expert",
+  "diff_sha256": "cf84e9a98b2ebf0f75189da896f6b6242b7fee259e54931d780b211801f4a8a8",
+  "timestamp": "2026-08-17T15:38:42.994487+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4720,
+      "end_line": 4723,
+      "content": "        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4725,
+      "end_line": 4742,
+      "content": "    def test_streaming_request_asks_for_usage(self):\n        \"\"\"A streaming request carries stream_options.include_usage.\n\n        Reading usage back out of the stream proves nothing if nothing\n        asked for it: llama.cpp sends no usage block unless the request\n        says it wants one, and the miss is silent -- counts stay zero,\n        the per-pass token line is guarded on nonzero so it never\n        prints, and the totals accumulate nothing that looks wrong.\n        \"\"\"\n        backend = BackendConfig(\n            name=\"test\", type=\"api\", model=\"m\", format=\"openai\",\n            base_url=\"https://example.com\", api_key_env=\"TEST_KEY\",\n            max_tokens=1024, stream=True,\n        )\n        captured_body = {}\n\n        def fake_urlopen(req, timeout=None):\n            captured_body.update(json.loads(req.data.decode()))",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4759,
+      "end_line": 4767,
+      "content": "        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4720,
+      "end_line": 4723,
+      "content": "        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4759,
+      "end_line": 4767,
+      "content": "        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4720,
+      "end_line": 4723,
+      "content": "        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4743,
+      "end_line": 4744,
+      "content": "            resp = Mock()\n            resp.__iter__ = Mock(return_value=iter([",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4757,
+      "end_line": 4767,
+      "content": "            result = llm_invoke(\"prompt\", backend=backend)\n\n        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start": 4717,
+      "end": 4770
+    }
+  ]
+}

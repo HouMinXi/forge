@@ -1,0 +1,41 @@
+{
+  "cycle": 2,
+  "pass": 3,
+  "skill": "adversarial-qe",
+  "diff_sha256": "cf84e9a98b2ebf0f75189da896f6b6242b7fee259e54931d780b211801f4a8a8",
+  "timestamp": "2026-08-17T18:09:13.118549+00:00",
+  "pass_status": "error",
+  "findings_count": 1,
+  "findings": [
+    {
+      "file": "<llm-invoke>",
+      "line": 0,
+      "description": "L1 invoke failed: API response content is not valid JSON -- JSONDecodeError: Expecting ',' delimiter: line 1 column 1149 (char 1148)\ncontent[:500]: '{\"findings\":[{\"file\":\"tests/test_llm_invoke.py\",\"line\":4744,\"severity\":\"P2\",\"description\":\"fake_urlopen builds a plain Mock and assigns __iter__ as an instance attribute. The iterator protocol looks up __iter__ on the type, not the instance, so a plain Mock is not iterable this way; no read/readline return_value is configured either. The SSE stream is therefore not actually consumed, so the test fails or does not exercise the streaming path. Use MagicMock and configure resp.__iter__.return_value'",
+      "disposition": "CONFIRMED"
+    }
+  ],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4719,
+      "end_line": 4767,
+      "content": "        assert captured_body[\"stream\"] is False\n        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )\n\n    def test_streaming_request_asks_for_usage(self):\n        \"\"\"A streaming request carries stream_options.include_usage.\n\n        Reading usage back out of the stream proves nothing if nothing\n        asked for it: llama.cpp sends no usage block unless the request\n        says it wants one, and the miss is silent -- counts stay zero,\n        the per-pass token line is guarded on nonzero so it never\n        prints, and the totals accumulate nothing that looks wrong.\n        \"\"\"\n        backend = BackendConfig(\n            name=\"test\", type=\"api\", model=\"m\", format=\"openai\",\n            base_url=\"https://example.com\", api_key_env=\"TEST_KEY\",\n            max_tokens=1024, stream=True,\n        )\n        captured_body = {}\n\n        def fake_urlopen(req, timeout=None):\n            captured_body.update(json.loads(req.data.decode()))\n            resp = Mock()\n            resp.__iter__ = Mock(return_value=iter([\n                b'data: {\"choices\": [{\"delta\": '\n                b'{\"content\": \"{\\\\\"findings\\\\\": []}\"}}]}\\n',\n                b'data: {\"choices\": [], \"usage\": '\n                b'{\"prompt_tokens\": 10, \"completion_tokens\": 20}}\\n',\n                b'data: [DONE]\\n',\n            ]))\n            resp.__enter__ = Mock(return_value=resp)\n            resp.__exit__ = Mock(return_value=False)\n            return resp\n\n        with patch.dict(os.environ, {\"TEST_KEY\": \"sk-test\"}), \\\n             patch(\"urllib.request.urlopen\", side_effect=fake_urlopen):\n            result = llm_invoke(\"prompt\", backend=backend)\n\n        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 4717,
+      "end_line": 4767,
+      "content": "            \"OmniRoute picks SSE\"\n        )\n        assert captured_body[\"stream\"] is False\n        assert \"stream_options\" not in captured_body, (\n            \"stream_options sent on a non-streaming request; a strict \"\n            \"server may reject the unknown field outright\"\n        )\n\n    def test_streaming_request_asks_for_usage(self):\n        \"\"\"A streaming request carries stream_options.include_usage.\n\n        Reading usage back out of the stream proves nothing if nothing\n        asked for it: llama.cpp sends no usage block unless the request\n        says it wants one, and the miss is silent -- counts stay zero,\n        the per-pass token line is guarded on nonzero so it never\n        prints, and the totals accumulate nothing that looks wrong.\n        \"\"\"\n        backend = BackendConfig(\n            name=\"test\", type=\"api\", model=\"m\", format=\"openai\",\n            base_url=\"https://example.com\", api_key_env=\"TEST_KEY\",\n            max_tokens=1024, stream=True,\n        )\n        captured_body = {}\n\n        def fake_urlopen(req, timeout=None):\n            captured_body.update(json.loads(req.data.decode()))\n            resp = Mock()\n            resp.__iter__ = Mock(return_value=iter([\n                b'data: {\"choices\": [{\"delta\": '\n                b'{\"content\": \"{\\\\\"findings\\\\\": []}\"}}]}\\n',\n                b'data: {\"choices\": [], \"usage\": '\n                b'{\"prompt_tokens\": 10, \"completion_tokens\": 20}}\\n',\n                b'data: [DONE]\\n',\n            ]))\n            resp.__enter__ = Mock(return_value=resp)\n            resp.__exit__ = Mock(return_value=False)\n            return resp\n\n        with patch.dict(os.environ, {\"TEST_KEY\": \"sk-test\"}), \\\n             patch(\"urllib.request.urlopen\", side_effect=fake_urlopen):\n            result = llm_invoke(\"prompt\", backend=backend)\n\n        assert captured_body.get(\"stream\") is True\n        assert \"stream_options\" in captured_body, (\n            \"streaming request never asked for usage, so the counts come \"\n            \"back zero and read as 'nothing to report'\"\n        )\n        assert captured_body[\"stream_options\"] == {\"include_usage\": True}\n        # The ask is only worth making if the answer still lands.\n        assert result.usage.input_tokens == 10\n        assert result.usage.output_tokens == 20",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "<llm-invoke>",
+      "start": 1,
+      "end": 10
+    }
+  ]
+}
