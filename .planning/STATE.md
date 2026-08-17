@@ -61,8 +61,8 @@ checks passed. Six follow-ups open: 48-FOLLOWUPS.md (configurable
 breaker threshold, cross_repo.py wiring decision, T0 drift re-probe,
 no_json extension point, bonsai TTFT smoke).
 
-Cleanup owed by user: `git branch -D fix/stream-ttft-continuation`
-(merged; worktree .worktrees/stream-ttft already removed). The worktree
+Cleanup done 2026-08-16: fix/stream-ttft-continuation deleted (was
+2d2c932), worktree .worktrees/stream-ttft already removed. The worktree
 removal took the .code-forge-r*-archived review receipts with it
 (48-FOLLOWUPS item 6, now closed as moot); the phase-48 dir retains the
 authoritative disposition records.
