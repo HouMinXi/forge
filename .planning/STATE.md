@@ -1,28 +1,29 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.8
-milestone_name: Onboarding + Throughput
+milestone: v2.9
+milestone_name: ENV-GROUNDING
 status: active
-stopped_at: main @ 59c1c51, pushed. Phase 48 (stream TTFT + truncation continuation) merged, 7 commits; deployed to yinhe-laptop; six follow-ups open in 48-FOLLOWUPS.md
-last_updated: "2026-08-16T00:00:00.000Z"
+stopped_at: main @ 59c1c51, pushed. v2.9 opened 2026-08-17 (accounting only, no code). v2.6/v2.7/v2.8 archived to MILESTONES.md; PROJECT.md and REQUIREMENTS.md switched from v2.6 to v2.9. Phase 48 is the one v2.9 phase shipped; 44/51/52/53a/53b + Router compat + 43.1 remain
+last_updated: "2026-08-17T00:00:00.000Z"
 progress:
-  total_phases: 17
-  completed_phases: 11
-  total_plans: 35
-  completed_plans: 33
-  percent: 64
+  basis: v2.9 tracked units -- 48, 44, 51, 52, 53a, 53b, Router-compat, 43.1
+  total_phases: 8
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 13
 ---
 
 # State: Forge
 
-**Last updated:** 2026-08-16
+**Last updated:** 2026-08-17
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-09)
+See: .planning/PROJECT.md (updated 2026-08-17)
 
 **Core value:** No code ships without surviving three consecutive clean review cycles; a green verdict is honest or declares what it did not verify
-**Current focus:** No phase in flight as of 2026-08-16, main @ 59c1c51. Phase 48 (stream TTFT + truncation continuation, first v2.9 lane landing) MERGED; six follow-ups open in .planning/phases/phase-48/48-FOLLOWUPS.md. Working queue unchanged: the eight pending todos + Phase 43.1 (charter ratified 08-08) + the Router batch remainder (F3 trust path, F4 live probe, F2/F5 docs; F1 landed 695f739, SSE parse tolerance deferred on a stated trigger). Phase 42 MERGED (933032d, 2026-07-29). Windows wave-2 parked until gpu-win evidence
+**Current focus:** Milestone v2.9 ENV-GROUNDING, opened 2026-08-17. No phase in flight, main @ 59c1c51. Next by dependency order is Phase 44 (EVAL-ON-DUTY), the lane root; Phase 51 may be pulled forward since its only hard prereq (Phase 43) is merged. Also in v2.9 scope, rolled forward from the v2.8 tail: Router compat remainder (F3/F4 + F2/F5 docs) and Phase 43.1 (four of its ten charter items closed during v2.8). Phase 48 is the one v2.9 phase shipped; six follow-ups open in .planning/phases/phase-48/48-FOLLOWUPS.md. Eight pending todos remain, #54 carrying [BLOCKS DEPLOYMENT]. Windows wave-2 parked until gpu-win evidence
 
 **CHARTER RATIFIED 2026-08-08.** `charter_review_pipeline_gaps` accepted,
 placed in v2.8 tail as Phase 43.1. 10 defect items + the
@@ -39,6 +40,67 @@ disk, pending resume. **Superseded 2026-08-09:** #49 and #57 landed on
 main (6e5650f, 6b05a6e); only #59 is still open. See the 08-09 reconcile.
 
 ## Current Position
+
+**MILESTONE v2.9 OPENED 2026-08-17 (accounting only -- no code changed, main
+still @ 59c1c51).** The GSD ledger had drifted three layers deep and was
+reconciled in one pass:
+
+- PROJECT.md still named v2.6 as the current milestone, last touched
+  2026-06-26, while v2.6, v2.7, and v2.8 had all shipped. REQUIREMENTS.md was
+  the matching v2.6 file, and its checkboxes had gone stale on their own terms
+  (ROBUST-01..05 marked pending though Phase 31 completed 2026-06-28).
+- MILESTONES.md stopped at v2.5. v2.6, v2.7, and v2.8 are now archived there
+  with measured git ranges: v2.6 = 0c724fd..db17d7e (45 commits, +4834/-96),
+  v2.7 = db17d7e..e236e51 (31 commits, +1266/-373), v2.8 = e236e51..dec413e
+  (257 commits, 179 files, +29963/-2052 over 46 days).
+- v2.8 is closed on what it actually delivered. Its unfinished tail -- Router
+  onboarding compat (F3 trust path, F4 live probe, F2/F5 docs) and Phase 43.1
+  -- rolled forward into v2.9 scope rather than holding v2.8 open. User
+  decision, 2026-08-17.
+
+**The standard `/gsd-new-milestone` flow was deliberately NOT run**, and the
+reason matters more than the outcome. Two of its steps are destructive against
+how this project uses `.planning/`, verified by reading the handler source
+rather than the workflow prose:
+
+- Step 6 `gsd-sdk query phases.clear --confirm` calls `cmdPhasesClear` in
+  bin/lib/milestone.cjs, which is `fs.rmSync(recursive: true, force: true)`
+  over every non-`999*` directory under .planning/phases. Measured here: 19
+  directories, 334 files, 3.0M -- including phase-48's whole delivery record
+  and 43.1's ratified charter plan. GSD treats phases/ as a scratch area to be
+  archived at milestone close; forge uses it as the permanent archive itself.
+- Step 5 `gsd-sdk query state.milestone-switch` calls
+  `cmdStateMilestoneSwitch` in bin/lib/state.cjs, whose regex
+  `/(##\s*Current Position\s*\n)([\s\S]*?)(?=\n##|$)/` replaces this entire
+  section with a four-line template. Measured: lines 41-503, 462 lines of
+  reconcile history, would have been overwritten.
+
+So the frontmatter was switched by hand and everything below this block was
+kept. Step 10 (respawning gsd-roadmapper) was also skipped: ROADMAP.md's v2.9
+lane already exists and is externally certified (ds+lc adversarial review,
+double 0/0/0/0, ledger dispatch/forge-env-r1-adjudication.txt). Regenerating
+it from a cold subagent would have been a net loss.
+
+**Progress basis, decided here** (the open counter question below is now
+answered for v2.9 and only for v2.9): the basis is v2.9 tracked units --
+48, 44, 51, 52, 53a, 53b, Router-compat, 43.1 = 8, of which Phase 48 is
+complete, so 13%. The three conflicting v2.8-era readings (11/17, 16/18,
+16/17) are left as found; they belong to a milestone that is now archived,
+and re-deriving them would be inventing a fourth unlabelled number.
+
+**Finding worth carrying: most historical SHAs in ROADMAP.md are dead.** main
+was filter-branch rewritten 2026-07-10, and a spot check of 19 quoted SHAs
+found 13 unresolvable (6fb427e, 965c247, 07d0381, 0a85662, 14b3985, 9f96fd5,
+6abb6fb, 89a091f, e50b375, c0f2b3d, a18844a, 4b060bd, 4c5f46d) against 6 that
+resolve (14328bb, 25b063e, ca0d860, 74adbf2, 8e18aa0, 933032d). The
+MILESTONES.md archive quotes only verified SHAs and carries this warning at
+its head. Verify with `git cat-file -e` before quoting any SHA from a record
+older than 2026-07-16.
+
+Three stale Out of Scope entries were dropped from PROJECT.md in the same
+pass, each having shipped: l1_provider parallelization (Phase 39), Reviewer
+Canary implementation (v2.5 Phase 28), Windows IDE support (wave 1,
+2026-07-11).
 
 **RECONCILE 2026-08-16 (authoritative main pointer; supersedes 08-09 for
 the main SHA only -- the 08-09 queue content below stays valid).** main

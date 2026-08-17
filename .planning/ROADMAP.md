@@ -10,14 +10,20 @@
 - [x] **v2.5 Releasable + Cross-Repo** -- Phases 24-29 (shipped 2026-06-26)
 - [x] **v2.6 Adoption** -- Phases 30-33: Switch-On+Dogfood / CN Robustness / Contract / MCP (shipped 2026-06-29)
 - [x] **v2.7 Provider Capability** -- Phases 34-36: Provider params / SSE / MCP sampling / Usability hardening (shipped 2026-07-01)
-- [ ] **v2.8 Onboarding + Throughput** -- Phases 37-42: User config / setup-mcp / stale-process / parallelization / convergence / design intent / router compat
-- [ ] **v2.9 ENV-GROUNDING** -- Phase 44 + epistemics lane 51/52/53a/53b: eval-on-duty / basis-disclose / env-manifest / exec-falsify (native + container opt-in)
-- [ ] **Review-pipeline self-attestation gaps (Phase 43.1)** -- charter ratified 2026-08-08, placed in v2.8 tail. 10 items + process change, 3 execution chains. Does not overlap v2.9 or the v3.x sketch lane. See .planning/charter_review_pipeline_gaps.md and .planning/phases/43.1-review-pipeline-gaps/.
+- [x] **v2.8 Onboarding + Throughput** -- Phases 37-42 plus 43/45/46/47 and four unplanned evidence-driven batches (shipped 2026-08-16). Closed on delivered content; the unfinished tail rolled forward to v2.9. Archive: MILESTONES.md
+- [ ] **v2.9 ENV-GROUNDING** -- Phase 44 + epistemics lane 51/52/53a/53b: eval-on-duty / basis-disclose / env-manifest / exec-falsify (native + container opt-in). Phase 48 shipped 2026-08-16. Also carries the v2.8 tail: Router onboarding compat remainder + Phase 43.1
+- [ ] **Review-pipeline self-attestation gaps (Phase 43.1)** -- charter ratified 2026-08-08; MOVED into v2.9 scope 2026-08-17 when v2.8 closed. Four of its ten items closed during v2.8 (item 1 via 888333a, item 3 via 8f745dd, item 10 via 0309c55, item 4 root-caused to an OmniRoute-side semantic cache), so the live scope is items 2, 5, 6, 7, 9 -- smaller than the charter text describes. Does not overlap the rest of v2.9 or the v3.x sketch lane. See .planning/charter_review_pipeline_gaps.md and .planning/phases/43.1-review-pipeline-gaps/.
 
 ## Phases
 
 <details>
-<summary>v2.8 Onboarding + Throughput (Phases 37-42) -- IN PROGRESS</summary>
+<summary>v2.8 Onboarding + Throughput (Phases 37-42 + 43/45/46/47 + batches) -- SHIPPED 2026-08-16</summary>
+
+Closed 2026-08-17 on delivered content. Measured range e236e51..dec413e:
+257 commits, 179 files, +29,963/-2,052 over 46 days. The one item still
+carrying an unchecked box below (Router onboarding compat) moved to v2.9
+rather than holding the milestone open. Archive entry: MILESTONES.md.
+
 
 Pre-phase work (merged to main before formal GSD tracking):
 - [x] Phase 37: User-level config + $HOME walkup defuse (D1-D5, ADR-0009) -- merged 2026-07-03 (6fb427e)
@@ -40,7 +46,7 @@ Tracked phases:
   Plans:
   - [ ] 42-01-PLAN.md -- Extend fast-fail guard to api_key_file + vertex
   - [ ] 42-02-PLAN.md -- claim_type oracle: derive_claim_type + wire into ledger
-- [ ] Router onboarding compat (unplanned, evidence-driven) -- scheduled 2026-07-25 after Phase 42, from the OmniRoute/gemini default-router RCA. PM-verified all 5 findings vs main @ 74adbf2 (triage + evidence: reports/router-friction-triage-20260725.md). CODE: F1 LANDED 2026-07-30 (695f739) BY A DIFFERENT MECHANISM THAN SCOPED -- a47d888 sends the stream flag explicitly (llm_invoke.py:152 `body["stream"] = bool(backend.stream)`), so a router that picks its own default when the field is absent never picks SSE. Prevention at the request, not tolerance at the parse. PM-verified on the real path against OmniRoute/onmi-gemini3.6, with bug-injection at the fix site reproducing the exact error and a byte-identical restore. STILL DEFERRED, and the reason to keep this entry open: the three non-streaming parse sites are untouched, so a router that returns SSE despite being told not to still fails. If that router appears, the original scope is still the right fix -- SSE auto-detect in the SHARED _parse_response_body (3 non-streaming parse sites; a one-site fix leaves 2 siblings broken). Re-grepped 2026-08-09 at main c72ff06: the function is llm_invoke.py:1135, call sites :1197 openai / :1295 anthropic / :1469 vertex. The pre-08-09 record read 1023/1121/1295 -- do not reuse it, and note WHY it is worse than a plain stale number: 1295 is in both lists and names a different provider in each (vertex then, anthropic now), so it still resolves to a real call of the same function and reads as correct. Re-grep again rather than trusting these; F3 trust prints resolved gate.yaml path + warns when cwd is not a project (cli.py:1112, follow ADR-0009 $HOME policy, do not reinvent); F4 LIVE backend probe extending doctor/_probe_api (currently env-check-only, backend.py:558-562). F4's "doubles as F1's acceptance test" rationale is now spent -- F1 shipped with its own real-path acceptance check, so F4 must justify itself on debug-loop value alone or shrink. DOCS: F2 base_url /v1 semantics in gate.schema.json; F5 point users at the existing ~/.config/code-forge/config.yaml inheritance. NOT BUILT (verified already ships): F5 user-level backend inheritance exists via _merge_user_into (cli.py:2303/1046/3321, Phase 37.1); F4 is not a from-scratch command (doctor already probes).
+- [>] Router onboarding compat (unplanned, evidence-driven) -- MOVED TO v2.9 on 2026-08-17 when v2.8 closed; F1 shipped in v2.8, the F3/F4/F2/F5 remainder is now tracked as ROUTER-02..05 in REQUIREMENTS.md. Originally scheduled 2026-07-25 after Phase 42, from the OmniRoute/gemini default-router RCA. PM-verified all 5 findings vs main @ 74adbf2 (triage + evidence: reports/router-friction-triage-20260725.md). CODE: F1 LANDED 2026-07-30 (695f739) BY A DIFFERENT MECHANISM THAN SCOPED -- a47d888 sends the stream flag explicitly (llm_invoke.py:152 `body["stream"] = bool(backend.stream)`), so a router that picks its own default when the field is absent never picks SSE. Prevention at the request, not tolerance at the parse. PM-verified on the real path against OmniRoute/onmi-gemini3.6, with bug-injection at the fix site reproducing the exact error and a byte-identical restore. STILL DEFERRED, and the reason to keep this entry open: the three non-streaming parse sites are untouched, so a router that returns SSE despite being told not to still fails. If that router appears, the original scope is still the right fix -- SSE auto-detect in the SHARED _parse_response_body (3 non-streaming parse sites; a one-site fix leaves 2 siblings broken). Re-grepped 2026-08-09 at main c72ff06: the function is llm_invoke.py:1135, call sites :1197 openai / :1295 anthropic / :1469 vertex. The pre-08-09 record read 1023/1121/1295 -- do not reuse it, and note WHY it is worse than a plain stale number: 1295 is in both lists and names a different provider in each (vertex then, anthropic now), so it still resolves to a real call of the same function and reads as correct. Re-grep again rather than trusting these; F3 trust prints resolved gate.yaml path + warns when cwd is not a project (cli.py:1112, follow ADR-0009 $HOME policy, do not reinvent); F4 LIVE backend probe extending doctor/_probe_api (currently env-check-only, backend.py:558-562). F4's "doubles as F1's acceptance test" rationale is now spent -- F1 shipped with its own real-path acceptance check, so F4 must justify itself on debug-loop value alone or shrink. DOCS: F2 base_url /v1 semantics in gate.schema.json; F5 point users at the existing ~/.config/code-forge/config.yaml inheritance. NOT BUILT (verified already ships): F5 user-level backend inheritance exists via _merge_user_into (cli.py:2303/1046/3321, Phase 37.1); F4 is not a from-scratch command (doctor already probes).
 - [x] Phase 45: Multi-language support -- merged 2026-07-10 (c0f2b3d, 11 commits, ff). Landed end-to-end: Go, C/C++ (cppcheck stderr-swap), Java (PMD positional args), JS/TS (ESLint json + parse_eslint); deferred with recorded blockers + Phase 47+ multi-language upgrade paths: C# (45-04), Ruby (45-07), Swift (45-08), PHP (45-09). Also: ALL_REGISTRIES refactor, MCP allow_main per-call env, SARIF trailing-noise tolerance, L0 crash guard, _resolve_command first-word fix (ended main's flake8-only L0 false-green -- memory feedback_resolve_command_false_green.md). Full suite 2695/7/0.
 - [x] Phase 46: doctor registry-vs-executed tool audit -- merged 2026-07-11 (main a18844a; worktree SHA was f53bf84, patch-id identical). Closes the resolve-false-green class via `forge doctor` tool-audit rows. Detail section below.
 - [x] Phase 47: invoke-error-visibility -- merged 2026-07-23 (ca0d860, fast-forward, 2 commits on 89bdb4d). API-path + CLI-path LLMInvokeError diagnostic surfaced in str(exc) (compute diag once, interpolate into message). Bug-injection proof at both sites. Full suite 2882/8/0 (passed/skipped/failed; PM-verified independent run, 423.90s). Forge review (deepseek, 3 internal passes, one warning dismissed on ground truth). Real-path smoke: real subprocess emits non-JSON stdout, diagnostic confirmed in str(exc).
@@ -49,7 +55,13 @@ Tracked phases:
 </details>
 
 <details>
-<summary>v2.9 ENV-GROUNDING (Phase 44 + lane 51/52/53a/53b) -- IN PROGRESS (Phase 48 shipped 2026-08-16; 44/51/52/53a/53b remain planned)</summary>
+<summary>v2.9 ENV-GROUNDING (Phase 44 + lane 51/52/53a/53b) -- CURRENT MILESTONE, opened 2026-08-17 (Phase 48 shipped 2026-08-16; 44/51/52/53a/53b remain planned)</summary>
+
+Formally opened as the current milestone 2026-08-17, having run as a parallel
+lane since Phase 48. Requirements: REQUIREMENTS.md (EVAL-02, BASIS-01/02,
+ENV-01..04, EXEC-01..04, ROUTER-02..05, ATTEST-01..05; STREAM-01/02 already
+complete). Progress basis: 8 tracked units, 1 complete.
+
 
 Source: v2.9-V3-GROUNDTRUTH-SCHEDULE.md AMENDMENT 1 (rev 2). Externally
 certified: ds+lc adversarial review, R2 double 0/0/0/0, ledger at
@@ -92,10 +104,27 @@ in-flight queue.
   only on demonstrated need. Shares falsify_real.py with Phase 50 and inherits
   its hard boundary. Prereq: Phase 53a + Phase 50 charter.
 
+Rolled forward from the v2.8 tail when that milestone closed (2026-08-17).
+Both sit OUTSIDE the 44 -> 53b chain and can run in any order against it:
+
+- [ ] Router onboarding compat remainder -- F3 trust path (print the resolved
+  gate.yaml path, warn when cwd is not a project, follow the ADR-0009 $HOME
+  policy), F4 live backend probe extending doctor/_probe_api, F2 base_url /v1
+  semantics in gate.schema.json, F5 point users at the shipped
+  ~/.config/code-forge/config.yaml inheritance. F1 shipped in v2.8 by
+  prevention rather than tolerance; the shared-parse SSE tolerance stays
+  deferred on its stated trigger. Tracked as ROUTER-02..05. Full evidence and
+  the re-grep warning about stale line numbers are in the v2.8 section above.
+- [ ] Phase 43.1 review-pipeline self-attestation gaps -- live scope is
+  charter items 2, 5, 6, 7, 9 (items 1/3/4/10 closed during v2.8). Item 7
+  carries todo #54 [BLOCKS DEPLOYMENT]. Tracked as ATTEST-01..05.
+
 Dependency graph:
 
     44 -> 51 -> 52 -> 53a -> 53b
                              +-- 53b also requires the Phase 50 charter
+
+    Router compat and 43.1 are independent of this chain.
 
 Fix-delivery constitution (three authorities): diagnose / propose / apply. A fix
 proposal ships only with fail-before/pass-after evidence produced in the

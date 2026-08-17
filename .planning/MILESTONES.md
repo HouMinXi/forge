@@ -1,5 +1,132 @@
 # Forge -- Milestones
 
+> **SHA validity warning (measured 2026-08-17).** main was filter-branch
+> rewritten on 2026-07-10 (recorded in STATE.md as c0f2b3d -> 15fdbc6,
+> tree-identical, metadata only). Every commit SHA recorded before that
+> rewrite no longer resolves. Spot-checked 19 SHAs quoted across ROADMAP.md:
+> 13 are DEAD (6fb427e, 965c247, 07d0381, 0a85662, 14b3985, 9f96fd5, 6abb6fb,
+> 89a091f, e50b375, c0f2b3d, a18844a, 4b060bd, 4c5f46d) and 6 resolve
+> (14328bb, 25b063e, ca0d860, 74adbf2, 8e18aa0, 933032d). The archive entries
+> below quote only SHAs verified with `git cat-file -e` at the time of
+> writing; pre-rewrite work is located by date and subject instead. Verify
+> before quoting any SHA from a phase record older than 2026-07-16.
+
+## v2.8 Onboarding + Throughput (Shipped: 2026-08-16)
+
+**Phases:** 17 tracked units (37, 37.1, 38, 38.1, 38.1-5/6, 38.2, 38.3, 39,
+40, 41, 42, 43, 45, 46, 47) plus four unplanned evidence-driven batches
+**Timeline:** 2026-07-01 to 2026-08-16 (46 days)
+**Git range:** e236e51..dec413e -- 257 commits, 179 files, +29,963/-2,052
+**Codebase at close:** 30,817 LOC Python (src/), 155 test files
+
+**Key accomplishments:**
+
+- User-level config at ~/.config/code-forge/config.yaml with a $HOME walkup
+  defuse, so a project without gate.yaml no longer inherits the home dir's
+  (Phase 37, ADR-0009); backend passthrough and retryable truncation (37.1)
+- `forge setup-mcp` one-command MCP onboarding (Phase 38); stale-process and
+  workspace guards (38.1); PDEATHSIG orphan guard so a dead parent takes its
+  MCP server with it (38.2)
+- LEDGER append-only outcome record -- the substrate the whole v2.9
+  ENV-GROUNDING lane consumes (Phase 43, 14328bb)
+- L1 pass parallelization: three review passes concurrent via
+  ThreadPoolExecutor/gather with a CLI serial guard and fixed-order fold,
+  roughly 3x wall-clock (Phase 39)
+- Honest partial results: PassOutcome enum, `passes=N/M` in the summary,
+  pass_status in the receipt JSON, and file-based chunking for large diffs
+  (Phase 40, 25b063e). The semantic half -- convergence plateau, prior-round
+  memory, cross-file findings under chunking -- was deferred
+- Review focus: design-intent header unified across all three prompt builders
+  plus a `--focus` emphasis parameter carrying its own trust hash independent
+  of backend trust (Phase 41, 74adbf2)
+- Multi-language review: Go, C/C++, Java, JS/TS wired end-to-end. Landing this
+  exposed that `_resolve_command` matched the whole command string rather than
+  its first word, so every flagged tool (ruff, pylint SARIF modes) had silently
+  never run -- main had been flake8-only at L0 (Phase 45)
+- `forge doctor` registry-vs-executed tool audit, closing the false-green class
+  that Phase 45 uncovered (Phase 46)
+- LLMInvokeError diagnostics surfaced in str(exc) on both API and CLI paths
+  (Phase 47, ca0d860)
+- Windows MCP wave 1: guarded add_signal_handler, which had killed every MCP
+  start, doctor self-check, and CLI review on Windows at lifespan setup
+- Two consumer-pain batches from real downstream users (usability on-ramp,
+  surflare) and a 2026-08-09 defect batch of 18 commits covering the
+  verify/receipt chain, gate wiring, and the eval runner
+
+**Key decisions:**
+
+- Router onboarding compat F1 shipped by prevention, not tolerance: the stream
+  flag is sent explicitly so a router that picks its own default never picks
+  SSE. The shared-parse SSE tolerance stays deferred on a stated trigger
+- Charter `review_pipeline_gaps` ratified 2026-08-08 as Phase 43.1; two of its
+  items landed directly on main during the 08-09 batch, so its scope is
+  smaller than the charter text describes
+
+**Carried into v2.9:** Router onboarding compat remainder (F3 trust path, F4
+live probe, F2/F5 docs), Phase 43.1, and eight pending todos.
+
+---
+
+## v2.7 Provider Capability (Shipped: 2026-07-01)
+
+**Phases:** 3 (34, 35, 36) | **Plans:** 9
+**Timeline:** 2026-06-30 to 2026-07-01 (2 days)
+**Git range:** db17d7e..e236e51 -- 31 commits, 45 files, +1,266/-373
+
+**Key accomplishments:**
+
+- Provider-aware parameter passthrough and SSE streaming: backends declare
+  per-provider reasoning/sampling params, so one gate.yaml entry per provider
+  suffices (Phase 34, ADR-0004 + ADR-0005). Design is key-follows-field --
+  the openai wire key is derived from whichever field is populated, while
+  anthropic and vertex pin to max_tokens
+- MCP sampling as a review backend: forge can use the calling client's model
+  (Copilot, Claude Max subscription) instead of requiring a separate API key
+  (Phase 35, ADR-0007)
+- Usability hardening: 55 findings from a 5-round exhaustive audit resolved as
+  7 fix patterns -- MCP-to-CLI flag alignment, error remediation hints, docs
+  reconciled against code, silent failures surfaced, onboarding friction,
+  edge-path crashes, packaging hygiene (Phase 36)
+
+**Review evidence:** Phase 34 took 7 rounds of external plan review to reach
+0/0/0/0 with real-API smoke on DeepSeek and Vertex. Phase 35 took 9 rounds to
+converge; its code review then found 9 real bugs across 4 models x 3 rounds,
+and the user's own finishing pass found 4 more, each fixed with bug-injection
+proof.
+
+---
+
+## v2.6 Adoption (Shipped: 2026-06-29)
+
+**Phases:** 4 (30, 31, 32, 33) | **Plans:** 9
+**Timeline:** 2026-06-27 to 2026-06-29 (3 days)
+**Git range:** 0c724fd..db17d7e -- 45 commits, 27 files, +4,834/-96
+
+**Key accomplishments:**
+
+- Switch-on and dogfood: forge gates real changes through its CN backend and
+  blocked an injected new-failure change through its own pre-commit hook,
+  end to end. `resolve-outlet` names a real backend, and a missing backend
+  fails closed at exit 2 rather than passing silently (Phase 30)
+- CN backend robustness across five providers: exponential backoff with
+  jitter, Retry-After honored where the provider sends it (DeepSeek, Kimi),
+  provider error codes classified retryable vs not, and 402/403 balance
+  exhaustion fast-failing with an actionable message (Phase 31)
+- Per-change intent contract: `--contract FILE` feeds stated invariants into
+  the existing contract_spec slot so the reviewer checks code against the
+  contract instead of against itself. Contract text states invariants and
+  residual risks and never asserts "this is correct" -- framing a change as
+  safe drops detection by 16-93pp (Phase 32)
+- `code-forge-mcp` stdio server exposing review and gate-check to any MCP
+  client, routing to the resolved trusted backend rather than a DELEGATED
+  self-review by the calling model (Phase 33)
+
+**Note on Zhipu/MiniMax error codes:** mapped from documentation that could
+not be re-verified against live docs at the time (the scrape redirected to a
+platform intro page). Recorded as UNCONFIRMED in the Phase 31 record.
+
+---
+
 ## v2.5 Releasable + Cross-Repo (Shipped: 2026-06-26)
 
 **Phases:** 8 (24, 24.1, 25, 25.1, 26, 27, 28, 29) | **Plans:** 29
