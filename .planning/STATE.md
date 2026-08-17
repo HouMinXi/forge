@@ -129,8 +129,29 @@ removal took the .code-forge-r*-archived review receipts with it
 (48-FOLLOWUPS item 6, now closed as moot); the phase-48 dir retains the
 authoritative disposition records.
 
-Also still open from the 08-09 reconcile: fix/rebase-msg is 1 commit
-ahead of main -- inspect before deleting.
+**fix/rebase-msg CLOSED 2026-08-17 -- deleted, and the deletion was
+correct.** The branch name was misleading: 8def79e was not a message fix but
+19 lines of cli.py plus 154 lines of tests, unmerged. It was inspected before
+deletion rather than after, and main turned out to carry a strictly better
+version of the same work:
+
+- The branch wrapped each of the two load_contract_digest call sites in its
+  own try/except (duplicated logic). main extracts one
+  `_safe_load_contract_digest` helper (cli.py:2064) called from both
+  (cli.py:2426, :2951).
+- The branch's `except Exception` would have swallowed MemoryError, since
+  MemoryError is an Exception subclass -- laundering memory exhaustion into
+  an empty digest and letting the run reach PASS without contract context.
+  main re-raises it explicitly. That is exactly the defect 8e18aa0 later
+  landed to fix, so merging this branch would have re-introduced it.
+- Test coverage is a superset, not a gap: the branch added 2 tests; main has
+  4 assertions in test_outlet_c_cli.py plus 5 in test_mcp_server.py,
+  including "MemoryError from _safe_load_contract_digest propagates"
+  (test_mcp_server.py:2515), which the branch's implementation would fail.
+
+8def79e is now dangling and safe to GC. Do not rescue it -- this entry
+exists so a future session that finds the dangling commit does not mistake
+it for lost work.
 
 **RECONCILE 2026-08-09 (authoritative main pointer; supersedes the F1 block
 below, whose scope narrative stays valid).** main @ c72ff06, pushed,
@@ -217,7 +238,9 @@ reproducible count and 3138 as an unexplained earlier reading, not as evidence
 that anything was skipped.
 
 Still owed: `fix/rebase-msg` is 1 commit ahead of main -- inspect before
-deleting.
+deleting. **CLOSED 2026-08-17: inspected, deleted, zero loss -- see the
+fix/rebase-msg block in the 08-17 section above for why main's version is
+strictly better.**
 
 Counter question left open, not guessed at: the frontmatter reads 11/17 phases
 = 64%, while the 07-25 block below says v2.8 is 16/18 (89%) and the 07-25
