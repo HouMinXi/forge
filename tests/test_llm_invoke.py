@@ -4717,6 +4717,62 @@ class TestStreamFlagOnTheWire:
             "OmniRoute picks SSE"
         )
         assert captured_body["stream"] is False
+        assert "stream_options" not in captured_body, (
+            "stream_options sent on a non-streaming request; a strict "
+            "server may reject the unknown field outright"
+        )
+
+    def test_streaming_request_asks_for_usage(self):
+        """A streaming request carries stream_options.include_usage.
+
+        Reading usage back out of the stream proves nothing if nothing
+        asked for it: llama.cpp sends no usage block unless the request
+        says it wants one, and the miss is silent -- counts stay zero,
+        the per-pass token line is guarded on nonzero so it never
+        prints, and the totals accumulate nothing that looks wrong.
+        """
+        backend = BackendConfig(
+            name="test", type="api", model="m", format="openai",
+            base_url="https://example.com", api_key_env="TEST_KEY",
+            max_tokens=1024, stream=True,
+        )
+        captured_body = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured_body.update(json.loads(req.data.decode()))
+            # MagicMock, not Mock: the response must answer both the
+            # iterator protocol and the context-manager protocol, and
+            # MagicMock is the variant that provides them.
+            resp = MagicMock()
+            resp.__iter__.return_value = iter([
+                b'data: {"choices": [{"delta": '
+                b'{"content": "{\\"findings\\": []}"}}]}\n',
+                b'data: {"choices": [], "usage": '
+                b'{"prompt_tokens": 10, "completion_tokens": 20}}\n',
+                b'data: [DONE]\n',
+            ])
+            resp.__enter__.return_value = resp
+            resp.__exit__.return_value = False
+            return resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = llm_invoke("prompt", backend=backend)
+
+        assert captured_body.get("stream") is True
+        assert "stream_options" in captured_body, (
+            "streaming request never asked for usage, so the counts come "
+            "back zero and read as 'nothing to report'"
+        )
+        assert captured_body["stream_options"] == {"include_usage": True}
+        # The ask is only worth making if the answer still lands.
+        assert result.usage.input_tokens == 10
+        assert result.usage.output_tokens == 20
+        # Usage counting and content assembly are independent paths off the
+        # same stream: a regression that mangles delta.content leaves the
+        # counts intact and passes everything above. llm_invoke parses the
+        # streamed text as JSON, so content arrives as a dict, not a string.
+        assert result.content == {"findings": []}
 
 
 class TestOutputCeiling:
