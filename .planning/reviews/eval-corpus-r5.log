@@ -1,0 +1,14 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing eval-corpus-findings @ dec413e8 (diff: 3 files); mode: local; backend: deepseek-direct; LLM timeout: 2400s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-direct
+[forge] t+0.0s pass expert: calling deepseek-direct
+[forge] t+0.0s pass adversarial: calling deepseek-direct
+code-forge: L1 pass 'qodo' failed: deepseek-direct backend went silent for 900s mid-response
+code-forge: L1 pass 'expert' failed: deepseek-direct backend went silent for 900s mid-response
+code-forge: L1 pass 'adversarial' failed: deepseek-direct backend went silent for 900s mid-response
+[forge] t+1020.9s round 1 start
+[forge] t+1020.9s pass qodo: calling deepseek-direct
+[forge] t+1020.9s pass expert: calling deepseek-direct
+[forge] t+1020.9s pass adversarial: calling deepseek-direct

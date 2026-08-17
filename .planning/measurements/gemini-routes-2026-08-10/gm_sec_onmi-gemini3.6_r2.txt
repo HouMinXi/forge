@@ -1,0 +1,112 @@
+```json
+{
+  "findings": [],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/backend.py",
+      "start_line": 24,
+      "end_line": 29,
+      "content": "import json\nimport os\nimport re\nimport shutil\nimport subprocess\nimport time"
+    },
+    {
+      "file": "src/code_forge/backend.py",
+      "start_line": 49,
+      "end_line": 122,
+      "content": "    # The wire key reasoning_effort takes on the formats that nest it:\n    # _apply_params writes body[\"output_config\"][\"effort\"], and the\n    # generic params copy that follows replaces the whole dict. Without\n    # this, a config could set the very field the typed one above it\n    # just wrote, and the typed field would appear to be ignored.\n    \"output_config\",\n})\n\n# A configured header is checked for two different things, and keeping them\n# apart is what makes either one checkable for completeness. Whether the\n# string is a header at all is grammar, and RFC 7230 answers it with no\n# judgement left over. Whether forge will let a config own it is a\n# permission question, and the answer is a list, which means it can be\n# wrong -- so it is a list somebody else publishes and we can be held to.\n\n# RFC 7230: field-name is a token. The '+' refuses the empty name and the\n# character class refuses everything else in one clause, which matters\n# because urllib is only a partial backstop here. Measured 2026-08-07 on\n# CPython 3.14: http.client raises on an empty name and on CR/LF in a\n# name, but a name with a SPACE in it is sent verbatim, so \"X Opt: v\"\n# leaves on the socket for the far side to interpret however it likes.\n# That one is refused here or nowhere.\n_HEADER_NAME_RE = re.compile(r\"[-!#$%&'*+.^_`|~0-9A-Za-z]+\")\n\n# RFC 7230 field-value, narrowed to printable ASCII with runs of space or\n# tab between words but never at either end. Same measurement: urllib\n# does raise on CR/LF in a value, so injection has a backstop -- but it\n# passes control bytes and obs-text (0x80-0xFF) through untouched, and\n# anything above U+00FF dies in its latin-1 encode as a UnicodeEncodeError\n# with no backend name in it. The RFC permits obs-text and we do not:\n# these carry gateway options, which are ASCII.\n_HEADER_VALUE_RE = re.compile(r\"(?:[\\x21-\\x7e]+(?:[ \\t]+[\\x21-\\x7e]+)*)?\")\n\n# Names a config may not set. Two sources, deliberately one set:\n#\n#   - The credential and framing our own three wire formats send. If a\n#     config could name one, it would sit in the same dict as the real one\n#     and which the far side honoured would stop being forge's decision.\n#   - The WHATWG Fetch forbidden request-header list, for the reason that\n#     standard gives: \"these are forbidden so the user agent remains in\n#     full control over them\". Here forge is the user agent. Measured\n#     2026-08-07: a configured Content-Length of 3 replaced urllib's own\n#     13, leaving ten body bytes in the connection for the next request to\n#     be parsed out of -- a smuggling primitive, not a theoretical one.\n#     The X-*-Method-Override family is in the same list and rewrites the\n#     method at any gateway that honours it.\n#\n# Compared case-folded because HTTP header names are case-insensitive\n# while a dict is not.\nPROTECTED_HEADER_KEYS = frozenset({\n    # forge's own credential and framing\n    \"authorization\", \"x-api-key\", \"content-type\", \"anthropic-version\",\n    # WHATWG Fetch forbidden request-header names\n    \"accept-charset\", \"accept-encoding\", \"access-control-request-headers\",\n    \"access-control-request-method\", \"connection\", \"content-length\",\n    \"cookie\", \"cookie2\", \"date\", \"dnt\", \"expect\", \"host\", \"keep-alive\",\n    \"origin\", \"referer\", \"set-cookie\", \"te\", \"trailer\",\n    \"transfer-encoding\", \"upgrade\", \"via\",\n    # method override, same list\n    \"x-http-method\", \"x-http-method-override\", \"x-method-override\",\n})\n\n# Also from that list. Proxy-Authorization is a credential and Sec- is\n# reserved so new headers can be minted that config cannot reach.\nPROTECTED_HEADER_PREFIXES = (\"proxy-\", \"sec-\")\n\n# Fields that describe an HTTP request and so mean nothing to a cli\n# backend, which spawns a subprocess and sends none. Configured on one,\n# they would be silently ignored, so they are refused instead.\n_API_ONLY_FIELDS = (\n    \"temperature\", \"max_completion_tokens\", \"thinking_type\",\n    \"thinking_budget\", \"reasoning_effort\", \"stream\",\n    \"outcap_key\", \"output_ceiling\", \"params\", \"headers\",\n)"
+    },
+    {
+      "file": "src/code_forge/backend.py",
+      "start_line": 174,
+      "end_line": 180,
+      "content": "    params: Optional[dict] = field(\n        default=None, compare=False, repr=False\n    )\n    headers: Optional[dict] = field(\n        default=None, compare=False, repr=False\n    )"
+    },
+    {
+      "file": "src/code_forge/backend.py",
+      "start_line": 219,
+      "end_line": 231,
+      "content": "def is_protected_header(name: str) -> bool:\n    \"\"\"Whether forge reserves this header name for itself.\n\n    Case-folded, because HTTP does not distinguish spellings. Kept as a\n    function rather than left as two inline lookups so config load and\n    the send-time check ask the question the same way: two copies of the\n    same predicate drift, and the one that drifts is the one nobody is\n    looking at.\n    \"\"\"\n    folded = name.lower()\n    return (folded in PROTECTED_HEADER_KEYS\n            or folded.startswith(PROTECTED_HEADER_PREFIXES))"
+    },
+    {
+      "file": "src/code_forge/backend.py",
+      "start_line": 400,
+      "end_line": 404,
+      "content": "        check_params(params, name, CliError)\n    kw[\"params\"] = params\n\n    kw[\"headers\"] = _parse_headers(entry, name)"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 28,
+      "end_line": 30,
+      "content": "from .backend import (\n    BackendConfig, DEFAULT_BACKEND, check_headers, check_params,\n)"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 86,
+      "end_line": 95,
+      "content": "def _request_headers(base: dict, backend: \"BackendConfig\") -> dict:\n    \"\"\"The format's own headers, plus whatever the backend configures.\n\n    Some gateways take per-request options as headers rather than in the\n    body, and a backend that needs one has nowhere else to put it. What it\n    must not do is reach the credential or the protocol's framing.\n\n    Config load already refuses that by name, and that is where the good\n    error lives -- it knows the backend and can be fixed before anything\n    runs. But it compares against a written-down list, and a list of what"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 228,
+      "end_line": 254,
+      "content": "    # Generic params passthrough. Asked again here, on the way out, for\n    # the reason the headers path is: config load is the only thing that\n    # fills this field today, so the repeat catches nothing that exists\n    # -- it is what keeps that true for a backend built in code rather\n    # than parsed from yaml, which reaches this line without passing the\n    # parser at all.\n    #\n    # This one matters more than its header twin. There the merge is\n    # {**configured, **base}, so a configured name that slipped through\n    # would lose to forge's own; here it is a plain assignment into the\n    # body forty lines of this function just finished computing, so a\n    # protected key wins and takes the resolved cap, the model, or the\n    # stream flag with it.\n    #\n    # `or {}` would read as \"none configured\" and mean \"falsy\", and\n    # every empty container is falsy: params=[] would become {} here,\n    # one line above the check whose whole purpose is to refuse it.\n    # Measured: [], \"\", 0, False and () all reached the wire silently\n    # while the identical values on the headers path were refused.\n    # Only None means none.\n    configured = backend.params if backend.params is not None else {}\n    check_params(\n        configured, backend.name,\n        lambda msg: LLMInvokeError(msg, retryable=False),\n    )\n    for k, v in configured.items():\n        body[k] = v"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 772,
+      "end_line": 796,
+      "content": "        # The mirror of the checks _request_headers and _apply_params\n        # run for api backends. Config load refuses these fields on a\n        # cli backend by name; a backend built in code reaches neither\n        # that nor any request, and _invoke_cli spawns a subprocess\n        # that sends no HTTP at all -- so the field would be dropped in\n        # silence, which is the one outcome this whole feature exists\n        # to make impossible. Here rather than inside _invoke_cli so a\n        # config error is not reported after a PATH lookup fails first.\n        #\n        # Two fields, not the ten in _API_ONLY_FIELDS, because only\n        # these two say \"unset\" in a way that can be read back. The\n        # other eight carry in-band sentinels -- stream defaults to\n        # False, max_completion_tokens to 0, outcap_key to \"\" -- and a\n        # user who configures those exact values is indistinguishable\n        # from one who configured nothing, so a loop over all ten would\n        # either refuse untouched defaults or learn nothing.\n        for field in (\"headers\", \"params\"):\n            if getattr(backend, field) is not None:\n                raise LLMInvokeError(\n                    \"backend %r: type 'cli' spawns a subprocess and \"\n                    \"sends no HTTP request, so its %s could not be \"\n                    \"applied. Remove them, or make this an api backend.\"\n                    % (backend.name, field),\n                    retryable=False,\n                )"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 1165,
+      "end_line": 1168,
+      "content": "    headers = _request_headers({\n        \"Authorization\": \"Bearer \" + api_key,\n        \"Content-Type\": \"application/json\",
+    }, backend)"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 1272,
+      "end_line": 1276,
+      "content": "    headers = _request_headers({\n        \"x-api-key\": api_key,\n        \"anthropic-version\": \"2023-06-01\",\n        \"Content-Type\": \"application/json\",
+    }, backend)"
+    },
+    {
+      "file": "src/code_forge/llm_invoke.py",
+      "start_line": 1447,
+      "end_line": 1450,
+      "content": "    headers = _request_headers({\n        \"Authorization\": \"Bearer \" + creds.token,\n        \"Content-Type\": \"application/json\",
+    }, backend)"
+    },
+    {
+      "file": "tests/test_backend.py",
+      "start_line": 21,
+      "end_line": 25,
+      "content": "from code_forge.backend import (\n    DEFAULT_BACKEND,\n    PROTECTED_HEADER_KEYS,\n    BackendConfig,\n    ProbeResult,"
+    },
+    {
+      "file": "tests/test_backend.py",
+      "start_line": 1511,
+      "end_line": 1520,
+      "content": "    def test_two_protected_params_always_name_the_same_one(self):\n        \"\"\"The message must not depend on the interpreter's hash seed.\n\n        Measured over twelve fresh interpreters: iterating the protected\n        frozenset named 'max_tokens', 'model' or 'stream' for one config,\n        so a user who fixed the key the error named could be shown a\n        different one on the next run and read it as the fix failing.\n        Hash randomisation is per-process, so this is checked with a\n        subprocess rather than a loop -- an in-process loop reports one\n        stable answer and proves nothing.\n        \"\"\""
+    },
+    {
+      "file": "tests/test_backend.py",
+      "start_line": 1878,
+      "end_line": 1886,
+      "content": "        \"\"\"Driven from the tuple, so a new field cannot be added untested.\n\n        This used to carry its own copy of the list, and the copy went\n        stale the moment 'headers' was added to _API_ONLY_FIELDS -- a new\n        field arrived with no coverage and nothing said so. Reading the\n        real tuple means the loop below grows on its own; the sample\n        values are the only thing left to maintain, and a missing one\n        fails loudly rather than skipping the field.\n        \"\"\""
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 247,
+      "end_line": 253,
+      "content": "    def test_a_configured_header_reaches_the_request(self):\n        \"\"\"Some gateways take per-request options as headers.\n\n        Nothing else in the backend config can express one, so a backend\n        that needs it has no way to be configured at all without this.\n        \"\"\""
+    },
+    {
+      "file": "tests/test_llm_invoke.py",
+      "start_line": 1747,
+      "end_line": 1752,
+      "content": "    def test_vertex_carries_a_configured_header(self, monkeypatch):\n        \"\"\"The third of the three formats has to be wired too.\n\n        Each format builds its own header dict, so a merge added to one\n        of them says nothing about the other two.\n        \"\"\""
+    }
+  ]
+}
+```

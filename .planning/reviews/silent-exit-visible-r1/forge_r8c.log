@@ -1,0 +1,30 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing silent-exit-fix @ f43323a7 (diff: 1 file); mode: local; backend: deepseek-direct; LLM timeout: 2400s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-direct
+[forge] t+0.0s pass expert: calling deepseek-direct
+[forge] t+0.0s pass adversarial: calling deepseek-direct
+[deepseek-direct:expert] 16593 in / 14625 out tokens
+[deepseek-direct:adversarial] 16591 in / 23068 out tokens
+[deepseek-direct:qodo] 16592 in / 24009 out tokens
+[forge] t+313.6s falsify 1/8: src/code_forge/cli.py:[3046, 3046] (421a81091feaedcb)
+[forge] t+375.6s falsify 1/8: done Disposition.CONFIRMED (61.9s)
+[forge] t+375.6s falsify 2/8: src/code_forge/cli.py:[2577, 2577] (9191738e3cf4e969)
+[forge] t+434.3s falsify 2/8: done Disposition.CONFIRMED (58.8s)
+[forge] t+434.3s falsify 3/8: src/code_forge/cli.py:[3037, 3037] (661e1fb21ff68dab)
+[forge] t+598.5s falsify 3/8: done Disposition.DISMISSED (164.2s)
+[forge] t+598.5s falsify 4/8: src/code_forge/cli.py:[1659, 1659] (86abedce6f370cdd)
+[forge] t+673.6s falsify 4/8: done Disposition.DISMISSED (75.1s)
+[forge] t+673.6s falsify 5/8: src/code_forge/cli.py:[2548, 2548] (a5a3a3c03c049bb9)
+[forge] t+777.5s falsify 5/8: done Disposition.CONFIRMED (103.9s)
+[forge] t+777.5s falsify 6/8: src/code_forge/cli.py:[1659, 1659] (a9e6c8460a3a4f39)
+[forge] t+953.4s falsify 6/8: done Disposition.UNCERTAIN (175.9s)
+[forge] t+953.4s falsify 7/8: src/code_forge/cli.py:[2577, 2577] (e970bd673a72f681)
+[forge] t+1114.4s falsify 7/8: done Disposition.DISMISSED (161.0s)
+[forge] t+1114.4s falsify 8/8: src/code_forge/cli.py:[2540, 2540] (80e03ecfe7d85ade)
+[forge] t+1203.0s falsify 8/8: done Disposition.CONFIRMED (88.7s)
+[forge] t+1203.1s round 1 start
+[forge] t+1203.1s pass qodo: calling deepseek-direct
+[forge] t+1203.1s pass expert: calling deepseek-direct
+[forge] t+1203.1s pass adversarial: calling deepseek-direct

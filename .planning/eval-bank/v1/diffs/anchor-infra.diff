@@ -1,0 +1,116 @@
+diff --git a/src/code_forge/receipt.py b/src/code_forge/receipt.py
+index b2fc520..260dbd8 100644
+--- a/src/code_forge/receipt.py
++++ b/src/code_forge/receipt.py
+@@ -106,6 +106,15 @@ def write_receipts(
+                 }
+                 for f in pass_findings
+             ],
++            # An infra finding names a sentinel such as "<llm-invoke>", not a
++            # file: when a backend call fails there is no code to point at.
++            # Anchors are read back as paths that must appear in the diff, so
++            # one sentinel makes the review unattestable -- and permanently,
++            # since receipts are never pruned and that check reads every
++            # cycle, not only the last three. The finding itself stays in
++            # findings above, where the failure is still reported.
++            # covered_line_ranges below needs no such filter: it is
++            # intersected with the diff, so a sentinel entry is inert there.
+             "anchors": [
+                 {
+                     "file": f.file,
+@@ -113,6 +122,7 @@ def write_receipts(
+                     "text": _read_line(cwd, f.file, f.line_range[0] if f.line_range else 0),
+                 }
+                 for f in pass_findings
++                if f.source != "INFRA"
+             ],
+             "code_excerpts": assembled_excerpts,
+             # self-reported, not measured -- audit-only
+diff --git a/tests/test_verify.py b/tests/test_verify.py
+index e028af8..d381b8f 100644
+--- a/tests/test_verify.py
++++ b/tests/test_verify.py
+@@ -413,6 +413,83 @@ class TestReceiptVerifyE2E:
+         r = run_verify(tmp_path, diff_sha, diff_files)
+         assert r.passed, "E2E failed: %s" % r.reason
+ 
++    def test_backend_failure_in_an_early_round_still_verifies(self, tmp_path):
++        """A failed backend call must not cost the review its attestation.
++
++        The pass that fails is recorded as a finding naming "<llm-invoke>",
++        since no file is at fault. That is not a path, so the anchor check
++        rejects it, and receipts are never pruned -- a single failure in
++        round one outlives every clean round after it. Four rounds here, the
++        failure in the first: the last three are spotless and verify still
++        has to accept the set.
++
++        Driven through run_verify rather than read off the receipt, because
++        the anchor list is only wrong in the eyes of its consumer.
++        """
++        import datetime
++        from unittest.mock import patch
++        from code_forge.receipt import write_receipts
++        from code_forge.disposition import Disposition
++        from code_forge.state import StateFinding
++
++        (tmp_path / "src").mkdir(parents=True)
++        (tmp_path / "src" / "foo.py").write_text(
++            "".join("line%d\n" % i for i in range(1, 81)))
++        diff_sha = _sha("diff")
++        diff_files = {"src/foo.py": list(range(1, 81))}
++
++        base = datetime.datetime(2026, 5, 28, 10, 0, 0,
++                                 tzinfo=datetime.timezone.utc)
++        passes = ["qodo", "expert", "adversarial"]
++        # Spread far enough apart that the last three cycles stay under the
++        # Jaccard similarity ceiling while each still clears the coverage
++        # floor: findings cover +/-10 lines, so three per cycle is 63 of 80.
++        cycle_locs = [(10, 30, 50), (11, 33, 55), (15, 40, 65), (20, 45, 70)]
++        for round_idx in range(4):
++            findings = []
++            for pi, pn in enumerate(passes):
++                ln = cycle_locs[round_idx][pi]
++                findings.append(StateFinding(
++                    id="l1-%s-fp%d%d" % (pn, round_idx, pi),
++                    fingerprint="fp%d%d" % (round_idx, pi), source="L1",
++                    disposition=Disposition.UNCERTAIN,
++                    file="src/foo.py", line_range=[ln, ln],
++                    description="[%s] finding r%dp%d" % (pn, round_idx, pi),
++                ))
++            if round_idx == 0:
++                findings.append(StateFinding(
++                    id="l1-qodo-invoke-fail",
++                    fingerprint="invoke-fail-qodo", source="INFRA",
++                    disposition=Disposition.CONFIRMED,
++                    file="<llm-invoke>", line_range=[0, 0],
++                    description="L1 invoke failed: 502 server error",
++                ))
++            with patch("code_forge.receipt.datetime") as mock_dt:
++                mock_dt.datetime.now.return_value = (
++                    base + datetime.timedelta(minutes=round_idx * 5))
++                mock_dt.timedelta = datetime.timedelta
++                mock_dt.timezone = datetime.timezone
++                write_receipts(
++                    receipts_dir=tmp_path / ".code-forge" / "receipts",
++                    round_index=round_idx,
++                    l1_findings=findings,
++                    diff_sha256=diff_sha,
++                    source_files=[Path("src/foo.py")],
++                    cwd=tmp_path,
++                    diff_files=diff_files,
++                )
++
++        r = run_verify(tmp_path, diff_sha, diff_files)
++        assert r.passed, "backend failure blocked attestation: %s" % r.reason
++
++        # The failure is dropped as an anchor, not silenced: round one still
++        # reports it, or the receipts would claim a pass that never ran.
++        c1p1 = json.loads(
++            (tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json")
++            .read_text())
++        assert any(f["file"] == "<llm-invoke>" for f in c1p1["findings"])
++        assert not any(a["file"] == "<llm-invoke>" for a in c1p1["anchors"])
++
+ 
+ # ---------------------------------------------------------------------------
+ # Hardened-verify fixtures

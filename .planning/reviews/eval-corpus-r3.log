@@ -1,0 +1,39 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing eval-corpus-findings @ dec413e8 (diff: 3 files); mode: local; backend: deepseek-direct; LLM timeout: 2400s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-direct
+[forge] t+0.0s pass expert: calling deepseek-direct
+[forge] t+0.0s pass adversarial: calling deepseek-direct
+[deepseek-direct:adversarial] 19570 in / 21835 out tokens
+[deepseek-direct:qodo] 19571 in / 24472 out tokens
+[deepseek-direct:expert] 19572 in / 31673 out tokens
+[forge] t+330.9s falsify 1/12: src/code_forge/eval/runner.py:[438, 438] (4c4c4656fd787e04)
+[forge] t+420.5s falsify 1/12: done Disposition.UNCERTAIN (89.6s)
+[forge] t+420.5s falsify 2/12: src/code_forge/eval/corpus.py:[168, 168] (0ffd0bf402e14d36)
+[forge] t+475.3s falsify 2/12: done Disposition.CONFIRMED (54.7s)
+[forge] t+475.3s falsify 3/12: src/code_forge/eval/corpus.py:[126, 126] (83191fd724867f7a)
+[forge] t+579.9s falsify 3/12: done Disposition.CONFIRMED (104.7s)
+[forge] t+579.9s falsify 4/12: src/code_forge/eval/scorer.py:[90, 90] (61f328354c8731c6)
+[forge] t+715.2s falsify 4/12: done Disposition.CONFIRMED (135.3s)
+[forge] t+715.2s falsify 5/12: src/code_forge/eval/runner.py:[421, 421] (1c03faccd0ab7133)
+[forge] t+755.7s falsify 5/12: done Disposition.CONFIRMED (40.5s)
+[forge] t+755.7s falsify 6/12: src/code_forge/eval/corpus.py:[138, 138] (c80cbbdca3be122f)
+[forge] t+811.9s falsify 6/12: done Disposition.CONFIRMED (56.1s)
+[forge] t+811.9s falsify 7/12: src/code_forge/eval/corpus.py:[151, 151] (9780aa78ce78cba2)
+[forge] t+842.5s falsify 7/12: done Disposition.UNCERTAIN (30.6s)
+[forge] t+842.5s falsify 8/12: src/code_forge/eval/scorer.py:[204, 204] (96a5d310fc967d80)
+[forge] t+868.8s falsify 8/12: done Disposition.CONFIRMED (26.3s)
+[forge] t+868.8s falsify 9/12: src/code_forge/eval/scorer.py:[130, 130] (2c79568c0e54f92b)
+[forge] t+944.2s falsify 9/12: done Disposition.CONFIRMED (75.5s)
+[forge] t+944.2s falsify 10/12: src/code_forge/eval/runner.py:[418, 418] (a415091981722fe2)
+[forge] t+1085.7s falsify 10/12: done Disposition.CONFIRMED (141.4s)
+[forge] t+1085.7s falsify 11/12: src/code_forge/eval/scorer.py:[90, 90] (bfc506916f049224)
+[forge] t+1179.1s falsify 11/12: done Disposition.CONFIRMED (93.5s)
+[forge] t+1179.1s falsify 12/12: src/code_forge/eval/corpus.py:[168, 168] (d1567c3da39a07c2)
+code-forge: retrying deepseek-direct (2/5, waiting 2.1s) after API response content is not valid JSON -- JSONDecodeError: Expecting ',' delimiter: line 1 column 283 (char 282) content[:500]: '{"verdict":"CONFIRMED","reasoning":"At corpus.py:168 the parser checks file.strip() for non-empty but does not store the stripped result; the raw file string is kept in the finding object. Later finding_hit uses an exact equality comparison on file values. A manifest ent
+[forge] t+1323.8s falsify 12/12: done Disposition.CONFIRMED (144.7s)
+[forge] t+1323.8s round 1 start
+[forge] t+1323.8s pass qodo: calling deepseek-direct
+[forge] t+1323.8s pass expert: calling deepseek-direct
+[forge] t+1323.8s pass adversarial: calling deepseek-direct

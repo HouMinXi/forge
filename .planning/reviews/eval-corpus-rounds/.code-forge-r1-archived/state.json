@@ -1,0 +1,349 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "4be570c06acb23265de0aee4e801acb2552080ee394b2d9eb29046b60887b50a",
+  "findings": [
+    {
+      "id": "l1-qodo-95aac6cc42053d57",
+      "fingerprint": "95aac6cc42053d57",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        420,
+        420
+      ],
+      "description": "[qodo] _read_confirmed_findings promises empty list on malformed state.json, but it does not guard against json.loads returning a non-dict (e.g. list, null) or `findings` being a non-list/non-dict. In those cases data.get or f.get raises AttributeError/TypeError and aborts the whole eval instead of returning [].",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-e57f4f8362b0b39d",
+      "fingerprint": "e57f4f8362b0b39d",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        126,
+        126
+      ],
+      "description": "[qodo] _parse_expected_findings does not validate that raw is a list or that items are dicts; malformed expected_findings (e.g. expected_findings: ['foo'] or expected_findings: null) raises AttributeError/TypeError rather than the intended ValueError shape error.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-3a70386b749244d4",
+      "fingerprint": "3a70386b749244d4",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        144,
+        144
+      ],
+      "description": "[qodo] line_range integer validation uses isinstance(v, int), which accepts YAML booleans because bool is a subclass of int. A manifest line_range like [true, false] is accepted and later used as numeric line numbers.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-ea5a3f4c3f73c831",
+      "fingerprint": "ea5a3f4c3f73c831",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        69,
+        69
+      ],
+      "description": "[qodo] finding_hit unpacks actual_range[0] / actual_range[1] without validating that actual_range is a two-element numeric sequence; malformed state.json line_range can raise TypeError/IndexError instead of returning False.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-0caacdbd167d96ec",
+      "fingerprint": "0caacdbd167d96ec",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        420,
+        420
+      ],
+      "description": "[expert] `_read_confirmed_findings` calls `data.get(\"findings\", [])` and then `f.get(...)` on each item without first checking that `data` is a dict and each `f` is a dict. A valid JSON document that is not a dict, or a `findings` list containing non-object values, raises `AttributeError` and aborts the eval run instead of returning `[]` as documented.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-7e94cacc231c2b18",
+      "fingerprint": "7e94cacc231c2b18",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        69,
+        69
+      ],
+      "description": "[expert] `finding_hit` assumes `actual_range` is an indexable two-integer sequence and `actual.get(\"description\")` is string-like. `_read_confirmed_findings` passes through raw state values, so a malformed `line_range` (string, dict, wrong-length list) or non-string `description` crashes the scoring loop instead of being ignored.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-1f0a050e1f521f7b",
+      "fingerprint": "1f0a050e1f521f7b",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        126,
+        126
+      ],
+      "description": "[expert] `_parse_expected_findings` does not validate that `raw` is a list or that each `item` is a dict. A manifest with `expected_findings: null`, a scalar, or list entries that are not mappings raises `TypeError`/`AttributeError` rather than the intended `ValueError`, contradicting the strict-shape contract.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-6dadc50051cdad47",
+      "fingerprint": "6dadc50051cdad47",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        150,
+        150
+      ],
+      "description": "[expert] `line_range` is accepted without checking `start <= end`. An inverted range such as `[5, 2]` can never pass `finding_hit`'s overlap check, so that answer-key entry silently never matches and corrupts findings scoring.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-7c49c357e9dc740c",
+      "fingerprint": "7c49c357e9dc740c",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        133,
+        133
+      ],
+      "description": "[expert] Adding required `findings_expected`, `findings_hit`, and `findings_fp` fields to the public `EvalSummary` dataclass is a breaking change for any positional constructor callers outside `compute_summary`. These should likely default to `0`.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-20c199e08439eaf1",
+      "fingerprint": "20c199e08439eaf1",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        69,
+        69
+      ],
+      "description": "[adversarial] finding_hit assumes actual_range is a two-element sequence. A truthy non-sequence line_range (e.g. '12') or a one-element list from state.json reaches actual_range[0]/actual_range[1] and raises TypeError/IndexError, aborting findings scoring for the run.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-ba0f6950e906dcd1",
+      "fingerprint": "ba0f6950e906dcd1",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        420,
+        420
+      ],
+      "description": "[adversarial] _read_confirmed_findings only catches JSONDecodeError/OSError, then assumes data is a dict and data['findings'] is an iterable of dicts. Valid JSON such as null, {'findings': null}, or a list containing a scalar will raise AttributeError/TypeError and abort the whole corpus replay instead of treating malformed state as empty findings.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-0848215c58d303a9",
+      "fingerprint": "0848215c58d303a9",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        150,
+        150
+      ],
+      "description": "[adversarial] line_range validation checks only that the range is a two-int list; reversed ranges such as [10, 1] or non-positive ranges are accepted. They can never satisfy overlap in finding_hit, so a malformed answer key silently never hits.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-23664c15f56e10d7",
+      "fingerprint": "23664c15f56e10d7",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        126,
+        126
+      ],
+      "description": "[adversarial] _parse_expected_findings assumes raw is a list of dicts. expected_findings: null or a list containing a scalar falls through to item.get and raises TypeError/AttributeError rather than the intended ValueError.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-019228fea114b671",
+      "fingerprint": "019228fea114b671",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        144,
+        144
+      ],
+      "description": "[adversarial] isinstance(v, int) accepts bool because bool is an int subclass. A YAML line_range of [true, false] passes validation and becomes a nonsense tuple.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-d465d4a8fb1ab819",
+      "fingerprint": "d465d4a8fb1ab819",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        358,
+        358
+      ],
+      "description": "[adversarial] write_json_report serializes finding_hits/misses/fps but omits expected_findings from the per-entry 'entry' object. The generated JSON report cannot be audited against the answer key.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-95aac6cc42053d57": "CONFIRMED",
+    "l1-qodo-e57f4f8362b0b39d": "CONFIRMED",
+    "l1-qodo-3a70386b749244d4": "CONFIRMED",
+    "l1-qodo-ea5a3f4c3f73c831": "CONFIRMED",
+    "l1-expert-0caacdbd167d96ec": "CONFIRMED",
+    "l1-expert-7e94cacc231c2b18": "CONFIRMED",
+    "l1-expert-1f0a050e1f521f7b": "CONFIRMED",
+    "l1-expert-6dadc50051cdad47": "CONFIRMED",
+    "l1-expert-7c49c357e9dc740c": "CONFIRMED",
+    "l1-adversarial-20c199e08439eaf1": "CONFIRMED",
+    "l1-adversarial-ba0f6950e906dcd1": "CONFIRMED",
+    "l1-adversarial-0848215c58d303a9": "CONFIRMED",
+    "l1-adversarial-23664c15f56e10d7": "CONFIRMED",
+    "l1-adversarial-019228fea114b671": "CONFIRMED",
+    "l1-adversarial-d465d4a8fb1ab819": "UNCERTAIN"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "95aac6cc42053d57",
+        "e57f4f8362b0b39d",
+        "3a70386b749244d4",
+        "ea5a3f4c3f73c831",
+        "0caacdbd167d96ec",
+        "7e94cacc231c2b18",
+        "1f0a050e1f521f7b",
+        "6dadc50051cdad47",
+        "7c49c357e9dc740c",
+        "20c199e08439eaf1",
+        "ba0f6950e906dcd1",
+        "0848215c58d303a9",
+        "23664c15f56e10d7",
+        "019228fea114b671",
+        "d465d4a8fb1ab819"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "95aac6cc42053d57": "CONFIRMED",
+        "e57f4f8362b0b39d": "CONFIRMED",
+        "3a70386b749244d4": "CONFIRMED",
+        "ea5a3f4c3f73c831": "CONFIRMED",
+        "0caacdbd167d96ec": "CONFIRMED",
+        "7e94cacc231c2b18": "CONFIRMED",
+        "1f0a050e1f521f7b": "CONFIRMED",
+        "6dadc50051cdad47": "CONFIRMED",
+        "7c49c357e9dc740c": "CONFIRMED",
+        "20c199e08439eaf1": "CONFIRMED",
+        "ba0f6950e906dcd1": "CONFIRMED",
+        "0848215c58d303a9": "CONFIRMED",
+        "23664c15f56e10d7": "CONFIRMED",
+        "019228fea114b671": "CONFIRMED",
+        "d465d4a8fb1ab819": "UNCERTAIN"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/eval-corpus-findings/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 53724,
+    "total_output_tokens": 84055,
+    "total_duration_s": 289.78147014102433,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 17908,
+        "output": 28018,
+        "duration_s": 96.594
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 17908,
+        "output": 28018,
+        "duration_s": 96.594
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 17908,
+        "output": 28018,
+        "duration_s": 96.594
+      }
+    ]
+  }
+}

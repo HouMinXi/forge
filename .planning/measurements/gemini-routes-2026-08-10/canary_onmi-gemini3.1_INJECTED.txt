@@ -1,0 +1,110 @@
+```json
+{
+  "findings": [
+    {
+      "file": "src/code_forge/verify.py",
+      "line": 454,
+      "severity": "P1",
+      "description": "By using `if file_lines is None: continue` to skip exempt files, `verify.py` inadvertently allows any non-exempt file that happens to be missing from `post_image` (e.g. purely deleted lines) to bypass the fabrication verification entirely. It should explicitly check `if exc[\"file\"] in exempt_files: continue` (matching the pre-flight logic in `receipt.py`) and default `file_lines` to `{}` so that fabricated lines in such files are properly caught."
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 3,
+      "severity": "P0",
+      "description": "Hardcoded AWS Access Key. Hardcoding credentials in source code is a critical security vulnerability."
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 4,
+      "severity": "P0",
+      "description": "Hardcoded AWS Secret Key. Hardcoding credentials in source code is a critical security vulnerability."
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 13,
+      "severity": "P0",
+      "description": "SQL injection vulnerability: unescaped user input 'name' is directly concatenated into the SQL query string. Use parameterized queries instead."
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/diff.py",
+      "start_line": 268,
+      "end_line": 309,
+      "content": "def describe_fabricated_lines(\n    file_lines: dict[int, str],\n    start_line: int,\n    end_line: int,\n    cap: int = 100,\n) -> str:\n    \"\"\"Name the lines in start_line..end_line the post-image does not have.\n\n    ``file_lines`` is one file's entry from :func:`_extract_post_image_lines`.\n    A line the diff never produced cannot have been read from it, so an\n    excerpt covering one is fabricated.  Returns them comma-separated, or\n    \"\" when every line in the range is present.\n\n    Two shapes land here: a line falling in the gap between two hunks, and\n    a line past the last one the diff produced.  Both are simply absent\n    from ``file_lines``.  At most ``cap`` are named, with a trailing \"...\"\n    when more were left out -- ``end_line`` comes from the reviewer and is\n    bounded by nothing on disk.\n\n    Callers that also hold the diff's exempt files must skip those first:\n    binary, rename, and mode-change entries have no post-image at all, and\n    every line of an excerpt against one would read as fabricated here.\n    \"\"\"\n    fabricated: list[int] = []\n    truncated = False\n\n    for ln in range(start_line, end_line + 1):\n        if ln in file_lines:\n            continue\n        if len(fabricated) >= cap:\n            truncated = True\n            break\n        fabricated.append(ln)\n\n    if not fabricated:\n        return \"\"\n    named = \", \".join(str(ln) for ln in fabricated)\n    if truncated:\n        named += \", ...\"\n    return named\n\n"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 891,
+      "end_line": 895,
+      "content": "        # cost_per_pass divides the round total equally across 3 passes, so\n        # all three entries come out identical -- tokens and duration alike.\n        # That sameness is arithmetic, not evidence of a cached replay, and\n        # nothing in here can tell the two apart.  The only real per-pass\n        # numbers are the [model:pass] in/out counts on stderr."
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 11,
+      "end_line": 18,
+      "content": "import logging\nfrom pathlib import Path\n\nfrom .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 90,
+      "end_line": 131,
+      "content": "    # assembled_excerpts is built ONCE from the round's combined reviewer\n    # output and written into all three pass receipts identically.  This is\n    # NOT a cache-replay signal -- it reflects what the round read, not\n    # which pass read it.\n    # Pre-flight: verify refuses excerpts that cover lines the diff never\n    # produced, and it runs long after this point.  Saying so here gives\n    # the reviewer the same answer while the round can still act on it.\n    if diff_text and assembled_excerpts:\n        log = logging.getLogger(__name__)\n        try:\n            post_image = _extract_post_image_lines(diff_text)\n            _, exempt_files = parse_diff_hunks(diff_text)\n        except Exception as err:\n            log.debug(\"pre-flight: post-image extraction failed: %s\", err)\n            post_image, exempt_files = {}, []\n        for excerpt in assembled_excerpts:\n            start = excerpt.get(\"start_line\")\n            end = excerpt.get(\"end_line\")\n            if not isinstance(start, int) or not isinstance(end, int):\n                continue\n            fname = excerpt.get(\"file\", \"\")\n            # Binary, rename, and mode-change files have no post-image, so\n            # every line of an excerpt against one would read as invented.\n            # Verify exempts them; this has to agree or it cries wolf on\n            # every review that touches an image.\n            if fname in exempt_files:\n                continue\n            file_lines = post_image.get(fname)\n            if file_lines is None:\n                log.warning(\n                    \"pre-flight: excerpt %s:%d-%d references file %s \"\n                    \"not in the diff; verify will refuse this\",\n                    fname, start, end, fname,\n                )\n                continue\n            fabricated = describe_fabricated_lines(file_lines, start, end)\n            if fabricated:\n                log.warning(\n                    \"pre-flight: excerpt %s:%d-%d references lines %s \"\n                    \"not in diff post-image; verify will refuse this\",\n                    fname, start, end, fabricated,\n                )"
+    },
+    {
+      "file": "src/code_forge/reviewer_json.py",
+      "start_line": 35,
+      "end_line": 37,
+      "content": "    \"not diff format -- no +/- prefixes, no @@ headers. \"\n    \"The @@ line is a diff header, not a source line; do not count \"\n    \"it when determining start_line or end_line.\\n\""
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 23,
+      "end_line": 27,
+      "content": "from .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 452,
+      "end_line": 455,
+      "content": "            file_lines = post_image.get(exc[\"file\"])\n            # Exempt files (binary/rename/mode-change) have no post-image.\n            if file_lines is None:\n                continue"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 465,
+      "end_line": 468,
+      "content": "                            \"excerpt content mismatch at %s:%d \"\n                            \"(excerpt covering %d-%d)\" % (\n                                exc[\"file\"], ln,\n                                exc[\"start_line\"], exc[\"end_line\"]),"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 471,
+      "end_line": 485,
+      "content": "            # Refuse an excerpt covering lines the diff never produced.\n            # Matching content on the lines it does cover is not enough:\n            # the reviewer can pad a real excerpt with invented tail lines\n            # and the overlap comparison above would never look at them.\n            fabricated = describe_fabricated_lines(\n                file_lines, exc[\"start_line\"], exc[\"end_line\"])\n            if fabricated:\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d-%d references lines %s not in diff\"\n                    \" post-image\" % (\n                        exc[\"file\"], exc[\"start_line\"], exc[\"end_line\"],\n                        fabricated),\n                    5, cp,\n                )"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 236,
+      "end_line": 270,
+      "content": "class TestPreflightWarning:\n    \"\"\"Pre-flight excerpt check logs a warning for fabricated lines.\"\"\"\n\n    def test_preflight_warns_on_fabricated_excerpt(self, tmp_path, caplog):\n        \"\"\"An excerpt referencing lines outside the diff post-image triggers\n        a warning log before the receipt is written.\"\"\"\n        import logging\n        diff_text = (\n            \"diff --git a/foo.py b/foo.py\\n\"\n            \"--- a/foo.py\\n\"\n            \"+++ b/foo.py\\n\"\n            \"@@ -1,2 +1,3 @@\\n\"\n            \" x = 1\\n\"\n            \"+y = 2\\n\"\n            \" z = 3\\n\"\n        )\n        diff_sha = \"abc123\"\n        excerpts = [\n            {\"file\": \"foo.py\", \"start_line\": 3, \"end_line\": 5,\n             \"content\": \"z = 3\\nFAB 1\\nFAB 2\"},\n        ]\n        with caplog.at_level(logging.WARNING, logger=\"code_forge.receipt\"):\n            write_receipts(\n                receipts_dir=tmp_path / \"r\",\n                round_index=0,\n                l1_findings=[],\n                diff_sha256=diff_sha,\n                source_files=[],\n                cwd=tmp_path,\n                diff_text=diff_text,\n                reviewer_excerpts=excerpts,\n            )\n        assert any(\"pre-flight\" in r.message and \"4, 5\" in r.message\n                    for r in caplog.records), caplog.text"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 719,
+      "end_line": 750,
+      "content": "    def test_mismatch_names_failing_line_not_excerpt_start(self, tmp_path):\n        \"\"\"STEP C: overlapping excerpts -- the reason leads with the bad line.\n\n        foo.py lines 1-3 are covered twice: an earlier excerpt (1-3) that is\n        correct, and a later one (2-3) whose line 3 is wrong. Reporting the\n        excerpt's start_line first sends the reader to line 2, which the\n        earlier excerpt already matched, while the actual defect sits at 3.\n        \"\"\"\n        rd = self._rd(tmp_path)\n        sha = _sha(_HARDEN_DIFF)\n        diff_files = parse_diff_files(_HARDEN_DIFF)\n        overlapping = [\n            # Correct, and covers the line the later excerpt gets wrong.\n            {\"file\": \"foo.py\", \"start_line\": 1, \"end_line\": 3,\n             \"content\": \"x = 1\\ny = 2\\nz = 3\"},\n            # Starts at 2, correct there, wrong at line 3.\n            {\"file\": \"foo.py\", \"start_line\": 2, \"end_line\": 3,\n             \"content\": \"y = 2\\nWRONG\"},\n            {\"file\": \"foo.py\", \"start_line\": 6, \"end_line\": 8,\n             \"content\": \"a = 1\\nb = 2\\nc = 3\"},\n            {\"file\": \"bar.py\", \"start_line\": 1, \"end_line\": 3,\n             \"content\": \"p = 1\\nq = 2\\nr = 3\"},\n        ]\n        _write_hardened(rd, sha, excerpts=overlapping)\n        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)\n        assert not r.passed\n        assert \"excerpt content mismatch at foo.py:3\" in r.reason, r.reason\n        # Line 2 is correct here; naming it as the location is the defect.\n        assert \"foo.py:2\" not in r.reason, r.reason\n        assert \"excerpt covering 2-3\" in r.reason, r.reason\n\n    def test_fabricated_excerpt_lines_refused(self, tmp_path):"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 1171,
+      "end_line": 1172,
+      "content": "                receipt[\"code_excerpts\"][0][\"content\"] = \"def f():\\n    return 2\"\n                receipt[\"code_excerpts\"][0][\"end_line\"] = 2"
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "start_line": 1,
+      "end_line": 14,
+      "content": "import boto3\n\nAPI_KEY = \"AKIAIOSFODNN7EXAMPLE\"\nSECRET = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n\n\ndef connect():\n    return boto3.client(\"s3\", aws_access_key_id=API_KEY,\n                        aws_secret_access_key=SECRET)\n\n\ndef find_run(db, name):\n    cur = db.execute(\"SELECT * FROM runs WHERE name = '\" + name + \"'\")\n    return cur.fetchone()"
+    }
+  ]
+}
+```

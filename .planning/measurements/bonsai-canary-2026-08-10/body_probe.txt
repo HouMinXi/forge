@@ -1,0 +1,26 @@
+```json
+{
+  "findings": [
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 13,
+      "severity": "P1",
+      "description": "SQL query is constructed using string concatenation, which introduces SQL injection vulnerability and will cause syntax errors if the `name` parameter contains single quotes."
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 3,
+      "severity": "P0",
+      "description": "AWS credentials are hardcoded directly in the source code, posing a critical security risk and violating secure coding practices."
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "start_line": 1,
+      "end_line": 14,
+      "content": "import boto3\n\nAPI_KEY = \"AKIAIOSFODNN7EXAMPLE\"\nSECRET = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n\ndef connect():\n    return boto3.client(\"s3\", aws_access_key_id=API_KEY,\n                        aws_secret_access_key=SECRET)\n\ndef find_run(db, name):\n    cur = db.execute(\"SELECT * FROM runs WHERE name = '\" + name + \"'\")\n    return cur.fetchone()"
+    }
+  ]
+}
+```

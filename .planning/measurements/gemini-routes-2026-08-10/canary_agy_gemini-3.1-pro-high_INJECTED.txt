@@ -1,0 +1,110 @@
+```json
+{
+  "findings": [
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 3,
+      "severity": "P0",
+      "description": "Hardcoded AWS credentials (API_KEY and SECRET). Credentials should never be hardcoded in source code. They should be dynamically loaded via environment variables, IAM roles, or a secure secret manager."
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 13,
+      "severity": "P0",
+      "description": "SQL injection vulnerability. The `name` parameter is concatenated directly into the SQL query string rather than using bound parameters. Use parameterized queries (e.g., `db.execute(\"SELECT * FROM runs WHERE name = ?\", (name,))\`) instead."
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "line": 454,
+      "severity": "P1",
+      "description": "Logic error: bypassing verification when `file_lines is None` fails to distinguish between exempt files (which have no post-image, so skipping is correct) and non-exempt text files with an empty post-image (e.g., after all lines are deleted). This mistakenly allows reviewers to successfully submit fabricated excerpts for fully deleted text files, because both the overlap and fabrication checks are skipped. Verify should explicitly check `if exc[\"file\"] in exempt_files: continue` instead, just as `receipt.py` does."
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "line": 121,
+      "severity": "P3",
+      "description": "The log message claims the file is 'not in the diff' when `file_lines is None`. This is misleading because a file can be in the diff (and `hunk_map`) but still lack `file_lines` if it is a completely deleted text file (an empty post-image). A more accurate warning message should distinguish between absence and complete deletion."
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/diff.py",
+      "start_line": 268,
+      "end_line": 273,
+      "content": "def describe_fabricated_lines(\n    file_lines: dict[int, str],\n    start_line: int,\n    end_line: int,\n    cap: int = 100,\n) -> str:\n"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 891,
+      "end_line": 895,
+      "content": "        # cost_per_pass divides the round total equally across 3 passes, so\n        # all three entries come out identical -- tokens and duration alike.\n        # That sameness is arithmetic, not evidence of a cached replay, and\n        # nothing in here can tell the two apart.  The only real per-pass\n        # numbers are the [model:pass] in/out counts on stderr.\n"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 11,
+      "end_line": 18,
+      "content": "import logging\nfrom pathlib import Path\n\nfrom .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)\n"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 90,
+      "end_line": 97,
+      "content": "    # assembled_excerpts is built ONCE from the round's combined reviewer\n    # output and written into all three pass receipts identically.  This is\n    # NOT a cache-replay signal -- it reflects what the round read, not\n    # which pass read it.\n    # Pre-flight: verify refuses excerpts that cover lines the diff never\n    # produced, and it runs long after this point.  Saying so here gives\n    # the reviewer the same answer while the round can still act on it.\n    if diff_text and assembled_excerpts:\n"
+    },
+    {
+      "file": "src/code_forge/reviewer_json.py",
+      "start_line": 35,
+      "end_line": 37,
+      "content": "    \"not diff format -- no +/- prefixes, no @@ headers. \"\n    \"The @@ line is a diff header, not a source line; do not count \"\n    \"it when determining start_line or end_line.\\n\"\n"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 23,
+      "end_line": 27,
+      "content": "from .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)\n"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 452,
+      "end_line": 455,
+      "content": "            file_lines = post_image.get(exc[\"file\"])\n            # Exempt files (binary/rename/mode-change) have no post-image.\n            if file_lines is None:\n                continue\n"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 465,
+      "end_line": 468,
+      "content": "                            \"excerpt content mismatch at %s:%d \"\n                            \"(excerpt covering %d-%d)\" % (\n                                exc[\"file\"], ln,\n                                exc[\"start_line\"], exc[\"end_line\"]),\n"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 236,
+      "end_line": 242,
+      "content": "class TestPreflightWarning:\n    \"\"\"Pre-flight excerpt check logs a warning for fabricated lines.\"\"\"\n\n    def test_preflight_warns_on_fabricated_excerpt(self, tmp_path, caplog):\n        \"\"\"An excerpt referencing lines outside the diff post-image triggers\n        a warning log before the receipt is written.\"\"\"\n        import logging\n"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 719,
+      "end_line": 728,
+      "content": "    def test_mismatch_names_failing_line_not_excerpt_start(self, tmp_path):\n        \"\"\"STEP C: overlapping excerpts -- the reason leads with the bad line.\n\n        foo.py lines 1-3 are covered twice: an earlier excerpt (1-3) that is\n        correct, and a later one (2-3) whose line 3 is wrong. Reporting the\n        excerpt's start_line first sends the reader to line 2, which the\n        earlier excerpt already matched, while the actual defect sits at 3.\n        \"\"\"\n        rd = self._rd(tmp_path)\n        sha = _sha(_HARDEN_DIFF)\n"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 818,
+      "end_line": 826,
+      "content": "    def test_fabricated_line_list_is_capped(self, tmp_path):\n        \"\"\"end_line comes from the reviewer, so the named list needs a bound.\n\n        An excerpt claiming 1-100000 would otherwise put every missing line\n        into the failure reason.\n        \"\"\"\n        rd = self._rd(tmp_path)\n        sha = _sha(_HARDEN_DIFF)\n        huge = [\n"
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 1172,
+      "end_line": 1172,
+      "content": "                receipt[\"code_excerpts\"][0][\"end_line\"] = 2\n"
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "start_line": 1,
+      "end_line": 14,
+      "content": "import boto3\n\nAPI_KEY = \"AKIAIOSFODNN7EXAMPLE\"\nSECRET = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n\n\ndef connect():\n    return boto3.client(\"s3\", aws_access_key_id=API_KEY,\n                        aws_secret_access_key=SECRET)\n\n\ndef find_run(db, name):\n    cur = db.execute(\"SELECT * FROM runs WHERE name = '\" + name + \"'\")\n    return cur.fetchone()\n"
+    }
+  ]
+}
+```

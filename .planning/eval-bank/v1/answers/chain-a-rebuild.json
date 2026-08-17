@@ -1,0 +1,16 @@
+{
+  "name": "chain-a-rebuild",
+  "commit": "fd98d1288de20385f26eede600fb6e718cbbd0f9",
+  "source": [
+    ".planning/reviews/chain-a-rebuild-VERDICT.md"
+  ],
+  "findings": [
+    {"file": "src/code_forge/receipt.py", "line_range": [118, 118], "description": "The pre-flight warns 'references file X not in diff post-image' for every exempt file (binary, rename, or mode-change), which verify does not refuse, producing a false alarm on every review that touches one.", "source": ".planning/reviews/chain-a-rebuild-VERDICT.md"},
+    {"file": "src/code_forge/verify.py", "line_range": [481, 499], "description": "The fabricated-lines algorithm exists twice, verbatim, in verify.py and receipt.py; only the variable names and the final line differ, so the two copies must be kept in lockstep by hand.", "source": ".planning/reviews/chain-a-rebuild-VERDICT.md"},
+    {"file": "tests/test_verify.py", "line_range": [], "description": "The exempt-file guard has no test: reverting the `if file_lines is None: continue` line to the old `.get(..., {})` leaves all 97 tests green while every review containing a binary, rename, or mode-change file would fail verify.", "source": ".planning/reviews/chain-a-rebuild-VERDICT.md"},
+    {"file": "src/code_forge/machine.py", "line_range": [891, 894], "description": "The A4 comment claims 'Duration collapse (all passes same wall-clock time) is the practical replay detector', but duration_s is computed without reference to the loop index, so all three durations are always equal and the detector can never fire.", "source": ".planning/reviews/chain-a-rebuild-VERDICT.md"},
+    {"file": "src/code_forge/receipt.py", "line_range": [100, 105], "description": "`exc` names two different things in one function: the caught exception (`except Exception as exc`) and later an excerpt dict (`for exc in assembled_excerpts`).", "source": ".planning/reviews/chain-a-rebuild-VERDICT.md"},
+    {"file": "src/code_forge/receipt.py", "line_range": [17, 17], "description": "receipt.py carries a four-line justification for importing the private _extract_post_image_lines while verify.py imports the same function with no comment, so the rationale lives in exactly one of the two call sites.", "source": ".planning/reviews/chain-a-rebuild-VERDICT.md"},
+    {"file": "src/code_forge/verify.py", "line_range": [493, 499], "description": "The 100-entry cap only applies to the beyond-max_line branch; the in-range loop appends without limit, so a large sparse post-image can inline every missing line into the message.", "source": ".planning/reviews/chain-a-rebuild-VERDICT.md"}
+  ]
+}

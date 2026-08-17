@@ -1,0 +1,126 @@
+version: 1
+entries:
+  - name: check6-coverage-detail
+    repo: forge
+    commit: 6a3996fc53ab6483ff5fb22f1a3c71acef05db84
+    diff_file: diffs/check6-coverage-detail.diff
+    answers_file: answers/check6-coverage-detail.json
+    axis: verify
+    diff_state: pre-fix
+    pre_fix_source: "git show 52650e5 (first reviewed commit of branch fix/check6-intent; pre-fix ancestor of the landed 6a3996f)"
+    source:
+      - .planning/reviews/check6-actionable-findings.md
+      - /tmp/check6_review_v2r1.log
+      - /tmp/check6_review_v5r2c.log
+  - name: hang-idle-timeout
+    repo: forge
+    commit: a101baa9b407c46ecf3adf1737bf8b4661ca5690
+    diff_file: diffs/hang-idle-timeout.diff
+    answers_file: answers/hang-idle-timeout.json
+    axis: llm
+    diff_state: pre-fix
+    pre_fix_source: "git show 2ff097a (the R1-reviewed state named in hang-idle-review-20260816.md; pre-fix ancestor of the landed a101baa)"
+    source:
+      - .planning/reviews/hang-idle-review-20260816.md
+      - /tmp/hangidle_review_r1b.log
+      - /tmp/hangidle_review_r1c.log
+  - name: progress-events
+    repo: forge
+    commit: a83e552ee7f3cd131c15b3e1ac098cecb74c5141
+    diff_file: diffs/progress-events.diff
+    answers_file: answers/progress-events.json
+    axis: machine
+    diff_state: pre-fix
+    pre_fix_source: "git show 1cfec8a (unreachable branch commit; the state reviewed by progress_review_r2 before the r2 fixes)"
+    source:
+      - /tmp/progress_review_r2.log
+      - /tmp/progress_review_r2b.log
+      - /tmp/progress_review_r3.log
+  - name: cycle-track-removal
+    repo: forge
+    commit: 736c5beb716e6e9940ec9759a2c0e3f3155730e6
+    diff_file: diffs/cycle-track-removal.diff
+    answers_file: answers/cycle-track-removal.json
+    axis: machine
+    diff_state: pre-fix
+    pre_fix_source: "git show 0df08db -- src/code_forge/machine.py (the commit whose diff adds the dual-track code the route-probe reviews confirmed as dead weight)"
+    source:
+      - .planning/reviews/reviewer-hardening-findings.md
+  - name: receipts-hardening
+    repo: forge
+    commit: 0df08db40e7b3deac88504ec9725468270593c80
+    diff_file: diffs/receipts-hardening.diff
+    answers_file: answers/receipts-hardening.json
+    axis: review-hardening
+    diff_state: pre-fix
+    pre_fix_source: "git stash@{0} 'On main: p2' (P2b working-tree snapshot of fix/xdg-backend-fallback2; the earliest recoverable pre-fix state of the review series)"
+    source:
+      - .planning/reviews/xdg-fix2-r3-findings.md
+      - .planning/reviews/xdg-fix2-r4-findings.md
+  - name: mutation-gate-fixes
+    repo: forge
+    commit: 8f745ddc6ca30801c56156b3056ba81eb85793dd
+    diff_file: diffs/mutation-gate-fixes.diff
+    answers_file: answers/mutation-gate-fixes.json
+    axis: mutation
+    diff_state: pre-fix
+    pre_fix_source: ".planning/reviews/mutation-gate-own-fixes/panel-r2/reviewed-diff.patch (the exact staged diff the panel reviewed)"
+    source:
+      - .planning/reviews/mutation-gate-own-fixes/panel-r2/state.json
+      - .planning/reviews/mutation-gate-own-fixes/panel-r2/provenance.txt
+  - name: anchor-infra
+    repo: forge
+    commit: 73d6c9e6b80452c9045127e8ea1e968a61e48e44
+    diff_file: diffs/anchor-infra.diff
+    answers_file: answers/anchor-infra.json
+    axis: verify
+    diff_state: pre-fix
+    pre_fix_source: ".planning/reviews/anchor-infra/panel-r1/reviewed-diff.patch (the exact staged diff panel-r1 reviewed; the CONFIRMED findings were made against this state)"
+    source:
+      - .planning/reviews/anchor-infra/COMMIT-PLAN.md
+      - .planning/reviews/anchor-infra/panel-r1/state.json
+      - .planning/reviews/anchor-infra/panel-r1/disposition.md
+      - .planning/reviews/anchor-infra/panel-r2/state.json
+  - name: ashare-l2-wiring
+    repo: ashare-lab
+    commit: 1f98491d1917bb7b177c78e6d778fe1f60ec8ce2
+    diff_file: diffs/ashare-l2-wiring.diff
+    answers_file: answers/ashare-l2-wiring.json
+    axis: pipeline
+    diff_state: pre-fix
+    pre_fix_source: "git -C ashare-lab show cc7821b (pre-fix ancestor whose diff adds the Day-0 bootstrap the R3 review confirmed as F1; the reviewed tree at feat/l2-book-wiring contained this code)"
+    source:
+      - .planning/reviews/l2_wiring_r2_r4_review.md
+      - .planning/reviews/l2_wiring_r3_review.md
+  - name: surflare-dwell-storm
+    repo: surflare-watchdog
+    commit: 51cafa51bd0f4b039968d460f25ba8a4fbb070f3
+    diff_file: diffs/surflare-dwell-storm.diff
+    answers_file: answers/surflare-dwell-storm.json
+    axis: watchdog
+    diff_state: pre-fix
+    pre_fix_source: "git show 51cafa5 (the reviewed storm-gate commit; the R7f-confirmed defects are in this diff, the remaining fixes landed later as 4f41164 on fix/dwell-storm-gate)"
+    source:
+      - .code-forge/state.json.r7f-51cafa5
+      - .code-forge/receipts/
+      - /tmp/forge_pain_report_20260816.txt
+  - name: chain-a-rebuild
+    repo: forge
+    commit: fd98d1288de20385f26eede600fb6e718cbbd0f9
+    diff_file: diffs/chain-a-rebuild.diff
+    answers_file: answers/chain-a-rebuild.json
+    axis: verify
+    diff_state: pre-fix
+    pre_fix_source: "git show e755156 (the superseded pre-fix commit; the verdict states chain-a-rebuild = e755156 plus comment/wrapping-only differences, and F1/F2 are inherited from it)"
+    source:
+      - .planning/reviews/chain-a-rebuild-VERDICT.md
+  - name: ashare-l1-risk-state-machine
+    repo: ashare-lab
+    commit: 0edd3e5214f88e13cb78d0647fb16847bcc32357
+    diff_file: diffs/ashare-l1-risk-state-machine.diff
+    answers_file: answers/ashare-l1-risk-state-machine.json
+    axis: pipeline
+    diff_state: pre-fix
+    pre_fix_source: "git show 0edd3e5 (the initial delivery reviewed by L1; the PM-rejected D1 defect is in this diff; the rework commit 09359b2 carries the fix)"
+    source:
+      - .planning/reviews/L1-risk-state-machine/REVIEW.md

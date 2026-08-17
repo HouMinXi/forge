@@ -1,0 +1,10 @@
+model=oc-ds-flash-free  prompt=70286 bytes (real L1 shape)  max_tokens=16384  UA=Chrome
+arm                       code     wall     comp   reason  content    valid  note
+--------------------------------------------------------------------------------------------------------------
+none (baseline)            200   167.9s    16384    67340        0    EMPTY  
+reasoning_effort=low       200    88.1s    12608    28334    20373  INVALID  ValueError: not valid JSON: Expecting value: line 1 column 1 (char 0)
+thinking=disabled          200   155.3s    16384    66335        0    EMPTY  
+
+USABLE: none. The 1010 is fixed by the User-Agent, but this route
+        still cannot return a review under the 16384 output clamp.
+EXIT=0

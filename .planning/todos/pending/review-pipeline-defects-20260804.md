@@ -118,6 +118,18 @@ Looks like a path is being joined or trimmed somewhere that eats the root
 slash. Worth checking whether this only bites for newly added (untracked ->
 staged) files, since the same run linted other paths without complaint.
 
+Status 2026-08-15: NOT REPRODUCIBLE on main @ 835115d. Both a minimal-repo
+argv trace and a real StateMachine._run_l0_phase run in an OmniRoute
+linked worktree (staged new TS file, real eslint, known-positive payload
+proving the check fires) produce correct paths. The diff -> files ->
+runner chain is byte-identical between the 2026-08-04 HEAD (1fb3eea) and
+main, and no lstrip("/") / relative_to("/") site exists on that chain in
+any historical version. Most plausible: the 2026-08-04 run rode an
+installed wheel behind the main tree, or a since-removed path. If it
+resurfaces, capture `code-forge --version` and whether the run was
+cross-repo mode first. Full evidence:
+.planning/reviews/a4-eslint-experiments-20260815.md
+
 ## 4. L2 is skipped silently when gate.yaml has no test section
 
 From `infra_errors`:

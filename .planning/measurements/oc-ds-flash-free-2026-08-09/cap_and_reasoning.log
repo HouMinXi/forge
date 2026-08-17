@@ -1,0 +1,8 @@
+model=oc-ds-flash-free  UA=Chrome 131  max_tokens=65536
+case                              code     wall comp.tok reasoning  content
+----------------------------------------------------------------------------------
+Q1 long answer, no controls        200    88.0s    16384     46176        0  
+Q2 review + effort=low             200    36.8s     4409     13233     4107  
+Q2 review + enable_thinking=0      200    93.7s    11915     46244     3867  
+Q2 review + thinking=disabled      200    17.5s     1616         0     6798  
+EXIT=0

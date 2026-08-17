@@ -1,0 +1,462 @@
+{
+  "cycle": 1,
+  "pass": 3,
+  "skill": "adversarial-qe",
+  "diff_sha256": "8b07142a07f1d3c75bf08ed53ddd56ac758f42c4373a7dc10bfe3a57cc2cfab6",
+  "timestamp": "2026-08-16T13:45:39.224653+00:00",
+  "pass_status": "completed",
+  "findings_count": 2,
+  "findings": [
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "line": 319,
+      "description": "[adversarial] compute_summary hard-codes summary.findings_misses as findings_expected - findings_hit instead of aggregating each EvalResult.finding_misses. When every run for an entry lacks .code-forge/state.json or it is malformed, replay_entry appends no per_run_findings tuple, pick_best_findings returns (0,0,0), and the entry's finding_misses is 0. compute_summary still adds len(entry.expected_findings) to findings_expected and then reports all of them as missed. This contradicts the _read_confirmed_findings 'never participates' semantics and makes per-entry JSON (misses=0) disagree with the summary misses count.",
+      "disposition": "CONFIRMED"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "line": 162,
+      "description": "[adversarial] _parse_expected_findings only rejects an empty or whitespace description. A punctuation-only description such as '!!!' or '...' is accepted, but finding_hit tokenization yields no alphanumeric tokens and the fallback returns false; such an expected finding can never be hit. The parser should require at least one tokenizable alphanumeric run to avoid an un-hittable answer key.",
+      "disposition": "CONFIRMED"
+    }
+  ],
+  "anchors": [
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "line": 319,
+      "text": "findings_misses=findings_expected - findings_hit,"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "line": 162,
+      "text": "if not isinstance(description, str) or not description.strip():"
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 22,
+      "end_line": 31,
+      "content": "    return (\n        isinstance(raw_range, (list, tuple))\n        and len(raw_range) == 2\n        and all(\n            isinstance(v, int) and not isinstance(v, bool)\n            for v in raw_range\n        )\n        and raw_range[0] >= 1\n        and raw_range[1] >= raw_range[0]\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 77,
+      "end_line": 77,
+      "content": "    expected_findings: list[ExpectedFinding] = field(default_factory=list)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 182,
+      "end_line": 187,
+      "content": "        findings.append(\n            ExpectedFinding(\n                file=file,\n                description=description,\n                line_range=line_range,\n            )\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 39,
+      "end_line": 43,
+      "content": "from code_forge.eval.scorer import (\n    pick_best_findings,\n    score_findings,\n    valid_line_range,\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 431,
+      "end_line": 434,
+      "content": "    confirmed = []\n    for f in raw_findings:\n        if not isinstance(f, dict):\n            continue",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 612,
+      "end_line": 612,
+      "content": "    per_run_findings: list[tuple[int, int, int]] = []",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 648,
+      "end_line": 650,
+      "content": "            # Findings-level scoring: read CONFIRMED findings BEFORE\n            # cleanup and score against the entry's answer key. A run\n            # without state evidence (None) does not participate.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 670,
+      "end_line": 673,
+      "content": "    # Findings-level aggregation across runs: use the best run.\n    finding_hits, finding_misses, finding_fps = pick_best_findings(\n        per_run_findings\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 27,
+      "end_line": 31,
+      "content": "from code_forge.eval.corpus import (\n    CorpusEntry,\n    ExpectedFinding,\n    valid_line_range,\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 75,
+      "end_line": 78,
+      "content": "    if expected.line_range is not None and valid_line_range(actual_range):\n        exp_lo, exp_hi = expected.line_range\n        act_lo, act_hi = actual_range[0], actual_range[1]\n        return max(exp_lo, act_lo) <= min(exp_hi, act_hi)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 123,
+      "end_line": 125,
+      "content": "    expected = entry.expected_findings\n    if not expected:\n        return (0, 0, 0)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 163,
+      "end_line": 164,
+      "content": "    if not per_run:\n        return (0, 0, 0)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 189,
+      "end_line": 191,
+      "content": "    finding_hits: int = 0\n    finding_misses: int = 0\n    finding_fps: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 219,
+      "end_line": 222,
+      "content": "    findings_expected: int = 0\n    findings_hit: int = 0\n    findings_misses: int = 0\n    findings_fp: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 297,
+      "end_line": 306,
+      "content": "    findings_expected = 0\n    findings_hit = 0\n    findings_fp = 0\n    for r in results:\n        if r.skipped_reason:\n            continue\n        if r.entry.expected_findings:\n            findings_expected += len(r.entry.expected_findings)\n            findings_hit += r.finding_hits\n            findings_fp += r.finding_fps",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 396,
+      "end_line": 397,
+      "content": "    if summary.findings_expected > 0:\n        findings_total = summary.findings_expected",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 445,
+      "end_line": 447,
+      "content": "                                list(f.line_range)\n                                if f.line_range is not None\n                                else None",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 18,
+      "end_line": 50,
+      "content": "def valid_line_range(raw_range) -> bool:\n    \"\"\"A semantically valid forge line range: two non-bool ints,\n    1-based, ordered. Shared by the manifest parser and\n    finding_hit so the two cannot drift.\"\"\"\n    return (\n        isinstance(raw_range, (list, tuple))\n        and len(raw_range) == 2\n        and all(\n            isinstance(v, int) and not isinstance(v, bool)\n            for v in raw_range\n        )\n        and raw_range[0] >= 1\n        and raw_range[1] >= raw_range[0]\n    )\n\n\n@dataclass(frozen=True)\nclass ExpectedFinding:\n    \"\"\"One findings-level answer in the corpus.\n\n    A run \"hits\" this finding when one of its CONFIRMED findings\n    matches: same file AND (overlapping line range, or shared\n    description terms when either side has no range).\n\n    Fields:\n        file: path of the file the finding lives in.\n        line_range: optional (start, end) 1-based inclusive range.\n        description: one-sentence statement of the defect.\n    \"\"\"\n\n    file: str\n    description: str\n    line_range: tuple[int, int] | None = None",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 66,
+      "end_line": 69,
+      "content": "        expected_findings: findings-level answer key. A non-empty list\n            adds findings scoring on top of the verdict quadrant: each\n            expected finding must appear in the run's CONFIRMED findings.\n            Empty (default) keeps the verdict-only scoring unchanged.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 74,
+      "end_line": 77,
+      "content": "    expected_verdict: str\n    axis_tags: list[str]\n    expected_advisory: list[str] = field(default_factory=list)\n    expected_findings: list[ExpectedFinding] = field(default_factory=list)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 123,
+      "end_line": 126,
+      "content": "                expected_findings=_parse_expected_findings(\n                    raw.get(\"expected_findings\", []),\n                    raw[\"name\"],\n                ),",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 132,
+      "end_line": 189,
+      "content": "def _parse_expected_findings(\n    raw: list[dict], entry_name: str\n) -> list[ExpectedFinding]:\n    \"\"\"Validate and build ExpectedFinding list from manifest YAML.\n\n    Strict on shape (a malformed answer key would silently poison the\n    findings scoring): file must be a non-empty string, description a\n    non-empty string, line_range absent or a two-int list.\n    \"\"\"\n    findings: list[ExpectedFinding] = []\n    if raw is None:\n        # An explicit empty expected_findings key means no answer key,\n        # same as the absent key.\n        raw = []\n    if not isinstance(raw, list):\n        raise ValueError(\n            \"expected_findings in %r must be a list\" % entry_name\n        )\n    for item in raw:\n        if not isinstance(item, dict):\n            raise ValueError(\n                \"expected_findings entry in %r is not a mapping\"\n                % entry_name\n            )\n        file = item.get(\"file\")\n        description = item.get(\"description\")\n        if not isinstance(file, str) or not file.strip():\n            raise ValueError(\n                \"expected_findings entry in %r missing file\" % entry_name\n            )\n        if not isinstance(description, str) or not description.strip():\n            raise ValueError(\n                \"expected_findings entry in %r missing description\"\n                % entry_name\n            )\n        # Store the stripped values: validation and matching must\n        # agree, or a whitespace-padded value validates and then can\n        # never match.\n        file = file.strip()\n        description = description.strip()\n\n        line_range = None\n        raw_range = item.get(\"line_range\")\n        if raw_range is not None:\n            if not valid_line_range(raw_range):\n                raise ValueError(\n                    \"expected_findings entry in %r has invalid \"\n                    \"line_range %r\" % (entry_name, raw_range)\n                )\n            line_range = (raw_range[0], raw_range[1])\n        findings.append(\n            ExpectedFinding(\n                file=file,\n                description=description,\n                line_range=line_range,\n            )\n        )\n    return findings",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 39,
+      "end_line": 43,
+      "content": "from code_forge.eval.scorer import (\n    pick_best_findings,\n    score_findings,\n    valid_line_range,\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 409,
+      "end_line": 453,
+      "content": "def _read_confirmed_findings(temp_dir: str) -> list[dict] | None:\n    \"\"\"CONFIRMED findings from the run's state.json.\n\n    Returns a list of {file, line_range, description} dicts. Returns\n    None when the file is absent or malformed -- distinguishable from\n    a run that genuinely produced zero confirmed findings, so a run\n    without state evidence never participates in findings scoring.\n    Called BEFORE temp dir cleanup in the per-run loop, mirroring\n    _read_advisory_findings.\n    \"\"\"\n    state_path = Path(temp_dir) / \".code-forge\" / \"state.json\"\n    if not state_path.exists():\n        return None\n    try:\n        data = json.loads(state_path.read_text(encoding=\"utf-8\"))\n    except (json.JSONDecodeError, OSError, UnicodeError):\n        return None\n    if not isinstance(data, dict):\n        return None\n    raw_findings = data.get(\"findings\")\n    if not isinstance(raw_findings, list):\n        return None\n    confirmed = []\n    for f in raw_findings:\n        if not isinstance(f, dict):\n            continue\n        if f.get(\"disposition\") != \"CONFIRMED\":\n            continue\n        file = f.get(\"file\")\n        if not isinstance(file, str) or not file.strip():\n            # A confirmed finding with no file can never match an\n            # answer key; keeping it would only inflate false\n            # positives.\n            continue\n        raw_range = f.get(\"line_range\")\n        line_range = raw_range if valid_line_range(raw_range) else None\n        description = f.get(\"description\")\n        confirmed.append({\n            \"file\": file.strip(),\n            \"line_range\": line_range,\n            \"description\": description if isinstance(\n                description, str\n            ) else \"\",\n        })\n    return confirmed",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 609,
+      "end_line": 612,
+      "content": "    num_runs = runs if runs is not None else _default_runs(entry)\n    caught_count = 0\n    advisory_hit_count = 0\n    per_run_findings: list[tuple[int, int, int]] = []",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 648,
+      "end_line": 656,
+      "content": "            # Findings-level scoring: read CONFIRMED findings BEFORE\n            # cleanup and score against the entry's answer key. A run\n            # without state evidence (None) does not participate.\n            if entry.expected_findings:\n                confirmed = _read_confirmed_findings(temp_dir)\n                if confirmed is not None:\n                    per_run_findings.append(\n                        score_findings(entry, confirmed)\n                    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 670,
+      "end_line": 673,
+      "content": "    # Findings-level aggregation across runs: use the best run.\n    finding_hits, finding_misses, finding_fps = pick_best_findings(\n        per_run_findings\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 679,
+      "end_line": 684,
+      "content": "        caught_count=caught_count,\n        skipped_reason=\"\",\n        advisory_caught_count=advisory_hit_count,\n        finding_hits=finding_hits,\n        finding_misses=finding_misses,\n        finding_fps=finding_fps,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 23,
+      "end_line": 31,
+      "content": "import re\nfrom dataclasses import dataclass\nfrom pathlib import Path\n\nfrom code_forge.eval.corpus import (\n    CorpusEntry,\n    ExpectedFinding,\n    valid_line_range,\n)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 57,
+      "end_line": 108,
+      "content": "def finding_hit(actual: dict, expected: ExpectedFinding) -> bool:\n    \"\"\"Match one actual finding against one findings-level answer.\n\n    Rules (deterministic, documented for the bank's consumers):\n      1. The file must match exactly.\n      2. When both sides carry a valid two-int line range, the ranges\n         must overlap by at least one line.\n      3. When either side lacks a valid range, descriptions must share\n         at least two significant tokens (lowercased alphanumeric runs\n         of length >= 4).\n\n    A malformed actual line_range is treated as absent (falls through\n    to the description rule) -- the harness must never crash on the\n    state.json of an arbitrary run.\n    \"\"\"\n    if actual.get(\"file\") != expected.file:\n        return False\n    actual_range = actual.get(\"line_range\")\n    if expected.line_range is not None and valid_line_range(actual_range):\n        exp_lo, exp_hi = expected.line_range\n        act_lo, act_hi = actual_range[0], actual_range[1]\n        return max(exp_lo, act_lo) <= min(exp_hi, act_hi)\n\n    def _tokens(text: str) -> set[str]:\n        return {\n            t for t in re.findall(r\"[a-z0-9_]+\", (text or \"\").lower())\n            if len(t) >= 4\n        }\n\n    actual_description = actual.get(\"description\")\n    actual_text = (\n        actual_description if isinstance(actual_description, str)\n        else str(actual_description or \"\")\n    )\n    expected_tokens = _tokens(expected.description)\n    actual_tokens = _tokens(actual_text)\n    shared = len(expected_tokens & actual_tokens)\n    if not expected_tokens:\n        # No significant token at all in the answer key (\"RCE bug\"):\n        # fall back to any shared alphanumeric token of any length,\n        # so a valid key is never permanently un-hittable.\n        def _any_tokens(text: str) -> set[str]:\n            return set(re.findall(r\"[a-z0-9_]+\", (text or \"\").lower()))\n        return bool(\n            _any_tokens(expected.description) & _any_tokens(actual_text)\n        )\n    if len(expected_tokens) < 2:\n        # A concise answer key (one significant token) can only ever\n        # demand one shared token; requiring two would make it\n        # permanently un-hittable.\n        return shared >= 1\n    return shared >= 2",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 112,
+      "end_line": 165,
+      "content": "def score_findings(\n    entry: CorpusEntry, confirmed: list[dict]\n) -> tuple[int, int, int]:\n    \"\"\"(hits, misses, fps) for one run against the entry's answer key.\n\n    Greedy distinct assignment: each actual finding can hit at most\n    one expected finding, so one actual cannot inflate the hit count\n    across duplicated or overlapping answer entries. An actual\n    finding matching no expected finding counts as a false positive.\n    Entries without an answer key score (0, 0, 0).\n    \"\"\"\n    expected = entry.expected_findings\n    if not expected:\n        return (0, 0, 0)\n    # Maximum bipartite matching (Kuhn's augmenting paths): the\n    # greedy first-match pass can under-count when one actual could\n    # satisfy several expected findings and choices interact. Sets\n    # are tiny (bank sizes), so O(V*E) DFS is free.\n    match_actual = [-1] * len(confirmed)\n    used = []\n\n    def _try_match(ei: int) -> bool:\n        for ai, a in enumerate(confirmed):\n            if used[ai] or not finding_hit(a, expected[ei]):\n                continue\n            used[ai] = True\n            if (\n                match_actual[ai] == -1\n                or _try_match(match_actual[ai])\n            ):\n                match_actual[ai] = ei\n                return True\n        return False\n\n    hits = 0\n    for ei in range(len(expected)):\n        used = [False] * len(confirmed)\n        if _try_match(ei):\n            hits += 1\n    fps = len(confirmed) - hits\n    return (hits, len(expected) - hits, fps)\n\n\n\n\ndef pick_best_findings(\n    per_run: list[tuple[int, int, int]],\n) -> tuple[int, int, int]:\n    \"\"\"Best-run findings aggregation across a multi-run replay.\n\n    Most hits wins; ties break toward fewest false positives; further\n    ties keep the first run. Empty input is (0, 0, 0).\n    \"\"\"\n    if not per_run:\n        return (0, 0, 0)\n    return max(per_run, key=lambda t: (t[0], -t[2]))",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 186,
+      "end_line": 191,
+      "content": "    caught_count: int\n    skipped_reason: str\n    advisory_caught_count: int = 0\n    finding_hits: int = 0\n    finding_misses: int = 0\n    finding_fps: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 218,
+      "end_line": 222,
+      "content": "    results: list[EvalResult]\n    findings_expected: int = 0\n    findings_hit: int = 0\n    findings_misses: int = 0\n    findings_fp: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 297,
+      "end_line": 306,
+      "content": "    findings_expected = 0\n    findings_hit = 0\n    findings_fp = 0\n    for r in results:\n        if r.skipped_reason:\n            continue\n        if r.entry.expected_findings:\n            findings_expected += len(r.entry.expected_findings)\n            findings_hit += r.finding_hits\n            findings_fp += r.finding_fps",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 317,
+      "end_line": 320,
+      "content": "        findings_expected=findings_expected,\n        findings_hit=findings_hit,\n        findings_misses=findings_expected - findings_hit,\n        findings_fp=findings_fp,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 396,
+      "end_line": 407,
+      "content": "    if summary.findings_expected > 0:\n        findings_total = summary.findings_expected\n        lines.append(\"\")\n        lines.append(\n            \"Findings-level: hit %d/%d (missed %d), false positives %d\"\n            % (\n                summary.findings_hit,\n                findings_total,\n                findings_total - summary.findings_hit,\n                summary.findings_fp,\n            )\n        )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 428,
+      "end_line": 431,
+      "content": "        \"findings_expected\": summary.findings_expected,\n        \"findings_hit\": summary.findings_hit,\n        \"findings_misses\": summary.findings_misses,\n        \"findings_fp\": summary.findings_fp,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 440,
+      "end_line": 451,
+      "content": "                    \"expected_findings\": [\n                        {\n                            \"file\": f.file,\n                            \"description\": f.description,\n                            \"line_range\": (\n                                list(f.line_range)\n                                if f.line_range is not None\n                                else None\n                            ),\n                        }\n                        for f in r.entry.expected_findings\n                    ],",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 458,
+      "end_line": 460,
+      "content": "                \"finding_hits\": r.finding_hits,\n                \"finding_misses\": r.finding_misses,\n                \"finding_fps\": r.finding_fps,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 18,
+      "end_line": 18,
+      "content": "def valid_line_range(raw_range) -> bool:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 66,
+      "end_line": 66,
+      "content": "        expected_findings: findings-level answer key. A non-empty list",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 77,
+      "end_line": 77,
+      "content": "    expected_findings: list[ExpectedFinding] = field(default_factory=list)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start_line": 162,
+      "end_line": 162,
+      "content": "        if not isinstance(description, str) or not description.strip():",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 39,
+      "end_line": 39,
+      "content": "from code_forge.eval.scorer import (",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 419,
+      "end_line": 419,
+      "content": "    state_path = Path(temp_dir) / \".code-forge\" / \"state.json\"",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 612,
+      "end_line": 612,
+      "content": "    per_run_findings: list[tuple[int, int, int]] = []",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 651,
+      "end_line": 651,
+      "content": "            if entry.expected_findings:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 670,
+      "end_line": 670,
+      "content": "    # Findings-level aggregation across runs: use the best run.",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/runner.py",
+      "start_line": 682,
+      "end_line": 682,
+      "content": "        finding_hits=finding_hits,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 23,
+      "end_line": 23,
+      "content": "import re",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 57,
+      "end_line": 57,
+      "content": "def finding_hit(actual: dict, expected: ExpectedFinding) -> bool:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 113,
+      "end_line": 113,
+      "content": "    entry: CorpusEntry, confirmed: list[dict]",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 189,
+      "end_line": 189,
+      "content": "    finding_hits: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 219,
+      "end_line": 219,
+      "content": "    findings_expected: int = 0",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 303,
+      "end_line": 303,
+      "content": "        if r.entry.expected_findings:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 319,
+      "end_line": 319,
+      "content": "        findings_misses=findings_expected - findings_hit,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 396,
+      "end_line": 396,
+      "content": "    if summary.findings_expected > 0:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 428,
+      "end_line": 428,
+      "content": "        \"findings_expected\": summary.findings_expected,",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start_line": 440,
+      "end_line": 440,
+      "content": "                    \"expected_findings\": [",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/eval/scorer.py",
+      "start": 309,
+      "end": 329
+    },
+    {
+      "file": "src/code_forge/eval/corpus.py",
+      "start": 152,
+      "end": 172
+    }
+  ]
+}

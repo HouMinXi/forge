@@ -1,0 +1,7 @@
+model=oc-ds-flash-free  prompt=70286 bytes (real L1 shape)  max_tokens=16384  UA=Chrome
+arm                       code     wall     comp   reason  content    valid  note
+--------------------------------------------------------------------------------------------------------------
+reasoning_effort=low       200   117.2s    14506    37222    19404    VALID  
+
+USABLE: reasoning_effort=low
+EXIT=0

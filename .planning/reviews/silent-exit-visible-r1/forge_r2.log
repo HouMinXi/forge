@@ -1,0 +1,42 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing silent-exit-fix @ f43323a7 (diff: 1 file); mode: local; backend: deepseek-nocache; LLM timeout: 1200s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-nocache
+[forge] t+0.0s pass expert: calling deepseek-nocache
+[forge] t+0.0s pass adversarial: calling deepseek-nocache
+[deepseek-nocache:expert] 15876 in / 2720 out tokens
+[deepseek-nocache:adversarial] 15874 in / 3199 out tokens
+[deepseek-nocache:qodo] 15875 in / 5342 out tokens
+[forge] t+48.6s falsify 1/2: src/code_forge/cli.py:[2492, 2492] (cd84859dc580c4a1)
+[forge] t+55.6s falsify 1/2: done Disposition.CONFIRMED (6.9s)
+[forge] t+55.6s falsify 2/2: src/code_forge/cli.py:[2524, 2524] (6960ab670e4c056f)
+[forge] t+62.5s falsify 2/2: done Disposition.UNCERTAIN (6.9s)
+[forge] t+62.5s round 1 start
+[forge] t+62.5s pass qodo: calling deepseek-nocache
+[forge] t+62.5s pass expert: calling deepseek-nocache
+[forge] t+62.5s pass adversarial: calling deepseek-nocache
+[deepseek-nocache:qodo] 15875 in / 3895 out tokens
+[deepseek-nocache:expert] 15876 in / 4336 out tokens
+[deepseek-nocache:adversarial] 15874 in / 7210 out tokens
+[forge] t+120.8s falsify 1/2: src/code_forge/cli.py:[3012, 3012] (e3ef0b49559f6642)
+[forge] t+135.0s falsify 1/2: done Disposition.CONFIRMED (14.2s)
+[forge] t+135.0s falsify 2/2: src/code_forge/cli.py:[2524, 2524] (a77adcef63f3dc88)
+[forge] t+143.4s falsify 2/2: done Disposition.CONFIRMED (8.4s)
+[forge] t+143.4s round 2 start
+[forge] t+143.4s pass qodo: calling deepseek-nocache
+[forge] t+143.4s pass expert: calling deepseek-nocache
+[forge] t+143.4s pass adversarial: calling deepseek-nocache
+[deepseek-nocache:qodo] 15875 in / 5120 out tokens
+[deepseek-nocache:expert] 15876 in / 6508 out tokens
+[deepseek-nocache:adversarial] 15874 in / 8074 out tokens
+[forge] t+215.4s falsify 1/2: src/code_forge/cli.py:[2492, 2492] (7593eeb8855bb693)
+[forge] t+222.0s falsify 1/2: done Disposition.UNCERTAIN (6.6s)
+[forge] t+222.0s falsify 2/2: src/code_forge/cli.py:[3014, 3014] (447dc5fd9c34d6df)
+[forge] t+231.2s falsify 2/2: done Disposition.CONFIRMED (9.2s)
+[forge] t+231.2s round 3 start
+[forge] t+231.2s pass qodo: calling deepseek-nocache
+[forge] t+231.2s pass expert: calling deepseek-nocache
+[forge] t+231.2s pass adversarial: calling deepseek-nocache
+[deepseek-nocache:qodo] 15875 in / 4731 out tokens
+[deepseek-nocache:adversarial] 15874 in / 5308 out tokens

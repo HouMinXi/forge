@@ -1,0 +1,413 @@
+commit e75515611e6812e70a5c622e7f422190f73ceae8
+Author: Minxi Hou <houminxi@gmail.com>
+Date:   Sun Aug 9 08:19:59 2026 -0400
+
+    wip: excerpt fabrication preflight and verify refusal
+
+diff --git a/src/code_forge/machine.py b/src/code_forge/machine.py
+index 31a75f9..f027818 100644
+--- a/src/code_forge/machine.py
++++ b/src/code_forge/machine.py
+@@ -888,6 +888,11 @@ class StateMachine:
+         self._state.cost_total_input += self._round_input_tokens
+         self._state.cost_total_output += self._round_output_tokens
+         self._state.cost_total_duration += self._round_duration
++        # A4: cost_per_pass divides the round total equally across 3 passes.
++        # All three entries are identical BY CONSTRUCTION -- this is not a
++        # cache-replay signal.  Real per-pass numbers are on stderr
++        # ([model:pass] in/out counts).  Duration collapse (all passes same
++        # wall-clock time) is the practical replay detector.
+         for i in range(3):
+             self._pass_counter += 1
+             self._state.cost_per_pass.append({
+diff --git a/src/code_forge/receipt.py b/src/code_forge/receipt.py
+index 278ab68..311438e 100644
+--- a/src/code_forge/receipt.py
++++ b/src/code_forge/receipt.py
+@@ -8,8 +8,13 @@ from __future__ import annotations
+ 
+ import datetime
+ import json
++import logging
+ from pathlib import Path
+ 
++# Internal import: same package, no cross-boundary stability concern.
++# The function is private to .diff because it is an implementation
++# detail of the diff parser, not because it is unstable.
++from .diff import _extract_post_image_lines
+ from .state import (
+     StateFinding,
+     PassOutcome,
+@@ -81,6 +86,67 @@ def write_receipts(
+     written = []
+ 
+     assembled_excerpts = _build_excerpts(reviewer_excerpts)
++    # NOTE: assembled_excerpts is built ONCE from the round's combined
++    # reviewer output and written into all three pass receipts identically.
++    # This is NOT a cache-replay signal -- it reflects what the round read,
++    # not which pass read it.  Per-pass coverage is tracked separately by
++    # the incomplete-coverage-<pass> guard.  (A4 investigation, 2026-08-08)
++    # Pre-flight: warn if any excerpt references lines outside the diff
++    # post-image.  Verify will refuse these anyway, but catching them here
++    # gives the reviewer early feedback before the round is committed.
++    if diff_text and assembled_excerpts:
++        try:
++            post_image = _extract_post_image_lines(diff_text)
++        except Exception as exc:
++            logging.getLogger(__name__).debug(
++                "pre-flight: post-image extraction failed: %s", exc,
++            )
++            post_image = {}
++        for exc in assembled_excerpts:
++            start = exc.get("start_line")
++            end = exc.get("end_line")
++            if not isinstance(start, int) or not isinstance(end, int):
++                continue
++            fname = exc.get("file", "")
++            file_lines = post_image.get(fname)
++            # file_lines is None when the file does not appear in the
++            # post-image at all.  That is suspicious: either the file is
++            # exempt (binary/rename -- STEP B handles it) or the excerpt
++            # is fabricated.  Warn early so the reviewer knows.
++            if file_lines is None:
++                logging.getLogger(__name__).warning(
++                    "pre-flight: excerpt %s:%d-%d references file %s "
++                    "not in diff post-image; verify may refuse this",
++                    fname, start, end, fname,
++                )
++                continue
++            # Lines beyond the post-image's max are definitely
++            # fabricated; lines within the range that are absent
++            # from file_lines are also fabricated.
++            max_line = max(file_lines) if file_lines else 0
++            fabricated = []
++            # Cap iteration to post-image bounds -- lines beyond
++            # max_line are unconditionally fabricated.
++            check_end = min(end, max_line)
++            for ln in range(start, check_end + 1):
++                if ln not in file_lines:
++                    fabricated.append(ln)
++            # Lines beyond max_line are all fabricated.
++            if end > max_line:
++                beyond_start = max(start, max_line + 1)
++                beyond_count = end - beyond_start + 1
++                if beyond_count <= 100:
++                    fabricated.extend(range(beyond_start, end + 1))
++                else:
++                    fabricated.extend(range(beyond_start, beyond_start + 100))
++                    fabricated.append("...")
++            if fabricated:
++                logging.getLogger(__name__).warning(
++                    "pre-flight: excerpt %s:%d-%d references lines %s "
++                    "not in diff post-image; verify will refuse this",
++                    fname, start, end,
++                    ", ".join(str(x) for x in fabricated),
++                )
+     pass_outcomes = derive_pass_outcomes(l1_findings)
+ 
+     for pass_idx, (pass_name, skill_name) in enumerate(
+diff --git a/src/code_forge/reviewer_json.py b/src/code_forge/reviewer_json.py
+index d1be59e..1f7e16c 100644
+--- a/src/code_forge/reviewer_json.py
++++ b/src/code_forge/reviewer_json.py
+@@ -32,7 +32,9 @@ REVIEW_JSON_CONTRACT = (
+     "Even if findings is empty, provide code_excerpts "
+     "covering each changed hunk.\n"
+     "code_excerpts content must be actual source code lines, "
+-    "not diff format -- no +/- prefixes, no @@ headers.\n"
++    "not diff format -- no +/- prefixes, no @@ headers. "
++    "The @@ line is a diff header, not a source line; do not count "
++    "it when determining start_line or end_line.\n"
+     "Every code_excerpt must fall inside a diff hunk. An excerpt is the "
+     "evidence that you checked a changed line, and a line the diff never "
+     "touched is not something that claim can be checked against. Code you "
+diff --git a/src/code_forge/verify.py b/src/code_forge/verify.py
+index f9342f3..90d2d65 100644
+--- a/src/code_forge/verify.py
++++ b/src/code_forge/verify.py
+@@ -445,7 +445,10 @@ def run_verify(
+                 if i < len(actual_lines):
+                     excerpt_line_map[ln] = actual_lines[i]
+ 
+-            file_lines = post_image.get(exc["file"], {})
++            file_lines = post_image.get(exc["file"])
++            if file_lines is None:
++                # Exempt file (binary/rename/mode-change) -- no post-image.
++                continue
+             overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
+ 
+             if overlap_lines:
+@@ -455,10 +458,56 @@ def run_verify(
+                     if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
+                         return VerifyResult(
+                             False,
+-                            "excerpt content mismatch at %s:%d (line %d)" % (
+-                                exc["file"], exc["start_line"], ln),
++                            "excerpt content mismatch at %s:%d "
++                            "(excerpt covering %d-%d)" % (
++                                exc["file"], ln,
++                                exc["start_line"], exc["end_line"]),
+                             5, cp,
+                         )
++            # Refuse excerpts that include lines not in the diff post-image.
++            # A line the diff never produced cannot be verified and signals
++            # the reviewer fabricated content (Gemini GM-B1, 2026-08-08).
++            # Exempt files (binary/rename/mode-change) have no post-image,
++            # so this check does not apply to them -- file_lines is None
++            # when the file is absent from post_image entirely.
++            # Check the full declared range, not just lines with content:
++            # an excerpt declaring lines 1-10 but showing only 1-5 still
++            # claims coverage of 6-10.
++            if file_lines is not None:
++                # Lines beyond the post-image's max are definitely
++                # fabricated; lines within the range that are absent
++                # from file_lines are also fabricated.
++                max_line = max(file_lines) if file_lines else 0
++                fabricated = []
++                # Cap iteration to post-image bounds -- lines beyond
++                # max_line are unconditionally fabricated, so we only
++                # need to check up to min(end_line, max_line).
++                check_end = min(exc["end_line"], max_line)
++                for ln in range(exc["start_line"], check_end + 1):
++                    if ln not in file_lines:
++                        fabricated.append(ln)
++                # Lines beyond max_line are all fabricated.
++                if exc["end_line"] > max_line:
++                    beyond_start = max(exc["start_line"], max_line + 1)
++                    beyond_count = exc["end_line"] - beyond_start + 1
++                    if beyond_count <= 100:
++                        fabricated.extend(range(
++                            beyond_start, exc["end_line"] + 1,
++                        ))
++                    else:
++                        fabricated.extend(range(
++                            beyond_start, beyond_start + 100,
++                        ))
++                        fabricated.append("...")
++                if fabricated:
++                    return VerifyResult(
++                        False,
++                        "excerpt %s:%d-%d references lines %s not in diff"
++                        " post-image" % (
++                            exc["file"], exc["start_line"], exc["end_line"],
++                            ", ".join(str(x) for x in fabricated)),
++                        5, cp,
++                    )
+         cp += 1
+ 
+         # 6. excerpt-derived coverage >= 60%
+diff --git a/tests/test_receipt.py b/tests/test_receipt.py
+index 262d47e..b8725ac 100644
+--- a/tests/test_receipt.py
++++ b/tests/test_receipt.py
+@@ -231,3 +231,108 @@ class TestWriteReceipts:
+             "the timestamp gate rejected a receipt set this very writer "
+             "produced: %s" % result.reason
+         )
++
++
++class TestPreflightWarning:
++    """Pre-flight excerpt check logs a warning for fabricated lines."""
++
++    def test_preflight_warns_on_fabricated_excerpt(self, tmp_path, caplog):
++        """An excerpt referencing lines outside the diff post-image triggers
++        a warning log before the receipt is written."""
++        import logging
++        diff_text = (
++            "diff --git a/foo.py b/foo.py\n"
++            "--- a/foo.py\n"
++            "+++ b/foo.py\n"
++            "@@ -1,2 +1,3 @@\n"
++            " x = 1\n"
++            "+y = 2\n"
++            " z = 3\n"
++        )
++        diff_sha = "abc123"
++        # Excerpt spans lines 3-5, but post-image only has lines 1-3.
++        # Lines 4-5 are fabricated.
++        excerpts = [
++            {"file": "foo.py", "start_line": 3, "end_line": 5,
++             "content": "z = 3\nFAB 1\nFAB 2"},
++        ]
++        with caplog.at_level(logging.WARNING, logger="code_forge.receipt"):
++            write_receipts(
++                receipts_dir=tmp_path / "r",
++                round_index=0,
++                l1_findings=[],
++                diff_sha256=diff_sha,
++                source_files=[],
++                cwd=tmp_path,
++                diff_text=diff_text,
++                reviewer_excerpts=excerpts,
++            )
++        assert any("pre-flight" in r.message and "4, 5" in r.message
++                    for r in caplog.records), caplog.text
++
++    def test_preflight_silent_on_valid_excerpt(self, tmp_path, caplog):
++        """Valid excerpts produce no pre-flight warning."""
++        import logging
++        diff_text = (
++            "diff --git a/foo.py b/foo.py\n"
++            "--- a/foo.py\n"
++            "+++ b/foo.py\n"
++            "@@ -1,2 +1,3 @@\n"
++            " x = 1\n"
++            "+y = 2\n"
++            " z = 3\n"
++        )
++        diff_sha = "abc123"
++        excerpts = [
++            {"file": "foo.py", "start_line": 1, "end_line": 3,
++             "content": "x = 1\ny = 2\nz = 3"},
++        ]
++        with caplog.at_level(logging.WARNING, logger="code_forge.receipt"):
++            write_receipts(
++                receipts_dir=tmp_path / "r",
++                round_index=0,
++                l1_findings=[],
++                diff_sha256=diff_sha,
++                source_files=[],
++                cwd=tmp_path,
++                diff_text=diff_text,
++                reviewer_excerpts=excerpts,
++            )
++        assert not any("pre-flight" in r.message for r in caplog.records), (
++            "unexpected pre-flight warning on valid excerpt"
++        )
++
++    def test_preflight_warns_when_file_absent_from_post_image(
++        self, tmp_path, caplog
++    ):
++        """An excerpt referencing a file not in the diff post-image triggers
++        a warning -- the file is either exempt or fabricated."""
++        import logging
++        diff_text = (
++            "diff --git a/foo.py b/foo.py\n"
++            "--- a/foo.py\n"
++            "+++ b/foo.py\n"
++            "@@ -1,2 +1,3 @@\n"
++            " x = 1\n"
++            "+y = 2\n"
++            " z = 3\n"
++        )
++        diff_sha = "abc123"
++        # Excerpt references bar.py, which is not in the diff at all.
++        excerpts = [
++            {"file": "bar.py", "start_line": 1, "end_line": 3,
++             "content": "p = 1\nq = 2\nr = 3"},
++        ]
++        with caplog.at_level(logging.WARNING, logger="code_forge.receipt"):
++            write_receipts(
++                receipts_dir=tmp_path / "r",
++                round_index=0,
++                l1_findings=[],
++                diff_sha256=diff_sha,
++                source_files=[],
++                cwd=tmp_path,
++                diff_text=diff_text,
++                reviewer_excerpts=excerpts,
++            )
++        assert any("not in diff post-image" in r.message
++                    for r in caplog.records), caplog.text
+diff --git a/tests/test_verify.py b/tests/test_verify.py
+index e4c1daf..35d07de 100644
+--- a/tests/test_verify.py
++++ b/tests/test_verify.py
+@@ -716,6 +716,89 @@ class TestHardenedVerify:
+         assert not r.passed
+         assert "excerpt content mismatch at" in r.reason
+ 
++    def test_mismatch_names_failing_line_not_excerpt_start(self, tmp_path):
++        """STEP C: overlapping excerpts -- the reason leads with the bad line.
++
++        foo.py lines 1-3 are covered twice: an earlier excerpt (1-3) that is
++        correct, and a later one (2-3) whose line 3 is wrong. Reporting the
++        excerpt's start_line first sends the reader to line 2, which the
++        earlier excerpt already matched, while the actual defect sits at 3.
++        """
++        rd = self._rd(tmp_path)
++        sha = _sha(_HARDEN_DIFF)
++        diff_files = parse_diff_files(_HARDEN_DIFF)
++        overlapping = [
++            # Correct, and covers the line the later excerpt gets wrong.
++            {"file": "foo.py", "start_line": 1, "end_line": 3,
++             "content": "x = 1\ny = 2\nz = 3"},
++            # Starts at 2, correct there, wrong at line 3.
++            {"file": "foo.py", "start_line": 2, "end_line": 3,
++             "content": "y = 2\nWRONG"},
++            {"file": "foo.py", "start_line": 6, "end_line": 8,
++             "content": "a = 1\nb = 2\nc = 3"},
++            {"file": "bar.py", "start_line": 1, "end_line": 3,
++             "content": "p = 1\nq = 2\nr = 3"},
++        ]
++        _write_hardened(rd, sha, excerpts=overlapping)
++        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
++        assert not r.passed
++        assert "excerpt content mismatch at foo.py:3" in r.reason, r.reason
++        # Line 2 is correct here; naming it as the location is the defect.
++        assert "foo.py:2" not in r.reason, r.reason
++        assert "excerpt covering 2-3" in r.reason, r.reason
++
++    def test_fabricated_excerpt_lines_refused(self, tmp_path):
++        """STEP C: lines outside the diff post-image are refused.
++
++        The post-image of foo.py has lines 1-3 and 6-8.  An excerpt that
++        spans lines 3-5 puts line 3 (real) next to lines 4-5 (fabricated --
++        the diff never produced them).  Before the fix the overlap check
++        only compared line 3, accepted it, and silently skipped 4-5.
++        Gemini GM-B1, 2026-08-08.
++        """
++        rd = self._rd(tmp_path)
++        sha = _sha(_HARDEN_DIFF)
++        diff_files = parse_diff_files(_HARDEN_DIFF)
++        fabricated = [
++            # This excerpt straddles a gap: line 3 is real, 4-5 do not exist.
++            {"file": "foo.py", "start_line": 3, "end_line": 5,
++             "content": "z = 3\nFABRICATED 1\nFABRICATED 2"},
++            {"file": "foo.py", "start_line": 6, "end_line": 8,
++             "content": "a = 1\nb = 2\nc = 3"},
++            {"file": "bar.py", "start_line": 1, "end_line": 3,
++             "content": "p = 1\nq = 2\nr = 3"},
++        ]
++        _write_hardened(rd, sha, excerpts=fabricated)
++        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
++        assert not r.passed
++        assert "not in diff post-image" in r.reason, r.reason
++        # Must name the fabricated lines, not just the excerpt range.
++        assert "4, 5" in r.reason, r.reason
++
++    def test_excerpt_tail_lines_outside_post_image_refused(self, tmp_path):
++        """STEP C: excerpt tail lines outside post-image are refused.
++
++        foo.py post-image has lines 1-3 and 6-8.  An excerpt at 7-10
++        overlaps hunk 6-8 at lines 7-8, but lines 9-10 are fabricated.
++        """
++        rd = self._rd(tmp_path)
++        sha = _sha(_HARDEN_DIFF)
++        diff_files = parse_diff_files(_HARDEN_DIFF)
++        outside = [
++            {"file": "foo.py", "start_line": 1, "end_line": 3,
++             "content": "x = 1\ny = 2\nz = 3"},
++            # Overlaps hunk 6-8 at lines 7-8, but lines 9-10 are fabricated.
++            {"file": "foo.py", "start_line": 7, "end_line": 10,
++             "content": "b = 2\nc = 3\nFAB 1\nFAB 2"},
++            {"file": "bar.py", "start_line": 1, "end_line": 3,
++             "content": "p = 1\nq = 2\nr = 3"},
++        ]
++        _write_hardened(rd, sha, excerpts=outside)
++        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
++        assert not r.passed
++        assert "not in diff post-image" in r.reason, r.reason
++        assert "9, 10" in r.reason, r.reason
++
+     def test_low_coverage_fail(self, tmp_path):
+         """Check 6: per-cycle coverage 3/9 = 33% < 60% -> fail."""
+         rd = self._rd(tmp_path)
+@@ -1045,6 +1128,7 @@ class TestOutOfHunkExcerpts:
+                 receipt = _receipt(c, p, sha)
+                 # The in-hunk excerpt content must match post-image lines 1-2
+                 receipt["code_excerpts"][0]["content"] = "def f():\n    return 2"
++                receipt["code_excerpts"][0]["end_line"] = 2
+                 # Read for orientation, outside every hunk, so it goes here
+                 # rather than into code_excerpts.
+                 receipt["context_quotes"] = [{

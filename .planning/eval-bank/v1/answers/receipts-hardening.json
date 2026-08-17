@@ -1,0 +1,15 @@
+{
+  "name": "receipts-hardening",
+  "commit": "0df08db40e7b3deac88504ec9725468270593c80",
+  "source": [
+    ".planning/reviews/xdg-fix2-r3-findings.md",
+    ".planning/reviews/xdg-fix2-r4-findings.md"
+  ],
+  "findings": [
+    {"file": "src/code_forge/cli.py", "line_range": [3009, 3009], "description": "_run_hold_loop ships with `if True:`, so LOCAL PENDING runs return without ever entering HOLD.", "source": ".planning/reviews/xdg-fix2-r3-findings.md"},
+    {"file": "src/code_forge/daemon_state.py", "line_range": [325, 325], "description": "The backend=None guard sits at the top of run(), killing the heuristic/disabled/static-rule paths that never need an LLM.", "source": ".planning/reviews/xdg-fix2-r3-findings.md"},
+    {"file": "src/code_forge/machine.py", "line_range": [549, 549], "description": "The except clause around receipt loading is too narrow, missing ValueError and RecursionError, so other read failures escape.", "source": ".planning/reviews/xdg-fix2-r3-findings.md"},
+    {"file": "src/code_forge/runtime.py", "line_range": [318, 318], "description": "The backend=None early return leaves the previous run's last_surfaces behind, so daemon_state would inject stale surfaces into its prompt.", "source": ".planning/reviews/xdg-fix2-r4-findings.md"},
+    {"file": "tests/test_canary_gen.py", "line_range": [302, 303], "description": "The cite-reverify regex makes the '[+ N] ' annotation prefix optional, weakening the test; production always annotates.", "source": ".planning/reviews/xdg-fix2-r4-findings.md"}
+  ]
+}

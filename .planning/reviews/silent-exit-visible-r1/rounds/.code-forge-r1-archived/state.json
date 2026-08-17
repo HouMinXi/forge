@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 7,
+  "mode": "CI",
+  "source_hash": "043cd56b675da86f83a8f657eb2f0f7565ee6f174053bec0f7debafc74dda3a9",
+  "findings": [
+    {
+      "id": "coverage-README.md",
+      "fingerprint": "coverage:README.md",
+      "source": "COVERAGE",
+      "disposition": "UNCERTAIN",
+      "file": "README.md",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "no review layer examined this file: no linter in tools.yaml matches it and L1 semantic review did not run (non-git review or stub engine). forge cannot vouch for it. Configure a matching linter, review it in git mode, or exempt it in .code-forge/coverage.yaml.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "e2e-layer1",
+      "fingerprint": "e2e-l1:d9025a73f1e7d83c",
+      "source": "E2E_CHECK",
+      "disposition": "DISMISSED",
+      "file": "",
+      "line_range": [],
+      "description": "cross-component change spans groups {README.md, src}; signature changed in {src/code_forge/cli.py}; is there an e2e test for the joined path?",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "coverage-README.md": "UNCERTAIN",
+    "e2e-layer1": "DISMISSED"
+  },
+  "fix_attempts": {},
+  "verdict": "FAIL",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 7,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [
+        "e2e-l1:d9025a73f1e7d83c"
+      ],
+      "dispositions": {
+        "coverage:README.md": "UNCERTAIN",
+        "e2e-l1:d9025a73f1e7d83c": "DISMISSED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'",
+    "CI: mutation skipped -- gate.yaml not found: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'",
+    "coverage: 1 in-scope file(s) had no review layer (non-git review or no matching linter); see COVERAGE findings"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "total_duration_s": 0.0,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 7,
+        "input": 0,
+        "output": 0,
+        "duration_s": 0.0
+      },
+      {
+        "pass": 2,
+        "cycle": 7,
+        "input": 0,
+        "output": 0,
+        "duration_s": 0.0
+      },
+      {
+        "pass": 3,
+        "cycle": 7,
+        "input": 0,
+        "output": 0,
+        "duration_s": 0.0
+      }
+    ]
+  }
+}

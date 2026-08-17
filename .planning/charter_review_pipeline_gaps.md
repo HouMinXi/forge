@@ -58,6 +58,31 @@ bug-injection + standalone pytest 87/87), log the deferred items here
 instead of chasing them inline, and route ALL further backlog through a
 new phase rather than ad hoc.
 
+## Status update, 2026-08-15
+
+Ratified-scope items re-checked against main @ 835115d:
+
+- Item 3 (mutation baseline timeout): RESOLVED by 8f745dd -- gate.yaml
+  test.timeout_seconds now reaches the mutation baseline through the
+  detached-run chain. The charter's design question (should L2's
+  flaky-guard budget equal L1's correctness budget) was answered YES on
+  the grounds that the baseline runs the suite the config names.
+  fixval's unscoped 120 default is an intentional split (scoped
+  candidate baseline). See 43.1-DECISIONS-20260815.md.
+- Item 4 (cache-replay, investigative): IDENTIFIED -- OmniRoute-side
+  semantic cache (SHA-256 of model + messages + temperature + top_p,
+  memory LRU + SQLite, temperature-0 requests), not a forge-side
+  memoization. Evidence and bypasses in
+  .planning/reviews/a4-eslint-experiments-20260815.md.
+- Item 6 (coverage-floor intent): decision recorded, awaiting user
+  sign-off (recommendation: working as intended; see
+  43.1-DECISIONS-20260815.md).
+- Item 10 (checks 2-4 read every cycle): RESOLVED by 0309c55 -- every
+  receipt check now scopes to the attested window, with the contract
+  written into the commit message and the verify.py comment. The
+  asymmetry was an accident; it is now a documented contract.
+
+
 ## Scope-challenge
 
 (a) Does this need to exist?

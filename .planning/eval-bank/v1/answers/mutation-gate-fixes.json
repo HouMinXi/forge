@@ -1,0 +1,11 @@
+{
+  "name": "mutation-gate-fixes",
+  "commit": "8f745ddc6ca30801c56156b3056ba81eb85793dd",
+  "source": [
+    ".planning/reviews/mutation-gate-own-fixes/panel-r2/state.json",
+    ".planning/reviews/mutation-gate-own-fixes/panel-r2/provenance.txt"
+  ],
+  "findings": [
+    {"file": "src/code_forge/machine.py", "line_range": [493, 493], "description": "Setting daemon=False for the mutation thread blocks the Python interpreter from exiting until the thread finishes (up to ~12 minutes), so the CLI hangs silently instead of delegating the run to the background; a detached subprocess (e.g. subprocess.Popen with flags severing it from the session) is needed.", "source": ".planning/reviews/mutation-gate-own-fixes/panel-r2/state.json"}
+  ]
+}

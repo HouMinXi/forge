@@ -1,0 +1,83 @@
+{
+  "cycle": 2,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "78823c2ee77d0ed0128eab70811baffc92193196bd9f58bc4e4e71d6c076749c",
+  "timestamp": "2026-08-16T08:42:48.883415+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 1659,
+      "end_line": 1675,
+      "content": "        except SystemExit as exc:\n            # A SystemExit escaping the pipeline is a forge internal bug,\n            # not a legitimate review outcome: it exits silently with\n            # its own code (1 reads like FAIL) and leaves no receipts.\n            # Convert it to a visible internal error with the traceback\n            # showing the raise site.\n            import traceback\n            print(\n                \"code-forge: internal error: SystemExit(%s) escaped \"\n                \"the review pipeline\" % (exc.code,),\n                file=sys.stderr,\n            )\n            traceback.print_exc(file=sys.stderr)\n            return EXIT_CLI_ERROR\n        except KeyboardInterrupt:\n            print(\"code-forge: interrupted\", file=sys.stderr)\n            raise",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2489,
+      "end_line": 2522,
+      "content": "def _startup_banner_line(\n    repo_name: str,\n    sha: str,\n    diff_count: int | None,\n    mode: str,\n    backend_name: str,\n    timeout_s: int | None,\n) -> str:\n    \"\"\"One stderr line stating what review is about to run.\n\n    Prints repo@sha, diff size, mode, backend, and the effective LLM\n    timeout with its override variable. A wrong cwd, wrong target, or\n    surprise timeout budget (FORGE_LLM_TIMEOUT_S) is visible in the\n    first seconds instead of after the first deadline.\n    \"\"\"\n    if sha:\n        target = \"%s @ %s\" % (repo_name, sha)\n    else:\n        target = repo_name\n    if diff_count is None:\n        diff_str = \"n/a\"\n    else:\n        diff_str = \"%d file%s\" % (\n            diff_count, \"\" if diff_count == 1 else \"s\"\n        )\n    if timeout_s is not None:\n        timeout_str = \"%ds\" % timeout_s\n    else:\n        timeout_str = \"n/a\"\n    return (\n        \"code-forge: reviewing %s (diff: %s); mode: %s; backend: %s; \"\n        \"LLM timeout: %s (override: FORGE_LLM_TIMEOUT_S)\"\n        % (target, diff_str, mode, backend_name, timeout_str)\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2960,
+      "end_line": 2990,
+      "content": "    # Startup banner: state the review target and effective timeout\n    # before the first LLM call (or lock wait) so a wrong cwd or a\n    # surprise timeout budget is visible immediately.\n    _banner_timeout = None\n    if backend is not None:\n        from .llm_invoke import effective_invoke_timeout_s\n        _banner_timeout = effective_invoke_timeout_s(backend, None)\n    _banner_sha = \"\"\n    try:\n        _banner_sha = subprocess.run(\n            [\"git\", \"rev-parse\", \"HEAD\"],\n            capture_output=True, text=True, encoding=\"utf-8\",\n            errors=\"replace\", cwd=cwd, check=False,\n        ).stdout.strip()[:8]\n    except subprocess.SubprocessError:\n        pass\n    _banner_diff_count = None\n    if resolved.git_diff:\n        from .verify import parse_diff_files\n        _banner_diff_count = len(parse_diff_files(resolved.git_diff))\n    print(\n        _startup_banner_line(\n            repo_name=cwd.name,\n            sha=_banner_sha,\n            diff_count=_banner_diff_count,\n            mode=mode.value.lower(),\n            backend_name=backend.name if backend is not None else \"none\",\n            timeout_s=_banner_timeout,\n        ),\n        file=sys.stderr,\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 1656,
+      "end_line": 1678,
+      "content": "            )\n            traceback.print_exc(file=sys.stderr)\n            return EXIT_FAIL\n        except SystemExit as exc:\n            # A SystemExit escaping the pipeline is a forge internal bug,\n            # not a legitimate review outcome: it exits silently with\n            # its own code (1 reads like FAIL) and leaves no receipts.\n            # Convert it to a visible internal error with the traceback\n            # showing the raise site.\n            import traceback\n            print(\n                \"code-forge: internal error: SystemExit(%s) escaped \"\n                \"the review pipeline\" % (exc.code,),\n                file=sys.stderr,\n            )\n            traceback.print_exc(file=sys.stderr)\n            return EXIT_CLI_ERROR\n        except KeyboardInterrupt:\n            print(\"code-forge: interrupted\", file=sys.stderr)\n            raise\n\n        # B2: PENDING guard before verdict_to_exit.\n        if verdict == Verdict.PENDING:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2486,
+      "end_line": 2525,
+      "content": "        raise CliError(err)\n\n\n\ndef _startup_banner_line(\n    repo_name: str,\n    sha: str,\n    diff_count: int | None,\n    mode: str,\n    backend_name: str,\n    timeout_s: int | None,\n) -> str:\n    \"\"\"One stderr line stating what review is about to run.\n\n    Prints repo@sha, diff size, mode, backend, and the effective LLM\n    timeout with its override variable. A wrong cwd, wrong target, or\n    surprise timeout budget (FORGE_LLM_TIMEOUT_S) is visible in the\n    first seconds instead of after the first deadline.\n    \"\"\"\n    if sha:\n        target = \"%s @ %s\" % (repo_name, sha)\n    else:\n        target = repo_name\n    if diff_count is None:\n        diff_str = \"n/a\"\n    else:\n        diff_str = \"%d file%s\" % (\n            diff_count, \"\" if diff_count == 1 else \"s\"\n        )\n    if timeout_s is not None:\n        timeout_str = \"%ds\" % timeout_s\n    else:\n        timeout_str = \"n/a\"\n    return (\n        \"code-forge: reviewing %s (diff: %s); mode: %s; backend: %s; \"\n        \"LLM timeout: %s (override: FORGE_LLM_TIMEOUT_S)\"\n        % (target, diff_str, mode, backend_name, timeout_str)\n    )\n\n\ndef _run(args, env, cwd: Path) -> Verdict:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2957,
+      "end_line": 2992,
+      "content": "    if _cv is not None:\n        return _cv\n\n    # Startup banner: state the review target and effective timeout\n    # before the first LLM call (or lock wait) so a wrong cwd or a\n    # surprise timeout budget is visible immediately.\n    _banner_timeout = None\n    if backend is not None:\n        from .llm_invoke import effective_invoke_timeout_s\n        _banner_timeout = effective_invoke_timeout_s(backend, None)\n    _banner_sha = \"\"\n    try:\n        _banner_sha = subprocess.run(\n            [\"git\", \"rev-parse\", \"HEAD\"],\n            capture_output=True, text=True, encoding=\"utf-8\",\n            errors=\"replace\", cwd=cwd, check=False,\n        ).stdout.strip()[:8]\n    except subprocess.SubprocessError:\n        pass\n    _banner_diff_count = None\n    if resolved.git_diff:\n        from .verify import parse_diff_files\n        _banner_diff_count = len(parse_diff_files(resolved.git_diff))\n    print(\n        _startup_banner_line(\n            repo_name=cwd.name,\n            sha=_banner_sha,\n            diff_count=_banner_diff_count,\n            mode=mode.value.lower(),\n            backend_name=backend.name if backend is not None else \"none\",\n            timeout_s=_banner_timeout,\n        ),\n        file=sys.stderr,\n    )\n\n    # Step 7: lock + run",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 1659,
+      "end_line": 1675,
+      "content": "        except SystemExit as exc:\n            # A SystemExit escaping the pipeline is a forge internal bug,\n            # not a legitimate review outcome: it exits silently with\n            # its own code (1 reads like FAIL) and leaves no receipts.\n            # Convert it to a visible internal error with the traceback\n            # showing the raise site.\n            import traceback\n            print(\n                \"code-forge: internal error: SystemExit(%s) escaped \"\n                \"the review pipeline\" % (exc.code,),\n                file=sys.stderr,\n            )\n            traceback.print_exc(file=sys.stderr)\n            return EXIT_CLI_ERROR\n        except KeyboardInterrupt:\n            print(\"code-forge: interrupted\", file=sys.stderr)\n            raise",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2489,
+      "end_line": 2522,
+      "content": "def _startup_banner_line(\n    repo_name: str,\n    sha: str,\n    diff_count: int | None,\n    mode: str,\n    backend_name: str,\n    timeout_s: int | None,\n) -> str:\n    \"\"\"One stderr line stating what review is about to run.\n\n    Prints repo@sha, diff size, mode, backend, and the effective LLM\n    timeout with its override variable. A wrong cwd, wrong target, or\n    surprise timeout budget (FORGE_LLM_TIMEOUT_S) is visible in the\n    first seconds instead of after the first deadline.\n    \"\"\"\n    if sha:\n        target = \"%s @ %s\" % (repo_name, sha)\n    else:\n        target = repo_name\n    if diff_count is None:\n        diff_str = \"n/a\"\n    else:\n        diff_str = \"%d file%s\" % (\n            diff_count, \"\" if diff_count == 1 else \"s\"\n        )\n    if timeout_s is not None:\n        timeout_str = \"%ds\" % timeout_s\n    else:\n        timeout_str = \"n/a\"\n    return (\n        \"code-forge: reviewing %s (diff: %s); mode: %s; backend: %s; \"\n        \"LLM timeout: %s (override: FORGE_LLM_TIMEOUT_S)\"\n        % (target, diff_str, mode, backend_name, timeout_str)\n    )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 2960,
+      "end_line": 2990,
+      "content": "    # Startup banner: state the review target and effective timeout\n    # before the first LLM call (or lock wait) so a wrong cwd or a\n    # surprise timeout budget is visible immediately.\n    _banner_timeout = None\n    if backend is not None:\n        from .llm_invoke import effective_invoke_timeout_s\n        _banner_timeout = effective_invoke_timeout_s(backend, None)\n    _banner_sha = \"\"\n    try:\n        _banner_sha = subprocess.run(\n            [\"git\", \"rev-parse\", \"HEAD\"],\n            capture_output=True, text=True, encoding=\"utf-8\",\n            errors=\"replace\", cwd=cwd, check=False,\n        ).stdout.strip()[:8]\n    except subprocess.SubprocessError:\n        pass\n    _banner_diff_count = None\n    if resolved.git_diff:\n        from .verify import parse_diff_files\n        _banner_diff_count = len(parse_diff_files(resolved.git_diff))\n    print(\n        _startup_banner_line(\n            repo_name=cwd.name,\n            sha=_banner_sha,\n            diff_count=_banner_diff_count,\n            mode=mode.value.lower(),\n            backend_name=backend.name if backend is not None else \"none\",\n            timeout_s=_banner_timeout,\n        ),\n        file=sys.stderr,\n    )",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/cli.py",
+      "start": 1656,
+      "end": 2994
+    }
+  ]
+}

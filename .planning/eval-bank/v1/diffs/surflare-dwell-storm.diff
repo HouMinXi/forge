@@ -1,0 +1,362 @@
+commit 51cafa51bd0f4b039968d460f25ba8a4fbb070f3
+Author: Minxi Hou <houminxi@gmail.com>
+Date:   Sat Aug 15 09:46:47 2026 -0400
+
+    watchdog: suppress proactive rotation during dwell storms
+    
+    In a relay-wide storm every exit node dies within minutes. The
+    proactive node-error rotation was designed for the opposite case (one
+    sick node, healthy alternatives): it fires at >=50 urltest probe errors
+    even while user traffic still forwards, so during storms it churns
+    working sessions, and every reconnect costs the LAN 15-30 seconds of
+    tombstone + conntrack flush. Measured 2026-08-15 evening: ~24 reconnects
+    over four hours, roughly ten minutes of avoidable outage on top of the
+    storm itself.
+    
+    The gate tracks the last three session dwell times; when all of them
+    died under 15 minutes, proactive rotation stands down and logs the
+    transition once. Hard forwarding failures still reconnect normally --
+    only the proactive churn is removed. The gate clears itself as soon as
+    one session outlives the threshold, and starts empty on boot so a
+    fresh watchdog behaves exactly as before.
+    
+    Signed-off-by: Minxi Hou <houminxi@gmail.com>
+
+diff --git a/surflare_watchdog.sh b/surflare_watchdog.sh
+index 40f25bb..347e90a 100755
+--- a/surflare_watchdog.sh
++++ b/surflare_watchdog.sh
+@@ -53,6 +53,9 @@ LOCK_FILE=/run/surflare_watchdog.lock # Mutex lock to prevent concurrent reconne
+ PIDFILE=/run/surflare_watchdog.pid    # PID file for reliable daemon shutdown
+ RESTART_MARKER=/run/surflare_watchdog.restart  # set by main loop before reconnect; cleanup checks it
+ ROTATION_STATE=/var/tmp/surflare_rotation  # Persists active node across restarts
++STORM_DWELL_MAX=900                    # a session dying younger than this counts as storm-killed
++STORM_DWELL_SESSIONS=3                 # this many consecutive short sessions = dwell-storm
++DWELL_HISTORY=/run/surflare_dwell      # ring of recent session dwell times (seconds, one per line)
+ DIAG_SACK_THRESHOLD=20                # % of packets with SACK blocks to flag transit degradation
+ DISCONNECT_SETTLE=1                   # seconds after surflare disconnect before killing processes
+ CONNECT_SETTLE=20                     # seconds after surflare connect --daemon for VPN to establish
+@@ -3431,6 +3434,29 @@ _record_connect() {
+ 	# Read the transit written by connect_vpn for every connection (not just after reprobe)
+ 	_sess_transit=$(cat /run/surflare_last_transit 2>/dev/null || echo "unknown")
+ 	log "Session: node=${_sess_node} transit=${_sess_transit} exit=${_sess_exit} prev=${_sess_prev_node:-none}(${_sess_prev_s}s)"
++	# Dwell history feeds the dwell-storm gate: keep the last
++	# STORM_DWELL_SESSIONS session lifetimes, newest last. If the append
++	# fails (/run full), the gate freezes at its last verdict -- surface
++	# that once per connect rather than silently.
++	if [ "$_sess_prev_s" -gt 0 ]; then
++		if ! echo "$_sess_prev_s" >> "$DWELL_HISTORY" 2>/dev/null; then
++			log "Dwell history write failed (${DWELL_HISTORY}), storm gate state frozen"
++		elif tail -n "$STORM_DWELL_SESSIONS" "$DWELL_HISTORY" > "${DWELL_HISTORY}.tmp" 2>/dev/null; then
++			if ! mv -f "${DWELL_HISTORY}.tmp" "$DWELL_HISTORY" 2>/dev/null; then
++				# A persistent mv failure would let the ring grow
++				# unbounded (wc -l scans it every loop); drop it --
++				# same fail-open reset as the tail-failure path.
++				rm -f "$DWELL_HISTORY" "${DWELL_HISTORY}.tmp" 2>/dev/null
++				log "Dwell history trim move failed, ring reset (storm gate open)"
++			fi
++		else
++			# Trim read failed: drop the ring entirely (fail open, no
++			# storm) rather than keep an unbounded file. The next
++			# append recreates it.
++			rm -f "$DWELL_HISTORY" 2>/dev/null
++			log "Dwell history trim failed, storm gate opened"
++		fi
++	fi
+ 	if [ "$_sess_prev_s" -gt 0 ] && [ "$_sess_prev_s" -lt 300 ]; then
+ 		log "NODE_DEGRADED: ${_sess_prev_node} survived ${_sess_prev_s}s (threshold 300s)"
+ 		_stats_degraded="${_stats_degraded:+$_stats_degraded }${_sess_prev_node}"
+@@ -4487,6 +4513,37 @@ _rotate_node() {
+ 	printf '%s\t%d\n' "$_active_node" "$_node_idx" > "$ROTATION_STATE" 2>/dev/null || true
+ }
+ 
++# _in_dwell_storm: true when the last STORM_DWELL_SESSIONS sessions all
++# died younger than STORM_DWELL_MAX -- the relay layer is killing every
++# node fast (the Asian-evening pattern). While true, proactive node-error
++# rotation is suppressed: in that state urltest probe failures fire en
++# masse while user traffic still flows, and rotating churns working
++# sessions (each reconnect costs the LAN 15-30s). Hard forwarding
++# failures still reconnect normally; the gate only removes the
++# proactive churn. Clears itself as soon as one session outlives the
++# threshold and enters the history.
++_in_dwell_storm() {
++	local _d _n _all_short=1 _lines
++	# Missing or unreadable history fails open (no storm): suppression is
++	# a last-resort lever, and a cold ring carries no evidence either way.
++	[ -r "$DWELL_HISTORY" ] || return 1
++	# wc -l output is stripped: BusyBox right-aligns counts on some
++	# builds and the case guard below would reject the leading spaces.
++	_n=$(( $(wc -l < "$DWELL_HISTORY" 2>/dev/null || echo 0) + 0 ))
++	case "$_n" in ''|*[!0-9]*) return 1 ;; esac
++	[ "$_n" -ge "$STORM_DWELL_SESSIONS" ] || return 1
++	# Only the last STORM_DWELL_SESSIONS lines are read, so a ring that
++	# grew past its bound cannot skew the verdict with stale sessions.
++	# tail failing (or returning nothing) fails open -- same direction.
++	_lines=$(tail -n "$STORM_DWELL_SESSIONS" "$DWELL_HISTORY" 2>/dev/null)
++	[ -n "$_lines" ] || return 1
++	while IFS= read -r _d; do
++		case "$_d" in ''|*[!0-9]*) return 1 ;; esac
++		[ "$_d" -lt "$STORM_DWELL_MAX" ] 2>/dev/null || { _all_short=0; break; }
++	done <<< "${_lines%$'\n'}"
++	[ "$_all_short" -eq 1 ]
++}
++
+ # Proactive node-error rotation: if the current exit node has accumulated
+ # >= NODE_ERR_ROTATE_THRESHOLD outbound errors in the health window and at
+ # least one candidate is healthy, rotate immediately by raising fail_count to
+@@ -6123,8 +6180,21 @@ while true; do
+ 
+ 		# Proactive node-error rotation: rotate immediately when the current exit
+ 		# node has >= NODE_ERR_ROTATE_THRESHOLD errors and a healthy candidate
+-		# exists, instead of waiting for fail_count to build.
+-		_handle_proactive_node_rotation "$_now"
++		# exists, instead of waiting for fail_count to build. Suppressed during
++		# dwell-storms (every node dying fast): rotating then churns sessions
++		# that still forward user traffic. Announce the transition once.
++		# A storm also needs the CURRENT session to still be young: if it has
++		# already outlived STORM_DWELL_MAX, the relay recovered and holding
++		# rotation back would keep a degrading node for no reason.
++		if _in_dwell_storm && [ $((_now - ${_sess_connect_s:-0})) -lt "$STORM_DWELL_MAX" ]; then
++			if [ "${_dwell_storm_active:-0}" -eq 0 ]; then
++				_dwell_storm_active=1
++				log "Dwell storm: last ${STORM_DWELL_SESSIONS} sessions all <${STORM_DWELL_MAX}s, proactive rotation suppressed"
++			fi
++		else
++			_dwell_storm_active=0
++			_handle_proactive_node_rotation "$_now"
++		fi
+ 
+ 		# Periodic heartbeat -- confirms watchdog is alive during long healthy stretches
+ 		now=$(date +%s)
+diff --git a/tests/test_dwell_storm.sh b/tests/test_dwell_storm.sh
+new file mode 100755
+index 0000000..da9979a
+--- /dev/null
++++ b/tests/test_dwell_storm.sh
+@@ -0,0 +1,226 @@
++#!/bin/bash
++# Tests for the dwell-storm gate (Zone C storm backoff).
++# _in_dwell_storm, the dwell-history append block, and the main-loop gate
++# are EXTRACTED from the real watchdog script so a pass proves the
++# production logic, not a copy.
++
++set -u
++cd "$(dirname "$0")/.." || exit 1
++WATCHDOG=surflare_watchdog.sh
++HIST=$(mktemp /tmp/dwell_hist_XXXXXX)
++RINGDIR=$(mktemp -d /tmp/dwell_ring_XXXXXX)
++RING="$RINGDIR/ring"   # absent until T7's first append creates it
++GATE_SCR=$(mktemp /tmp/dwell_gate_XXXXXX)
++GATE_ENV=$(mktemp /tmp/dwell_gateenv_XXXXXX)
++INJ_GATE=$(mktemp /tmp/dwell_gateinj_XXXXXX)
++INJ=$(mktemp /tmp/dwell_inj_XXXXXX)
++cleanup() { rm -f "$HIST" "$GATE_SCR" "$GATE_ENV" "$INJ_GATE" "$INJ" "/tmp/dwell_hist_absent_$$"; rm -r "$RINGDIR"; }
++trap cleanup EXIT
++PASS=0; FAIL=0
++ok()  { PASS=$((PASS+1)); echo "  PASS: $1"; }
++bad() { FAIL=$((FAIL+1)); echo "  FAIL: $1"; }
++
++# Extract from "/^_in_dwell_storm()/,/^}/" plus the constants it reads.
++extract_fn() {
++	awk '/^_in_dwell_storm\(\)/,/^}/' "$1"
++}
++
++# Extract the dwell-history append block from _record_connect: from the
++# marker comment to the end of its enclosing if. Nesting counts only
++# "if" lines ("elif" opens no new block, so it must not increment).
++extract_append() {
++	awk '
++		/# Dwell history feeds/ { in_blk=1 }
++		in_blk { print }
++		in_blk && /^[[:space:]]*if[[:space:]].*then[[:space:]]*$/ { nest++ }
++		in_blk && /^[[:space:]]*fi/ { nest--; if (nest == 0) exit }
++	' "$1"
++}
++
++# Extract the main-loop gate block: from "if _in_dwell_storm" to
++# its matching fi (if-only nesting, same rule as extract_append).
++extract_gate() {
++	awk '
++		/if _in_dwell_storm/ { in_blk=1 }
++		in_blk { print }
++		in_blk && /^[[:space:]]*if[[:space:]].*then[[:space:]]*$/ { nest++ }
++		in_blk && /^[[:space:]]*fi/ { nest--; if (nest == 0) exit }
++	' "$1"
++}
++
++CONSTS=$(grep -E "^STORM_DWELL_MAX=|^STORM_DWELL_SESSIONS=|^DWELL_HISTORY=" "$WATCHDOG")
++
++run_case() {
++	# $1 = history file content (one dwell per line), $2 = expected (0/1)
++	local hist="$1" want="$2" rc
++	printf '%s\n' "$hist" > "$HIST"
++	DWELL_HISTORY="$HIST" bash -c "
++		$CONSTS
++		DWELL_HISTORY=\"$HIST\"
++		$(extract_fn "$WATCHDOG")
++		_in_dwell_storm && exit 0 || exit 1
++	" 2>/dev/null
++	rc=$?
++	if [ "$rc" -ne "$want" ]; then
++		echo "    (got rc=$rc, want rc=$want, hist='$hist')" >&2
++	fi
++	[ "$rc" -eq "$want" ]
++}
++
++echo "T1: empty history -> no storm"
++if run_case "" 1; then ok "empty -> false"; else bad "empty -> wrong"; fi
++
++echo "T2: fewer than 3 sessions -> no storm"
++if run_case "$(printf '120\n480')" 1; then ok "2 short -> false"; else bad "2 short -> wrong"; fi
++
++echo "T3: 3 consecutive short sessions -> storm"
++if run_case "$(printf '236\n483\n660')" 0; then ok "3 short -> true"; else bad "3 short -> wrong"; fi
++
++echo "T4: one long session among the last 3 -> no storm"
++if run_case "$(printf '3600\n236\n483')" 1; then ok "long+2short -> false"; else bad "long+2short -> wrong"; fi
++
++echo "T5: exactly at threshold boundary (900s) is NOT storm"
++if run_case "$(printf '900\n900\n900')" 1; then ok "900 x3 -> false"; else bad "900 x3 -> wrong"; fi
++
++echo "T6: garbage line in history -> no storm (fail open, rotation continues)"
++if run_case "$(printf 'abc\n120\n480')" 1; then ok "garbage -> false"; else bad "garbage -> wrong"; fi
++
++echo "T7: production append block keeps only last N (extracted from _record_connect)"
++if extract_append "$WATCHDOG" | grep -q "NODE_DEGRADED"; then
++	bad "extraction overran past the append block (elif counted as if)"
++else
++	ok "extraction stops at the append block"
++fi
++for s in 100 200 300 3600; do
++	_sess_prev_s="$s" DWELL_HISTORY="$RING" bash -c "
++		$CONSTS
++		DWELL_HISTORY=\"$RING\"
++		log() { :; }
++		$(extract_append "$WATCHDOG")
++	" 2>/dev/null
++done
++if [ "$(wc -l < "$RING")" -eq 3 ] && [ "$(sed -n 1p "$RING")" = "200" ] \
++	&& [ "$(sed -n 3p "$RING")" = "3600" ]; then
++	ok "ring bounded at 3, oldest dropped"
++else
++	bad "ring wrong: $(tr '\n' ',' < "$RING")"
++fi
++_sess_prev_s=0 DWELL_HISTORY="$RING" bash -c "
++	$CONSTS
++	DWELL_HISTORY=\"$RING\"
++	log() { :; }
++	$(extract_append "$WATCHDOG")
++" 2>/dev/null
++if [ "$(wc -l < "$RING")" -eq 3 ]; then
++	ok "zero prev session does not append"
++else
++	bad "zero prev appended: $(tr '\n' ',' < "$RING")"
++fi
++
++echo "T8: bug-inject -- inverted comparison must flip T3"
++# shellcheck disable=SC2016  # \$ must stay literal: sed matches "$_d" in the source
++sed 's/\[ "\$_d" -lt "\$STORM_DWELL_MAX" \]/[ "$_d" -ge "$STORM_DWELL_MAX" ]/' "$WATCHDOG" > "$INJ"
++printf '236\n483\n660\n' > "$HIST"
++DWELL_HISTORY="$HIST" bash -c "
++	$CONSTS
++	DWELL_HISTORY=\"$HIST\"
++	$(extract_fn "$INJ")
++	_in_dwell_storm && exit 0 || exit 1
++" 2>/dev/null
++rc=$?
++# inverted: 3 short sessions all fail the >=900 check -> all_short=0 ->
++# no storm. T3 (expect storm) must flip, so rc must be 1 here.
++if [ "$rc" -eq 1 ]; then ok "injected bug detected (verdict flipped)"; else bad "injection not caught (rc=$rc)"; fi
++
++echo "T9: missing history file -> no storm (fail open)"
++DWELL_HISTORY=/tmp/dwell_hist_absent_$$ bash -c "
++	$CONSTS
++	DWELL_HISTORY=/tmp/dwell_hist_absent_\$\$
++	$(extract_fn "$WATCHDOG")
++	_in_dwell_storm && exit 0 || exit 1
++" 2>/dev/null
++rc=$?
++if [ "$rc" -eq 1 ]; then ok "missing -> false"; else bad "missing -> wrong (rc=$rc)"; fi
++
++echo "T10: gate suppresses rotation in storm, resumes after, announces once"
++{
++	echo "log() { LOG_CALLS=\$((LOG_CALLS+1)); }"
++	echo "_handle_proactive_node_rotation() { ROTATED=1; }"
++	extract_fn "$WATCHDOG"
++	extract_gate "$WATCHDOG"
++} > "$GATE_SCR"
++
++OUT=$(bash -c "
++	$CONSTS
++	DWELL_HISTORY=\"$GATE_ENV\"
++	printf '200\n300\n400\n' > \"$GATE_ENV\"
++	LOG_CALLS=0
++	_now=1000
++	_sess_connect_s=200
++	. \"$GATE_SCR\"
++	. \"$GATE_SCR\"
++	echo \"calls=\$LOG_CALLS rotated=\${ROTATED:-0}\"
++" 2>/dev/null)
++if [ "$OUT" = "calls=1 rotated=0" ]; then ok "storm: no rotation, one announcement"; else bad "storm wrong: $OUT"; fi
++
++OUT=$(bash -c "
++	$CONSTS
++	DWELL_HISTORY=\"$GATE_ENV\"
++	printf '3600\n' > \"$GATE_ENV\"
++	LOG_CALLS=0
++	_now=1000
++	_sess_connect_s=200
++	. \"$GATE_SCR\"
++	. \"$GATE_SCR\"
++	echo \"calls=\$LOG_CALLS rotated=\${ROTATED:-0}\"
++" 2>/dev/null)
++if [ "$OUT" = "calls=0 rotated=1" ]; then ok "clean: rotation runs, no announcement"; else bad "clean wrong: $OUT"; fi
++
++OUT=$(bash -c "
++	$CONSTS
++	DWELL_HISTORY=\"$GATE_ENV\"
++	printf '200\n300\n400\n' > \"$GATE_ENV\"
++	LOG_CALLS=0
++	_now=1000
++	_sess_connect_s=200
++	ROTATED=0
++	. \"$GATE_SCR\"
++	printf '3600\n' > \"$GATE_ENV\"
++	ROTATED=0
++	. \"$GATE_SCR\"
++	printf '200\n300\n400\n' > \"$GATE_ENV\"
++	ROTATED=0
++	. \"$GATE_SCR\"
++	echo \"calls=\$LOG_CALLS rotated=\${ROTATED:-0}\"
++" 2>/dev/null)
++if [ "$OUT" = "calls=2 rotated=0" ]; then ok "storm->clean->storm: re-announced, final storm re-suppresses"; else bad "recovery wrong: $OUT"; fi
++
++echo "T12: storm history but current session outlived threshold -> rotation runs"
++OUT=$(bash -c "
++	$CONSTS
++	DWELL_HISTORY=\"$GATE_ENV\"
++	printf '200\n300\n400\n' > \"$GATE_ENV\"
++	LOG_CALLS=0
++	_now=2000
++	_sess_connect_s=100
++	. \"$GATE_SCR\"
++	echo \"calls=\$LOG_CALLS rotated=\${ROTATED:-0}\"
++" 2>/dev/null)
++if [ "$OUT" = "calls=0 rotated=1" ]; then ok "old session clears storm: rotation runs, no announcement"; else bad "old session wrong: $OUT"; fi
++
++echo "T11: bug-inject -- deleting the gate must be caught (rotation runs in storm)"
++sed 's/if _in_dwell_storm/if false/' "$GATE_SCR" > "$INJ_GATE"
++OUT=$(bash -c "
++	$CONSTS
++	DWELL_HISTORY=\"$GATE_ENV\"
++	printf '200\n300\n400\n' > \"$GATE_ENV\"
++	_now=1000
++	_sess_connect_s=200
++	. \"$INJ_GATE\"
++	echo \"rotated=\${ROTATED:-0}\"
++" 2>/dev/null)
++if [ "$OUT" = "rotated=1" ]; then ok "injected gate bypass detected (rotation ran during storm)"; else bad "injection not caught: $OUT"; fi
++
++echo "---"
++echo "PASS=$PASS FAIL=$FAIL"
++[ "$FAIL" -eq 0 ]

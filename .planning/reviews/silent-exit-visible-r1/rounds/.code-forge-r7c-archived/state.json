@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "3814c87568ee43d632a5435e5d57c7c775540db53ec3e446fc50021b130bcebe",
+  "findings": [
+    {
+      "id": "l1-qodo-f9fe63af1345d796",
+      "fingerprint": "f9fe63af1345d796",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3052,
+        3052
+      ],
+      "description": "[qodo] Startup banner always uses `git rev-parse HEAD` for the SHA, so reviews targeting a non-HEAD head (`--head <sha>`, `--head WORKING`, or `--head INDEX`) are labeled with the current HEAD hash instead of the target being reviewed. Prefer deriving the abbreviated SHA from the resolved head/ref or omit it when the target is not HEAD.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-b24cadc9e72df487",
+      "fingerprint": "b24cadc9e72df487",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        1659,
+        1659
+      ],
+      "description": "[expert] Catching SystemExit here converts any SystemExit raised from the surrounding try into EXIT_CLI_ERROR plus a traceback. If argparse parse_args() or any legitimate sys.exit() is inside this try, --help/--version and clean exits will be misreported as internal errors. Keep this catch scoped to the pipeline dispatch only.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-f8d1a9e82ad57e51",
+      "fingerprint": "f8d1a9e82ad57e51",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3046,
+        3046
+      ],
+      "description": "[expert] The banner computes _banner_timeout via effective_invoke_timeout_s(backend, None), while _banner_timeout_note is fed env.get('FORGE_LLM_TIMEOUT_S'). If the second argument is the env override (the helper's contract), the printed timeout can be the default/backend value while the note claims it came from FORGE_LLM_TIMEOUT_S. Pass the same env value used by the note to keep the diagnostic truthful.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-29f12cdaffae42d0",
+      "fingerprint": "29f12cdaffae42d0",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3037,
+        3037
+      ],
+      "description": "[expert] Startup-banner assembly is inlined in _run, mixing diagnostic fallbacks with pipeline flow. Extract an _emit_startup_banner helper so the subprocess/exception handling is testable and _run remains focused on the pipeline.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-16ecda8c10563df1",
+      "fingerprint": "16ecda8c10563df1",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2548,
+        2548
+      ],
+      "description": "[adversarial] _banner_timeout_note recomputes backend-vs-env precedence from _run's `env` mapping, while `_banner_timeout` is computed separately by `effective_invoke_timeout_s(backend, None)` at line 3046 (which likely reads `os.environ` directly). If `_run` is called with an env mapping that differs from `os.environ` (tests or embedding), the banner note can claim FORGE_LLM_TIMEOUT_S was used or ignored when the resolver actually did the opposite. This is diagnostics-only but can mislead timeout debugging.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-addb1a88c339c3d5",
+      "fingerprint": "addb1a88c339c3d5",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2501,
+        2501
+      ],
+      "description": "[adversarial] _repo_display_name runs `git rev-parse --show-toplevel` with a 5s timeout, and `_run` later runs another `git rev-parse HEAD` with another 5s timeout. Both are serialized before the lock. On a machine where git is slow or hanging this adds up to 10 seconds of startup latency for a diagnostic banner that is supposed to be cheap and non-crashing.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-f9fe63af1345d796": "CONFIRMED",
+    "l1-expert-b24cadc9e72df487": "CONFIRMED",
+    "l1-expert-f8d1a9e82ad57e51": "CONFIRMED",
+    "l1-expert-29f12cdaffae42d0": "UNCERTAIN",
+    "l1-adversarial-16ecda8c10563df1": "CONFIRMED",
+    "l1-adversarial-addb1a88c339c3d5": "UNCERTAIN"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "f9fe63af1345d796",
+        "b24cadc9e72df487",
+        "f8d1a9e82ad57e51",
+        "29f12cdaffae42d0",
+        "16ecda8c10563df1",
+        "addb1a88c339c3d5"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "f9fe63af1345d796": "CONFIRMED",
+        "b24cadc9e72df487": "CONFIRMED",
+        "f8d1a9e82ad57e51": "CONFIRMED",
+        "29f12cdaffae42d0": "UNCERTAIN",
+        "16ecda8c10563df1": "CONFIRMED",
+        "addb1a88c339c3d5": "UNCERTAIN"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 49761,
+    "total_output_tokens": 69209,
+    "total_duration_s": 390.4497268430132,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 16587,
+        "output": 23069,
+        "duration_s": 130.15
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 16587,
+        "output": 23069,
+        "duration_s": 130.15
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 16587,
+        "output": 23069,
+        "duration_s": 130.15
+      }
+    ]
+  }
+}

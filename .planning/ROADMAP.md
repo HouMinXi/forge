@@ -49,7 +49,7 @@ Tracked phases:
 </details>
 
 <details>
-<summary>v2.9 ENV-GROUNDING (Phase 44 + lane 51/52/53a/53b) -- PLANNED, not started</summary>
+<summary>v2.9 ENV-GROUNDING (Phase 44 + lane 51/52/53a/53b) -- IN PROGRESS (Phase 48 shipped 2026-08-16; 44/51/52/53a/53b remain planned)</summary>
 
 Source: v2.9-V3-GROUNDTRUTH-SCHEDULE.md AMENDMENT 1 (rev 2). Externally
 certified: ds+lc adversarial review, R2 double 0/0/0/0, ledger at
@@ -60,6 +60,15 @@ in-flight queue.
 
 - [ ] Phase 44: EVAL-ON-DUTY -- case generation re-extracts diffs from the
   LEDGER (prereq Phase 43, merged 14328bb); ~300-450 LOC. Root of the v2.9 lane.
+- [x] Phase 48: LLM stream TTFT + truncation continuation -- stream-mode
+  passes get a first-token progress event (TTFT visibility, Codex-style);
+  finish_reason=length is detected as truncation (never normal completion)
+  and recovered by bounded continuation (partial JSON preserved, Claude
+  Code query.ts layered-recovery model, OpenCode doom-loop guards).
+  User order 2026-08-16. Prereq: none (llm_invoke-local). Design:
+  todos/pending/stream-ttft-truncation-continuation-20260816.md.
+  MERGED 2026-08-16 (59c1c51, 7 commits). First v2.9 lane phase to
+  land; six follow-ups in phases/phase-48/48-FOLLOWUPS.md.
 - [ ] Phase 51: BASIS-DISCLOSE -- add falsification_survived + convergence_rounds
   sub-fields to the basis (pipeline already computes both). Prereq: Phase 43
   (provenance). No prompt change. Pull-forward to post-43 PERMITTED (ledger Q1);
@@ -379,7 +388,26 @@ Plans:
 
 - [x] 23-02-PLAN.md -- Pipeline wiring (machine.py + cli.py) + SKILL.md mirror + drift test + E8 eval corpus
 
-### Phase 46: doctor: registry-vs-executed tool audit -- completed 2026-07-11
+### Phase 48: LLM stream TTFT + truncation continuation
+
+**Goal:** Streaming passes emit a first-token progress event (TTFT visibility), and passes truncated by provider max_tokens caps are recovered by bounded continuation instead of dying on incomplete JSON.
+**Requirements**: STREAM-VISIBLE, TRUNCATION-RECOVER
+**Depends on:** none (llm_invoke-local)
+**Type:** logic-bearing code -- TDD + forge review per house discipline
+**Design:** .planning/todos/pending/stream-ttft-truncation-continuation-20260816.md
+**User order:** 2026-08-16
+**Note:** MERGED 2026-08-16 as 59c1c51 (7 commits, branch
+fix/stream-ttft-continuation; branch deletion owed by user). Landed:
+first-token progress emit in _read_sse, _TruncatedResponse carrier,
+TruncationBreaker (threshold 5, sticky, monotonic), _continue_truncated
+(budget 2, full-envelope requirement, fence-stripping, untrusted-data
+instruction, two-level trip propagation). Plan D-1..D-11 + CP1b
+amendments A-1..A-23 (exit: external unanimous zero findings); forge
+code review 3 rounds with fix batches b2a7a3b / 7b0ddcf / 2d2c932.
+Full suite 3415/9/0 at merge; deployed to yinhe-laptop and verified
+live. Full record: .planning/phases/phase-48/ (SUMMARY.md,
+EXIT-CHECKLIST.md, INJECTIONS.md, cp-artifacts/). Follow-ups:
+phases/phase-48/48-FOLLOWUPS.md.
 
 **Goal:** Add a tool-audit check to `forge doctor` that verifies every tool in the loaded registry actually resolves and runs in the pipeline, closing the resolve-command false-green class permanently.
 **Requirements**: PREVENT-RESOLVE-FALSE-GREEN
@@ -788,6 +816,7 @@ Plans:
 | surflare consumer-pain fixes | v2.8 | -- | Complete | 2026-07-08 |
 | 46. doctor tool-audit | v2.8 | -- | Complete | 2026-07-11 |
 | Windows MCP wave 1 | v2.8 | -- | Complete (gpu-win verified) | 2026-07-11 |
+| 48. LLM stream TTFT + truncation continuation | v2.9 | 1/1 | Complete | 2026-08-16 |
 
 ### Phase 36: Usability Hardening -- completed 2026-07-01
 **Goal:** Fix the 55 usability findings (MCP-01..55) from the 5-round exhaustive

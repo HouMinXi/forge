@@ -1,0 +1,20 @@
+==============================================================================
+A. onmi-gemini3.1: which variable causes the 400?
+==============================================================================
+cell                                 code     wall  body
+short prompt, cap 64                  200    16.2s  OK (content returned)
+short prompt, cap 65536               400     0.1s  {"message": "No target in combo onmi-gemini3.1 supports structured output for this request", "type": "invalid_request_error", "code": "capability_mismatch"}
+long prompt, cap 4096                 200   197.2s  OK (content returned)
+long prompt, cap 65536                400     7.1s  {"message": "No target in combo onmi-gemini3.1 supports structured output for this request", "type": "invalid_request_error", "code": "capability_mismatch"}
+
+==============================================================================
+B. Security-adjacent code (a3abdf3): does the Flash go empty?
+==============================================================================
+chain-a prompt     70286 bytes  (the first run's, for reference)
+security prompt   170486 bytes
+
+model / run                   code   wall     comp  content   finish valid      note
+onmi-gemini3.6 r1              502  35.4s     None        0        - GATEWAY ERROR {"message": "[antigravity/gemini-3.6-flash-high] [502]: fetch failed (cause: ECONNREFUSED: connect ECONNREFUSED 172.217.
+onmi-gemini3.6 r2              200  36.2s     3835    13267     stop INVALID    ValueError: not valid JSON: Invalid control character at: li
+agy/gemini-3.1-pro-high r1     400  11.6s     None        0        - GATEWAY ERROR {"message": "[400]: Antigravity upstream error (400)", "type": "invalid_request_error", "code": "bad_request"}
+EXIT=0

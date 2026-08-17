@@ -1,0 +1,86 @@
+```json
+{
+  "findings": [
+    {
+      "file": "src/code_forge/verify.py",
+      "line": 454,
+      "severity": "P1",
+      "description": "Checking `if file_lines is None:` instead of `if exc[\"file\"] in exempt_files:` skips validation for ALL files absent from the post-image, not just exempt files. This causes `verify.py` to quietly accept excerpts for completely deleted files (or files whose content was wiped out, leaving no target lines). A reviewer can provide fabricated code excerpts for such files to bypass both the content check and the new `fabricated` check, despite the intention of the newly added check and `receipt.py`'s preflight warning expecting `verify` to refuse them. The check should bypass for `exc[\"file\"] in exempt_files`, and fallback to an empty dictionary or raise a `VerifyResult` rejection for non-exempt files lacking a post-image."
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/diff.py",
+      "start_line": 291,
+      "end_line": 300,
+      "content": "    fabricated: list[int] = []\n    truncated = False\n\n    for ln in range(start_line, end_line + 1):\n        if ln in file_lines:\n            continue\n        if len(fabricated) >= cap:\n            truncated = True\n            break\n        fabricated.append(ln)"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 891,
+      "end_line": 895,
+      "content": "        # cost_per_pass divides the round total equally across 3 passes, so\n        # all three entries come out identical -- tokens and duration alike.\n        # That sameness is arithmetic, not evidence of a cached replay, and\n        # nothing in here can tell the two apart.  The only real per-pass\n        # numbers are the [model:pass] in/out counts on stderr."
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 14,
+      "end_line": 18,
+      "content": "from .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 117,
+      "end_line": 124,
+      "content": "            file_lines = post_image.get(fname)\n            if file_lines is None:\n                log.warning(\n                    \"pre-flight: excerpt %s:%d-%d references file %s \"\n                    \"not in the diff; verify will refuse this\",\n                    fname, start, end, fname,\n                )\n                continue"
+    },
+    {
+      "file": "src/code_forge/reviewer_json.py",
+      "start_line": 35,
+      "end_line": 37,
+      "content": "    \"not diff format -- no +/- prefixes, no @@ headers. \"\n    \"The @@ line is a diff header, not a source line; do not count \"\n    \"it when determining start_line or end_line.\\n\""
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 23,
+      "end_line": 27,
+      "content": "from .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 452,
+      "end_line": 455,
+      "content": "            file_lines = post_image.get(exc[\"file\"])\n            # Exempt files (binary/rename/mode-change) have no post-image.\n            if file_lines is None:\n                continue"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 465,
+      "end_line": 468,
+      "content": "                            \"excerpt content mismatch at %s:%d \"\n                            \"(excerpt covering %d-%d)\" % (\n                                exc[\"file\"], ln,\n                                exc[\"start_line\"], exc[\"end_line\"]),"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 471,
+      "end_line": 485,
+      "content": "            # Refuse an excerpt covering lines the diff never produced.\n            # Matching content on the lines it does cover is not enough:\n            # the reviewer can pad a real excerpt with invented tail lines\n            # and the overlap comparison above would never look at them.\n            fabricated = describe_fabricated_lines(\n                file_lines, exc[\"start_line\"], exc[\"end_line\"])\n            if fabricated:\n                return VerifyResult(\n                    False,\n                    \"excerpt %s:%d-%d references lines %s not in diff\"\n                    \" post-image\" % (\n                        exc[\"file\"], exc[\"start_line\"], exc[\"end_line\"],\n                        fabricated),\n                    5, cp,\n                )"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 236,
+      "end_line": 241,
+      "content": "class TestPreflightWarning:\n    \"\"\"Pre-flight excerpt check logs a warning for fabricated lines.\"\"\"\n\n    def test_preflight_warns_on_fabricated_excerpt(self, tmp_path, caplog):\n        \"\"\"An excerpt referencing lines outside the diff post-image triggers\n        a warning log before the receipt is written.\"\"\""
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 719,
+      "end_line": 726,
+      "content": "    def test_mismatch_names_failing_line_not_excerpt_start(self, tmp_path):\n        \"\"\"STEP C: overlapping excerpts -- the reason leads with the bad line.\n\n        foo.py lines 1-3 are covered twice: an earlier excerpt (1-3) that is\n        correct, and a later one (2-3) whose line 3 is wrong. Reporting the\n        excerpt's start_line first sends the reader to line 2, which the\n        earlier excerpt already matched, while the actual defect sits at 3.\n        \"\"\""
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 1172,
+      "end_line": 1172,
+      "content": "                receipt[\"code_excerpts\"][0][\"end_line\"] = 2"
+    }
+  ]
+}
+```

@@ -1,0 +1,24 @@
+{
+  "cycle": 5,
+  "pass": 2,
+  "skill": "code-review-expert",
+  "diff_sha256": "38694d4df9164396090639af1cca67161f401f25c5d5e7bd958b6a729ff1ad71",
+  "timestamp": "2026-08-16T08:47:56.019865+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [],
+  "covered_line_ranges": [
+    {
+      "file": "README.md",
+      "start": 518,
+      "end": 521
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start": 1656,
+      "end": 3021
+    }
+  ]
+}

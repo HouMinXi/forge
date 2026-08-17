@@ -1,0 +1,6 @@
+model=oc-ds-flash-free  cap=65536  prompt=27246 bytes  UA=Chrome 131
+HTTP 200 in 119.7s
+usage: {"prompt_tokens": 6267, "completion_tokens": 16384, "total_tokens": 22651, "prompt_tokens_details": {}}
+reasoning chars: 65485   content chars: 0
+content head: 
+EXIT=0

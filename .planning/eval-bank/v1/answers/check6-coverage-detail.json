@@ -1,0 +1,14 @@
+{
+  "name": "check6-coverage-detail",
+  "commit": "6a3996fc53ab6483ff5fb22f1a3c71acef05db84",
+  "source": [
+    ".planning/reviews/check6-actionable-findings.md",
+    "/tmp/check6_review_v2r1.log",
+    "/tmp/check6_review_v5r2c.log"
+  ],
+  "findings": [
+    {"file": "src/code_forge/verify.py", "line_range": [381, 381], "description": "The `if not top: return \"none\"` branch in _coverage_failure_detail is unreachable because check 6 only invokes it when coverage is below 60%, which guarantees uncovered lines exist; the dead code has no guard comment.", "source": "/tmp/check6_review_v2r1.log"},
+    {"file": "src/code_forge/verify.py", "line_range": [383, 383], "description": "'%d lines' is used unconditionally, so a single uncovered line renders as '1 lines'.", "source": "/tmp/check6_review_v5r2c.log"},
+    {"file": "tests/test_verify.py", "line_range": [745, 745], "description": "Assertions are broad substrings checking only file-name presence, not exact line counts or ordering.", "source": ".planning/reviews/check6-actionable-findings.md"}
+  ]
+}

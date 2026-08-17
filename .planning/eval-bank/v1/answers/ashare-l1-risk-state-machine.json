@@ -1,0 +1,10 @@
+{
+  "name": "ashare-l1-risk-state-machine",
+  "commit": "0edd3e5214f88e13cb78d0647fb16847bcc32357",
+  "source": [
+    ".planning/reviews/L1-risk-state-machine/REVIEW.md"
+  ],
+  "findings": [
+    {"file": "ashare_lab/paper/risk_state.py", "line_range": [295, 295], "description": "save_risk_state is only called in the migration path, not in the daily pipeline run, so risk state never persists during normal daily operation.", "source": ".planning/reviews/L1-risk-state-machine/REVIEW.md"}
+  ]
+}

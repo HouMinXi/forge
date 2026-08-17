@@ -1,0 +1,3 @@
+code-forge: trust invalidated: credential-related fields changed in gate.yaml. Run 'code-forge trust' to re-authorize.
+Untrusted repo backends ignored. Run 'code-forge trust' to enable.
+ignoring prior state.json in CI mode (STATE-09)

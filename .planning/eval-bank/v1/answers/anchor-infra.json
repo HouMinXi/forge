@@ -1,0 +1,16 @@
+{
+  "name": "anchor-infra",
+  "commit": "73d6c9e6b80452c9045127e8ea1e968a61e48e44",
+  "source": [
+    ".planning/reviews/anchor-infra/COMMIT-PLAN.md",
+    ".planning/reviews/anchor-infra/panel-r1/state.json",
+    ".planning/reviews/anchor-infra/panel-r1/disposition.md",
+    ".planning/reviews/anchor-infra/panel-r2/state.json",
+    ".planning/reviews/anchor-infra/panel-r3/R3_DISPOSITION_EVIDENCE.md"
+  ],
+  "findings": [
+    {"file": "src/code_forge/receipt.py", "line_range": [125, 125], "description": "The write-time filter only prevents new INFRA anchors; receipts already on disk are never pruned, so an existing '<llm-invoke>' sentinel anchor keeps failing attestation forever.", "source": ".planning/reviews/anchor-infra/panel-r1/state.json"},
+    {"file": "src/code_forge/receipt.py", "line_range": [125, 125], "description": "Filtering INFRA findings out of anchors removes the stale sentinel block but leaves no per-pass proof that a failed pass actually read the diff; coverage is computed per cycle, not per receipt, so a pass returning only an INFRA finding can still be attested when the other passes cover the floor.", "source": ".planning/reviews/anchor-infra/panel-r2/state.json"},
+    {"file": "tests/test_verify.py", "line_range": [], "description": "No test exercised a pass whose only finding is the INFRA sentinel; the original test paired the infra finding with a normal code finding in the same pass, unlike a real timed-out pass which returns the infra finding alone.", "source": ".planning/reviews/anchor-infra/panel-r1/disposition.md"}
+  ]
+}

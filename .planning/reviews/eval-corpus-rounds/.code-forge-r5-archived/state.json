@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "72b7520af9e4a66e3b6f245ac05c45878d4f1a55acd75139db0c42645788ba9b",
+  "findings": [
+    {
+      "id": "l1-qodo-invoke-fail",
+      "fingerprint": "invoke-fail-qodo",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: deepseek-direct backend went silent for 900s mid-response",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": true
+    },
+    {
+      "id": "l1-expert-invoke-fail",
+      "fingerprint": "invoke-fail-expert",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: deepseek-direct backend went silent for 900s mid-response",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": true
+    },
+    {
+      "id": "l1-adversarial-invoke-fail",
+      "fingerprint": "invoke-fail-adversarial",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: deepseek-direct backend went silent for 900s mid-response",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": true
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-invoke-fail": "CONFIRMED",
+    "l1-expert-invoke-fail": "CONFIRMED",
+    "l1-adversarial-invoke-fail": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "invoke-fail-expert",
+        "invoke-fail-adversarial"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-qodo": "CONFIRMED",
+        "invoke-fail-expert": "CONFIRMED",
+        "invoke-fail-adversarial": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "round 0: pass(es) did not complete: {'qodo': 'timeout', 'expert': 'timeout', 'adversarial': 'timeout'}",
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/eval-corpus-findings/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "total_duration_s": 1020.8372936740052,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 340.279
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 340.279
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 340.279
+      }
+    ]
+  }
+}

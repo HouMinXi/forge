@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "8605aa0a75b08438d39e283ee6d0bdc5afc68bdfff31afcb3df28f69b256b883",
+  "findings": [
+    {
+      "id": "l1-qodo-6ca2391a57f3d492",
+      "fingerprint": "6ca2391a57f3d492",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2527,
+        2527
+      ],
+      "description": "[qodo] In _banner_timeout_note, the check for backend timeout uses `(backend.timeout_s or 0) > 0`, which treats timeout_s=0 as falsy. If backend.timeout_s is set to 0 (meaning no timeout), the banner will incorrectly claim the timeout is from FORGE_LLM_TIMEOUT_S instead of the backend. The condition should check `backend.timeout_s is not None` instead of `> 0`.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-7945e36e125f9efa",
+      "fingerprint": "7945e36e125f9efa",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2533,
+        2533
+      ],
+      "description": "[expert] Unsanitized env_raw printed to stderr; if FORGE_LLM_TIMEOUT_S contains ANSI escape sequences, it could corrupt terminal output.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-81fb553c12b59070",
+      "fingerprint": "81fb553c12b59070",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3017,
+        3017
+      ],
+      "description": "[adversarial] Startup banner computes timeout using `effective_invoke_timeout_s(backend, None)`, ignoring the actual FORGE_LLM_TIMEOUT_S environment variable. This causes the banner to display an incorrect timeout value when the env var is set and the backend has no timeout (or a different timeout). The timeout displayed may not match the actual timeout used by the pipeline.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-6ca2391a57f3d492": "CONFIRMED",
+    "l1-expert-7945e36e125f9efa": "CONFIRMED",
+    "l1-adversarial-81fb553c12b59070": "UNCERTAIN"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "6ca2391a57f3d492",
+        "7945e36e125f9efa",
+        "81fb553c12b59070"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "6ca2391a57f3d492": "CONFIRMED",
+        "7945e36e125f9efa": "CONFIRMED",
+        "81fb553c12b59070": "UNCERTAIN"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 47850,
+    "total_output_tokens": 22176,
+    "total_duration_s": 70.8669192729867,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 15950,
+        "output": 7392,
+        "duration_s": 23.622
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 15950,
+        "output": 7392,
+        "duration_s": 23.622
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 15950,
+        "output": 7392,
+        "duration_s": 23.622
+      }
+    ]
+  }
+}

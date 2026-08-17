@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "d6f36536495db07d378f1decbbd10e39e8542bd4b7547002fe07952d42e7c512",
+  "findings": [
+    {
+      "id": "l1-adversarial-invoke-fail",
+      "fingerprint": "invoke-fail-adversarial",
+      "source": "INFRA",
+      "disposition": "CONFIRMED",
+      "file": "<llm-invoke>",
+      "line_range": [
+        0,
+        0
+      ],
+      "description": "L1 invoke failed: deepseek-nocache backend timed out after 1200s",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": true
+    }
+  ],
+  "dispositions": {
+    "l1-adversarial-invoke-fail": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-adversarial"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-adversarial": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "round 0: pass(es) did not complete: {'adversarial': 'timeout'}",
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 32339,
+    "total_output_tokens": 10538,
+    "total_duration_s": 1200.2238666960038,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 10779,
+        "output": 3512,
+        "duration_s": 400.075
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 10779,
+        "output": 3512,
+        "duration_s": 400.075
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 10779,
+        "output": 3512,
+        "duration_s": 400.075
+      }
+    ]
+  }
+}

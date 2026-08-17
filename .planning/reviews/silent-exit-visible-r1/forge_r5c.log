@@ -1,0 +1,28 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing silent-exit-fix @ f43323a7 (diff: 1 file); mode: local; backend: deepseek-direct; LLM timeout: 2400s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-direct
+[forge] t+0.0s pass expert: calling deepseek-direct
+[forge] t+0.0s pass adversarial: calling deepseek-direct
+[deepseek-direct:expert] 16247 in / 13367 out tokens
+[deepseek-direct:qodo] 16246 in / 26307 out tokens
+[deepseek-direct:adversarial] 16245 in / 27151 out tokens
+[forge] t+283.6s falsify 1/7: src/code_forge/cli.py:[3054, 3054] (2460774fa71c7413)
+[forge] t+383.4s falsify 1/7: done Disposition.CONFIRMED (99.8s)
+[forge] t+383.4s falsify 2/7: src/code_forge/cli.py:[2525, 2525] (ab6c7835f7bae2d5)
+[forge] t+453.2s falsify 2/7: done Disposition.CONFIRMED (69.8s)
+[forge] t+453.2s falsify 3/7: src/code_forge/cli.py:[1659, 1659] (3611dac874dcd9a4)
+[forge] t+503.7s falsify 3/7: done Disposition.UNCERTAIN (50.5s)
+[forge] t+503.7s falsify 4/7: src/code_forge/cli.py:[2511, 2511] (f7ed4c3fdc975c62)
+[forge] t+594.0s falsify 4/7: done Disposition.CONFIRMED (90.3s)
+[forge] t+594.0s falsify 5/7: src/code_forge/cli.py:[1659, 1659] (4ec182fbd3684b39)
+[forge] t+685.7s falsify 5/7: done Disposition.CONFIRMED (91.7s)
+[forge] t+685.7s falsify 6/7: src/code_forge/cli.py:[3024, 3024] (c10293ed21f6478b)
+[forge] t+846.1s falsify 6/7: done Disposition.CONFIRMED (160.4s)
+[forge] t+846.1s falsify 7/7: src/code_forge/cli.py:[2525, 2525] (96d3036a4a604f63)
+[forge] t+930.1s falsify 7/7: done Disposition.CONFIRMED (84.0s)
+[forge] t+930.1s round 1 start
+[forge] t+930.1s pass qodo: calling deepseek-direct
+[forge] t+930.1s pass expert: calling deepseek-direct
+[forge] t+930.1s pass adversarial: calling deepseek-direct

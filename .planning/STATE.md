@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.8
 milestone_name: Onboarding + Throughput
 status: active
-stopped_at: main @ c72ff06, pushed. Router batch F1 merged (695f739); F3 + F4-live-probe + F2/F5 docs remain, SSE parse tolerance still deferred
-last_updated: "2026-08-09T00:00:00.000Z"
+stopped_at: main @ 59c1c51, pushed. Phase 48 (stream TTFT + truncation continuation) merged, 7 commits; deployed to yinhe-laptop; six follow-ups open in 48-FOLLOWUPS.md
+last_updated: "2026-08-16T00:00:00.000Z"
 progress:
   total_phases: 17
   completed_phases: 11
@@ -15,14 +15,14 @@ progress:
 
 # State: Forge
 
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-16
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** No code ships without surviving three consecutive clean review cycles; a green verdict is honest or declares what it did not verify
-**Current focus:** No phase in flight as of 2026-08-09, main @ c72ff06. Working queue is the eight pending todos + Phase 43.1 (charter ratified 08-08) + the Router batch remainder (F3 trust path, F4 live probe, F2/F5 docs; F1 landed 695f739, SSE parse tolerance deferred on a stated trigger). Phase 42 MERGED (933032d, 2026-07-29). Windows wave-2 parked until gpu-win evidence
+**Current focus:** No phase in flight as of 2026-08-16, main @ 59c1c51. Phase 48 (stream TTFT + truncation continuation, first v2.9 lane landing) MERGED; six follow-ups open in .planning/phases/phase-48/48-FOLLOWUPS.md. Working queue unchanged: the eight pending todos + Phase 43.1 (charter ratified 08-08) + the Router batch remainder (F3 trust path, F4 live probe, F2/F5 docs; F1 landed 695f739, SSE parse tolerance deferred on a stated trigger). Phase 42 MERGED (933032d, 2026-07-29). Windows wave-2 parked until gpu-win evidence
 
 **CHARTER RATIFIED 2026-08-08.** `charter_review_pipeline_gaps` accepted,
 placed in v2.8 tail as Phase 43.1. 10 defect items + the
@@ -39,6 +39,36 @@ disk, pending resume. **Superseded 2026-08-09:** #49 and #57 landed on
 main (6e5650f, 6b05a6e); only #59 is still open. See the 08-09 reconcile.
 
 ## Current Position
+
+**RECONCILE 2026-08-16 (authoritative main pointer; supersedes 08-09 for
+the main SHA only -- the 08-09 queue content below stays valid).** main
+@ 59c1c51, pushed to origin and gitee. Phase 48 (LLM stream TTFT +
+truncation continuation) MERGED as 59c1c51 -- 7 commits
+3be9d46..2d2c932 on fix/stream-ttft-continuation, the first phase of
+the v2.9 ENV-GROUNDING lane to land. Shipped: stream-mode first-token
+progress event, _TruncatedResponse carrier, run-level TruncationBreaker
+(threshold 5, sticky, monotonic), _continue_truncated with budget-2
+bounded continuation and a full-envelope requirement. Full record:
+.planning/phases/phase-48/ (SUMMARY.md, PLAN.md D-1..D-11 + CP1b amendments
+A-1..A-23, EXIT-CHECKLIST.md, INJECTIONS.md, T0-PROBE.md,
+48-FOLLOWUPS.md, cp-artifacts/). CP1b exit: external unanimous zero
+findings (mimo R3 + dsflash). Forge code review 3 rounds, fix batches
+b2a7a3b / 7b0ddcf / 2d2c932, every fix bug-injected at its own site.
+Full suite at 59c1c51: 3415 passed, 9 skipped (778.89s); the 22-test
+delta over the worktree's 3393 is the eval-corpus-findings merge
+(cf99468) already on main. Deployed to yinhe-laptop via rsync with live
+checks passed. Six follow-ups open: 48-FOLLOWUPS.md (configurable
+breaker threshold, cross_repo.py wiring decision, T0 drift re-probe,
+no_json extension point, bonsai TTFT smoke).
+
+Cleanup owed by user: `git branch -D fix/stream-ttft-continuation`
+(merged; worktree .worktrees/stream-ttft already removed). The worktree
+removal took the .code-forge-r*-archived review receipts with it
+(48-FOLLOWUPS item 6, now closed as moot); the phase-48 dir retains the
+authoritative disposition records.
+
+Also still open from the 08-09 reconcile: fix/rebase-msg is 1 commit
+ahead of main -- inspect before deleting.
 
 **RECONCILE 2026-08-09 (authoritative main pointer; supersedes the F1 block
 below, whose scope narrative stays valid).** main @ c72ff06, pushed,

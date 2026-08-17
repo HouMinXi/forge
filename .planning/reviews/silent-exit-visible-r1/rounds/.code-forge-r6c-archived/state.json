@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "228d5e1951a7ad6edeb978654c5e86f273a767fb6a7dc1bdb7aaedc03036a949",
+  "findings": [
+    {
+      "id": "l1-qodo-76b5a5c0166ef23e",
+      "fingerprint": "76b5a5c0166ef23e",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3034,
+        3034
+      ],
+      "description": "[qodo] The banner computes the effective LLM timeout with effective_invoke_timeout_s(backend, None), passing None instead of the caller's env override. When backend.timeout_s is unset/zero, the printed timeout will not reflect FORGE_LLM_TIMEOUT_S even though _banner_timeout_note is separately told about env.get('FORGE_LLM_TIMEOUT_S') and may append '(from FORGE_LLM_TIMEOUT_S)'. The seconds and the note can therefore contradict each other. Pass env.get('FORGE_LLM_TIMEOUT_S') here (or otherwise use the same env raw value used by the note).",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-f8c2fdeadb2b031a",
+      "fingerprint": "f8c2fdeadb2b031a",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2531,
+        2531
+      ],
+      "description": "[qodo] _banner_timeout_note treats any non-empty FORGE_LLM_TIMEOUT_S value as honored. If the value is non-numeric (e.g. 'abc'), effective_invoke_timeout_s will fall back to the default because int() fails, but the banner will still claim the timeout came from FORGE_LLM_TIMEOUT_S. Validate the value or mirror the resolver's fallback before making that claim.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-fae4e7b21265d219",
+      "fingerprint": "fae4e7b21265d219",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3034,
+        3034
+      ],
+      "description": "[expert] The startup banner computes `_banner_timeout` with `effective_invoke_timeout_s(backend, None)`, but `_banner_timeout_note` independently inspects `FORGE_LLM_TIMEOUT_S`. When the backend has no positive `timeout_s` and the env var is set, the note can claim the timeout came from the env var while the displayed value was computed without it. Pass the resolved env value to the same timeout resolver used for the banner value.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-9f6ff379ff9b94e5",
+      "fingerprint": "9f6ff379ff9b94e5",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2550,
+        2550
+      ],
+      "description": "[expert] `_banner_timeout_note` returns `(from FORGE_LLM_TIMEOUT_S)` for any non-empty value whenever the backend does not win, including invalid values such as `abc`, `0`, or negative integers that the resolver will reject and fall back to the default. This contradicts the function's contract of not claiming an override the resolution chain did not honor. Validate that the value resolves to a positive integer before attributing the timeout to it.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-8548a3ff62921fd8",
+      "fingerprint": "8548a3ff62921fd8",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3061,
+        3061
+      ],
+      "description": "[expert] `backend.name` is passed directly into `_startup_banner_line` and formatted into a stderr line without the control-character sanitization applied to `repo_name` and `env_raw`. A repo-supplied backend name containing newlines or ANSI escapes can corrupt or spoof terminal/log output. Sanitize `backend_name` or enforce a safe backend name pattern at config load.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-68785829339a1761",
+      "fingerprint": "68785829339a1761",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3034,
+        3034
+      ],
+      "description": "[adversarial] The banner timeout numeric value is computed as effective_invoke_timeout_s(backend, None), but the note is built from env.get(\"FORGE_LLM_TIMEOUT_S\"). When no backend timeout is configured and FORGE_LLM_TIMEOUT_S is set, effective_invoke_timeout_s(backend, None) does not use that env value, so the banner prints the default timeout alongside 'from FORGE_LLM_TIMEOUT_S', misattributing the active timeout.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-bc690575301543d1",
+      "fingerprint": "bc690575301543d1",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2531,
+        2531
+      ],
+      "description": "[adversarial] _banner_timeout_note only treats empty/whitespace env values as ignored; a non-empty non-numeric value such as FORGE_LLM_TIMEOUT_S=abc passes the emptiness check and returns 'from FORGE_LLM_TIMEOUT_S', even though the resolver's int() path will discard the invalid value. The banner then claims an override the resolution chain did not honor.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-76b5a5c0166ef23e": "CONFIRMED",
+    "l1-qodo-f8c2fdeadb2b031a": "CONFIRMED",
+    "l1-expert-fae4e7b21265d219": "CONFIRMED",
+    "l1-expert-9f6ff379ff9b94e5": "CONFIRMED",
+    "l1-expert-8548a3ff62921fd8": "UNCERTAIN",
+    "l1-adversarial-68785829339a1761": "DISMISSED",
+    "l1-adversarial-bc690575301543d1": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "76b5a5c0166ef23e",
+        "f8c2fdeadb2b031a",
+        "fae4e7b21265d219",
+        "9f6ff379ff9b94e5",
+        "8548a3ff62921fd8",
+        "68785829339a1761",
+        "bc690575301543d1"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "76b5a5c0166ef23e": "CONFIRMED",
+        "f8c2fdeadb2b031a": "CONFIRMED",
+        "fae4e7b21265d219": "CONFIRMED",
+        "9f6ff379ff9b94e5": "CONFIRMED",
+        "8548a3ff62921fd8": "UNCERTAIN",
+        "68785829339a1761": "DISMISSED",
+        "bc690575301543d1": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 49275,
+    "total_output_tokens": 48973,
+    "total_duration_s": 231.3673068700009,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 16425,
+        "output": 16324,
+        "duration_s": 77.122
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 16425,
+        "output": 16324,
+        "duration_s": 77.122
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 16425,
+        "output": 16324,
+        "duration_s": 77.122
+      }
+    ]
+  }
+}

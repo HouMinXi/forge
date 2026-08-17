@@ -1,0 +1,20 @@
+endpoint http://192.168.100.11:8081/v1/chat/completions
+model    Ternary-Bonsai-27B-Q2_0.gguf  cap=65536
+
+=== probe: is it alive and can it emit the contract at all? ===
+A pass here predicts nothing about the 70KB prompts below.
+diff        code     wall reasoning   content findings on-inject  note
+--------------------------------------------------------------------------------------------------------
+PROBE        200    62.5s     10148      1094        2         2  
+probe prompt 2122 bytes, tok/s 53.2
+
+=== known-answer canary, same prompts the OmniRoute routes took ===
+CLEAN prompt      70286 bytes
+INJECTED prompt   70936 bytes
+diff        code     wall reasoning   content findings on-inject  note
+--------------------------------------------------------------------------------------------------------
+CLEAN        200   378.6s     44408     11479        2         0  
+           tok/s 38.9
+INJECTED     200  1935.0s    248613         0        -         -  EMPTY CONTENT (finish=length comp=65536)
+           tok/s 33.9
+EXIT=0

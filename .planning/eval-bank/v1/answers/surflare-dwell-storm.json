@@ -1,0 +1,15 @@
+{
+  "name": "surflare-dwell-storm",
+  "commit": "51cafa51bd0f4b039968d460f25ba8a4fbb070f3",
+  "source": [
+    ".code-forge/state.json.r7f-51cafa5",
+    ".code-forge/receipts/",
+    "/tmp/forge_pain_report_20260816.txt"
+  ],
+  "findings": [
+    {"file": "surflare_watchdog.sh", "line_range": [3444, 3444], "description": "Dwell-history trim uses a fixed ${DWELL_HISTORY}.tmp path with > redirection rather than mktemp or explicit symlink rejection, so a pre-created symlink could redirect root-owned writes.", "source": ".code-forge/state.json.r7f-51cafa5"},
+    {"file": "surflare_watchdog.sh", "line_range": [3456, 3456], "description": "If tail fails, the cleanup removes DWELL_HISTORY but not ${DWELL_HISTORY}.tmp, so a transient tail failure leaves a stale temp file in /run that can accumulate.", "source": ".code-forge/state.json.r7f-51cafa5"},
+    {"file": "tests/test_dwell_storm.sh", "line_range": [56, 56], "description": "run_case writes an empty argument with printf '%s\\n', creating one blank line instead of a zero-byte file, so T1's empty-history case never exercises the empty path.", "source": ".code-forge/receipts/"},
+    {"file": "tests/test_dwell_storm.sh", "line_range": [136, 138], "description": "T9's outer DWELL_HISTORY assignment uses the test shell's PID while the inner bash -c reassigns it with its own $$, so the child path is not what cleanup() removes and the test passes vacuously.", "source": ".code-forge/state.json.r7f-51cafa5"}
+  ]
+}

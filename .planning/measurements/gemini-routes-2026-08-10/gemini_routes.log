@@ -1,0 +1,21 @@
+prompt=70286 bytes (real L1, same as yesterday's runs)  max_tokens=65536
+
+=== onmi-gemini3.6
+    liveness (short): 200 in 15.4s
+    run     code      wall     comp    reason  content valid      note
+    1        200     32.9s     5504         0    18752 VALID      
+    2        200     26.3s     1199         0     3751 VALID      
+
+=== onmi-gemini3.1
+    liveness (short): 200 in 10.0s
+    run     code      wall     comp    reason  content valid      note
+    1        400      0.1s     None         0        0 GATEWAY ERROR {"message": "No target in combo onmi-gemini3.1 supports structured out
+    2        400      4.2s     None         0        0 GATEWAY ERROR {"message": "No target in combo onmi-gemini3.1 supports structured out
+
+=== agy/gemini-3.1-pro-high
+    liveness (short): 200 in 13.8s
+    run     code      wall     comp    reason  content valid      note
+    1        200    187.6s     1740         0     5879 VALID      
+    2        200    148.0s     1545         0     5054 VALID      
+
+EXIT=0

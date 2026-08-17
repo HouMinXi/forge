@@ -1,0 +1,24 @@
+{
+  "cycle": 7,
+  "pass": 3,
+  "skill": "adversarial-qe",
+  "diff_sha256": "043cd56b675da86f83a8f657eb2f0f7565ee6f174053bec0f7debafc74dda3a9",
+  "timestamp": "2026-08-16T08:50:16.277279+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [],
+  "covered_line_ranges": [
+    {
+      "file": "README.md",
+      "start": 518,
+      "end": 522
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start": 1656,
+      "end": 3045
+    }
+  ]
+}

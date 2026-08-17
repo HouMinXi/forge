@@ -1,0 +1,272 @@
+commit 1cfec8ad191e08cda577d6d5d4d01a3f2c48e4ca
+Author: t <t@t>
+Date:   Sat Aug 15 12:25:55 2026 -0400
+
+    progress: emit a wall-clocked event stream so a stuck stage is visible
+    
+    A review that hangs mid-stage looked identical to a slow one: the
+    only lines written were pass completions, so a hung falsify call
+    produced silence until the 1200-2400s timeout fired. Measured
+    2026-08-15, one run sat 24 minutes like that.
+    
+    Every phase transition now writes one stderr line prefixed with the
+    wall clock since run start: run start/done, pass start (completion
+    lines unchanged), per-finding falsify calls with dispositions, and
+    the mutation baseline. The clock makes the gap between the last
+    event and now directly readable, which is what turns "stuck" from a
+    guess into an observation. stderr is the shared channel: the MCP
+    server already tails it for forge_job_status, and the CLI already
+    writes pass summaries there, so both entry points get the stream.
+    
+    Each emit flushes; stderr into a file is block-buffered, and an
+    event that never leaves the buffer hides the stage it describes.
+    
+    Signed-off-by: Minxi Hou <houminxi@gmail.com>
+
+diff --git a/src/code_forge/factories.py b/src/code_forge/factories.py
+index 3f498fe..e328651 100644
+--- a/src/code_forge/factories.py
++++ b/src/code_forge/factories.py
+@@ -19,6 +19,7 @@ from .autofix import AutoFixer, FixOutcome, NoChangeAutoFixer
+ from .baseline import ResolvedReview
+ from .disposition import Disposition
+ from .falsify import Falsifier, StubFalsifier
++from . import progress
+ from .e2e_check import run_e2e_check
+ from .mutation import run_mutation
+ from .state import StateFinding
+@@ -292,6 +293,10 @@ def build_l1_provider(
+ 
+         def _run_pass(idx):
+             pn = pass_configs[idx][0]
++            progress.emit(
++                "pass %s: calling %s"
++                % (pn, backend.name if backend else "unknown")
++            )
+             r = llm_invoke(
+                 prompts[idx], backend=backend,
+                 max_attempts=max_attempts,
+diff --git a/src/code_forge/machine.py b/src/code_forge/machine.py
+index 48723d2..4d9e199 100644
+--- a/src/code_forge/machine.py
++++ b/src/code_forge/machine.py
+@@ -46,6 +46,7 @@ from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
+ from .hold import check_escalated_frozen
+ from .llm_invoke import Usage
+ from .parsers.base import Finding, ToolError
++from . import progress
+ from .state import (
+     Mode,
+     State,
+@@ -254,6 +255,8 @@ class StateMachine:
+ 
+     def run(self) -> Verdict:
+         """Dispatch to LOCAL or CI execution per mode."""
++        progress.reset()
++        progress.emit("run start: mode=%s" % self.mode.value)
+         self._maybe_load_prior_state()
+         self._state.mode = self.mode
+         self._state.source_hash = self.source_hash
+@@ -272,6 +275,12 @@ class StateMachine:
+         self._preexisting_buf.clear()
+         self._serialize_advisories()
+         self._display_advisories()
++        progress.emit(
++            "run done: verdict=%s findings=%d confirmed=%d"
++            % (verdict.value,
++               len(self._state.findings),
++               self._count(Disposition.CONFIRMED))
++        )
+         return verdict
+ 
+     def _maybe_load_prior_state(self) -> None:
+@@ -772,18 +781,33 @@ class StateMachine:
+         self._round_output_tokens += usage.output_tokens
+         self._round_duration += duration
+         l1_findings: list[StateFinding] = []
+-        for f in l1_candidates:
++        total = len(l1_candidates)
++        for i, f in enumerate(l1_candidates, 1):
+             if f.source == "INFRA":
+                 l1_findings.append(f)
+                 continue
++            progress.emit(
++                "falsify %d/%d: %s:%s (%s)"
++                % (i, total, f.file, f.line_range, f.fingerprint)
++            )
++            t_falsify = time.monotonic()
+             try:
+                 f.disposition = self.falsifier.falsify(f)
++                progress.emit(
++                    "falsify %d/%d: done %s (%.1fs)"
++                    % (i, total, f.disposition,
++                       time.monotonic() - t_falsify)
++                )
+             except RuntimeError as exc:
+                 f.disposition = Disposition.UNCERTAIN
+                 f.error = "falsify() raised: %s" % exc
+                 self._state.infra_errors.append(
+                     "falsify exception on %s: %s" % (f.fingerprint, exc)
+                 )
++                progress.emit(
++                    "falsify %d/%d: failed (%.1fs)"
++                    % (i, total, time.monotonic() - t_falsify)
++                )
+             l1_findings.append(f)
+         return (l1_findings, l1_excerpts)
+ 
+@@ -853,6 +877,7 @@ class StateMachine:
+ 
+         diff_files = [str(f) for f in self._source_files()]
+ 
++        progress.emit("mutation: running baseline")
+         try:
+             l2_findings, l2_infra = self.l2_runner(diff_files, baseline_cmd)
+             self._state.infra_errors.extend(l2_infra)
+@@ -924,6 +949,7 @@ class StateMachine:
+           CI:    L0 detect -> L1 -> L2 -> E2E (no autofix loop per STATE-03)
+         """
+         self._state.round = round_index
++        progress.emit("round %d start" % round_index)
+         l0_findings = self._run_l0_phase()
+         if self.mode == Mode.LOCAL:
+             self._apply_autofix_loop_to(l0_findings)
+diff --git a/src/code_forge/progress.py b/src/code_forge/progress.py
+new file mode 100644
+index 0000000..d36c05f
+--- /dev/null
++++ b/src/code_forge/progress.py
+@@ -0,0 +1,62 @@
++# SPDX-License-Identifier: Apache-2.0
++# Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
++"""Progress event stream for review runs.
++
++One line per phase transition on stderr, each prefixed with the wall
++clock since the run started.  The clock is what makes a stuck stage
++visible: the last line before a silence says which stage was running
++and how old the run was when it started, so a coder watching the log
++can tell a hung call from a slow one at a glance.
++
++stderr is the channel by design.  The MCP server tails stderr for
++forge_job_status (mcp_server.py), and the CLI already writes its pass
++summaries there (factories.py), so both entry points share one stream
++and every consumer -- a human at a terminal, a log file, a job-status
++poll -- sees the same events.
++
++Every emit flushes.  Python block-buffers stderr when it is not a tty,
++which is exactly the log-file case where a stuck stage hides its own
++trace; without the flush the events pile up in the buffer and the
++stream stays silent.
++"""
++from __future__ import annotations
++
++import sys
++import threading
++import time
++
++_t0 = time.monotonic()
++_emit_lock = threading.Lock()
++
++
++def reset() -> None:
++    """Restart the wall clock.
++
++    The default zero point is module import, which is the run start for
++    a one-shot CLI process. A long-lived process (the MCP server's
++    inline outlet) imports once and runs many reviews, so each run
++    calls reset() before its first event or its clocks read as hours.
++    """
++    global _t0
++    _t0 = time.monotonic()
++
++
++def _elapsed() -> float:
++    return time.monotonic() - _t0
++
++
++def emit(msg: str) -> None:
++    """Write one progress event line to stderr and flush it.
++
++    Parallel review passes emit from worker threads; the lock keeps
++    whole lines from interleaving so the stream stays readable.
++
++    A broken stderr (closed stream, write failure) must not kill the
++    review: progress output is auxiliary, never load-bearing.
++    """
++    try:
++        with _emit_lock:
++            sys.stderr.write("[forge] t+%.1fs %s\n" % (_elapsed(), msg))
++            sys.stderr.flush()
++    except (OSError, ValueError):
++        pass
+diff --git a/tests/test_factories.py b/tests/test_factories.py
+index 0ac058a..d4cee29 100644
+--- a/tests/test_factories.py
++++ b/tests/test_factories.py
+@@ -1091,7 +1091,8 @@ class TestDurationWallClock:
+         with patch("code_forge.llm_invoke.llm_invoke",
+                     return_value=good_resp), \
+              patch("code_forge.factories.time.monotonic",
+-                    side_effect=clock):
++                    side_effect=clock), \
++             patch("code_forge.factories.progress.emit"):
+             provider = build_l1_provider("real", resolved,
+                                          backend=backend)
+             _, _, _, duration = provider()
+diff --git a/tests/test_progress.py b/tests/test_progress.py
+new file mode 100644
+index 0000000..7e5f3db
+--- /dev/null
++++ b/tests/test_progress.py
+@@ -0,0 +1,51 @@
++"""Progress event stream tests.
++
++The stream exists so a stuck review stage is visible on every entry
++point: each emit carries a wall clock since run start, so the last
++line before a silence says what was running and how old the run was.
++The flush matters because Python block-buffers stderr into a file,
++which is exactly where a hung stage hides its own trace.
++"""
++from unittest.mock import patch
++
++from code_forge import progress
++
++
++class TestProgressEmit:
++    def test_line_has_clock_and_message(self, capsys):
++        progress.emit("pass qodo: calling deepseek-nocache")
++        err = capsys.readouterr().err
++        assert err.startswith("[forge] t+")
++        assert " pass qodo: calling deepseek-nocache\n" in err
++        assert "\n" in err and not err.endswith("\n\n")
++
++    def test_flushes_after_every_emit(self):
++        with patch("code_forge.progress.sys.stderr") as stderr:
++            progress.emit("x")
++            stderr.flush.assert_called_once_with()
++
++    def test_two_emits_stay_on_separate_lines(self, capsys):
++        progress.emit("round 0 start")
++        progress.emit("falsify 1/2: src/x.py:10 (fp1)")
++        lines = capsys.readouterr().err.splitlines()
++        assert len(lines) == 2
++        assert all(line.startswith("[forge] t+") for line in lines)
++
++
++class TestProgressResetAndFaultTolerance:
++    def test_reset_restarts_the_clock(self, capsys):
++        with patch("code_forge.progress.time.monotonic",
++                   side_effect=[1000.0, 1000.5, 1050.0, 1052.0]):
++            progress.reset()
++            progress.emit("a")
++            progress.reset()
++            progress.emit("b")
++        lines = capsys.readouterr().err.splitlines()
++        # after the second reset the clock starts near zero again
++        assert "t+0.5s a" in lines[0]
++        assert "t+2.0s b" in lines[1]
++
++    def test_broken_stderr_does_not_raise(self):
++        with patch("code_forge.progress.sys.stderr") as stderr:
++            stderr.write.side_effect = OSError("stream closed")
++            progress.emit("x")  # must not raise

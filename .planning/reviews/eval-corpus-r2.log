@@ -1,0 +1,37 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing eval-corpus-findings @ dec413e8 (diff: 3 files); mode: local; backend: deepseek-direct; LLM timeout: 2400s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-direct
+[forge] t+0.0s pass expert: calling deepseek-direct
+[forge] t+0.0s pass adversarial: calling deepseek-direct
+[deepseek-direct:adversarial] 19263 in / 31590 out tokens
+[deepseek-direct:expert] 19265 in / 32826 out tokens
+[deepseek-direct:qodo] 19264 in / 43504 out tokens
+[forge] t+444.2s falsify 1/9: src/code_forge/eval/scorer.py:[71, 71] (31bb4dc80e704266)
+[forge] t+535.3s falsify 1/9: done Disposition.CONFIRMED (91.1s)
+[forge] t+535.3s falsify 2/9: src/code_forge/eval/corpus.py:[138, 138] (34dca8d6cf83ab0e)
+[forge] t+584.3s falsify 2/9: done Disposition.CONFIRMED (49.0s)
+[forge] t+584.3s falsify 3/9: src/code_forge/eval/scorer.py:[71, 71] (6b200adae3289beb)
+[forge] t+679.6s falsify 3/9: done Disposition.CONFIRMED (95.3s)
+[forge] t+679.6s falsify 4/9: src/code_forge/eval/runner.py:[432, 432] (964f7189304ff964)
+[forge] t+817.0s falsify 4/9: done Disposition.CONFIRMED (137.4s)
+[forge] t+817.0s falsify 5/9: src/code_forge/eval/runner.py:[452, 452] (6ea287165d7bef40)
+[forge] t+853.1s falsify 5/9: done Disposition.UNCERTAIN (36.1s)
+[forge] t+853.1s falsify 6/9: src/code_forge/eval/scorer.py:[97, 97] (aca16f33dec4778d)
+[forge] t+895.8s falsify 6/9: done Disposition.CONFIRMED (42.6s)
+[forge] t+895.8s falsify 7/9: src/code_forge/eval/scorer.py:[71, 71] (a4dccfe96b99a096)
+[forge] t+994.4s falsify 7/9: done Disposition.CONFIRMED (98.6s)
+[forge] t+994.4s falsify 8/9: src/code_forge/eval/runner.py:[432, 432] (36ffb42d430c26e1)
+[forge] t+1119.6s falsify 8/9: done Disposition.CONFIRMED (125.2s)
+[forge] t+1119.6s falsify 9/9: src/code_forge/eval/runner.py:[465, 465] (e86c096beeabf3d6)
+[forge] t+1244.0s falsify 9/9: done Disposition.CONFIRMED (124.4s)
+[forge] t+1244.0s round 1 start
+[forge] t+1244.0s pass qodo: calling deepseek-direct
+[forge] t+1244.0s pass expert: calling deepseek-direct
+[forge] t+1244.0s pass adversarial: calling deepseek-direct
+[deepseek-direct:expert] 19265 in / 20228 out tokens
+[deepseek-direct:adversarial] 19263 in / 31504 out tokens
+[deepseek-direct:qodo] 19264 in / 70464 out tokens
+[forge] t+2004.5s falsify 1/11: src/code_forge/eval/runner.py:[432, 432] (08d47a439031a61c)
+code-forge: interrupted

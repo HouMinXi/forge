@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "8e141b74ef1679a2b7eb04497662d03102bc2f74c9ddcbb0943cc20f3e6b983d",
+  "findings": [
+    {
+      "id": "l1-qodo-421a81091feaedcb",
+      "fingerprint": "421a81091feaedcb",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3046,
+        3046
+      ],
+      "description": "[qodo] Timeout is computed with effective_invoke_timeout_s(backend, None), but the accompanying note is derived from env.get(\"FORGE_LLM_TIMEOUT_S\"). If _run receives an env mapping that is not os.environ (tests/embedding), the printed timeout may disagree with the env value the pipeline and note actually use. Pass env to effective_invoke_timeout_s so both derive from the same source.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-9191738e3cf4e969",
+      "fingerprint": "9191738e3cf4e969",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2577,
+        2577
+      ],
+      "description": "[qodo] _startup_banner_line embeds sha without control-character sanitization. resolved.head_sha can be user-influenced via --head and may contain terminal control sequences; other banner fields (repo_name, backend_name, timeout env) are sanitized with isprintable(). Strip control characters from sha before formatting.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-661e1fb21ff68dab",
+      "fingerprint": "661e1fb21ff68dab",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3037,
+        3037
+      ],
+      "description": "[qodo] Startup banner is inserted after the canary early-return guard, so when the canary path returns before this point the banner is skipped and may be printed after LLM work has already occurred. Move the banner block above the early return to satisfy its stated 'before first LLM call' diagnostic purpose.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-86abedce6f370cdd",
+      "fingerprint": "86abedce6f370cdd",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        1659,
+        1659
+      ],
+      "description": "[expert] The new except SystemExit in main() converts every SystemExit escaping the try block into EXIT_CLI_ERROR with a traceback. This is safe only while the try body is scoped strictly to the review pipeline; if parser.parse_args or any deliberate sys.exit(0) path is ever moved inside this try, --help/--version and other intentional exits become internal errors. Keep this catch scoped to the pipeline only or document/assert the try boundary.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-a5a3a3c03c049bb9",
+      "fingerprint": "a5a3a3c03c049bb9",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2548,
+        2548
+      ],
+      "description": "[expert] _banner_timeout_note duplicates the timeout precedence rule from effective_invoke_timeout_s (backend timeout wins over FORGE_LLM_TIMEOUT_S). If the resolver changes, the banner can silently print the wrong provenance while the actual timeout differs. Have the resolver expose which source won, or call one shared helper, so the diagnostic cannot drift.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-a9e6c8460a3a4f39",
+      "fingerprint": "a9e6c8460a3a4f39",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        1659,
+        1659
+      ],
+      "description": "[adversarial] The new `except SystemExit` handler is in the same broad try/except in main(). If `parser.parse_args()` is inside that try, argparse's normal `--help`, `--version`, and invalid-argument exits are `SystemExit`; they would now be reported as internal errors and return EXIT_CLI_ERROR (2) instead of argparse's normal behavior. `--help`/`--version` would exit 2 instead of 0 and print a traceback.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-e970bd673a72f681",
+      "fingerprint": "e970bd673a72f681",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2577,
+        2577
+      ],
+      "description": "[adversarial] `_startup_banner_line` interpolates `sha` into `target` without stripping non-printable/control characters. The same function sanitizes `backend_name`, and the other banner inputs are sanitized or numeric, but `sha` is embedded as-is. If `resolved.head_sha` can be influenced by `--head` or by git output, terminal escape sequences can corrupt the stderr banner/logs.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-80e03ecfe7d85ade",
+      "fingerprint": "80e03ecfe7d85ade",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2540,
+        2540
+      ],
+      "description": "[adversarial] `_banner_timeout_note` returns an empty suffix for an invalid, empty, or non-positive `FORGE_LLM_TIMEOUT_S`. The resolver then falls back to backend/default, but the banner does not say who determined the effective timeout, contrary to the docstring contract that the banner must state which timeout determination happened.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-421a81091feaedcb": "CONFIRMED",
+    "l1-qodo-9191738e3cf4e969": "CONFIRMED",
+    "l1-qodo-661e1fb21ff68dab": "DISMISSED",
+    "l1-expert-86abedce6f370cdd": "DISMISSED",
+    "l1-expert-a5a3a3c03c049bb9": "CONFIRMED",
+    "l1-adversarial-a9e6c8460a3a4f39": "UNCERTAIN",
+    "l1-adversarial-e970bd673a72f681": "DISMISSED",
+    "l1-adversarial-80e03ecfe7d85ade": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "421a81091feaedcb",
+        "9191738e3cf4e969",
+        "661e1fb21ff68dab",
+        "86abedce6f370cdd",
+        "a5a3a3c03c049bb9",
+        "a9e6c8460a3a4f39",
+        "e970bd673a72f681",
+        "80e03ecfe7d85ade"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "421a81091feaedcb": "CONFIRMED",
+        "9191738e3cf4e969": "CONFIRMED",
+        "661e1fb21ff68dab": "DISMISSED",
+        "86abedce6f370cdd": "DISMISSED",
+        "a5a3a3c03c049bb9": "CONFIRMED",
+        "a9e6c8460a3a4f39": "UNCERTAIN",
+        "e970bd673a72f681": "DISMISSED",
+        "80e03ecfe7d85ade": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 49776,
+    "total_output_tokens": 61702,
+    "total_duration_s": 313.6241478699958,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 16592,
+        "output": 20567,
+        "duration_s": 104.541
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 16592,
+        "output": 20567,
+        "duration_s": 104.541
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 16592,
+        "output": 20567,
+        "duration_s": 104.541
+      }
+    ]
+  }
+}

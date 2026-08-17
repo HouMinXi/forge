@@ -1,0 +1,10 @@
+{
+  "name": "cycle-track-removal",
+  "commit": "736c5beb716e6e9940ec9759a2c0e3f3155730e6",
+  "source": [
+    ".planning/reviews/reviewer-hardening-findings.md"
+  ],
+  "findings": [
+    {"file": "src/code_forge/machine.py", "line_range": [556, 585], "description": "_continuation_round_index tracks max_cycle_this_diff alongside max_cycle_any_diff and returns the max of both, but the this-diff value can never exceed the any-diff value, so the this_diff track is dead weight.", "source": ".planning/reviews/reviewer-hardening-findings.md"}
+  ]
+}

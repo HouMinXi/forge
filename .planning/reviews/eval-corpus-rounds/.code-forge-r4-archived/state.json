@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "8b07142a07f1d3c75bf08ed53ddd56ac758f42c4373a7dc10bfe3a57cc2cfab6",
+  "findings": [
+    {
+      "id": "l1-qodo-aeace773571deb5f",
+      "fingerprint": "aeace773571deb5f",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        671,
+        671
+      ],
+      "description": "[qodo] pick_best_findings returns (0, 0, 0) for empty input (scorer.py). When entry.expected_findings is non-empty but every run returns None from _read_confirmed_findings, per_run_findings stays empty, so the EvalResult built here has finding_misses=0. compute_summary later reports findings_misses = findings_expected - findings_hit, which counts all expected findings as missed. The per-entry JSON finding_misses therefore underreports misses and disagrees with the summary.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-169f61e7ed3a21c3",
+      "fingerprint": "169f61e7ed3a21c3",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        75,
+        75
+      ],
+      "description": "[qodo] Only actual_range is checked by valid_line_range. An ExpectedFinding constructed outside the YAML parser with an invalid expected.line_range (for example (2, 1)) enters this branch, unpacks exp_lo/exp_hi, and returns False without falling back to description matching, making it potentially impossible to hit.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-76bf0f6e749158aa",
+      "fingerprint": "76bf0f6e749158aa",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        653,
+        653
+      ],
+      "description": "[expert] Missing state evidence is silently converted into an all-miss findings score. _read_confirmed_findings returns None when state.json is absent/malformed, and that run is simply not appended to per_run_findings. If no run contributes evidence, pick_best_findings returns (0,0,0), but compute_summary still adds the entry's expected_findings to findings_expected and reports all expected findings as misses. This contradicts the documented 'does not participate' behavior and produces inconsistent per-result finding_misses (0) vs summary misses (full).",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-9652e7f7cfa06951",
+      "fingerprint": "9652e7f7cfa06951",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        115,
+        115
+      ],
+      "description": "[expert] Docstring still says 'Greedy distinct assignment' but the implementation performs maximum bipartite matching; this misdocuments the algorithm and should be updated.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-0ebd7babab03cd1f",
+      "fingerprint": "0ebd7babab03cd1f",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        39,
+        39
+      ],
+      "description": "[expert] valid_line_range is imported from code_forge.eval.scorer, which re-exports it from code_forge.eval.corpus. Importing a shared validation helper through an unrelated scorer module creates a transitive dependency; import directly from code_forge.eval.corpus.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-528c983cd3853f72",
+      "fingerprint": "528c983cd3853f72",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        319,
+        319
+      ],
+      "description": "[adversarial] compute_summary hard-codes summary.findings_misses as findings_expected - findings_hit instead of aggregating each EvalResult.finding_misses. When every run for an entry lacks .code-forge/state.json or it is malformed, replay_entry appends no per_run_findings tuple, pick_best_findings returns (0,0,0), and the entry's finding_misses is 0. compute_summary still adds len(entry.expected_findings) to findings_expected and then reports all of them as missed. This contradicts the _read_confirmed_findings 'never participates' semantics and makes per-entry JSON (misses=0) disagree with the summary misses count.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-fedcbddc1e1c9584",
+      "fingerprint": "fedcbddc1e1c9584",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        162,
+        162
+      ],
+      "description": "[adversarial] _parse_expected_findings only rejects an empty or whitespace description. A punctuation-only description such as '!!!' or '...' is accepted, but finding_hit tokenization yields no alphanumeric tokens and the fallback returns false; such an expected finding can never be hit. The parser should require at least one tokenizable alphanumeric run to avoid an un-hittable answer key.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-aeace773571deb5f": "CONFIRMED",
+    "l1-qodo-169f61e7ed3a21c3": "CONFIRMED",
+    "l1-expert-76bf0f6e749158aa": "CONFIRMED",
+    "l1-expert-9652e7f7cfa06951": "UNCERTAIN",
+    "l1-expert-0ebd7babab03cd1f": "UNCERTAIN",
+    "l1-adversarial-528c983cd3853f72": "CONFIRMED",
+    "l1-adversarial-fedcbddc1e1c9584": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "aeace773571deb5f",
+        "169f61e7ed3a21c3",
+        "76bf0f6e749158aa",
+        "9652e7f7cfa06951",
+        "0ebd7babab03cd1f",
+        "528c983cd3853f72",
+        "fedcbddc1e1c9584"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "aeace773571deb5f": "CONFIRMED",
+        "169f61e7ed3a21c3": "CONFIRMED",
+        "76bf0f6e749158aa": "CONFIRMED",
+        "9652e7f7cfa06951": "UNCERTAIN",
+        "0ebd7babab03cd1f": "UNCERTAIN",
+        "528c983cd3853f72": "CONFIRMED",
+        "fedcbddc1e1c9584": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/eval-corpus-findings/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 62184,
+    "total_output_tokens": 118504,
+    "total_duration_s": 608.8700728090189,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 20728,
+        "output": 39501,
+        "duration_s": 202.957
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 20728,
+        "output": 39501,
+        "duration_s": 202.957
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 20728,
+        "output": 39501,
+        "duration_s": 202.957
+      }
+    ]
+  }
+}

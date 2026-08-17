@@ -1,0 +1,92 @@
+```json
+{
+  "findings": [
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 3,
+      "severity": "P0",
+      "description": "Hardcoded AWS credentials (API_KEY and SECRET) present in source code. Credentials should be loaded securely from environment variables, configuration settings, or AWS IAM roles rather than being committed directly."
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "line": 13,
+      "severity": "P0",
+      "description": "SQL injection vulnerability due to string concatenation in SQL query execution. Use parameterized queries (e.g. `db.execute(\"SELECT * FROM runs WHERE name = ?\", (name,))\`) to properly sanitize input parameters."
+    }
+  ],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/diff.py",
+      "start_line": 268,
+      "end_line": 273,
+      "content": "def describe_fabricated_lines(\n    file_lines: dict[int, str],\n    start_line: int,\n    end_line: int,\n    cap: int = 100,\n) -> str:"
+    },
+    {
+      "file": "src/code_forge/machine.py",
+      "start_line": 891,
+      "end_line": 895,
+      "content": "        # cost_per_pass divides the round total equally across 3 passes, so\n        # all three entries come out identical -- tokens and duration alike.\n        # That sameness is arithmetic, not evidence of a cached replay, and\n        # nothing in here can tell the two apart.  The only real per-pass\n        # numbers are the [model:pass] in/out counts on stderr."
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 14,
+      "end_line": 18,
+      "content": "from .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)"
+    },
+    {
+      "file": "src/code_forge/receipt.py",
+      "start_line": 97,
+      "end_line": 101,
+      "content": "    if diff_text and assembled_excerpts:\n        log = logging.getLogger(__name__)\n        try:\n            post_image = _extract_post_image_lines(diff_text)\n            _, exempt_files = parse_diff_hunks(diff_text)"
+    },
+    {
+      "file": "src/code_forge/reviewer_json.py",
+      "start_line": 35,
+      "end_line": 37,
+      "content": "    \"not diff format -- no +/- prefixes, no @@ headers. \"\n    \"The @@ line is a diff header, not a source line; do not count \"\n    \"it when determining start_line or end_line.\\n\""
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 23,
+      "end_line": 27,
+      "content": "from .diff import (\n    _extract_post_image_lines,\n    describe_fabricated_lines,\n    parse_diff_hunks,\n)"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 452,
+      "end_line": 455,
+      "content": "            file_lines = post_image.get(exc[\"file\"])\n            # Exempt files (binary/rename/mode-change) have no post-image.\n            if file_lines is None:\n                continue"
+    },
+    {
+      "file": "src/code_forge/verify.py",
+      "start_line": 475,
+      "end_line": 477,
+      "content": "            fabricated = describe_fabricated_lines(\n                file_lines, exc[\"start_line\"], exc[\"end_line\"])\n            if fabricated:"
+    },
+    {
+      "file": "tests/test_receipt.py",
+      "start_line": 236,
+      "end_line": 237,
+      "content": "class TestPreflightWarning:\n    \"\"\"Pre-flight excerpt check logs a warning for fabricated lines.\"\"\""
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 719,
+      "end_line": 720,
+      "content": "    def test_mismatch_names_failing_line_not_excerpt_start(self, tmp_path):\n        \"\"\"STEP C: overlapping excerpts -- the reason leads with the bad line."
+    },
+    {
+      "file": "tests/test_verify.py",
+      "start_line": 1172,
+      "end_line": 1172,
+      "content": "                receipt[\"code_excerpts\"][0][\"end_line\"] = 2"
+    },
+    {
+      "file": "src/code_forge/s3_sync.py",
+      "start_line": 1,
+      "end_line": 14,
+      "content": "import boto3\n\nAPI_KEY = \"AKIAIOSFODNN7EXAMPLE\"\nSECRET = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n\n\ndef connect():\n    return boto3.client(\"s3\", aws_access_key_id=API_KEY,\n                        aws_secret_access_key=SECRET)\n\n\ndef find_run(db, name):\n    cur = db.execute(\"SELECT * FROM runs WHERE name = '\" + name + \"'\")\n    return cur.fetchone()"
+    }
+  ]
+}
+```

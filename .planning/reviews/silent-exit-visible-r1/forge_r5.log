@@ -1,0 +1,16 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing silent-exit-fix @ f43323a7 (diff: 1 file); mode: local; backend: deepseek-nocache; LLM timeout: 1200s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-nocache
+[forge] t+0.0s pass expert: calling deepseek-nocache
+[forge] t+0.0s pass adversarial: calling deepseek-nocache
+[deepseek-nocache:expert] 16170 in / 6406 out tokens
+[deepseek-nocache:qodo] 16169 in / 4132 out tokens
+code-forge: L1 pass 'adversarial' failed: deepseek-nocache backend timed out after 1200s
+[forge] t+1200.2s round 1 start
+[forge] t+1200.3s pass qodo: calling deepseek-nocache
+[forge] t+1200.3s pass expert: calling deepseek-nocache
+[forge] t+1200.3s pass adversarial: calling deepseek-nocache
+[deepseek-nocache:qodo] 16169 in / 4327 out tokens
+[deepseek-nocache:expert] 16170 in / 4583 out tokens

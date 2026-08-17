@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "e3d0fa6bd22cdb6cd1c618c64cb3dd5437c4d9360c77ae1458ee440b1de9a5cb",
+  "findings": [
+    {
+      "id": "l1-qodo-31bb4dc80e704266",
+      "fingerprint": "31bb4dc80e704266",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        71,
+        71
+      ],
+      "description": "[qodo] valid_actual_range only checks that actual line_range is a two-element sequence of ints (not bools); it does not enforce a 1-based, non-empty range (start >= 1 and start <= end). A malformed actual range such as [0, 5] is accepted and can overlap an expected 1-based range, producing a false hit. Since state.json is arbitrary input, malformed ranges should be treated as absent per the docstring.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-34dca8d6cf83ab0e",
+      "fingerprint": "34dca8d6cf83ab0e",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        138,
+        138
+      ],
+      "description": "[qodo] file and description validation passes whitespace-only strings because it checks `not file` / `not description` rather than stripping. A whitespace-only file or description can never match findings and silently poisons the answer key.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-6b200adae3289beb",
+      "fingerprint": "6b200adae3289beb",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        71,
+        71
+      ],
+      "description": "[expert] valid_actual_range checks only type, arity, and intness. Semantically invalid ranges such as [0, 999999] or [5, 1] are treated as valid, so the documented description fallback for malformed actual ranges is skipped and scoring can be wrong.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-964f7189304ff964",
+      "fingerprint": "964f7189304ff964",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        432,
+        432
+      ],
+      "description": "[expert] _read_confirmed_findings repeats the shape-only line_range validation and does not check start >= 1 or end >= start. Malformed CONFIRMED ranges flow into finding_hit as valid, so scoring depends on duplicated validation that can drift.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-6ea287165d7bef40",
+      "fingerprint": "6ea287165d7bef40",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        452,
+        452
+      ],
+      "description": "[expert] _score_findings/_pick_best_findings are scoring policy but live in runner.py. This splits findings-scoring responsibility between runner and scorer (finding_hit) and weakens module cohesion; move them next to finding_hit in scorer.py.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-aca16f33dec4778d",
+      "fingerprint": "aca16f33dec4778d",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        97,
+        97
+      ],
+      "description": "[expert] Description fallback requires at least two significant tokens. The corpus parser accepts any non-empty description, so an expected_findings entry whose description contains fewer than two tokens of length >=4 can never hit and silently becomes a miss. Validate token count at parse time or define a fallback.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-a4dccfe96b99a096",
+      "fingerprint": "a4dccfe96b99a096",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        71,
+        71
+      ],
+      "description": "[adversarial] finding_hit only checks that actual line_range is a two-int list/tuple; it does not enforce start >= 1 or start <= end. A malformed actual range such as [0, 100] can overlap an expected range and score a false hit, even though the docstring says malformed actual ranges are treated as absent.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-36ffb42d430c26e1",
+      "fingerprint": "36ffb42d430c26e1",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        432,
+        432
+      ],
+      "description": "[adversarial] _read_confirmed_findings passes through any two-int list as a valid line_range without validating order or positivity. This means state.json with [5, 1] or [0, 100] reaches finding_hit as valid and can cause false overlap hits/misses.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-e86c096beeabf3d6",
+      "fingerprint": "e86c096beeabf3d6",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        465,
+        465
+      ],
+      "description": "[adversarial] _score_findings counts hits independently for each expected finding, so one actual finding that overlaps multiple expected findings (duplicated answer entries or overlapping descriptions/ranges) is counted as multiple hits. This can inflate finding_hits.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-31bb4dc80e704266": "CONFIRMED",
+    "l1-qodo-34dca8d6cf83ab0e": "CONFIRMED",
+    "l1-expert-6b200adae3289beb": "CONFIRMED",
+    "l1-expert-964f7189304ff964": "CONFIRMED",
+    "l1-expert-6ea287165d7bef40": "UNCERTAIN",
+    "l1-expert-aca16f33dec4778d": "CONFIRMED",
+    "l1-adversarial-a4dccfe96b99a096": "CONFIRMED",
+    "l1-adversarial-36ffb42d430c26e1": "CONFIRMED",
+    "l1-adversarial-e86c096beeabf3d6": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "31bb4dc80e704266",
+        "34dca8d6cf83ab0e",
+        "6b200adae3289beb",
+        "964f7189304ff964",
+        "6ea287165d7bef40",
+        "aca16f33dec4778d",
+        "a4dccfe96b99a096",
+        "36ffb42d430c26e1",
+        "e86c096beeabf3d6"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "31bb4dc80e704266": "CONFIRMED",
+        "34dca8d6cf83ab0e": "CONFIRMED",
+        "6b200adae3289beb": "CONFIRMED",
+        "964f7189304ff964": "CONFIRMED",
+        "6ea287165d7bef40": "UNCERTAIN",
+        "aca16f33dec4778d": "CONFIRMED",
+        "a4dccfe96b99a096": "CONFIRMED",
+        "36ffb42d430c26e1": "CONFIRMED",
+        "e86c096beeabf3d6": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/eval-corpus-findings/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 57792,
+    "total_output_tokens": 107920,
+    "total_duration_s": 444.219559819001,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 19264,
+        "output": 35973,
+        "duration_s": 148.073
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 19264,
+        "output": 35973,
+        "duration_s": 148.073
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 19264,
+        "output": 35973,
+        "duration_s": 148.073
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+model=oc-ds-flash-free  long prompt=27246 bytes  max_tokens=16384
+
+liveness (short body, Chrome UA): 200 OK in 2.5s
+
+User-Agent sent              code      wall  outcome        body head
+------------------------------------------------------------------------------------------------------------
+Chrome 131                    502    159.8s  TOKEN BUDGET   {"error":{"message":"Upstream response failed quality valida
+curl/8.18.0                   502    170.6s  TOKEN BUDGET   {"error":{"message":"Upstream response failed quality valida
+(urllib default)              403     23.3s  BLOCKED 1010   {"error":{"message":"[openai/deepseek-v4-flash-free] [403]: 
+
+VERDICT: the User-Agent changes the outcome. Chrome 131=TOKEN BUDGET, curl/8.18.0=TOKEN BUDGET, (urllib default)=BLOCKED 1010
+EXIT=0

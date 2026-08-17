@@ -1,0 +1,26 @@
+{
+  "cycle": 1,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "72b7520af9e4a66e3b6f245ac05c45878d4f1a55acd75139db0c42645788ba9b",
+  "timestamp": "2026-08-16T14:05:39.879413+00:00",
+  "pass_status": "timeout",
+  "findings_count": 1,
+  "findings": [
+    {
+      "file": "<llm-invoke>",
+      "line": 0,
+      "description": "L1 invoke failed: deepseek-direct backend went silent for 900s mid-response",
+      "disposition": "CONFIRMED"
+    }
+  ],
+  "anchors": [],
+  "code_excerpts": [],
+  "covered_line_ranges": [
+    {
+      "file": "<llm-invoke>",
+      "start": 1,
+      "end": 10
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "hang-idle-timeout",
+  "commit": "a101baa9b407c46ecf3adf1737bf8b4661ca5690",
+  "source": [
+    ".planning/reviews/hang-idle-review-20260816.md",
+    "/tmp/hangidle_review_r1b.log",
+    "/tmp/hangidle_review_r1c.log"
+  ],
+  "findings": [
+    {"file": "src/code_forge/llm_invoke.py", "line_range": [306, 306], "description": "retryable=False contradicted the comment describing the retry policy; the comment was aligned with the no-same-call-retry policy.", "source": ".planning/reviews/hang-idle-review-20260816.md"},
+    {"file": "src/code_forge/llm_invoke.py", "line_range": [319, 319], "description": "The idle timeout relies on private urllib internals (response.fp.raw._sock), which are not part of any documented API and may be absent or behave differently across Python versions.", "source": "/tmp/hangidle_review_r1b.log"},
+    {"file": "src/code_forge/llm_invoke.py", "line_range": [327, 327], "description": "The 900s idle timeout exceeds the effective API timeout cap (600s) for backends using the default timeout, so the idle timeout never fires on those paths.", "source": "/tmp/hangidle_review_r1b.log"},
+    {"file": "src/code_forge/llm_invoke.py", "line_range": [303, 303], "description": "The error message reports the 900s constant even when the socket timeout was clamped to a shorter remaining deadline, misleading operators.", "source": "/tmp/hangidle_review_r1c.log"},
+    {"file": "tests/test_llm_invoke.py", "line_range": [18, 18], "description": "_IDLE_READ_TIMEOUT_S is imported but unused.", "source": "/tmp/hangidle_review_r1c.log"},
+    {"file": "src/code_forge/llm_invoke.py", "line_range": [328, 329], "description": "Exceptions from sock.settimeout() are silently swallowed, so a rejected timeout setting degrades the idle bound without any warning.", "source": ".planning/reviews/hang-idle-review-20260816.md"}
+  ]
+}

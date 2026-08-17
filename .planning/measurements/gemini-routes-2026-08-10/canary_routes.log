@@ -1,0 +1,18 @@
+CLEAN prompt      70286 bytes
+INJECTED prompt   70936 bytes  (+ a new file with an AWS key and a string-built SQL query)
+
+model                      diff        cap   code     wall findings on-inject  note
+----------------------------------------------------------------------------------------------------
+sn-deepseek-flash          CLEAN     65536    200   134.0s        0         0  
+sn-deepseek-flash          INJECTED  65536    200    76.1s        2         2  
+
+onmi-gemini3.6             CLEAN     65536    200    33.0s        0         0  
+onmi-gemini3.6             INJECTED  65536    200    13.3s        -         -  INVALID: not valid JSON: Invalid \escape: line 13 column 19
+
+onmi-gemini3.1             CLEAN      4096    200   193.5s        -         -  INVALID: not valid JSON: Unterminated string starting at: l
+onmi-gemini3.1             INJECTED   4096    200   167.1s        4         3  
+
+agy/gemini-3.1-pro-high    CLEAN     65536    200   124.4s        0         0  
+agy/gemini-3.1-pro-high    INJECTED  65536    200   179.3s        -         -  INVALID: not valid JSON: Invalid \escape: line 13 column 25
+
+EXIT=0

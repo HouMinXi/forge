@@ -1,0 +1,292 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "b582ab1104e053d9c32a95d50c45c8d4c719d488f33034a056b874bcc0acab5a",
+  "findings": [
+    {
+      "id": "l1-qodo-4c4c4656fd787e04",
+      "fingerprint": "4c4c4656fd787e04",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        438,
+        438
+      ],
+      "description": "[qodo] A CONFIRMED finding with a missing file is coerced to empty string and still appended. score_findings() then counts it as a false positive because an empty file can never match the non-empty expected.file. Malformed/missing-file findings should be skipped during normalization instead of retained for FP scoring.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-0ffd0bf402e14d36",
+      "fingerprint": "0ffd0bf402e14d36",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        168,
+        168
+      ],
+      "description": "[qodo] file and description are validated with .strip() but the unstripped originals are stored in ExpectedFinding. A manifest value with surrounding whitespace passes validation and then exact file matching in finding_hit() fails for file.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-83191fd724867f7a",
+      "fingerprint": "83191fd724867f7a",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        126,
+        126
+      ],
+      "description": "[qodo] YAML `expected_findings:` with no value loads as None, which is rejected here as not a list, while an absent key defaults to []. If an explicit empty key should mean no findings, None should be coerced to [].",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-61f328354c8731c6",
+      "fingerprint": "61f328354c8731c6",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        90,
+        90
+      ],
+      "description": "[expert] finding_hit handles one-token expected descriptions, but if an expected description has zero significant tokens (all alphanumeric runs are shorter than 4 characters, e.g. 'RCE bug') shared can never reach 1, so a valid answer key is permanently un-hittable. Reject such descriptions at parse time or define a zero-token fallback.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-1c03faccd0ab7133",
+      "fingerprint": "1c03faccd0ab7133",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        421,
+        421
+      ],
+      "description": "[expert] _read_confirmed_findings catches JSONDecodeError and OSError only. Path.read_text(encoding='utf-8') can raise UnicodeDecodeError for malformed state.json; this propagates and crashes replay_entry rather than returning [] as documented. Catch UnicodeError or read with errors='replace'.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-c80cbbdca3be122f",
+      "fingerprint": "c80cbbdca3be122f",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        138,
+        138
+      ],
+      "description": "[expert] file and description are validated with strip() but the original unstripped strings are stored on ExpectedFinding. A manifest value with leading/trailing whitespace passes validation and then can never match the actual file/description. Store stripped values or reject whitespace explicitly.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-9780aa78ce78cba2",
+      "fingerprint": "9780aa78ce78cba2",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        151,
+        151
+      ],
+      "description": "[expert] line_range validation is duplicated here and in scorer.valid_line_range, but this copy accepts only list while scorer accepts list/tuple. The two validators can drift; use a single shared validation function.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-96a5d310fc967d80",
+      "fingerprint": "96a5d310fc967d80",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        204,
+        204
+      ],
+      "description": "[expert] EvalSummary does not carry finding_misses even though EvalResult records it and write_json_report emits it per result. The aggregate JSON report therefore cannot report misses directly (format_table recomputes it). Add finding_misses for symmetry.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-2c79568c0e54f92b",
+      "fingerprint": "2c79568c0e54f92b",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        130,
+        130
+      ],
+      "description": "[adversarial] score_findings uses a greedy first-match assignment and never reconsiders, so an earlier expected finding can consume the only matching actual for a later expected finding. This under-counts hits when actual findings could satisfy multiple expected findings (e.g. E1 matches A1/A2, E2 matches only A2). The advertised distinct-assignment rule would need maximum bipartite matching or backtracking, not a single forward pass.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-a415091981722fe2",
+      "fingerprint": "a415091981722fe2",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        418,
+        418
+      ],
+      "description": "[adversarial] _read_confirmed_findings returns [] for absent or malformed state.json, indistinguishable from a run that genuinely produced no confirmed findings. score_findings(entry, []) then yields (0, expected_count, 0), and pick_best_findings tie-breaks toward fewest false positives, so a missing/empty state run can be chosen over a real run that had false positives, hiding FPs and potentially hits in findings-level scoring.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-bfc506916f049224",
+      "fingerprint": "bfc506916f049224",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/scorer.py",
+      "line_range": [
+        90,
+        90
+      ],
+      "description": "[adversarial] When expected.line_range is absent and expected.description contains no significant token of length >= 4 (e.g. 'a b'), expected_tokens is empty and the special case returns shared >= 1. Since actual_tokens only contains tokens of length >= 4, shared can never be >= 1, so such an answer-key entry is permanently un-hittable even though the parser accepted it.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-d1567c3da39a07c2",
+      "fingerprint": "d1567c3da39a07c2",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/corpus.py",
+      "line_range": [
+        168,
+        168
+      ],
+      "description": "[adversarial] The parser validates file.strip() but stores the original file string. A manifest entry with surrounding whitespace passes validation but can never match the actual finding file because finding_hit compares file values exactly.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-4c4c4656fd787e04": "UNCERTAIN",
+    "l1-qodo-0ffd0bf402e14d36": "CONFIRMED",
+    "l1-qodo-83191fd724867f7a": "CONFIRMED",
+    "l1-expert-61f328354c8731c6": "CONFIRMED",
+    "l1-expert-1c03faccd0ab7133": "CONFIRMED",
+    "l1-expert-c80cbbdca3be122f": "CONFIRMED",
+    "l1-expert-9780aa78ce78cba2": "UNCERTAIN",
+    "l1-expert-96a5d310fc967d80": "CONFIRMED",
+    "l1-adversarial-2c79568c0e54f92b": "CONFIRMED",
+    "l1-adversarial-a415091981722fe2": "CONFIRMED",
+    "l1-adversarial-bfc506916f049224": "CONFIRMED",
+    "l1-adversarial-d1567c3da39a07c2": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "4c4c4656fd787e04",
+        "0ffd0bf402e14d36",
+        "83191fd724867f7a",
+        "61f328354c8731c6",
+        "1c03faccd0ab7133",
+        "c80cbbdca3be122f",
+        "9780aa78ce78cba2",
+        "96a5d310fc967d80",
+        "2c79568c0e54f92b",
+        "a415091981722fe2",
+        "bfc506916f049224",
+        "d1567c3da39a07c2"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "4c4c4656fd787e04": "UNCERTAIN",
+        "0ffd0bf402e14d36": "CONFIRMED",
+        "83191fd724867f7a": "CONFIRMED",
+        "61f328354c8731c6": "CONFIRMED",
+        "1c03faccd0ab7133": "CONFIRMED",
+        "c80cbbdca3be122f": "CONFIRMED",
+        "9780aa78ce78cba2": "UNCERTAIN",
+        "96a5d310fc967d80": "CONFIRMED",
+        "2c79568c0e54f92b": "CONFIRMED",
+        "a415091981722fe2": "CONFIRMED",
+        "bfc506916f049224": "CONFIRMED",
+        "d1567c3da39a07c2": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/eval-corpus-findings/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 58713,
+    "total_output_tokens": 77980,
+    "total_duration_s": 330.90525139600504,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 19571,
+        "output": 25993,
+        "duration_s": 110.302
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 19571,
+        "output": 25993,
+        "duration_s": 110.302
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 19571,
+        "output": 25993,
+        "duration_s": 110.302
+      }
+    ]
+  }
+}

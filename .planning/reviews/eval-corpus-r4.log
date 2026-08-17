@@ -1,0 +1,28 @@
+GraphTriageRunner: neither sem CLI nor graph.db found; install sem (https://github.com/Ataraxy-Labs/sem) or build code-review-graph
+code-forge: reviewing eval-corpus-findings @ dec413e8 (diff: 3 files); mode: local; backend: deepseek-direct; LLM timeout: 2400s
+[forge] t+0.0s run start: mode=LOCAL
+[forge] t+0.0s round 0 start
+[forge] t+0.0s pass qodo: calling deepseek-direct
+[forge] t+0.0s pass expert: calling deepseek-direct
+[forge] t+0.0s pass adversarial: calling deepseek-direct
+[deepseek-direct:expert] 20729 in / 24770 out tokens
+[deepseek-direct:adversarial] 20727 in / 42628 out tokens
+[deepseek-direct:qodo] 20728 in / 51106 out tokens
+[forge] t+608.9s falsify 1/7: src/code_forge/eval/runner.py:[671, 671] (aeace773571deb5f)
+[forge] t+678.9s falsify 1/7: done Disposition.CONFIRMED (70.0s)
+[forge] t+678.9s falsify 2/7: src/code_forge/eval/scorer.py:[75, 75] (169f61e7ed3a21c3)
+[forge] t+815.8s falsify 2/7: done Disposition.CONFIRMED (136.9s)
+[forge] t+815.8s falsify 3/7: src/code_forge/eval/runner.py:[653, 653] (76bf0f6e749158aa)
+[forge] t+934.9s falsify 3/7: done Disposition.CONFIRMED (119.1s)
+[forge] t+934.9s falsify 4/7: src/code_forge/eval/scorer.py:[115, 115] (9652e7f7cfa06951)
+[forge] t+973.1s falsify 4/7: done Disposition.UNCERTAIN (38.2s)
+[forge] t+973.1s falsify 5/7: src/code_forge/eval/runner.py:[39, 39] (0ebd7babab03cd1f)
+[forge] t+1043.4s falsify 5/7: done Disposition.UNCERTAIN (70.3s)
+[forge] t+1043.4s falsify 6/7: src/code_forge/eval/scorer.py:[319, 319] (528c983cd3853f72)
+[forge] t+1164.6s falsify 6/7: done Disposition.CONFIRMED (121.2s)
+[forge] t+1164.6s falsify 7/7: src/code_forge/eval/corpus.py:[162, 162] (fedcbddc1e1c9584)
+[forge] t+1223.1s falsify 7/7: done Disposition.CONFIRMED (58.5s)
+[forge] t+1223.1s round 1 start
+[forge] t+1223.1s pass qodo: calling deepseek-direct
+[forge] t+1223.1s pass expert: calling deepseek-direct
+[forge] t+1223.1s pass adversarial: calling deepseek-direct

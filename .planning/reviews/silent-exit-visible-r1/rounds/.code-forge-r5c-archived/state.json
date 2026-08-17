@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 0,
+  "mode": "LOCAL",
+  "source_hash": "d6f36536495db07d378f1decbbd10e39e8542bd4b7547002fe07952d42e7c512",
+  "findings": [
+    {
+      "id": "l1-qodo-2460774fa71c7413",
+      "fingerprint": "2460774fa71c7413",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3054,
+        3054
+      ],
+      "description": "[qodo] The startup banner resolves FORGE_LLM_TIMEOUT_S from os.environ rather than the `env` mapping passed to _run, and the displayed timeout is computed with effective_invoke_timeout_s(backend, None) rather than that same env value. With no backend timeout and FORGE_LLM_TIMEOUT_S set, this can print a timeout value/source that is internally inconsistent or wrong: the banner may claim '(from FORGE_LLM_TIMEOUT_S)' while the displayed seconds were resolved as if the env var were absent. Use the same environment/value for both the timeout lookup and the banner note.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-qodo-ab6c7835f7bae2d5",
+      "fingerprint": "ab6c7835f7bae2d5",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2525,
+        2525
+      ],
+      "description": "[qodo] _banner_timeout_note treats any non-None env_raw as if the env override is honored. An empty FORGE_LLM_TIMEOUT_S= will still append '(from FORGE_LLM_TIMEOUT_S)' even though the resolver likely ignores an empty or invalid value. Guard on truthiness/validated integer so the banner does not claim an env override that is not in effect.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-3611dac874dcd9a4",
+      "fingerprint": "3611dac874dcd9a4",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        1659,
+        1659
+      ],
+      "description": "[expert] Broad `except SystemExit` at the main pipeline boundary treats every `SystemExit` as an internal error. If argparse `--help`/`--version` or an early-exit path in a nested subcommand runs inside this try, normal `sys.exit(0)`/`sys.exit(2)` behavior becomes a traceback and EXIT_CLI_ERROR. Keep argument-parser exits outside this catch, or narrow it to the exact call that must not call `sys.exit`.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-expert-f7ed4c3fdc975c62",
+      "fingerprint": "f7ed4c3fdc975c62",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2511,
+        2511
+      ],
+      "description": "[expert] `_repo_display_name` returns `repo_name` from the git top-level path or `cwd.name` without sanitizing control or ANSI characters, and `_startup_banner_line` writes it directly to stderr. A repository directory name containing newlines or escape sequences can corrupt the terminal/log line. The timeout env var is sanitized for exactly this reason; apply the same printable-character filter or truncation to the repo name.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-4ec182fbd3684b39",
+      "fingerprint": "4ec182fbd3684b39",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        1659,
+        1659
+      ],
+      "description": "[adversarial] The new `except SystemExit` is a sibling to the broad `except Exception` in `main()`'s top-level try block that also wraps argument parsing. argparse raises `SystemExit` for normal `--help`, `--version`, and usage errors; those are now captured here, printed as internal errors with tracebacks, and returned as EXIT_CLI_ERROR. This converts `code-forge --help`/`--version` from successful exits into internal-error exits. Let argparse's SystemExit propagate, or move parse_args outside this try so only pipeline-originated SystemExit is converted.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-c10293ed21f6478b",
+      "fingerprint": "c10293ed21f6478b",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3024,
+        3024
+      ],
+      "description": "[adversarial] `_banner_timeout` is computed by calling `effective_invoke_timeout_s(backend, None)`, while the banner suffix is computed from `os.environ.get(\"FORGE_LLM_TIMEOUT_S\")` in `_banner_timeout_note`. The resolution chain does not use `None` when the env override is present, so with `FORGE_LLM_TIMEOUT_S` set and no backend timeout, the banner can print a timeout that ignores the env var while appending `(from FORGE_LLM_TIMEOUT_S)`. Pass the same env value used by the actual timeout resolution to both the effective-timeout call and the note computation.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-96d3036a4a604f63",
+      "fingerprint": "96d3036a4a604f63",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2525,
+        2525
+      ],
+      "description": "[adversarial] `_banner_timeout_note` only checks `env_raw is None`. An empty `FORGE_LLM_TIMEOUT_S=''` is therefore treated as an honored override and produces `(from FORGE_LLM_TIMEOUT_S)`, even though empty timeout env vars are normally treated as unset by the resolution chain. Treat empty/whitespace-only values as unset to avoid a misleading banner suffix.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-2460774fa71c7413": "CONFIRMED",
+    "l1-qodo-ab6c7835f7bae2d5": "CONFIRMED",
+    "l1-expert-3611dac874dcd9a4": "UNCERTAIN",
+    "l1-expert-f7ed4c3fdc975c62": "CONFIRMED",
+    "l1-adversarial-4ec182fbd3684b39": "CONFIRMED",
+    "l1-adversarial-c10293ed21f6478b": "CONFIRMED",
+    "l1-adversarial-96d3036a4a604f63": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "invoke-fail-expert",
+        "invoke-fail-adversarial"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "invoke-fail-qodo": "CONFIRMED",
+        "invoke-fail-expert": "CONFIRMED",
+        "invoke-fail-adversarial": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "2460774fa71c7413",
+        "ab6c7835f7bae2d5",
+        "3611dac874dcd9a4",
+        "f7ed4c3fdc975c62",
+        "4ec182fbd3684b39",
+        "c10293ed21f6478b",
+        "96d3036a4a604f63"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "2460774fa71c7413": "CONFIRMED",
+        "ab6c7835f7bae2d5": "CONFIRMED",
+        "3611dac874dcd9a4": "UNCERTAIN",
+        "f7ed4c3fdc975c62": "CONFIRMED",
+        "4ec182fbd3684b39": "CONFIRMED",
+        "c10293ed21f6478b": "CONFIRMED",
+        "96d3036a4a604f63": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "round 0: pass(es) did not complete: {'qodo': 'timeout', 'expert': 'timeout', 'adversarial': 'timeout'}",
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'",
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 48738,
+    "total_output_tokens": 66825,
+    "total_duration_s": 1483.7150927159819,
+    "passes": 3,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 400.044
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 400.044
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 0,
+        "output": 0,
+        "duration_s": 400.044
+      },
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 16246,
+        "output": 22275,
+        "duration_s": 94.528
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 16246,
+        "output": 22275,
+        "duration_s": 94.528
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 16246,
+        "output": 22275,
+        "duration_s": 94.528
+      }
+    ]
+  }
+}

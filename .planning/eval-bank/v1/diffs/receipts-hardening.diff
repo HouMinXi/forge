@@ -1,0 +1,1762 @@
+diff --git a/src/code_forge/backend.py b/src/code_forge/backend.py
+index f487e97..1bca4f1 100644
+--- a/src/code_forge/backend.py
++++ b/src/code_forge/backend.py
+@@ -458,6 +458,12 @@ def _parse_cli_env(entry: dict, name: str) -> dict:
+ 
+ def _parse_backend_entry(entry: dict) -> BackendConfig:
+     """Parse and validate a single backend config entry."""
++    # One rule for null: it means absent. Strip null-valued keys so
++    # every field falls back to its own default or sentinel instead of
++    # storing None into a typed attribute (or crashing in max(0, None)
++    # before validation can name it). The caller's dict is left
++    # untouched -- a shallow copy keeps its other values shared.
++    entry = {k: v for k, v in entry.items() if v is not None}
+     name = entry.get("name", "<unnamed>")
+ 
+     # Reject inline secrets (never allow raw keys in config)
+@@ -597,6 +603,10 @@ def load_backend_configs(
+                 "backend %r: entry must be a dict, got %s"
+                 % (name, type(entry).__name__)
+             )
++        # Null handling and caller-dict isolation live in
++        # _parse_backend_entry; the name is injected on a copy so the
++        # caller's entry dict is never mutated.
++        entry = dict(entry)
+         entry["name"] = name
+         configs.append(_parse_backend_entry(entry))
+     # multiple default: true entries raise CliError
+diff --git a/src/code_forge/canary_gen.py b/src/code_forge/canary_gen.py
+index 306bdeb..e13258b 100644
+--- a/src/code_forge/canary_gen.py
++++ b/src/code_forge/canary_gen.py
+@@ -30,8 +30,6 @@ from uuid import uuid4
+ 
+ from .canary import (
+     Canary,
+-    CanaryGateResult,
+-    CanaryPartition,
+     evaluate_canary_coverage,
+     partition_canary_findings,
+ )
+@@ -339,12 +337,17 @@ def dispatch_canary_review(
+     The prompt has no author narrative, no prior findings, no conventions
+     digest to prevent anchoring bias in the fresh-context review.
+     """
++    from .diff import annotated_diff_prompt_block
++
++    prompt_diff = annotated_diff_prompt_block(modified_diff)
++    if prompt_diff.startswith("\nDiff:\n"):
++        prompt_diff = prompt_diff[len("\nDiff:\n"):]
+     prompt = (
+         "You are a code reviewer. Review this diff for bugs, security "
+         "issues, and code quality problems.\n"
+         "Return JSON: {\"findings\": [...]}\n"
+         "Each finding needs: file, line, severity, description.\n\n"
+-        "Diff:\n" + modified_diff
++        "Diff:\n" + prompt_diff
+     )
+     raw = provider(prompt)
+ 
+diff --git a/src/code_forge/cli.py b/src/code_forge/cli.py
+index 7b5cff0..9a5fdfb 100644
+--- a/src/code_forge/cli.py
++++ b/src/code_forge/cli.py
+@@ -16,7 +16,7 @@ import subprocess
+ import sys
+ import time
+ from pathlib import Path
+-from typing import TYPE_CHECKING, Any, Callable, Optional
++from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
+ 
+ from . import __version__
+ from .runner import capture_tool_version
+@@ -203,6 +203,83 @@ def _merge_user_into(
+     return cfgs
+ 
+ 
++def probe_backend_with_fallback(
++    backend: "BackendConfig",
++    cfgs: list["BackendConfig"],
++    project_names: set[str],
++    env: Mapping[str, str] | None = None,
++):
++    """Probe the resolved backend, falling back to project backends.
++
++    A user-level backend (from XDG config) that fails its probe must not
++    take the whole review down: the probe walks the project backends and
++    returns the first reachable one. When the resolved backend IS a
++    project backend, its failure stands -- falling back would silently
++    swap a deliberately configured backend for a sibling.
++    """
++    from .backend import probe_backend
++
++    result = probe_backend(backend, env=env)
++    if result.ok:
++        return result
++    if backend.name in project_names:
++        return result
++    for cfg in cfgs:
++        if cfg.name in project_names:
++            r2 = probe_backend(cfg, env=env)
++            if r2.ok:
++                log.warning(
++                    "User backend %r unreachable, "
++                    "falling back to project backend %r",
++                    backend.name, cfg.name,
++                )
++                return r2
++    return result
++
++
++def resolve_backend_with_fallback(
++    backend: "BackendConfig",
++    cfgs: list["BackendConfig"],
++    project_names: set[str],
++    env: Mapping[str, str] | None = None,
++) -> "BackendConfig":
++    """Resolve the backend the review must actually use.
++
++    probe_backend_with_fallback only reports reachability; the review
++    path needs the backend object itself, or the probe would pass on a
++    fallback while the review still called the unreachable user backend.
++    """
++    from .backend import ProbeResult, probe_backend
++
++    if backend.name in project_names:
++        return backend
++    result = probe_backend(backend, env=env)
++    if result.ok:
++        return backend
++    for cfg in cfgs:
++        if cfg.name in project_names:
++            if probe_backend(cfg, env=env).ok:
++                log.warning(
++                    "User backend %r unreachable, "
++                    "falling back to project backend %r",
++                    backend.name, cfg.name,
++                )
++                return cfg
++    return backend
++
++
++def _project_backend_names(gate_data: dict[str, Any]) -> set[str]:
++    """The set of project backend names from gate.yaml's backends block.
++
++    A non-dict backends block names no backends: set() over a list would
++    treat list elements as names and misroute the fallback.
++    """
++    raw = gate_data.get("backends", {}) or {}
++    if isinstance(raw, dict):
++        return set(raw)
++    return set()
++
++
+ def _load_canary_config(args: argparse.Namespace, gate_data: dict) -> dict | None:
+     """Extract canary opt-in config from CLI flags or gate_data.
+ 
+@@ -2502,13 +2579,17 @@ def _run(args, env, cwd: Path) -> Verdict:
+     has_explicit_backend = has_inline or (_backend_arg is not None)
+ 
+     def _reachability():
+-        from .backend import resolve_backend, probe_backend
++        from .backend import resolve_backend
+         backend = resolve_backend(
+             env,
+             configs=cfgs,
+             cli_value=_backend_arg,
+         )
+-        return probe_backend(backend, env=env)
++        return probe_backend_with_fallback(
++            backend, cfgs,
++            project_names=_project_backend_names(gate_data),
++            env=env,
++        )
+ 
+     outlet = resolve_outlet(
+         env,
+@@ -2552,6 +2633,11 @@ def _run(args, env, cwd: Path) -> Verdict:
+                 configs=cfgs,
+                 cli_value=getattr(args, 'backend', None),
+             )
++            backend = resolve_backend_with_fallback(
++                backend, cfgs,
++                project_names=_project_backend_names(gate_data),
++                env=env,
++            )
+         except CliError:
+             raise
+ 
+@@ -2920,8 +3006,11 @@ def _run_hold_loop(
+             ],
+         )
+         verdict = sm.run()
+-        if verdict != Verdict.PENDING:
++        if True:
+             # CLI-08 B6: load final state from disk for cost fields.
++            # PENDING is not exempt: a CI run that ended PENDING with
++            # UNCERTAIN findings still spent tokens, and the cost line
++            # is the only place they are reported.
+             from .state import load_state as _load_cost_state
+             final_state = _load_cost_state(state_path)
+             if final_state is not None and final_state.cost_passes > 0:
+@@ -2953,6 +3042,12 @@ def _run_hold_loop(
+         loaded = load_state(state_path)
+         if loaded is None:
+             return Verdict.ESCALATED
++        if mode == Mode.CI:
++            # GATE-01b: CI never enters HOLD -- there is no human at
++            # the keyboard to answer it. Return PENDING so the caller
++            # sees the UNCERTAIN findings in state.json instead of
++            # hanging on a prompt that never gets input.
++            return Verdict.PENDING
+         try:
+             run_hold_ui(
+                 loaded, state_path,
+diff --git a/src/code_forge/daemon_state.py b/src/code_forge/daemon_state.py
+index bebec7b..4589650 100644
+--- a/src/code_forge/daemon_state.py
++++ b/src/code_forge/daemon_state.py
+@@ -322,6 +322,11 @@ class DaemonStateRunner:
+         """
+         self.infra_errors.clear()
+ 
++        if self._backend is None:
++            self.infra_errors.append(
++                "DAEMON-STATE axis skipped: no backend configured"
++            )
++            return []
+         if not diff_text or not diff_text.strip():
+             return []
+ 
+diff --git a/src/code_forge/diff.py b/src/code_forge/diff.py
+index 6df815c..45a7893 100644
+--- a/src/code_forge/diff.py
++++ b/src/code_forge/diff.py
+@@ -383,13 +383,9 @@ def annotated_diff_prompt_block(diff_text: str) -> str:
+     a prompt that shows ``[+  82]`` without saying what 82 counts invites
+     the reviewer to read it as part of the source line.
+ 
+-    Used by the L1 review prompts. Two other prompts ask for line numbers
+-    and still send a bare diff: the canary review in ``canary_gen`` and the
+-    runtime lifecycle question in ``runtime``. Both are deliberate for now --
+-    the canary is a gate, so changing what it sends changes what it
+-    certifies, and the runtime question has a verbatim mirror in SKILL.md
+-    guarded by a drift test. The daemon-state questions never cite lines, so
+-    the column would be noise there.
++    Used by the L1 review prompts, the canary review in ``canary_gen``,
++    and the runtime lifecycle question in ``runtime``. The daemon-state
++    questions never cite lines, so the column would be noise there.
+     """
+     result = _annotation_walk(diff_text)
+     if result is None:
+diff --git a/src/code_forge/llm_invoke.py b/src/code_forge/llm_invoke.py
+index 6e58d61..79d74b6 100644
+--- a/src/code_forge/llm_invoke.py
++++ b/src/code_forge/llm_invoke.py
+@@ -25,9 +25,7 @@ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Any, Optional
+ 
+-from .backend import (
+-    BackendConfig, DEFAULT_BACKEND, check_headers, check_params,
+-)
++from .backend import BackendConfig, check_headers, check_params
+ from .errors import CliError
+ 
+ 
+@@ -765,7 +763,16 @@ def llm_invoke(
+         LLMInvokeError: on timeout, nonzero exit, HTTP error, or JSON parse failure
+     """
+     if backend is None:
+-        backend = DEFAULT_BACKEND
++        # Fail closed: the old fallthrough to DEFAULT_BACKEND spawned an
++        # implicit claude -p subprocess (session-default cli backend),
++        # which bills the main session account and nests a subprocess the
++        # caller never asked for. Advisory axes construct their runners
++        # with a backend; a None here means wiring forgot it.
++        raise LLMInvokeError(
++            "llm_invoke called with no backend; an implicit "
++            "claude -p fallthrough is disabled",
++            retryable=False,
++        )
+     timeout_s = effective_invoke_timeout_s(backend, timeout_s)
+ 
+     if backend.type == "cli":
+@@ -1242,6 +1249,24 @@ def _invoke_openai(
+     if finish == "length":
+         in_tok = usage_data.get("prompt_tokens", "?")
+         out_tok = usage_data.get("completion_tokens", "?")
++        # Name the limit that actually truncated, not the one in the
++        # config. When output landed below the configured ceiling the
++        # backend clamped on its own (a hard model/plan cap), so
++        # telling the user to raise output_ceiling would change nothing.
++        # Zero output tokens is the empty-content case, not a clamp.
++        if isinstance(out_tok, (int, float)) \
++                and isinstance(resolved_cap, int) \
++                and 0 < out_tok < resolved_cap:
++            raise LLMInvokeError(
++                "%s backend response truncated at %s output tokens "
++                "(finish_reason=length, input=%s). The configured "
++                "output_ceiling is %d, so the backend clamped below it "
++                "on its own; raising output_ceiling will not help -- "
++                "use a backend/model with a higher hard output limit."
++                % (backend.name, out_tok, in_tok, resolved_cap),
++                kind="truncated",
++                retryable=False,
++            )
+         raise LLMInvokeError(
+             "%s backend response truncated (finish_reason=length, "
+             "input=%s output=%s). Review output truncated: output "
+diff --git a/src/code_forge/machine.py b/src/code_forge/machine.py
+index 31a75f9..aed55a5 100644
+--- a/src/code_forge/machine.py
++++ b/src/code_forge/machine.py
+@@ -305,7 +305,9 @@ class StateMachine:
+         case left in place -- a "running" marker whose PID has died, or
+         never had one, is also consumed.
+         """
+-        self._execute_round(round_index=0)
++        self._execute_round(
++            round_index=self._continuation_round_index(),
++        )
+ 
+         # Check for prior mutation result
+         result_path = self.cwd / ".code-forge" / "mutation-result.json"
+@@ -525,6 +527,33 @@ class StateMachine:
+         self._persist_state()
+         return verdict
+ 
++    def _continuation_round_index(self) -> int:
++        """The round index CI should start from.
++
++        CI restarts at round 0 on every invocation, which made every
++        separate `code-forge review` call overwrite receipt-c1p{1,2,3}
++        -- three clean rounds across three invocations were three
++        files' worth of evidence. When existing receipts carry the same
++        diff_sha256, the tree did not move between them, so this run
++        continues the cycle count instead of clobbering: the next cycle
++        number after the highest one on disk. A changed diff (or none)
++        starts at 0 as before.
++        """
++        receipts_dir = self.cwd / ".code-forge" / "receipts"
++        if not receipts_dir.is_dir():
++            return 0
++        max_cycle = 0
++        for f in receipts_dir.glob("receipt-*.json"):
++            try:
++                data = json.loads(f.read_text(encoding="utf-8"))
++            except (OSError, json.JSONDecodeError):
++                continue
++            if not isinstance(data, dict):
++                continue
++            if data.get("diff_sha256") == self.source_hash:
++                max_cycle = max(max_cycle, data.get("cycle", 0))
++        return max_cycle
++
+     def _run_local(self) -> Verdict:
+         """LOCAL: loop until fixpoint / HOLD / MAX_TOTAL_ROUNDS.
+ 
+diff --git a/src/code_forge/receipt.py b/src/code_forge/receipt.py
+index 278ab68..a898752 100644
+--- a/src/code_forge/receipt.py
++++ b/src/code_forge/receipt.py
+@@ -8,6 +8,7 @@ from __future__ import annotations
+ 
+ import datetime
+ import json
++import os
+ from pathlib import Path
+ 
+ from .state import (
+@@ -70,18 +71,24 @@ def write_receipts(
+     diff_text: str | None = None,
+     reviewer_excerpts: list[dict] | None = None,
+ ) -> list[Path]:
+-    """Write 3 receipt files (one per pass) for a round."""
++    """Write 3 receipt files (one per pass) for a round.
++
++    Writes are staged to temp files and renamed only when all three
++    are complete, so a run that dies mid-write cannot clobber a prior
++    round's receipts with a partial set.
++    """
+     receipts_dir.mkdir(parents=True, exist_ok=True)
+     by_pass = _split_by_pass(l1_findings)
+     cycle = round_index + 1
++    pass_outcomes = derive_pass_outcomes(l1_findings)
+     # One write time for the whole round. A per-pass offset is not ordered
+     # against the next round, and rounds finish faster than it spans, so it
+     # inverted the sequence verify reads and failed a converged review.
+     now = datetime.datetime.now(datetime.timezone.utc)
+     written = []
++    staged = []
+ 
+     assembled_excerpts = _build_excerpts(reviewer_excerpts)
+-    pass_outcomes = derive_pass_outcomes(l1_findings)
+ 
+     for pass_idx, (pass_name, skill_name) in enumerate(
+         zip(_PASS_NAMES, _SKILL_NAMES)
+@@ -148,7 +155,15 @@ def write_receipts(
+         }
+ 
+         path = receipts_dir / ("receipt-c%dp%d.json" % (cycle, pass_num))
+-        path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
++        tmp_path = receipts_dir / (".tmp-c%dp%d-%d.json" % (
++            cycle, pass_num, os.getpid()))
++        tmp_path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
++        staged.append((tmp_path, path))
++
++    # Rename only when all three staged cleanly, so a run that dies
++    # mid-write leaves a prior round's receipts standing.
++    for tmp_path, path in staged:
++        tmp_path.replace(path)
+         written.append(path)
+ 
+     return written
+diff --git a/src/code_forge/runtime.py b/src/code_forge/runtime.py
+index f76d3f8..5951ccc 100644
+--- a/src/code_forge/runtime.py
++++ b/src/code_forge/runtime.py
+@@ -315,13 +315,29 @@ class RuntimeRunner:
+             List of AdvisoryFinding. Advisory only -- never blocks verdict.
+         """
+         self.infra_errors.clear()
++        if self._backend is None:
++            self.infra_errors.append(
++                "RUNTIME axis skipped: no backend configured"
++            )
++            return []
+         if not diff_text or not diff_text.strip():
+             return []
+ 
+         diff_hash = compute_source_hash(git_diff=diff_text)
+ 
++        # The receipt key hashes the raw diff (stable), while the prompt
++        # shows the annotated diff so the reviewer reads post-image line
++        # numbers instead of counting from hunk headers -- the same
++        # presentation the L1 passes get. The block carries its own
++        # "\nDiff:\n" prefix; the template already says "Diff:", so drop
++        # the block's prefix and keep its legend.
++        from .diff import annotated_diff_prompt_block
++
++        prompt_diff = annotated_diff_prompt_block(diff_text)
++        if prompt_diff.startswith("\nDiff:\n"):
++            prompt_diff = prompt_diff[len("\nDiff:\n"):]
+         # str.replace NOT str.format: diffs can contain literal { or }.
+-        prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", diff_text)
++        prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", prompt_diff)
+         try:
+             result = llm_invoke(prompt, backend=self._backend)
+         except LLMInvokeError as exc:
+diff --git a/src/code_forge/sarif.py b/src/code_forge/sarif.py
+index 6a25c1d..a3b1eed 100644
+--- a/src/code_forge/sarif.py
++++ b/src/code_forge/sarif.py
+@@ -14,6 +14,7 @@ from .state import (
+     State,
+     StateFinding,
+     Verdict,
++    Mode,
+     PassOutcome,
+     derive_pass_outcomes,
+     _PASS_NAMES,
+@@ -79,13 +80,17 @@ def build_sarif_log(
+     CLI backends pass backend_name=None so tokenCost is omitted.
+ 
+     Raises:
+-        ValueError: state.verdict is PENDING. CI never PENDINGs (no HOLD
+-            in CI per GATE-01b); reaching this is a caller bug.
++        ValueError: state.verdict is PENDING and mode is LOCAL -- a
++            local run enters the interactive HOLD UX instead, so a
++            PENDING state reaching the SARIF writer is a caller bug.
++            CI never enters HOLD (GATE-01b) but CAN legitimately finish
++            PENDING with UNCERTAIN findings: there is no human at the
++            keyboard, so the findings land in state.json.
+     """
+-    if state.verdict == Verdict.PENDING:
++    if state.verdict == Verdict.PENDING and state.mode == Mode.LOCAL:
+         raise ValueError(
+-            "build_sarif_log called with PENDING verdict; CI mode does "
+-            "not enter HOLD (GATE-01b). Caller bug."
++            "build_sarif_log called with PENDING verdict on a LOCAL "
++            "run; HOLD UX should have resolved it. Caller bug."
+         )
+     run = _build_run(state, tool_versions, forge_version)
+     if backend_name is not None and state.cost_passes > 0:
+@@ -255,12 +260,14 @@ def format_summary(state: State, advisory_count: int = 0) -> str:
+       ^code-forge: (PASS|FAIL|ESCALATED) findings=\\d+ confirmed=\\d+
+       uncertain=\\d+ dismissed=\\d+ fixed=\\d+( infra=\\d+)?( advisory=\\d+)?$
+ 
+-    Verdict.PENDING is rejected (CI never PENDINGs; caller guards).
++    LOCAL PENDING is rejected (the HOLD UX resolves it; caller guards).
++    CI PENDING is legitimate: UNCERTAIN findings with no human at the
++    keyboard (GATE-01b).
+     """
+-    if state.verdict == Verdict.PENDING:
++    if state.verdict == Verdict.PENDING and state.mode == Mode.LOCAL:
+         raise ValueError(
+-            "format_summary called with PENDING verdict; CI mode does "
+-            "not enter HOLD (GATE-01b). Caller bug."
++            "format_summary called with PENDING verdict on a LOCAL "
++            "run; HOLD UX should have resolved it. Caller bug."
+         )
+     counts = {
+         Disposition.CONFIRMED: 0,
+diff --git a/src/code_forge/verify.py b/src/code_forge/verify.py
+index d4b7ee0..b905237 100644
+--- a/src/code_forge/verify.py
++++ b/src/code_forge/verify.py
+@@ -374,6 +374,46 @@ def _jaccard(a: set, b: set) -> float:
+     return len(a & b) / len(u) if u else 1.0
+ 
+ 
++def _constant_offset(
++    excerpt_line_map: dict[int, str],
++    file_lines: dict[int, str],
++    lo: int,
++    hi: int,
++) -> int | None:
++    """Return the shift that makes every excerpt line match the file,
++    or None when no single offset explains the mismatch.
++
++    A misnumbered excerpt (the reviewer ignored the annotated column)
++    matches the post-image at a constant delta; a fabricated one matches
++    at no delta. Offsets are searched in the inclusive range lo..hi.
++    A single-line excerpt is too weak a signal: one line can coincide
++    with any shifted position, so it must not convict as misnumbering.
++    """
++    if len(excerpt_line_map) < 2:
++        return None
++
++    def norm(s):
++        return s.rstrip()
++
++    for delta in range(lo, hi + 1):
++        if delta == 0:
++            continue
++        matches = 0
++        compared = 0
++        for claimed, content in excerpt_line_map.items():
++            actual = file_lines.get(claimed + delta)
++            if actual is None:
++                continue
++            compared += 1
++            if norm(content) == norm(actual):
++                matches += 1
++        # Every comparable line matches at this delta and at least one
++        # line was compared: a constant shift, not a coincidental pair.
++        if compared and matches == compared:
++            return delta
++    return None
++
++
+ def run_verify(
+     cwd: Path, diff_sha256: str,
+     diff_files: dict[str, list[int]],
+@@ -610,12 +650,51 @@ def run_verify(
+                     return s.rstrip()
+                 for ln in sorted(overlap_lines):
+                     if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
++                        # Distinguish a misnumbered excerpt from a fabricated
++                        # one. A reviewer that ignored the annotated line
++                        # numbers produces content that matches the file at a
++                        # constant offset; a fabricated excerpt matches at no
++                        # offset at all. Report the offset so the diagnosis
++                        # does not point at the wrong line.
++                        offset = _constant_offset(
++                            excerpt_line_map, file_lines, -64, 65,
++                        )
++                        if offset is not None:
++                            return VerifyResult(
++                                False,
++                                "excerpt misnumbered by %+d at %s:%d-%d "
++                                "(claims %s:%d, actually %s:%d)" % (
++                                    offset, exc["file"],
++                                    exc["start_line"], exc["end_line"],
++                                    exc["file"], ln,
++                                    exc["file"], ln + offset),
++                                5, cp,
++                            )
+                         return VerifyResult(
+                             False,
+-                            "excerpt content mismatch at %s:%d (line %d)" % (
+-                                exc["file"], exc["start_line"], ln),
++                            "excerpt content mismatch at %s:%d-%d (line %d)" % (
++                                exc["file"], exc["start_line"],
++                                exc["end_line"], ln),
+                             5, cp,
+                         )
++
++            # Every claimed line must land in the post-image. A line
++            # outside it is content nobody can check -- the tail of a
++            # genuine excerpt can carry invented lines and the receipt
++            # would read as "the reviewer verified these" while they were
++            # never compared against anything. This runs after the
++            # misnumber check so a shifted excerpt reports its offset
++            # rather than a bare outside-the-diff line.
++            outside = set(excerpt_line_map.keys()) - set(file_lines.keys())
++            if outside:
++                return VerifyResult(
++                    False,
++                    "excerpt %s:%d-%d claims line %d outside the diff "
++                    "post-image; it cannot be verified" % (
++                        exc["file"], exc["start_line"], exc["end_line"],
++                        min(outside)),
++                    5, cp,
++                )
+         cp += 1
+ 
+         # 6. excerpt-derived coverage >= 60%
+diff --git a/tests/test_backend.py b/tests/test_backend.py
+index 652cec8..2c6d192 100644
+--- a/tests/test_backend.py
++++ b/tests/test_backend.py
+@@ -1464,6 +1464,32 @@ class TestParseProviderFields:
+         cfg = _parse_backend_entry(self._api_entry(outcap_key=None))
+         assert cfg.outcap_key == ""
+ 
++    @pytest.mark.parametrize("field", [
++        "temperature", "max_completion_tokens", "thinking_type",
++        "thinking_budget", "reasoning_effort", "stream",
++        "outcap_key", "output_ceiling", "params", "headers",
++    ])
++    def test_null_means_absent_for_every_api_only_field(self, field):
++        """One rule for null across _API_ONLY_FIELDS: a null-valued
++        field parses exactly like an absent one. Nothing stores None
++        into a typed attribute and nothing crashes."""
++        absent = _parse_backend_entry(self._api_entry())
++        nulled = _parse_backend_entry(self._api_entry(**{field: None}))
++        assert getattr(absent, field) == getattr(nulled, field), (
++            "field %s: absent=%r null=%r" % (
++                field, getattr(absent, field), getattr(nulled, field),
++            )
++        )
++
++    def test_null_cli_side_is_not_a_rejection(self):
++        """A null-valued api-only key on a cli backend parses as absent
++        instead of tripping the key-presence rejection."""
++        from code_forge.backend import load_backend_configs
++        entry = _cli_entry()
++        entry["headers"] = None
++        cfgs = load_backend_configs({"backends": {"c": entry}})
++        assert len(cfgs) == 1
++
+     def test_outcap_key_invalid_rejected(self):
+         with pytest.raises(CliError, match="outcap_key"):
+             _parse_backend_entry(
+diff --git a/tests/test_canary_gen.py b/tests/test_canary_gen.py
+index 8fe2b54..f836ab8 100644
+--- a/tests/test_canary_gen.py
++++ b/tests/test_canary_gen.py
+@@ -4,11 +4,9 @@ from __future__ import annotations
+ 
+ import json
+ 
+-import pytest
+ 
+-from code_forge.canary import Canary, evaluate_canary_coverage
++from code_forge.canary import evaluate_canary_coverage
+ from code_forge.canary_gen import (
+-    CanaryProvider,
+     CanarySkip,
+     dispatch_canary_review,
+     generate_canaries,
+@@ -298,8 +296,11 @@ def test_cite_reverify_on_real_only():
+         import re
+         findings = []
+         # Match appended canary hunk headers: +++ b/<file> followed by @@ ...
++        # Annotated added lines carry a "[+  N] " bracket prefix; accept
++        # it optionally so the parser works with annotated and bare diffs.
+         for m in re.finditer(
+-            r'\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@\n((?:\+.*\n?)+)',
++            r'\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@\n'
++            r'((?:(?:\[[^\]]*\] )?\+.*\n?)+)',
+             prompt,
+         ):
+             fname = m.group(1)
+diff --git a/tests/test_cli_sarif.py b/tests/test_cli_sarif.py
+index 9a39e02..b4175b0 100644
+--- a/tests/test_cli_sarif.py
++++ b/tests/test_cli_sarif.py
+@@ -260,35 +260,34 @@ class TestForgeLockHeldDuringEmission:
+ 
+ 
+ class TestPendingCIDefensivePath:
+-    """(i) PENDING through CI defensive path.
++    """(i) PENDING through CI output path.
+ 
+-    Setup requires TWO monkeypatches:
+-    1. load_state -> State with PENDING verdict
+-    2. Simulates GATE-01b violation
++    CI PENDING is legitimate: UNCERTAIN findings with no human at the
++    keyboard land in state.json and the SARIF summary carries PENDING.
+     """
+ 
+-    def test_pending_raises_valueerror(self, state_dir, mock_registry):
++    def test_pending_ci_emits_sarif_with_pending_summary(
++        self, state_dir, mock_registry,
++    ):
+         state_path = state_dir / "state.json"
+-        # Create a valid state file (will be overridden by monkeypatch)
+         state = _make_state(Verdict.PASS, [])
+         save_state(state, state_path)
+ 
+-        # Monkeypatch load_state to return PENDING state
+         pending_state = _make_state(Verdict.PENDING, [])
+ 
+         stdout = StringIO()
++        stderr = StringIO()
+ 
+         with patch("code_forge.cli._load_state", return_value=pending_state), \
+              patch("sys.stdout", stdout), \
+-             patch("sys.stderr", StringIO()), \
++             patch("sys.stderr", stderr), \
+              patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+-            with pytest.raises(ValueError) as exc_info:
+-                _emit_ci_output(state_path, mock_registry)
++            _emit_ci_output(state_path, mock_registry)
+ 
+-        # Verify no SARIF on stdout
+-        assert stdout.getvalue() == ""
+-        # Verify GATE-01b in error message
+-        assert "GATE-01b" in str(exc_info.value)
++        # SARIF on stdout, PENDING summary on stderr -- no crash.
++        log = json.loads(stdout.getvalue())
++        assert log["runs"]
++        assert "code-forge: PENDING" in stderr.getvalue()
+ 
+ 
+ class TestLoadStateNoneDefensive:
+diff --git a/tests/test_daemon_state.py b/tests/test_daemon_state.py
+index 11fdd19..8fee15e 100644
+--- a/tests/test_daemon_state.py
++++ b/tests/test_daemon_state.py
+@@ -45,13 +45,13 @@ class TestDaemonStateProtocol:
+     def test_is_advisory(self):
+         from code_forge.daemon_state import DaemonStateRunner
+ 
+-        runner = DaemonStateRunner()
++        runner = DaemonStateRunner(backend=MagicMock())
+         assert runner.is_advisory is True
+ 
+     def test_run_returns_list(self, tmp_path):
+         from code_forge.daemon_state import DaemonStateRunner
+ 
+-        runner = DaemonStateRunner()
++        runner = DaemonStateRunner(backend=MagicMock())
+         result = runner.run("", tmp_path)
+         assert isinstance(result, list)
+ 
+@@ -67,14 +67,14 @@ class TestDaemonStateEmptyDiff:
+     def test_empty_diff(self, tmp_path):
+         from code_forge.daemon_state import DaemonStateRunner
+ 
+-        runner = DaemonStateRunner()
++        runner = DaemonStateRunner(backend=MagicMock())
+         result = runner.run("", tmp_path)
+         assert result == []
+ 
+     def test_empty_whitespace_diff(self, tmp_path):
+         from code_forge.daemon_state import DaemonStateRunner
+ 
+-        runner = DaemonStateRunner()
++        runner = DaemonStateRunner(backend=MagicMock())
+         result = runner.run("  \n  ", tmp_path)
+         assert result == []
+ 
+@@ -92,7 +92,7 @@ class TestDaemonStateHeuristicFallback:
+         from code_forge.daemon_state import DaemonStateRunner
+ 
+         # No .code-forge/gate.yaml at all
+-        runner = DaemonStateRunner()
++        runner = DaemonStateRunner(backend=MagicMock())
+         diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter input drop"
+         result = runner.run(diff, tmp_path)
+ 
+@@ -106,7 +106,7 @@ class TestDaemonStateHeuristicFallback:
+         """Heuristic advisory finding uses axis='DAEMON-STATE'."""
+         from code_forge.daemon_state import DaemonStateRunner
+ 
+-        runner = DaemonStateRunner()
++        runner = DaemonStateRunner(backend=MagicMock())
+         diff = "diff --git a/fw.sh b/fw.sh\n+iptables -A INPUT -j DROP"
+         result = runner.run(diff, tmp_path)
+ 
+@@ -117,7 +117,7 @@ class TestDaemonStateHeuristicFallback:
+         """Diff with no stateful keywords + no gate.yaml -> []."""
+         from code_forge.daemon_state import DaemonStateRunner
+ 
+-        runner = DaemonStateRunner()
++        runner = DaemonStateRunner(backend=MagicMock())
+         diff = "diff --git a/hello.py b/hello.py\n+print('hello world')"
+         result = runner.run(diff, tmp_path)
+         assert result == []
+@@ -166,7 +166,7 @@ class TestDaemonStateTwoStepLLM:
+         with patch("code_forge.daemon_state.llm_invoke",
+                    side_effect=[q1_response, q2q3_response]) as mock_llm, \
+              patch("code_forge.daemon_state._grep_repo", return_value=""):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter"
+             runner.run(diff, tmp_path)
+ 
+@@ -221,7 +221,7 @@ class TestDaemonStateStaticRules:
+         with patch("code_forge.daemon_state.llm_invoke",
+                    side_effect=[q1_response, q2q3_response]), \
+              patch("code_forge.daemon_state._grep_repo", return_value=""):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
+             result = runner.run(diff, tmp_path)
+ 
+@@ -263,7 +263,7 @@ class TestDaemonStateStaticRules:
+         with patch("code_forge.daemon_state.llm_invoke",
+                    side_effect=[q1_response, q2q3_response]) as mock_llm, \
+              patch("code_forge.daemon_state._grep_repo", return_value=""):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
+             runner.run(diff, tmp_path)
+ 
+@@ -358,7 +358,7 @@ class TestDaemonStateQ1Empty:
+                    side_effect=[q1_response, q2q3_response]), \
+              patch("code_forge.daemon_state._grep_repo",
+                    return_value="") as mock_grep:
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/f b/f\n+nft add rule"
+             runner.run(diff, tmp_path)
+ 
+@@ -398,7 +398,7 @@ class TestDaemonStateQ1Malformed:
+ 
+         with patch("code_forge.daemon_state.llm_invoke",
+                    return_value=q1_response):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/f b/f\n+nft add rule"
+             result = runner.run(diff, tmp_path)
+ 
+@@ -435,7 +435,7 @@ class TestDaemonStateLLMFailure:
+ 
+         with patch("code_forge.daemon_state.llm_invoke",
+                    side_effect=LLMInvokeError("connection timeout")):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/f b/f\n+nft add rule"
+             result = runner.run(diff, tmp_path)
+ 
+@@ -481,7 +481,7 @@ class TestDaemonStateRuntimeSurfaces:
+         with patch("code_forge.daemon_state.llm_invoke",
+                    side_effect=[q1_response, q2q3_response]) as mock_llm, \
+              patch("code_forge.daemon_state._grep_repo", return_value=""):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             runner._runtime_runner = mock_runtime
+             diff = "diff --git a/f b/f\n+nft add rule"
+             runner.run(diff, tmp_path)
+@@ -514,7 +514,7 @@ class TestDaemonStateRuntimeSurfaces:
+         with patch("code_forge.daemon_state.llm_invoke",
+                    side_effect=[q1_response, q2q3_response]), \
+              patch("code_forge.daemon_state._grep_repo", return_value=""):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             # _runtime_runner is None by default
+             diff = "diff --git a/f b/f\n+nft add rule"
+             result = runner.run(diff, tmp_path)
+@@ -538,7 +538,7 @@ class TestDaemonStateUnconfigured:
+ 
+         # No gate.yaml at all
+         with patch("code_forge.daemon_state.llm_invoke") as mock_llm:
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/f b/f\n+nft add rule inet filter"
+             result = runner.run(diff, tmp_path)
+ 
+@@ -583,7 +583,7 @@ class TestDaemonStateConflictsFileMissing:
+         with patch("code_forge.daemon_state.llm_invoke",
+                    side_effect=[q1_response, q2q3_response]), \
+              patch("code_forge.daemon_state._grep_repo", return_value=""):
+-            runner = DaemonStateRunner()
++            runner = DaemonStateRunner(backend=MagicMock())
+             diff = "diff --git a/f b/f\n+nft add rule"
+             runner.run(diff, tmp_path)
+ 
+diff --git a/tests/test_llm_invoke.py b/tests/test_llm_invoke.py
+index 13fe754..d83bdaf 100644
+--- a/tests/test_llm_invoke.py
++++ b/tests/test_llm_invoke.py
+@@ -57,7 +57,7 @@ class TestLLMInvoke:
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
+              patch("code_forge.llm_invoke._kill_tree"):
+             with pytest.raises(LLMInvokeError, match="timed out") as exc:
+-                llm_invoke("prompt", timeout_s=120)
++                llm_invoke("prompt", backend=DEFAULT_BACKEND, timeout_s=120)
+             assert exc.value.is_timeout is True
+ 
+     def test_raises_on_nonzero_exit(self):
+@@ -65,26 +65,26 @@ class TestLLMInvoke:
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+             with pytest.raises(LLMInvokeError, match="exited with code 1"):
+-                llm_invoke("prompt")
++                llm_invoke("prompt", backend=DEFAULT_BACKEND)
+ 
+     def test_raises_on_invalid_json(self):
+         mock_proc = _make_mock_proc(stdout="not json at all")
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+             with pytest.raises(LLMInvokeError, match="non-JSON"):
+-                llm_invoke("prompt")
++                llm_invoke("prompt", backend=DEFAULT_BACKEND)
+ 
+     def test_raises_when_claude_not_found(self):
+         with patch("shutil.which", return_value=None):
+             with pytest.raises(LLMInvokeError, match="not found"):
+-                llm_invoke("prompt")
++                llm_invoke("prompt", backend=DEFAULT_BACKEND)
+ 
+     def test_respects_forge_llm_model_env(self):
+         mock_proc = _make_mock_proc(stdout='{"ok": true}')
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen, \
+              patch.dict(os.environ, {"FORGE_LLM_MODEL": "opus-4-7"}):
+-            llm_invoke("prompt")
++            llm_invoke("prompt", backend=DEFAULT_BACKEND)
+             cmd = mock_popen.call_args[0][0]
+             assert "opus-4-7" in cmd
+ 
+@@ -93,7 +93,7 @@ class TestLLMInvoke:
+         mock_proc = _make_mock_proc(stdout='{"ok": true}')
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
+-            result = llm_invoke(large_prompt)
++            result = llm_invoke(large_prompt, backend=DEFAULT_BACKEND)
+         assert result.content == {"ok": True}
+         cmd = mock_popen.call_args[0][0]
+         assert cmd[0] == "sh"
+@@ -103,7 +103,7 @@ class TestLLMInvoke:
+         mock_proc = _make_mock_proc(stdout='```json\n{"key": "value"}\n```')
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+-            result = llm_invoke("prompt")
++            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
+         assert result.content == {"key": "value"}
+ 
+     def test_raises_on_oserror(self):
+@@ -112,14 +112,14 @@ class TestLLMInvoke:
+             side_effect=OSError("No such file or directory"),
+         ):
+             with pytest.raises(LLMInvokeError, match="subprocess failed"):
+-                llm_invoke("prompt")
++                llm_invoke("prompt", backend=DEFAULT_BACKEND)
+ 
+     def test_cli_dispatch_default_backend(self):
+         """backend=None uses DEFAULT_BACKEND cli path."""
+         mock_proc = _make_mock_proc(stdout='{"ok": true}')
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
+-            result = llm_invoke("prompt")
++            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
+         assert result.content == {"ok": True}
+         cmd = mock_popen.call_args[0][0]
+         assert "claude" in cmd[0]
+@@ -155,7 +155,7 @@ class TestLLMInvoke:
+         mock_proc = _make_mock_proc(stdout='{"ok": true}')
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc) as mock_popen:
+-            llm_invoke("prompt")
++            llm_invoke("prompt", backend=DEFAULT_BACKEND)
+         kwargs = mock_popen.call_args[1]
+         assert kwargs.get("start_new_session") is True
+ 
+@@ -164,7 +164,7 @@ class TestLLMInvoke:
+         mock_proc = _make_mock_proc(stdout='{"ok": true}')
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+-            result = llm_invoke("prompt")
++            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
+         assert result.usage.input_tokens == 0
+         assert result.usage.output_tokens == 0
+         assert result.content == {"ok": True}
+@@ -181,7 +181,7 @@ class TestLLMInvoke:
+         mock_proc = _make_mock_proc(stdout=envelope)
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+-            result = llm_invoke("prompt")
++            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
+         assert result.usage.input_tokens == 350
+         assert result.usage.output_tokens == 120
+         assert result.content == {"findings": []}
+@@ -198,7 +198,7 @@ class TestLLMInvoke:
+         mock_proc = _make_mock_proc(stdout=json.dumps(events))
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+-            result = llm_invoke("prompt")
++            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
+ 
+         assert result.content == {"surfaces": ["nftables"], "findings": []}
+         assert result.usage.input_tokens == 100
+@@ -210,7 +210,7 @@ class TestLLMInvoke:
+         mock_proc = _make_mock_proc(stdout=json.dumps(events))
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+-            result = llm_invoke("prompt")
++            result = llm_invoke("prompt", backend=DEFAULT_BACKEND)
+ 
+         assert isinstance(result.content, list)
+ 
+@@ -1209,7 +1209,7 @@ class TestSubprocessCleanup:
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc), \
+              patch("code_forge.llm_invoke._kill_tree", side_effect=mock_kill_tree):
+             with pytest.raises(LLMInvokeError, match="timed out") as exc:
+-                llm_invoke("test", timeout_s=1)
++                llm_invoke("test", backend=DEFAULT_BACKEND, timeout_s=1)
+             assert exc.value.is_timeout is True
+ 
+         assert len(kill_called) == 1, "_kill_tree must be called exactly once on timeout"
+@@ -1221,7 +1221,7 @@ class TestSubprocessCleanup:
+         mock_proc = _make_mock_proc(stdout='{"ok": true}')
+ 
+         with patch("code_forge.llm_invoke.subprocess.Popen", return_value=mock_proc):
+-            llm_invoke("prompt")
++            llm_invoke("prompt", backend=DEFAULT_BACKEND)
+ 
+         assert m._active_proc is None
+ 
+@@ -1435,6 +1435,31 @@ class TestTruncationDetection:
+             content, usage = _invoke_openai("p", backend, api_key="k", timeout_s=10)
+             assert "findings" in content
+ 
++    def test_openai_length_below_ceiling_names_the_backend_clamp(self):
++        """When output lands below the configured ceiling, the backend
++        clamped on its own; the message must say so instead of telling
++        the user to raise output_ceiling (which would change nothing)."""
++        from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
++
++        backend = BackendConfig(
++            name="ds", type="api", model="m", format="openai",
++            base_url="http://x", api_key_env="K", max_tokens=32768,
++        )
++        resp = Mock()
++        resp.read.return_value = json.dumps({
++            "choices": [{"message": {"content": '{"find'}, "finish_reason": "length"}],
++            # 16384 = the SenseNova-family hard clamp, well below 32768.
++            "usage": {"prompt_tokens": 800, "completion_tokens": 16384},
++        }).encode("utf-8")
++        resp.__enter__ = Mock(return_value=resp)
++        resp.__exit__ = Mock(return_value=False)
++
++        with patch("urllib.request.urlopen", return_value=resp):
++            with pytest.raises(LLMInvokeError, match="truncated") as exc_info:
++                _invoke_openai("p", backend, api_key="k", timeout_s=10)
++            assert "clamped below" in str(exc_info.value)
++            assert "will not help" in str(exc_info.value)
++
+ 
+     def test_vertex_stop_reason_max_tokens(self):
+         from code_forge.llm_invoke import _invoke_vertex, LLMInvokeError
+diff --git a/tests/test_machine_ci.py b/tests/test_machine_ci.py
+index e8cd334..ae83ceb 100644
+--- a/tests/test_machine_ci.py
++++ b/tests/test_machine_ci.py
+@@ -37,7 +37,8 @@ def _make_resolved():
+     )
+ 
+ 
+-def _make_machine(tmp_path, l0_findings=None, l0_infra=None):
++def _make_machine(tmp_path, l0_findings=None, l0_infra=None,
++                  source_hash="abc123"):
+     """Build a CI-mode StateMachine with injectable L0 results."""
+     findings = l0_findings if l0_findings is not None else []
+     infra = l0_infra if l0_infra is not None else []
+@@ -51,7 +52,7 @@ def _make_machine(tmp_path, l0_findings=None, l0_infra=None):
+         autofixer=StubAutoFixer(),
+         revert_fn=lambda f: None,
+         resolved_review=_make_resolved(),
+-        source_hash="abc123",
++        source_hash=source_hash,
+         baseline_spec_repr="empty",
+         cwd=tmp_path,
+         registry={},
+@@ -119,6 +120,59 @@ class TestCIUncertainPass:
+         assert machine._state.converged is True
+ 
+ 
++class TestCIContinuation:
++    """CI invocations continue the cycle count when the diff is unchanged.
++
++    Three separate invocations each restart at round 0 by default and
++    would overwrite receipt-c1p{1,2,3}; continuing the cycle count is
++    what lets three clean rounds across three invocations satisfy the
++    commit gate without renaming or hand-editing a receipt.
++    """
++
++    import json as _json
++    """CI invocations continue the cycle count when the diff is unchanged.
++
++    Three separate invocations each restart at round 0 by default and
++    would overwrite receipt-c1p{1,2,3}; continuing the cycle count is
++    what lets three clean rounds across three invocations satisfy the
++    commit gate without renaming or hand-editing a receipt.
++    """
++
++    def _machine_for(self, tmp_path):
++        return _make_machine(tmp_path, source_hash="sha")
++
++    def test_no_receipts_starts_at_zero(self, tmp_path):
++        m = self._machine_for(tmp_path)
++        assert m._continuation_round_index() == 0
++
++    def test_same_hash_continues_after_highest_cycle(self, tmp_path):
++        rd = tmp_path / ".code-forge" / "receipts"
++        rd.mkdir(parents=True)
++        (rd / "receipt-c1p1.json").write_text(
++            self._json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
++        (rd / "receipt-c1p2.json").write_text(
++            self._json.dumps({"cycle": 1, "pass": 2, "diff_sha256": "sha"}))
++        m = self._machine_for(tmp_path)
++        assert m._continuation_round_index() == 1
++
++    def test_changed_hash_restarts_at_zero(self, tmp_path):
++        rd = tmp_path / ".code-forge" / "receipts"
++        rd.mkdir(parents=True)
++        (rd / "receipt-c1p1.json").write_text(
++            self._json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "other"}))
++        m = self._machine_for(tmp_path)
++        assert m._continuation_round_index() == 0
++
++    def test_corrupt_receipt_is_skipped(self, tmp_path):
++        rd = tmp_path / ".code-forge" / "receipts"
++        rd.mkdir(parents=True)
++        (rd / "receipt-c1p1.json").write_text(
++            self._json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
++        (rd / "receipt-c1p2.json").write_text("{ not json")
++        m = self._machine_for(tmp_path)
++        assert m._continuation_round_index() == 1
++
++
+ class TestCINeverHolds:
+     """CI mode never enters HOLD."""
+ 
+diff --git a/tests/test_runtime.py b/tests/test_runtime.py
+index ba4d094..c7e70fd 100644
+--- a/tests/test_runtime.py
++++ b/tests/test_runtime.py
+@@ -83,22 +83,22 @@ class TestRuntimeRunnerProtocol:
+ 
+     def test_is_advisory_true(self):
+         from code_forge.runtime import RuntimeRunner
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         assert runner.is_advisory is True
+ 
+     def test_has_run_method(self):
+         from code_forge.runtime import RuntimeRunner
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         assert callable(runner.run)
+ 
+     def test_infra_errors_initialized_empty(self):
+         from code_forge.runtime import RuntimeRunner
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         assert runner.infra_errors == []
+ 
+     def test_source_files_initialized_none(self):
+         from code_forge.runtime import RuntimeRunner
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         assert runner.source_files is None
+ 
+ 
+@@ -112,13 +112,13 @@ class TestRuntimeRunnerEmptyDiff:
+ 
+     def test_empty_string_returns_empty(self, tmp_path):
+         from code_forge.runtime import RuntimeRunner
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         result = runner.run("", tmp_path)
+         assert result == []
+ 
+     def test_whitespace_only_returns_empty(self, tmp_path):
+         from code_forge.runtime import RuntimeRunner
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         result = runner.run("   \n  \t  ", tmp_path)
+         assert result == []
+ 
+@@ -138,7 +138,7 @@ class TestRuntimeRunnerLLMCall:
+         valid_response.content = {"surfaces": [], "findings": []}
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=valid_response) as mock_invoke:
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             runner.run(diff, tmp_path)
+             assert mock_invoke.called
+             prompt_arg = mock_invoke.call_args[0][0]
+@@ -155,7 +155,7 @@ class TestRuntimeRunnerLLMCall:
+         valid_response.content = {"surfaces": [], "findings": []}
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=valid_response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             # Must not raise KeyError
+             result = runner.run(diff, tmp_path)
+             assert isinstance(result, list)
+@@ -173,7 +173,7 @@ class TestRuntimeRunnerJSONParsing:
+         from code_forge.runtime import RuntimeRunner
+         response = MagicMock()
+         response.content = content
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         return runner, response
+ 
+     def test_valid_json_with_surfaces_produces_findings(self, tmp_path):
+@@ -191,7 +191,7 @@ class TestRuntimeRunnerJSONParsing:
+             ],
+         }
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+         assert isinstance(result, list)
+         # At least the finding from LLM
+@@ -213,7 +213,7 @@ class TestRuntimeRunnerJSONParsing:
+             ],
+         }
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+         for finding in result:
+             assert finding.axis == "RUNTIME"
+@@ -226,7 +226,7 @@ class TestRuntimeRunnerJSONParsing:
+             "findings": [],
+         }
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+         for item in result:
+             assert isinstance(item, AdvisoryFinding)
+@@ -246,7 +246,7 @@ class TestRuntimeRunnerLLMError:
+ 
+         with patch("code_forge.runtime.llm_invoke",
+                    side_effect=LLMInvokeError("connection refused")):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         assert len(result) == 1
+@@ -263,7 +263,7 @@ class TestRuntimeRunnerLLMError:
+ 
+         with patch("code_forge.runtime.llm_invoke",
+                    side_effect=LLMInvokeError("timeout")):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         assert len(runner.infra_errors) > 0
+@@ -275,7 +275,7 @@ class TestRuntimeRunnerLLMError:
+ 
+         with patch("code_forge.runtime.llm_invoke",
+                    side_effect=LLMInvokeError("auth failed")):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         assert len(result) > 0
+@@ -297,7 +297,7 @@ class TestRuntimeRunnerMalformedJSON:
+         response.content = "this is not json at all"
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         assert len(result) >= 1
+@@ -313,7 +313,7 @@ class TestRuntimeRunnerMalformedJSON:
+         response.content = {"bad_key": "no surfaces here"}
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         skipped = [f for f in result if f.id == "runtime-skipped"]
+@@ -327,7 +327,7 @@ class TestRuntimeRunnerMalformedJSON:
+         response.content = None
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         skipped = [f for f in result if f.id == "runtime-skipped"]
+@@ -340,7 +340,7 @@ class TestRuntimeRunnerMalformedJSON:
+         response.content = "not json"
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         assert len(runner.infra_errors) > 0
+@@ -353,7 +353,7 @@ class TestRuntimeRunnerMalformedJSON:
+         response.content = [{"surfaces": ["nftables", "systemd"], "findings": []}]
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
+ 
+         skipped = [f for f in result if f.id == "runtime-skipped"]
+@@ -373,7 +373,7 @@ class TestRuntimeRunnerMalformedJSON:
+         ]
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
+ 
+         skipped = [f for f in result if f.id == "runtime-skipped"]
+@@ -387,7 +387,7 @@ class TestRuntimeRunnerMalformedJSON:
+         response.content = []
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+nft add rule", tmp_path)
+ 
+         skipped = [f for f in result if f.id == "runtime-skipped"]
+@@ -434,7 +434,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = self._mock_response(surfaces=["nftables", "systemd"])
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+ 
+         # Should have a summary finding indicating unverified surfaces
+@@ -460,7 +460,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = self._mock_response(surfaces=["nftables", "systemd"], findings=[])
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+ 
+         # summary finding should show 1/2 verified
+@@ -482,7 +482,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = self._mock_response(surfaces=["nftables"], findings=[])
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+ 
+         # Receipt is invalid -> surface is UNVERIFIED
+@@ -505,7 +505,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = self._mock_response(surfaces=["nftables"], findings=[])
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+ 
+         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
+@@ -521,7 +521,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = self._mock_response(surfaces=[], findings=[])
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+ 
+         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
+@@ -542,7 +542,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = self._mock_response(surfaces=["nftables"], findings=[])
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+ 
+         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
+@@ -559,7 +559,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = self._mock_response(surfaces=["nftables"], findings=[])
+ 
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+ 
+         summary_findings = [f for f in result if f.id == "runtime-smoke-summary"]
+@@ -571,7 +571,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         from code_forge.llm_invoke import LLMInvokeError
+         from code_forge.runtime import RuntimeRunner
+ 
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         # First run: LLM error
+         with patch("code_forge.runtime.llm_invoke",
+                    side_effect=LLMInvokeError("err1")):
+@@ -596,7 +596,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = MagicMock()
+         response.content = {"surfaces": None, "findings": []}
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run("diff --git a/f b/f\n+c", tmp_path)
+         ids = {f.id for f in result}
+         assert "runtime-skipped" not in ids, "surfaces=null must not return SKIPPED"
+@@ -614,7 +614,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = MagicMock()
+         response.content = {"surfaces": ["nftables-filter"], "findings": []}
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
+         assert summary is not None
+@@ -634,7 +634,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = MagicMock()
+         response.content = {"surfaces": ["nftables rules"], "findings": []}
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
+         assert summary is not None
+@@ -653,7 +653,7 @@ class TestRuntimeRunnerSmokeReceipts:
+         response = MagicMock()
+         response.content = {"surfaces": ["nftables rules"], "findings": []}
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             result = runner.run(diff, tmp_path)
+         summary = next((f for f in result if f.id == "runtime-smoke-summary"), None)
+         assert summary is not None
+@@ -671,10 +671,10 @@ class TestRuntimeRunnerLastSurfaces:
+     """RuntimeRunner stores last_surfaces after run() for cross-axis sharing."""
+ 
+     def test_last_surfaces_empty_on_init(self):
+-        """RuntimeRunner().last_surfaces equals [] on initialization."""
++        """RuntimeRunner(backend=MagicMock()).last_surfaces equals [] on initialization."""
+         from code_forge.runtime import RuntimeRunner
+ 
+-        runner = RuntimeRunner()
++        runner = RuntimeRunner(backend=MagicMock())
+         assert runner.last_surfaces == []
+ 
+     def test_last_surfaces_stored(self, tmp_path):
+@@ -687,7 +687,7 @@ class TestRuntimeRunnerLastSurfaces:
+             "findings": [],
+         }
+         with patch("code_forge.runtime.llm_invoke", return_value=response):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             runner.run("diff --git a/f b/f\n+change", tmp_path)
+ 
+         assert runner.last_surfaces == ["nftables rules", "systemd units"]
+@@ -708,7 +708,7 @@ class TestRuntimeRunnerLastSurfaces:
+         }
+         with patch("code_forge.runtime.llm_invoke",
+                    side_effect=[response1, response2]):
+-            runner = RuntimeRunner()
++            runner = RuntimeRunner(backend=MagicMock())
+             runner.run("diff --git a/f b/f\n+change1", tmp_path)
+             runner.run("diff --git a/f b/f\n+change2", tmp_path)
+ 
+diff --git a/tests/test_sarif.py b/tests/test_sarif.py
+index 5c51a1d..1d65014 100644
+--- a/tests/test_sarif.py
++++ b/tests/test_sarif.py
+@@ -413,20 +413,38 @@ class TestPendingVerdictRaises:
+     """(o, o2) PENDING verdict raises ValueError."""
+ 
+     def test_build_sarif_log_pending_raises(self):
+-        """(o) build_sarif_log raises on PENDING."""
++        """(o) build_sarif_log raises on LOCAL PENDING."""
+         state = _make_state(Verdict.PENDING, [])
+         with pytest.raises(ValueError) as exc_info:
+             build_sarif_log(state, {}, "2.0.0a1")
+ 
+-        assert "GATE-01b" in str(exc_info.value)
++        assert "LOCAL" in str(exc_info.value)
++
++    def test_build_sarif_log_pending_ci_does_not_raise(self):
++        """(o2) CI PENDING is a legitimate terminal state: UNCERTAIN
++        findings with no human at the keyboard. It must produce a log,
++        not a crash."""
++        from code_forge.state import Mode
++        state = _make_state(Verdict.PENDING, [])
++        state.mode = Mode.CI
++        log = build_sarif_log(state, {}, "2.0.0a1")
++        assert log["runs"]
+ 
+     def test_format_summary_pending_raises(self):
+-        """(o2) format_summary raises on PENDING."""
++        """(o2) format_summary raises on LOCAL PENDING."""
+         state = _make_state(Verdict.PENDING, [])
+         with pytest.raises(ValueError) as exc_info:
+             format_summary(state)
+ 
+-        assert "GATE-01b" in str(exc_info.value)
++        assert "LOCAL" in str(exc_info.value)
++
++    def test_format_summary_pending_ci_passes(self):
++        """CI PENDING is a legitimate terminal state."""
++        from code_forge.state import Mode
++        state = _make_state(Verdict.PENDING, [])
++        state.mode = Mode.CI
++        line = format_summary(state)
++        assert line.startswith("code-forge: PENDING")
+ 
+ 
+ class TestMixedFindings:
+diff --git a/tests/test_user_config.py b/tests/test_user_config.py
+index f441848..0117a55 100644
+--- a/tests/test_user_config.py
++++ b/tests/test_user_config.py
+@@ -135,3 +135,126 @@ class TestMergeUserInto:
+ 
+         names = [c.name for c in result]
+         assert "user-back" in names
++
++    def test_user_backend_probe_failure_falls_back_to_project(self):
++        """probe_backend_with_fallback: a failing user backend falls
++        back to the first reachable project backend."""
++        from code_forge.backend import BackendConfig, ProbeResult
++        from code_forge.cli import probe_backend_with_fallback
++
++        user_cfg = BackendConfig(
++            name="stray", type="api", model="u", format="openai",
++            base_url="http://bad", api_key_env="MISSING",
++        )
++        proj_cfg = BackendConfig(
++            name="proj", type="api", model="m", format="openai",
++            base_url="http://x", api_key_env="K",
++        )
++
++        def probe_results(backend, env=None):
++            if backend.name == "stray":
++                return ProbeResult(ok=False, error="unreachable")
++            return ProbeResult(ok=True)
++
++        with patch("code_forge.backend.probe_backend",
++                   side_effect=probe_results) as probe_spy:
++            result = probe_backend_with_fallback(
++                user_cfg, [proj_cfg], project_names={"proj"},
++            )
++
++        assert result.ok
++        assert probe_spy.call_count == 2
++
++    def test_project_backend_failure_does_not_fall_back(self):
++        """A deliberately configured project backend that fails the
++        probe must not be silently swapped for a sibling."""
++        from code_forge.backend import BackendConfig, ProbeResult
++        from code_forge.cli import probe_backend_with_fallback
++
++        proj_cfg = BackendConfig(
++            name="proj", type="api", model="m", format="openai",
++            base_url="http://x", api_key_env="K",
++        )
++        other_cfg = BackendConfig(
++            name="other", type="api", model="o", format="openai",
++            base_url="http://y", api_key_env="K2",
++        )
++
++        def probe_results(backend, env=None):
++            if backend.name == "proj":
++                return ProbeResult(ok=False, error="unreachable")
++            return ProbeResult(ok=True)
++
++        with patch("code_forge.backend.probe_backend",
++                   side_effect=probe_results) as probe_spy:
++            result = probe_backend_with_fallback(
++                proj_cfg, [proj_cfg, other_cfg],
++                project_names={"proj", "other"},
++            )
++
++        assert not result.ok
++        assert probe_spy.call_count == 1
++
++    def test_all_backends_down_returns_original_failure(self):
++        """User backend fails and every project backend fails: the
++        original failure surfaces, nothing is invented."""
++        from code_forge.backend import BackendConfig, ProbeResult
++        from code_forge.cli import probe_backend_with_fallback
++
++        user_cfg = BackendConfig(
++            name="stray", type="api", model="u", format="openai",
++            base_url="http://bad", api_key_env="MISSING",
++        )
++        proj_cfg = BackendConfig(
++            name="proj", type="api", model="m", format="openai",
++            base_url="http://x", api_key_env="K",
++        )
++
++        def probe_results(backend, env=None):
++            return ProbeResult(
++                ok=False, error="down: %s" % backend.name,
++            )
++
++        with patch("code_forge.backend.probe_backend",
++                   side_effect=probe_results):
++            result = probe_backend_with_fallback(
++                user_cfg, [proj_cfg], project_names={"proj"},
++            )
++
++        assert not result.ok
++        assert "down: stray" in result.error
++
++    def test_no_project_backends_returns_original_failure(self):
++        """No project backend to fall back to: the failure stands."""
++        from code_forge.backend import BackendConfig, ProbeResult
++        from code_forge.cli import probe_backend_with_fallback
++
++        user_cfg = BackendConfig(
++            name="stray", type="api", model="u", format="openai",
++            base_url="http://bad", api_key_env="MISSING",
++        )
++
++        with patch("code_forge.backend.probe_backend",
++                   return_value=ProbeResult(ok=False, error="down")) as probe_spy:
++            result = probe_backend_with_fallback(
++                user_cfg, [], project_names=set(),
++            )
++
++        assert not result.ok
++        assert probe_spy.call_count == 1
++
++    def test_non_dict_backends_block_names_no_project(self):
++        """A list-valued backends block must not have its elements
++        misread as project backend names."""
++        from code_forge.cli import _project_backend_names
++
++        assert _project_backend_names({"backends": ["proj"]}) == set()
++        assert _project_backend_names({"backends": None}) == set()
++        assert _project_backend_names({}) == set()
++
++    def test_dict_backends_block_yields_names(self):
++        from code_forge.cli import _project_backend_names
++
++        assert _project_backend_names(
++            {"backends": {"proj": {"type": "api"}}},
++        ) == {"proj"}
+diff --git a/tests/test_verify.py b/tests/test_verify.py
+index c11bf87..29f02b6 100644
+--- a/tests/test_verify.py
++++ b/tests/test_verify.py
+@@ -1166,6 +1166,109 @@ class TestOutOfHunkExcerpts:
+         assert not r.passed
+         assert "belongs in context_quotes" in r.reason
+ 
++    def test_excerpt_inverted_range_fails_at_schema(self, tmp_path):
++        """start_line > end_line is nonsense and fails at schema load."""
++        rd = tmp_path / ".code-forge" / "receipts"
++        rd.mkdir(parents=True)
++        (tmp_path / "src").mkdir()
++        diff_content = (
++            "diff --git a/src/f.py b/src/f.py\n"
++            "--- a/src/f.py\n"
++            "+++ b/src/f.py\n"
++            "@@ -1,2 +1,2 @@\n"
++            " def f():\n"
++            "-    return 1\n"
++            "+    return 2\n"
++        )
++        (tmp_path / "src" / "f.py").write_text(
++            "def f():\n    return 2\n"
++        )
++        sha = _sha(diff_content)
++        diff_files = parse_diff_files(diff_content)
++        for c in range(1, 4):
++            for p in range(1, 4):
++                receipt = _receipt(c, p, sha)
++                receipt["code_excerpts"][0]["start_line"] = 5
++                receipt["code_excerpts"][0]["end_line"] = 2
++                name = "receipt-c%dp%d.json" % (c, p)
++                (rd / name).write_text(json.dumps(receipt))
++        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
++        assert not r.passed, f"inverted range should fail, got: {r.reason}"
++        assert "start_line 5 > end_line 2" in r.reason
++
++    def test_misnumbered_excerpt_reports_the_offset(self, tmp_path):
++        """A reviewer that ignored the annotated line numbers produces
++        content matching the file at a constant offset. The failure must
++        name that offset instead of a bare content mismatch, so the
++        diagnosis does not point at the wrong line."""
++        rd = tmp_path / ".code-forge" / "receipts"
++        rd.mkdir(parents=True)
++        (tmp_path / "src").mkdir()
++        diff_content = (
++            "diff --git a/src/f.py b/src/f.py\n"
++            "--- a/src/f.py\n"
++            "+++ b/src/f.py\n"
++            "@@ -1,2 +1,4 @@\n"
++            " def f():\n"
++            "-    return 1\n"
++            "+    x = 1\n"
++            "+    return 2\n"
++            "+    return 3\n"
++        )
++        (tmp_path / "src" / "f.py").write_text(
++            "def f():\n    x = 1\n    return 2\n    return 3\n"
++        )
++        sha = _sha(diff_content)
++        diff_files = parse_diff_files(diff_content)
++        for c in range(1, 4):
++            for p in range(1, 4):
++                receipt = _receipt(c, p, sha)
++                # Content is verbatim for lines 2-4 but claims 3-5: a
++                # constant +1 misnumbering, exactly the reviewer failure.
++                receipt["code_excerpts"][0] = {
++                    "file": "src/f.py", "start_line": 3, "end_line": 5,
++                    "content": "    x = 1\n    return 2\n    return 3",
++                }
++                name = "receipt-c%dp%d.json" % (c, p)
++                (rd / name).write_text(json.dumps(receipt))
++        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
++        assert not r.passed, f"misnumbered excerpt should fail, got: {r.reason}"
++        assert "misnumbered by" in r.reason
++        assert "-1" in r.reason
++
++    def test_fabricated_excerpt_reports_mismatch_not_offset(self, tmp_path):
++        """Content that matches at no offset is fabrication, not
++        misnumbering; the message must stay a content mismatch."""
++        rd = tmp_path / ".code-forge" / "receipts"
++        rd.mkdir(parents=True)
++        (tmp_path / "src").mkdir()
++        diff_content = (
++            "diff --git a/src/f.py b/src/f.py\n"
++            "--- a/src/f.py\n"
++            "+++ b/src/f.py\n"
++            "@@ -1,2 +1,2 @@\n"
++            " def f():\n"
++            "-    return 1\n"
++            "+    return 2\n"
++        )
++        (tmp_path / "src" / "f.py").write_text(
++            "def f():\n    return 2\n"
++        )
++        sha = _sha(diff_content)
++        diff_files = parse_diff_files(diff_content)
++        for c in range(1, 4):
++            for p in range(1, 4):
++                receipt = _receipt(c, p, sha)
++                receipt["code_excerpts"][0]["content"] = (
++                    "def f():\n    return 999\n"
++                )
++                name = "receipt-c%dp%d.json" % (c, p)
++                (rd / name).write_text(json.dumps(receipt))
++        r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
++        assert not r.passed
++        assert "content mismatch" in r.reason
++        assert "misnumbered" not in r.reason
++
+     def test_excerpt_content_mismatch_still_fails(self, tmp_path):
+         """Excerpt content that contradicts the post-image must still fail."""
+         rd = tmp_path / ".code-forge" / "receipts"

@@ -1,0 +1,153 @@
+commit 2ff097a6ab5126c70f4163b47b6fb7f167c676ca
+Author: t <t@t>
+Date:   Sat Aug 15 12:06:46 2026 -0400
+
+    llm: fail a hung response fast instead of waiting out the slow-pass budget
+    
+    urlopen() installs the full timeout_s (1200-2400s) as the socket
+    timeout. That is sized for a legitimate slow pass, and a non-streaming
+    backend generates the whole answer before the first body byte, so a
+    slow pass and a hung connection look identical to the socket. A hung
+    connection therefore stalls the round for the full budget before the
+    deadline notices; measured 2026-08-15, a review sat 24 minutes in that
+    state before being killed by hand.
+    
+    _read_with_deadline now tightens the raw socket to a 900s idle bound
+    before the read starts. A connection that produces nothing for 900s
+    raises socket.timeout from read(), which is converted to the existing
+    timeout error rather than surfacing as an OSError. The bound sits above
+    the 411.7s a real pass has taken and below the slow-pass budget, so
+    slow answers still complete and hung ones fail in a quarter of the
+    time. Dripping responses are unaffected: only a full stop trips it.
+    
+    Signed-off-by: Minxi Hou <houminxi@gmail.com>
+
+diff --git a/src/code_forge/llm_invoke.py b/src/code_forge/llm_invoke.py
+index 60827cd..3871200 100644
+--- a/src/code_forge/llm_invoke.py
++++ b/src/code_forge/llm_invoke.py
+@@ -254,6 +254,21 @@ def _apply_params(
+     return cap
+ 
+ 
++# A response that has gone silent for this many seconds is treated as
++# hung.  urlopen() installs a socket timeout of timeout_s (1200-2400s),
++# which is sized for a legitimate slow pass -- a non-streaming backend
++# generates the whole answer before the first body byte, so a slow pass
++# reads as one long zero-byte wait (411.7s measured).  That same window
++# also means a hung connection ties up the round for 20-40 minutes
++# before anyone notices.  This shorter idle bound fails a silent
++# connection fast while staying above the measured slow pass with
++# margin; if a future backend legitimately generates past it, the pass
++# fails without same-call retries (same policy as the total read
++# deadline) and the round records the failure -- cheaper than a
++# 40-minute stall, and a fresh round retries the whole pass anyway.
++_IDLE_READ_TIMEOUT_S = 900
++
++
+ def _read_with_deadline(response, deadline, backend_name):
+     """Read response body, enforcing a total-wall deadline.
+ 
+@@ -263,6 +278,10 @@ def _read_with_deadline(response, deadline, backend_name):
+     body in a daemon thread and joins with a timeout; if the join
+     expires, the socket is shut down to interrupt the blocking recv(),
+     and a timeout error is raised.
++
++    The socket additionally gets the idle timeout above, shorter than
++    the caller's timeout_s, so a connection that stops producing bytes
++    entirely (as opposed to dripping them slowly) is caught early.
+     """
+     import socket as _socket
+ 
+@@ -279,6 +298,13 @@ def _read_with_deadline(response, deadline, backend_name):
+     def _worker():
+         try:
+             result[0] = response.read()
++        except TimeoutError:
++            error[0] = LLMInvokeError(
++                "%s backend went silent for %ds mid-response"
++                % (backend_name, _IDLE_READ_TIMEOUT_S),
++                is_timeout=True,
++                retryable=False,
++            )
+         except Exception as exc:
+             error[0] = exc
+ 
+@@ -290,6 +316,17 @@ def _read_with_deadline(response, deadline, backend_name):
+         sock = response.fp.raw._sock
+     except Exception:
+         pass
++    if sock is not None:
++        # Tighten the idle bound: urlopen() set timeout_s on this
++        # socket, which makes a silent connection wait out the whole
++        # slow-pass budget.  A socket that answers nothing for the idle
++        # window raises socket.timeout from read(), which the worker
++        # converts above.  Setting it here overrides the urlopen value
++        # for the duration of this read only.
++        try:
++            sock.settimeout(_IDLE_READ_TIMEOUT_S)
++        except Exception:
++            pass
+ 
+     t = threading.Thread(target=_worker, daemon=True)
+     t.start()
+diff --git a/tests/test_llm_invoke.py b/tests/test_llm_invoke.py
+index ead0a46..aad71b2 100644
+--- a/tests/test_llm_invoke.py
++++ b/tests/test_llm_invoke.py
+@@ -10,7 +10,14 @@ from unittest.mock import patch, MagicMock, Mock
+ 
+ import pytest
+ 
+-from code_forge.llm_invoke import llm_invoke, LLMInvokeError, LLMResult, Usage
++from code_forge.llm_invoke import (
++    llm_invoke,
++    LLMInvokeError,
++    LLMResult,
++    Usage,
++    _IDLE_READ_TIMEOUT_S,
++    _read_with_deadline,
++)
+ from code_forge.backend import BackendConfig, DEFAULT_BACKEND
+ 
+ 
+@@ -33,6 +40,39 @@ class TestLLMInvokeError:
+         assert err.is_timeout is True
+ 
+ 
++class TestReadWithDeadlineIdle:
++    """The idle bound catches a connection that stops producing bytes,
++    which the caller's slow-pass timeout cannot: a non-streaming backend
++    generates the whole answer before the first body byte, so a slow
++    pass and a hung connection look identical to the socket until one
++    of them is much too late."""
++
++    @staticmethod
++    def _fake_response(read_side_effect=None):
++        resp = MagicMock()
++        if read_side_effect is not None:
++            resp.read.side_effect = read_side_effect
++        return resp
++
++    def test_installs_idle_timeout_on_socket(self):
++        resp = self._fake_response()
++        _read_with_deadline(resp, time.monotonic() + 30, "test-backend")
++        resp.fp.raw._sock.settimeout.assert_called_once_with(
++            _IDLE_READ_TIMEOUT_S
++        )
++
++    def test_silent_socket_raises_llm_invoke_error(self):
++        resp = self._fake_response(read_side_effect=TimeoutError("timed out"))
++        with pytest.raises(LLMInvokeError, match="went silent") as exc:
++            _read_with_deadline(resp, time.monotonic() + 30, "test-backend")
++        assert exc.value.is_timeout is True
++
++    def test_other_read_errors_pass_through(self):
++        resp = self._fake_response(read_side_effect=OSError("reset"))
++        with pytest.raises(OSError):
++            _read_with_deadline(resp, time.monotonic() + 30, "test-backend")
++
++
+ class TestLLMInvoke:
+     def test_returns_llm_result_on_success(self):
+         mock_proc = _make_mock_proc(stdout=json.dumps({"findings": []}))

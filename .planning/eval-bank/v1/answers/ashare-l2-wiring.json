@@ -1,0 +1,11 @@
+{
+  "name": "ashare-l2-wiring",
+  "commit": "1f98491d1917bb7b177c78e6d778fe1f60ec8ce2",
+  "source": [
+    ".planning/reviews/l2_wiring_r2_r4_review.md",
+    ".planning/reviews/l2_wiring_r3_review.md"
+  ],
+  "findings": [
+    {"file": "ashare_lab/paper/pipeline.py", "line_range": [1833, 1835], "description": "Day-0 Book B bootstrap copies the prod DB with a bare shutil.copy2, inheriting prod's pending T+1 orders, so Day T+1 settle double-settles and nav_b systematically diverges from nav_a, breaking the m=1.0 canary contract.", "source": ".planning/reviews/l2_wiring_r3_review.md"}
+  ]
+}

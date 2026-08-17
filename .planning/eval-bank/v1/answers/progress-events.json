@@ -1,0 +1,14 @@
+{
+  "name": "progress-events",
+  "commit": "a83e552ee7f3cd131c15b3e1ac098cecb74c5141",
+  "source": [
+    "/tmp/progress_review_r2.log",
+    "/tmp/progress_review_r2b.log",
+    "/tmp/progress_review_r3.log"
+  ],
+  "findings": [
+    {"file": "src/code_forge/progress.py", "line_range": [61, 61], "description": "emit() catches OSError and ValueError but not AttributeError; if sys.stderr is None, the write call raises AttributeError and crashes the review.", "source": "/tmp/progress_review_r2.log"},
+    {"file": "src/code_forge/machine.py", "line_range": [808, 808], "description": "The progress emit for falsify failure sits only in the RuntimeError handler; a different exception (e.g. TypeError) inside falsify gets no failure progress line.", "source": "/tmp/progress_review_r2b.log"},
+    {"file": "src/code_forge/progress.py", "line_range": [28, 28], "description": "The global _t0 clock is shared across threads, so concurrent runs (e.g. the MCP server) interfere and report incorrect elapsed times; the clock should be per-run.", "source": "/tmp/progress_review_r3.log"}
+  ]
+}

@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 2,
+  "mode": "LOCAL",
+  "source_hash": "7dcdca7549a5b31b49e08db53b69fb8b3df15a9c601799343008e79463f0a1ce",
+  "findings": [
+    {
+      "id": "l1-qodo-7593eeb8855bb693",
+      "fingerprint": "7593eeb8855bb693",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        2492,
+        2492
+      ],
+      "description": "[qodo] In _repo_display_name, except subprocess.SubprocessError does not catch FileNotFoundError when git is not installed, which would cause an unhandled exception and crash the pipeline before the banner is printed.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    },
+    {
+      "id": "l1-adversarial-447dc5fd9c34d6df",
+      "fingerprint": "447dc5fd9c34d6df",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/cli.py",
+      "line_range": [
+        3014,
+        3014
+      ],
+      "description": "[adversarial] Startup banner uses os.environ instead of the env parameter passed to _run, causing the displayed LLM timeout to potentially differ from the actual timeout used when the environment is overridden via the env argument.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false
+    }
+  ],
+  "dispositions": {
+    "l1-qodo-7593eeb8855bb693": "UNCERTAIN",
+    "l1-adversarial-447dc5fd9c34d6df": "CONFIRMED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:HEAD",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "cd84859dc580c4a1",
+        "6960ab670e4c056f"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "cd84859dc580c4a1": "CONFIRMED",
+        "6960ab670e4c056f": "UNCERTAIN"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 1,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "e3ef0b49559f6642",
+        "a77adcef63f3dc88"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "e3ef0b49559f6642": "CONFIRMED",
+        "a77adcef63f3dc88": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    },
+    {
+      "round": 2,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "7593eeb8855bb693",
+        "447dc5fd9c34d6df"
+      ],
+      "l2_fingerprints": [],
+      "e2e_fingerprints": [],
+      "dispositions": {
+        "7593eeb8855bb693": "UNCERTAIN",
+        "447dc5fd9c34d6df": "CONFIRMED"
+      },
+      "fixed_fingerprints": []
+    }
+  ],
+  "infra_errors": [
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'",
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'",
+    "L2: gate.yaml missing or test.command not configured: [Errno 2] No such file or directory: '/home/houminxi/code/forge/.worktrees/silent-exit-fix/.code-forge/gate.yaml'"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 142875,
+    "total_output_tokens": 46404,
+    "total_duration_s": 178.8593204659701,
+    "passes": 9,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 15875,
+        "output": 3753,
+        "duration_s": 16.196
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 15875,
+        "output": 3753,
+        "duration_s": 16.196
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 15875,
+        "output": 3753,
+        "duration_s": 16.196
+      },
+      {
+        "pass": 1,
+        "cycle": 1,
+        "input": 15875,
+        "output": 5147,
+        "duration_s": 19.428
+      },
+      {
+        "pass": 2,
+        "cycle": 1,
+        "input": 15875,
+        "output": 5147,
+        "duration_s": 19.428
+      },
+      {
+        "pass": 3,
+        "cycle": 1,
+        "input": 15875,
+        "output": 5147,
+        "duration_s": 19.428
+      },
+      {
+        "pass": 1,
+        "cycle": 2,
+        "input": 15875,
+        "output": 6567,
+        "duration_s": 23.995
+      },
+      {
+        "pass": 2,
+        "cycle": 2,
+        "input": 15875,
+        "output": 6567,
+        "duration_s": 23.995
+      },
+      {
+        "pass": 3,
+        "cycle": 2,
+        "input": 15875,
+        "output": 6567,
+        "duration_s": 23.995
+      }
+    ]
+  }
+}
