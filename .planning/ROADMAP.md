@@ -107,7 +107,7 @@ in-flight queue.
 Rolled forward from the v2.8 tail when that milestone closed (2026-08-17).
 Both sit OUTSIDE the 44 -> 53b chain and can run in any order against it:
 
-- [ ] Router onboarding compat remainder -- F3 trust path (print the resolved
+- [ ] Phase 54: Router onboarding compat remainder -- F3 trust path (print the resolved
   gate.yaml path, warn when cwd is not a project, follow the ADR-0009 $HOME
   policy), F4 live backend probe extending doctor/_probe_api, F2 base_url /v1
   semantics in gate.schema.json, F5 point users at the shipped

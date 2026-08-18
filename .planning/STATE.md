@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: ENV-GROUNDING
 status: active
-stopped_at: main @ 59c1c51, pushed. v2.9 opened 2026-08-17 (accounting only, no code). v2.6/v2.7/v2.8 archived to MILESTONES.md; PROJECT.md and REQUIREMENTS.md switched from v2.6 to v2.9. Phase 48 is the one v2.9 phase shipped; 44/51/52/53a/53b + Router compat + 43.1 remain
-last_updated: "2026-08-17T00:00:00.000Z"
+stopped_at: main @ 4087b05 (11 evidence-driven commits merged 2026-08-18: stream-usage + canary-verdict-type + post-image-window, full suite 3483p/8s/0f). Phase 54 numbered for the Router compat remainder; 54-CONTEXT.md gathered 2026-08-18, ready for planning. v2.9 opened 2026-08-17; Phase 48 is the one v2.9 phase shipped; 44/51/52/53a/53b + 54 + 43.1 remain
+last_updated: "2026-08-18T00:00:00.000Z"
 progress:
-  basis: v2.9 tracked units -- 48, 44, 51, 52, 53a, 53b, Router-compat, 43.1
+  basis: v2.9 tracked units -- 48, 44, 51, 52, 53a, 53b, 54 (Router-compat), 43.1
   total_phases: 8
   completed_phases: 1
   total_plans: 1
