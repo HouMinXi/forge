@@ -260,6 +260,24 @@ class TestAssemblePostImage:
             "partial line(s) survived the 50KB cut: %r" % partial[:1]
         )
 
+    def test_single_giant_line_reports_truncation_without_numbering(self, tmp_path):
+        """A file whose first line exceeds the cap has no newline to cut
+        back to. The fragment goes out whole -- plain header, no numbered
+        lines, marker outside the numbering -- so the reviewer sees a
+        truncated file, never a disguised one."""
+        f = tmp_path / "g.py"
+        f.write_text("H" * 60000 + "\nalpha\nbeta\n")
+        diff = (
+            "diff --git a/g.py b/g.py\n"
+            "--- a/g.py\n+++ b/g.py\n"
+            "@@ -2,1 +2,1 @@\n-alpha\n+alpha_changed\n"
+        )
+        out, _ = _assemble_post_image(tmp_path, diff)
+        assert "## File: g.py\n" in out
+        assert "around the changes" not in out
+        assert "... [truncated at 50KB]" in out.splitlines()
+        assert not re.findall(r"^\d+: ", out, re.M)
+
     def test_rename_only_never_reaches_the_post_image(self, tmp_path):
         """Not a windowing decision -- it was already true.
 
