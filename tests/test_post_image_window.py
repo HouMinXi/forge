@@ -135,13 +135,13 @@ class TestWindowFileText:
         assert out == ""
         assert windowed is False
 
-    def test_negative_context_lines_behaves_as_zero(self):
-        """lo clamps at 1 and hi at len(lines), so a negative context
-        cannot invert the window; with the hunk covering the file it
-        comes back whole."""
-        out, windowed = _window_file_text("a\nb\nc", [_hunk(2, 2)], -5)
-        assert windowed is False
-        assert out == "a\nb\nc"
+    def test_negative_context_clamps_to_zero(self):
+        """A negative context would invert every region (lo > hi) and send
+        the whole file -- the opposite of narrowing. It clamps to zero:
+        only the hunk lines survive."""
+        out, windowed = _window_file_text("a\nb\nc\nd\ne", [_hunk(2, 3)], -5)
+        assert windowed is True
+        assert out == "... [1 lines omitted]\n2: b\n3: c\n... [2 lines omitted]"
 
     def test_out_of_range_hunk_does_not_corrupt_an_in_range_one(self):
         out, windowed = _window_file_text(

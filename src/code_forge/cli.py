@@ -917,6 +917,10 @@ def _window_file_text(
     result is no longer contiguous and the reviewer cannot count its way to
     a line that isn't there.
     """
+    # A negative context is a caller bug, not a request for a bigger file:
+    # left alone it inverts every region (lo > hi) and the whole text goes
+    # out under a plain header, the opposite of what narrowing is for.
+    context_lines = max(0, context_lines)
     lines = text.splitlines()
     if not hunks:
         return text, False
