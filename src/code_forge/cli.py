@@ -906,16 +906,96 @@ def _make_subagent_spawn(
     return _spawn
 
 
-def _assemble_post_image(cwd: Path, diff_text: str) -> tuple[str, str]:
+def _window_file_text(
+    text: str, hunks: list[dict], context_lines: int,
+) -> tuple[str, bool]:
+    """Keep the lines around each hunk, drop the rest.
+
+    Returns (windowed_text, was_windowed). Regions within context_lines of
+    each other merge, so a file changed throughout comes back whole rather
+    than as a run of one-line gaps. Line numbers are prefixed because the
+    result is no longer contiguous and the reviewer cannot count its way to
+    a line that isn't there.
+    """
+    # A negative context is a caller bug, not a request for a bigger file:
+    # left alone it inverts every region (lo > hi) and the whole text goes
+    # out under a plain header, the opposite of what narrowing is for.
+    context_lines = max(0, context_lines)
+    lines = text.splitlines()
+    if not hunks:
+        return text, False
+
+    # Sorted because the merge below only looks at the previous region.
+    # git emits hunks ascending, so this changes nothing today; it is what
+    # keeps the merge from silently emitting a line twice if that ever
+    # stops being true.
+    wanted: list[tuple[int, int]] = []
+    for h in sorted(hunks, key=lambda x: x["start"]):
+        lo = max(1, h["start"] - context_lines)
+        hi = min(len(lines), h["end"] + context_lines)
+        if lo > hi:
+            # The hunk lies entirely past the end of the text in hand --
+            # reachable when the caller truncated the file (the 50KB cap)
+            # but the diff still references lines beyond the cut. Keeping
+            # the region would emit a bare omission marker with no code
+            # under a header that promises "around the changes".
+            continue
+        if wanted and lo <= wanted[-1][1] + 1:
+            wanted[-1] = (wanted[-1][0], max(wanted[-1][1], hi))
+        else:
+            wanted.append((lo, hi))
+    if not wanted:
+        # Every hunk was out of range; windowing would drop the whole
+        # file. Send it whole instead -- truncated but present beats an
+        # empty block the reviewer misreads as a one-line change.
+        return text, False
+
+    kept = sum(hi - lo + 1 for lo, hi in wanted)
+    if kept >= len(lines):
+        return text, False
+
+    out: list[str] = []
+    prev_hi = 0
+    for lo, hi in wanted:
+        if lo > prev_hi + 1:
+            out.append("... [%d lines omitted]" % (lo - prev_hi - 1))
+        for n in range(lo, hi + 1):
+            out.append("%d: %s" % (n, lines[n - 1]))
+        prev_hi = hi
+    if prev_hi < len(lines):
+        out.append("... [%d lines omitted]" % (len(lines) - prev_hi))
+    return "\n".join(out), True
+
+
+def _assemble_post_image(
+    cwd: Path, diff_text: str, context_lines: int = 40,
+) -> tuple[str, str]:
     """Build post-image content and conventions digest for reviewer context.
 
     Shared by both Outlet C (subagent) and Outlet A (subprocess) paths.
     Returns (post_image, conventions_digest).
+
+    Only the neighbourhood of each hunk is included. Sending whole files
+    dominates the prompt -- on a seven-file change it measured 87% of the
+    input, most of it code the diff never touched -- and it grows with file
+    size rather than with the size of the change. What the reviewer needs
+    is the surroundings of the lines it is judging.
+
+    This is prompt context only. Verify rebuilds the post-image from the
+    diff itself (`_extract_post_image_lines`) and never reads this, so
+    narrowing here cannot weaken excerpt checking.
+
+    context_lines=0 keeps only the hunk lines. A file with no hunks in the
+    diff is returned whole, since there is nothing to window around --
+    though in practice such a file rarely gets here at all, because
+    get_changed_files lists only files carrying an added line and a
+    binary, rename, or mode-change entry has none.
     """
-    from .diff import get_changed_files
+    from .diff import get_changed_files, parse_diff_hunks
     from .conventions import get_digest
 
     changed_files = get_changed_files(diff_text or "")
+    hunk_map, _exempt = parse_diff_hunks(diff_text or "")
     cap = 50 * 1024
     parts: list[str] = []
     for cf in changed_files:
@@ -927,13 +1007,31 @@ def _assemble_post_image(cwd: Path, diff_text: str) -> tuple[str, str]:
                     raw = fh.read(cap)
                 if b"\x00" in raw[:1024]:
                     continue
+                # Cut at the last newline, not mid-line: a partial final
+                # line would make splitlines() report one giant first
+                # line, every diff hunk would fall past it, and the
+                # post-image would go out as a truncated fragment under
+                # a plain header -- the reviewer sees half a line and no
+                # sign that anything was cut.
+                nl = raw.rfind(b"\n")
+                if nl != -1:
+                    raw = raw[:nl]
                 text = raw.decode("utf-8", errors="replace")
-                text += "\n... [truncated at 50KB]"
+                truncated = True
             else:
                 text = fp.read_text(encoding="utf-8", errors="replace")
                 if b"\x00" in text.encode("utf-8", errors="replace")[:1024]:
                     continue
-            parts.append("## File: %s\n```\n%s\n```" % (cf, text))
+                truncated = False
+            text, windowed = _window_file_text(
+                text, hunk_map.get(cf, []), context_lines,
+            )
+            # Appended after windowing, not before: a marker inside the
+            # text would get a line number of its own and read as code.
+            if truncated:
+                text += "\n... [truncated at 50KB]"
+            label = "%s (around the changes)" % cf if windowed else cf
+            parts.append("## File: %s\n```\n%s\n```" % (label, text))
         except (OSError, IOError):
             pass
     return "\n\n".join(parts), get_digest(cwd)
