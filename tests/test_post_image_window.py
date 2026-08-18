@@ -3,6 +3,8 @@
 Whole files dominated the reviewer prompt and grew with file size rather
 than with the size of the change.
 """
+import re
+
 from code_forge.cli import _assemble_post_image, _window_file_text
 
 
@@ -198,6 +200,52 @@ class TestAssemblePostImage:
         out, _ = _assemble_post_image(tmp_path, diff, context_lines=40)
         assert "## File: big.py\n" in out, out[:120]
         assert "around the changes" not in out
+
+    def test_truncated_read_is_never_mistaken_for_a_whole_file(self, tmp_path):
+        """The 50KB cap can land mid-line. The cut must back up to the last
+        newline, and the truncated marker must survive, or splitlines()
+        reports one giant first line, every hunk falls past it, and the
+        reviewer gets a fragment under a plain header."""
+        f = tmp_path / "huge.py"
+        f.write_text("x" * 60000 + "\n" + "\n".join("row%d" % i for i in range(2, 300)))
+        diff = (
+            "diff --git a/huge.py b/huge.py\n"
+            "--- a/huge.py\n"
+            "+++ b/huge.py\n"
+            "@@ -100,1 +100,1 @@\n"
+            "-row100\n"
+            "+row100_changed\n"
+        )
+        out, _ = _assemble_post_image(tmp_path, diff)
+        assert "truncated at 50KB" in out
+
+    def test_truncated_read_drops_the_partial_line(self, tmp_path):
+        """The cap cut backs up to the last newline. Lines here are 100
+        bytes, so 50KB lands mid-line near line 512; a hunk near the cut
+        (line 500) windows over the boundary, and without the backup the
+        partial tail line shifts the numbering and leaves fragments."""
+        f = tmp_path / "t.py"
+
+        def line(i):
+            return "r%05d" % i + "x" * 93 + "\n"
+
+        f.write_text("".join(line(i) for i in range(1, 2000)))
+        diff = (
+            "diff --git a/t.py b/t.py\n"
+            "--- a/t.py\n+++ b/t.py\n"
+            "@@ -500,1 +500,1 @@\n"
+            "-" + line(500) + "+" + line(500).replace("x", "y")
+        )
+        out, _ = _assemble_post_image(tmp_path, diff)
+        numbered = re.findall(r"^\d+: (.*)$", out, re.M)
+        assert numbered, out[:200]
+        partial = [
+            ln for ln in numbered
+            if not (ln.endswith("x" * 93) or ln.endswith("y" * 93))
+        ]
+        assert not partial, (
+            "partial line(s) survived the 50KB cut: %r" % partial[:1]
+        )
 
     def test_rename_only_never_reaches_the_post_image(self, tmp_path):
         """Not a windowing decision -- it was already true.

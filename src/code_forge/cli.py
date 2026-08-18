@@ -1003,15 +1003,29 @@ def _assemble_post_image(
                     raw = fh.read(cap)
                 if b"\x00" in raw[:1024]:
                     continue
+                # Cut at the last newline, not mid-line: a partial final
+                # line would make splitlines() report one giant first
+                # line, every diff hunk would fall past it, and the
+                # post-image would go out as a truncated fragment under
+                # a plain header -- the reviewer sees half a line and no
+                # sign that anything was cut.
+                nl = raw.rfind(b"\n")
+                if nl != -1:
+                    raw = raw[:nl]
                 text = raw.decode("utf-8", errors="replace")
-                text += "\n... [truncated at 50KB]"
+                truncated = True
             else:
                 text = fp.read_text(encoding="utf-8", errors="replace")
                 if b"\x00" in text.encode("utf-8", errors="replace")[:1024]:
                     continue
+                truncated = False
             text, windowed = _window_file_text(
                 text, hunk_map.get(cf, []), context_lines,
             )
+            # Appended after windowing, not before: a marker inside the
+            # text would get a line number of its own and read as code.
+            if truncated:
+                text += "\n... [truncated at 50KB]"
             label = "%s (around the changes)" % cf if windowed else cf
             parts.append("## File: %s\n```\n%s\n```" % (label, text))
         except (OSError, IOError):
