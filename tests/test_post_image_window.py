@@ -130,6 +130,19 @@ class TestWindowFileText:
         assert windowed is False
         assert out == text
 
+    def test_empty_text_stays_empty(self):
+        out, windowed = _window_file_text("", [_hunk(1, 2)], 40)
+        assert out == ""
+        assert windowed is False
+
+    def test_negative_context_lines_behaves_as_zero(self):
+        """lo clamps at 1 and hi at len(lines), so a negative context
+        cannot invert the window; with the hunk covering the file it
+        comes back whole."""
+        out, windowed = _window_file_text("a\nb\nc", [_hunk(2, 2)], -5)
+        assert windowed is False
+        assert out == "a\nb\nc"
+
     def test_out_of_range_hunk_does_not_corrupt_an_in_range_one(self):
         out, windowed = _window_file_text(
             self._text(100), [_hunk(10, 12), _hunk(500, 510)], 5,
