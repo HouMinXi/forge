@@ -1,0 +1,62 @@
+{
+  "cycle": 1,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "00af75ecd02dd1ea33ab8b9829cf28ef41c717e89a34c45e3b62f7c987e3a6a6",
+  "timestamp": "2026-08-18T01:32:17.182958+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "tests/test_outlet_c_cli.py",
+      "start_line": 120,
+      "end_line": 124,
+      "content": "            \"subprocess.run\",\n            return_value=fake_diff_result,\n        ):\n            result = _dispatch_inline_canary(\n                \"inline\", args, env, {}, gate_data, tmp_path)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_outlet_c_cli.py",
+      "start_line": 137,
+      "end_line": 148,
+      "content": "            assert mock_llm.call_count >= 1, (\n                \"llm_invoke was never called -- canary is silently dead\"\n            )\n            # None is a legal return here -- it means \"not my outlet, go\n            # run the subprocess path\".  For inline that answer is wrong,\n            # and wrong quietly: the caller would fall through and review\n            # the diff a second time.\n            from code_forge.state import Verdict\n            assert isinstance(result, Verdict), (\n                \"inline returned %s, so the caller falls through to the \"\n                \"subprocess path\" % type(result).__name__\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_outlet_c_cli.py",
+      "start_line": 120,
+      "end_line": 124,
+      "content": "            \"subprocess.run\",\n            return_value=fake_diff_result,\n        ):\n            result = _dispatch_inline_canary(\n                \"inline\", args, env, {}, gate_data, tmp_path)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_outlet_c_cli.py",
+      "start_line": 138,
+      "end_line": 149,
+      "content": "            assert mock_llm.call_count >= 1, (\n                \"llm_invoke was never called -- canary is silently dead\"\n            )\n            # None is a legal return here -- it means \"not my outlet, go\n            # run the subprocess path\".  For inline that answer is wrong,\n            # and wrong quietly: the caller would fall through and review\n            # the diff a second time.\n            from code_forge.state import Verdict\n            assert isinstance(result, Verdict), (\n                \"inline returned %s, so the caller falls through to the \"\n                \"subprocess path\" % type(result).__name__\n            )",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_outlet_c_cli.py",
+      "start_line": 123,
+      "end_line": 124,
+      "content": "            result = _dispatch_inline_canary(\n                \"inline\", args, env, {}, gate_data, tmp_path)",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_outlet_c_cli.py",
+      "start_line": 141,
+      "end_line": 149,
+      "content": "            # None is a legal return here -- it means \"not my outlet, go\n            # run the subprocess path\".  For inline that answer is wrong,\n            # and wrong quietly: the caller would fall through and review\n            # the diff a second time.\n            from code_forge.state import Verdict\n            assert isinstance(result, Verdict), (\n                \"inline returned %s, so the caller falls through to the \"\n                \"subprocess path\" % type(result).__name__\n            )",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "tests/test_outlet_c_cli.py",
+      "start": 120,
+      "end": 152
+    }
+  ]
+}

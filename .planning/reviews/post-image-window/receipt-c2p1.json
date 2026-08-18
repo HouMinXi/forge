@@ -1,0 +1,67 @@
+{
+  "cycle": 2,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "ffada01f6a8a16df5f61416fc40b37eb0877ee1f7a5033a74d983586eb4e3fdb",
+  "timestamp": "2026-08-18T01:56:02.854926+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 929,
+      "end_line": 950,
+      "content": "    for h in sorted(hunks, key=lambda x: x[\"start\"]):\n        lo = max(1, h[\"start\"] - context_lines)\n        hi = min(len(lines), h[\"end\"] + context_lines)\n        if lo > hi:\n            # The hunk lies entirely past the end of the text in hand --\n            # reachable when the caller truncated the file (the 50KB cap)\n            # but the diff still references lines beyond the cut. Keeping\n            # the region would emit a bare omission marker with no code\n            # under a header that promises \"around the changes\".\n            continue\n        if wanted and lo <= wanted[-1][1] + 1:\n            wanted[-1] = (wanted[-1][0], max(wanted[-1][1], hi))\n        else:\n            wanted.append((lo, hi))\n    if not wanted:\n        # Every hunk was out of range; windowing would drop the whole\n        # file. Send it whole instead -- truncated but present beats an\n        # empty block the reviewer misreads as a one-line change.\n        return text, False\n\n    kept = sum(hi - lo + 1 for lo, hi in wanted)\n    if kept >= len(lines):",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_post_image_window.py",
+      "start_line": 119,
+      "end_line": 141,
+      "content": "        assert \"10: line10\" in out\n        assert \"line11\" not in out\n\n    def test_hunk_beyond_eof_falls_back_to_whole_text(self):\n        \"\"\"A 50KB-truncated read leaves every hunk past the cut. Windowing\n        there would emit omission markers with no code under them, so the\n        file goes out whole instead.\"\"\"\n        text = self._text(10)\n        out, windowed = _window_file_text(text, [_hunk(500, 510)], 40)\n        assert windowed is False\n        assert out == text\n\n    def test_out_of_range_hunk_does_not_corrupt_an_in_range_one(self):\n        out, windowed = _window_file_text(\n            self._text(100), [_hunk(10, 12), _hunk(500, 510)], 5,\n        )\n        assert windowed is True\n        assert \"10: line10\" in out\n        # The out-of-range hunk contributes no bare omission run of its own:\n        # the only large gap is the file tail after line 17.\n        assert \"... [83 lines omitted]\" in out\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 929,
+      "end_line": 950,
+      "content": "    for h in sorted(hunks, key=lambda x: x[\"start\"]):\n        lo = max(1, h[\"start\"] - context_lines)\n        hi = min(len(lines), h[\"end\"] + context_lines)\n        if lo > hi:\n            # The hunk lies entirely past the end of the text in hand --\n            # reachable when the caller truncated the file (the 50KB cap)\n            # but the diff still references lines beyond the cut. Keeping\n            # the region would emit a bare omission marker with no code\n            # under a header that promises \"around the changes\".\n            continue\n        if wanted and lo <= wanted[-1][1] + 1:\n            wanted[-1] = (wanted[-1][0], max(wanted[-1][1], hi))\n        else:\n            wanted.append((lo, hi))\n    if not wanted:\n        # Every hunk was out of range; windowing would drop the whole\n        # file. Send it whole instead -- truncated but present beats an\n        # empty block the reviewer misreads as a one-line change.\n        return text, False\n\n    kept = sum(hi - lo + 1 for lo, hi in wanted)\n    if kept >= len(lines):",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_post_image_window.py",
+      "start_line": 119,
+      "end_line": 142,
+      "content": "        assert \"10: line10\" in out\n        assert \"line11\" not in out\n\n    def test_hunk_beyond_eof_falls_back_to_whole_text(self):\n        \"\"\"A 50KB-truncated read leaves every hunk past the cut. Windowing\n        there would emit omission markers with no code under them, so the\n        file goes out whole instead.\"\"\"\n        text = self._text(10)\n        out, windowed = _window_file_text(text, [_hunk(500, 510)], 40)\n        assert windowed is False\n        assert out == text\n\n    def test_out_of_range_hunk_does_not_corrupt_an_in_range_one(self):\n        out, windowed = _window_file_text(\n            self._text(100), [_hunk(10, 12), _hunk(500, 510)], 5,\n        )\n        assert windowed is True\n        assert \"10: line10\" in out\n        # The out-of-range hunk contributes no bare omission run of its own:\n        # the only large gap is the file tail after line 17.\n        assert \"... [83 lines omitted]\" in out\n\nclass TestAssemblePostImage:",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "src/code_forge/cli.py",
+      "start_line": 929,
+      "end_line": 950,
+      "content": "    for h in sorted(hunks, key=lambda x: x[\"start\"]):\n        lo = max(1, h[\"start\"] - context_lines)\n        hi = min(len(lines), h[\"end\"] + context_lines)\n        if lo > hi:\n            # The hunk lies entirely past the end of the text in hand --\n            # reachable when the caller truncated the file (the 50KB cap)\n            # but the diff still references lines beyond the cut. Keeping\n            # the region would emit a bare omission marker with no code\n            # under a header that promises \"around the changes\".\n            continue\n        if wanted and lo <= wanted[-1][1] + 1:\n            wanted[-1] = (wanted[-1][0], max(wanted[-1][1], hi))\n        else:\n            wanted.append((lo, hi))\n    if not wanted:\n        # Every hunk was out of range; windowing would drop the whole\n        # file. Send it whole instead -- truncated but present beats an\n        # empty block the reviewer misreads as a one-line change.\n        return text, False\n\n    kept = sum(hi - lo + 1 for lo, hi in wanted)\n    if kept >= len(lines):",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_post_image_window.py",
+      "start_line": 119,
+      "end_line": 140,
+      "content": "        assert \"10: line10\" in out\n        assert \"line11\" not in out\n\n    def test_hunk_beyond_eof_falls_back_to_whole_text(self):\n        \"\"\"A 50KB-truncated read leaves every hunk past the cut. Windowing\n        there would emit omission markers with no code under them, so the\n        file goes out whole instead.\"\"\"\n        text = self._text(10)\n        out, windowed = _window_file_text(text, [_hunk(500, 510)], 40)\n        assert windowed is False\n        assert out == text\n\n    def test_out_of_range_hunk_does_not_corrupt_an_in_range_one(self):\n        out, windowed = _window_file_text(\n            self._text(100), [_hunk(10, 12), _hunk(500, 510)], 5,\n        )\n        assert windowed is True\n        assert \"10: line10\" in out\n        # The out-of-range hunk contributes no bare omission run of its own:\n        # the only large gap is the file tail after line 17.\n        assert \"... [83 lines omitted]\" in out\n",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "src/code_forge/cli.py",
+      "start": 929,
+      "end": 950
+    },
+    {
+      "file": "tests/test_post_image_window.py",
+      "start": 119,
+      "end": 143
+    }
+  ]
+}

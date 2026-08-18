@@ -1,0 +1,41 @@
+{
+  "cycle": 4,
+  "pass": 1,
+  "skill": "qodo-review",
+  "diff_sha256": "e12f19299dc89c65ae64ccc55e46167fbedf190065e7ff8cd5fe1616904067f7",
+  "timestamp": "2026-08-18T02:05:47.124751+00:00",
+  "pass_status": "completed",
+  "findings_count": 0,
+  "findings": [],
+  "anchors": [],
+  "code_excerpts": [
+    {
+      "file": "tests/test_post_image_window.py",
+      "start_line": 135,
+      "end_line": 141,
+      "content": "        assert windowed is True\n        assert \"10: line10\" in out\n        # The out-of-range hunk contributes no bare omission run of its own:\n        # the only large gap is the file tail after line 17 (hunk 10-12\n        # plus 5 lines of context on each side).\n        assert \"... [%d lines omitted]\" % (100 - 17) in out\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_post_image_window.py",
+      "start_line": 135,
+      "end_line": 141,
+      "content": "        assert windowed is True\n        assert \"10: line10\" in out\n        # The out-of-range hunk contributes no bare omission run of its own:\n        # the only large gap is the file tail after line 17 (hunk 10-12\n        # plus 5 lines of context on each side).\n        assert \"... [%d lines omitted]\" % (100 - 17) in out\n",
+      "rationale": "reviewer-provided"
+    },
+    {
+      "file": "tests/test_post_image_window.py",
+      "start_line": 135,
+      "end_line": 141,
+      "content": "        assert windowed is True\n        assert \"10: line10\" in out\n        # The out-of-range hunk contributes no bare omission run of its own:\n        # the only large gap is the file tail after line 17 (hunk 10-12\n        # plus 5 lines of context on each side).\n        assert \"... [%d lines omitted]\" % (100 - 17) in out\n",
+      "rationale": "reviewer-provided"
+    }
+  ],
+  "covered_line_ranges": [
+    {
+      "file": "tests/test_post_image_window.py",
+      "start": 135,
+      "end": 143
+    }
+  ]
+}
