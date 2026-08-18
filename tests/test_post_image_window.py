@@ -135,8 +135,9 @@ class TestWindowFileText:
         assert windowed is True
         assert "10: line10" in out
         # The out-of-range hunk contributes no bare omission run of its own:
-        # the only large gap is the file tail after line 17.
-        assert "... [83 lines omitted]" in out
+        # the only large gap is the file tail after line 17 (hunk 10-12
+        # plus 5 lines of context on each side).
+        assert "... [%d lines omitted]" % (100 - 17) in out
 
 
 class TestAssemblePostImage:
