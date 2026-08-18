@@ -929,10 +929,22 @@ def _window_file_text(
     for h in sorted(hunks, key=lambda x: x["start"]):
         lo = max(1, h["start"] - context_lines)
         hi = min(len(lines), h["end"] + context_lines)
+        if lo > hi:
+            # The hunk lies entirely past the end of the text in hand --
+            # reachable when the caller truncated the file (the 50KB cap)
+            # but the diff still references lines beyond the cut. Keeping
+            # the region would emit a bare omission marker with no code
+            # under a header that promises "around the changes".
+            continue
         if wanted and lo <= wanted[-1][1] + 1:
             wanted[-1] = (wanted[-1][0], max(wanted[-1][1], hi))
         else:
             wanted.append((lo, hi))
+    if not wanted:
+        # Every hunk was out of range; windowing would drop the whole
+        # file. Send it whole instead -- truncated but present beats an
+        # empty block the reviewer misreads as a one-line change.
+        return text, False
 
     kept = sum(hi - lo + 1 for lo, hi in wanted)
     if kept >= len(lines):

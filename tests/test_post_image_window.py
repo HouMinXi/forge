@@ -119,6 +119,25 @@ class TestWindowFileText:
         assert "10: line10" in out
         assert "line11" not in out
 
+    def test_hunk_beyond_eof_falls_back_to_whole_text(self):
+        """A 50KB-truncated read leaves every hunk past the cut. Windowing
+        there would emit omission markers with no code under them, so the
+        file goes out whole instead."""
+        text = self._text(10)
+        out, windowed = _window_file_text(text, [_hunk(500, 510)], 40)
+        assert windowed is False
+        assert out == text
+
+    def test_out_of_range_hunk_does_not_corrupt_an_in_range_one(self):
+        out, windowed = _window_file_text(
+            self._text(100), [_hunk(10, 12), _hunk(500, 510)], 5,
+        )
+        assert windowed is True
+        assert "10: line10" in out
+        # The out-of-range hunk contributes no bare omission run of its own:
+        # the only large gap is the file tail after line 17.
+        assert "... [83 lines omitted]" in out
+
 
 class TestAssemblePostImage:
     """The whole assembly, against real files and a real diff."""
