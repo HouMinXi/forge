@@ -825,4 +825,4 @@ don't silently let them go.
 
 | Date | Task | Result |
 |------|------|--------|
-| 2026-08-20 | cache-token visibility (charter mcp_prompt_caching fix 1) | fix/cache-token-visibility @ 299353e, 3-round review, 3466 tests pass, unmerged |
+| 2026-08-20 | cache-token visibility (charter mcp_prompt_caching fix 1) | fix/cache-token-visibility @ 299353e, 3-round review; MERGED to main (12c9709), 3495 tests pass post-merge |
