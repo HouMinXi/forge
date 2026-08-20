@@ -667,10 +667,15 @@ def _build_parser() -> argparse.ArgumentParser:
             'backend is unreachable and no explicit override is set.'
         ),
     )
-    subparsers.add_parser(
+    doctor_parser = subparsers.add_parser(
         'doctor',
         help='Run self-check on workspace, backends, trust, and MCP. '
              'Exit 0 = all green, 1 = any FAIL or SKIP.',
+    )
+    doctor_parser.add_argument(
+        "--live", action="store_true",
+        help="also perform one real chat completion per api backend "
+             "(60s budget each, no retries); requires network",
     )
 
     # --- INIT subcommand: generate gate.yaml template ---
@@ -1894,7 +1899,8 @@ def main() -> int:
 
     elif args.subcommand == 'doctor':
         from .doctor import run_doctor
-        return run_doctor(cwd=Path.cwd(), env=os.environ)
+        return run_doctor(cwd=Path.cwd(), env=os.environ,
+                          live=getattr(args, 'live', False))
 
     elif args.subcommand == 'trust':
         return _run_trust(args, cwd=Path.cwd())

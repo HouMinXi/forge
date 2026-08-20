@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import textwrap
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -639,3 +641,165 @@ class TestUserConfigLine:
         # not; either branch must render without raising.
         rc, out = self._run(tmp_path, capsys)
         assert "user config:" in out
+
+
+class TestDoctorLive:
+    """--live: opt-in real completions, additive rows, exit pipeline.
+
+    The live helper is patched at code_forge.backend (doctor imports
+    it function-locally, so the source module is the patch target).
+    """
+
+    def _workspace(self, tmp_path, backend_type="api"):
+        ws = tmp_path / "project"
+        gate_dir = ws / ".code-forge"
+        gate_dir.mkdir(parents=True)
+        if backend_type == "api":
+            (gate_dir / "gate.yaml").write_text(textwrap.dedent("""\
+                backends:
+                  demo:
+                    type: api
+                    model: test-model
+                    format: openai
+                    base_url: https://api.example.com/v1
+                    api_key_env: DEMO_API_KEY
+                outlet: subprocess
+            """))
+        else:
+            (gate_dir / "gate.yaml").write_text(textwrap.dedent("""\
+                backends:
+                  local:
+                    type: cli
+                    model: claude-sonnet-4-6
+                outlet: subprocess
+            """))
+        (gate_dir / "tools.yaml").write_text(textwrap.dedent("""\
+            tools:
+              pyver:
+                command: python3
+                output_format: grep_line
+                file_patterns: ["*.py"]
+        """))
+        return ws
+
+    def _green_ctx(self):
+        return [
+            patch("code_forge.doctor._check_handshake",
+                  return_value=(True, "code-forge-mcp")),
+            patch("code_forge.doctor._check_registries",
+                  return_value=[("Claude Code", "PRESENT")]),
+            patch("code_forge.trust.trust_status",
+                  return_value=MagicMock(trusted=True)),
+        ]
+
+    def test_default_path_never_calls_live_helper(self, tmp_path,
+                                                  capsys):
+        ws = self._workspace(tmp_path)
+        with ExitStack() as stack, \
+             patch("code_forge.backend.probe_backend_live") as live:
+            for ctx in self._green_ctx():
+                stack.enter_context(ctx)
+            rc = run_doctor(cwd=ws, env={"DEMO_API_KEY": "k"})
+        live.assert_not_called()
+        assert rc == 0
+        assert "live:" not in capsys.readouterr().out
+
+    def test_live_on_success_row(self, tmp_path, capsys):
+        from code_forge.backend import LiveProbeResult
+        ws = self._workspace(tmp_path)
+        with ExitStack() as stack, \
+             patch("code_forge.backend.probe_backend_live",
+                   return_value=LiveProbeResult(ok=True)) as live:
+            for ctx in self._green_ctx():
+                stack.enter_context(ctx)
+            rc = run_doctor(cwd=ws, env={"DEMO_API_KEY": "k"},
+                            live=True)
+        live.assert_called_once()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "live: ok" in out
+        # offline row still present alongside
+        assert "demo (project)" in out
+
+    def test_live_on_failure_fails_exit(self, tmp_path, capsys):
+        from code_forge.backend import LiveProbeResult
+        ws = self._workspace(tmp_path)
+        fail = LiveProbeResult(
+            ok=False, error_class="http-error",
+            detail="code-forge: demo backend: HTTP error (404)",
+            suggestion="Inspect the body excerpt",
+        )
+        with ExitStack() as stack, \
+             patch("code_forge.backend.probe_backend_live",
+                   return_value=fail):
+            for ctx in self._green_ctx():
+                stack.enter_context(ctx)
+            rc = run_doctor(cwd=ws, env={"DEMO_API_KEY": "k"},
+                            live=True)
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "http-error" in out
+        assert "FAIL" in out
+
+    @pytest.mark.parametrize("error_class", [
+        "timeout", "credential-rejected", "connection-refused",
+        "SSE-mixed", "JSON-malformed", "truncated-output",
+        "http-error", "unclassified",
+    ])
+    def test_all_eight_classes_render(self, tmp_path, capsys,
+                                      error_class):
+        from code_forge.backend import LiveProbeResult
+        from code_forge.doctor import _check_backends
+        gate_data = {"backends": {"demo": {
+            "type": "api", "model": "m", "format": "openai",
+            "base_url": "https://api.example.com/v1",
+            "api_key_env": "DEMO_API_KEY",
+        }}}
+        result = LiveProbeResult(
+            ok=False, error_class=error_class,
+            detail="something failed", suggestion="do the thing",
+        )
+        with patch("code_forge.backend.probe_backend",
+                   return_value=MagicMock(ok=True)), \
+             patch("code_forge.backend.probe_backend_live",
+                   return_value=result):
+            diag, _ = _check_backends(
+                Path("/ws"), gate_data, {}, live=True)
+        live_rows = [m for ok, m in diag if "live:" in m]
+        assert len(live_rows) == 1
+        assert error_class in live_rows[0]
+        assert "do the thing" in live_rows[0]
+        assert any(ok is False for ok, _ in diag)
+
+    def test_cli_backend_skips_live_helper(self, tmp_path, capsys):
+        ws = self._workspace(tmp_path, backend_type="cli")
+        with ExitStack() as stack, \
+             patch("code_forge.backend.probe_backend_live") as live:
+            for ctx in self._green_ctx():
+                stack.enter_context(ctx)
+            rc = run_doctor(cwd=ws, env={}, live=True)
+        live.assert_not_called()
+        out = capsys.readouterr().out
+        assert "skipped" in out
+        assert "no live probe applies" in out
+
+
+class TestDoctorLiveCliDispatch:
+    """main()-level: the --live flag must reach run_doctor."""
+
+    def test_doctor_live_flag_reaches_run_doctor(self, monkeypatch):
+        from code_forge import cli as cli_mod
+
+        calls = {}
+
+        def fake_run_doctor(cwd, env, live=False):
+            calls["live"] = live
+            return 0
+
+        monkeypatch.setattr("code_forge.doctor.run_doctor",
+                            fake_run_doctor)
+        monkeypatch.setattr(sys, "argv", [
+            "code-forge", "doctor", "--live"])
+        cli_mod.main()
+
+        assert calls.get("live") is True

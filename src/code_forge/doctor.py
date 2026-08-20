@@ -117,13 +117,18 @@ def _check_trust(
 
 def _check_backends(
     workspace: Path, gate_data: dict, env: Mapping[str, str],
+    live: bool = False,
 ) -> tuple[list[tuple[bool, str]], list | None]:
     """Return diagnostic lines AND merged BackendConfig list.
 
     Returns configs=None on config-validation error (backends exist but
     are invalid), distinct from configs=[] (no backends at all).
     """
-    from code_forge.backend import load_backend_configs, probe_backend
+    from code_forge.backend import (
+        load_backend_configs,
+        probe_backend,
+        probe_backend_live,
+    )
     from code_forge.errors import CliError
     from code_forge.user_config import load_user_backends, merge_backends
 
@@ -158,6 +163,39 @@ def _check_backends(
         except Exception as exc:
             diag.append(
                 (False, "%s %s: %s" % (cfg.name, provenance, exc)))
+
+        if not live:
+            continue
+        # Direct call, never probe_backend: its 5-minute success cache
+        # would suppress the network call the live probe exists to
+        # make, and doctor would report a cached guess as liveness.
+        if cfg.type != "api":
+            diag.append((
+                True,
+                "%s %s live: skipped (cli backends are trusted as "
+                "configured; no live probe applies)"
+                % (cfg.name, provenance),
+            ))
+            continue
+        try:
+            live_result = probe_backend_live(cfg)
+            if live_result.ok:
+                diag.append((
+                    True, "%s %s live: ok" % (cfg.name, provenance)))
+            else:
+                diag.append((
+                    False,
+                    "%s %s live: %s -- %s; %s"
+                    % (cfg.name, provenance,
+                       live_result.error_class,
+                       live_result.detail,
+                       live_result.suggestion),
+                ))
+        except Exception as exc:
+            diag.append((
+                False,
+                "%s %s live: %s" % (cfg.name, provenance, exc),
+            ))
     return (diag, configs)
 
 
@@ -435,7 +473,7 @@ def _audit_tools(
 
 
 def run_doctor(
-    cwd: Path, env: Mapping[str, str],
+    cwd: Path, env: Mapping[str, str], live: bool = False,
 ) -> int:
     """Run all checks and print diagnostic output. Returns 0 or 1."""
     has_fail = False
@@ -462,7 +500,7 @@ def run_doctor(
                 has_fail = True
 
             diag_lines, configs = _check_backends(
-                workspace, gate_data, env)
+                workspace, gate_data, env, live=live)
             for ok_b, msg_b in diag_lines:
                 _line("backend", msg_b, ok_b)
                 if not ok_b:
