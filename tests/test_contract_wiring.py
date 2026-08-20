@@ -19,6 +19,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def _isolate_project_dir(monkeypatch):
+    """Walk-up resolution reads FORGE_PROJECT_DIR from os.environ.
+
+    _run_trust takes no env parameter, so an exported value on the
+    host would hijack every resolution -- isolate it for all tests
+    here, not just the new walk-up ones.
+    """
+    monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
+
+
 
 # ---------------------------------------------------------------------------
 # Outlet A: build_l1_provider

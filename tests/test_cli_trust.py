@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -318,3 +319,148 @@ class TestTrustParser:
         parser = _build_parser()
         args = parser.parse_args(["trust"])
         assert args.subcommand == "trust"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_project_dir(monkeypatch):
+    """Walk-up resolution reads FORGE_PROJECT_DIR from os.environ.
+
+    _run_trust takes no env parameter, so an exported value on the
+    host would hijack every resolution -- isolate it for all trust
+    tests, not just the new walk-up ones.
+    """
+    monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
+
+
+def _gate_yaml_at(root: Path) -> None:
+    code_forge = root / ".code-forge"
+    code_forge.mkdir(parents=True, exist_ok=True)
+    (code_forge / "gate.yaml").write_text(yaml.dump({
+        "backends": {
+            "test-backend": {
+                "type": "api",
+                "format": "openai",
+                "base_url": "https://api.example.com/v1",
+                "api_key_env": "TEST_KEY",
+                "model": "test-model",
+                "max_tokens": 4096,
+            }
+        }
+    }))
+
+
+class TestTrustWalkUp:
+    """Trust issued from a subdirectory reaches the ancestor gate.yaml."""
+
+    def test_walk_up_resolves_ancestor_gate_yaml(self, tmp_path):
+        from types import SimpleNamespace
+        from code_forge.cli import _run_trust
+
+        _gate_yaml_at(tmp_path)
+        subdir = tmp_path / "sub" / "dir"
+        subdir.mkdir(parents=True)
+
+        args = SimpleNamespace(status=False, revoke=False)
+        with patch("code_forge.trust.record_trust") as mock_record:
+            rc = _run_trust(args, subdir)
+
+        assert rc == 0
+        expected = tmp_path / ".code-forge" / "gate.yaml"
+        assert mock_record.call_args[0][0] == expected
+
+    def test_path_printed_before_record_trust(self, tmp_path, capsys):
+        from types import SimpleNamespace
+        from code_forge.cli import _run_trust
+
+        _gate_yaml_at(tmp_path)
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+
+        seen_stderr_at_call = []
+        args = SimpleNamespace(status=False, revoke=False)
+
+        def capture_and_record(*a, **kw):
+            seen_stderr_at_call.append(capsys.readouterr().err)
+            return None
+
+        with patch("code_forge.trust.record_trust",
+                   side_effect=capture_and_record):
+            rc = _run_trust(args, subdir)
+
+        assert rc == 0
+        expected = str(tmp_path / ".code-forge" / "gate.yaml")
+        assert seen_stderr_at_call, "record_trust was never called"
+        assert expected in seen_stderr_at_call[0], (
+            "resolved path must be on stderr BEFORE record_trust runs")
+
+    def test_off_root_warn_names_both_paths(self, tmp_path, capsys):
+        from types import SimpleNamespace
+        from code_forge.cli import _run_trust
+
+        _gate_yaml_at(tmp_path)
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+
+        args = SimpleNamespace(status=False, revoke=False)
+        with patch("code_forge.trust.record_trust"):
+            rc = _run_trust(args, subdir)
+
+        assert rc == 0  # warn-and-proceed, never an error
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert str(subdir.resolve()) in err
+        assert str(tmp_path.resolve()) in err
+
+    def test_revoke_prints_path_before_revoke(self, tmp_path, capsys):
+        from types import SimpleNamespace
+        from code_forge.cli import _run_trust
+
+        _gate_yaml_at(tmp_path)
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+
+        seen_stderr_at_call = []
+        args = SimpleNamespace(status=False, revoke=True)
+
+        def capture_and_revoke(*a, **kw):
+            seen_stderr_at_call.append(capsys.readouterr().err)
+            return None
+
+        with patch("code_forge.trust.revoke_trust",
+                   side_effect=capture_and_revoke):
+            rc = _run_trust(args, subdir)
+
+        assert rc == 0
+        expected = str(tmp_path / ".code-forge" / "gate.yaml")
+        assert seen_stderr_at_call, "revoke_trust was never called"
+        assert expected in seen_stderr_at_call[0]
+
+    def test_no_ancestor_keeps_not_found_error(self, tmp_path, capsys):
+        from types import SimpleNamespace
+        from code_forge.cli import _run_trust, EXIT_CLI_ERROR
+
+        # tmp_path itself has no .code-forge; no ancestor of it does
+        # either (walk-up skips $HOME).
+        args = SimpleNamespace(status=False, revoke=False)
+        rc = _run_trust(args, tmp_path)
+
+        assert rc == EXIT_CLI_ERROR
+        assert "gate.yaml not found" in capsys.readouterr().err
+
+    def test_status_from_subdir_has_no_warn_line(
+            self, tmp_path, trust_home, capsys):
+        from types import SimpleNamespace
+        from code_forge.cli import _run_trust
+
+        _gate_yaml_at(tmp_path)
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+
+        args = SimpleNamespace(status=True, revoke=False)
+        rc = _run_trust(args, subdir)
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "Warning" not in err, (
+            "--status is a read-only probe and must not warn")
+        assert str(tmp_path / ".code-forge" / "gate.yaml") in err

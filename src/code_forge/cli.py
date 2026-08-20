@@ -1311,8 +1311,22 @@ def _run_trust(args, cwd: Path) -> int:
         trust_status,
         trust_status_contracts,
     )
+    from .workspace import resolve_workspace
 
-    gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
+    # Same resolution doctor and the MCP server use: an ancestor
+    # gate.yaml owns the workspace, so trust issued from a
+    # subdirectory must reach it instead of erroring on a cwd join.
+    workspace = resolve_workspace(cwd, os.environ)
+    gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
+    cwd_abs = cwd.resolve()
+    # Mutating paths announce the climb; --status stays silent.
+    off_root_warning = None
+    if workspace != cwd_abs:
+        off_root_warning = (
+            "Warning: cwd %s is below workspace root %s; "
+            "the ancestor gate.yaml is the mutation target"
+            % (cwd_abs, workspace)
+        )
     try:
         with open(gate_yaml_path, "r", encoding="utf-8") as _f:
             gd = _y.safe_load(_f)
@@ -1334,7 +1348,7 @@ def _run_trust(args, cwd: Path) -> int:
         )
         return EXIT_CLI_ERROR
 
-    contracts_yaml_path = cwd / ".code-forge" / "contracts.yaml"
+    contracts_yaml_path = workspace / ".code-forge" / "contracts.yaml"
 
     if args.status:
         s = trust_status(gate_yaml_path, gd)
@@ -1348,7 +1362,7 @@ def _run_trust(args, cwd: Path) -> int:
         if contracts_yaml_path.is_file():
             from .contract_loader import resolve_contract_specs
             resolved_specs = resolve_contract_specs(
-                contracts_yaml_path, cwd,
+                contracts_yaml_path, workspace,
             )
             trust_contents = [
                 (abs_path, content)
@@ -1368,6 +1382,13 @@ def _run_trust(args, cwd: Path) -> int:
         return EXIT_PASS
 
     if args.revoke:
+        if off_root_warning:
+            print(off_root_warning, file=sys.stderr)
+        # Announce the target before the store changes so a revoke
+        # issued from a subdirectory is auditable.
+        print(
+            "Revoking trust at %s" % gate_yaml_path, file=sys.stderr,
+        )
         revoke_trust(gate_yaml_path)
         print(
             "Trust revoked for %s" % gate_yaml_path, file=sys.stderr,
@@ -1405,12 +1426,17 @@ def _run_trust(args, cwd: Path) -> int:
                 "  %s.%s = %s" % (bname, fname, fvalue),
                 file=sys.stderr,
             )
+    if off_root_warning:
+        print(off_root_warning, file=sys.stderr)
+    # Announce the target before the store changes so a trust issued
+    # from a subdirectory is auditable.
+    print("Trusting %s" % gate_yaml_path, file=sys.stderr)
     record_trust(gate_yaml_path, gd)
     print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
     if contracts_yaml_path.is_file():
         from .contract_loader import resolve_contract_specs
         resolved_specs = resolve_contract_specs(
-            contracts_yaml_path, cwd,
+            contracts_yaml_path, workspace,
         )
         trust_contents = [
             (abs_path, content)
