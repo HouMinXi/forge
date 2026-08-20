@@ -247,6 +247,7 @@ class StateMachine:
         """Initialize per-round cost accumulator (CLI-08 H3)."""
         self._round_input_tokens: int = 0
         self._round_output_tokens: int = 0
+        self._round_cached_tokens: int = 0
         self._round_duration: float = 0.0
         self._pass_counter: int = 0
         self._advisories: "list[AdvisoryFinding]" = []
@@ -779,6 +780,7 @@ class StateMachine:
         # Accumulate round-level token usage (H3: applied after round ends)
         self._round_input_tokens += usage.input_tokens
         self._round_output_tokens += usage.output_tokens
+        self._round_cached_tokens += usage.cached_input_tokens
         self._round_duration += duration
         l1_findings: list[StateFinding] = []
         total = len(l1_candidates)
@@ -981,6 +983,7 @@ class StateMachine:
         #     "cycle" = round_index.
         self._state.cost_total_input += self._round_input_tokens
         self._state.cost_total_output += self._round_output_tokens
+        self._state.cost_total_cached += self._round_cached_tokens
         self._state.cost_total_duration += self._round_duration
         for i in range(3):
             self._pass_counter += 1
@@ -989,12 +992,14 @@ class StateMachine:
                 "cycle": round_index,
                 "input": self._round_input_tokens // 3,
                 "output": self._round_output_tokens // 3,
+                "cached": self._round_cached_tokens // 3,
                 "duration_s": round(self._round_duration / 3.0, 3),
             })
         self._state.cost_passes = self._pass_counter
         # Reset round accumulators for next round.
         self._round_input_tokens = 0
         self._round_output_tokens = 0
+        self._round_cached_tokens = 0
         self._round_duration = 0.0
         from .receipt import write_receipts
         from .verify import parse_diff_files

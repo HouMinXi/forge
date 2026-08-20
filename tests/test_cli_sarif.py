@@ -350,6 +350,31 @@ class TestTokenCostWiringApiBackend:
         assert tc["passes"] == 2
         assert tc["durationSeconds"] == 5.0
 
+    def test_token_cost_carries_cached_tokens(self, state_dir,
+                                               mock_registry):
+        state_path = state_dir / "state.json"
+        state = _make_state(Verdict.PASS, [])
+        state.cost_total_input = 31
+        state.cost_total_output = 16
+        state.cost_total_cached = 6720
+        state.cost_passes = 1
+        save_state(state, state_path)
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout), patch("sys.stderr",
+                                                StringIO()), \
+             patch("code_forge.cli.capture_tool_version",
+                   return_value="0.1.0"):
+            _emit_ci_output(
+                state_path, mock_registry,
+                backend_name="mimo-pro",
+                backend_model="mimo-v2.5-pro",
+            )
+
+        sarif = json.loads(stdout.getvalue())
+        tc = sarif["runs"][0]["properties"]["tokenCost"]
+        assert tc["cachedTokens"] == 6720
+
 
 class TestTokenCostWiringCliBackend:
     """cli backend -> SARIF omits tokenCost.

@@ -5243,3 +5243,140 @@ class TestEffectiveInvokeTimeoutS:
             timeout_s=0, format=None,
         )
         assert effective_invoke_timeout_s(be_api) == 600
+
+
+class TestCachedTokenExtraction:
+    """Prompt-cache hit counts must survive into Usage.
+
+    On a caching backend, input_tokens reports only the uncached delta.
+    forge discarded the cache fields entirely, which made a fully
+    cached call look like a near-empty prompt -- two independent
+    misreadings of this shape happened on 2026-08-20 (one diagnosed as
+    "backend has no cache", one as "MCP sent a blank prompt"). The
+    cached count is the field that disambiguates.
+    """
+
+    def _openai_backend(self):
+        return BackendConfig(
+            name="mimo-openai",
+            type="api",
+            model="mimo-v2.5-pro",
+            format="openai",
+            base_url="https://api.xiaomimimo.com/v1",
+            api_key_env="MIMO_PRO_API_KEY",
+        )
+
+    def _anthropic_backend(self):
+        return BackendConfig(
+            name="mimo-anthropic",
+            type="api",
+            model="mimo-v2.5-pro",
+            format="anthropic",
+            base_url="https://api.xiaomimimo.com/anthropic",
+            api_key_env="MIMO_PRO_API_KEY",
+        )
+
+    @staticmethod
+    def _mock_response(payload):
+        m = Mock()
+        m.read.return_value = json.dumps(payload).encode("utf-8")
+        m.__enter__ = Mock(return_value=m)
+        m.__exit__ = Mock(return_value=False)
+        return m
+
+    def test_openai_cached_tokens_extracted(self):
+        backend = self._openai_backend()
+        resp = self._mock_response({
+            "choices": [{"message": {"content": '{"result": "pass"}'}}],
+            "usage": {
+                "prompt_tokens": 4280,
+                "completion_tokens": 16,
+                "prompt_tokens_details": {"cached_tokens": 4224},
+            },
+        })
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+        assert result.usage.cached_input_tokens == 4224
+        assert result.usage.input_tokens == 4280
+        assert result.usage.output_tokens == 16
+
+    def test_anthropic_cache_read_extracted(self):
+        backend = self._anthropic_backend()
+        resp = self._mock_response({
+            "content": [{"text": '{"result": "pass"}'}],
+            "usage": {
+                "input_tokens": 31,
+                "output_tokens": 16,
+                "cache_read_input_tokens": 6720,
+            },
+        })
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+        assert result.usage.cached_input_tokens == 6720
+        assert result.usage.input_tokens == 31
+
+    def test_openai_without_details_defaults_to_zero(self):
+        backend = self._openai_backend()
+        resp = self._mock_response({
+            "choices": [{"message": {"content": '{"result": "pass"}'}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 5},
+        })
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+        assert result.usage.cached_input_tokens == 0
+
+    def test_deepseek_flat_cache_field_extracted(self):
+        # DeepSeek reports cache hits as a flat prompt_cache_hit_tokens
+        # (prompt_tokens = hit + miss), not the nested openai shape.
+        backend = self._openai_backend()
+        resp = self._mock_response({
+            "choices": [{"message": {"content": '{"result": "pass"}'}}],
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 5,
+                "prompt_cache_hit_tokens": 1000,
+                "prompt_cache_miss_tokens": 200,
+            },
+        })
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+        assert result.usage.cached_input_tokens == 1000
+
+    def test_openai_null_cached_tokens_defaults_to_zero(self):
+        # Same null-value gateway hazard as the anthropic side: the
+        # nested prompt_tokens_details can carry cached_tokens: null,
+        # and an unguarded inner .get returns None into an int field.
+        backend = self._openai_backend()
+        resp = self._mock_response({
+            "choices": [{"message": {"content": '{"result": "pass"}'}}],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "prompt_tokens_details": {"cached_tokens": None},
+            },
+        })
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+        assert result.usage.cached_input_tokens == 0
+
+    def test_anthropic_null_cache_read_defaults_to_zero(self):
+        # Gateways exist that emit the key with a null value; .get()
+        # alone would pass None through into an int field.
+        backend = self._anthropic_backend()
+        resp = self._mock_response({
+            "content": [{"text": '{"result": "pass"}'}],
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_read_input_tokens": None,
+            },
+        })
+        with patch.dict(os.environ, {"MIMO_PRO_API_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", return_value=resp):
+            result = llm_invoke("prompt", backend=backend)
+        assert result.usage.cached_input_tokens == 0

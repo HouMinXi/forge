@@ -1213,3 +1213,26 @@ class TestDurationWallClock:
             "failed pass duration should be counted; got %.3f"
             % duration
         )
+
+
+class TestPassTokenLine:
+    """The per-pass progress line must carry the cached count.
+
+    A caching backend reports input_tokens as the uncached delta only;
+    without the cached count on the line, a full cache hit (input ~30)
+    reads as a near-empty prompt in the log.
+    """
+
+    def test_cached_present_when_positive(self):
+        from code_forge.factories import _pass_token_line
+        from code_forge.llm_invoke import Usage
+        line = _pass_token_line("mimo-pro", "qodo",
+                                Usage(31, 16, 6720))
+        assert line == "[mimo-pro:qodo] 31 in / 16 out tokens (6720 cached)\n"
+
+    def test_cached_absent_when_zero(self):
+        from code_forge.factories import _pass_token_line
+        from code_forge.llm_invoke import Usage
+        line = _pass_token_line("deepseek", "expert",
+                                Usage(16974, 8605, 0))
+        assert line == "[deepseek:expert] 16974 in / 8605 out tokens\n"

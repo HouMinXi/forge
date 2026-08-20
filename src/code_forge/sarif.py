@@ -97,6 +97,9 @@ def build_sarif_log(
         run.setdefault("properties", {})["tokenCost"] = {
             "inputTokens": state.cost_total_input,
             "outputTokens": state.cost_total_output,
+            "cachedTokens": state.cost_total_cached,
+            # totalTokens deliberately excludes cachedTokens: it tracks
+            # what the caller paid prefill for, not the full prompt size.
             "totalTokens": state.cost_total_input + state.cost_total_output,
             "backend": backend_name,
             "model": backend_model or "",
