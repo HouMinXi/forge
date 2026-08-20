@@ -1,0 +1,57 @@
+[
+  {
+    "tag": "A1",
+    "elapsed_s": 2.605,
+    "prompt_tokens": 4280,
+    "completion_tokens": 32,
+    "prompt_tokens_details": {
+      "cached_tokens": 4224
+    },
+    "finish_reason": "length",
+    "err": null
+  },
+  {
+    "tag": "A2",
+    "elapsed_s": 1.661,
+    "prompt_tokens": 4280,
+    "completion_tokens": 32,
+    "prompt_tokens_details": {
+      "cached_tokens": 4224
+    },
+    "finish_reason": "length",
+    "err": null
+  },
+  {
+    "tag": "A3",
+    "elapsed_s": 2.127,
+    "prompt_tokens": 4280,
+    "completion_tokens": 32,
+    "prompt_tokens_details": {
+      "cached_tokens": 4224
+    },
+    "finish_reason": "length",
+    "err": null
+  },
+  {
+    "tag": "C1",
+    "elapsed_s": 4.433,
+    "prompt_tokens": 4280,
+    "completion_tokens": 32,
+    "prompt_tokens_details": {
+      "cached_tokens": 4224
+    },
+    "finish_reason": "length",
+    "err": null
+  },
+  {
+    "tag": "C2",
+    "elapsed_s": 18.466,
+    "prompt_tokens": 4280,
+    "completion_tokens": 18,
+    "prompt_tokens_details": {
+      "cached_tokens": 4224
+    },
+    "finish_reason": "stop",
+    "err": null
+  }
+]

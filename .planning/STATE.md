@@ -820,3 +820,9 @@ don't silently let them go.
   + T3 onboarding flip). Parallel-safe with 38.2/43 (different files).
 - Open v2.9 milestone requirements via GSD flow at/before 43 merge
 - Queue: 43 -> 39 -> 40 -> 44 -> 41 -> 42 (per v2.9 schedule)
+
+## Quick Tasks Completed
+
+| Date | Task | Result |
+|------|------|--------|
+| 2026-08-20 | cache-token visibility (charter mcp_prompt_caching fix 1) | fix/cache-token-visibility @ 299353e, 3-round review, 3466 tests pass, unmerged |

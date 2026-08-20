@@ -1,0 +1,31 @@
+[forge] t+0.0s run start: mode=CI
+ignoring prior state.json in CI mode (STATE-09) -- each CI run starts fresh and cannot accumulate dispositions, so repeated runs on an unchanged diff report the same findings; run LOCAL mode for iterative multi-round review
+[forge] t+0.0s round 7 start
+[forge] t+0.0s pass qodo: calling mimo-pro
+[forge] t+0.0s pass expert: calling mimo-pro
+[forge] t+0.0s pass adversarial: calling mimo-pro
+[forge] t+37.2s backend mimo-pro: first token
+[forge] t+42.2s backend mimo-pro: first token
+[forge] t+60.9s backend mimo-pro: first token
+[forge] t+113.4s falsify 1/6: relay/channel/openai/adaptor.go:[283, 283] (e99c1643112f6fd9)
+[forge] t+160.1s backend mimo-pro: first token
+[forge] t+163.0s falsify 1/6: done Disposition.UNCERTAIN (49.6s)
+[forge] t+163.0s falsify 2/6: relay/channel/openai/adaptor.go:[259, 259] (17e48926e76ec12d)
+[forge] t+190.6s backend mimo-pro: first token
+[forge] t+193.0s falsify 2/6: done Disposition.DISMISSED (30.0s)
+[forge] t+193.0s falsify 3/6: relay/channel/openai/buffered_stream.go:[205, 205] (1fd2dba346ccc814)
+[forge] t+205.7s backend mimo-pro: first token
+[forge] t+211.0s falsify 3/6: done Disposition.CONFIRMED (18.0s)
+[forge] t+211.0s falsify 4/6: relay/channel/openai/adaptor.go:[259, 259] (d80f34163fd96ed1)
+[forge] t+254.8s backend mimo-pro: first token
+[forge] t+258.0s falsify 4/6: done Disposition.UNCERTAIN (47.0s)
+[forge] t+258.0s falsify 5/6: relay/channel/openai/adaptor.go:[259, 259] (7884bb9edfedb444)
+[forge] t+302.7s backend mimo-pro: first token
+[forge] t+305.2s falsify 5/6: done Disposition.UNCERTAIN (47.2s)
+[forge] t+305.2s falsify 6/6: relay/channel/openai/buffered_stream.go:[134, 134] (d84d392fb0402539)
+[forge] t+333.5s backend mimo-pro: first token
+[forge] t+345.0s falsify 6/6: done Disposition.DISMISSED (39.8s)
+[forge] t+545.7s backend mimo-pro: first token
+[forge] t+565.1s run done: verdict=FAIL findings=7 confirmed=1
+code-forge: cost: 60865 tokens (43737 in + 17128 out), 3 passes, 113.4s (wall: 565.5s)
+[forge] t+675.9s backend mimo-pro: first token

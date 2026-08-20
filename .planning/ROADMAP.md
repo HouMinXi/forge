@@ -115,6 +115,11 @@ Both sit OUTSIDE the 44 -> 53b chain and can run in any order against it:
   prevention rather than tolerance; the shared-parse SSE tolerance stays
   deferred on its stated trigger. Tracked as ROUTER-02..05. Full evidence and
   the re-grep warning about stale line numbers are in the v2.8 section above.
+  **Plans:** 1 plan
+  Plans:
+  - [ ] 54-01-PLAN.md -- F2 schema text, F3 trust walk-up + path print + warn,
+    F5 doctor user-config line + README pointer, F4 doctor --live probe with
+    five-class taxonomy (kind= additions + probe_backend_live helper + wiring)
 - [ ] Phase 43.1 review-pipeline self-attestation gaps -- live scope is
   charter items 2, 5, 6, 7, 9 (items 1/3/4/10 closed during v2.8). Item 7
   carries todo #54 [BLOCKS DEPLOYMENT]. Tracked as ATTEST-01..05.

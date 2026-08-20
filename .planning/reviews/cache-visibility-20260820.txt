@@ -1,0 +1,18 @@
+Review record: fix/cache-token-visibility @ 299353e (2026-08-20)
+R1 (independent agent, three perspectives): 1x P1 (openai inner
+null guard missing -> TypeError kills every L1 pass on null
+cached_tokens gateways), 2x P2 (CLI cost line hid cached;
+continuation fold dropped cached), 4x P3. All fixed except
+accepted latents (outlet_c latent reconstruction; dual-dialect
+anthropic gateway hypothetical).
+R2 (fix verification): CLEAN, no blocking findings, no
+fix-on-fix regressions.
+R3 (adversarial): 1x P2 (DeepSeek flat prompt_cache_hit_tokens
+dialect unsupported -> feature no-ops on sn-deepseek-flash),
+fixed with test + injection proof. Streaming path verified
+preserving prompt_tokens_details (office stream:true config OK).
+R4 (DeepSeek one-liner): self-verified with mechanical test +
+bug-injection (FAIL->PASS), not an independent agent round.
+Tests: full suite 3466 passed / 0 failed; bug-injection proven at
+helper, openai, anthropic, aggregation, state-dump, deepseek-line
+(6 sites).

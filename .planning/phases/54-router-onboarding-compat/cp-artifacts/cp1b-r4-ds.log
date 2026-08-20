@@ -1,0 +1,5 @@
+[aicc] session: p54-r3-ds
+[aicc] output saved to: cp1b-r4-ds.md (2959 bytes)
+
+[aicc] session saved: p54-r3-ds
+[aicc] to resume:  aicc ds --cont p54-r3-ds "continue"

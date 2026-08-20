@@ -1,0 +1,77 @@
+[
+  {
+    "tag": "C1",
+    "surface": "anthropic",
+    "elapsed_s": 2.261,
+    "input_tokens": 6558,
+    "cache_read": 192,
+    "cache_creation": null
+  },
+  {
+    "tag": "C2",
+    "surface": "anthropic",
+    "elapsed_s": 5.439,
+    "input_tokens": 31,
+    "cache_read": 6720,
+    "cache_creation": null
+  },
+  {
+    "tag": "C3",
+    "surface": "anthropic",
+    "elapsed_s": 3.389,
+    "input_tokens": 6559,
+    "cache_read": 192,
+    "cache_creation": null
+  },
+  {
+    "tag": "S1",
+    "surface": "anthropic",
+    "elapsed_s": 4.205,
+    "input_tokens": 30,
+    "cache_read": 6720,
+    "cache_creation": null
+  },
+  {
+    "tag": "S2",
+    "surface": "anthropic",
+    "elapsed_s": 4.661,
+    "input_tokens": 30,
+    "cache_read": 6720,
+    "cache_creation": null
+  },
+  {
+    "tag": "C1",
+    "surface": "openai",
+    "elapsed_s": 10.778,
+    "input_tokens": 6750,
+    "cached": 6720
+  },
+  {
+    "tag": "C2",
+    "surface": "openai",
+    "elapsed_s": 9.783,
+    "input_tokens": 6751,
+    "cached": 6720
+  },
+  {
+    "tag": "C3",
+    "surface": "openai",
+    "elapsed_s": 10.013,
+    "input_tokens": 6751,
+    "cached": 6720
+  },
+  {
+    "tag": "S1",
+    "surface": "openai",
+    "elapsed_s": 7.967,
+    "input_tokens": 6750,
+    "cached": 6720
+  },
+  {
+    "tag": "S2",
+    "surface": "openai",
+    "elapsed_s": 4.607,
+    "input_tokens": 6750,
+    "cached": 6720
+  }
+]
