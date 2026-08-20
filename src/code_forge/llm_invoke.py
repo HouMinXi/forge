@@ -76,7 +76,8 @@ class LLMInvokeError(Exception):
         self.retry_after = retry_after
         # Machine-readable failure class for dispatch decisions.
         # invoke_sampling and the api dispatch set one of: "truncated",
-        # "empty", "stub_model", "no_json". Note "empty" covers a response
+        # "empty", "stub_model", "no_json", "conn", "credentials",
+        # "sse_body", "bad_body". Note "empty" covers a response
         # that carried no usable text, whatever the wording of the message.
         # Matching on kind (not message text) keeps the MCP
         # fallback routing immune to message rewording and to model output
@@ -736,6 +737,12 @@ def _format_error_message(
     else:
         problem = "HTTP error"
         tip = "Check provider documentation"
+    if body_excerpt:
+        # The body names the actual problem (a wrong-path router 404
+        # says so in the body); dropping it hides the diagnosis.
+        return "code-forge: %s backend: %s (%d). %s; body: %s" % (
+            provider_name, problem, http_code, tip, body_excerpt,
+        )
     return "code-forge: %s backend: %s (%d). %s" % (
         provider_name, problem, http_code, tip,
     )
@@ -1365,22 +1372,26 @@ def _invoke_api(
             except OSError as exc:
                 raise LLMInvokeError(
                     "backend %r: cannot read api_key_file: %s"
-                    % (backend.name, exc)
+                    % (backend.name, exc),
+                    kind="credentials",
                 ) from exc
             if not api_key:
                 raise LLMInvokeError(
-                    "backend %r: api_key_file is empty" % backend.name
+                    "backend %r: api_key_file is empty" % backend.name,
+                    kind="credentials",
                 )
         elif backend.api_key_env:
             api_key = os.environ.get(backend.api_key_env, "")
             if not api_key:
                 raise LLMInvokeError(
-                    "API key env var %r is not set" % backend.api_key_env
+                    "API key env var %r is not set" % backend.api_key_env,
+                    kind="credentials",
                 )
         else:
             raise LLMInvokeError(
                 "backend %r: no api_key_env or api_key_file configured"
-                % backend.name
+                % backend.name,
+                kind="credentials",
             )
     else:
         api_key = ""
@@ -1581,10 +1592,20 @@ def _parse_response_body(raw: bytes, backend_name: str) -> dict:
     try:
         return json.loads(body_text)
     except json.JSONDecodeError as exc:
+        if body_text.lstrip().startswith("data: "):
+            # An SSE event stream reached the non-streaming parse: the
+            # endpoint is a streaming-only proxy, not a JSON API.
+            raise LLMInvokeError(
+                "%s backend returned an SSE stream body: %s"
+                % (backend_name, body_text[:200]),
+                retryable=True,
+                kind="sse_body",
+            ) from exc
         raise LLMInvokeError(
             "%s backend returned non-JSON response body: %s"
             % (backend_name, body_text[:200]),
             retryable=True,
+            kind="bad_body",
         ) from exc
 
 
@@ -1644,6 +1665,7 @@ def _invoke_openai(
         raise LLMInvokeError(
             "URLError from %s backend: %s" % (backend.name, exc.reason),
             retryable=True,
+            kind="conn",
         ) from exc
     except TimeoutError:
         raise  # preserve non-retryable timeout handling in retry loop
@@ -1651,6 +1673,7 @@ def _invoke_openai(
         raise LLMInvokeError(
             "connection error from %s backend: %s" % (backend.name, exc),
             retryable=True,
+            kind="conn",
         ) from exc
 
     # Body-based error detection: Zhipu error.code, MiniMax base_resp
@@ -1784,6 +1807,7 @@ def _invoke_anthropic(
         raise LLMInvokeError(
             "URLError from %s backend: %s" % (backend.name, exc.reason),
             retryable=True,
+            kind="conn",
         ) from exc
     except TimeoutError:
         raise  # preserve non-retryable timeout handling in retry loop
@@ -1791,6 +1815,7 @@ def _invoke_anthropic(
         raise LLMInvokeError(
             "connection error from %s backend: %s" % (backend.name, exc),
             retryable=True,
+            kind="conn",
         ) from exc
 
     # Extract first text block from Anthropic response.  Some backends
@@ -1895,12 +1920,14 @@ def _invoke_vertex(
             "Failed to load GCP credentials from %s: %s"
             % (backend.credentials_path, exc),
             retryable=False,
+            kind="credentials",
         ) from exc
     except DefaultCredentialsError as exc:
         raise LLMInvokeError(
             "No GCP credentials found. Set GOOGLE_APPLICATION_CREDENTIALS "
             "or use credentials_path in gate.yaml",
             retryable=False,
+            kind="credentials",
         ) from exc
 
     # Refresh token
@@ -1911,6 +1938,7 @@ def _invoke_vertex(
         raise LLMInvokeError(
             "Failed to refresh GCP credentials: %s" % exc,
             retryable=False,
+            kind="credentials",
         ) from exc
 
     if not backend.project_id:
@@ -1956,6 +1984,7 @@ def _invoke_vertex(
         raise LLMInvokeError(
             "URLError from vertex backend: %s" % exc.reason,
             retryable=True,
+            kind="conn",
         ) from exc
     except TimeoutError:
         raise  # preserve non-retryable timeout handling in retry loop
@@ -1963,6 +1992,7 @@ def _invoke_vertex(
         raise LLMInvokeError(
             "connection error from %s backend: %s" % (backend.name, exc),
             retryable=True,
+            kind="conn",
         ) from exc
 
     try:

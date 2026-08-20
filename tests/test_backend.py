@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -1989,3 +1990,130 @@ class TestParseCliEnvFields:
             _parse_backend_entry(
                 self._cli_entry(env={"unset": [], "bogus": 1})
             )
+
+
+class TestProbeBackendLive:
+    """Live probe: one real completion, 60s cap, one attempt, no cache.
+
+    llm_invoke is patched at its SOURCE module (backend.py imports it
+    function-locally, so the call-time import sees the patch).
+    """
+
+    def _cfg(self, **kw):
+        from code_forge.backend import BackendConfig
+        base = dict(
+            name="live-test", type="api", model="m",
+            format="openai", base_url="https://example.com",
+            api_key_env="LIVE_TEST_KEY", timeout_s=1800,
+            max_tokens=8192,
+        )
+        base.update(kw)
+        return BackendConfig(**base)
+
+    def _invoke(self, error=None, result=None):
+        """Capture (prompt, kwargs) at the llm_invoke call site."""
+        from unittest.mock import MagicMock
+        m = MagicMock()
+        if error is not None:
+            m.side_effect = error
+        elif result is not None:
+            m.return_value = result
+        return m
+
+    def test_success_returns_ok(self):
+        from code_forge.backend import probe_backend_live
+        m = self._invoke(result="unused")
+        with patch("code_forge.llm_invoke.llm_invoke", m):
+            r = probe_backend_live(self._cfg())
+        assert r.ok is True
+
+    def test_probe_config_overrides(self):
+        from code_forge.backend import probe_backend_live
+        m = self._invoke(result="unused")
+        with patch("code_forge.llm_invoke.llm_invoke", m):
+            probe_backend_live(self._cfg())
+        cfg = m.call_args[1]["backend"]
+        assert cfg.timeout_s == 60
+        assert cfg.max_tokens == 32
+        assert cfg.max_completion_tokens == 0
+        assert cfg.output_ceiling == 0
+        assert cfg.thinking_type == ""
+        assert cfg.thinking_budget == 0
+        assert cfg.reasoning_effort == ""
+        # identity preserved: the source config object is untouched
+        src = self._cfg()
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   self._invoke(result="unused")):
+            probe_backend_live(src)
+        assert src.timeout_s == 1800
+
+    def test_one_attempt_and_json_demand(self):
+        from code_forge.backend import probe_backend_live
+        m = self._invoke(result="unused")
+        with patch("code_forge.llm_invoke.llm_invoke", m):
+            probe_backend_live(self._cfg())
+        kw = m.call_args[1]
+        assert kw["max_attempts"] == 1
+        assert "ok" in kw["expected_keys"]
+        assert kw["continuation_breaker"] is not None
+
+    def _classify(self, error):
+        from code_forge.backend import probe_backend_live
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   self._invoke(error=error)):
+            return probe_backend_live(self._cfg())
+
+    def test_timeout_class(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("timed out", is_timeout=True))
+        assert r.error_class == "timeout"
+        assert r.suggestion
+
+    def test_credential_class_via_kind(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("env not set",
+                                          kind="credentials"))
+        assert r.error_class == "credential-rejected"
+
+    def test_credential_class_via_http_code(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("401", exit_code=401))
+        assert r.error_class == "credential-rejected"
+
+    def test_conn_class(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("refused", kind="conn"))
+        assert r.error_class == "connection-refused"
+
+    def test_sse_class(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("SSE body", kind="sse_body"))
+        assert r.error_class == "SSE-mixed"
+
+    def test_bad_body_class(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("non-JSON", kind="bad_body"))
+        assert r.error_class == "JSON-malformed"
+
+    def test_truncated_class(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("truncation breaker",
+                                          kind="truncated"))
+        assert r.error_class == "truncated-output"
+
+    def test_http_error_class_no_kind(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("404", exit_code=404))
+        assert r.error_class == "http-error"
+
+    def test_unclassified_fallback(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError("something novel",
+                                          kind="no_json"))
+        assert r.error_class == "unclassified"
+
+    def test_detail_is_single_line(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError(
+            "body:\nline two\nline three", kind="bad_body"))
+        assert "\n" not in r.detail

@@ -27,11 +27,16 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Mapping, Optional, Tuple
 
 from .errors import CliError
+
+if TYPE_CHECKING:
+    # Runtime import is function-local (probe_backend_live) to avoid
+    # the circular import: llm_invoke imports this module at top level.
+    from .llm_invoke import LLMInvokeError
 
 # -- Constants --------------------------------------------------------
 
@@ -925,6 +930,128 @@ def _probe_api(
         )
 
     return ProbeResult(ok=True)
+
+
+@dataclass(frozen=True)
+class LiveProbeResult:
+    """One real completion against a configured api backend.
+
+    error_class is one of the pinned taxonomy labels; detail is the
+    whitespace-normalized exception message (single line, excerpt
+    embedded); suggestion is a short imperative action.
+    """
+
+    ok: bool
+    error_class: Optional[str] = None
+    detail: Optional[str] = None
+    suggestion: Optional[str] = None
+
+
+def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[
+    str, str
+]:
+    """Map one invoke failure to a (error_class, suggestion) pair.
+
+    The labels are pinned by tests -- doctor rows render through them,
+    so implementer-invented strings cannot drift in unnoticed.
+    """
+    if exc.is_timeout:
+        return (
+            "timeout",
+            "Check network reachability to the endpoint, or raise "
+            "timeout_s on the backend.",
+        )
+    if exc.exit_code in (401, 403) or exc.kind == "credentials":
+        return (
+            "credential-rejected",
+            "Check the API key value, its permissions, and that the "
+            "env var is exported where forge runs.",
+        )
+    if exc.kind == "conn":
+        return (
+            "connection-refused",
+            "Verify the host and port in base_url are reachable from "
+            "this machine.",
+        )
+    if exc.kind == "sse_body":
+        return (
+            "SSE-mixed",
+            "The endpoint answered with an SSE stream to a "
+            "non-streaming request; check base_url points at the "
+            "chat-completions API.",
+        )
+    if exc.kind == "bad_body":
+        return (
+            "JSON-malformed",
+            "The endpoint returned a non-JSON body; verify base_url "
+            "points at the API, not a web page.",
+        )
+    if exc.kind == "truncated":
+        return (
+            "truncated-output",
+            "The backend could not finish even a 32-token reply; "
+            "check its output limits.",
+        )
+    if exc.exit_code >= 400 and not exc.kind:
+        return (
+            "http-error",
+            "Inspect the body excerpt; a 404/400/405 usually means "
+            "base_url carries (or misses) the /v1 prefix forge "
+            "concatenates verbatim.",
+        )
+    return (
+        "unclassified",
+        "Inspect the detail; if reproducible, report the backend "
+        "response to the forge maintainers.",
+    )
+
+
+def probe_backend_live(cfg: BackendConfig) -> LiveProbeResult:
+    """One real chat completion against the configured backend.
+
+    Bounded: 60s timeout on a config copy (the copy is mandatory --
+    backend.timeout_s outranks the caller argument), exactly one
+    attempt, and a threshold-1 truncation breaker so a
+    truncating-and-continuing backend cannot multiply requests inside
+    that budget. Deliberately NOT routed through probe_backend: its
+    5-minute success cache would suppress the network call this
+    exists to make. Thinking and reasoning-effort fields are zeroed
+    so model-side reasoning cannot burn the 32-token cap before the
+    JSON key arrives. stream stays as configured -- the probe is a
+    snapshot of what a real review experiences.
+    """
+    # Function-local: llm_invoke imports this module at top level, so
+    # a module-level import here would be circular.
+    from .llm_invoke import LLMInvokeError, TruncationBreaker, llm_invoke
+
+    probe_cfg = replace(
+        cfg,
+        timeout_s=60,
+        max_tokens=32,
+        max_completion_tokens=0,
+        output_ceiling=0,
+        thinking_type="",
+        thinking_budget=0,
+        reasoning_effort="",
+    )
+    try:
+        llm_invoke(
+            'Reply with exactly this JSON object: {"ok": true}',
+            backend=probe_cfg,
+            max_attempts=1,
+            expected_keys=frozenset({"ok"}),
+            continuation_breaker=TruncationBreaker(threshold=1),
+        )
+        return LiveProbeResult(ok=True)
+    except LLMInvokeError as exc:
+        error_class, suggestion = _classify_live_failure(exc)
+        detail = " ".join(str(exc).split())
+        return LiveProbeResult(
+            ok=False,
+            error_class=error_class,
+            detail=detail,
+            suggestion=suggestion,
+        )
 
 
 def _probe_cli(

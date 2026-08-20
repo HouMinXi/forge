@@ -2700,3 +2700,34 @@ async def test_dispatch_cli_no_contract_no_tmpfile():
         assert tmp_arg is None
 
 
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sampling_conn_kind_never_falls_back():
+    """A connection failure (kind=conn) must not consume the fallback.
+
+    The fallback exists for recoverable-review failures; a dead
+    endpoint would fail identically on the subprocess path, so
+    falling back only burns another attempt.
+    """
+    from code_forge.mcp_server import _dispatch_sampling
+    from code_forge.llm_invoke import LLMInvokeError
+
+    p1, p2, _, p4 = _sampling_dispatch_patches("", ["deepseek"])
+    p3 = patch(
+        "code_forge.mcp_server.asyncio.to_thread",
+        new_callable=AsyncMock,
+        side_effect=LLMInvokeError(
+            "URLError from deepseek backend: connection refused",
+            kind="conn",
+        ),
+    )
+    with p1, p2, p3, p4, patch(
+        "code_forge.mcp_server._run_cli_budgeted",
+        new_callable=AsyncMock,
+    ) as mock_cli:
+        with pytest.raises(ToolError, match="Sampling failed"):
+            await _dispatch_sampling(
+                session=MagicMock(), committed=False,
+                workspace=_resolve_workspace())
+    mock_cli.assert_not_called()

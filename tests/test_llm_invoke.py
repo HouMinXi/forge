@@ -6,6 +6,7 @@ import ssl
 import subprocess
 import threading
 import time
+import io
 import urllib.error
 from unittest.mock import patch, MagicMock, Mock
 
@@ -5380,3 +5381,125 @@ class TestCachedTokenExtraction:
              patch("urllib.request.urlopen", return_value=resp):
             result = llm_invoke("prompt", backend=backend)
         assert result.usage.cached_input_tokens == 0
+
+
+class TestFailureKindClassification:
+    """kind= values on connection, credential, and body-parse failures.
+
+    doctor's live probe and the MCP fallback both dispatch on kind,
+    not message text -- these tests pin the classification so message
+    rewording can never silently reroute them.
+    """
+
+    def _openai_backend(self):
+        return BackendConfig(
+            name="kind-test", type="api", model="m",
+            format="openai", base_url="https://example.com",
+            api_key_env="KIND_TEST_KEY",
+        )
+
+    @staticmethod
+    def _mock_response(payload):
+        m = Mock()
+        m.read.return_value = json.dumps(payload).encode("utf-8")
+        m.__enter__ = Mock(return_value=m)
+        m.__exit__ = Mock(return_value=False)
+        return m
+
+    def test_sse_body_classified(self):
+        m = Mock()
+        m.read.return_value = b"data: {\"id\": \"evt_1\"}\n\ndata: [DONE]"
+        m.__enter__ = Mock(return_value=m)
+        m.__exit__ = Mock(return_value=False)
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen", return_value=m):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert ei.value.kind == "sse_body"
+        assert "data: " in str(ei.value)
+
+    def test_bad_body_classified(self):
+        m = Mock()
+        m.read.return_value = b"<html>gateway error page</html>"
+        m.__enter__ = Mock(return_value=m)
+        m.__exit__ = Mock(return_value=False)
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen", return_value=m):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert ei.value.kind == "bad_body"
+
+    def test_urlerror_classified_conn(self):
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen",
+                   side_effect=urllib.error.URLError("refused")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert ei.value.kind == "conn"
+
+    def test_oserror_classified_conn(self):
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen",
+                   side_effect=OSError("connection reset")), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert ei.value.kind == "conn"
+
+    def test_missing_env_key_classified_credentials(self):
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KIND_TEST_KEY", None)
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend)
+        assert ei.value.kind == "credentials"
+
+    def test_no_key_config_classified_credentials(self):
+        backend = BackendConfig(
+            name="kind-test", type="api", model="m",
+            format="openai", base_url="https://example.com",
+        )
+        with pytest.raises(LLMInvokeError) as ei:
+            llm_invoke("prompt", backend=backend)
+        assert ei.value.kind == "credentials"
+
+    def test_http_error_message_carries_body_excerpt(self):
+        # The headline failure: a wrong-path router answers 404 whose
+        # body names the problem -- the excerpt must survive.
+        err = urllib.error.HTTPError(
+            "https://example.com/v1/chat/completions", 404,
+            "Not Found", {}, io.BytesIO(b'{"error": "no such route"}'),
+        )
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen", side_effect=err), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert "no such route" in str(ei.value)
+        assert ei.value.exit_code == 404
+        assert ei.value.kind == ""  # http-error lands in the probe via code
+
+    def test_empty_http_body_keeps_short_message(self):
+        err = urllib.error.HTTPError(
+            "https://example.com/v1/chat/completions", 502,
+            "Bad Gateway", {}, io.BytesIO(b""),
+        )
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen", side_effect=err), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert "body:" not in str(ei.value)
