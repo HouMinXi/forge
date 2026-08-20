@@ -1,0 +1,37 @@
+Review record: fix/router-onboarding-compat @ 60336c9 (2026-08-20)
+Base main @ 12c9709. 8 commits. Full suite 3543 passed / 0 failed.
+
+R1 (independent agent, three perspectives + real-socket smoke):
+  0 P0/P1, 7 P3. Fixed: off-root warning wording (FORGE_PROJECT_DIR
+  outside-tree), credential retryable flags, SSE event:/comment
+  sniff. Accepted follow-ups: threshold-1 length-stop false
+  positive (60s-bound tradeoff, deliberate); _check_body_error
+  200-with-body stays unclassified; sibling gate.yaml paths
+  (review/gate-check/verify) remain cwd-only (out of plan scope);
+  vertex refresh outside timeout_s (pre-existing).
+R2 (fix verification): 0 blocking, 2 P3. Both fixed: b3063bb
+  commit message claimed a retry path that never existed (credential
+  raises fire before the retry loop) -> message amended; URLError
+  (TimeoutError) connect timeouts misclassified as
+  connection-refused -> is_timeout flag at all 3 URLError handlers.
+R3 (final adversarial): CLEAN, no blocking findings. 1 P3 message
+  fix (0eaca60 "metadata only" was false -- is_timeout feeds the
+  run-level timeout breaker via factories pass fold; behavior is
+  semantically correct, message corrected) + 2 follow-ups recorded:
+  probe max_completion_tokens-only backends may misdiagnose
+  (http-error with wrong-prefix advice); DNS gaierror classifies as
+  connection-refused (coarse but reasonable advice).
+Reviewers ran real-socket experiments: 60s bound with source
+  timeout_s=1800 (60.1s measured), exactly 1 HTTP request on
+  truncating backend (threshold-1 breaker), timeout/conn/credential
+  classes via real endpoints, black-hole connect vs read-phase
+  shapes on this host's tproxy path.
+Bug-injection proven at: T1 guard, T2 walk-up/pre-print/warn,
+  T3 doctor line, T4 timeout/attempts/taxonomy-arm/oserror-kind/
+  urlerror-kind/excerpt, T5 live-guard/cache-route/swallow-fail/
+  dispatch.
+Per-task commits: 6f857ca schema, a33ea3d trust, 45732aa doctor
+  user-config, d6dc9c5 README docs, 94d1eec kind taxonomy + live
+  helper, 5f1564e doctor --live, b3063bb R1 follow-ups, 60336c9
+  connect-timeout flag.
+T6 human real-path checkpoint: PENDING (user).

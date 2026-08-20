@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: ENV-GROUNDING
 status: active
-stopped_at: main @ 4087b05 (11 evidence-driven commits merged 2026-08-18: stream-usage + canary-verdict-type + post-image-window, full suite 3483p/8s/0f). Phase 54 numbered for the Router compat remainder; 54-CONTEXT.md gathered 2026-08-18, ready for planning. v2.9 opened 2026-08-17; Phase 48 is the one v2.9 phase shipped; 44/51/52/53a/53b + 54 + 43.1 remain
+stopped_at: main @ 12c9709. Phase 54 EXECUTED 2026-08-20 on branch fix/router-onboarding-compat @ 60336c9 (8 commits, T1-T5 done, 3543 tests pass, 3-round review converged; T6 human checkpoint PENDING; NOT merged -- user decision). Cache-visibility quick task merged+pushed same day (12c9709). v2.9 opened 2026-08-17; Phase 48 shipped; 44/51/52/53a/53b + 43.1 remain, 54 pending merge
 last_updated: "2026-08-18T00:00:00.000Z"
 progress:
   basis: v2.9 tracked units -- 48, 44, 51, 52, 53a, 53b, 54 (Router-compat), 43.1
