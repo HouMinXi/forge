@@ -5420,6 +5420,21 @@ class TestFailureKindClassification:
         assert ei.value.kind == "sse_body"
         assert "data: " in str(ei.value)
 
+    def test_sse_body_event_prefix_classified(self):
+        # Some SSE gateways open with an event: or comment line before
+        # the first data: frame -- still a stream, not a JSON body.
+        m = Mock()
+        m.read.return_value = b"event: message\n: keepalive\ndata: {}"
+        m.__enter__ = Mock(return_value=m)
+        m.__exit__ = Mock(return_value=False)
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen", return_value=m):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert ei.value.kind == "sse_body"
+
     def test_bad_body_classified(self):
         m = Mock()
         m.read.return_value = b"<html>gateway error page</html>"

@@ -1373,11 +1373,13 @@ def _invoke_api(
                 raise LLMInvokeError(
                     "backend %r: cannot read api_key_file: %s"
                     % (backend.name, exc),
+                    retryable=False,
                     kind="credentials",
                 ) from exc
             if not api_key:
                 raise LLMInvokeError(
                     "backend %r: api_key_file is empty" % backend.name,
+                    retryable=False,
                     kind="credentials",
                 )
         elif backend.api_key_env:
@@ -1385,12 +1387,14 @@ def _invoke_api(
             if not api_key:
                 raise LLMInvokeError(
                     "API key env var %r is not set" % backend.api_key_env,
+                    retryable=False,
                     kind="credentials",
                 )
         else:
             raise LLMInvokeError(
                 "backend %r: no api_key_env or api_key_file configured"
                 % backend.name,
+                retryable=False,
                 kind="credentials",
             )
     else:
@@ -1592,7 +1596,8 @@ def _parse_response_body(raw: bytes, backend_name: str) -> dict:
     try:
         return json.loads(body_text)
     except json.JSONDecodeError as exc:
-        if body_text.lstrip().startswith("data: "):
+        stripped_body = body_text.lstrip()
+        if stripped_body.startswith(("data:", "event:", ":")):
             # An SSE event stream reached the non-streaming parse: the
             # endpoint is a streaming-only proxy, not a JSON API.
             raise LLMInvokeError(

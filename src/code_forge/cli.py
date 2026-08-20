@@ -1328,8 +1328,8 @@ def _run_trust(args, cwd: Path) -> int:
     off_root_warning = None
     if workspace != cwd_abs:
         off_root_warning = (
-            "Warning: cwd %s is below workspace root %s; "
-            "the ancestor gate.yaml is the mutation target"
+            "Warning: cwd %s is not the workspace root %s; "
+            "the gate.yaml there is the mutation target"
             % (cwd_abs, workspace)
         )
     try:
