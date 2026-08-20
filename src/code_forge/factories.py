@@ -25,6 +25,25 @@ from .mutation import run_mutation
 from .state import StateFinding
 
 
+def _pass_token_line(backend_name: str, pass_name: str, usage) -> str:
+    """Progress line for one L1 pass.
+
+    A caching backend reports input_tokens as the uncached delta only,
+    so the cached count rides along when present -- otherwise a full
+    cache hit reads as a near-empty prompt in the log.
+    """
+    if usage.cached_input_tokens > 0:
+        return "[%s:%s] %d in / %d out tokens (%d cached)\n" % (
+            backend_name, pass_name,
+            usage.input_tokens, usage.output_tokens,
+            usage.cached_input_tokens,
+        )
+    return "[%s:%s] %d in / %d out tokens\n" % (
+        backend_name, pass_name,
+        usage.input_tokens, usage.output_tokens,
+    )
+
+
 def build_falsifier(
     engine: str,
     backend=None,
@@ -305,14 +324,10 @@ def build_l1_provider(
                 continuation_breaker=continuation_breaker,
             )
             if (r.usage.input_tokens > 0
-                    or r.usage.output_tokens > 0):
+                    or r.usage.output_tokens > 0
+                    or r.usage.cached_input_tokens > 0):
                 bname = backend.name if backend else "unknown"
-                sys.stderr.write(
-                    "[%s:%s] %d in / %d out tokens\n"
-                    % (bname, pn,
-                       r.usage.input_tokens,
-                       r.usage.output_tokens)
-                )
+                sys.stderr.write(_pass_token_line(bname, pn, r.usage))
             return r
 
         pass_results = []
@@ -346,6 +361,7 @@ def build_l1_provider(
         seen = set()
         total_input = 0
         total_output = 0
+        total_cached = 0
         total_duration = 0.0
 
         for i, (pass_name, _role) in enumerate(pass_configs):
@@ -403,6 +419,7 @@ def build_l1_provider(
             response = result.content
             total_input += result.usage.input_tokens
             total_output += result.usage.output_tokens
+            total_cached += result.usage.cached_input_tokens
             total_duration += result.duration_s
 
             try:
@@ -511,7 +528,9 @@ def build_l1_provider(
                 all_candidates.append(sf)
         if not is_cli:
             total_duration = _parallel_wall
-        return (all_candidates, all_excerpts, Usage(total_input, total_output), total_duration)
+        return (all_candidates, all_excerpts,
+                Usage(total_input, total_output, total_cached),
+                total_duration)
 
     return _provider
 

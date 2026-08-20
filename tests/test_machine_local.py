@@ -284,7 +284,8 @@ class TestCostAccumulation:
             return ([], [])
 
         def mock_l1():
-            return ([], [], Usage(input_tokens=1000, output_tokens=500), 12.5)
+            return ([], [], Usage(input_tokens=1000, output_tokens=500,
+                                  cached_input_tokens=250), 12.5)
 
         machine = StateMachine(
             mode=Mode.LOCAL,
@@ -307,11 +308,12 @@ class TestCostAccumulation:
         assert state.cost_passes >= 6  # at least 2 rounds needed
         assert state.cost_total_input == state.cost_passes // 3 * 1000
         assert state.cost_total_output == state.cost_passes // 3 * 500
+        assert state.cost_total_cached == state.cost_passes // 3 * 250
         assert abs(state.cost_total_duration - state.cost_passes // 3 * 12.5) < 0.5
         assert len(state.cost_per_pass) == state.cost_passes
 
     def test_cost_per_pass_structure(self, tmp_path):
-        """cost_per_pass entries have pass (1-3), cycle, input, output, duration_s."""
+        """cost_per_pass entries have pass (1-3), cycle, input, output, cached, duration_s."""
         def mock_l0(registry, files):
             return ([], [])
 
@@ -779,6 +781,7 @@ class TestTimeoutBreakerIntegration:
                     class usage:
                         input_tokens = 0
                         output_tokens = 0
+                        cached_input_tokens = 0
                     duration_s = 0.0
                 return MockResult()
             raise LLMInvokeError("timed out", is_timeout=True, retryable=False)
@@ -861,3 +864,39 @@ class TestTimeoutBreakerIntegration:
             assert any(
                 f.source == "INFRA" and f.is_timeout for f in findings
             )
+
+
+class TestL1ProviderCachedAggregation:
+    """Cached tokens must survive the real provider's per-pass summation.
+
+    The machine-side accumulation is covered by TestCostAccumulation,
+    but that test mocks l1_provider wholesale and never executes the
+    factories aggregation. This one runs the real provider with a
+    mocked llm_invoke so the summation line itself is under test.
+    """
+
+    def test_cached_summed_across_passes(self, monkeypatch):
+        from code_forge.baseline import ResolvedReview
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage
+
+        resolved = ResolvedReview(
+            source_files=[], baseline_content=None,
+            git_diff="diff", mode_hint="git")
+
+        def mock_invoke(*args, **kwargs):
+            return LLMResult(
+                content='{"findings": [], "code_excerpts": '
+                        '[{"file": "f", "content": "c", '
+                        '"start_line": 1, "end_line": 2}]}',
+                usage=Usage(input_tokens=31, output_tokens=16,
+                            cached_input_tokens=6720),
+                duration_s=0.1,
+            )
+
+        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke",
+                            mock_invoke)
+        l1_provider = build_l1_provider("real", resolved)
+        _, _, usage, _ = l1_provider()
+        assert usage.cached_input_tokens == 3 * 6720
+        assert usage.input_tokens == 3 * 31

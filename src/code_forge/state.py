@@ -177,6 +177,8 @@ class State:
     # 08-02 additions: cost tracking fields (CLI-08)
     cost_total_input: int = 0
     cost_total_output: int = 0
+    # Tokens served from the provider prompt cache across all rounds.
+    cost_total_cached: int = 0
     cost_total_duration: float = 0.0
     cost_passes: int = 0
     cost_per_pass: list[dict] = field(default_factory=list)
@@ -287,6 +289,7 @@ def load_state(path: Path) -> Optional[State]:
     cost_data = data.get("cost", {})
     state.cost_total_input = cost_data.get("total_input_tokens", 0)
     state.cost_total_output = cost_data.get("total_output_tokens", 0)
+    state.cost_total_cached = cost_data.get("total_cached_tokens", 0)
     state.cost_total_duration = cost_data.get("total_duration_s", 0.0)
     state.cost_passes = cost_data.get("passes", 0)
     state.cost_per_pass = cost_data.get("per_pass", [])
@@ -342,6 +345,7 @@ def save_state(state: State, path: Path) -> None:
         "cost": {
             "total_input_tokens": state.cost_total_input,
             "total_output_tokens": state.cost_total_output,
+            "total_cached_tokens": state.cost_total_cached,
             "total_duration_s": state.cost_total_duration,
             "passes": state.cost_passes,
             "per_pass": state.cost_per_pass,

@@ -306,3 +306,30 @@ class TestConsecutiveSurvivorRounds:
         loaded = load_state(path)
         assert loaded is not None
         assert loaded.consecutive_survivor_rounds == 0
+
+
+class TestCachedTokenCostRoundTrip:
+    """total_cached_tokens persists and loads; absent key stays 0.
+
+    Old state.json files predate the field, so load must default to 0
+    rather than raise -- a cache-visibility field must not break
+    resume of an older run.
+    """
+
+    def test_round_trip_total_cached(self, tmp_path):
+        state = State(round=1, mode=Mode.CI, source_hash="abc")
+        state.cost_total_cached = 6720
+        path = tmp_path / "state.json"
+        save_state(state, path)
+        loaded = load_state(path)
+        assert loaded.cost_total_cached == 6720
+
+    def test_absent_key_loads_zero(self, tmp_path):
+        state = State(round=1, mode=Mode.CI, source_hash="abc")
+        path = tmp_path / "state.json"
+        save_state(state, path)
+        raw = json.loads(path.read_text())
+        raw["cost"].pop("total_cached_tokens")
+        path.write_text(json.dumps(raw))
+        loaded = load_state(path)
+        assert loaded.cost_total_cached == 0

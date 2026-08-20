@@ -37,6 +37,12 @@ class Usage:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    # Tokens served from the provider's prompt cache (anthropic
+    # cache_read_input_tokens / openai prompt_tokens_details.cached_tokens).
+    # input_tokens on a caching backend reports only the uncached delta,
+    # so cached_input_tokens is the field that reveals a hit -- without
+    # it, a fully-cached call is indistinguishable from an empty prompt.
+    cached_input_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -165,6 +171,26 @@ class TruncationBreaker:
 DEFAULT_TIMEOUT_S = 1800  # documented fallback (seconds); FORGE_LLM_TIMEOUT_S overrides per call
 _CLI_TIMEOUT_CAP_S = 300  # CLI subprocesses cap; only applies when no explicit timeout is set
 _API_TIMEOUT_CAP_S = 600  # API backends cap; prevents 30-minute hangs on dead endpoints
+
+
+def _cached_tokens_from(usage_data) -> int:
+    """Prompt-cache hit count from either usage dialect.
+
+    openai: usage.prompt_tokens_details.cached_tokens (nested).
+    anthropic/vertex: usage.cache_read_input_tokens (flat).
+    Every value is null-guarded: gateways exist that emit a key with
+    null, and an unguarded .get would smuggle None into an int field.
+    """
+    if not usage_data:
+        return 0
+    if "prompt_tokens" in usage_data:
+        details = usage_data.get("prompt_tokens_details") or {}
+        # openai nests the hit count; deepseek reports it flat
+        # (prompt_cache_hit_tokens, with prompt_tokens = hit + miss).
+        return (details.get("cached_tokens")
+                or usage_data.get("prompt_cache_hit_tokens")
+                or 0)
+    return usage_data.get("cache_read_input_tokens") or 0
 
 
 def _request_headers(base: dict, backend: "BackendConfig") -> dict:
@@ -1113,6 +1139,7 @@ def _invoke_cli(
         usage=Usage(
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
+            cached_input_tokens=_cached_tokens_from(usage_data),
         ),
         duration_s=duration,
     )
@@ -1215,6 +1242,9 @@ def _continue_truncated(
                 output_tokens=(
                     (truncated.usage_data or {}).get(out_key, 0)
                 ),
+                cached_input_tokens=_cached_tokens_from(
+                    truncated.usage_data
+                ),
             )
         if not truncated.content.strip() \
                 or "{" not in truncated.content:
@@ -1299,6 +1329,10 @@ def _continue_truncated(
                 output_tokens=(
                     (truncated.usage_data or {}).get(out_key, 0)
                     + (usage_c or {}).get(out_key, 0)
+                ),
+                cached_input_tokens=(
+                    _cached_tokens_from(truncated.usage_data)
+                    + _cached_tokens_from(usage_c)
                 ),
             )
     except TruncationBreakerError:
@@ -1388,6 +1422,7 @@ def _invoke_api(
                     usage = Usage(
                         input_tokens=usage_data.get("prompt_tokens", 0),
                         output_tokens=usage_data.get("completion_tokens", 0),
+                        cached_input_tokens=_cached_tokens_from(usage_data),
                     )
                 elif backend.format == "anthropic":
                     content, usage_data = _invoke_anthropic(
@@ -1396,6 +1431,7 @@ def _invoke_api(
                     usage = Usage(
                         input_tokens=usage_data.get("input_tokens", 0),
                         output_tokens=usage_data.get("output_tokens", 0),
+                        cached_input_tokens=_cached_tokens_from(usage_data),
                     )
                 elif backend.format == "vertex":
                     content, usage_data = _invoke_vertex(
@@ -1404,6 +1440,7 @@ def _invoke_api(
                     usage = Usage(
                         input_tokens=usage_data.get("input_tokens", 0),
                         output_tokens=usage_data.get("output_tokens", 0),
+                        cached_input_tokens=_cached_tokens_from(usage_data),
                     )
                 else:
                     raise LLMInvokeError(

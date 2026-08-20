@@ -3212,11 +3212,19 @@ def _run_hold_loop(
                 + final_state.cost_total_output
             )
             if total_tokens > 0:
-                token_str = "%d tokens (%d in + %d out)" % (
+                token_str = "%d tokens (%d in + %d out" % (
                     total_tokens,
                     final_state.cost_total_input,
                     final_state.cost_total_output,
                 )
+                # A caching backend reports input as the uncached delta,
+                # so the cached count rides along when present -- without
+                # it a fully cached run prints a deceptively small total.
+                if final_state.cost_total_cached > 0:
+                    token_str += ", %d cached" % (
+                        final_state.cost_total_cached,
+                    )
+                token_str += ")"
             else:
                 token_str = "tokens: N/A (cli backend)"
             cost_line = "code-forge: cost: %s, %d passes, %.1fs" % (
