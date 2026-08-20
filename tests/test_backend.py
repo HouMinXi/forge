@@ -2080,6 +2080,13 @@ class TestProbeBackendLive:
         r = self._classify(LLMInvokeError("401", exit_code=401))
         assert r.error_class == "credential-rejected"
 
+    def test_connect_timeout_classifies_as_timeout(self):
+        from code_forge.llm_invoke import LLMInvokeError
+        r = self._classify(LLMInvokeError(
+            "URLError from live-test backend: timed out",
+            is_timeout=True, kind="conn"))
+        assert r.error_class == "timeout"
+
     def test_conn_class(self):
         from code_forge.llm_invoke import LLMInvokeError
         r = self._classify(LLMInvokeError("refused", kind="conn"))

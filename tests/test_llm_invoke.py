@@ -5518,3 +5518,20 @@ class TestFailureKindClassification:
                 llm_invoke("prompt", backend=backend,
                            max_attempts=1)
         assert "body:" not in str(ei.value)
+
+    def test_urlerror_wrapped_timeout_flags_is_timeout(self):
+        # A black-holed host raises URLError(TimeoutError) -- the
+        # connect phase timed out. kind stays conn (retryable like
+        # any connection error) but is_timeout lets the live probe
+        # classify it as a timeout, not a refusal.
+        backend = self._openai_backend()
+        with patch.dict(os.environ, {"KIND_TEST_KEY": "sk"}), \
+             patch("urllib.request.urlopen",
+                   side_effect=urllib.error.URLError(
+                       TimeoutError("timed out"))), \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError) as ei:
+                llm_invoke("prompt", backend=backend,
+                           max_attempts=1)
+        assert ei.value.kind == "conn"
+        assert ei.value.is_timeout is True

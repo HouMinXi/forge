@@ -1670,6 +1670,11 @@ def _invoke_openai(
         raise LLMInvokeError(
             "URLError from %s backend: %s" % (backend.name, exc.reason),
             retryable=True,
+            # A URLError wrapping a TimeoutError is a connect-phase
+            # timeout (black-holed host): keep it retryable like any
+            # conn error, but flag is_timeout so failure classifiers
+            # name it a timeout, not a refusal.
+            is_timeout=isinstance(exc.reason, TimeoutError),
             kind="conn",
         ) from exc
     except TimeoutError:
@@ -1812,6 +1817,11 @@ def _invoke_anthropic(
         raise LLMInvokeError(
             "URLError from %s backend: %s" % (backend.name, exc.reason),
             retryable=True,
+            # A URLError wrapping a TimeoutError is a connect-phase
+            # timeout (black-holed host): keep it retryable like any
+            # conn error, but flag is_timeout so failure classifiers
+            # name it a timeout, not a refusal.
+            is_timeout=isinstance(exc.reason, TimeoutError),
             kind="conn",
         ) from exc
     except TimeoutError:
@@ -1989,6 +1999,7 @@ def _invoke_vertex(
         raise LLMInvokeError(
             "URLError from vertex backend: %s" % exc.reason,
             retryable=True,
+            is_timeout=isinstance(exc.reason, TimeoutError),
             kind="conn",
         ) from exc
     except TimeoutError:
