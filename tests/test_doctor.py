@@ -581,3 +581,61 @@ def test_doctor_reports_hook_drift(tmp_path, capsys):
     assert "hooks:" in out
     assert "run code-forge install-hooks" in out
     assert rc == 1
+
+
+class TestUserConfigLine:
+    """Doctor reports the user-level config location every run.
+
+    The line is informational only: never a FAIL row, never touches
+    the exit code. Tests patch code_forge.user_config.user_config_path
+    (NOT load_user_backends -- the conftest autouse fixture patches
+    that, and patching it here would be silently neutered).
+    """
+
+    def _run(self, tmp_path, capsys):
+        from code_forge.doctor import run_doctor
+        rc = run_doctor(tmp_path, {})
+        out = capsys.readouterr().out
+        return rc, out
+
+    def test_present_path_printed(self, tmp_path, capsys):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("backends: {}\n")
+        with patch("code_forge.user_config.user_config_path",
+                   return_value=cfg):
+            rc, out = self._run(tmp_path, capsys)
+        assert str(cfg) in out
+
+    def test_absent_path_prints_would_be_location(self, tmp_path,
+                                                  capsys):
+        would_be = tmp_path / "xdg" / "code-forge" / "config.yaml"
+        with patch("code_forge.user_config.user_config_path",
+                   return_value=None), \
+             patch("code_forge.user_config.user_config_dir",
+                   return_value=would_be.parent):
+            rc, out = self._run(tmp_path, capsys)
+        assert str(would_be) in out
+        assert "shared backends" in out
+
+    def test_line_never_affects_exit_code(self, tmp_path, capsys):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("backends: {}\n")
+        with patch("code_forge.user_config.user_config_path",
+                   return_value=cfg):
+            rc, _ = self._run(tmp_path, capsys)
+        # An empty tmp workspace is a FAIL workspace; the user-config
+        # line must not add to that. The assertion that matters: the
+        # line is not itself a FAIL -- checked via the present-path
+        # run's rc equaling the absent-path run's rc on the same ws.
+        with patch("code_forge.user_config.user_config_path",
+                   return_value=None), \
+             patch("code_forge.user_config.user_config_dir",
+                   return_value=tmp_path / "code-forge"):
+            rc2, _ = self._run(tmp_path, capsys)
+        assert rc == rc2
+
+    def test_default_run_does_not_crash(self, tmp_path, capsys):
+        # No patching of user_config at all: host may have a config or
+        # not; either branch must render without raising.
+        rc, out = self._run(tmp_path, capsys)
+        assert "user config:" in out

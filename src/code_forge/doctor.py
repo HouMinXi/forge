@@ -497,6 +497,19 @@ def run_doctor(
     if not ok_h:
         has_fail = True
 
+    # User-level config is host state, not workspace state: report it
+    # every run, outside the workspace-gated block above.
+    from code_forge.user_config import user_config_dir, user_config_path
+    user_cfg = user_config_path()
+    if user_cfg is not None:
+        print("  user config: %s" % user_cfg)
+    else:
+        print(
+            "  user config: none at %s -- shared backends can be set "
+            "there once; a project gate.yaml backend wins by name"
+            % (user_config_dir() / "config.yaml")
+        )
+
     reg_results = _check_registries(Path(os.path.expanduser("~")))
     print("  registries:")
     for name, status in reg_results:
