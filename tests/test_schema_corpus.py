@@ -849,3 +849,19 @@ def test_invalid_siblings_ref_shell_chars(tmp_path: pathlib.Path) -> None:
     siblings = [{"repo": "../sibling", "ref": "main; rm -rf /..feature"}]
     with pytest.raises(ValueError, match="invalid characters"):
         validate_siblings(siblings, gate_yaml_dir=gate_yaml_dir)
+
+
+class TestBaseUrlDescription:
+    """The base_url description owns the /v1 semantics text.
+
+    It is the single place the verbatim-concatenation rule is worded
+    (a second wording in the README would drift); this guard keeps
+    the substrings that rule needs from being edited away.
+    """
+
+    def test_base_url_description_names_both_shapes(self):
+        desc = SCHEMA["$defs"]["backendEntry"]["properties"]["base_url"][
+            "description"
+        ]
+        assert "/v1" in desc
+        assert "/chat/completions" in desc

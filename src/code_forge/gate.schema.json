@@ -268,7 +268,7 @@
         },
         "base_url": {
           "type": "string",
-          "description": "API base URL. Required for type=api with format=anthropic or format=openai."
+          "description": "API base URL. Required for type=api. forge appends the provider path verbatim (openai: /chat/completions, anthropic: /v1/messages) with no /v1 normalization, so the prefix is yours to own: an OpenAI-style endpoint needs https://host/v1, a router root that already includes /v1 in its paths needs just https://host."
         },
         "api_key_env": {
           "type": "string",
