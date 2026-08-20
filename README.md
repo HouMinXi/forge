@@ -189,6 +189,12 @@ code-forge verify    # check review receipt status
 
 ## Backend configuration
 
+Backends can also be set once for all projects in
+`~/.config/code-forge/config.yaml` (override the location with
+`FORGE_CONFIG_DIR`); a backend with the same name in a project's
+`gate.yaml` wins. `code-forge doctor` prints the resolved user-level
+config path every run.
+
 By default, code-forge uses the `claude` CLI in your PATH with the session
 model (no model pin). Three environment variables control the backend:
 
