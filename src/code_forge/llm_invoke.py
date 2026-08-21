@@ -1892,7 +1892,10 @@ def _invoke_anthropic(
             "unexpected response structure from %s backend" % backend.name,
             retryable=False,
         ) from exc
-    usage_data = resp_data.get("usage", {})
+    # Same guard as the truncation raise: a null usage key must yield
+    # {}, because the retry loop reads token counts off this dict.
+    raw_usage = resp_data.get("usage")
+    usage_data = raw_usage if isinstance(raw_usage, dict) else {}
 
     return (content, usage_data)
 
@@ -2080,7 +2083,10 @@ def _invoke_vertex(
             "unexpected response structure from vertex backend",
             retryable=False,
         ) from exc
-    usage_data = resp_data.get("usage", {})
+    # Same guard as the truncation raise: a null usage key must yield
+    # {}, because the retry loop reads token counts off this dict.
+    raw_usage = resp_data.get("usage")
+    usage_data = raw_usage if isinstance(raw_usage, dict) else {}
 
     return (content, usage_data)
 

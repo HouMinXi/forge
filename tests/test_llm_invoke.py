@@ -1438,6 +1438,34 @@ class TestTruncationDetection:
             assert "output=16384" in str(exc_info.value)
             assert "output capacity" in str(exc_info.value)
 
+    def test_anthropic_null_usage_end_turn_returns_empty_dict(self):
+        """Null usage on the success path returns {}, not None.
+
+        The retry loop reads usage_data.get("input_tokens", 0); a None
+        returned here crashes it with a raw AttributeError that the
+        LLMInvokeError-only loop cannot catch. Mirrors the openai
+        guard: .get's default fires only on a missing key.
+        """
+        from code_forge.llm_invoke import _invoke_anthropic
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": [{"type": "text", "text": '{"findings": []}'}],
+            "usage": None,
+            "stop_reason": "end_turn",
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            content, usage = _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+            assert "findings" in content
+            assert usage == {}
+
     def test_anthropic_stop_reason_end_turn_passes(self):
         from code_forge.llm_invoke import _invoke_anthropic
 
@@ -1760,6 +1788,30 @@ class TestTruncationDetection:
             assert "input=600" in str(exc_info.value)
             assert "output=8192" in str(exc_info.value)
             assert "output capacity" in str(exc_info.value)
+
+    def test_vertex_null_usage_end_turn_returns_empty_dict(self):
+        """Null usage on the success path returns {}, not None."""
+        from code_forge.llm_invoke import _invoke_vertex
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        resp_data = {
+            "content": [{"type": "text", "text": '{"findings": []}'}],
+            "usage": None,
+            "stop_reason": "end_turn",
+        }
+        resp = Mock()
+        resp.read.return_value = json.dumps(resp_data).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", return_value=resp):
+            content, usage = _invoke_vertex("p", backend, timeout_s=10)
+            assert "findings" in content
+            assert usage == {}
 
     def test_vertex_stop_reason_end_turn_passes(self):
         from code_forge.llm_invoke import _invoke_vertex
