@@ -2057,6 +2057,36 @@ class TestProbeBackendLive:
         assert "ok" in kw["expected_keys"]
         assert kw["continuation_breaker"] is not None
 
+    def test_thinking_only_truncation_classified_end_to_end(self):
+        """A thinking-only anthropic body reaches the classifier intact.
+
+        The probe's threshold-1 breaker trips on the first truncation,
+        so the surfaced error carries kind="truncated" and the probe
+        must report truncated-output -- not unclassified, which is what
+        a parse-order regression (truncation decided after text-block
+        extraction) would produce.
+        """
+        import json as _json
+        import os as _os
+        from unittest.mock import MagicMock
+        from code_forge.backend import probe_backend_live
+
+        resp = MagicMock()
+        resp.read.return_value = _json.dumps({
+            "content": [{"type": "thinking", "thinking": "budget spent"}],
+            "usage": {"input_tokens": 7, "output_tokens": 32},
+            "stop_reason": "max_tokens",
+        }).encode("utf-8")
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp), \
+                patch.dict(_os.environ, {"LIVE_TEST_KEY": "k"}):
+            r = probe_backend_live(self._cfg(format="anthropic"))
+        assert r.ok is False
+        assert r.error_class == "truncated-output"
+        assert r.suggestion
+
     def _classify(self, error):
         from code_forge.backend import probe_backend_live
         with patch("code_forge.llm_invoke.llm_invoke",

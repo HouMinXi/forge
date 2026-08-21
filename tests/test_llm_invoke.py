@@ -1405,6 +1405,12 @@ class TestTruncationDetection:
     Covers M1a: anthropic stop_reason=max_tokens, openai finish_reason=length,
     vertex stop_reason=max_tokens.  The sampling path (stopReason=maxTokens)
     was already covered in TestInvokeSampling.
+
+    The anthropic and vertex paths decide truncation BEFORE text-block
+    extraction: a thinking model that spends the whole output budget on
+    reasoning returns content with no text block, and the extraction
+    failure would otherwise mask the truncation as an unexpected
+    response structure.
     """
 
     def test_anthropic_stop_reason_max_tokens(self):
@@ -1451,6 +1457,106 @@ class TestTruncationDetection:
         with patch("urllib.request.urlopen", return_value=resp):
             content, usage = _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
             assert "findings" in content
+
+    def test_anthropic_thinking_only_max_tokens_is_truncation(self):
+        from code_forge.llm_invoke import _invoke_anthropic, _TruncatedResponse
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": [{"type": "thinking", "thinking": "budget spent"}],
+            "usage": {"input_tokens": 7, "output_tokens": 32},
+            "stop_reason": "max_tokens",
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+            exc = exc_info.value
+            assert exc.kind == "truncated"
+            assert exc.retryable is False
+            assert exc.content is None
+            assert "input=7" in str(exc)
+            assert "output=32" in str(exc)
+
+    def test_anthropic_nondict_body_reports_structure(self):
+        """A non-dict 200-body is a structure error, not a traceback."""
+        from code_forge.llm_invoke import _invoke_anthropic, LLMInvokeError
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        for raw in ('[{"type": "text", "text": "hi"}]', '"str"', "42", "null"):
+            resp = Mock()
+            resp.read.return_value = raw.encode("utf-8")
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+
+            with patch("urllib.request.urlopen", return_value=resp):
+                with pytest.raises(
+                    LLMInvokeError, match="unexpected response"
+                ):
+                    _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+
+    def test_anthropic_malformed_content_max_tokens_is_truncation(self):
+        """Non-iterable content with max_tokens still reports truncation."""
+        from code_forge.llm_invoke import _invoke_anthropic, _TruncatedResponse
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        resp = Mock()
+        resp.read.return_value = json.dumps({
+            "content": 5,
+            "usage": {"input_tokens": 7, "output_tokens": 32},
+            "stop_reason": "max_tokens",
+        }).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+            assert exc_info.value.kind == "truncated"
+            assert exc_info.value.content is None
+
+    def test_anthropic_null_usage_max_tokens_is_truncation(self):
+        """A null or non-dict usage value must not crash the raise.
+
+        .get("usage", {}) returns None when the key exists with a null
+        value -- a gateway behavior this codebase already documents
+        elsewhere -- so the token counts degrade to "?" instead of
+        raising AttributeError from inside the message format.
+        """
+        from code_forge.llm_invoke import _invoke_anthropic, _TruncatedResponse
+
+        backend = BackendConfig(
+            name="mimo", type="api", model="m", format="anthropic",
+            base_url="http://x", api_key_env="K",
+        )
+        for usage in (None, "totals", 7):
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "content": [{"type": "thinking", "thinking": "spent"}],
+                "usage": usage,
+                "stop_reason": "max_tokens",
+            }).encode("utf-8")
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+
+            with patch("urllib.request.urlopen", return_value=resp):
+                with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                    _invoke_anthropic("p", backend, api_key="k", timeout_s=10)
+                assert exc_info.value.kind == "truncated"
+                assert "input=?" in str(exc_info.value)
+                assert "output=?" in str(exc_info.value)
 
     def test_openai_finish_reason_length(self):
         from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
@@ -1643,6 +1749,81 @@ class TestTruncationDetection:
              patch("urllib.request.urlopen", return_value=resp):
             content, usage = _invoke_vertex("p", backend, timeout_s=10)
             assert "findings" in content
+
+    def test_vertex_thinking_only_max_tokens_is_truncation(self):
+        from code_forge.llm_invoke import _invoke_vertex, _TruncatedResponse
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        resp_data = {
+            "content": [{"type": "thinking", "thinking": "budget spent"}],
+            "usage": {"input_tokens": 7, "output_tokens": 8192},
+            "stop_reason": "max_tokens",
+        }
+        resp = Mock()
+        resp.read.return_value = json.dumps(resp_data).encode("utf-8")
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+
+        with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("urllib.request.urlopen", return_value=resp):
+            with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                _invoke_vertex("p", backend, timeout_s=10)
+            exc = exc_info.value
+            assert exc.kind == "truncated"
+            assert exc.retryable is False
+            assert exc.content is None
+            assert "input=7" in str(exc)
+            assert "output=8192" in str(exc)
+
+    def test_vertex_nondict_body_reports_structure(self):
+        """A non-dict 200-body is a structure error, not a traceback."""
+        from code_forge.llm_invoke import _invoke_vertex, LLMInvokeError
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        for raw in ('[{"type": "text", "text": "hi"}]', '"str"', "null"):
+            resp = Mock()
+            resp.read.return_value = raw.encode("utf-8")
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+
+            with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+                 patch("google.auth.transport.requests.Request"), \
+                 patch("urllib.request.urlopen", return_value=resp):
+                with pytest.raises(
+                    LLMInvokeError, match="unexpected response"
+                ):
+                    _invoke_vertex("p", backend, timeout_s=10)
+
+    def test_vertex_null_usage_max_tokens_is_truncation(self):
+        """A null or non-dict usage value must not crash the raise."""
+        from code_forge.llm_invoke import _invoke_vertex, _TruncatedResponse
+
+        backend = _make_vertex_backend()
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        for usage in (None, "totals", 7):
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "content": [{"type": "thinking", "thinking": "spent"}],
+                "usage": usage,
+                "stop_reason": "max_tokens",
+            }).encode("utf-8")
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+
+            with patch("google.auth.default", return_value=(mock_creds, "proj")), \
+                 patch("google.auth.transport.requests.Request"), \
+                 patch("urllib.request.urlopen", return_value=resp):
+                with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                    _invoke_vertex("p", backend, timeout_s=10)
+                assert exc_info.value.kind == "truncated"
+                assert "input=?" in str(exc_info.value)
+                assert "output=?" in str(exc_info.value)
 
 
 class TestTruncationCarrier:

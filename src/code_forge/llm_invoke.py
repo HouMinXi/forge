@@ -1833,6 +1833,48 @@ def _invoke_anthropic(
             kind="conn",
         ) from exc
 
+    # Truncation detection must precede text-block extraction: a thinking
+    # model that spends the whole output budget on reasoning returns
+    # content with no text block at all, and the extraction failure below
+    # would then report a misleading "unexpected response structure"
+    # instead of the real cause.  Thinking tokens (if enabled) count
+    # against max_tokens, so a large diff + thinking can exhaust the
+    # budget before the JSON content is complete.  The isinstance gates
+    # keep a non-dict 200-body (a gateway may answer 200 with a bare
+    # list or string) on the classified error path below instead of
+    # crashing on .get.
+    if isinstance(resp_data, dict) and \
+            resp_data.get("stop_reason") == "max_tokens":
+        raw_blocks = resp_data.get("content")
+        partial_blocks = [
+            b for b in (raw_blocks if isinstance(raw_blocks, list) else [])
+            if isinstance(b, dict) and b.get("type", "text") == "text"
+        ]
+        partial = partial_blocks[0].get("text") if partial_blocks else None
+        # .get's default fires only on a missing key; a gateway can emit
+        # "usage": null, and the token counts then degrade to "?" rather
+        # than crash the raise.
+        raw_usage = resp_data.get("usage")
+        usage_data = raw_usage if isinstance(raw_usage, dict) else {}
+        raise _TruncatedResponse(
+            "%s backend response truncated (stop_reason=max_tokens, "
+            "input=%s output=%s). Review output truncated: output "
+            "capacity (%d tokens) insufficient for this diff. Raise "
+            "output_ceiling on this backend in gate.yaml or use a "
+            "higher-output model."
+            % (
+                backend.name,
+                usage_data.get("input_tokens", "?"),
+                usage_data.get("output_tokens", "?"),
+                resolved_cap,
+            ),
+            content=partial,
+            usage_data=usage_data,
+            resolved_cap=resolved_cap,
+            kind="truncated",
+            retryable=False,
+        )
+
     # Extract first text block from Anthropic response.  Some backends
     # (e.g. MiniMax) prepend a thinking block before the text block.
     try:
@@ -1841,36 +1883,12 @@ def _invoke_anthropic(
         if not text_blocks:
             raise KeyError("no text block in content")
         content = text_blocks[0]["text"]
-        usage_data = resp_data.get("usage", {})
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.name,
             retryable=False,
         ) from exc
-
-    # Truncation detection: anthropic format uses stop_reason == "max_tokens"
-    # when the response hit the output cap.  Thinking tokens (if enabled)
-    # count against max_tokens, so a large diff + thinking can exhaust the
-    # budget before the JSON content is complete.  Detect this before the
-    # caller attempts JSON parsing -- a truncated JSON always fails parse,
-    # and "not valid JSON" hides the real cause from the user.
-    stop = resp_data.get("stop_reason", "")
-    if stop == "max_tokens":
-        in_tok = usage_data.get("input_tokens", "?")
-        out_tok = usage_data.get("output_tokens", "?")
-        raise _TruncatedResponse(
-            "%s backend response truncated (stop_reason=max_tokens, "
-            "input=%s output=%s). Review output truncated: output "
-            "capacity (%d tokens) insufficient for this diff. Raise "
-            "output_ceiling on this backend in gate.yaml or use a "
-            "higher-output model."
-            % (backend.name, in_tok, out_tok, resolved_cap),
-            content=content,
-            usage_data=usage_data,
-            resolved_cap=resolved_cap,
-            kind="truncated",
-            retryable=False,
-        )
+    usage_data = resp_data.get("usage", {})
 
     return (content, usage_data)
 
@@ -2011,37 +2029,54 @@ def _invoke_vertex(
             kind="conn",
         ) from exc
 
-    try:
-        blocks = resp_data["content"]
-        text_blocks = [b for b in blocks if b.get("type", "text") == "text"]
-        if not text_blocks:
-            raise KeyError("no text block in content")
-        content = text_blocks[0]["text"]
-        usage_data = resp_data.get("usage", {})
-    except (KeyError, IndexError, TypeError) as exc:
-        raise LLMInvokeError(
-            "unexpected response structure from vertex backend",
-            retryable=False,
-        ) from exc
-
-    # Vertex uses anthropic response format: same stop_reason field.
-    stop = resp_data.get("stop_reason", "")
-    if stop == "max_tokens":
-        in_tok = usage_data.get("input_tokens", "?")
-        out_tok = usage_data.get("output_tokens", "?")
+    # Same ordering rule as the anthropic path: decide truncation before
+    # text-block extraction, or a thinking model that exhausts the budget
+    # on reasoning alone is misreported as an unexpected structure.  The
+    # isinstance gates mirror the anthropic path: a non-dict 200-body
+    # falls through to the classified error below.
+    if isinstance(resp_data, dict) and \
+            resp_data.get("stop_reason") == "max_tokens":
+        raw_blocks = resp_data.get("content")
+        partial_blocks = [
+            b for b in (raw_blocks if isinstance(raw_blocks, list) else [])
+            if isinstance(b, dict) and b.get("type", "text") == "text"
+        ]
+        partial = partial_blocks[0].get("text") if partial_blocks else None
+        # .get's default fires only on a missing key; a gateway can emit
+        # "usage": null, and the token counts then degrade to "?" rather
+        # than crash the raise.
+        raw_usage = resp_data.get("usage")
+        usage_data = raw_usage if isinstance(raw_usage, dict) else {}
         raise _TruncatedResponse(
             "vertex backend response truncated (stop_reason=max_tokens, "
             "input=%s output=%s). Review output truncated: output "
             "capacity (%d tokens) insufficient for this diff. Raise "
             "output_ceiling on this backend in gate.yaml or use a "
             "higher-output model."
-            % (in_tok, out_tok, resolved_cap),
-            content=content,
+            % (
+                usage_data.get("input_tokens", "?"),
+                usage_data.get("output_tokens", "?"),
+                resolved_cap,
+            ),
+            content=partial,
             usage_data=usage_data,
             resolved_cap=resolved_cap,
             kind="truncated",
             retryable=False,
         )
+
+    try:
+        blocks = resp_data["content"]
+        text_blocks = [b for b in blocks if b.get("type", "text") == "text"]
+        if not text_blocks:
+            raise KeyError("no text block in content")
+        content = text_blocks[0]["text"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LLMInvokeError(
+            "unexpected response structure from vertex backend",
+            retryable=False,
+        ) from exc
+    usage_data = resp_data.get("usage", {})
 
     return (content, usage_data)
 
