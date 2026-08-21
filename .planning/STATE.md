@@ -3,27 +3,27 @@ gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: ENV-GROUNDING
 status: active
-stopped_at: main @ 12c9709. Phase 54 EXECUTED 2026-08-20 on branch fix/router-onboarding-compat @ 60336c9 (8 commits, T1-T5 done, 3543 tests pass, 3-round review converged; T6 human checkpoint PENDING; NOT merged -- user decision). Cache-visibility quick task merged+pushed same day (12c9709). v2.9 opened 2026-08-17; Phase 48 shipped; 44/51/52/53a/53b + 43.1 remain, 54 pending merge
-last_updated: "2026-08-18T00:00:00.000Z"
+stopped_at: main @ 8bd01bc. Phase 54 MERGED 2026-08-21 (60336c9, fast-forward; T6 human checkpoint passed 2026-08-20; branch+worktree cleaned). Same-day follow-up fix/anthropic-truncation-ordering merged+pushed (8bd01bc, found BY the T6 checkpoint: thinking-only truncation misclassified as unexpected-response-structure). Cache-visibility quick task merged+pushed 2026-08-20 (12c9709). v2.9 opened 2026-08-17; shipped so far: 48, 54. Remaining: 44, 51, 52, 53a, 53b, 43.1
+last_updated: "2026-08-21T16:00:00.000Z"
 progress:
   basis: v2.9 tracked units -- 48, 44, 51, 52, 53a, 53b, 54 (Router-compat), 43.1
   total_phases: 8
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 1
   completed_plans: 1
-  percent: 13
+  percent: 25
 ---
 
 # State: Forge
 
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-21
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-08-17)
 
 **Core value:** No code ships without surviving three consecutive clean review cycles; a green verdict is honest or declares what it did not verify
-**Current focus:** Milestone v2.9 ENV-GROUNDING, opened 2026-08-17. No phase in flight, main @ 59c1c51. Next by dependency order is Phase 44 (EVAL-ON-DUTY), the lane root; Phase 51 may be pulled forward since its only hard prereq (Phase 43) is merged. Also in v2.9 scope, rolled forward from the v2.8 tail: Router compat remainder (F3/F4 + F2/F5 docs) and Phase 43.1 (four of its ten charter items closed during v2.8). Phase 48 is the one v2.9 phase shipped; six follow-ups open in .planning/phases/phase-48/48-FOLLOWUPS.md. Eight pending todos remain, #54 carrying [BLOCKS DEPLOYMENT]. Windows wave-2 parked until gpu-win evidence
+**Current focus:** Milestone v2.9 ENV-GROUNDING, opened 2026-08-17. main @ 8bd01bc. Phases 48 and 54 shipped; remaining: 44 (EVAL-ON-DUTY, lane root), 51 (BASIS-DISCLOSE, prereq Phase 43 already merged -- may be pulled forward), 52, 53a, 53b, and 43.1 (ATTEST items 2/5/6/7/9; #54 [BLOCKS DEPLOYMENT]). 2026-08-20/21 delivered: cache-token-visibility (12c9709, charter MCP-prompt-caching diagnosed and resolved -- no MCP-vs-CLI gap exists, mimo-pro auto-caches on both API surfaces), Phase 54 (60336c9), anthropic-truncation-ordering (8bd01bc, found by the T6 checkpoint). Open follow-up batches: 48-FOLLOWUPS (6), router-onboarding review file (serial live probe progress line, probe budget vs thinking models, family F1-F3). Windows wave-2 parked until gpu-win evidence
 
 **CHARTER RATIFIED 2026-08-08.** `charter_review_pipeline_gaps` accepted,
 placed in v2.8 tail as Phase 43.1. 10 defect items + the
@@ -40,6 +40,20 @@ disk, pending resume. **Superseded 2026-08-09:** #49 and #57 landed on
 main (6e5650f, 6b05a6e); only #59 is still open. See the 08-09 reconcile.
 
 ## Current Position
+
+**RECONCILE 2026-08-21: Phase 54 CLOSED.** Merged as fast-forward 60336c9
+(user-executed), pushed to origin. T6 human checkpoint passed 2026-08-20 on
+the merged work: trust walk-up from a subdirectory (warning + resolved-path
+print), doctor --live on 12 real backends (8-class taxonomy fired live: 4 ok /
+3 http-error / 3 credential-rejected / 1 unclassified), wrong-/v1 scratch
+witness (http-error + body excerpt + /v1 hint + exit 1), plain doctor shows
+zero live rows. T6 caught two real defects in the wild: (1) opus-omniroute
+misconfigured model name `onmi-opus4.6` (user config fix, not code); (2) the
+anthropic truncation-ordering defect -- thinking-only responses exhausted
+max_tokens and hit "unexpected response structure" instead of the truncation
+diagnosis, which became fix/anthropic-truncation-ordering (3 commits, 4
+review rounds, merged 8bd01bc + pushed). Branch/worktree cleanup done.
+Milestone: 48 + 54 of 8 units shipped (25%).
 
 **MILESTONE v2.9 OPENED 2026-08-17 (accounting only -- no code changed, main
 still @ 59c1c51).** The GSD ledger had drifted three layers deep and was

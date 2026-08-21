@@ -107,7 +107,11 @@ in-flight queue.
 Rolled forward from the v2.8 tail when that milestone closed (2026-08-17).
 Both sit OUTSIDE the 44 -> 53b chain and can run in any order against it:
 
-- [ ] Phase 54: Router onboarding compat remainder -- F3 trust path (print the resolved
+- [x] Phase 54: Router onboarding compat remainder -- MERGED 2026-08-21 (60336c9,
+  8 commits, T1-T6 all passed; 3-round review converged; T6 human checkpoint
+  passed 2026-08-20 including two real-world catches: an opus-omniroute
+  misconfigured model name and the anthropic truncation-ordering defect that
+  became fix/anthropic-truncation-ordering, merged as 8bd01bc). F3 trust path (print the resolved
   gate.yaml path, warn when cwd is not a project, follow the ADR-0009 $HOME
   policy), F4 live backend probe extending doctor/_probe_api, F2 base_url /v1
   semantics in gate.schema.json, F5 point users at the shipped
@@ -115,11 +119,14 @@ Both sit OUTSIDE the 44 -> 53b chain and can run in any order against it:
   prevention rather than tolerance; the shared-parse SSE tolerance stays
   deferred on its stated trigger. Tracked as ROUTER-02..05. Full evidence and
   the re-grep warning about stale line numbers are in the v2.8 section above.
+  Six follow-ups accepted (serial live probe with no progress line, probe
+  32-token budget vs thinking models, plus four pre-existing defects family
+  F1-F3) recorded in .planning/reviews/router-onboarding-20260820.txt.
   **Plans:** 1 plan
   Plans:
-  - [ ] 54-01-PLAN.md -- F2 schema text, F3 trust walk-up + path print + warn,
+  - [x] 54-01-PLAN.md -- F2 schema text, F3 trust walk-up + path print + warn,
     F5 doctor user-config line + README pointer, F4 doctor --live probe with
-    five-class taxonomy (kind= additions + probe_backend_live helper + wiring)
+    eight-class taxonomy (kind= additions + probe_backend_live helper + wiring)
 - [ ] Phase 43.1 review-pipeline self-attestation gaps -- live scope is
   charter items 2, 5, 6, 7, 9 (items 1/3/4/10 closed during v2.8). Item 7
   carries todo #54 [BLOCKS DEPLOYMENT]. Tracked as ATTEST-01..05.
@@ -851,6 +858,7 @@ Plans:
 | 46. doctor tool-audit | v2.8 | -- | Complete | 2026-07-11 |
 | Windows MCP wave 1 | v2.8 | -- | Complete (gpu-win verified) | 2026-07-11 |
 | 48. LLM stream TTFT + truncation continuation | v2.9 | 1/1 | Complete | 2026-08-16 |
+| 54. Router onboarding compat remainder | v2.9 | 1/1 | Complete | 2026-08-21 |
 
 ### Phase 36: Usability Hardening -- completed 2026-07-01
 **Goal:** Fix the 55 usability findings (MCP-01..55) from the 5-round exhaustive

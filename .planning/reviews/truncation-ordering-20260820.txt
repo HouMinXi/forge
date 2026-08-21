@@ -1,0 +1,165 @@
+# Review: fix/anthropic-truncation-ordering (truncation-before-extraction)
+
+Date: 2026-08-20. Reviewer: independent agent, fresh context (round 1).
+Commit under review: b4022a3 (llm/truncation: decide anthropic-style
+truncation before text extraction). Base main@60336c9.
+
+Origin: T6 human checkpoint (Phase 54) found doctor --live reporting
+mimo-pro as "unclassified -- unexpected response structure" roughly 2
+of 5 runs. Live experiment: 5 identical probe-shaped requests to
+mimo-v2.5-pro (anthropic surface, max_tokens=32) returned
+stop=max_tokens + thinking-only content 2/5 times. Root cause:
+text-block extraction ran before the stop_reason check, so
+budget-exhaustion-by-reasoning was misreported as a structure error.
+
+Bug-injection: proven per site. Disabling the hoisted check at the
+anthropic site (sed `if False and`) -> 2 anthropic tests FAIL
+(new thinking-only test + pre-existing max_tokens test), vertex 12/12
+wait 10/12 pass; same at vertex site symmetrically. Restored, 12/12
+pass. Full suite 3545 passed / 0 failed.
+
+## Round 1 findings
+
+P1 (REQUEST_CHANGES): hoisted unconditional resp_data.get(...) calls
+(llm_invoke.py anthropic ~1843-1844, vertex ~2025-2026) crash on
+non-dict 200-bodies. _parse_response_body returns whatever json.loads
+produces; a top-level list/string/number/null body previously hit the
+extraction try's TypeError/KeyError and was classified as
+LLMInvokeError("unexpected response structure"), but now raises a raw
+AttributeError that escapes _invoke_api's LLMInvokeError-only retry
+loop and probe_backend_live's handler (doctor crashes instead of
+reporting). Reviewer demonstrated experimentally: list body, string
+body, 42 body, null body -> AttributeError; {"content": 5,
+stop_reason: max_tokens} -> TypeError from the comprehension. Also
+noted: content=5 + max_tokens inside a dict is NOT covered by an
+isinstance(resp_data, dict) guard alone (iterating 5 still TypeErrors).
+
+Remedy adopted: isinstance(resp_data, dict) gate on the hoisted block
++ isinstance(raw_blocks, list) guard on the partial extraction;
+non-dict bodies fall through to the unchanged extraction failure.
+
+Categories 2 (end_turn contract), 3 (dead code), 4 (downstream
+consumers incl. probe -> truncated-output classification), 6
+(non-truncating backends): CLEAN, experimentally verified by reviewer
+against the pre-change baseline.
+
+P3 gaps accepted (not blocking): (a) no test for content missing/null
++ max_tokens (collapses into the same or-[] path); (b) no
+probe_backend_live e2e test mocking a thinking-only anthropic response
+-- the llm_invoke fix -> classification wiring was only established by
+tracing; added in round 1 rework (see below).
+
+Verdict round 1: REQUEST_CHANGES (1 P1).
+
+## Round 2 findings (reviewer 2, fresh context, on 4d4c0c6)
+
+Round-1 P1 fixed and verified: isinstance(resp_data, dict) gate +
+isinstance(raw_blocks, list) guard; the three regression tests were
+run against the round-1 state first and failed with the predicted raw
+AttributeError/TypeError, then passed. Reviewer independently re-ran
+the full suite (3549/0) and verified each new test fails on at least
+one ancestor exhibiting its target bug (e2e probe test fails on main
+with exactly the live symptom: 'unclassified' != 'truncated-output').
+
+P1 (REQUEST_CHANGES): hoisted blocks still called
+usage_data.get(...) without checking usage is a dict.
+{"stop_reason": "max_tokens", "usage": null} -> None.get -> raw
+AttributeError escaping the retry loop and probe (experimentally
+confirmed on both paths). .get("usage", {}) returns None when the key
+exists with null -- the gateway behavior _cached_tokens_from's
+docstring already documents. Same class as round-1 P1, one field over.
+
+P3: commit message claim "a malformed content value stays on the
+classified unexpected-structure path" inaccurate for the max_tokens
+variant (malformed content + max_tokens -> truncation, content=None,
+by design).
+
+Categories verified CLEAN in round 2: guarded hoisted blocks (all
+malformed shapes), end_turn return contract (byte-identical, verified
+against main), test pinning (per-ancestor failure matrix), downstream
+consumers, non-ASCII.
+
+## Round-2 rework (commits 669f115 + 5c67721)
+
+- usage guard added to both hoisted blocks (raw_usage/isinstance
+  dict else {}); null/str/int usage now degrades token counts to "?".
+  Tests test_anthropic_null_usage_max_tokens_is_truncation +
+  test_vertex_null_usage_max_tokens_is_truncation written FIRST,
+  failed on 4d4c0c6 with raw AttributeError, pass after the guard.
+- P3 fixed: commit message rewritten to state malformed content +
+  max_tokens is reported as the truncation it signals.
+- Pre-existing openai sibling found during rework: the openai
+  truncation branch (llm_invoke.py ~1714) crashes the same way on
+  usage null/non-dict. Per the no-silent-fix rule it is a SEPARATE
+  commit (5c67721) with its own message naming it a pre-existing
+  defect in the same family, pinned by
+  test_openai_null_usage_finish_length_is_truncation (written first,
+  failed on 669f115, passes after).
+- Full suite after both commits: 3552 passed / 0 failed.
+
+Open items (accepted, not blocking): P3 gap (a) content key
+missing/null + max_tokens has no dedicated test (collapses into the
+same isinstance-[] path); pre-existing extraction AttributeError for
+content=["hello"] (string items) without max_tokens on main -- out of
+scope, unchanged by this diff.
+
+## Round 3 findings (reviewer 3, fresh context, on 669f115 + 5c67721)
+
+R1/R2 P1 fixes verified clean (guard interactions, scoping of the two
+commits, commit messages vs diffs, test pinning via out-of-tree
+failing-first re-verification, full suite re-run 3552/0).
+
+P1 (REQUEST_CHANGES, pre-existing sibling): anthropic/vertex SUCCESS
+path still returned None for "usage": null (llm_invoke.py 1895/2083
+pre-guard); the retry-loop consumer (~1447 usage_data.get) crashed
+with a raw AttributeError, reproduced end-to-end by the reviewer. The
+openai guard in 5c67721 covered both truncated and non-truncated
+returns, creating a format asymmetry. Recommendation: third
+separately-scoped commit per the branch's own no-silent-fix policy.
+
+P3 (noted, out of scope): _check_body_error (~1690, all formats)
+calls resp_data.get("error") before any isinstance guard; a non-dict
+200-body crashes there. Identical on main. Recorded as follow-up, NOT
+fixed on this branch.
+
+## Round-3 rework (commit 8bd01bc)
+
+Success-path usage guard added to anthropic and vertex
+(raw_usage/isinstance dict else {}), mirroring the openai guard.
+Tests test_anthropic_null_usage_end_turn_returns_empty_dict +
+test_vertex_null_usage_end_turn_returns_empty_dict written FIRST,
+failed on 5c67721 (usage was None), pass after. Full suite 3554/0.
+
+Branch state entering round 4: 669f115 + 5c67721 + 8bd01bc.
+
+## Round 4 (reviewer 4, fresh context, on all three commits): APPROVE
+
+8bd01bc verified independently: regression tests re-run against the
+parent commit (fail with assert None == {} as expected), the e2e
+retry-loop crash reproduced on the parent and clean Usage(0,0,0) on
+HEAD, all (content, usage) consumers enumerated safe for {}, format
+symmetry table verified across openai/anthropic/vertex for every
+malformed shape, systematic family enumeration of every attribute
+access after a 200 response. Suite re-run 499/0 (target files).
+
+New family members found, all pre-existing on main, recorded as
+follow-ups (NOT this branch):
+- F1: null token VALUES inside a usage dict -> Usage(input=None) ->
+  TypeError in machine.py/factories.py accumulation.
+- F2: non-dict SSE chunk (data: [1] / data: 5) -> raw crash in
+  _read_sse (:532/:537).
+- F3: truthy non-dict usage on the CLI path (:1133 or {} handles
+  null only) -> :1144 AttributeError.
+
+CONVERGED: R1 RC -> R2 RC -> R3 RC -> R4 APPROVE. Final branch
+fix/anthropic-truncation-ordering @ 8bd01bc (3 commits), full suite
+3554 passed / 0 failed.
+
+Real-path smoke (post-convergence, result): 6 live probe_backend_live
+calls against the real mimo-pro anthropic backend from the worktree
+code -> 3 ok + 3 truncated-output, ZERO occurrences of
+"unclassified -- unexpected response structure" (the pre-fix symptom
+fired ~2 of 5 runs on the same backend earlier the same evening).
+
+
+
