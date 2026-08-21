@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: ENV-GROUNDING
 status: active
-stopped_at: main @ 8bd01bc. Phase 54 MERGED 2026-08-21 (60336c9, fast-forward; T6 human checkpoint passed 2026-08-20; branch+worktree cleaned). Same-day follow-up fix/anthropic-truncation-ordering merged+pushed (8bd01bc, found BY the T6 checkpoint: thinking-only truncation misclassified as unexpected-response-structure). Cache-visibility quick task merged+pushed 2026-08-20 (12c9709). v2.9 opened 2026-08-17; shipped so far: 48, 54. Remaining: 44, 51, 52, 53a, 53b, 43.1
+stopped_at: main @ 8bd01bc. Phase 44 (EVAL-ON-DUTY) context gathered 2026-08-21 (14 decisions D-01..D-14 incl. fable constraints; H1 CI-ledger-write + H2 atomic, adjudicate path, extractor design all locked; ready for /gsd-plan-phase 44). Phase 54 MERGED 2026-08-21 (60336c9, fast-forward; T6 human checkpoint passed 2026-08-20; branch+worktree cleaned). Same-day follow-up fix/anthropic-truncation-ordering merged+pushed (8bd01bc, found BY the T6 checkpoint: thinking-only truncation misclassified as unexpected-response-structure). Cache-visibility quick task merged+pushed 2026-08-20 (12c9709). v2.9 opened 2026-08-17; shipped so far: 48, 54. Remaining: 44 (context ready), 51, 52, 53a, 53b, 43.1
 last_updated: "2026-08-21T16:00:00.000Z"
 progress:
   basis: v2.9 tracked units -- 48, 44, 51, 52, 53a, 53b, 54 (Router-compat), 43.1
