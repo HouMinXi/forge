@@ -1693,7 +1693,11 @@ def _invoke_openai(
     try:
         choice = resp_data["choices"][0]
         content = choice["message"]["content"]
-        usage_data = resp_data.get("usage", {})
+        # .get's default fires only on a missing key; a gateway can emit
+        # "usage": null, and the truncation branch below then reads the
+        # token counts from {} instead of crashing on None.
+        raw_usage = resp_data.get("usage")
+        usage_data = raw_usage if isinstance(raw_usage, dict) else {}
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMInvokeError(
             "unexpected response structure from %s backend" % backend.name,

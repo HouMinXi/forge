@@ -1558,6 +1558,39 @@ class TestTruncationDetection:
                 assert "input=?" in str(exc_info.value)
                 assert "output=?" in str(exc_info.value)
 
+    def test_openai_null_usage_finish_length_is_truncation(self):
+        """A null or non-dict usage value must not crash the raise.
+
+        Same family as the anthropic/vertex guards: .get("usage", {})
+        returns None when the key exists with a null value, and the
+        token counts then degrade to "?" instead of raising
+        AttributeError from inside the message format.
+        """
+        from code_forge.llm_invoke import _invoke_openai, _TruncatedResponse
+
+        backend = BackendConfig(
+            name="ds", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K",
+        )
+        for usage in (None, "totals", 7):
+            resp = Mock()
+            resp.read.return_value = json.dumps({
+                "choices": [{
+                    "message": {"content": '{"find'},
+                    "finish_reason": "length",
+                }],
+                "usage": usage,
+            }).encode("utf-8")
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+
+            with patch("urllib.request.urlopen", return_value=resp):
+                with pytest.raises(_TruncatedResponse, match="truncated") as exc_info:
+                    _invoke_openai("p", backend, api_key="k", timeout_s=10)
+                assert exc_info.value.kind == "truncated"
+                assert "input=?" in str(exc_info.value)
+                assert "output=?" in str(exc_info.value)
+
     def test_openai_finish_reason_length(self):
         from code_forge.llm_invoke import _invoke_openai, LLMInvokeError
 
