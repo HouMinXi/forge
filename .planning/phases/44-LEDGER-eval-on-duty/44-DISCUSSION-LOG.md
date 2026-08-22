@@ -184,7 +184,27 @@ Warnings adjudicated and folded in:
   docstring in 44-01 Task 2.
 - W (44-02 Task 3 test-file load): noted; monitor at execution.
 
-Re-check (CP1 round 2) follows.
+## CP1 Plan-Check Round 2 (deleg_d92059a6, 2026-08-22)
+
+VERDICT: PASS, SCORECARD B=0 W=3. All three round-1 blockers RESOLVED
+(B-1 strip-before-replay implementable; B-2 expected_verdict derived +
+load_corpus-shape emission verified against corpus.py:106-128; B-3 shared
+resolve_ledger_root wired into all three consumers with worktree proof
+tests). No new blockers.
+
+3 round-2 warnings adjudicated:
+- W1 (D-17 strip = outcome not algorithm): FIXED -- 44-02 Task 2 now names
+  emission-side patch filtering (drop the .code-forge/gate.yaml file
+  section from the emitted patch text, from its `diff --git` header to the
+  next header/EOF).
+- W2 (strip forbids gate-config-is-the-diff class silently): FIXED --
+  documented-tradeoff note added to 44-02 Task 2 (export.py docstring).
+- W3 (env-var kill-switch placement cosmetic): skipped -- checker itself
+  marked it harmless; acceptance grep pins the load_gate_config call site.
+
+CP1 CLOSED. Proceeding to CP1b external panel (forge rule: aicc
+kimi/gemini/deepseek, gemini via manual relay; after 0/0/0/0 the user does
+a final human review before execution).
 
 ## Deferred ideas captured
 
