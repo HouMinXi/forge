@@ -73,6 +73,35 @@ five additional gray areas, all recorded as D-10..D-14:
   rows invert it -- the reviewed diff CONTAINS the fix)
 - G-5/D-14 (LOW): axis_claim free text vs axis enum mapping rule
 
+## Review Round 1 (kanban t_6e58fa74, 2026-08-22, reviewer/gemini3.6)
+
+SCORECARD B=2 H=5 M=4 L=2. Architect adjudication against real code:
+
+- B-1 (D-03 self-contradiction: skip vs manifest-entry): CONFIRMED.
+  Resolved in D-03 revision -- skipped rows are listed in the export
+  summary report; no manifest entry for unmaterializable diffs.
+- B-2 (D-10 metadata loss on re-mark): CONFIRMED at cli.py:1643-1654
+  and extended -- re-marking today can write file=""/line=0/
+  axis_claim="manual". Resolved via D-10 inheritance requirement.
+- H-1 (UNADJUDICATED behavior in export undefined): CONFIRMED -> D-15.
+- H-2 (uncapped evidence breaks PIPE_BUF guard): CONFIRMED -> D-07
+  extension (<=500 chars + serialized-size test).
+- H-3 (FIXED/ESCAPED diff polarity inversion): CONFIRMED -- LOCAL
+  terminal-time SHAs may reference post-fix diffs. D-13 upgraded to
+  HIGH with the "SHAs at confirmation time" write-path rule.
+- M-1 (UNADJUDICATED flooding): accepted-inherent, documented in D-16.
+- M-2 (repo_root portability): CONFIRMED -> D-09 --repo-root override.
+- M-3 (D-12 framing wrong): CONFIRMED at reviewer_json.py:153-181 --
+  fingerprints already in memory. D-12 corrected.
+- M-4 (dedup race): accepted best-effort per 2495035; extractor dedups
+  on read (D-08 extension).
+- M-5 (replay toolchain isolation): CONFIRMED -> D-17.
+- L-1 (old readers reject UNADJUDICATED): refuted-as-crash, confirmed
+  as silent-skip via iter_rows tolerance -- acceptable, documented D-06.
+- L-2 (absolute path PII in manifests): CONFIRMED -> D-09 basename
+  rewrite.
+- H-5 (scope ~750+ LOC, split): accepted -> D-18 two-plan split.
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start
