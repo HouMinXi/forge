@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.9
 milestone_name: ENV-GROUNDING
 status: active
-stopped_at: main @ 8bd01bc. Phase 44 (EVAL-ON-DUTY) context gathered 2026-08-21 (14 decisions D-01..D-14 incl. fable constraints; H1 CI-ledger-write + H2 atomic, adjudicate path, extractor design all locked; ready for /gsd-plan-phase 44). Phase 54 MERGED 2026-08-21 (60336c9, fast-forward; T6 human checkpoint passed 2026-08-20; branch+worktree cleaned). Same-day follow-up fix/anthropic-truncation-ordering merged+pushed (8bd01bc, found BY the T6 checkpoint: thinking-only truncation misclassified as unexpected-response-structure). Cache-visibility quick task merged+pushed 2026-08-20 (12c9709). v2.9 opened 2026-08-17; shipped so far: 48, 54. Remaining: 44 (context ready), 51, 52, 53a, 53b, 43.1
-last_updated: "2026-08-21T16:00:00.000Z"
+stopped_at: main @ 8bd01bc. Phase 44 (EVAL-ON-DUTY) EXPANDED 2026-08-22 with the review pain-points work order (read-side convergence): 27 decisions D-01..D-27, three plans written -- 44-01 write path (CP1 PASS B=0), 44-02 export-eval (CP1 PASS B=0), 44-03 read-side convergence (D-23..D-27, CP1 incremental running). CP1b external panel (deepseek/gemini/kimi via kanban) reviewing all three. Execution order: 44-01 -> 44-03 -> 44-02, after user final human review (forge rule). Prior: Phase 54 MERGED 60336c9; artifact-gate MERGED hermes-agent main @ 791308241 (force-pushed over orphan bot commit, user-authorized).
+last_updated: "2026-08-22T16:15:00.000Z"
 progress:
   basis: v2.9 tracked units -- 48, 44, 51, 52, 53a, 53b, 54 (Router-compat), 43.1
   total_phases: 8
