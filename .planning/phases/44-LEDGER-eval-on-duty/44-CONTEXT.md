@@ -198,7 +198,7 @@ extractor. Two plans, one phase. Root of the v2.9 lane -- Phase 51
   re-extraction), TerminalState enum (FIXED/DISPROVED/DUPLICATE/
   ESCAPED), append_row (single-write O_APPEND atomicity), iter_rows
   (tolerant: skips rows failing validation per c5d420d).
-- `src/code_forge/eval/` (1572 lines): corpus.py (CorpusEntry,
+- `src/code_forge/eval/` (1450 lines): corpus.py (CorpusEntry,
   ExpectedFinding, load_corpus, valid_line_range), runner.py
   (replay_entry -- isolated temp repo per run, applies diff, invokes
   code-forge review), scorer.py (finding_hit, score_findings,
