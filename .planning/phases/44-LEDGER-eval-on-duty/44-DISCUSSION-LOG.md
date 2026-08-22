@@ -136,6 +136,56 @@ axes adjudicated by architect against real code:
   14328bb/7b6101a/c5d420d/2495035/fab6d63) verified against real code
   and git history. All PASS.
 
+## CP1 Plan-Check Round 1 (deleg_2bd6fbc3, 2026-08-22, FORCE stance)
+
+VERDICT: FAIL, SCORECARD B=3 W=7. Architect verified each finding against
+real code, then revised both plans. All three blockers CONFIRMED:
+
+- B-1 (D-17 no implementable mechanism): CONFIRMED. The plan said a
+  "review-only stub merges with _create_gate_yaml" but never named the
+  transport (CorpusEntry/load_corpus/replay_entry have no gate-config
+  channel), AND missed the real hazard -- a foreign diff carrying its own
+  gate.yaml with test.command gets merged (existing keys win,
+  runner.py:537-556) and EXECUTED at replay. FIXED in 44-02 Task 2: D-17
+  is delivered by STRIPPING the foreign gate.yaml from the materialized
+  diff before replay, not by a carried stub. Hostile-test.command fixture
+  test added (marker file must be absent).
+- B-2 (expected_verdict never specified + format conflict): CONFIRMED.
+  load_corpus raises ValueError when expected_verdict is missing/not
+  HOLD/PASS (corpus.py:106-111), and eval-bank v1 (no expected_verdict)
+  was wrongly cited as "target format". FIXED: Task 1 derives
+  expected_verdict (catch->HOLD, no-catch->PASS); Task 2 emits the
+  load_corpus shape with eval-bank-compat fields as ignored extras
+  (load_corpus reads only known keys, corpus.py:108-128).
+- B-3 (read-side path resolution not wired): CONFIRMED and would ship
+  broken silently (worktree reviews are mandated; adjudicate/list/export
+  from a worktree would read an empty worktree-local ledger while
+  temp-dir tests pass). FIXED: shared resolve_ledger_root added to
+  44-01 Task 1 (in ledger.py, importable by machine/cli/export); 44-01
+  Task 2/3 and 44-02 Task 3 all route reads through it; worktree
+  read-side proof tests added to all three.
+
+Warnings adjudicated and folded in:
+- W (run_tests.sh does not exist in forge): CONFIRMED (it's hermes-agent's;
+  forge uses python -m pytest). All 8 verify/verification commands fixed.
+- W (44-02 interfaces axis "enum" wrong): CONFIRMED (axis_tags is
+  list[str] free-text, corpus.py:76). Corrected in interfaces + Task 2.
+- W (D-07 mark --evidence uncapped, cli.py:1647): CONFIRMED -> 44-01 Task
+  3 applies _truncate_evidence to the mark path too.
+- W (clean-row fingerprint unspecified): CONFIRMED (iter_rows KeyError-
+  skips rows lacking fingerprint, ledger.py:103) -> 44-01 Task 2 gives the
+  clean row a diff-scoped fingerprint sha256("clean:<base>:<head>")[:16].
+- W (D-19 kill-switch read failure modes): CONFIRMED (load_gate_config
+  raises FileNotFoundError/ValueError) -> config read moved INSIDE the
+  same try/except as the write in 44-01 Task 2.
+- W (repo_root field = disposable worktree): CONFIRMED -> 44-01 Task 2
+  sets repo_root = resolve_ledger_root(cwd) (main root), not cwd.
+- W (D-16 name-dropped): -> landing site = _write_ci_ledger_rows
+  docstring in 44-01 Task 2.
+- W (44-02 Task 3 test-file load): noted; monitor at execution.
+
+Re-check (CP1 round 2) follows.
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start
