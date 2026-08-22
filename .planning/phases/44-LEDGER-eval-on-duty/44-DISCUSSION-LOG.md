@@ -206,6 +206,36 @@ CP1 CLOSED. Proceeding to CP1b external panel (forge rule: aicc
 kimi/gemini/deepseek, gemini via manual relay; after 0/0/0/0 the user does
 a final human review before execution).
 
+## Scope extension (pain-points work order) + 44-03 (2026-08-22)
+
+User merged the review pain-points work order (12 rounds/39 receipts, 52%
+repeat findings, STATE-09 CI zero-memory) into Phase 44. Added D-23..D-27
+(read-side convergence) and wrote 44-03-PLAN.md (2 tasks, depends_on
+44-01). Architect adjudication during planning:
+- D-25 deliberately REJECTS fuzzy/topic matching (false-green risk); only
+  exact-fingerprint suppression of terminal-ruled findings. Wording-drift
+  and line-drift re-finds still block -- documented in the objective.
+
+CP1 incremental check of 44-03 (deleg_0510b5f8): VERDICT PASS, B=0 W=4.
+False-green rule sound + bug-injection-pinned; coupling to 44-01 honored.
+4 warnings adjudicated:
+- W-1 (suppression mechanism two options): FIXED -- pinned to disposition
+  change (KEEP finding, set DISMISSED, NOT removal) + post-run disposition
+  assertion, so active_findings/MCP extractor/state.json stay consistent.
+- W-2 (pinned_paths wiring + glob semantics + wrong-config-file precedent):
+  FIXED -- pinned_paths + style_downgrade wired into BOTH StateMachine
+  constructors (cli.py:3303 + mcp_server.py:928); match via
+  pathlib.PurePath.match relative to repo root; interfaces corrected
+  (coverage_exempt_patterns lives in coverage.yaml, pinned_paths in
+  gate.yaml, same flow).
+- W-3 (objective oversells 52%): FIXED -- objective now scopes the fix to
+  verbatim re-finds; reworded/line-drifted re-finds documented as
+  out-of-scope reviewer-behavior problems.
+- W-4 (style classifier = executor judgment, untestable): FIXED -- D-27
+  now table-driven from gate.yaml style_downgrade (pass_names +
+  desc_keywords); L1 findings carry no style tag (reviewer_json.py:161-179),
+  so the table is the only source and is identical across executors.
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start
