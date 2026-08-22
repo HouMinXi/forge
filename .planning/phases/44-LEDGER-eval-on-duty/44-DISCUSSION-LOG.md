@@ -102,6 +102,40 @@ SCORECARD B=2 H=5 M=4 L=2. Architect adjudication against real code:
   rewrite.
 - H-5 (scope ~750+ LOC, split): accepted -> D-18 two-plan split.
 
+## Review Round 2 (reviewer t_2cc0f297 + devops t_a5c16f5a, 2026-08-22)
+
+reviewer SCORECARD B=1 H=1 M=3 L=0; devops SCORECARD B=0 H=4 M=3 L=1.
+Part A: all 14 round-1 adjudications verified RESOLVED. Part B + devops
+axes adjudicated by architect against real code:
+
+- reviewer B (D-15 double-count): CONFIRMED -> D-15 extended with
+  mutually-exclusive counter precedence.
+- reviewer H (D-13 polarity assertion wrong): CONFIRMED --
+  resolved_review SHAs snapshot at run start (machine.py:201,218,
+  1316-1317), so LOCAL FIXED rows already record PRE-fix SHAs. D-13
+  rewritten to VERIFIED/no-change.
+- reviewer M (D-16 O(N) cost): existing D-16 wording sufficient,
+  quantified ~3600 rows/6mo -> ms-range parse. No change.
+- reviewer M (D-17 gate.yaml collision): CONFIRMED ->
+  eval/runner.py:757-768 generates gate.yaml; D-17 extended with merge
+  rule.
+- reviewer M (D-18 coupling): CONFIRMED -> D-18 extended: 44-02 tests
+  consume real 44-01-produced rows.
+- devops DO-01 (CI write no OSError isolation) + DO-08 (no
+  kill-switch): CONFIRMED -> D-19.
+- devops DO-04 (no --unadjudicated filter) + DO-06 (--git-common-dir
+  ambiguity): CONFIRMED -> D-20.
+- devops DO-02 (truncated-row pollution): -> D-21.
+- devops DO-07 (re-export overwrite semantics): -> D-22.
+- devops DO-03 (network-fs atomicity note) + DO-05 (adjudicate context
+  echo): folded into D-20/D-21 narrative; DO-03 accepted as doc note.
+- scribe t_8c0b9154 fact-check: scribe exhausted its iteration budget
+  (known 30/30 ceiling); architect performed the incremental fact-check
+  directly -- every R2 citation (reviewer_json.py:153-181,
+  cli.py:1643-1654, machine.py:1316-1317, mcp_server.py:929, commits
+  14328bb/7b6101a/c5d420d/2495035/fab6d63) verified against real code
+  and git history. All PASS.
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start

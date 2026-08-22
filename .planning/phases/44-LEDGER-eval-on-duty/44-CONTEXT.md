@@ -1,10 +1,12 @@
 # Phase 44: EVAL-ON-DUTY - Context
 
 **Gathered:** 2026-08-21
-**Status:** Round-1 review adjudicated 2026-08-22 (kanban t_6e58fa74,
-SCORECARD B=2 H=5 M=4 L=2; both blockers confirmed against real code and
-resolved below as D-15..D-21 + D-03/D-12/D-13 revisions). Ready for
-round-2 review, then planning.
+**Status:** Round-2 review adjudicated 2026-08-22 (reviewer t_2cc0f297
+B=1 H=1 M=3 L=0; devops t_a5c16f5a B=0 H=4 M=3 L=1; scribe fact-check
+done by architect, all R2 citations PASS). All findings resolved --
+D-13 corrected to VERIFIED/no-change, D-15/D-17/D-18 extended, D-19..D-22
+added. 22 decisions total. Ready for /gsd-plan-phase 44 (two plans per
+D-18: 44-01 write path, 44-02 export-eval).
 
 <domain>
 ## Phase Boundary
@@ -107,42 +109,84 @@ extractor. Two plans, one phase. Root of the v2.9 lane -- Phase 51
   that _run_ci never calls the ledger writer. Fix = invoke the writer
   (or a CI variant) at CI terminal with in-memory findings; NO
   fingerprint recomputation, NO STATE-09 weakening.
-- **D-13 (UPGRADED to HIGH round-1): diff polarity rule.** Round-1 H-3:
-  the row's base/head must reference the diff IN WHICH THE FINDING WAS
-  LIVE. CI-derived rows satisfy this automatically (single-round, the
-  reviewed diff contains the flagged code). LOCAL-mode FIXED rows are
-  written at terminal time and their SHAs may reference the POST-fix
-  diff -- replay would then expect a catch on already-fixed code
-  (inverted semantics). Write path must record SHAs at
-  finding-confirmation time; if LOCAL terminal-time writing cannot
-  provide them, that is a write-path defect fixed in this phase.
-  Expected-answers derivation: FIXED/ESCAPED -> expect catch at the
-  row's file/line/claim; DISPROVED/DUPLICATE -> expect no-catch.
+- **D-13 (VERIFIED round-2 -- polarity already correct, no change
+  needed).** Round-1 H-3 feared LOCAL-mode FIXED rows might reference
+  post-fix SHAs. Round-2 verification at machine.py:1316-1317 +
+  machine.py:201,218: `resolved_review` base/head are snapshotted at
+  RUN START (the diff under review), so LOCAL FIXED rows already
+  record PRE-fix SHAs -- the polarity the extractor needs. D-13's
+  original "SHAs at confirmation time" demand is satisfied by existing
+  architecture; no write-path change required. Expected-answers
+  derivation: FIXED/ESCAPED -> expect catch at the row's
+  file/line/claim; DISPROVED/DUPLICATE -> expect no-catch.
 - **D-14 (LOW): axis_claim free text vs axis enum.** Extractor needs a
   mapping rule (exact-match table + fallback -- planner decides:
   skip-with-warning or default axis).
 
 ### Round-1 additions (kanban t_6e58fa74, adjudicated 2026-08-22)
 
-- **D-15 (from H-1): export-eval consumes terminal-state rows ONLY.**
+- **D-15 (from H-1, EXTENDED round-2): export-eval consumes
+  terminal-state rows ONLY; summary counters are MUTUALLY EXCLUSIVE.**
   UNADJUDICATED rows are skipped with a count + a hint to run
-  `ledger adjudicate`. The export summary always reports: entries
-  emitted / stale-SHA skipped / unadjudicated skipped / dedup-collapsed.
+  `ledger adjudicate`. Round-2 B-1: a single row can be both
+  stale-SHA AND unadjudicated -- sequential counters would
+  double-count. Each skipped row is attributed to exactly ONE reason
+  by a documented precedence (unadjudicated first, then stale-SHA,
+  then dedup-collapse). The export summary always reports: entries
+  emitted / unadjudicated skipped / stale-SHA skipped /
+  dedup-collapsed, summing to total rows read.
 - **D-16 (from M-1 + H-4): growth expectations documented, compaction
   deferred.** One row per finding per diff is inherent to an
   append-only ledger; D-08 dedup caps re-run inflation. The O(N)
-  full-file dedup scan in _write_ledger_rows is accepted at current
-  scale; trigger for an index/rotation follow-up: >10k rows or
-  measured write latency regression.
-- **D-17 (from M-5): corpus entries are toolchain-self-contained.**
-  Replaying a foreign diff must not require the foreign project's
-  toolchain. Extractor emits a per-entry minimal config stub
-  (review-only: no test.command, or a no-op) unless the source repo's
-  own .code-forge config is available and explicitly opted in.
-- **D-18 (scope split, from H-5): two plans.** 44-01 write path:
-  D-01, D-05, D-06, D-07, D-08, D-10, D-11, D-12, D-13(write side),
-  D-16. 44-02 export-eval: D-02, D-03, D-04, D-09, D-13(expectations),
-  D-14, D-15, D-17.
+  full-file dedup scan is accepted at current scale (round-2 estimate:
+  ~20 CI runs/day -> ~3600 rows/repo/6mo, millisecond-range parse);
+  trigger for an index/rotation follow-up: >10k rows or measured write
+  latency regression.
+- **D-17 (from M-5, EXTENDED round-2): corpus entries are
+  toolchain-self-contained AND merge with the runner's own gate.yaml
+  generation.** Replaying a foreign diff must not require the foreign
+  project's toolchain. eval/runner.py:757-768 (_create_gate_yaml)
+  already generates a gate.yaml from backend_name/backend_config --
+  the D-17 minimal stub must MERGE into or defer to that generation
+  (review-only: no test.command / no-op test), never overwrite or
+  collide with it. Planner must specify the merge/precedence rule.
+- **D-18 (scope split, from H-5, EXTENDED round-2): two plans, with an
+  explicit coupling rule.** 44-01 write path: D-01, D-05, D-06, D-07,
+  D-08, D-10, D-11, D-12, D-16, D-19, D-20, D-21. 44-02 export-eval:
+  D-02, D-03, D-04, D-09, D-13(expectations), D-14, D-15, D-17, D-22.
+  Coupling rule (round-2 M-5): 44-02's tests must consume rows
+  PRODUCED by 44-01's real write path (not hand-mocked ledger lines),
+  so a 44-01 regression surfaces in 44-02's suite.
+
+### Round-2 additions (reviewer t_2cc0f297 + devops t_a5c16f5a,
+###   adjudicated 2026-08-22; scribe t_8c0b9154 fact-check done by
+###   architect -- all R2 citations verified against real code/commits)
+
+- **D-19 (devops DO-01+DO-08, HIGH): CI write path is failure-isolated
+  and has a two-layer kill-switch.** `_write_ledger_rows` invoked from
+  the CI terminal path must be wrapped in try/except OSError: a ledger
+  write failure degrades to a stderr warning and NEVER fails the
+  review verdict. Plus a two-layer disable: env var
+  `CODE_FORGE_DISABLE_LEDGER=1` (CI-platform global kill) and
+  gate.yaml `ledger: { enabled: false }` (repo-level). Neither exists
+  today (verified: no ledger gate in gate_check.py:39-100).
+- **D-20 (devops DO-04+DO-06, HIGH): adjudication discoverability +
+  unambiguous persistence path.** (a) `ledger list` gains an
+  `--unadjudicated` filter so operators can find pending rows;
+  `ledger adjudicate` echoes the inherited metadata after writing.
+  (b) H2 persistence resolves via
+  `git rev-parse --path-format=absolute --git-common-dir`, normalized
+  to the MAIN repo root (common-dir's parent), NOT inside .git; on any
+  failure fall back to cwd-local (D-11).
+- **D-21 (devops DO-02, MEDIUM): truncated evidence stays
+  machine-parseable.** When D-07 truncates evidence, the truncation
+  marker is explicit (`... [truncated]`) so a truncated row can never
+  be mistaken for a complete one downstream.
+- **D-22 (devops DO-07, MEDIUM): export-eval output hygiene.** Default
+  `--out` is a dedicated dir (e.g. `.code-forge/eval-export`), and
+  re-export semantics are explicit: only manifest-managed files are
+  cleaned/overwritten, foreign files in the dir are left untouched,
+  and a non-empty pre-existing dir requires `--force`.
 
 </decisions>
 
