@@ -188,6 +188,51 @@ extractor. Two plans, one phase. Root of the v2.9 lane -- Phase 51
   cleaned/overwritten, foreign files in the dir are left untouched,
   and a non-empty pre-existing dir requires `--force`.
 
+### Scope extension (review pain-points work order, user-ratified
+###   2026-08-22: all 5 suggestions merged into Phase 44; root cause =
+###   STATE-09 CI zero-memory, same root as H1)
+
+Pain-point evidence: 12 rounds / 39 receipts of MCP carve-out review
+showed 52% repeat findings, 19% useful density -- CI reviews re-report
+known/already-ruled findings because each CI run starts with zero memory
+(STATE-09, machine.py:288-300, the author's own comment). Phase 44 fixes
+the WRITE side; these decisions add the READ side (CI consumes the ledger
+to converge). Full analysis: 44-SCOPE-EXTENSION-ANALYSIS.md.
+
+- **D-23 (S1, finding suppression): CI reads the ledger and suppresses
+  KNOWN fingerprints before the verdict count.** "Known" = a fingerprint
+  with a FIXED/DUPLICATE ledger row (a real prior terminal state), read
+  via resolve_ledger_root. Inserted before `_count(Disposition.CONFIRMED)`
+  at machine.py:~528. CONSERVATIVE rule: only suppress fingerprints with a
+  real terminal-state ledger row; an unrecognized fingerprint is NEVER
+  suppressed (no false-green from over-matching).
+- **D-24 (S2, human rebuttal as a suppressing signal): a human rebuttal
+  rides the SAME adjudicate path (D-10) as a terminal-state row -- a
+  rebutted finding becomes a DISPROVED/DUPLICATE row via
+  `ledger adjudicate`, which D-23 then suppresses.** No separate
+  rebuttals.json; the ledger IS the rebuttal registry (single source,
+  no duplicate store -- golden rule). Suppression follows the row.
+- **D-25 (S3, convergence): CI converges when the post-suppression
+  new-CONFIRMED count is zero.** Because suppression is conservative
+  (D-23), zero post-suppression CONFIRMED means every current finding
+  carries a real terminal-state row. The verdict logic at machine.py:528
+  counts post-suppression findings. A finding whose wording drifted (new
+  fingerprint) is NOT suppressed and DOES block -- wording-drift
+  re-finds are surfaced, not silenced (the R5/R7 rewording case is a
+  reviewer-behavior issue, not a license to suppress by fuzzy topic
+  match; fuzzy matching is a false-green risk and is REJECTED).
+- **D-26 (S4, pinned paths): gate.yaml gains `pinned_paths: []` --
+  findings whose file matches a pinned path are suppressed (owner has
+  ruled the path out of scope).** Follows the coverage_exempt_patterns
+  precedent (machine.py:232). Read via the same gate config load as the
+  D-19 kill-switch. Pinned-path suppression is explicit and logged
+  (infra_errors note), never silent.
+- **D-27 (S5, style findings downgrade): findings classified as
+  style/test-assertion/naming/idiomatic are emitted as AdvisoryFinding
+  (never block, advisory.py:5-8) instead of CONFIRMED StateFinding.**
+  The classification rule (which axes/keywords downgrade) is defined in
+  the 44-03 plan; the mechanism (AdvisoryFinding) already exists.
+
 </decisions>
 
 <code_context>
