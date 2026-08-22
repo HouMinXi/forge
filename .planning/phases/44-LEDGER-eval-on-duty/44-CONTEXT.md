@@ -162,14 +162,19 @@ extractor. Two plans, one phase. Root of the v2.9 lane -- Phase 51
 ###   adjudicated 2026-08-22; scribe t_8c0b9154 fact-check done by
 ###   architect -- all R2 citations verified against real code/commits)
 
-- **D-19 (devops DO-01+DO-08, HIGH): CI write path is failure-isolated
-  and has a two-layer kill-switch.** `_write_ledger_rows` invoked from
-  the CI terminal path must be wrapped in try/except OSError: a ledger
-  write failure degrades to a stderr warning and NEVER fails the
-  review verdict. Plus a two-layer disable: env var
-  `CODE_FORGE_DISABLE_LEDGER=1` (CI-platform global kill) and
-  gate.yaml `ledger: { enabled: false }` (repo-level). Neither exists
-  today (verified: no ledger gate in gate_check.py:39-100).
+- **D-19 (devops DO-01+DO-08, HIGH -- REVISED per CP1b kimi B-2): CI write
+  path is failure-isolated and has a two-layer kill-switch.**
+  `_write_ledger_rows` invoked from the CI terminal path must be wrapped in
+  try/except OSError: a ledger write failure degrades to a stderr warning and
+  NEVER fails the review verdict. Plus a two-layer disable: env var
+  `CODE_FORGE_DISABLE_LEDGER=1` (CI-platform global kill) and gate.yaml
+  `ledger: { enabled: false }` (repo-level). CRITICAL loader constraint
+  (kimi B-2): the config layer must read gate.yaml via a TOLERANT raw-YAML
+  read (yaml.safe_load + dict.get), NOT load_gate_config -- load_gate_config
+  raises ValueError when gate.yaml has no `test:` section (gate_check.py:64-71),
+  and review-only mode is exactly that case (outlet_resolver.py:132 avoids
+  load_gate_config for this reason), so routing the kill-switch through
+  load_gate_config would leave the config layer DEAD in the common case.
 - **D-20 (devops DO-04+DO-06, HIGH): adjudication discoverability +
   unambiguous persistence path.** (a) `ledger list` gains an
   `--unadjudicated` filter so operators can find pending rows;
@@ -227,11 +232,20 @@ to converge). Full analysis: 44-SCOPE-EXTENSION-ANALYSIS.md.
   precedent (machine.py:232). Read via the same gate config load as the
   D-19 kill-switch. Pinned-path suppression is explicit and logged
   (infra_errors note), never silent.
-- **D-27 (S5, style findings downgrade): findings classified as
-  style/test-assertion/naming/idiomatic are emitted as AdvisoryFinding
-  (never block, advisory.py:5-8) instead of CONFIRMED StateFinding.**
-  The classification rule (which axes/keywords downgrade) is defined in
-  the 44-03 plan; the mechanism (AdvisoryFinding) already exists.
+- **D-27 (S5, style findings downgrade -- REVISED per CP1b kimi B-1):
+  findings classified as style/test-assertion/naming/idiomatic STAY
+  StateFindings (keep their fingerprint) but are recorded with a
+  NON-BLOCKING disposition, NOT rerouted to AdvisoryFinding.** AdvisoryFinding
+  structurally excludes fingerprint (advisory.py:33-37), so rerouting to
+  advisories would eject style findings from the ledger/extractor data model
+  entirely -- never written by CI, never adjudicable, never exportable,
+  never even countable across runs. That contradicts the phase goal (corpus
+  grows from real reviewed work). Instead: a style finding keeps its
+  fingerprint and gets a non-blocking disposition (a new STYLE disposition
+  or DISMISSED-with-style-note), so it stays in the ledger, stays
+  suppressible/adjudicable/exportable, and never blocks the verdict. The
+  classification rule is the gate.yaml `style_downgrade` table (44-03 Task
+  2, table-driven).
 
 </decisions>
 

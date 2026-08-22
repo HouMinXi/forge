@@ -236,6 +236,31 @@ False-green rule sound + bug-injection-pinned; coupling to 44-01 honored.
   desc_keywords); L1 findings carry no style tag (reviewer_json.py:161-179),
   so the table is the only source and is identical across executors.
 
+## CP1b external panel -- kimi leg (t_ef4fa893, 2026-08-22)
+
+kimi SCORECARD B=3 H=3 M=7 L=3. The three blockers were all CONFIRMED
+against real code by the architect (CP1 had missed all three):
+
+- B-1 (D-27 style downgrade ejects findings from the data model):
+  CONFIRMED -- AdvisoryFinding structurally excludes fingerprint
+  (advisory.py:33-37), so rerouting style findings to advisories makes them
+  unwritable/unadjudicable/unexportable/uncountable. FIXED: D-27 + 44-03
+  Task 2 revised -- style findings STAY StateFindings with their
+  fingerprint and get a non-blocking disposition, never rerouted.
+- B-2 (kill-switch/pinned_paths read via load_gate_config which refuses
+  review-mode gate.yaml): CONFIRMED -- load_gate_config raises ValueError
+  without a test: section (gate_check.py:64-71); review-only mode is
+  exactly that case (outlet_resolver.py:132 avoids it). FIXED: D-19 + 44-01
+  Task 2 + 44-03 Task 2 all switched to a tolerant raw-YAML read
+  (yaml.safe_load + dict.get).
+- B-3 (mutation-survivor terminal at machine.py:360 returns before the
+  :541 ledger write): CONFIRMED -- the "tests are weak" FAIL never reached
+  the ledger. FIXED: 44-01 Task 2 funnels EVERY CI terminal exit (both
+  :541 and :360) through the single write call.
+
+(deepseek t_9ea4ec60 and gemini t_1ba32600 legs crashed "pid not alive" x2
+-- to be re-dispatched after the blocker fixes land.)
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start
