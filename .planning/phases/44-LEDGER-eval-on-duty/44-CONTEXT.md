@@ -37,9 +37,14 @@ extractor. Two plans, one phase. Root of the v2.9 lane -- Phase 51
   SHA, verdict, CONFIRMED finding fingerprints, diff_sha256. H1 (CI
   never writes) is fixed IN this phase, not deferred -- user decision:
   "那必须要打通CI模式写ledger".
-- **D-02: Terminal-state mapping (all three).** ESCAPED -> missed-bug
-  entry (false negative), FIXED -> hit entry, DISPROVED ->
-  false-positive entry. One extractor, three signal types.
+- **D-02: Terminal-state mapping (REVISED per CP1b deepseek H-1).**
+  ESCAPED -> missed-bug entry (false negative), FIXED -> hit entry,
+  DISPROVED -> false-positive entry. DUPLICATE -> EXCLUDED from export
+  (a DUPLICATE means the bug was real, just reported twice; mapping it to
+  expect-no-catch would penalize a reviewer for finding a real bug --
+  DUPLICATE rows are skipped under their own counter, carrying no
+  independent signal). One extractor, three emitted signal types + one
+  exclusion.
 - **D-03: Dead-SHA handling (REVISED round-1 -- contradiction
   resolved).** Extractor validates each row's base/head via
   `git -C <row.repo_root> cat-file -e`; unresolvable -> skip the row +
@@ -118,7 +123,8 @@ extractor. Two plans, one phase. Root of the v2.9 lane -- Phase 51
   original "SHAs at confirmation time" demand is satisfied by existing
   architecture; no write-path change required. Expected-answers
   derivation: FIXED/ESCAPED -> expect catch at the row's
-  file/line/claim; DISPROVED/DUPLICATE -> expect no-catch.
+  file/line/claim; DISPROVED -> expect no-catch; DUPLICATE -> excluded
+  from export (per D-02 revision, deepseek H-1).
 - **D-14 (LOW): axis_claim free text vs axis enum.** Extractor needs a
   mapping rule (exact-match table + fallback -- planner decides:
   skip-with-warning or default axis).

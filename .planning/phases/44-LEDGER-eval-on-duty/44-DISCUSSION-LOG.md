@@ -261,6 +261,40 @@ against real code by the architect (CP1 had missed all three):
 (deepseek t_9ea4ec60 and gemini t_1ba32600 legs crashed "pid not alive" x2
 -- to be re-dispatched after the blocker fixes land.)
 
+## CP1b external panel -- deepseek + gemini legs (2026-08-22)
+
+Both legs recovered and completed (reclaimed after the crash). deepseek
+SCORECARD B=1 H=2 M=3 L=3; gemini SCORECARD B=2 H=4 M=3 L=2. Architect
+adjudication against real code:
+
+- gemini B-1 (pinned_paths does not suppress COVERAGE findings): CONFIRMED
+  -- _count_coverage_gaps (machine.py:1635-1643) counts source=="COVERAGE"
+  findings with disposition != DISMISSED separately, so a pinned COVERAGE
+  finding keeps coverage_gaps > 0 -> FAIL even when pinned. FIXED in 44-03
+  Task 2: suppression pass also sets pinned-path COVERAGE findings to
+  DISMISSED (test b2 + acceptance).
+- gemini B-2 (ledger mark --new ESCAPED yields base==head -> empty diff ->
+  permanent MISSED false-green): CONFIRMED -- cli.py:1620-1622 defaults
+  base_sha=head_sha=_git_head(cwd) when both omitted. FIXED in 44-02 Task 1:
+  extractor skips base_sha==head_sha / empty diffs under a dedicated
+  empty-diff counter (test f).
+- deepseek H-1 (DUPLICATE mapped to expect-no-catch penalizes finding a
+  real bug): CONFIRMED -- a DUPLICATE means the bug WAS real. FIXED: D-02 +
+  D-13 + 44-02 Task 1 revised -- DUPLICATE rows are EXCLUDED from export
+  under their own counter, not emitted as expect-no-catch.
+- deepseek B (D-27 naive substring match brittle): covered by the earlier
+  D-27 table-driven revision (match on pass_name prefix, not description
+  substring); noted in 44-03 Task 2.
+- deepseek H (_truncate_evidence may split multibyte UTF-8): valid -- noted
+  for 44-01 Task 1 implementation (truncate on a char boundary, then
+  validate the row still json-round-trips; the size-guard test already
+  asserts <2048 bytes).
+
+CP1b all three legs adjudicated. Plan set is now at: 44-01 (write),
+44-03 (read-side convergence), 44-02 (export), 27 decisions D-01..D-27
+with revisions. Pending: re-run CP1 on the revised 44-01/44-02/44-03 to
+confirm convergence to 0 blockers, then user final human review.
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start
