@@ -489,3 +489,112 @@ def test_export_eval_force_gate_raises():
         (out / "x.txt").write_text("foreign\n", encoding="utf-8")
         with pytest.raises(ExportError):
             export_eval(root, out)
+
+
+# ---------------------------------------------------------------------------
+# Forge R1 hardening: input-trust guards on ledger-carried values
+# ---------------------------------------------------------------------------
+
+
+def _append_raw_row(repo: Path, fp: str, base: str, head: str, claim):
+    """Append one FIXED row via the real ledger write path, with field
+    values a crafted/foreign ledger could carry (None claim, non-SHA)."""
+    from datetime import datetime, timezone
+
+    from code_forge.ledger import LedgerRow, TerminalState, append_row
+
+    append_row(repo, LedgerRow(
+        fingerprint=fp,
+        repo_root=str(repo.resolve()),
+        base_sha=base,
+        head_sha=head,
+        file="a.py",
+        line=1,
+        axis_claim=claim,
+        pass_provenance="manual",
+        terminal_state=TerminalState.FIXED,
+        evidence_class="t",
+        ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    ))
+
+
+def test_none_axis_claim_does_not_crash(tmp_path, capsys):
+    """A row carrying axis_claim=None exports as UNKNOWN, no traceback."""
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "fp-none", base, head, None)
+
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.emitted == 1
+    entries = load_corpus(out / "manifest.yaml")
+    assert entries[0].axis_tags == ["UNKNOWN"]
+    assert "unmapped axis_claim" in capsys.readouterr().err
+
+
+def test_crafted_sha_never_reaches_git(tmp_path, monkeypatch):
+    """A flag-shaped base_sha is rejected by format validation before any
+    git subprocess runs: the row counts as stale and git sees nothing."""
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "fp-evil", "--upload-pack=/bin/sh", head, "logic error")
+
+    calls = []
+    import code_forge.eval.export as export_mod
+
+    real_run = subprocess.run
+
+    def spy(*a, **k):
+        calls.append(a[0] if a else k.get("args"))
+        return real_run(*a, **k)
+
+    monkeypatch.setattr(export_mod.subprocess, "run", spy)
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.stale_sha_skipped == 1
+    assert summary.emitted == 0
+    for argv in calls:
+        assert not any("--upload-pack" in str(part) for part in argv)
+
+
+def test_tampered_manifest_cannot_steal_foreign_file(tmp_path, capsys):
+    """A managed-path entry with '..' is rejected; the file it points at
+    outside the output dir survives re-export."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+
+    victim = tmp_path / "victim.diff"
+    victim.write_text("do not delete\n", encoding="utf-8")
+    # Rewrite the manifest so the managed set points outside out/.
+    (out / "manifest.yaml").write_text(
+        yaml.dump({
+            "provenance": "x",
+            "entries": [{
+                "name": "evil",
+                "diff_file": "../victim.diff",
+                "expected_verdict": "HOLD",
+                "axis_tags": [],
+            }],
+        }),
+        encoding="utf-8",
+    )
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+    assert victim.read_text(encoding="utf-8") == "do not delete\n"
+    assert "ignoring unsafe managed path" in capsys.readouterr().err
+
+
+def test_manifest_written_atomically(tmp_path, monkeypatch):
+    """The manifest lands via tmp-file + Path.replace, not a direct write:
+    a failed export must never orphan managed diffs without a manifest."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    renames = []
+    real_replace = Path.replace
+
+    def spy_replace(self, target):
+        renames.append((self.name, Path(target).name))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", spy_replace)
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+    assert ("manifest.yaml.tmp", "manifest.yaml") in renames
+    assert not (out / "manifest.yaml.tmp").exists()

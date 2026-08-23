@@ -158,14 +158,15 @@ _AXIS_CLAIM_TABLE: dict[str, list[str]] = {
 }
 
 
-def _map_axis_claim(claim: str) -> list[str]:
+def _map_axis_claim(claim: Optional[str]) -> list[str]:
     """Map a free-text axis_claim to a list of axis_tags (D-14).
 
     Exact-match lookup on the lowercased claim.  Falls back to
     skip-with-warning: prints a warning to stderr and returns
-    ``["UNKNOWN"]``.
+    ``["UNKNOWN"]``.  None/empty claims take the same fallback rather
+    than crashing the export.
     """
-    key = claim.strip().lower()
+    key = (claim or "").strip().lower()
     result = _AXIS_CLAIM_TABLE.get(key)
     if result is not None:
         return list(result)
@@ -179,6 +180,18 @@ def _map_axis_claim(claim: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # SHA validation
 # ---------------------------------------------------------------------------
+
+_VALID_SHA = re.compile(r"^[0-9a-fA-F]{4,40}$")
+
+
+def _sha_format_ok(sha: str) -> bool:
+    """Reject ledger-carried values that are not plain hex SHAs.
+
+    The ledger is local, but export consumes rows that may travel with a
+    foreign repo; a value like ``--upload-pack=...`` must never reach a
+    git subprocess as an argument.
+    """
+    return isinstance(sha, str) and _VALID_SHA.match(sha) is not None
 
 
 def _sha_is_resolvable(repo_root: Path, sha: str) -> bool:
@@ -240,6 +253,9 @@ def _managed_diff_files(out_dir: Path) -> list[str]:
     """Return the diff_file list from a previously exported manifest.
 
     Missing or unparseable manifest -> empty list (nothing managed).
+    Entries that are absolute or contain ``..`` are rejected here rather
+    than at the join site, so a tampered manifest can never steer the
+    re-export cleanup outside the output dir.
     """
     manifest_path = out_dir / "manifest.yaml"
     if not manifest_path.exists():
@@ -248,7 +264,17 @@ def _managed_diff_files(out_dir: Path) -> list[str]:
         entries = load_corpus(manifest_path)
     except (ValueError, KeyError, TypeError):
         return []
-    return [e.diff_file for e in entries]
+    managed: list[str] = []
+    for e in entries:
+        rel = Path(e.diff_file)
+        if rel.is_absolute() or ".." in rel.parts:
+            print(
+                "export: ignoring unsafe managed path %r" % e.diff_file,
+                file=sys.stderr,
+            )
+            continue
+        managed.append(e.diff_file)
+    return managed
 
 
 def _check_out_dir(out_dir: Path, force: bool) -> None:
@@ -332,10 +358,14 @@ def export_eval(
             else Path(row.repo_root)
         )
 
-        # Priority 2: stale SHAs (D-03)
-        if not _sha_is_resolvable(
-            repo_root, row.base_sha
-        ) or not _sha_is_resolvable(repo_root, row.head_sha):
+        # Priority 2: stale SHAs (D-03).  Format is checked before any
+        # git subprocess sees the value.
+        if not (
+            _sha_format_ok(row.base_sha)
+            and _sha_format_ok(row.head_sha)
+            and _sha_is_resolvable(repo_root, row.base_sha)
+            and _sha_is_resolvable(repo_root, row.head_sha)
+        ):
             summary = dataclasses.replace(
                 summary, stale_sha_skipped=summary.stale_sha_skipped + 1
             )
@@ -418,10 +448,14 @@ def export_eval(
         "provenance": _provenance(ledger_root),
         "entries": [_entry_to_dict(e) for e in entries],
     }
-    (out_dir / "manifest.yaml").write_text(
+    # Write the manifest last and atomically so a failed export never
+    # leaves managed diff files orphaned without their manifest.
+    manifest_tmp = out_dir / "manifest.yaml.tmp"
+    manifest_tmp.write_text(
         yaml.dump(manifest, default_flow_style=False, sort_keys=False),
         encoding="utf-8",
     )
+    manifest_tmp.replace(out_dir / "manifest.yaml")
 
     for item in stale_sha_list:
         print("export: stale SHA skipped: %s" % item, file=sys.stderr)
