@@ -181,10 +181,10 @@ def _map_axis_claim(claim: Optional[str]) -> list[str]:
 # SHA validation
 # ---------------------------------------------------------------------------
 
-_VALID_SHA = re.compile(r"^[0-9a-fA-F]{4,40}$")
+_VALID_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
-def _sha_format_ok(sha: str) -> bool:
+def _sha_format_ok(sha: object) -> bool:
     """Reject ledger-carried values that are not plain hex SHAs.
 
     The ledger is local, but export consumes rows that may travel with a
@@ -211,7 +211,9 @@ def _sha_is_resolvable(repo_root: Path, sha: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _materialize_diff(repo_root: Path, base_sha: str, head_sha: str) -> str:
+def _materialize_diff(
+    repo_root: Path, base_sha: str, head_sha: str
+) -> Optional[str]:
     """Run ``git diff base..head`` in ``repo_root`` (may be empty)."""
     res = subprocess.run(
         ["git", "diff", base_sha + ".." + head_sha],
@@ -220,6 +222,11 @@ def _materialize_diff(repo_root: Path, base_sha: str, head_sha: str) -> str:
         text=True, encoding="utf-8", errors="replace",
         check=False,
     )
+    if res.returncode != 0:
+        # SHAs resolved moments ago but diff failed (repo moved, shallow
+        # graft, corruption): the caller counts this as stale, never as
+        # an empty diff.
+        return None
     return res.stdout
 
 
@@ -263,6 +270,7 @@ def _managed_diff_files(out_dir: Path) -> list[str]:
     try:
         entries = load_corpus(manifest_path)
     except (ValueError, KeyError, TypeError):
+        # load_corpus wraps yaml.YAMLError into ValueError upstream
         return []
     managed: list[str] = []
     for e in entries:
@@ -386,6 +394,9 @@ def export_eval(
 
         # Priority 4: empty diff (gemini B-2: base == head or a 0-byte
         # materialized diff replays as permanent PASS -> false green).
+        # The empty check runs on the STRIPPED text: a diff whose only
+        # change is a foreign gate.yaml is stripped to nothing by D-17
+        # and must not emit a vacuous HOLD entry.
         if row.base_sha == row.head_sha:
             summary = dataclasses.replace(
                 summary, empty_diff_skipped=summary.empty_diff_skipped + 1
@@ -393,6 +404,18 @@ def export_eval(
             continue
 
         diff_text = _materialize_diff(repo_root, row.base_sha, row.head_sha)
+        if diff_text is None:
+            summary = dataclasses.replace(
+                summary, stale_sha_skipped=summary.stale_sha_skipped + 1
+            )
+            stale_sha_list.append(
+                "%s (git diff failed for %s..%s)"
+                % (row.fingerprint, row.base_sha, row.head_sha)
+            )
+            continue
+        # D-17: strip any foreign gate.yaml before the empty check and
+        # before the diff hits disk.
+        diff_text = _strip_gate_yaml(diff_text)
         if not diff_text.strip():
             summary = dataclasses.replace(
                 summary, empty_diff_skipped=summary.empty_diff_skipped + 1
@@ -425,8 +448,7 @@ def export_eval(
                 expected_findings=expected_findings,
             )
         )
-        # D-17: strip any foreign gate.yaml before the diff hits disk.
-        new_diff_texts["diffs/%s.diff" % name] = _strip_gate_yaml(diff_text)
+        new_diff_texts["diffs/%s.diff" % name] = diff_text
 
     # Re-export hygiene (D-22): remove previously manifest-managed diff
     # files, then write the new managed set.  Foreign files are never
@@ -470,8 +492,21 @@ def export_eval(
 
 
 def _entry_name(row: LedgerRow) -> str:
-    """Derive a stable entry name from a ledger row."""
-    return "lgr-%s" % row.fingerprint
+    """Derive a stable entry name from a ledger row.
+
+    Ledger fingerprints are hex digests in practice, but rows may travel
+    with a foreign repo; anything outside a safe filename alphabet is
+    replaced so a crafted fingerprint (e.g. containing '/') can never
+    steer the diff path outside diffs/ or crash the write.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_-]", "-", row.fingerprint)
+    if safe != row.fingerprint:
+        print(
+            "export: sanitized unsafe fingerprint %r for naming"
+            % row.fingerprint,
+            file=sys.stderr,
+        )
+    return "lgr-%s" % safe
 
 
 def _provenance(ledger_root: Path) -> str:

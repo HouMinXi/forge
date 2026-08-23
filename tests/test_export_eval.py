@@ -77,6 +77,14 @@ def _make_repo(tmp_path: Path, hostile_gate: bool = False):
     return repo, base, head
 
 
+def _shas(repo: Path):
+    """Return (base, head) commit SHAs of a two-commit fixture repo."""
+    return (
+        _git(repo, "rev-list", "--max-parents=0", "HEAD"),
+        _git(repo, "rev-parse", "HEAD"),
+    )
+
+
 def _make_finding(fp, file="a.py", line=1):
     return StateFinding(
         id=fp,
@@ -233,10 +241,16 @@ def test_counters_mutually_exclusive_and_sum_to_total(tmp_path):
         "--base-sha", "f" * 40, "--head-sha", "e" * 40,
     ) == EXIT_PASS
 
-    # Row 3: ESCAPED with base == head -> empty-diff.
+    # Row 3: pure DUPLICATE with valid SHAs -> duplicate_excluded itself.
+    assert _mark_new(
+        repo, "fp-puredup", "DUPLICATE", "logic error",
+        "--base-sha", base, "--head-sha", head,
+    ) == EXIT_PASS
+
+    # Row 4: ESCAPED with base == head -> empty-diff.
     assert _mark_new(repo, "fp-empty", "ESCAPED", "logic error") == EXIT_PASS
 
-    # Rows 4+5: CI row adjudicated FIXED -> dedup-collapse 1 + emitted 1.
+    # Rows 5+6: CI row adjudicated FIXED -> dedup-collapse 1 + emitted 1.
     _ci_run(repo, base, head, [_make_finding("fp-good", line=1)])
     assert _adjudicate(repo, "fp-good", "FIXED") == EXIT_PASS
 
@@ -244,11 +258,11 @@ def test_counters_mutually_exclusive_and_sum_to_total(tmp_path):
     summary = export_eval(repo, out)
     assert summary.unadjudicated_skipped == 1
     assert summary.stale_sha_skipped == 1
-    assert summary.duplicate_excluded == 0
+    assert summary.duplicate_excluded == 1
     assert summary.empty_diff_skipped == 1
     assert summary.dedup_collapsed == 1
     assert summary.emitted == 1
-    assert summary.total_rows_read == len(list(iter_rows(repo)))
+    assert summary.total_rows_read == len(list(iter_rows(repo))) == 6
 
 
 def test_materialized_diff_applies_cleanly(tmp_path):
@@ -427,8 +441,14 @@ def test_cli_reexport_preserves_foreign_files(tmp_path):
     foreign = out / "notes.txt"
     foreign.write_text("keep me\n", encoding="utf-8")
 
-    # Re-rule the fingerprint DUPLICATE: the entry disappears on re-export.
-    assert _ledger_cli(repo, "mark", "fp-cli", "DUPLICATE") == EXIT_PASS
+    # Re-rule the fingerprint DUPLICATE with the row's real SHAs (a mark
+    # without SHAs would default base==head and misroute to empty-diff):
+    # the entry disappears on re-export via the duplicate counter.
+    base, head = _shas(repo)
+    assert _ledger_cli(
+        repo, "mark", "fp-cli", "DUPLICATE",
+        "--base-sha", base, "--head-sha", head,
+    ) == EXIT_PASS
     assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
     assert foreign.read_text(encoding="utf-8") == "keep me\n"
     assert not managed.exists()
@@ -534,6 +554,17 @@ def test_none_axis_claim_does_not_crash(tmp_path, capsys):
 def test_crafted_sha_never_reaches_git(tmp_path, monkeypatch):
     """A flag-shaped base_sha is rejected by format validation before any
     git subprocess runs: the row counts as stale and git sees nothing."""
+    from code_forge.eval.export import _sha_format_ok
+
+    # Format gate unit assertions: 7..40 hex only (git minimum
+    # abbreviation is 7); flags, short prefixes, and non-hex rejected.
+    assert _sha_format_ok("a" * 40)
+    assert _sha_format_ok("0123abc")
+    assert not _sha_format_ok("abc12")
+    assert not _sha_format_ok("--upload-pack=/bin/sh")
+    assert not _sha_format_ok("")
+    assert not _sha_format_ok(None)
+
     repo, base, head = _make_repo(tmp_path)
     _append_raw_row(repo, "fp-evil", "--upload-pack=/bin/sh", head, "logic error")
 
@@ -598,3 +629,110 @@ def test_manifest_written_atomically(tmp_path, monkeypatch):
     assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
     assert ("manifest.yaml.tmp", "manifest.yaml") in renames
     assert not (out / "manifest.yaml.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Forge R2 hardening: strip-before-empty ordering and further trust guards
+# ---------------------------------------------------------------------------
+
+
+def test_gate_only_diff_counts_as_empty(tmp_path):
+    """A diff whose ONLY change is a foreign gate.yaml strips to nothing:
+    no vacuous HOLD entry, counted as empty-diff."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "a.py")
+    _git(repo, "commit", "-q", "-m", "base")
+    base, = (_git(repo, "rev-parse", "HEAD"),)
+    gate_dir = repo / ".code-forge"
+    gate_dir.mkdir()
+    (gate_dir / "gate.yaml").write_text(
+        "test:\n  command: touch /tmp/foreign_toolchain_ran\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".code-forge/gate.yaml")
+    _git(repo, "commit", "-q", "-m", "gate only")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    _append_raw_row(repo, "fp-gateonly", base, head, "logic error")
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.emitted == 0
+    assert summary.empty_diff_skipped == 1
+    assert not (out / "diffs").exists()
+
+
+def test_malformed_yaml_manifest_reexport_graceful(tmp_path, capsys):
+    """A manifest with invalid YAML degrades to an empty managed list:
+    re-export succeeds and foreign files survive."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "manifest.yaml").write_text(
+        "entries:\n  - [unclosed\n\tbad indent: {\n", encoding="utf-8",
+    )
+    foreign = out / "keep.txt"
+    foreign.write_text("keep\n", encoding="utf-8")
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+    assert foreign.read_text(encoding="utf-8") == "keep\n"
+    assert load_corpus(out / "manifest.yaml")  # real manifest rewritten
+
+
+def test_invalid_fingerprint_sanitized_not_crash(tmp_path, capsys):
+    """A crafted fingerprint with path separators exports under a
+    sanitized name instead of crashing the write."""
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "a/b/../x", base, head, "logic error")
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.emitted == 1
+    entries = load_corpus(out / "manifest.yaml")
+    assert entries[0].name == "lgr-a-b----x"
+    assert ".." not in Path(entries[0].diff_file).parts
+    target = out / entries[0].diff_file
+    assert target.is_file()
+    assert target.resolve().is_relative_to(out.resolve())
+    assert "sanitized unsafe fingerprint" in capsys.readouterr().err
+
+
+def test_git_diff_failure_counts_as_stale(tmp_path, monkeypatch, capsys):
+    """git diff failing on resolvable SHAs is stale-sha, never empty-diff."""
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "fp-diffail", base, head, "logic error")
+
+    import code_forge.eval.export as export_mod
+
+    real_run = subprocess.run
+
+    def fail_diff(*a, **k):
+        argv = a[0] if a else k.get("args", [])
+        if list(argv[:2]) == ["git", "diff"]:
+            return subprocess.CompletedProcess(argv, 128, "", "bad object")
+        return real_run(*a, **k)
+
+    monkeypatch.setattr(export_mod.subprocess, "run", fail_diff)
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.stale_sha_skipped == 1
+    assert summary.empty_diff_skipped == 0
+    assert summary.emitted == 0
+    assert "git diff failed" in capsys.readouterr().err
+
+
+def test_cli_repo_root_must_be_git_repo(tmp_path, capsys):
+    """--repo-root pointing at a non-git dir is a CLI error, not a
+    misleading all-stale export."""
+    repo = _fixed_ledger_repo(tmp_path)
+    not_git = tmp_path / "plain"
+    not_git.mkdir()
+    rc = _ledger_cli(
+        repo, "export-eval",
+        "--out", str(tmp_path / "out"),
+        "--repo-root", str(not_git),
+    )
+    assert rc == EXIT_CLI_ERROR
+    assert "not a git repository" in capsys.readouterr().err
