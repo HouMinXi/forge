@@ -1445,7 +1445,7 @@ class StateMachine:
 
         # Layer 2: gate.yaml kill-switch (tolerant raw YAML load, fail-open on parse error)
         try:
-            gate_path = self.cwd / "gate.yaml"
+            gate_path = self.cwd / ".code-forge" / "gate.yaml"
             if gate_path.exists():
                 with open(gate_path, "r", encoding="utf-8") as f:
                     gate_data = yaml.safe_load(f)

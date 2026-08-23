@@ -33,6 +33,7 @@ DISPOSITION_TO_LEVEL: dict[Disposition, str] = {
     Disposition.UNCERTAIN: "warning",
     Disposition.DISMISSED: "note",
     Disposition.FIXED: "note",
+    Disposition.STYLE: "note",
 }
 
 

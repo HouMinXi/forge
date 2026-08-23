@@ -11,11 +11,11 @@ from code_forge.disposition import (
 
 
 class TestDispositionEnum:
-    """Verify Disposition enum has exactly 4 members with correct values."""
+    """Verify Disposition enum members and values."""
 
-    def test_exactly_four_members(self):
+    def test_exactly_five_members(self):
         members = list(Disposition)
-        assert len(members) == 4
+        assert len(members) == 5
 
     def test_confirmed_value(self):
         assert Disposition.CONFIRMED.value == "CONFIRMED"

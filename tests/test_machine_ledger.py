@@ -451,7 +451,7 @@ def test_ci_env_kill_switch(tmp_path, monkeypatch):
 def test_ci_config_kill_switch(tmp_path):
     """Test (f): gate.yaml ledger.enabled=false suppresses CI ledger writes."""
     _prep_local_state(tmp_path)
-    gate_file = tmp_path / "gate.yaml"
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text("ledger:\n  enabled: false\n", encoding="utf-8")
     finding = _make_finding("fp-ci-kill-cfg", disp=Disposition.CONFIRMED)
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
@@ -463,7 +463,7 @@ def test_ci_config_kill_switch(tmp_path):
 def test_ci_config_kill_switch_tolerant(tmp_path):
     """Test (g): Kill-switch is tolerant to review-only gate.yaml, empty gate.yaml, malformed YAML, non-utf8."""
     _prep_local_state(tmp_path)
-    gate_file = tmp_path / "gate.yaml"
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
 
     # 1. gate.yaml with no test section and ledger.enabled: false
     gate_file.write_text("mode: review\nledger:\n  enabled: false\n", encoding="utf-8")
