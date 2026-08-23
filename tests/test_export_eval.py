@@ -769,6 +769,41 @@ def test_crlf_diff_still_strips_gate_yaml():
     assert "b.py" in stripped
 
 
+def test_rename_into_gate_yaml_stripped():
+    """A section renaming innocent.txt TO .code-forge/gate.yaml has a
+    different a-side path; the strip keys on the b-side, so the hostile
+    toolchain file never materializes on replay."""
+    from code_forge.eval.export import _strip_gate_yaml
+
+    rename_diff = (
+        "diff --git a/innocent.txt b/.code-forge/gate.yaml\n"
+        "similarity index 100%\n"
+        "rename from innocent.txt\n"
+        "rename to .code-forge/gate.yaml\n"
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+    )
+    stripped = _strip_gate_yaml(rename_diff)
+    assert "gate.yaml" not in stripped
+    assert "rename to .code-forge" not in stripped
+    assert "a.py" in stripped
+
+
+def test_rename_away_from_gate_yaml_kept():
+    """A rename FROM gate.yaml TO a harmless name no longer controls the
+    toolchain; that section survives the strip."""
+    from code_forge.eval.export import _strip_gate_yaml
+
+    away_diff = (
+        "diff --git a/.code-forge/gate.yaml b/notes.txt\n"
+        "similarity index 100%\n"
+        "rename from .code-forge/gate.yaml\n"
+        "rename to notes.txt\n"
+    )
+    stripped = _strip_gate_yaml(away_diff)
+    assert "notes.txt" in stripped
+
+
 def test_row_with_missing_repo_root_counts_stale(tmp_path):
     """A ledger row whose repo_root moved away is a stale-skip, not a
     FileNotFoundError traceback."""

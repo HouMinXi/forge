@@ -251,20 +251,23 @@ def _materialize_diff(
 # ---------------------------------------------------------------------------
 
 _GATE_DIFF_PATTERN = re.compile(
-    r"^diff --git a/\.code-forge/gate\.yaml b/\.code-forge/gate\.yaml\r?\n"
+    r"^diff --git (?:a/\S+ )?b/\.code-forge/gate\.yaml\r?\n"
     r".*?(?=^diff --git |\Z)",
     re.MULTILINE | re.DOTALL,
 )
 
 
 def _strip_gate_yaml(diff_text: str) -> str:
-    """Remove any ``.code-forge/gate.yaml`` section from a diff.
+    """Remove any diff section producing ``.code-forge/gate.yaml``.
 
     D-17: the extractor strips foreign gate.yaml additions/modifications
     from materialized diffs so replay never executes a hostile foreign
-    test.command.  CRLF line endings (core.autocrlf / eol=crlf) are
-    tolerated; without that the strip silently no-ops and the hostile
-    section survives.
+    test.command.  Any section whose b-side path is gate.yaml is removed
+    regardless of the a-side, so a rename from an innocent source path
+    cannot smuggle the file past the strip; a rename FROM gate.yaml TO
+    another name is left intact since the result no longer controls the
+    toolchain.  CRLF line endings (core.autocrlf / eol=crlf) are
+    tolerated.
     """
     return _GATE_DIFF_PATTERN.sub("", diff_text)
 
