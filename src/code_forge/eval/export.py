@@ -182,7 +182,7 @@ def _map_axis_claim(claim: Optional[str]) -> list[str]:
 # SHA validation
 # ---------------------------------------------------------------------------
 
-_VALID_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
+_VALID_SHA = re.compile(r"[0-9a-fA-F]{7,64}")
 
 
 def _sha_format_ok(sha: object) -> bool:
@@ -277,13 +277,18 @@ def _strip_gate_yaml(diff_text: str) -> str:
 def _managed_diff_files(out_dir: Path) -> list[str]:
     """Return the diff_file list from a previously exported manifest.
 
+    Reads ``manifest.yaml.prev`` first: the re-export flow renames the
+    old manifest aside before writing the new one, so between rename and
+    replace the previous manifest lives at ``manifest.yaml.prev``.
     Missing or unparseable manifest -> empty list (nothing managed).
     Entries that are absolute or contain ``..`` are rejected here rather
     than at the join site, so a tampered manifest can never steer the
     re-export cleanup outside the output dir.
     """
-    manifest_path = out_dir / "manifest.yaml"
-    if not manifest_path.exists():
+    manifest_path = out_dir / "manifest.yaml.prev"
+    if not manifest_path.is_file():
+        manifest_path = out_dir / "manifest.yaml"
+    if not manifest_path.is_file():
         return []
     try:
         entries = load_corpus(manifest_path)
@@ -472,17 +477,14 @@ def export_eval(
         )
         new_diff_texts["diffs/%s.diff" % name] = diff_text
 
-    # Re-export hygiene (D-22): remove previously manifest-managed diff
-    # files, then write the new managed set.  Foreign files are never
+    # Re-export hygiene (D-22): write the new managed set first, then
+    # remove previously manifest-managed diff files no longer emitted.
+    # A crash between the two steps leaves an orphaned diff file (a new
+    # re-export cleans it up via the freshly written manifest), never a
+    # manifest pointing at missing diffs.  Foreign files are never
     # touched.
     out_dir.mkdir(parents=True, exist_ok=True)
     diff_dir = out_dir / "diffs"
-    for old_rel in _managed_diff_files(out_dir):
-        old_path = out_dir / old_rel
-        if old_path.is_file() and old_path.resolve().is_relative_to(
-            out_dir.resolve()
-        ):
-            old_path.unlink()
     if new_diff_texts:
         diff_dir.mkdir(parents=True, exist_ok=True)
     for rel, text in new_diff_texts.items():
@@ -493,13 +495,30 @@ def export_eval(
         "entries": [_entry_to_dict(e) for e in entries],
     }
     # Write the manifest last and atomically so a failed export never
-    # leaves managed diff files orphaned without their manifest.
+    # leaves managed diff files orphaned without their manifest.  The
+    # previous manifest is kept as manifest.yaml.prev so stale-diff
+    # cleanup can still find it after the new manifest has landed.
+    prev_manifest = out_dir / "manifest.yaml"
+    prev_aside = out_dir / "manifest.yaml.prev"
+    if prev_manifest.is_file():
+        prev_manifest.replace(prev_aside)
     manifest_tmp = out_dir / "manifest.yaml.tmp"
     manifest_tmp.write_text(
         yaml.dump(manifest, default_flow_style=False, sort_keys=False),
         encoding="utf-8",
     )
-    manifest_tmp.replace(out_dir / "manifest.yaml")
+    manifest_tmp.replace(prev_manifest)
+
+    for old_rel in _managed_diff_files(out_dir):
+        if old_rel in new_diff_texts:
+            continue
+        old_path = out_dir / old_rel
+        if old_path.is_file() and old_path.resolve().is_relative_to(
+            out_dir.resolve()
+        ):
+            old_path.unlink()
+    if prev_aside.is_file():
+        prev_aside.unlink()
 
     for item in stale_sha_list:
         print("export: stale SHA skipped: %s" % item, file=sys.stderr)

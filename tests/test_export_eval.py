@@ -812,6 +812,59 @@ def test_sha_trailing_newline_rejected():
     assert not _sha_format_ok("0123abc\r\n")
 
 
+def test_sha256_hashes_accepted():
+    """SHA-256 object names (64 hex) pass the format gate."""
+    from code_forge.eval.export import _sha_format_ok
+
+    assert _sha_format_ok("a" * 64)
+    assert not _sha_format_ok("a" * 65)
+
+
+def test_manifest_never_points_at_missing_diffs(tmp_path):
+    """Crash-ordering: old managed diffs are removed only AFTER the new
+    manifest lands, so a manifest never references a deleted diff."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+
+    events = []
+    real_unlink = Path.unlink
+    real_replace = Path.replace
+
+    def spy_unlink(self, *a, **k):
+        if self.name.endswith(".diff"):
+            events.append(("unlink", self.name))
+        return real_unlink(self, *a, **k)
+
+    def spy_replace(self, target, *a, **k):
+        if self.name == "manifest.yaml.tmp":
+            events.append(("manifest-replace", ""))
+        return real_replace(self, target, *a, **k)
+
+    # Re-rule the fingerprint away from FIXED so its managed diff goes
+    # stale on the second export.
+    row = list(iter_rows(repo))[0]
+    base, head = row.base_sha, row.head_sha
+    assert _ledger_cli(
+        repo, "mark", row.fingerprint, "DUPLICATE",
+        "--base-sha", base, "--head-sha", head,
+    ) == EXIT_PASS
+
+    monkeypatch_t = pytest.MonkeyPatch()
+    monkeypatch_t.setattr(Path, "unlink", spy_unlink)
+    monkeypatch_t.setattr(Path, "replace", spy_replace)
+    try:
+        assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+    finally:
+        monkeypatch_t.undo()
+    diff_unlinks = [i for i, e in enumerate(events) if e[0] == "unlink"]
+    manifest_idx = next(
+        i for i, e in enumerate(events) if e[0] == "manifest-replace"
+    )
+    assert diff_unlinks, "second export must clean up the stale diff"
+    assert all(i > manifest_idx for i in diff_unlinks)
+
+
 # ---------------------------------------------------------------------------
 # Forge R4 hardening: process timeouts and sanitized-name collisions
 # ---------------------------------------------------------------------------
