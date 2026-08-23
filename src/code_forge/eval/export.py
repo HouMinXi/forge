@@ -30,6 +30,7 @@ force=True.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import re
 import subprocess
 import sys
@@ -203,10 +204,12 @@ def _sha_is_resolvable(repo_root: Path, sha: str) -> bool:
             cwd=str(repo_root),
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
+            timeout=30,
             check=False,
         )
-    except OSError:
-        # repo_root moved, was deleted, or never existed: unresolvable.
+    except (OSError, subprocess.TimeoutExpired):
+        # repo_root moved, was deleted, never existed, or git hung on a
+        # corrupted object store: unresolvable.
         return False
     return res.returncode == 0
 
@@ -219,14 +222,22 @@ def _sha_is_resolvable(repo_root: Path, sha: str) -> bool:
 def _materialize_diff(
     repo_root: Path, base_sha: str, head_sha: str
 ) -> Optional[str]:
-    """Run ``git diff base..head`` in ``repo_root`` (may be empty)."""
-    res = subprocess.run(
-        ["git", "diff", base_sha + ".." + head_sha],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
-        check=False,
-    )
+    """Run ``git diff base..head`` in ``repo_root`` (may be empty).
+
+    None means the diff could not be produced (non-zero exit or git
+    hang); the caller counts that as stale-sha, never as empty-diff.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "diff", base_sha + ".." + head_sha],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     if res.returncode != 0:
         # SHAs resolved moments ago but diff failed (repo moved, shallow
         # graft, corruption): the caller counts this as stale, never as
@@ -516,6 +527,12 @@ def _entry_name(row: LedgerRow) -> str:
             "export: sanitized unsafe fingerprint %r for naming"
             % row.fingerprint,
             file=sys.stderr,
+        )
+        # Distinct raw fingerprints can sanitize to the same name
+        # ('a/b' vs 'a-b'); pin a short hash of the raw value so the
+        # entry name stays unique and no diff silently overwrites.
+        safe = "%s-%s" % (
+            safe, hashlib.sha256(row.fingerprint.encode()).hexdigest()[:8],
         )
     return "lgr-%s" % safe
 

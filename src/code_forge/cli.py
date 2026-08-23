@@ -1875,7 +1875,7 @@ def _run_ledger(args, cwd: Path) -> int:
                     timeout=30,
                     check=False,
                 )
-            except OSError:
+            except (OSError, subprocess.TimeoutExpired):
                 probe = None
             if probe is None or probe.returncode != 0:
                 print(

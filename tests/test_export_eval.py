@@ -692,7 +692,10 @@ def test_invalid_fingerprint_sanitized_not_crash(tmp_path, capsys):
     summary = export_eval(repo, out)
     assert summary.emitted == 1
     entries = load_corpus(out / "manifest.yaml")
-    assert entries[0].name == "lgr-a-b----x"
+    # Unsafe chars are dashed and a short hash of the raw fingerprint is
+    # pinned so colliding sanitizations cannot overwrite each other.
+    assert entries[0].name.startswith("lgr-a-b----x-")
+    assert len(entries[0].name.rsplit("-", 1)[1]) == 8
     assert ".." not in Path(entries[0].diff_file).parts
     target = out / entries[0].diff_file
     assert target.is_file()
@@ -807,3 +810,89 @@ def test_sha_trailing_newline_rejected():
 
     assert not _sha_format_ok("0123abc\n")
     assert not _sha_format_ok("0123abc\r\n")
+
+
+# ---------------------------------------------------------------------------
+# Forge R4 hardening: process timeouts and sanitized-name collisions
+# ---------------------------------------------------------------------------
+
+
+def _timeout_for(argv_match):
+    """Return a subprocess.run stand-in that raises TimeoutExpired only
+    for the given argv prefix and delegates everything else."""
+
+    real_run = subprocess.run
+
+    def picky(*a, **k):
+        argv = list(a[0]) if a else list(k.get("args", []))
+        if argv[: len(argv_match)] == argv_match:
+            raise subprocess.TimeoutExpired(argv, 1)
+        return real_run(*a, **k)
+
+    return picky
+
+
+def test_cat_file_timeout_counts_stale(tmp_path, monkeypatch):
+    """git cat-file hanging on a corrupted repo counts the row stale,
+    never propagates TimeoutExpired out of the export."""
+    import code_forge.eval.export as export_mod
+
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "fp-hang", base, head, "logic error")
+    monkeypatch.setattr(
+        export_mod.subprocess, "run",
+        _timeout_for(["git", "cat-file"]),
+    )
+    summary = export_eval(repo, tmp_path / "out")
+    assert summary.stale_sha_skipped == 1
+    assert summary.emitted == 0
+
+
+def test_git_diff_timeout_counts_stale(tmp_path, monkeypatch):
+    """git diff hanging counts as stale, not as an empty diff."""
+    import code_forge.eval.export as export_mod
+
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "fp-diffhang", base, head, "logic error")
+    monkeypatch.setattr(
+        export_mod.subprocess, "run",
+        _timeout_for(["git", "diff"]),
+    )
+    summary = export_eval(repo, tmp_path / "out")
+    assert summary.stale_sha_skipped == 1
+    assert summary.empty_diff_skipped == 0
+    assert summary.emitted == 0
+
+
+def test_sanitized_fingerprints_stay_unique(tmp_path):
+    """'a/b' and 'a-b' sanitize to the same stem; the pinned raw-hash
+    suffix keeps both entries and both diff files distinct."""
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "a/b", base, head, "logic error")
+    _append_raw_row(repo, "a-b", base, head, "logic error")
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.emitted == 2
+    entries = load_corpus(out / "manifest.yaml")
+    names = [e.name for e in entries]
+    assert len(set(names)) == 2
+    diff_files = [e.diff_file for e in entries]
+    assert len(set(diff_files)) == 2
+    for rel in diff_files:
+        assert (out / rel).is_file()
+
+
+def test_cli_repo_root_probe_timeout(tmp_path, monkeypatch, capsys):
+    """A hanging --repo-root probe is a CLI error, not a traceback."""
+    repo = _fixed_ledger_repo(tmp_path)
+    monkeypatch.setattr(
+        subprocess, "run",
+        _timeout_for(["git", "rev-parse", "--git-dir"]),
+    )
+    rc = _ledger_cli(
+        repo, "export-eval",
+        "--out", str(tmp_path / "out"),
+        "--repo-root", str(repo),
+    )
+    assert rc == EXIT_CLI_ERROR
+    assert "not a git repository" in capsys.readouterr().err
