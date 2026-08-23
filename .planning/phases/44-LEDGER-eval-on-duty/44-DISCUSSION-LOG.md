@@ -295,6 +295,36 @@ CP1b all three legs adjudicated. Plan set is now at: 44-01 (write),
 with revisions. Pending: re-run CP1 on the revised 44-01/44-02/44-03 to
 confirm convergence to 0 blockers, then user final human review.
 
+## CP1 convergence check (deleg_905c7ae1, 2026-08-22)
+
+VERDICT: PASS, SCORECARD B=0 W=5. All 6 CP1b findings RESOLVED with live
+evidence. 5 warnings (prose/contract staleness), all adjudicated + fixed:
+- W-1 (44-03 frontmatter/key_links still described the rejected
+  AdvisoryFinding rerouting): FIXED -- frontmatter truths/artifacts/
+  key_links rewritten to the keep-StateFinding design; advisory.py dropped
+  from files_modified (no change needed); interfaces advisory.py note
+  updated.
+- W-2 (44-02 counter lists not extended for the 2 new skip counters):
+  FIXED -- precedence chain extended to "unadjudicated > stale-sha >
+  duplicate-excluded > empty-diff > dedup-collapse" in must_haves, Task 1
+  test (d), Task 3 test (a) summary.
+- W-3 (stale DUPLICATE->no-catch strings at 44-02:21,:174): FIXED -- both
+  rewritten to DUPLICATE-excluded.
+- W-4 (false active_findings visibility claim): FIXED -- 44-03 Task 1 prose
+  corrected: DISMISSED findings are filtered OUT of active_findings
+  (machine.py:240-243); the audit trail is in state.findings/state.json/
+  infra_errors, not active_findings.
+- W-5 (cross-plan write-scope contradiction for style findings): FIXED --
+  44-01 Task 2 now specifies the CI write scope: CONFIRMED + style-downgraded
+  findings get UNADJUDICATED rows; suppressed-DISMISSED findings are NOT
+  re-written; the shared row-build takes the per-finding terminal-state
+  decision as an INPUT (never the LOCAL DISMISSED->DISPROVED mapping,
+  machine.py:1330-1334).
+
+CP1 fully converged: 44-01/44-02 PASS (round 2), 44-03 PASS (incremental),
+all CP1b findings resolved, convergence check PASS B=0. Ready for the
+user's final human review, then execution (44-01 -> 44-03 -> 44-02).
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start
