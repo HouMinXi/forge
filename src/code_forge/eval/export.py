@@ -297,7 +297,7 @@ def _managed_diff_files(out_dir: Path) -> list[str]:
         return []
     managed: list[str] = []
     for e in entries:
-        rel = Path(e.diff_file)
+        rel = Path(str(e.diff_file))
         if rel.is_absolute() or ".." in rel.parts:
             print(
                 "export: ignoring unsafe managed path %r" % e.diff_file,

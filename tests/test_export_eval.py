@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import yaml
@@ -517,7 +518,7 @@ def test_export_eval_force_gate_raises():
 
 
 def _append_raw_row(repo: Path, fp: str, base: str, head: str, claim,
-                    repo_root: Path | None = None):
+                    repo_root: Optional[Path] = None):
     """Append one FIXED row via the real ledger write path, with field
     values a crafted/foreign ledger could carry (None claim, non-SHA)."""
     from datetime import datetime, timezone
