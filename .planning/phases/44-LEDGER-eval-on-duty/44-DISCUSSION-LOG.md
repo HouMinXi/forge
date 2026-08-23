@@ -325,6 +325,32 @@ CP1 fully converged: 44-01/44-02 PASS (round 2), 44-03 PASS (incremental),
 all CP1b findings resolved, convergence check PASS B=0. Ready for the
 user's final human review, then execution (44-01 -> 44-03 -> 44-02).
 
+## Final multi-role convergence review (2026-08-22, user-requested)
+
+Four role-perspective reviews (kanban): reviewer/logic t_54fd29f4,
+devops/ops t_20d612c8, scribe/facts t_a61a65f8, coder/exec t_8b59a4e6.
+ALL FOUR returned NO OBJECTION with 0 blockers, and each independently
+confirmed all 6 CP1b blockers CONFIRMED-FIXED against live code.
+
+Residual M/L findings adjudicated:
+- reviewer M-1 (kill-switch except OSError misses yaml.YAMLError from a
+  malformed gate.yaml -- an uncaught exception is a crash = verdict change,
+  violating D-19): CONFIRMED (yaml.YAMLError is not an OSError subclass;
+  safe_load on empty file returns None -> .get AttributeError). FIXED in
+  44-01 Task 2: except tuple broadened to OSError + yaml.YAMLError +
+  AttributeError/TypeError, isinstance(data, dict) guard, fail-open on read
+  failure; malformed + empty gate.yaml bug-injection tests added.
+- coder M-1 (resolve_ledger_root referenced before 44-01 lands):
+  informational only -- depends_on: [44-01] declared in frontmatter; no
+  change needed.
+- scribe L-1 (44-03 Task 2 <files> still listed advisory.py): FIXED --
+  removed advisory.py from files + Task 2 name corrected to "non-blocking
+  disposition".
+
+CONSENSUS REACHED across all four roles. Plan set final: 44-01 (write),
+44-03 (read-side convergence), 44-02 (export); 27 decisions D-01..D-27.
+Next: user final human review, then execution.
+
 ## Deferred ideas captured
 
 - DISPROVED findings-level expected-answers semantics (start
