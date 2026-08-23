@@ -304,7 +304,7 @@ def _managed_diff_files(out_dir: Path) -> list[str]:
                 file=sys.stderr,
             )
             continue
-        managed.append(e.diff_file)
+        managed.append(str(rel))
     return managed
 
 
@@ -322,7 +322,11 @@ def _check_out_dir(out_dir: Path, force: bool) -> None:
         )
     if not any(out_dir.iterdir()):
         return
-    if (out_dir / "manifest.yaml").exists():
+    if (out_dir / "manifest.yaml").exists() or (
+        out_dir / "manifest.yaml.prev"
+    ).exists():
+        # A previous export landed here; .prev without .yaml means the
+        # last run crashed mid-swap, which is still our managed dir.
         return
     if not force:
         raise ExportError(
@@ -542,7 +546,7 @@ def _entry_name(row: LedgerRow) -> str:
     clamped so the on-disk path stays well under the 255-byte filename
     limit on ext4/APFS.
     """
-    safe = re.sub(r"[^A-Za-z0-9_-]", "-", row.fingerprint)
+    safe = re.sub(r"[^A-Za-z0-9_-]", "-", row.fingerprint).lower()
     if safe != row.fingerprint or len(safe) > 100:
         print(
             "export: sanitized unsafe fingerprint %r for naming"

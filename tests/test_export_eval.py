@@ -821,6 +821,56 @@ def test_sha256_hashes_accepted():
     assert not _sha_format_ok("a" * 65)
 
 
+def test_crash_mid_swap_dir_is_recognized(tmp_path):
+    """A dir with manifest.yaml.prev but no manifest.yaml (crash between
+    rename and replace) is still our managed dir, not foreign."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "diffs").mkdir()
+    (out / "diffs" / "lgr-stale.diff").write_text("stale\n")
+    (out / "manifest.yaml.prev").write_text(
+        "provenance: repo\nentries: []\n", encoding="utf-8",
+    )
+    # No --force: must succeed because .prev marks ownership.
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+    assert not (out / "manifest.yaml.prev").exists()
+    assert (out / "manifest.yaml").is_file()
+
+
+def test_uppercase_fingerprints_cannot_collide(tmp_path):
+    """'ABC' vs 'abc' would collide on case-insensitive filesystems;
+    names are lowercased and hash-pinned so both survive."""
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "ABC", base, head, "logic error")
+    _append_raw_row(repo, "abc", base, head, "logic error")
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.emitted == 2
+    entries = load_corpus(out / "manifest.yaml")
+    diff_files = [e.diff_file for e in entries]
+    assert len(set(diff_files)) == 2
+    for rel in diff_files:
+        assert (out / rel).is_file()
+
+
+def test_unreadable_manifest_reexport_graceful(tmp_path):
+    """A manifest that disappears between the is_file check and the open
+    degrades to an empty managed list, not an OSError traceback."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    manifest = out / "manifest.yaml"
+    manifest.write_text("provenance: repo\nentries: []\n", encoding="utf-8")
+    foreign = out / "keep.txt"
+    foreign.write_text("keep\n", encoding="utf-8")
+    manifest.unlink()
+    # is_file() now false inside _managed_diff_files -> empty managed;
+    # dir has no manifest so --force is required for the foreign file.
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_CLI_ERROR
+    assert foreign.read_text(encoding="utf-8") == "keep\n"
+
+
 def test_manifest_never_points_at_missing_diffs(tmp_path):
     """Crash-ordering: old managed diffs are removed only AFTER the new
     manifest lands, so a manifest never references a deleted diff."""
