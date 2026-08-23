@@ -1339,6 +1339,9 @@ class StateMachine:
     def _write_ledger_rows(self) -> int:
         """Append terminal-StateFinding rows to .code-forge/ledger.jsonl (LOCAL mode).
 
+        D-05, D-11, D-20b: Persistence routes to the main repo root via
+        `resolve_ledger_root(self.cwd)` so findings survive worktree cleanup.
+
         One row per finding whose disposition is FIXED or DISMISSED.
         UNCERTAIN and still-open CONFIRMED findings are not terminal
         and yield no row. Returns the number of rows written; non-git
@@ -1472,7 +1475,7 @@ class StateMachine:
             # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
             findings_to_write = [
                 f for f in self._state.findings
-                if f.disposition == Disposition.CONFIRMED or getattr(f.disposition, "value", str(f.disposition)) == "STYLE"
+                if f.disposition == Disposition.CONFIRMED or f.disposition == Disposition.STYLE
             ]
 
             rows_written = 0

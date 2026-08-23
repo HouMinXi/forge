@@ -25,8 +25,12 @@ class Disposition(str, Enum):
     - FIXED -> CONFIRMED                          (next-round persists)
     - UNCERTAIN -> CONFIRMED                      (human re-CONFIRM in HOLD)
     - UNCERTAIN -> DISMISSED                      (human dismiss in HOLD)
+    - STYLE: a style/test-assertion/naming/idiomatic finding downgraded
+      to non-blocking (never blocks the verdict), stays ledger-written/
+      adjudicable/exportable.
     """
     CONFIRMED = "CONFIRMED"
     DISMISSED = "DISMISSED"
     UNCERTAIN = "UNCERTAIN"
     FIXED = "FIXED"
+    STYLE = "STYLE"

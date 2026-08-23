@@ -181,6 +181,18 @@ def test_unit_skips_open_confirmed_and_uncertain(tmp_path):
     assert list(iter_rows(tmp_path)) == []
 
 
+def test_unit_skips_style_findings(tmp_path):
+    """STYLE findings in local mode are non-terminal and not written as DISPROVED or FIXED."""
+    _prep_local_state(tmp_path)
+    machine = _build_machine(tmp_path, _resolved_with_shas())
+    machine._state.findings.append(
+        _make_finding("fp-style", disp=Disposition.STYLE)
+    )
+    n = machine._write_ledger_rows()
+    assert n == 0
+    assert list(iter_rows(tmp_path)) == []
+
+
 def test_unit_skips_when_no_shas(tmp_path):
     _prep_local_state(tmp_path)
     machine = _build_machine(tmp_path, _resolved_no_shas())
@@ -347,6 +359,26 @@ def test_ci_confirmed_finding_appends_unadjudicated_row(tmp_path):
     assert r.head_sha == "b" * 40
     assert r.file == "a.py"
     assert r.line == 10
+    assert r.repo_root == str(tmp_path.resolve())
+
+
+def test_ci_style_downgraded_finding_appends_unadjudicated_row_and_passes(tmp_path):
+    """P1 / P3b / CP1 W-5: Style-downgraded finding is written to CI ledger as UNADJUDICATED and does not block PASS."""
+    _prep_local_state(tmp_path)
+    finding = _make_finding("fp-ci-style", disp=Disposition.STYLE, file="a.py", line=15)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.fingerprint == "fp-ci-style"
+    assert r.terminal_state == TerminalState.UNADJUDICATED
+    assert r.base_sha == "a" * 40
+    assert r.head_sha == "b" * 40
+    assert r.file == "a.py"
+    assert r.line == 15
     assert r.repo_root == str(tmp_path.resolve())
 
 

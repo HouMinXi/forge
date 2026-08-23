@@ -1496,7 +1496,6 @@ def _run_ledger(args, cwd: Path) -> int:
     from .ledger import (
         LedgerRow,
         TerminalState,
-        _truncate_evidence,
         append_row,
         iter_rows,
         resolve_ledger_root,
@@ -1696,7 +1695,7 @@ def _run_ledger(args, cwd: Path) -> int:
             axis_claim=args.axis_claim if args.axis_claim is not None else "manual",
             pass_provenance="manual",
             terminal_state=state,
-            evidence_class=_truncate_evidence(args.evidence),
+            evidence_class=args.evidence,
             ts=ts,
         ))
         print(
@@ -1769,7 +1768,7 @@ def _run_ledger(args, cwd: Path) -> int:
         axis_claim_value = latest_row.axis_claim
         repo_root_value = latest_row.repo_root or str(ledger_root.resolve())
         version_sensitive_value = latest_row.version_sensitive
-        evidence_value = _truncate_evidence(args.evidence)
+        evidence_value = args.evidence
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         append_row(ledger_root, LedgerRow(

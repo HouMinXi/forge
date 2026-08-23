@@ -735,3 +735,30 @@ def test_mark_evidence_is_truncated(tmp_path):
     assert len(rows) == 1
     assert len(rows[0].evidence_class) <= 500
     assert rows[0].evidence_class.endswith("... [truncated]")
+
+
+def test_adjudicate_evidence_is_truncated(tmp_path):
+    """Test adjudicate with --evidence >500 chars is truncated via append_row (D-07, D-21)."""
+    _git_init(tmp_path)
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-trunc-adj",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="1" * 40,
+        head_sha="2" * 40,
+        file="a.py",
+        line=1,
+        axis_claim="claim",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="init",
+        ts="2026-07-04T00:00:00Z",
+    ))
+    long_evidence = "y" * 600
+    rc = _call(tmp_path, "ledger", "adjudicate", "fp-trunc-adj", "FIXED",
+               "--evidence", long_evidence)
+    assert rc == 0
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 2
+    assert len(rows[1].evidence_class) <= 500
+    assert rows[1].evidence_class.endswith("... [truncated]")
