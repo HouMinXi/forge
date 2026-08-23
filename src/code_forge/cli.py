@@ -829,7 +829,34 @@ def _build_parser() -> argparse.ArgumentParser:
              "words; required with --new",
     )
 
-    # ledger list [--json] [--fingerprint FP]
+    # ledger adjudicate <fingerprint> <terminal_state> [--evidence "..."]
+    #   [--base-sha S --head-sha S]
+    adjudicate_parser = ledger_subs.add_parser(
+        'adjudicate',
+        help='upgrade an UNADJUDICATED row to a terminal state with metadata inheritance',
+    )
+    adjudicate_parser.add_argument(
+        "fingerprint",
+        help="finding fingerprint to adjudicate",
+    )
+    adjudicate_parser.add_argument(
+        "terminal_state",
+        help="terminal state to record (FIXED, DISPROVED, DUPLICATE, ESCAPED)",
+    )
+    adjudicate_parser.add_argument(
+        "--evidence", default="manual",
+        help="evidence_class for the row (default: manual)",
+    )
+    adjudicate_parser.add_argument(
+        "--base-sha", default=None,
+        help="optional override for base SHA (must pair with --head-sha)",
+    )
+    adjudicate_parser.add_argument(
+        "--head-sha", default=None,
+        help="optional override for head SHA (must pair with --base-sha)",
+    )
+
+    # ledger list [--json] [--fingerprint FP] [--unadjudicated]
     list_parser = ledger_subs.add_parser(
         'list',
         help='list outcome ledger rows',
@@ -841,6 +868,10 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument(
         "--fingerprint", default=None,
         help="filter to one fingerprint",
+    )
+    list_parser.add_argument(
+        "--unadjudicated", dest="unadjudicated_only", action="store_true",
+        help="filter to fingerprints whose latest state is UNADJUDICATED",
     )
 
     return parser
@@ -1456,30 +1487,46 @@ def _run_trust(args, cwd: Path) -> int:
 
 
 def _run_ledger(args, cwd: Path) -> int:
-    """Handle ``code-forge ledger {mark,list}`` subcommand.
+    """Handle ``code-forge ledger {mark,adjudicate,list}`` subcommand.
 
     Returns EXIT_PASS (0) on success, EXIT_CLI_ERROR (2) on validation
     failure or I/O error. Non-review subcommand convention (no CliError).
     """
     from datetime import datetime, timezone
-    from .ledger import LedgerRow, TerminalState, append_row, iter_rows
+    from .ledger import (
+        LedgerRow,
+        TerminalState,
+        _truncate_evidence,
+        append_row,
+        iter_rows,
+        resolve_ledger_root,
+    )
 
     if not args.ledger_command:
         print(
-            "code-forge ledger: subcommand required (mark | list)",
+            "code-forge ledger: subcommand required (mark | adjudicate | list)",
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
+
+    ledger_root = resolve_ledger_root(cwd)
 
     if args.ledger_command == "mark":
         # Validate terminal_state
         try:
             state = TerminalState(args.terminal_state.upper())
         except ValueError:
-            valid = ", ".join(s.value for s in TerminalState)
+            valid = ", ".join(s.value for s in TerminalState if s != TerminalState.UNADJUDICATED)
             print(
                 "code-forge ledger mark: terminal_state must be one of: %s"
                 % valid,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        if state == TerminalState.UNADJUDICATED:
+            print(
+                "code-forge ledger mark: terminal_state must be one of: FIXED, DISPROVED, DUPLICATE, ESCAPED",
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
@@ -1498,7 +1545,7 @@ def _run_ledger(args, cwd: Path) -> int:
 
         # If not --new, fingerprint must already exist in ledger
         if not args.is_new:
-            existing = {r.fingerprint for r in iter_rows(cwd)}
+            existing = {r.fingerprint for r in iter_rows(ledger_root)}
             if args.fingerprint not in existing:
                 print(
                     "code-forge ledger mark: fingerprint %r not in ledger "
@@ -1639,9 +1686,9 @@ def _run_ledger(args, cwd: Path) -> int:
                 return EXIT_CLI_ERROR
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        append_row(cwd, LedgerRow(
+        append_row(ledger_root, LedgerRow(
             fingerprint=args.fingerprint,
-            repo_root=str(cwd.resolve()),
+            repo_root=str(ledger_root.resolve()),
             base_sha=base_sha,
             head_sha=head_sha,
             file=file_value,
@@ -1649,7 +1696,7 @@ def _run_ledger(args, cwd: Path) -> int:
             axis_claim=args.axis_claim if args.axis_claim is not None else "manual",
             pass_provenance="manual",
             terminal_state=state,
-            evidence_class=args.evidence,
+            evidence_class=_truncate_evidence(args.evidence),
             ts=ts,
         ))
         print(
@@ -1658,10 +1705,112 @@ def _run_ledger(args, cwd: Path) -> int:
         )
         return EXIT_PASS
 
+    if args.ledger_command == "adjudicate":
+        # Validate terminal_state
+        try:
+            state = TerminalState(args.terminal_state.upper())
+        except ValueError:
+            print(
+                "code-forge ledger adjudicate: terminal_state must be one of: FIXED, DISPROVED, DUPLICATE, ESCAPED",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        if state == TerminalState.UNADJUDICATED:
+            print(
+                "code-forge ledger adjudicate: terminal_state must be one of: FIXED, DISPROVED, DUPLICATE, ESCAPED",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        rows = [r for r in iter_rows(ledger_root) if r.fingerprint == args.fingerprint]
+        if not rows:
+            print(
+                "code-forge ledger adjudicate: fingerprint %r not in ledger"
+                % args.fingerprint,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        latest_row = rows[-1]
+        if latest_row.terminal_state != TerminalState.UNADJUDICATED:
+            print(
+                "code-forge ledger adjudicate: latest state for %r is %s (already terminal)"
+                % (args.fingerprint, latest_row.terminal_state.value),
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        if (args.base_sha is None) != (args.head_sha is None):
+            print(
+                "code-forge ledger adjudicate: --base-sha and --head-sha must "
+                "be provided together (or both omitted to inherit from source row)",
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+
+        if args.base_sha is not None and args.head_sha is not None:
+            base_sha = args.base_sha
+            head_sha = args.head_sha
+            for name, val in (("base-sha", base_sha), ("head-sha", head_sha)):
+                if len(val) != 40 or not all(c in "0123456789abcdefABCDEF" for c in val):
+                    print(
+                        "code-forge ledger adjudicate: %s %r is not a valid 40-hex "
+                        "git SHA" % (name, val),
+                        file=sys.stderr,
+                    )
+                    return EXIT_CLI_ERROR
+        else:
+            base_sha = latest_row.base_sha
+            head_sha = latest_row.head_sha
+
+        file_value = latest_row.file
+        line_value = latest_row.line
+        axis_claim_value = latest_row.axis_claim
+        repo_root_value = latest_row.repo_root or str(ledger_root.resolve())
+        version_sensitive_value = latest_row.version_sensitive
+        evidence_value = _truncate_evidence(args.evidence)
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        append_row(ledger_root, LedgerRow(
+            fingerprint=args.fingerprint,
+            repo_root=repo_root_value,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            file=file_value,
+            line=line_value,
+            axis_claim=axis_claim_value,
+            pass_provenance="adjudicated",
+            terminal_state=state,
+            evidence_class=evidence_value,
+            ts=ts,
+            version_sensitive=version_sensitive_value,
+        ))
+        print(
+            "ledger: adjudicated %s as %s (file=%s line=%d axis_claim=%s base_sha=%s head_sha=%s)"
+            % (
+                args.fingerprint,
+                state.value,
+                file_value,
+                line_value,
+                axis_claim_value,
+                base_sha,
+                head_sha,
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_PASS
+
     if args.ledger_command == "list":
-        rows = list(iter_rows(cwd))
+        rows = list(iter_rows(ledger_root))
         if args.fingerprint:
             rows = [r for r in rows if r.fingerprint == args.fingerprint]
+        if getattr(args, "unadjudicated_only", False):
+            latest_by_fp = {}
+            for r in rows:
+                latest_by_fp[r.fingerprint] = r
+            rows = [r for r in latest_by_fp.values() if r.terminal_state == TerminalState.UNADJUDICATED]
+
         if args.as_json:
             payload = [
                 {

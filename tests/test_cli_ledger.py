@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from code_forge.cli import _build_parser
-from code_forge.ledger import LedgerRow, TerminalState, append_row
+from code_forge.ledger import LedgerRow, TerminalState, append_row, iter_rows
 
 
 def _worktree_src():
@@ -87,6 +87,29 @@ def test_parser_ledger_list_args():
     assert args.ledger_command == "list"
     assert args.as_json is True
     assert args.fingerprint == "fp-2"
+    assert args.unadjudicated_only is False
+
+
+def test_parser_ledger_adjudicate_args():
+    args = _parse([
+        "ledger", "adjudicate", "fp-adj-1", "FIXED",
+        "--evidence", "fix-verified",
+        "--base-sha", "a" * 40,
+        "--head-sha", "b" * 40,
+    ])
+    assert args.subcommand == "ledger"
+    assert args.ledger_command == "adjudicate"
+    assert args.fingerprint == "fp-adj-1"
+    assert args.terminal_state == "FIXED"
+    assert args.evidence == "fix-verified"
+    assert args.base_sha == "a" * 40
+    assert args.head_sha == "b" * 40
+
+
+def test_parser_ledger_list_unadjudicated_args():
+    args = _parse(["ledger", "list", "--unadjudicated"])
+    assert args.ledger_command == "list"
+    assert args.unadjudicated_only is True
 
 
 def test_parser_rejects_unknown_terminal_state():
@@ -394,3 +417,321 @@ def test_list_filter_by_fingerprint(tmp_path):
     payload = json.loads(result.stdout)
     assert len(payload) == 1
     assert payload[0]["fingerprint"] == "fp-want"
+
+
+# ---------------------------------------------------------------------------
+# Adjudicate and --unadjudicated tests (Plan 44-01 Task 3)
+# ---------------------------------------------------------------------------
+
+
+def test_adjudicate_inherits_source_metadata(tmp_path):
+    """Test (a): Adjudicating an UNADJUDICATED row appends a terminal row inheriting metadata."""
+    _git_init(tmp_path)
+    base = "1" * 40
+    head = "2" * 40
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-adj-a",
+        repo_root=str(tmp_path.resolve()),
+        base_sha=base,
+        head_sha=head,
+        file="src/target.py",
+        line=42,
+        axis_claim="unvalidated input handling",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="test failure",
+        ts="2026-08-20T00:00:00Z",
+        version_sensitive=True,
+    ))
+
+    rc = _call(tmp_path, "ledger", "adjudicate", "fp-adj-a", "FIXED", "--evidence", "verified-by-human")
+    assert rc == 0
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 2
+    latest = rows[-1]
+    assert latest.fingerprint == "fp-adj-a"
+    assert latest.terminal_state == TerminalState.FIXED
+    assert latest.file == "src/target.py"
+    assert latest.line == 42
+    assert latest.axis_claim == "unvalidated input handling"
+    assert latest.base_sha == base
+    assert latest.head_sha == head
+    assert latest.repo_root == str(tmp_path.resolve())
+    assert latest.pass_provenance == "adjudicated"
+    assert latest.evidence_class == "verified-by-human"
+    assert latest.version_sensitive is True
+
+
+def test_adjudicate_is_append_only(tmp_path):
+    """Test (b): The source UNADJUDICATED row is still present after adjudication."""
+    _git_init(tmp_path)
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-adj-b",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="foo.py",
+        line=10,
+        axis_claim="claim",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="evidence",
+        ts="2026-08-20T00:00:00Z",
+    ))
+
+    assert _call(tmp_path, "ledger", "adjudicate", "fp-adj-b", "DISPROVED") == 0
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 2
+    assert rows[0].terminal_state == TerminalState.UNADJUDICATED
+    assert rows[1].terminal_state == TerminalState.DISPROVED
+
+
+def test_adjudicate_error_cases(tmp_path):
+    """Test (c): Errors on absent fingerprint, already terminal, invalid state, UNADJUDICATED."""
+    _git_init(tmp_path)
+
+    # 1. Absent fingerprint -> EXIT_CLI_ERROR
+    r1 = _run(tmp_path, "ledger", "adjudicate", "fp-absent", "FIXED")
+    assert r1.returncode != 0
+    assert "not in ledger" in r1.stderr
+
+    # 2. Already terminal -> EXIT_CLI_ERROR
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-terminal",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="f.py",
+        line=1,
+        axis_claim="c",
+        pass_provenance="CI",
+        terminal_state=TerminalState.FIXED,
+        evidence_class="e",
+        ts="2026-08-20T00:00:00Z",
+    ))
+    r2 = _run(tmp_path, "ledger", "adjudicate", "fp-terminal", "DISPROVED")
+    assert r2.returncode != 0
+    assert "already terminal" in r2.stderr
+
+    # 3. Invalid terminal state string -> EXIT_CLI_ERROR
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-unadj",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="f.py",
+        line=1,
+        axis_claim="c",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="e",
+        ts="2026-08-20T00:00:00Z",
+    ))
+    r3 = _run(tmp_path, "ledger", "adjudicate", "fp-unadj", "INVALID_STATE")
+    assert r3.returncode != 0
+    assert "terminal_state must be one of" in r3.stderr
+
+    # 4. Adjudicating to UNADJUDICATED -> EXIT_CLI_ERROR
+    r4 = _run(tmp_path, "ledger", "adjudicate", "fp-unadj", "UNADJUDICATED")
+    assert r4.returncode != 0
+    assert "terminal_state must be one of" in r4.stderr
+
+    # 5. Asymmetric base/head SHA -> EXIT_CLI_ERROR
+    r5 = _run(tmp_path, "ledger", "adjudicate", "fp-unadj", "FIXED", "--base-sha", "a" * 40)
+    assert r5.returncode != 0
+    assert "--base-sha and --head-sha must be provided together" in r5.stderr
+
+
+def test_adjudicate_echo_to_stderr(tmp_path):
+    """Test (d): After writing, inherited file:line and base/head print to stderr (D-20a)."""
+    _git_init(tmp_path)
+    base = "3" * 40
+    head = "4" * 40
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-adj-echo",
+        repo_root=str(tmp_path.resolve()),
+        base_sha=base,
+        head_sha=head,
+        file="pkg/logic.py",
+        line=89,
+        axis_claim="memory leak in cache",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="leak detector",
+        ts="2026-08-20T00:00:00Z",
+    ))
+
+    result = _run(tmp_path, "ledger", "adjudicate", "fp-adj-echo", "FIXED")
+    assert result.returncode == 0
+    assert "pkg/logic.py" in result.stderr
+    assert "89" in result.stderr
+    assert base in result.stderr
+    assert head in result.stderr
+    assert "adjudicated fp-adj-echo as FIXED" in result.stderr
+
+
+def test_list_unadjudicated_filter_tsv(tmp_path):
+    """Test (e): list --unadjudicated shows only fingerprints whose latest state is UNADJUDICATED."""
+    _git_init(tmp_path)
+    # fp-1: UNADJUDICATED -> should appear
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-unadj-1",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="a.py",
+        line=1,
+        axis_claim="claim 1",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="e1",
+        ts="2026-08-20T01:00:00Z",
+    ))
+    # fp-2: UNADJUDICATED then adjudicated to FIXED -> should NOT appear
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-unadj-2",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="b.py",
+        line=2,
+        axis_claim="claim 2",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="e2",
+        ts="2026-08-20T01:00:00Z",
+    ))
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-unadj-2",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="b.py",
+        line=2,
+        axis_claim="claim 2",
+        pass_provenance="adjudicated",
+        terminal_state=TerminalState.FIXED,
+        evidence_class="manual",
+        ts="2026-08-20T02:00:00Z",
+    ))
+    # fp-3: directly terminal -> should NOT appear
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-term-3",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="c.py",
+        line=3,
+        axis_claim="claim 3",
+        pass_provenance="L1",
+        terminal_state=TerminalState.DISPROVED,
+        evidence_class="e3",
+        ts="2026-08-20T01:00:00Z",
+    ))
+
+    result = _run(tmp_path, "ledger", "list", "--unadjudicated")
+    assert result.returncode == 0
+    assert "fp-unadj-1" in result.stdout
+    assert "fp-unadj-2" not in result.stdout
+    assert "fp-term-3" not in result.stdout
+
+
+def test_list_unadjudicated_filter_json(tmp_path):
+    """Test (f): list --unadjudicated --json filters properly."""
+    _git_init(tmp_path)
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-json-unadj",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="a.py",
+        line=1,
+        axis_claim="claim 1",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="e1",
+        ts="2026-08-20T01:00:00Z",
+    ))
+    append_row(tmp_path, LedgerRow(
+        fingerprint="fp-json-fixed",
+        repo_root=str(tmp_path.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="b.py",
+        line=2,
+        axis_claim="claim 2",
+        pass_provenance="L1",
+        terminal_state=TerminalState.FIXED,
+        evidence_class="e2",
+        ts="2026-08-20T01:00:00Z",
+    ))
+
+    result = _run(tmp_path, "ledger", "list", "--unadjudicated", "--json")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert len(payload) == 1
+    assert payload[0]["fingerprint"] == "fp-json-unadj"
+    assert payload[0]["terminal_state"] == "UNADJUDICATED"
+
+
+def test_adjudicate_and_list_from_linked_worktree(tmp_path):
+    """Test (g): adjudicate and list from linked worktree operate on main repo ledger (D-05, D-20b)."""
+    main_repo = tmp_path / "main_repo"
+    worktree = tmp_path / "worktree_branch"
+    main_repo.mkdir()
+    _git_init(main_repo)
+
+    import subprocess as sp
+    sp.run(["git", "worktree", "add", "-b", "wt-branch", str(worktree)],
+           cwd=str(main_repo), check=True, capture_output=True)
+
+    # Seed UNADJUDICATED row in main repo ledger
+    append_row(main_repo, LedgerRow(
+        fingerprint="fp-wt-read",
+        repo_root=str(main_repo.resolve()),
+        base_sha="a" * 40,
+        head_sha="b" * 40,
+        file="wt_file.py",
+        line=15,
+        axis_claim="boundary overflow",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="fuzzer report",
+        ts="2026-08-20T00:00:00Z",
+    ))
+
+    # 1. list --unadjudicated from worktree finds the main repo row
+    res_list = _run(worktree, "ledger", "list", "--unadjudicated")
+    assert res_list.returncode == 0
+    assert "fp-wt-read" in res_list.stdout
+
+    # 2. adjudicate from worktree modifies the main repo ledger
+    res_adj = _run(worktree, "ledger", "adjudicate", "fp-wt-read", "FIXED")
+    assert res_adj.returncode == 0
+
+    # Worktree local ledger was NOT created
+    assert not (worktree / ".code-forge" / "ledger.jsonl").exists()
+
+    # Main repo ledger has the new terminal row
+    main_rows = list(iter_rows(main_repo))
+    assert len(main_rows) == 2
+    assert main_rows[-1].fingerprint == "fp-wt-read"
+    assert main_rows[-1].terminal_state == TerminalState.FIXED
+    assert main_rows[-1].repo_root == str(main_repo.resolve())
+
+
+def test_mark_evidence_is_truncated(tmp_path):
+    """Test (h): ledger mark --evidence >500 chars is truncated (D-07, D-21)."""
+    _git_init(tmp_path)
+    long_evidence = "x" * 600
+    rc = _call(tmp_path, "ledger", "mark", "fp-trunc-mark", "DUPLICATE",
+               "--new", "--file", "a.py", "--line", "1", "--axis-claim", "claim",
+               "--evidence", long_evidence)
+    assert rc == 0
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    assert len(rows[0].evidence_class) <= 500
+    assert rows[0].evidence_class.endswith("... [truncated]")
