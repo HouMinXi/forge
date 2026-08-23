@@ -292,8 +292,10 @@ def _managed_diff_files(out_dir: Path) -> list[str]:
         return []
     try:
         entries = load_corpus(manifest_path)
-    except (ValueError, KeyError, TypeError):
-        # load_corpus wraps yaml.YAMLError into ValueError upstream
+    except (ValueError, KeyError, TypeError, OSError):
+        # load_corpus wraps yaml.YAMLError into ValueError upstream;
+        # OSError covers the file vanishing or becoming unreadable
+        # between the is_file check and the open.
         return []
     managed: list[str] = []
     for e in entries:
@@ -517,10 +519,15 @@ def export_eval(
         if old_rel in new_diff_texts:
             continue
         old_path = out_dir / old_rel
-        if old_path.is_file() and old_path.resolve().is_relative_to(
-            out_dir.resolve()
-        ):
-            old_path.unlink()
+        try:
+            if old_path.is_file() and old_path.resolve().is_relative_to(
+                out_dir.resolve()
+            ):
+                old_path.unlink()
+        except OSError:
+            # Externally removed or made unreadable between the check
+            # and the unlink: nothing left to clean up.
+            continue
     if prev_aside.is_file():
         prev_aside.unlink()
 

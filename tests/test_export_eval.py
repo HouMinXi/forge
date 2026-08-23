@@ -854,6 +854,53 @@ def test_uppercase_fingerprints_cannot_collide(tmp_path):
         assert (out / rel).is_file()
 
 
+def test_vanishing_prev_manifest_reexport_graceful(tmp_path, monkeypatch):
+    """manifest.yaml.prev vanishing between is_file and load degrades
+    to an empty managed list instead of an OSError traceback."""
+    from code_forge.eval.corpus import load_corpus as real_load
+
+    import code_forge.eval.export as export_mod
+
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "manifest.yaml.prev").write_text(
+        "provenance: repo\nentries: []\n", encoding="utf-8",
+    )
+
+    def vanish(path):
+        if str(path).endswith("manifest.yaml.prev"):
+            raise FileNotFoundError(2, "No such file", str(path))
+        return real_load(path)
+
+    monkeypatch.setattr(export_mod, "load_corpus", vanish)
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+
+
+def test_externally_deleted_managed_diff_skipped(tmp_path, monkeypatch):
+    """A managed diff removed externally between the check and the
+    unlink is skipped, not an OSError traceback."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+
+    row = list(iter_rows(repo))[0]
+    assert _ledger_cli(
+        repo, "mark", row.fingerprint, "DUPLICATE",
+        "--base-sha", row.base_sha, "--head-sha", row.head_sha,
+    ) == EXIT_PASS
+
+    real_unlink = Path.unlink
+
+    def deny_diff_unlink(self, *a, **k):
+        if self.suffix == ".diff" and self.name.startswith("lgr-"):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", deny_diff_unlink)
+    assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
+
+
 def test_unreadable_manifest_reexport_graceful(tmp_path):
     """A manifest that disappears between the is_file check and the open
     degrades to an empty managed list, not an OSError traceback."""
