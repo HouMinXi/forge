@@ -284,3 +284,21 @@ def test_advisory_no_state_import():
         assert "import" not in stripped or "state" not in stripped, (
             "advisory.py must not import from state module: %s" % stripped
         )
+
+
+def test_line_range_rejects_str_and_bytes():
+    """str/bytes are Sequences but not valid line_range; guard must raise."""
+    import pytest
+
+    from code_forge.advisory import AdvisoryFinding
+
+    with pytest.raises(TypeError):
+        AdvisoryFinding(
+            id="x", axis="t", file="f", line_range="hello",
+            description="d", attribution="a",
+        )
+    with pytest.raises(TypeError):
+        AdvisoryFinding(
+            id="x", axis="t", file="f", line_range=b"\x00\x01",
+            description="d", attribution="a",
+        )

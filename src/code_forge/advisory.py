@@ -56,7 +56,13 @@ class AdvisoryFinding:
         object.__setattr__(self, "axis", axis)
         object.__setattr__(self, "file", file)
 
-        # Normalize line_range to immutable tuple[int, int]
+        # Normalize line_range to immutable tuple[int, int]. Reject str/bytes
+        # explicitly: a str IS a Sequence, so it would slip past the annotation
+        # and crash int('h') here; fail loudly instead of producing garbage.
+        if isinstance(line_range, (str, bytes)):
+            raise TypeError(
+                "line_range must be a sequence of ints, not str/bytes"
+            )
         if not line_range:
             norm_range = (0, 0)
         elif len(line_range) == 1:

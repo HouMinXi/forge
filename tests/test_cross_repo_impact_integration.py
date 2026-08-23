@@ -469,9 +469,9 @@ class TestAbsolutePathStrip:
         assert "/tmp" not in f.file, (
             "Absolute path leaked into finding.file: %s" % f.file
         )
-        assert f.line_range == [5, 5], (
+        assert f.line_range == (5, 5), (
             "line_range should come from sibling node, got: %s"
-            % f.line_range
+            % (f.line_range,)
         )
 
         # Proximity should use relative paths (no inflated Jaccard
@@ -563,6 +563,6 @@ class TestAbsolutePathStrip:
         assert "/tmp" not in f.file, (
             "Absolute path leaked through symlink: %s" % f.file
         )
-        assert f.line_range == [7, 7]
+        assert f.line_range == (7, 7)
         assert "target_fn" in f.description
         assert len(runner.infra_errors) == 0

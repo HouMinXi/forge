@@ -445,7 +445,7 @@ class TestFindingShape:
         assert parts[0] == "sibling"
         assert parts[1]  # relpath non-empty
         # line_range
-        assert isinstance(f.line_range, list)
+        assert isinstance(f.line_range, tuple)
         assert len(f.line_range) == 2
         # symbol in description
         assert "process_request" in f.description
