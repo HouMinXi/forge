@@ -1866,13 +1866,18 @@ def _run_ledger(args, cwd: Path) -> int:
             Path(args.repo_root).resolve() if args.repo_root else None
         )
         if repo_root_override is not None:
-            probe = subprocess.run(
-                ["git", "rev-parse", "--git-dir"],
-                cwd=str(repo_root_override),
-                capture_output=True,
-                check=False,
-            )
-            if probe.returncode != 0:
+            try:
+                probe = subprocess.run(
+                    ["git", "rev-parse", "--git-dir"],
+                    cwd=str(repo_root_override),
+                    capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=30,
+                    check=False,
+                )
+            except OSError:
+                probe = None
+            if probe is None or probe.returncode != 0:
                 print(
                     "code-forge ledger export-eval: --repo-root is not a "
                     "git repository: %s" % args.repo_root,

@@ -181,7 +181,7 @@ def _map_axis_claim(claim: Optional[str]) -> list[str]:
 # SHA validation
 # ---------------------------------------------------------------------------
 
-_VALID_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
+_VALID_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 
 
 def _sha_format_ok(sha: object) -> bool:
@@ -189,20 +189,25 @@ def _sha_format_ok(sha: object) -> bool:
 
     The ledger is local, but export consumes rows that may travel with a
     foreign repo; a value like ``--upload-pack=...`` must never reach a
-    git subprocess as an argument.
+    git subprocess as an argument.  ``fullmatch`` (not ``$``) is used so
+    a trailing newline cannot slip past the anchor.
     """
-    return isinstance(sha, str) and _VALID_SHA.match(sha) is not None
+    return isinstance(sha, str) and _VALID_SHA.fullmatch(sha) is not None
 
 
 def _sha_is_resolvable(repo_root: Path, sha: str) -> bool:
     """Check whether ``sha`` resolves via ``git cat-file -e``."""
-    res = subprocess.run(
-        ["git", "cat-file", "-e", sha],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
-        check=False,
-    )
+    try:
+        res = subprocess.run(
+            ["git", "cat-file", "-e", sha],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            check=False,
+        )
+    except OSError:
+        # repo_root moved, was deleted, or never existed: unresolvable.
+        return False
     return res.returncode == 0
 
 
@@ -235,7 +240,7 @@ def _materialize_diff(
 # ---------------------------------------------------------------------------
 
 _GATE_DIFF_PATTERN = re.compile(
-    r"^diff --git a/\.code-forge/gate\.yaml b/\.code-forge/gate\.yaml\n"
+    r"^diff --git a/\.code-forge/gate\.yaml b/\.code-forge/gate\.yaml\r?\n"
     r".*?(?=^diff --git |\Z)",
     re.MULTILINE | re.DOTALL,
 )
@@ -246,7 +251,9 @@ def _strip_gate_yaml(diff_text: str) -> str:
 
     D-17: the extractor strips foreign gate.yaml additions/modifications
     from materialized diffs so replay never executes a hostile foreign
-    test.command.
+    test.command.  CRLF line endings (core.autocrlf / eol=crlf) are
+    tolerated; without that the strip silently no-ops and the hostile
+    section survives.
     """
     return _GATE_DIFF_PATTERN.sub("", diff_text)
 
@@ -293,6 +300,10 @@ def _check_out_dir(out_dir: Path, force: bool) -> None:
     """
     if not out_dir.exists():
         return
+    if not out_dir.is_dir():
+        raise ExportError(
+            "output path exists and is not a directory: %s" % out_dir
+        )
     if not any(out_dir.iterdir()):
         return
     if (out_dir / "manifest.yaml").exists():

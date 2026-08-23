@@ -516,7 +516,8 @@ def test_export_eval_force_gate_raises():
 # ---------------------------------------------------------------------------
 
 
-def _append_raw_row(repo: Path, fp: str, base: str, head: str, claim):
+def _append_raw_row(repo: Path, fp: str, base: str, head: str, claim,
+                    repo_root: Path | None = None):
     """Append one FIXED row via the real ledger write path, with field
     values a crafted/foreign ledger could carry (None claim, non-SHA)."""
     from datetime import datetime, timezone
@@ -525,7 +526,7 @@ def _append_raw_row(repo: Path, fp: str, base: str, head: str, claim):
 
     append_row(repo, LedgerRow(
         fingerprint=fp,
-        repo_root=str(repo.resolve()),
+        repo_root=str((repo_root or repo).resolve()),
         base_sha=base,
         head_sha=head,
         file="a.py",
@@ -736,3 +737,73 @@ def test_cli_repo_root_must_be_git_repo(tmp_path, capsys):
     )
     assert rc == EXIT_CLI_ERROR
     assert "not a git repository" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Forge R3 hardening: CRLF diffs, missing paths, defensive process guards
+# ---------------------------------------------------------------------------
+
+
+def test_crlf_diff_still_strips_gate_yaml():
+    """core.autocrlf / eol=crlf make git diff emit CRLF; the D-17 strip
+    must still remove a foreign gate.yaml section or it silently no-ops."""
+    from code_forge.eval.export import _strip_gate_yaml
+
+    crlf_diff = (
+        "diff --git a/a.py b/a.py\r\n"
+        "--- a/a.py\r\n+++ b/a.py\r\n@@ -1 +1 @@\r\n-x = 1\r\n+x = 2\r\n"
+        "diff --git a/.code-forge/gate.yaml b/.code-forge/gate.yaml\r\n"
+        "new file mode 100644\r\n"
+        "--- /dev/null\r\n+++ b/.code-forge/gate.yaml\r\n"
+        "@@ -0,0 +1,2 @@\r\n+test:\r\n+  command: evil\r\n"
+        "diff --git a/b.py b/b.py\r\n"
+        "--- a/b.py\r\n+++ b/b.py\r\n@@ -1 +1 @@\r\n-y = 1\r\n+y = 2\r\n"
+    )
+    stripped = _strip_gate_yaml(crlf_diff)
+    assert "gate.yaml" not in stripped
+    assert "a.py" in stripped
+    assert "b.py" in stripped
+
+
+def test_row_with_missing_repo_root_counts_stale(tmp_path):
+    """A ledger row whose repo_root moved away is a stale-skip, not a
+    FileNotFoundError traceback."""
+    repo, base, head = _make_repo(tmp_path)
+    gone = tmp_path / "moved-away"
+    _append_raw_row(repo, "fp-gone", base, head, "logic error",
+                    repo_root=gone)
+    summary = export_eval(repo, tmp_path / "out")
+    assert summary.stale_sha_skipped == 1
+    assert summary.emitted == 0
+
+
+def test_out_path_is_regular_file(tmp_path):
+    """--out pointing at an existing regular file is an ExportError,
+    not a NotADirectoryError traceback."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "afile"
+    out.write_text("not a dir\n", encoding="utf-8")
+    rc = _ledger_cli(repo, "export-eval", "--out", str(out), "--force")
+    assert rc == EXIT_CLI_ERROR
+
+
+def test_cli_repo_root_nonexistent_path(tmp_path, capsys):
+    """--repo-root pointing at a path that does not exist is a CLI
+    error, not an unhandled FileNotFoundError from the probe."""
+    repo = _fixed_ledger_repo(tmp_path)
+    rc = _ledger_cli(
+        repo, "export-eval",
+        "--out", str(tmp_path / "out"),
+        "--repo-root", str(tmp_path / "no-such-dir"),
+    )
+    assert rc == EXIT_CLI_ERROR
+    assert "not a git repository" in capsys.readouterr().err
+
+
+def test_sha_trailing_newline_rejected():
+    """fullmatch (not $) keeps a trailing newline from passing the
+    SHA format gate."""
+    from code_forge.eval.export import _sha_format_ok
+
+    assert not _sha_format_ok("0123abc\n")
+    assert not _sha_format_ok("0123abc\r\n")
