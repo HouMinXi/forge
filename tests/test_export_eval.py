@@ -896,3 +896,37 @@ def test_cli_repo_root_probe_timeout(tmp_path, monkeypatch, capsys):
     )
     assert rc == EXIT_CLI_ERROR
     assert "not a git repository" in capsys.readouterr().err
+
+
+def test_oversized_fingerprint_fits_filename_limit(tmp_path):
+    """A 300-char fingerprint clamps to a name that keeps the diff path
+    under the 255-byte ext4/APFS filename limit."""
+    repo, base, head = _make_repo(tmp_path)
+    _append_raw_row(repo, "f" * 300, base, head, "logic error")
+    out = tmp_path / "out"
+    summary = export_eval(repo, out)
+    assert summary.emitted == 1
+    entries = load_corpus(out / "manifest.yaml")
+    # clamp bound: 4 ("lgr-") + 100 (stem) + 1 + 8 (hash) = 113 chars
+    assert len(entries[0].name) <= 113
+    assert len(Path(entries[0].diff_file).name.encode()) <= 255
+    assert (out / entries[0].diff_file).is_file()
+
+
+def test_export_oserror_becomes_cli_error(tmp_path, monkeypatch, capsys):
+    """A filesystem failure mid-export (read-only dir, disk full) is a
+    clean CLI error, not a raw traceback."""
+    repo = _fixed_ledger_repo(tmp_path)
+    out = tmp_path / "out"
+
+    real_mkdir = Path.mkdir
+
+    def deny_mkdir(self, *a, **k):
+        if str(self).endswith("/out") or str(self).endswith("out/diffs"):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_mkdir(self, *a, **k)
+
+    monkeypatch.setattr(Path, "mkdir", deny_mkdir)
+    rc = _ledger_cli(repo, "export-eval", "--out", str(out))
+    assert rc == EXIT_CLI_ERROR
+    assert "export failed" in capsys.readouterr().err

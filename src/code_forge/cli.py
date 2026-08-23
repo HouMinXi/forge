@@ -1894,6 +1894,14 @@ def _run_ledger(args, cwd: Path) -> int:
         except ExportError as exc:
             print("code-forge ledger export-eval: %s" % exc, file=sys.stderr)
             return EXIT_CLI_ERROR
+        except OSError as exc:
+            # Disk-full, read-only fs, permission denied mid-write: the
+            # CLI surface reports a clean error, not a traceback.
+            print(
+                "code-forge ledger export-eval: export failed: %s" % exc,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
         print(
             "export-eval: %d emitted, %d unadjudicated, %d stale-sha, "
             "%d duplicate-excluded, %d empty-diff, %d dedup-collapsed "

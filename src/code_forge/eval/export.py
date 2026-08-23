@@ -519,10 +519,12 @@ def _entry_name(row: LedgerRow) -> str:
     Ledger fingerprints are hex digests in practice, but rows may travel
     with a foreign repo; anything outside a safe filename alphabet is
     replaced so a crafted fingerprint (e.g. containing '/') can never
-    steer the diff path outside diffs/ or crash the write.
+    steer the diff path outside diffs/ or crash the write.  The name is
+    clamped so the on-disk path stays well under the 255-byte filename
+    limit on ext4/APFS.
     """
     safe = re.sub(r"[^A-Za-z0-9_-]", "-", row.fingerprint)
-    if safe != row.fingerprint:
+    if safe != row.fingerprint or len(safe) > 100:
         print(
             "export: sanitized unsafe fingerprint %r for naming"
             % row.fingerprint,
@@ -532,7 +534,7 @@ def _entry_name(row: LedgerRow) -> str:
         # ('a/b' vs 'a-b'); pin a short hash of the raw value so the
         # entry name stays unique and no diff silently overwrites.
         safe = "%s-%s" % (
-            safe, hashlib.sha256(row.fingerprint.encode()).hexdigest()[:8],
+            safe[:100], hashlib.sha256(row.fingerprint.encode()).hexdigest()[:8],
         )
     return "lgr-%s" % safe
 
