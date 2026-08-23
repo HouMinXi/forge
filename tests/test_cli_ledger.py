@@ -10,8 +10,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from code_forge.cli import _build_parser
 from code_forge.ledger import LedgerRow, TerminalState, append_row, iter_rows
 
@@ -52,6 +50,14 @@ def _run(tmp_path, *args):
 
 def _parse(argv):
     return _build_parser().parse_args(argv)
+
+
+def test_parser_ledger_export_eval_args():
+    args = _parse(["ledger", "export-eval", "--out", "/tmp/o", "--repo-root", "/tmp/r", "--force"])
+    assert args.ledger_command == "export-eval"
+    assert args.out_dir == "/tmp/o"
+    assert args.repo_root == "/tmp/r"
+    assert args.force is True
 
 
 def test_parser_ledger_mark_args():
