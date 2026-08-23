@@ -35,7 +35,12 @@ from .autofix import AutoFixer, FixOutcome
 from .baseline import ResolvedReview
 from .claim import derive_claim_type
 from .diagnose import diagnose_non_convergence
-from .ledger import LedgerRow, TerminalState, append_row as ledger_append
+from .ledger import (
+    LedgerRow,
+    TerminalState,
+    append_row as ledger_append,
+    resolve_ledger_root,
+)
 from .disposition import (
     Disposition,
     MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
@@ -357,6 +362,7 @@ class StateMachine:
                                 % len(survivors)
                             )
                             self._persist_state()
+                            self._write_ci_ledger_rows()
                             return Verdict.FAIL
                     elif status == "running":
                         pid = result_data.get("pid")
@@ -539,6 +545,7 @@ class StateMachine:
         self._state.verdict = verdict
         self._state.converged = (verdict == Verdict.PASS)
         self._persist_state()
+        self._write_ci_ledger_rows()
         return verdict
 
     def _continuation_round_index(self) -> int:
@@ -1297,8 +1304,40 @@ class StateMachine:
         self._write_ledger_rows()
         self._persist_state()
 
+    def _build_ledger_row(
+        self,
+        fingerprint: str,
+        file: str,
+        line: int,
+        axis_claim: str,
+        pass_provenance: str,
+        terminal_state: TerminalState,
+        evidence_class: str,
+        ts: str,
+        version_sensitive: bool = False,
+        repo_root: str | None = None,
+    ) -> LedgerRow:
+        """Construct a LedgerRow from review state (shared between local and CI writers)."""
+        base = self.resolved_review.base_sha
+        head = self.resolved_review.head_sha
+        resolved_root = repo_root or str(resolve_ledger_root(self.cwd).resolve())
+        return LedgerRow(
+            fingerprint=fingerprint,
+            repo_root=resolved_root,
+            base_sha=base or "",
+            head_sha=head or "",
+            file=file,
+            line=line,
+            axis_claim=axis_claim,
+            pass_provenance=pass_provenance,
+            terminal_state=terminal_state,
+            evidence_class=evidence_class,
+            ts=ts,
+            version_sensitive=version_sensitive,
+        )
+
     def _write_ledger_rows(self) -> int:
-        """Append terminal-StateFinding rows to .code-forge/ledger.jsonl.
+        """Append terminal-StateFinding rows to .code-forge/ledger.jsonl (LOCAL mode).
 
         One row per finding whose disposition is FIXED or DISMISSED.
         UNCERTAIN and still-open CONFIRMED findings are not terminal
@@ -1318,9 +1357,10 @@ class StateMachine:
         if base is None or head is None:
             return 0
         from .ledger import iter_rows
+        ledger_root = resolve_ledger_root(self.cwd)
         existing = {
             (r.fingerprint, r.terminal_state)
-            for r in iter_rows(self.cwd)
+            for r in iter_rows(ledger_root)
         }
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1340,11 +1380,8 @@ class StateMachine:
                 else (f.error or "falsifier_rejected")
             )
             ct = derive_claim_type(f.source)
-            ledger_append(self.cwd, LedgerRow(
+            row = self._build_ledger_row(
                 fingerprint=f.fingerprint,
-                repo_root=str(self.cwd.resolve()),
-                base_sha=base,
-                head_sha=head,
                 file=f.file,
                 line=f.line_range[0] if f.line_range else 0,
                 axis_claim=ct.type,
@@ -1353,10 +1390,142 @@ class StateMachine:
                 evidence_class=evidence,
                 ts=ts,
                 version_sensitive=ct.version_sensitive,
-            ))
+                repo_root=str(ledger_root.resolve()),
+            )
+            ledger_append(ledger_root, row)
             existing.add((f.fingerprint, state))
             rows += 1
         return rows
+
+    def _write_ci_ledger_rows(self) -> int:
+        """Append UNADJUDICATED rows from CI review runs to the main repo ledger.
+
+        D-01: CI review runs record CONFIRMED and style-downgraded findings as
+        UNADJUDICATED rows so the self-evolution corpus receives real reviewed
+        signal. On zero-finding PASS, a diff-scoped clean row is emitted
+        (axis_claim="clean", file="", line=0, fingerprint=sha256("clean:<base>:<head>")[:16]).
+
+        D-05, D-11, D-20b: Persistence routes to the main repo root via
+        `resolve_ledger_root(self.cwd)`. The row's `repo_root` field records the
+        main repo path so downstream diff extraction survives worktree cleanup.
+
+        D-08: Dedup key for UNADJUDICATED rows is (fingerprint, base_sha, head_sha).
+        Re-running the same diff does not re-append duplicate rows.
+
+        D-16: Growth expectations and compaction trigger: append-only growth is
+        ~20 CI runs/day (~3600 rows/repo/6mo), millisecond-scale full scans.
+        Compaction / rotation is deferred until >10k rows or measured write-latency
+        regression.
+
+        D-19: Two-layer kill-switch:
+          1. Environment variable CODE_FORGE_DISABLE_LEDGER (truthy).
+          2. gate.yaml `ledger.enabled: false`, read via tolerant raw YAML.
+        Failure isolation: wrapped in try/except (OSError, yaml.YAMLError,
+        UnicodeDecodeError, AttributeError, TypeError). Any read/write failure
+        is logged to stderr and appended to infra_errors; review verdict is NEVER
+        altered (fail-open default).
+        """
+        import hashlib
+        import os
+        import sys
+        import yaml
+        from datetime import datetime, timezone
+        from .ledger import iter_rows
+
+        # Layer 1: Environment variable kill-switch
+        try:
+            env_val = os.environ.get("CODE_FORGE_DISABLE_LEDGER", "").strip().lower()
+            if env_val in ("1", "true", "yes", "on"):
+                return 0
+        except Exception:
+            pass
+
+        # Layer 2: gate.yaml kill-switch (tolerant raw YAML load, fail-open on parse error)
+        try:
+            gate_path = self.cwd / "gate.yaml"
+            if gate_path.exists():
+                with open(gate_path, "r", encoding="utf-8") as f:
+                    gate_data = yaml.safe_load(f)
+                if isinstance(gate_data, dict):
+                    ledger_cfg = gate_data.get("ledger")
+                    if isinstance(ledger_cfg, dict) and ledger_cfg.get("enabled") is False:
+                        return 0
+        except (OSError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+            msg = f"CI: gate.yaml ledger kill-switch read failed (fail-open, ledger enabled): {exc}"
+            self._state.infra_errors.append(msg)
+            print(msg, file=sys.stderr)
+
+        # Write path: failure-isolated (degrades to warning on write error)
+        try:
+            base = self.resolved_review.base_sha
+            head = self.resolved_review.head_sha
+            if base is None or head is None:
+                return 0
+
+            ledger_root = resolve_ledger_root(self.cwd)
+            existing = {
+                (r.fingerprint, r.base_sha, r.head_sha)
+                for r in iter_rows(ledger_root)
+            }
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
+            findings_to_write = [
+                f for f in self._state.findings
+                if f.disposition == Disposition.CONFIRMED or getattr(f.disposition, "value", str(f.disposition)) == "STYLE"
+            ]
+
+            rows_written = 0
+            if not findings_to_write:
+                # Zero-finding PASS: emit a single clean row with diff-scoped fingerprint (D-07)
+                if self._state.verdict == Verdict.PASS:
+                    clean_fp = hashlib.sha256(f"clean:{base}:{head}".encode("utf-8")).hexdigest()[:16]
+                    if (clean_fp, base, head) not in existing:
+                        row = self._build_ledger_row(
+                            fingerprint=clean_fp,
+                            file="",
+                            line=0,
+                            axis_claim="clean",
+                            pass_provenance="CI",
+                            terminal_state=TerminalState.UNADJUDICATED,
+                            evidence_class="clean_pass",
+                            ts=ts,
+                            version_sensitive=False,
+                            repo_root=str(ledger_root.resolve()),
+                        )
+                        ledger_append(ledger_root, row)
+                        existing.add((clean_fp, base, head))
+                        rows_written += 1
+                return rows_written
+
+            for f in findings_to_write:
+                if (f.fingerprint, base, head) in existing:
+                    continue
+                evidence = f.error or f.description or "confirmed_finding"
+                ct = derive_claim_type(f.source)
+                row = self._build_ledger_row(
+                    fingerprint=f.fingerprint,
+                    file=f.file,
+                    line=f.line_range[0] if f.line_range else 0,
+                    axis_claim=ct.type,
+                    pass_provenance=f.source,
+                    terminal_state=TerminalState.UNADJUDICATED,
+                    evidence_class=evidence,
+                    ts=ts,
+                    version_sensitive=ct.version_sensitive,
+                    repo_root=str(ledger_root.resolve()),
+                )
+                ledger_append(ledger_root, row)
+                existing.add((f.fingerprint, base, head))
+                rows_written += 1
+
+            return rows_written
+
+        except (OSError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+            msg = f"CI: ledger write failure (degraded to warning): {exc}"
+            self._state.infra_errors.append(msg)
+            print(msg, file=sys.stderr)
+            return 0
 
     def _get_commit_message(self) -> str:
         """Read the current commit message (worktree-safe).

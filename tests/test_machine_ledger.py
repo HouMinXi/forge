@@ -302,3 +302,210 @@ def test_write_ledger_derives_claim_type_from_source(tmp_path):
     r_l1 = rows_by_fp["fp-l1"]
     assert r_l1.axis_claim == "review"
     assert r_l1.version_sensitive is True
+
+
+# ---------------------------------------------------------------------------
+# CI mode ledger tests (Plan 44-01 Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _build_ci_machine(tmp_path, resolved, l0_findings=None, l0_infra=None):
+    findings = l0_findings if l0_findings is not None else []
+    infra = l0_infra if l0_infra is not None else []
+
+    def mock_l0(registry, files):
+        return (findings, infra)
+
+    return StateMachine(
+        mode=Mode.CI,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda f: None,
+        resolved_review=resolved,
+        source_hash="src-hash",
+        baseline_spec_repr="empty",
+        cwd=tmp_path,
+        registry={},
+        l0_runner=mock_l0,
+    )
+
+
+def test_ci_confirmed_finding_appends_unadjudicated_row(tmp_path):
+    """Test (a): CI run with CONFIRMED finding appends UNADJUDICATED row."""
+    _prep_local_state(tmp_path)
+    finding = _make_finding("fp-ci-1", disp=Disposition.CONFIRMED, file="a.py", line=10)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.fingerprint == "fp-ci-1"
+    assert r.terminal_state == TerminalState.UNADJUDICATED
+    assert r.base_sha == "a" * 40
+    assert r.head_sha == "b" * 40
+    assert r.file == "a.py"
+    assert r.line == 10
+    assert r.repo_root == str(tmp_path.resolve())
+
+
+def test_ci_clean_pass_appends_clean_row_with_diff_scoped_fingerprint(tmp_path):
+    """Test (b): CI run with zero CONFIRMED findings appends diff-scoped clean row."""
+    import hashlib
+    _prep_local_state(tmp_path)
+    base = "1" * 40
+    head = "2" * 40
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(base=base, head=head), l0_findings=[])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    r = rows[0]
+    expected_fp = hashlib.sha256(f"clean:{base}:{head}".encode("utf-8")).hexdigest()[:16]
+    assert r.fingerprint == expected_fp
+    assert r.axis_claim == "clean"
+    assert r.file == ""
+    assert r.line == 0
+    assert r.terminal_state == TerminalState.UNADJUDICATED
+    assert r.base_sha == base
+    assert r.head_sha == head
+
+
+def test_ci_dedup_same_diff_re_run(tmp_path):
+    """Test (c): Re-running the same diff in CI does not duplicate UNADJUDICATED rows (D-08)."""
+    _prep_local_state(tmp_path)
+    finding = _make_finding("fp-ci-dup", disp=Disposition.CONFIRMED)
+    machine1 = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    machine1.run()
+
+    machine2 = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    machine2.run()
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    assert rows[0].fingerprint == "fp-ci-dup"
+
+
+def test_ci_failure_isolation_oserror(tmp_path, monkeypatch):
+    """Test (d): OSError during ledger write does not change verdict and logs to infra_errors (D-19)."""
+    _prep_local_state(tmp_path)
+    finding = _make_finding("fp-ci-fail", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+
+    from code_forge import machine as machine_mod
+
+    def broken_append(cwd, row):
+        raise OSError("disk full (simulated)")
+
+    monkeypatch.setattr(machine_mod, "ledger_append", broken_append)
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert any("ledger write failure" in err for err in machine._state.infra_errors)
+
+
+def test_ci_env_kill_switch(tmp_path, monkeypatch):
+    """Test (e): CODE_FORGE_DISABLE_LEDGER=1 suppresses CI ledger writes."""
+    _prep_local_state(tmp_path)
+    monkeypatch.setenv("CODE_FORGE_DISABLE_LEDGER", "1")
+    finding = _make_finding("fp-ci-kill", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert list(iter_rows(tmp_path)) == []
+
+
+def test_ci_config_kill_switch(tmp_path):
+    """Test (f): gate.yaml ledger.enabled=false suppresses CI ledger writes."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / "gate.yaml"
+    gate_file.write_text("ledger:\n  enabled: false\n", encoding="utf-8")
+    finding = _make_finding("fp-ci-kill-cfg", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert list(iter_rows(tmp_path)) == []
+
+
+def test_ci_config_kill_switch_tolerant(tmp_path):
+    """Test (g): Kill-switch is tolerant to review-only gate.yaml, empty gate.yaml, malformed YAML, non-utf8."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / "gate.yaml"
+
+    # 1. gate.yaml with no test section and ledger.enabled: false
+    gate_file.write_text("mode: review\nledger:\n  enabled: false\n", encoding="utf-8")
+    finding = _make_finding("fp-ci-1", disp=Disposition.CONFIRMED)
+    m1 = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    assert m1.run() == Verdict.FAIL
+    assert list(iter_rows(tmp_path)) == []
+
+    # 2. Empty gate.yaml (defaults to enabled, no crash)
+    gate_file.write_text("", encoding="utf-8")
+    m2 = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    assert m2.run() == Verdict.FAIL
+    assert len(list(iter_rows(tmp_path))) == 1
+
+    # 3. Malformed YAML in gate.yaml (no crash, fail-open, records infra_error)
+    (tmp_path / ".code-forge" / "ledger.jsonl").unlink()
+    gate_file.write_text(":\n  - invalid yaml ::: [[]", encoding="utf-8")
+    m3 = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    assert m3.run() == Verdict.FAIL
+    assert len(list(iter_rows(tmp_path))) == 1
+
+    # 4. Non-UTF-8 bytes in gate.yaml (UnicodeDecodeError, no crash, fail-open)
+    (tmp_path / ".code-forge" / "ledger.jsonl").unlink()
+    gate_file.write_bytes(b"\xff\xfe\x00\x00invalid")
+    m4 = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    assert m4.run() == Verdict.FAIL
+    assert len(list(iter_rows(tmp_path))) == 1
+
+
+def test_ci_mutation_survivor_terminal_writes_rows(tmp_path):
+    """Test (g2): mutation-survivor FAIL terminal at :360 also writes ledger rows (D-01, kimi B-3)."""
+    _prep_local_state(tmp_path)
+    result_file = tmp_path / ".code-forge" / "mutation-result.json"
+    result_file.write_text('{"status": "done", "survivors": [1, 2]}', encoding="utf-8")
+
+    finding = _make_finding("fp-mutant", disp=Disposition.CONFIRMED, source="MUTANT")
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    assert rows[0].fingerprint == "fp-mutant"
+    assert rows[0].terminal_state == TerminalState.UNADJUDICATED
+
+
+def test_ci_worktree_persistence_and_repo_root_field(tmp_path, monkeypatch):
+    """Test (h): From a linked worktree, writes land in main repo and repo_root field = main repo (D-05, D-20b)."""
+    main_repo = tmp_path / "main_repo"
+    worktree = tmp_path / "worktree_branch"
+    main_repo.mkdir()
+    worktree.mkdir()
+    (main_repo / ".code-forge").mkdir()
+    (worktree / ".code-forge").mkdir()
+
+    from code_forge import machine as machine_mod
+
+    def mock_resolve(cwd):
+        if cwd == worktree:
+            return main_repo
+        return cwd
+
+    monkeypatch.setattr(machine_mod, "resolve_ledger_root", mock_resolve)
+
+    finding = _make_finding("fp-wt-1", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(worktree, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+
+    # Worktree local ledger is empty
+    assert list(iter_rows(worktree)) == []
+
+    # Main repo ledger received the row
+    main_rows = list(iter_rows(main_repo))
+    assert len(main_rows) == 1
+    assert main_rows[0].fingerprint == "fp-wt-1"
+    assert main_rows[0].repo_root == str(main_repo.resolve())

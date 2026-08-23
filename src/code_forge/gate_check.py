@@ -145,7 +145,19 @@ def load_gate_config(
     if "retry" in data:
         validate_retry_config(data["retry"])
 
+    # Validate optional ledger section (eval-on-duty kill-switch)
+    if "ledger" in data:
+        validate_ledger_config(data["ledger"])
+
     return data
+
+
+def validate_ledger_config(ledger_cfg: object) -> None:
+    """Validate optional ledger configuration section in gate.yaml (D-19)."""
+    if not isinstance(ledger_cfg, dict):
+        raise ValueError("gate.yaml 'ledger' section must be a mapping")
+    if "enabled" in ledger_cfg and not isinstance(ledger_cfg["enabled"], bool):
+        raise ValueError("gate.yaml 'ledger.enabled' must be a boolean")
 
 
 def validate_graph_triage(section: dict) -> None:
