@@ -8,6 +8,7 @@ Round-trip + malformed-line tolerance + directory auto-creation.
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,103 @@ def test_terminal_state_values():
     assert TerminalState.DISPROVED.value == "DISPROVED"
     assert TerminalState.DUPLICATE.value == "DUPLICATE"
     assert TerminalState.ESCAPED.value == "ESCAPED"
+    assert TerminalState.UNADJUDICATED.value == "UNADJUDICATED"
+
+
+def test_unadjudicated_round_trip(tmp_path):
+    row = _make_row(state=TerminalState.UNADJUDICATED)
+    append_row(tmp_path, row)
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 1
+    assert rows[0] == row
+    assert rows[0].terminal_state == TerminalState.UNADJUDICATED
+
+
+def test_iter_skips_unadjudicated_under_old_vocabulary(tmp_path, capsys, monkeypatch):
+    """Old readers with 4-state enum skip UNADJUDICATED rows (D-06)."""
+    class OldTerminalState(str, Enum):
+        FIXED = "FIXED"
+        DISPROVED = "DISPROVED"
+        DUPLICATE = "DUPLICATE"
+        ESCAPED = "ESCAPED"
+
+    ledger_path = tmp_path / ".code-forge" / "ledger.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    valid = json.dumps(_make_row(fp="fp-good", state=TerminalState.FIXED).__dict__)
+    unadj = json.dumps(_make_row(fp="fp-unadj", state=TerminalState.UNADJUDICATED).__dict__)
+    ledger_path.write_text(valid + "\n" + unadj + "\n")
+
+    import code_forge.ledger as ledger_mod
+    monkeypatch.setattr(ledger_mod, "TerminalState", OldTerminalState)
+    rows = list(iter_rows(tmp_path))
+    assert [r.fingerprint for r in rows] == ["fp-good"]
+    captured = capsys.readouterr()
+    assert "schema-invalid" in captured.err.lower()
+
+
+def test_resolve_ledger_root_non_git(tmp_path):
+    """From a non-git directory, resolve_ledger_root returns cwd unchanged (D-11)."""
+    from code_forge.ledger import resolve_ledger_root
+    non_git = tmp_path / "not_git"
+    non_git.mkdir()
+    assert resolve_ledger_root(non_git) == non_git
+
+
+def test_resolve_ledger_root_git_and_worktree():
+    """From main repo or linked worktree, resolve_ledger_root returns main root (D-05, D-20b)."""
+    from code_forge.ledger import resolve_ledger_root
+    worktree_cwd = Path(__file__).resolve().parent.parent
+    root = resolve_ledger_root(worktree_cwd)
+    assert root.exists()
+    assert (root / ".git").exists()
+    # From the main repo root itself
+    assert resolve_ledger_root(root) == root
+
+
+def test_evidence_truncation(tmp_path):
+    """Evidence >500 chars is truncated with marker; <=500 chars is not (D-07, D-21)."""
+    long_evidence = "x" * 600
+    row_long = _make_row(fp="fp-long", evidence=long_evidence)
+    append_row(tmp_path, row_long)
+
+    boundary_evidence = "y" * 500
+    row_boundary = _make_row(fp="fp-boundary", evidence=boundary_evidence)
+    append_row(tmp_path, row_boundary)
+
+    rows = list(iter_rows(tmp_path))
+    assert len(rows) == 2
+
+    # Long evidence truncated to 500 chars with marker
+    assert len(rows[0].evidence_class) == 500
+    assert rows[0].evidence_class.endswith("... [truncated]")
+    assert rows[0].evidence_class.startswith("x" * (500 - len("... [truncated]")))
+
+    # 500-char evidence untouched
+    assert len(rows[1].evidence_class) == 500
+    assert rows[1].evidence_class == boundary_evidence
+    assert not rows[1].evidence_class.endswith("... [truncated]")
+
+
+def test_serialized_row_pipe_buf_margin(tmp_path):
+    """A serialized row with maximal fields is well under 2048 bytes (D-07)."""
+    maximal_row = LedgerRow(
+        fingerprint="f" * 64,
+        repo_root="/very/deeply/nested/directory/structure/that/simulates/a/long/filesystem/path" * 3,
+        base_sha="1" * 40,
+        head_sha="2" * 40,
+        file="src/very/long/nested/package/path/to/a/source/file_with_a_long_name.py",
+        line=999999,
+        axis_claim="potential SQL injection through unescaped user input passed into dynamic query builder",
+        pass_provenance="heuristic_analyzer_deep_inspection_pass_v2",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="e" * 600,
+        ts="2026-08-22T23:59:59Z",
+        version_sensitive=True,
+    )
+    append_row(tmp_path, maximal_row)
+    ledger_file = tmp_path / ".code-forge" / "ledger.jsonl"
+    line_bytes = ledger_file.read_bytes()
+    assert len(line_bytes) < 2048, f"Row size {len(line_bytes)} exceeds 2048-byte limit"
 
 
 def test_append_then_iter_round_trip(tmp_path):

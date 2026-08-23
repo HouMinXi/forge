@@ -17,24 +17,66 @@ guaranteed atomic at the syscall level. Ledger rows are well under
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Iterator
 
+_TRUNCATION_MARKER = "... [truncated]"
+_MAX_EVIDENCE_LEN = 500
+
+
+def _truncate_evidence(text: str) -> str:
+    """Truncate evidence to <= 500 chars with an explicit marker (D-07, D-21)."""
+    if len(text) <= _MAX_EVIDENCE_LEN:
+        return text
+    prefix_len = _MAX_EVIDENCE_LEN - len(_TRUNCATION_MARKER)
+    return text[:prefix_len] + _TRUNCATION_MARKER
+
+
+def resolve_ledger_root(cwd: Path) -> Path:
+    """Resolve the main repo root for durable ledger storage (D-05, D-11, D-20b).
+
+    In a git repository (including linked worktrees), returns the parent directory
+    of the git common-dir (the main repo worktree root). On any failure (non-git cwd,
+    git execution failure, or OS error), falls back to returning cwd unchanged.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            check=False,
+        )
+        if res.returncode == 0:
+            out = res.stdout.strip()
+            if out:
+                common_dir = Path(out).resolve()
+                return common_dir.parent
+    except Exception:
+        pass
+    return cwd
+
 
 class TerminalState(str, Enum):
-    """Terminal outcomes recorded in the ledger.
+    """Outcomes recorded in the ledger: four terminal + one pending-adjudication.
 
-    FIXED and DISPROVED enter via the state machine hook; DUPLICATE
-    and ESCAPED enter only via `code-forge ledger mark --new`.
+    Entry rules:
+      - FIXED: enters via the local state machine hook on fix confirmation or via adjudication.
+      - DISPROVED: enters via the local state machine hook on falsifier rejection or via adjudication.
+      - DUPLICATE: enters via `code-forge ledger mark --new` or via adjudication.
+      - ESCAPED: enters via `code-forge ledger mark --new` or via adjudication.
+      - UNADJUDICATED: enters via CI review runs on confirmed findings pending human adjudication.
     """
 
     FIXED = "FIXED"
     DISPROVED = "DISPROVED"
     DUPLICATE = "DUPLICATE"
     ESCAPED = "ESCAPED"
+    UNADJUDICATED = "UNADJUDICATED"
 
 
 @dataclass(frozen=True)
@@ -63,12 +105,14 @@ def append_row(cwd: Path, row: LedgerRow) -> None:
     """Append one row to `<cwd>/.code-forge/ledger.jsonl`.
 
     Creates `.code-forge/` if missing. Single write per row, atomic
-    under Linux PIPE_BUF for the row sizes we emit.
+    under Linux PIPE_BUF for the row sizes we emit. Truncates evidence
+    to <= 500 chars with an explicit marker (D-07, D-21).
     """
     path = _ledger_path(cwd)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = asdict(row)
     payload["terminal_state"] = row.terminal_state.value
+    payload["evidence_class"] = _truncate_evidence(row.evidence_class)
     line = json.dumps(payload, separators=(",", ":")) + "\n"
     with path.open("a", encoding="utf-8") as fh:
         fh.write(line)
