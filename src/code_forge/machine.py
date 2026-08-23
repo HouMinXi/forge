@@ -527,6 +527,9 @@ class StateMachine:
             )
 
         # Proceed with normal L0+L1 verdict determination.
+        # D-23: suppress known findings before counting.
+        self._suppress_known_findings()
+
         # Coverage gaps (files no review layer examined) also FAIL CI:
         # a silent PASS over an unreviewed file is a false green.
         confirmed = self._count(Disposition.CONFIRMED)
@@ -1529,6 +1532,126 @@ class StateMachine:
             self._state.infra_errors.append(msg)
             print(msg, file=sys.stderr)
             return 0
+
+    def _suppress_known_findings(self) -> None:
+        """Suppress CONFIRMED findings that are known in ledger, pinned, or style-downgraded.
+
+        D-23: Reads ledger via resolve_ledger_root, loads gate.yaml pinned_paths
+        and style_downgrade, then for each CONFIRMED finding:
+          - fingerprint in known_terminal_fingerprints -> DISMISSED
+          - file matches pinned_paths glob -> DISMISSED
+          - source in style_downgrade.pass_names or description matches keyword -> STYLE
+        Fail-open: ledger read failure or missing gate.yaml silently degrades.
+        """
+        import os
+        import sys
+        import yaml
+        from pathlib import PurePath
+        from .ledger import (
+            known_terminal_fingerprints,
+            resolve_ledger_root,
+        )
+
+        # --- Load gate.yaml config (tolerant, fail-open) ---
+        pinned_paths: list[str] = []
+        style_pass_names: list[str] = []
+        style_keywords: list[str] = []
+        try:
+            gate_path = self.cwd / ".code-forge" / "gate.yaml"
+            if gate_path.exists():
+                with open(gate_path, "r", encoding="utf-8") as f:
+                    gate_data = yaml.safe_load(f)
+                if isinstance(gate_data, dict):
+                    pp = gate_data.get("pinned_paths", [])
+                    if isinstance(pp, list):
+                        pinned_paths = [str(p) for p in pp if isinstance(p, str)]
+                    sd = gate_data.get("style_downgrade", {})
+                    if isinstance(sd, dict):
+                        pn = sd.get("pass_names", [])
+                        if isinstance(pn, list):
+                            style_pass_names = [str(s) for s in pn if isinstance(s, str)]
+                        kw = sd.get("keywords", [])
+                        if isinstance(kw, list):
+                            style_keywords = [str(k) for k in kw if isinstance(k, str)]
+        except (OSError, yaml.YAMLError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+            msg = f"CI: gate.yaml read for suppression failed (fail-open): {exc}"
+            self._state.infra_errors.append(msg)
+            print(msg, file=sys.stderr)
+
+        # --- Load known terminal fingerprints from ledger ---
+        known_fps: set[str] = set()
+        try:
+            ledger_root = resolve_ledger_root(self.cwd)
+            known_fps = known_terminal_fingerprints(ledger_root)
+        except (OSError, ValueError, AttributeError, TypeError) as exc:
+            msg = f"CI: ledger read for suppression failed (fail-open): {exc}"
+            self._state.infra_errors.append(msg)
+            print(msg, file=sys.stderr)
+
+        # --- Apply suppression to each CONFIRMED finding ---
+        for f in self._state.findings:
+            if f.disposition != Disposition.CONFIRMED:
+                continue
+
+            # 1. Ledger-known fingerprint
+            if f.fingerprint in known_fps:
+                f.disposition = Disposition.DISMISSED
+                self._state.infra_errors.append(
+                    "ledger: suppressed %s (known terminal fingerprint)" % f.fingerprint
+                )
+                continue
+
+            # 2. Pinned path
+            matched_pin = None
+            for pattern in pinned_paths:
+                if PurePath(f.file).match(pattern):
+                    matched_pin = pattern
+                    break
+            if matched_pin is not None:
+                f.disposition = Disposition.DISMISSED
+                self._state.infra_errors.append(
+                    "pinned_paths: suppressed %s (%s matched %s)"
+                    % (f.fingerprint, matched_pin, f.file)
+                )
+                continue
+
+            # 3. Style downgrade
+            if style_pass_names and f.source in style_pass_names:
+                f.disposition = Disposition.STYLE
+                self._state.infra_errors.append(
+                    "style_downgrade: downgraded %s (pass_name %s)"
+                    % (f.fingerprint, f.source)
+                )
+                continue
+            if style_keywords:
+                desc_lower = f.description.lower()
+                for kw in style_keywords:
+                    if kw.lower() in desc_lower:
+                        f.disposition = Disposition.STYLE
+                        self._state.infra_errors.append(
+                            "style_downgrade: downgraded %s (keyword %s)"
+                            % (f.fingerprint, kw)
+                        )
+                        break
+
+        # Pinned-path suppression must ALSO cover COVERAGE findings (gemini B-1):
+        # they are UNCERTAIN (not CONFIRMED), so the loop above skips them, but
+        # _count_coverage_gaps counts source=="COVERAGE" with disposition !=
+        # DISMISSED -- a pinned-path COVERAGE finding would otherwise still
+        # block. Set those to DISMISSED so a pinned path genuinely stops
+        # blocking.
+        if pinned_paths:
+            for f in self._state.findings:
+                if f.source != "COVERAGE" or f.disposition == Disposition.DISMISSED:
+                    continue
+                for pattern in pinned_paths:
+                    if PurePath(f.file).match(pattern):
+                        f.disposition = Disposition.DISMISSED
+                        self._state.infra_errors.append(
+                            "pinned_paths: suppressed coverage gap %s (%s matched %s)"
+                            % (f.fingerprint, pattern, f.file)
+                        )
+                        break
 
     def _get_commit_message(self) -> str:
         """Read the current commit message (worktree-safe).

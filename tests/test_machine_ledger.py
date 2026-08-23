@@ -19,6 +19,7 @@ Verifies:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -27,13 +28,13 @@ from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
-from code_forge.ledger import TerminalState, iter_rows
+from code_forge.ledger import TerminalState, iter_rows, known_terminal_fingerprints, resolve_ledger_root
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding, Verdict
 
 
 def _make_finding(fp, disp=Disposition.CONFIRMED, source="L0", file="a.py",
-                  line=1, error=None):
+                  line=1, error=None, description=None):
     return StateFinding(
         id=fp,
         fingerprint=fp,
@@ -41,7 +42,7 @@ def _make_finding(fp, disp=Disposition.CONFIRMED, source="L0", file="a.py",
         disposition=disp,
         file=file,
         line_range=[line, line],
-        description="synthetic %s" % fp,
+        description=description if description is not None else "synthetic %s" % fp,
         error=error,
     )
 
@@ -541,3 +542,334 @@ def test_ci_worktree_persistence_and_repo_root_field(tmp_path, monkeypatch):
     assert len(main_rows) == 1
     assert main_rows[0].fingerprint == "fp-wt-1"
     assert main_rows[0].repo_root == str(main_repo.resolve())
+
+
+# ---------------------------------------------------------------------------
+# Plan 44-03 Task 1: known_terminal_fingerprints unit tests
+# ---------------------------------------------------------------------------
+
+
+def _write_ledger_line(root: Path, fingerprint: str, terminal_state: str):
+    """Write a single ledger row to root/.code-forge/ledger.jsonl."""
+    (root / ".code-forge").mkdir(parents=True, exist_ok=True)
+    ledger_file = root / ".code-forge" / "ledger.jsonl"
+    if not ledger_file.exists():
+        ledger_file.touch()
+    row = {
+        "fingerprint": fingerprint,
+        "repo_root": str(root.resolve()),
+        "base_sha": "a" * 40,
+        "head_sha": "b" * 40,
+        "file": "a.py",
+        "line": 1,
+        "axis_claim": "lint",
+        "pass_provenance": "L0",
+        "terminal_state": terminal_state,
+        "evidence_class": "test",
+        "ts": "2026-01-01T00:00:00Z",
+        "version_sensitive": False,
+    }
+    with open(ledger_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, sort_keys=False, ensure_ascii=False) + "\n")
+
+
+def test_known_terminal_fingerprints_empty(tmp_path):
+    """Empty ledger → empty set."""
+    (tmp_path / ".code-forge").mkdir(parents=True, exist_ok=True)
+    assert known_terminal_fingerprints(tmp_path) == set()
+
+
+def test_known_terminal_fingerprints_fixed(tmp_path):
+    """One FIXED row → {fp}."""
+    _write_ledger_line(tmp_path, "fp-fixed", "FIXED")
+    fps = known_terminal_fingerprints(tmp_path)
+    assert fps == {"fp-fixed"}
+
+
+def test_known_terminal_fingerprints_disproved(tmp_path):
+    """One DISPROVED row → {fp}."""
+    _write_ledger_line(tmp_path, "fp-disproved", "DISPROVED")
+    fps = known_terminal_fingerprints(tmp_path)
+    assert fps == {"fp-disproved"}
+
+
+def test_known_terminal_fingerprints_duplicate(tmp_path):
+    """One DUPLICATE row → {fp}."""
+    _write_ledger_line(tmp_path, "fp-dup", "DUPLICATE")
+    fps = known_terminal_fingerprints(tmp_path)
+    assert fps == {"fp-dup"}
+
+
+def test_known_terminal_fingerprints_unadjudicated(tmp_path):
+    """One UNADJUDICATED row → empty set."""
+    _write_ledger_line(tmp_path, "fp-unadj", "UNADJUDICATED")
+    fps = known_terminal_fingerprints(tmp_path)
+    assert fps == set()
+
+
+def test_known_terminal_fingerprints_escaped(tmp_path):
+    """One ESCAPED row → empty set."""
+    _write_ledger_line(tmp_path, "fp-esc", "ESCAPED")
+    fps = known_terminal_fingerprints(tmp_path)
+    assert fps == set()
+
+
+def test_known_terminal_fingerprints_latest_wins(tmp_path):
+    """Multiple rows per fingerprint, latest is FIXED → {fp}."""
+    (tmp_path / ".code-forge").mkdir(parents=True, exist_ok=True)
+    ledger_file = tmp_path / ".code-forge" / "ledger.jsonl"
+    # First row: UNADJUDICATED
+    _write_ledger_line(tmp_path, "fp-multi", "UNADJUDICATED")
+    # Second row: FIXED (latest)
+    _write_ledger_line(tmp_path, "fp-multi", "FIXED")
+    fps = known_terminal_fingerprints(tmp_path)
+    assert fps == {"fp-multi"}
+
+
+def test_known_terminal_fingerprints_latest_unadjudicated(tmp_path):
+    """Multiple rows per fingerprint, latest is UNADJUDICATED → empty set."""
+    (tmp_path / ".code-forge").mkdir(parents=True, exist_ok=True)
+    _write_ledger_line(tmp_path, "fp-multi", "FIXED")
+    _write_ledger_line(tmp_path, "fp-multi", "UNADJUDICATED")
+    fps = known_terminal_fingerprints(tmp_path)
+    assert fps == set()
+
+
+# ---------------------------------------------------------------------------
+# Plan 44-03 Task 1: _suppress_known_findings CI integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_ci_suppress_known_fixed_fingerprint(tmp_path):
+    """Known FIXED fingerprint → CONFIRMED → DISMISSED, verdict PASS."""
+    _prep_local_state(tmp_path)
+    _write_ledger_line(tmp_path, "fp-known-fixed", "FIXED")
+    finding = _make_finding("fp-known-fixed", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+    assert any("ledger: suppressed" in err for err in machine._state.infra_errors)
+
+
+def test_ci_suppress_known_disproved_fingerprint(tmp_path):
+    """Known DISPROVED fingerprint → CONFIRMED → DISMISSED, verdict PASS."""
+    _prep_local_state(tmp_path)
+    _write_ledger_line(tmp_path, "fp-known-disproved", "DISPROVED")
+    finding = _make_finding("fp-known-disproved", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+    assert any("ledger: suppressed" in err for err in machine._state.infra_errors)
+
+
+def test_ci_suppress_known_duplicate_fingerprint(tmp_path):
+    """Known DUPLICATE fingerprint → CONFIRMED → DISMISSED, verdict PASS."""
+    _prep_local_state(tmp_path)
+    _write_ledger_line(tmp_path, "fp-known-dup", "DUPLICATE")
+    finding = _make_finding("fp-known-dup", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+    assert any("ledger: suppressed" in err for err in machine._state.infra_errors)
+
+
+def test_ci_suppress_unknown_fingerprint(tmp_path):
+    """Unknown fingerprint → stays CONFIRMED, verdict FAIL."""
+    _prep_local_state(tmp_path)
+    # Ledger has FIXED entry for fp-A, but finding is fp-B (different)
+    _write_ledger_line(tmp_path, "fp-A", "FIXED")
+    finding = _make_finding("fp-B", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert not any("ledger: suppressed" in err for err in machine._state.infra_errors)
+
+
+def test_ci_suppress_escaped_fingerprint(tmp_path):
+    """ESCAPED fingerprint does NOT suppress → stays CONFIRMED, FAIL."""
+    _prep_local_state(tmp_path)
+    _write_ledger_line(tmp_path, "fp-escaped", "ESCAPED")
+    finding = _make_finding("fp-escaped", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert not any("ledger: suppressed" in err for err in machine._state.infra_errors)
+
+
+def test_ci_suppress_mixed_known_and_unknown(tmp_path):
+    """Known suppressed, unknown stays → FAIL (because unknown is still CONFIRMED)."""
+    _prep_local_state(tmp_path)
+    _write_ledger_line(tmp_path, "fp-known", "FIXED")
+    known = _make_finding("fp-known", disp=Disposition.CONFIRMED)
+    unknown = _make_finding("fp-unknown", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[known, unknown])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    # Infra should have suppression note for known
+    suppress_notes = [e for e in machine._state.infra_errors if "ledger: suppressed" in e]
+    assert len(suppress_notes) == 1
+    assert "fp-known" in suppress_notes[0]
+
+
+def test_ci_suppress_missing_ledger(tmp_path):
+    """No ledger file → no crash, no suppression, verdict FAIL."""
+    _prep_local_state(tmp_path)
+    # No ledger file written — only .code-forge dir exists
+    finding = _make_finding("fp-nolegger", disp=Disposition.CONFIRMED)
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    # No suppression infra_error
+    assert not any("ledger: suppressed" in err for err in machine._state.infra_errors)
+
+
+# ---------------------------------------------------------------------------
+# Plan 44-03 Task 2: pinned_paths + style_downgrade CI integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_ci_pinned_paths_suppresses_matching_file(tmp_path):
+    """CONFIRMED finding whose file matches pinned_paths glob → DISMISSED, PASS."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text(
+        "pinned_paths:\n  - 'vendor/*.py'\n  - '*.generated.*'\n",
+        encoding="utf-8",
+    )
+    finding = _make_finding("fp-pinned", disp=Disposition.CONFIRMED, file="vendor/foo.py")
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+    assert any("pinned_paths: suppressed" in err for err in machine._state.infra_errors)
+
+
+def test_ci_pinned_paths_does_not_affect_non_matching(tmp_path):
+    """CONFIRMED finding whose file does not match pinned_paths → stays CONFIRMED, FAIL."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text("pinned_paths:\n  - 'vendor/*.py'\n", encoding="utf-8")
+    finding = _make_finding("fp-not-pinned", disp=Disposition.CONFIRMED, file="src/main.py", source="L0")
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert not any("pinned_paths: suppressed" in err for err in machine._state.infra_errors)
+
+
+def test_ci_style_downgrade_pass_names(tmp_path):
+    """CONFIRMED finding with source in style_downgrade.pass_names → STYLE, PASS."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text(
+        "style_downgrade:\n  pass_names:\n    - 'LINT'\n    - 'FORMAT'\n",
+        encoding="utf-8",
+    )
+    finding = _make_finding("fp-style-pass", disp=Disposition.CONFIRMED, source="LINT")
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+    assert any("style_downgrade: downgraded" in err for err in machine._state.infra_errors)
+
+
+def test_ci_style_downgrade_keywords(tmp_path):
+    """CONFIRMED finding whose description contains style_downgrade keyword → STYLE, PASS."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text(
+        "style_downgrade:\n  keywords:\n    - 'indentation'\n    - 'whitespace'\n",
+        encoding="utf-8",
+    )
+    finding = _make_finding(
+        "fp-style-kw", disp=Disposition.CONFIRMED,
+        description="trailing indentation is not standard",
+    )
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+    assert any("style_downgrade: downgraded" in err for err in machine._state.infra_errors)
+
+
+def test_ci_style_downgrade_does_not_affect_non_matching(tmp_path):
+    """CONFIRMED finding with no matching pass_name or keyword → stays CONFIRMED, FAIL."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text(
+        "style_downgrade:\n  pass_names:\n    - 'LINT'\n  keywords:\n    - 'indentation'\n",
+        encoding="utf-8",
+    )
+    finding = _make_finding(
+        "fp-no-style", disp=Disposition.CONFIRMED, source="SECURITY",
+        description="this is a real security issue",
+    )
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert not any("style_downgrade: downgraded" in err for err in machine._state.infra_errors)
+
+
+# ---------------------------------------------------------------------------
+# Plan 44-03 Task 1+2: bug-injection — suppression removal
+# ---------------------------------------------------------------------------
+
+
+def test_bug_inject_remove_suppression_makes_ci_fail_again(tmp_path, monkeypatch):
+    """Bug-injection: remove suppression → CI FAIL proves suppression was active.
+
+    Tests that _suppress_known_findings is the sole cause of PASS.
+    """
+    _prep_local_state(tmp_path)
+    _write_ledger_line(tmp_path, "fp-bug", "FIXED")
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text(
+        "pinned_paths:\n  - 'vendor/*.py'\n",
+        encoding="utf-8",
+    )
+    finding_a = _make_finding("fp-bug", disp=Disposition.CONFIRMED, file="a.py")
+    finding_b = _make_finding("fp-bug-pinned", disp=Disposition.CONFIRMED, file="vendor/x.py")
+    machine = _build_ci_machine(
+        tmp_path, _resolved_with_shas(),
+        l0_findings=[finding_a, finding_b],
+    )
+
+    # Stub out _suppress_known_findings to a no-op
+    monkeypatch.setattr(machine, "_suppress_known_findings", lambda: None)
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL, (
+        "Without suppression, all CONFIRMED findings should cause FAIL. "
+        "If bug-inject passes but real code turns it into PASS, "
+        "then _suppress_known_findings is the active mechanism."
+    )
+
+
+def test_ci_pinned_paths_suppresses_coverage_gap(tmp_path):
+    """A COVERAGE finding on a pinned path is also suppressed (gemini B-1):
+    pinned COVERAGE gap set DISMISSED -> coverage_gaps drops -> PASS."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text("pinned_paths:\n  - 'vendor/*.py'\n", encoding="utf-8")
+    cov = _make_finding(
+        "coverage:vendor/foo.py", disp=Disposition.UNCERTAIN,
+        source="COVERAGE", file="vendor/foo.py",
+    )
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[cov])
+    verdict = machine.run()
+    assert verdict == Verdict.PASS
+    assert cov.disposition == Disposition.DISMISSED
+    assert any(
+        "pinned_paths: suppressed coverage gap" in err
+        for err in machine._state.infra_errors
+    )
+
+
+def test_ci_pinned_paths_does_not_suppress_unpinned_coverage_gap(tmp_path):
+    """An UNPINNED COVERAGE finding still counts -> coverage_gaps > 0 -> FAIL."""
+    _prep_local_state(tmp_path)
+    gate_file = tmp_path / ".code-forge" / "gate.yaml"
+    gate_file.write_text("pinned_paths:\n  - 'vendor/*.py'\n", encoding="utf-8")
+    cov = _make_finding(
+        "coverage:src/main.py", disp=Disposition.UNCERTAIN,
+        source="COVERAGE", file="src/main.py",
+    )
+    machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[cov])
+    verdict = machine.run()
+    assert verdict == Verdict.FAIL
+    assert cov.disposition == Disposition.UNCERTAIN

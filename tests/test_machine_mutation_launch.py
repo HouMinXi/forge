@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 from code_forge import mutation as mutation_module
@@ -101,12 +102,11 @@ class TestAsyncMutationLaunch:
             encoding="utf-8",
         )
 
-        captured = {}
+        captured = []
 
         class _RecordingPopen:
             def __init__(self, args, **kw):
-                captured["args"] = args
-                captured.update(kw)
+                captured.append(args)
                 self.pid = 99999
 
         monkeypatch.setattr(
@@ -122,7 +122,16 @@ class TestAsyncMutationLaunch:
         sm = _make_ci_sm(tmp_path)
         sm._run_ci()
 
-        assert "args" not in captured, (
+        # The mutation launcher spawns `sys.executable -c <script>`; a CI run
+        # may also legitimately spawn other subprocesses (e.g. resolve_ledger_
+        # root's `git rev-parse` via subprocess.run, which internally uses
+        # Popen). Assert no MUTATION process launched, not "no Popen at all".
+        mutation_launches = [
+            a for a in captured
+            if isinstance(a, (list, tuple)) and len(a) >= 2
+            and a[0] == sys.executable and a[1] == "-c"
+        ]
+        assert not mutation_launches, (
             "mutation launched despite an unusable gate config; this test "
             "no longer exercises the skip path it claims to"
         )

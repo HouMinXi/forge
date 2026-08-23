@@ -22,7 +22,7 @@ import sys
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Iterator
+from typing import Final, Iterator
 
 _TRUNCATION_MARKER = "... [truncated]"
 _MAX_EVIDENCE_LEN = 500
@@ -116,6 +116,28 @@ def append_row(cwd: Path, row: LedgerRow) -> None:
     line = json.dumps(payload, separators=(",", ":")) + "\n"
     with path.open("a", encoding="utf-8") as fh:
         fh.write(line)
+
+
+_SUPPRESSIBLE_TERMINAL_STATES: Final[frozenset[str]] = frozenset({
+    "FIXED", "DISPROVED", "DUPLICATE",
+})
+"""Terminal states whose fingerprint suppresses a re-appearing CONFIRMED finding (D-23)."""
+
+
+def known_terminal_fingerprints(root: Path) -> set[str]:
+    """Return fingerprints whose LATEST row is FIXED, DISPROVED, or DUPLICATE.
+
+    Latest = last in iteration order (append-only file -> last write wins).
+    UNADJUDICATED and ESCAPED do NOT suppress (D-23, D-25).
+    Missing ledger or empty ledger -> empty set (no crash).
+    """
+    latest: dict[str, tuple[str, str]] = {}  # fp -> (terminal_state, _)
+    for r in iter_rows(root):
+        latest[r.fingerprint] = (r.terminal_state.value, r.ts)
+    return {
+        fp for fp, (state, _) in latest.items()
+        if state in _SUPPRESSIBLE_TERMINAL_STATES
+    }
 
 
 def iter_rows(cwd: Path) -> Iterator[LedgerRow]:

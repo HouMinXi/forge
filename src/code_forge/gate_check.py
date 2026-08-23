@@ -149,7 +149,67 @@ def load_gate_config(
     if "ledger" in data:
         validate_ledger_config(data["ledger"])
 
+    # Validate optional pinned_paths (44-03 Task 2: path-based suppression)
+    if "pinned_paths" in data:
+        validate_pinned_paths(data["pinned_paths"])
+
+    # Validate optional style_downgrade (44-03 Task 2: style downgrade config)
+    if "style_downgrade" in data:
+        validate_style_downgrade_config(data["style_downgrade"])
+
     return data
+
+
+def validate_pinned_paths(section: object) -> None:
+    """Validate pinned_paths section of gate.yaml (44-03 Task 2).
+
+    Schema:
+        list[str] of glob patterns. Default: [].
+
+    Raises:
+        ValueError: if not a list of strings.
+    """
+    if not isinstance(section, list):
+        raise ValueError(
+            "gate.yaml 'pinned_paths' must be a list, got: %s"
+            % type(section).__name__
+        )
+    for idx, item in enumerate(section):
+        if not isinstance(item, str):
+            raise ValueError(
+                "gate.yaml 'pinned_paths[%d]' must be a string, got: %s"
+                % (idx, type(item).__name__)
+            )
+
+
+def validate_style_downgrade_config(section: object) -> None:
+    """Validate style_downgrade section of gate.yaml (44-03 Task 2).
+
+    Schema:
+        pass_names: list[str]  (OPTIONAL, default [])
+        keywords:   list[str]  (OPTIONAL, default [])
+
+    Raises:
+        ValueError: if known fields have wrong types.
+    """
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'style_downgrade' must be a mapping, got: %s"
+            % type(section).__name__
+        )
+    for key in ("pass_names", "keywords"):
+        val = section.get(key, [])
+        if not isinstance(val, list):
+            raise ValueError(
+                "gate.yaml 'style_downgrade.%s' must be a list, got: %s"
+                % (key, type(val).__name__)
+            )
+        for idx, item in enumerate(val):
+            if not isinstance(item, str):
+                raise ValueError(
+                    "gate.yaml 'style_downgrade.%s[%d]' must be a string, got: %s"
+                    % (key, idx, type(item).__name__)
+                )
 
 
 def validate_ledger_config(ledger_cfg: object) -> None:

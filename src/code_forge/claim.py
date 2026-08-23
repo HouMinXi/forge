@@ -29,6 +29,9 @@ _SOURCE_TO_CLAIM: dict[str, ClaimType] = {
     "COVERAGE": ClaimType(type="coverage", version_sensitive=False),
     "INFRA": ClaimType(type="infra", version_sensitive=False),
     "FIXVAL": ClaimType(type="fixval", version_sensitive=False),
+    "LINT": ClaimType(type="lint", version_sensitive=False),
+    "FORMAT": ClaimType(type="lint", version_sensitive=False),
+    "SECURITY": ClaimType(type="lint", version_sensitive=False),
 }
 
 
