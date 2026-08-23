@@ -176,7 +176,7 @@ def _subsystem_proximity(caller_file: str, changed_file: str) -> float:
 class CrossRepoImpactRunner:
     """Advisory axis: cross-repo direct-caller impact (R0).
 
-    Satisfies the AxisRunner Protocol (is_advisory=True).
+    Satisfies the AdvisoryAxisRunner Protocol (is_advisory=True).
     Discovers sibling repos via code-review-graph Registry,
     queries each sibling's graph.db for direct callers of
     changed symbols, and surfaces findings.
@@ -331,7 +331,7 @@ class CrossRepoImpactRunner:
                 id="cross-repo-impact-%d" % (i + 1),
                 axis=_AXIS,
                 file="%s:%s" % (alias, caller_file),
-                line_range=[caller_line, caller_line],
+                line_range=(caller_line, caller_line),
                 description="%s used by %s at %s:%d" % (
                     symbol, alias, caller_file, caller_line,
                 ),

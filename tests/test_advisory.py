@@ -22,14 +22,15 @@ def test_advisory_finding_construction():
         id="ADV-001",
         axis="RUNTIME",
         file="src/app.py",
-        line_range=[10, 20],
+        line_range=(10, 20),
         description="possible runtime issue",
         attribution="git blame: abc1234",
     )
     assert f.id == "ADV-001"
     assert f.axis == "RUNTIME"
     assert f.file == "src/app.py"
-    assert f.line_range == [10, 20]
+    assert f.line_range == (10, 20)
+    assert isinstance(f.line_range, tuple)
     assert f.description == "possible runtime issue"
     assert f.attribution == "git blame: abc1234"
 
@@ -42,12 +43,73 @@ def test_advisory_finding_is_frozen():
         id="ADV-001",
         axis="RUNTIME",
         file="src/app.py",
-        line_range=[10, 20],
+        line_range=(10, 20),
         description="test",
         attribution="test",
     )
     with pytest.raises(AttributeError):
         f.id = "ADV-002"
+
+
+def test_advisory_finding_line_range_immutable_tuple():
+    """line_range is an immutable tuple[int, int] preventing in-place mutation."""
+    from code_forge.advisory import AdvisoryFinding
+
+    f = AdvisoryFinding(
+        id="ADV-001",
+        axis="RUNTIME",
+        file="src/app.py",
+        line_range=(10, 20),
+        description="test",
+        attribution="test",
+    )
+    assert isinstance(f.line_range, tuple)
+    with pytest.raises(TypeError):
+        f.line_range[0] = 99  # type: ignore[index]
+    assert not hasattr(f.line_range, "append")
+
+
+def test_advisory_finding_line_range_coerces_list_to_tuple():
+    """Passing a list or sequence normalizes to tuple[int, int]."""
+    from code_forge.advisory import AdvisoryFinding
+
+    f = AdvisoryFinding(
+        id="ADV-001",
+        axis="RUNTIME",
+        file="src/app.py",
+        line_range=[10, 20],  # list input
+        description="test",
+        attribution="test",
+    )
+    assert isinstance(f.line_range, tuple)
+    assert f.line_range == (10, 20)
+
+
+def test_advisory_finding_line_range_safe_indexing_empty_and_singleton():
+    """Empty or singleton line_range normalizes to 2-element tuple, avoiding IndexError."""
+    from code_forge.advisory import AdvisoryFinding
+
+    f_empty = AdvisoryFinding(
+        id="ADV-EMPTY",
+        axis="RUNTIME",
+        file="src/app.py",
+        line_range=[],  # empty
+        description="test",
+        attribution="test",
+    )
+    assert f_empty.line_range == (0, 0)
+    assert f_empty.line_range[0] == 0 and f_empty.line_range[1] == 0
+
+    f_single = AdvisoryFinding(
+        id="ADV-SINGLE",
+        axis="RUNTIME",
+        file="src/app.py",
+        line_range=[42],  # singleton
+        description="test",
+        attribution="test",
+    )
+    assert f_single.line_range == (42, 42)
+    assert f_single.line_range[0] == 42 and f_single.line_range[1] == 42
 
 
 # -- Field exclusion (structural incompatibility with StateFinding) --------
@@ -98,12 +160,12 @@ def test_advisory_finding_no_source():
     assert not hasattr(f, "source")
 
 
-# -- AxisRunner Protocol conformance ---------------------------------------
+# -- AdvisoryAxisRunner Protocol conformance -------------------------------
 
 
-def test_axis_runner_advisory_conformance():
-    """A class with is_advisory=True and run() satisfies AxisRunner Protocol."""
-    from code_forge.advisory import AdvisoryFinding, AxisRunner
+def test_advisory_axis_runner_conformance():
+    """A class with is_advisory=True and run() satisfies AdvisoryAxisRunner Protocol."""
+    from code_forge.advisory import AdvisoryFinding, AdvisoryAxisRunner, AxisRunner
 
     class MockAdvisoryRunner:
         @property
@@ -115,38 +177,24 @@ def test_axis_runner_advisory_conformance():
         ) -> list[AdvisoryFinding]:
             return []
 
-    runner: AxisRunner = MockAdvisoryRunner()
+    # Satisfies AdvisoryAxisRunner
+    runner: AdvisoryAxisRunner = MockAdvisoryRunner()
     assert runner.is_advisory is True
     assert runner.run("diff text", Path("/repo")) == []
 
+    # AxisRunner backwards compatibility alias
+    alias_runner: AxisRunner = MockAdvisoryRunner()
+    assert alias_runner.is_advisory is True
+    assert AdvisoryAxisRunner is AxisRunner
 
-def test_axis_runner_blocking_conformance():
-    """A class with is_advisory=False also satisfies AxisRunner Protocol."""
-    from code_forge.advisory import AdvisoryFinding, AxisRunner
 
-    class MockBlockingRunner:
-        @property
-        def is_advisory(self) -> bool:
-            return False
+def test_advisory_axis_runner_docstring_and_scope():
+    """AdvisoryAxisRunner docstring reflects advisory-only scope, not blocking."""
+    from code_forge.advisory import AdvisoryAxisRunner
 
-        def run(
-            self, diff_text: str, repo_root: Path
-        ) -> list[AdvisoryFinding]:
-            return [
-                AdvisoryFinding(
-                    id="BLK-001",
-                    axis="TRUST",
-                    file="gate.yaml",
-                    line_range=[1, 5],
-                    description="untrusted backend",
-                    attribution="trust gate",
-                )
-            ]
-
-    runner: AxisRunner = MockBlockingRunner()
-    assert runner.is_advisory is False
-    results = runner.run("diff", Path("/repo"))
-    assert len(results) == 1
+    doc = AdvisoryAxisRunner.__doc__ or ""
+    assert "advisory" in doc.lower()
+    assert "blocking or advisory" not in doc.lower()
 
 
 # -- CRITICAL INVARIANT: advisory does NOT reset cycle counter ------------

@@ -6,7 +6,7 @@ Two sub-capabilities:
   (a) danger_score_from_diff -- L0 blocking: scans diff new-lines for
       DANGEROUS_FIELDS in gate.yaml / .code-forge/* config files.
   (b) TaintRunner -- advisory axis: semgrep intraprocedural taint detection
-      on source files via AxisRunner Protocol.
+      on source files via AdvisoryAxisRunner Protocol.
 """
 from __future__ import annotations
 
@@ -172,7 +172,7 @@ def _findings_to_advisories(
             id=f"taint:{f.file}:{f.line}:{f.rule_id}",
             axis="taint",
             file=f.file,
-            line_range=[f.line, f.end_line],
+            line_range=(f.line, f.end_line),
             description=f.message,
             attribution="semgrep-ce/intraprocedural",
         ))
@@ -182,7 +182,7 @@ def _findings_to_advisories(
 class TaintRunner:
     """Advisory axis: semgrep intraprocedural taint detection.
 
-    Satisfies the AxisRunner Protocol (is_advisory=True).
+    Satisfies the AdvisoryAxisRunner Protocol (is_advisory=True).
     machine.py sets source_files before dispatch; TaintRunner does NOT
     invoke git -- it uses the already-resolved source file list.
     """

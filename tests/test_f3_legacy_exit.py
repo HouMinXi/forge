@@ -96,7 +96,7 @@ class TestP1PreExistingToAdvisory:
         )
         first = advisories[0]
         assert first.file == "test.py"
-        assert first.line_range == [20, 20]
+        assert first.line_range == (20, 20)
         assert "pre-existing" in first.id
         assert first.attribution == "L0"
 

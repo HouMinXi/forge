@@ -206,7 +206,7 @@ def _match_static_rules(
                 id="daemon-state-static-%d" % idx,
                 axis="DAEMON-STATE",
                 file="",
-                line_range=[0, 0],
+                line_range=(0, 0),
                 description=description,
                 attribution="daemon-state/static-rule",
             ))
@@ -220,7 +220,7 @@ def _build_skipped_finding(reason: str) -> AdvisoryFinding:
         id="daemon-state-skipped",
         axis="DAEMON-STATE",
         file="",
-        line_range=[0, 0],
+        line_range=(0, 0),
         description="DAEMON-STATE axis SKIPPED: %s" % reason,
         attribution="daemon-state/infra-error",
     )
@@ -283,14 +283,14 @@ def _load_daemon_config(
 
 
 # ---------------------------------------------------------------------------
-# DaemonStateRunner -- AxisRunner Protocol implementation
+# DaemonStateRunner -- AdvisoryAxisRunner Protocol implementation
 # ---------------------------------------------------------------------------
 
 
 class DaemonStateRunner:
     """Advisory axis: cross-subsystem state-conflict detection.
 
-    Satisfies the AxisRunner Protocol (is_advisory=True).
+    Satisfies the AdvisoryAxisRunner Protocol (is_advisory=True).
     full axis only runs with explicit gate.yaml opt-in.
     reads RuntimeRunner.last_surfaces for cross-axis data.
     """
@@ -343,7 +343,7 @@ class DaemonStateRunner:
                     id="daemon-state-heuristic",
                     axis="DAEMON-STATE",
                     file="",
-                    line_range=[0, 0],
+                    line_range=(0, 0),
                     description=(
                         "Detected stateful subsystem keywords; "
                         "enable daemon_state in gate.yaml for deeper analysis"
@@ -488,7 +488,7 @@ class DaemonStateRunner:
                 id="daemon-state-llm-%d" % idx,
                 axis="DAEMON-STATE",
                 file="",
-                line_range=[0, 0],
+                line_range=(0, 0),
                 description=description,
                 attribution="daemon-state/llm",
             ))

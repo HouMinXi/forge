@@ -417,7 +417,7 @@ def test_findings_to_advisories():
     assert a.id == "taint:src/app.py:42:forge-taint-config-to-subprocess"
     assert a.axis == "taint"
     assert a.file == "src/app.py"
-    assert a.line_range == [42, 42]
+    assert a.line_range == (42, 42)
     # description is finding.message verbatim (no double caveat)
     assert a.description == finding.message
     assert a.attribution == "semgrep-ce/intraprocedural"

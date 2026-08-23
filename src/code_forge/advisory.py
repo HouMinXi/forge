@@ -1,4 +1,4 @@
-"""Advisory finding type and AxisRunner Protocol.
+"""Advisory finding type and AdvisoryAxisRunner Protocol.
 
 TWO FOUNDING PRINCIPLES:
 
@@ -9,8 +9,8 @@ TWO FOUNDING PRINCIPLES:
    of self.findings: list[StateFinding]. The convergence logic in
    _fixpoint_reached() operates ONLY on the StateFinding list.
 
-2. AxisRunner.run() intentionally receives ONLY (diff_text, repo_root): no
-   prior findings, no other axes' output, no review state. This is the
+2. AdvisoryAxisRunner.run() intentionally receives ONLY (diff_text, repo_root):
+   no prior findings, no other axes' output, no review state. This is the
    anti-anchoring invariant underpinning the multi-run majority vote. Each run
    sees the diff fresh, forming independent judgments. Do not widen this
    signature.
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Sequence
 
 
 @dataclass(frozen=True)
@@ -39,16 +39,41 @@ class AdvisoryFinding:
     id: str
     axis: str
     file: str
-    line_range: list[int]
+    line_range: tuple[int, int]
     description: str
     attribution: str
 
+    def __init__(
+        self,
+        id: str,
+        axis: str,
+        file: str,
+        line_range: Sequence[int] | tuple[int, int] | list[int] = (0, 0),
+        description: str = "",
+        attribution: str = "",
+    ) -> None:
+        object.__setattr__(self, "id", id)
+        object.__setattr__(self, "axis", axis)
+        object.__setattr__(self, "file", file)
 
-class AxisRunner(Protocol):
-    """Protocol for review axes (blocking or advisory).
+        # Normalize line_range to immutable tuple[int, int]
+        if not line_range:
+            norm_range = (0, 0)
+        elif len(line_range) == 1:
+            norm_range = (int(line_range[0]), int(line_range[0]))
+        else:
+            norm_range = (int(line_range[0]), int(line_range[1]))
+        object.__setattr__(self, "line_range", norm_range)
 
-    machine.py dispatches to runners implementing this protocol.
-    Each axis is a separate module providing its own runner.
+        object.__setattr__(self, "description", description)
+        object.__setattr__(self, "attribution", attribution)
+
+
+class AdvisoryAxisRunner(Protocol):
+    """Protocol for advisory review axes.
+
+    machine.py dispatches post-convergence advisory axes implementing this protocol.
+    Each advisory axis is a separate module providing its own runner.
 
     The run() signature is intentionally narrow: only diff_text and
     repo_root. No prior findings, no review state, no other axes' output.
@@ -65,13 +90,17 @@ class AxisRunner(Protocol):
         diff_text: str,
         repo_root: Path,
     ) -> list[AdvisoryFinding]:
-        """Run the axis on the given diff and return findings.
+        """Run the advisory axis on the given diff and return advisory findings.
 
         Args:
             diff_text: unified diff of the changes under review.
             repo_root: path to the repository root.
 
         Returns:
-            List of findings from this axis.
+            List of advisory findings from this axis.
         """
         ...
+
+
+# Backwards compatibility alias for existing callers/imports
+AxisRunner = AdvisoryAxisRunner
