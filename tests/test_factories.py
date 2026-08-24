@@ -781,14 +781,15 @@ class TestBuildSamplingL1Provider:
             with pytest.raises(LLMInvokeError, match="truncated"):
                 provider()
 
-    def test_build_sampling_l1_provider_empty_response_infra_finding(self):
-        """LLMInvokeError(kind='empty') on all 3 passes returns 3 INFRA
-        findings with id l1-<pass>-invoke-fail and disposition CONFIRMED.
+    def test_build_sampling_l1_provider_empty_response_propagates(self):
+        """Non-truncation LLM failures (empty response, stub model, no
+        valid JSON) must propagate to the caller, not be swallowed.
 
-        The fold loop handles LLMInvokeError by creating an INFRA
-        finding per failed pass and continuing. When all 3 passes fail
-        with kind='empty', the provider returns normally with the 3
-        findings instead of raising.
+        A non-truncation LLMInvokeError used to be swallowed into a
+        per-pass INFRA finding and the loop continued to the next pass,
+        so the provider returned normally instead of raising -- the MCP
+        layer never saw the failure and could not fall back to a
+        subprocess backend.
         """
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
@@ -799,36 +800,40 @@ class TestBuildSamplingL1Provider:
         session = MagicMock()
         loop = MagicMock()
 
-        # invoke_sampling raises LLMInvokeError(kind="empty") for all 3 passes
-        empty_error = LLMInvokeError(
-            "sampling response is empty (model=?, stopReason=?)",
-            kind="empty",
-            duration_s=0.1,
-        )
         future = concurrent.futures.Future()
-        future.set_result([empty_error, empty_error, empty_error])
+        future.set_exception(LLMInvokeError(
+            "sampling response is empty (model=?, stopReason=?)"
+        ))
 
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
              patch("asyncio.run_coroutine_threadsafe", return_value=future):
             provider = build_sampling_l1_provider(session, loop, resolved)
-            findings, excerpts, usage, duration = provider()
+            with pytest.raises(LLMInvokeError, match="empty"):
+                provider()
 
-        # Should return 3 INFRA findings, one per pass
-        infra = [f for f in findings if f.source == "INFRA"]
-        assert len(infra) == 3
+    def test_build_sampling_l1_provider_cancelled_error_propagates(self):
+        """asyncio.CancelledError (BaseException) must propagate, not be folded into INFRA finding."""
+        import asyncio
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+        from code_forge.factories import build_sampling_l1_provider
 
-        # Each finding should have the correct id pattern and disposition
-        pass_names = ["qodo", "expert", "adversarial"]
-        for i, pass_name in enumerate(pass_names):
-            f = infra[i]
-            assert f.id == f"l1-{pass_name}-invoke-fail"
-            assert f.disposition == Disposition.CONFIRMED
-            assert f.source == "INFRA"
-            assert "empty" in f.description.lower()
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        session = MagicMock()
+        loop = MagicMock()
 
-        # No L1 findings should be present
-        l1_findings = [f for f in findings if f.source == "L1"]
-        assert len(l1_findings) == 0
+        future = concurrent.futures.Future()
+        future.set_result([
+            asyncio.CancelledError(),
+            asyncio.CancelledError(),
+            asyncio.CancelledError(),
+        ])
+
+        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+            provider = build_sampling_l1_provider(session, loop, resolved)
+            with pytest.raises(asyncio.CancelledError):
+                provider()
 
 
 class TestParallelL1:
