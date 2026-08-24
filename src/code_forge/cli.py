@@ -874,6 +874,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="filter to fingerprints whose latest state is UNADJUDICATED",
     )
 
+    # ledger export-eval [--out DIR] [--repo-root DIR] [--force]
+    export_parser = ledger_subs.add_parser(
+        'export-eval',
+        help='export adjudicated terminal-state rows as an eval corpus directory',
+    )
+    export_parser.add_argument(
+        "--out", dest="out_dir", default=None,
+        help="output directory (default: .code-forge/eval-export under the "
+             "resolved ledger root)",
+    )
+    export_parser.add_argument(
+        "--repo-root", dest="repo_root", default=None,
+        help="override row.repo_root when resolving base/head SHAs",
+    )
+    export_parser.add_argument(
+        "--force", dest="force", action="store_true",
+        help="allow writing into a non-empty dir not produced by export-eval",
+    )
+
     return parser
 
 
@@ -1833,6 +1852,77 @@ def _run_ledger(args, cwd: Path) -> int:
                         r.pass_provenance,
                     )
                 )
+        return EXIT_PASS
+
+    if args.ledger_command == "export-eval":
+        from .eval.export import ExportError, export_eval
+
+        out_dir = (
+            Path(args.out_dir)
+            if args.out_dir is not None
+            else ledger_root / ".code-forge" / "eval-export"
+        )
+        repo_root_override = (
+            Path(args.repo_root).resolve() if args.repo_root else None
+        )
+        if repo_root_override is not None:
+            try:
+                probe = subprocess.run(
+                    ["git", "rev-parse", "--git-dir"],
+                    cwd=str(repo_root_override),
+                    capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                probe = None
+            if probe is None or probe.returncode != 0:
+                print(
+                    "code-forge ledger export-eval: --repo-root is not a "
+                    "git repository: %s" % args.repo_root,
+                    file=sys.stderr,
+                )
+                return EXIT_CLI_ERROR
+        try:
+            summary = export_eval(
+                ledger_root,
+                out_dir,
+                repo_root_override=repo_root_override,
+                force=args.force,
+            )
+        except ExportError as exc:
+            print("code-forge ledger export-eval: %s" % exc, file=sys.stderr)
+            return EXIT_CLI_ERROR
+        except OSError as exc:
+            # Disk-full, read-only fs, permission denied mid-write: the
+            # CLI surface reports a clean error, not a traceback.
+            print(
+                "code-forge ledger export-eval: export failed: %s" % exc,
+                file=sys.stderr,
+            )
+            return EXIT_CLI_ERROR
+        print(
+            "export-eval: %d emitted, %d unadjudicated, %d stale-sha, "
+            "%d duplicate-excluded, %d empty-diff, %d dedup-collapsed "
+            "(%d rows read)"
+            % (
+                summary.emitted,
+                summary.unadjudicated_skipped,
+                summary.stale_sha_skipped,
+                summary.duplicate_excluded,
+                summary.empty_diff_skipped,
+                summary.dedup_collapsed,
+                summary.total_rows_read,
+            )
+        )
+        if summary.unadjudicated_skipped:
+            print(
+                "export-eval: %d UNADJUDICATED rows were not exported; "
+                "run 'code-forge ledger adjudicate' to rule on them"
+                % summary.unadjudicated_skipped,
+                file=sys.stderr,
+            )
         return EXIT_PASS
 
     print(
