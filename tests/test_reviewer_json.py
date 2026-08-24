@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from code_forge.reviewer_json import validate_reviewer_json
+from code_forge.reviewer_json import REVIEW_JSON_CONTRACT, validate_reviewer_json
 
 VALID = {
     "findings": [
@@ -106,3 +106,14 @@ class TestSchemaFailClosed:
         data = {k: v for k, v in VALID.items() if k != "code_excerpts"}
         with pytest.raises(ValueError, match="missing required field"):
             validate_reviewer_json(json.dumps(data))
+
+
+class TestReviewJsonContract:
+    """Tests for REVIEW_JSON_CONTRACT content requirements."""
+
+    def test_contains_post_image_line_numbers_note(self):
+        """REVIEW_JSON_CONTRACT must specify that start_line/end_line are
+        post-image line numbers and @@ header old-side start is not a source line.
+        """
+        assert "start_line and end_line are post-image line numbers" in REVIEW_JSON_CONTRACT
+        assert "the @@ header's old-side start is not a source line" in REVIEW_JSON_CONTRACT

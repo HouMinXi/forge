@@ -650,7 +650,23 @@ def build_sampling_l1_provider(
             pr = pass_results[i]
 
             if isinstance(pr, LLMInvokeError):
-                raise pr
+                print(
+                    "code-forge: L1 sampling pass '%s' failed: %s"
+                    % (pass_name, pr),
+                    file=_sys.stderr,
+                )
+                all_candidates.append(StateFinding(
+                    id="l1-%s-invoke-fail" % pass_name,
+                    fingerprint="invoke-fail-%s" % pass_name,
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<llm-invoke>",
+                    line_range=[0, 0],
+                    description="L1 sampling invoke failed: %s" % pr,
+                    is_timeout=pr.is_timeout,
+                ))
+                total_duration += pr.duration_s
+                continue
 
             if isinstance(pr, BaseException):
                 print(
