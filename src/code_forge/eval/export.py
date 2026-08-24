@@ -430,9 +430,11 @@ def export_eval(
 
         # Priority 4: empty diff (gemini B-2: base == head or a 0-byte
         # materialized diff replays as permanent PASS -> false green).
-        # The empty check runs on the STRIPPED text: a diff whose only
-        # change is a foreign gate.yaml is stripped to nothing by D-17
-        # and must not emit a vacuous HOLD entry.
+        # base == head guarantees a 0-byte diff and is short-circuited
+        # before the git subprocess; the stripped-text check below
+        # catches a diff whose only change is a foreign gate.yaml
+        # (stripped to nothing by D-17), which must not emit a vacuous
+        # HOLD entry.
         if row.base_sha == row.head_sha:
             summary = dataclasses.replace(
                 summary, empty_diff_skipped=summary.empty_diff_skipped + 1
