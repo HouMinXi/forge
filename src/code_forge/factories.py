@@ -652,7 +652,7 @@ def build_sampling_l1_provider(
             if isinstance(pr, LLMInvokeError):
                 raise pr
 
-            if isinstance(pr, BaseException):
+            if isinstance(pr, Exception):
                 print(
                     "code-forge: L1 sampling pass '%s' UNEXPECTED: "
                     "%s: %s" % (pass_name, type(pr).__name__, pr),
@@ -669,6 +669,9 @@ def build_sampling_l1_provider(
                     % (type(pr).__name__, pr),
                 ))
                 continue
+
+            if isinstance(pr, BaseException):
+                raise pr
 
             result = pr
             total_duration += result.duration_s

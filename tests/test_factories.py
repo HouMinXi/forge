@@ -811,6 +811,30 @@ class TestBuildSamplingL1Provider:
             with pytest.raises(LLMInvokeError, match="empty"):
                 provider()
 
+    def test_build_sampling_l1_provider_cancelled_error_propagates(self):
+        """asyncio.CancelledError (BaseException) must propagate, not be folded into INFRA finding."""
+        import asyncio
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+        from code_forge.factories import build_sampling_l1_provider
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        session = MagicMock()
+        loop = MagicMock()
+
+        future = concurrent.futures.Future()
+        future.set_result([
+            asyncio.CancelledError(),
+            asyncio.CancelledError(),
+            asyncio.CancelledError(),
+        ])
+
+        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+            provider = build_sampling_l1_provider(session, loop, resolved)
+            with pytest.raises(asyncio.CancelledError):
+                provider()
+
 
 class TestParallelL1:
     """Parallel execution: determinism, no-lost-work, failure isolation."""

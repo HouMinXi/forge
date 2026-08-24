@@ -42,6 +42,8 @@ REVIEW_JSON_CONTRACT = (
     "change, a caller in another file -- goes in an optional "
     '"context_quotes": [{"file": "...", "content": "..."}] instead. It '
     "carries no line numbers because it asserts nothing about them.\n"
+    "start_line and end_line are post-image line numbers of the new file; "
+    "the @@ header's old-side start is not a source line.\n"
 )
 
 

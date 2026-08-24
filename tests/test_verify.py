@@ -366,6 +366,27 @@ class TestReceiptSchema:
         assert r.passed
 
 
+class TestTimestampMonotonic:
+    """ITEM 5: timestamps must be non-decreasing in (cycle, pass) order."""
+
+    def test_fail_timestamps_not_monotonic(self, tmp_path):
+        """c2p1 timestamp earlier than c1p1 -> FAIL at check 4."""
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+        sha = _sha("diff")
+        _write_all(rd, sha)
+        # Corrupt c2p1 timestamp to be earlier than c1p1
+        bad = json.loads((rd / "receipt-c2p1.json").read_text())
+        bad["timestamp"] = "2026-05-28T09:00:00Z"  # earlier than c1p1's 10:04:00Z
+        (rd / "receipt-c2p1.json").write_text(json.dumps(bad))
+        r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
+        assert not r.passed
+        assert r.checks_run == 4
+        assert "timestamps not monotonic" in r.reason
+
+
 class TestReceiptVerifyE2E:
     """End-to-end: receipt writer output must pass verify checks."""
 
