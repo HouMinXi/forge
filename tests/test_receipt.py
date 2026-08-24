@@ -318,3 +318,45 @@ class TestBuildExcerpts:
                 "a null-content excerpt must be rejected by receipt "
                 "schema validation, not silently accepted"
             )
+
+    def test_receipt_findings_include_epistemic_basis(self, tmp_path):
+        """Verify receipt finding entries include basis dictionary."""
+        f_conf = _finding("qodo", "fp1", file="src/foo.py", line=10)
+        f_conf.disposition = Disposition.CONFIRMED
+
+        f_dism = _finding("qodo", "fp2", file="src/foo.py", line=20)
+        f_dism.disposition = Disposition.DISMISSED
+
+        diff_sha = hashlib.sha256(b"diff").hexdigest()
+        (tmp_path / "src").mkdir(parents=True)
+        (tmp_path / "src" / "foo.py").write_text("line1\nline2\n")
+
+        write_receipts(
+            receipts_dir=tmp_path / ".code-forge" / "receipts",
+            round_index=2,  # cycle = 3
+            l1_findings=[f_conf, f_dism],
+            diff_sha256=diff_sha,
+            source_files=[Path("src/foo.py")],
+            cwd=tmp_path,
+        )
+
+        r = json.loads(
+            (tmp_path / ".code-forge" / "receipts" / "receipt-c3p1.json").read_text()
+        )
+        assert len(r["findings"]) == 2
+
+        finding_conf = r["findings"][0]
+        assert "basis" in finding_conf
+        assert finding_conf["basis"] == {
+            "authority": "llm-trained",
+            "falsification_survived": True,
+            "convergence_rounds": 3,
+        }
+
+        finding_dism = r["findings"][1]
+        assert "basis" in finding_dism
+        assert finding_dism["basis"] == {
+            "authority": "llm-trained",
+            "falsification_survived": False,
+            "convergence_rounds": 3,
+        }
