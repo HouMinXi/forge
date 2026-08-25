@@ -661,3 +661,71 @@ class TestEpistemicBasisSarifIntegration:
         ):
             build_sarif_log(state, {}, "2.0.0a1")
 
+
+class TestManifestSarifIntegration:
+    """SARIF environment manifest integration (Phase 52: ENV-MANIFEST)."""
+
+    def test_sarif_run_properties_includes_manifest(self):
+        from code_forge.manifest import EnvManifest, ManifestTier
+
+        manifest = EnvManifest(
+            tier=ManifestTier.DECLARED,
+            runtime="python 3.14.0",
+            manifest_path="poetry.lock",
+            manifest_format="poetry",
+            dependencies={"requests": "2.31.0"},
+            raw_summary="poetry.lock (1 deps)",
+        )
+        finding = _make_finding(Disposition.CONFIRMED, source="L1")
+        state = _make_state(verdict=Verdict.FAIL, findings=[finding])
+
+        sarif = build_sarif_log(state, {}, "2.0.0a1", manifest=manifest)
+        run_props = sarif["runs"][0]["properties"]
+        assert "manifest" in run_props
+        assert run_props["manifest"]["tier"] == "declared"
+        assert run_props["manifest"]["manifest_path"] == "poetry.lock"
+        assert run_props["manifest"]["dependencies"] == {"requests": "2.31.0"}
+
+    def test_sarif_absent_manifest_downgrades_level_and_flags_env_capped(self):
+        from code_forge.manifest import EnvManifest, ManifestTier
+
+        manifest = EnvManifest(
+            tier=ManifestTier.ABSENT,
+            raw_summary="absent (no lockfile or toolchain found)",
+        )
+        # L1 is version-sensitive -> should be downgraded from error to warning
+        f_l1 = _make_finding(Disposition.CONFIRMED, fingerprint="fp-l1", source="L1")
+        # L0 is non-version-sensitive -> should remain error
+        f_l0 = _make_finding(Disposition.CONFIRMED, fingerprint="fp-l0", source="L0")
+
+        state = _make_state(verdict=Verdict.FAIL, findings=[f_l1, f_l0])
+        sarif = build_sarif_log(state, {}, "2.0.0a1", manifest=manifest)
+        results = sarif["runs"][0]["results"]
+
+        assert results[0]["level"] == "warning"
+        assert results[0]["properties"]["env_capped"] is True
+        assert results[0]["properties"]["basis"]["authority"] == "llm-docs-latest"
+        assert results[0]["properties"]["basis"]["not_verified_against_declared_env"] is True
+
+        assert results[1]["level"] == "error"
+        assert "env_capped" not in results[1]["properties"]
+        assert results[1]["properties"]["basis"]["authority"] == "deterministic-executed"
+
+    def test_format_summary_includes_manifest_tier(self):
+        from code_forge.manifest import EnvManifest, ManifestTier
+
+        manifest = EnvManifest(
+            tier=ManifestTier.DECLARED,
+            raw_summary="poetry.lock",
+        )
+        finding = _make_finding(Disposition.CONFIRMED, source="L1")
+        state = _make_state(verdict=Verdict.FAIL, findings=[finding])
+
+        summary = format_summary(state, manifest=manifest)
+        assert "[manifest: declared]" in summary
+
+        manifest_absent = EnvManifest(tier=ManifestTier.ABSENT)
+        summary_absent = format_summary(state, manifest=manifest_absent)
+        assert "[manifest: absent]" in summary_absent
+
+

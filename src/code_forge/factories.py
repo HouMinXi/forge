@@ -228,6 +228,7 @@ def build_l1_provider(
     graph_impact_context: str = "",
     contract_spec: str = "",
     focus_spec: str = "",
+    manifest_spec: str = "",
     breaker=None,
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
@@ -243,6 +244,7 @@ def build_l1_provider(
         post_image: current content of changed files for excerpt verification (D11).
         graph_impact_context: blast-radius impact table for reviewer context.
         contract_spec: cross-repo contract reference for reviewer context.
+        manifest_spec: rendered environment manifest block for reviewer context.
     """
     from .llm_invoke import Usage
 
@@ -277,6 +279,10 @@ def build_l1_provider(
                 "You are a " + role + ". Review this diff.\n"
                 + REVIEW_JSON_CONTRACT
             )
+            if manifest_spec:
+                prompt += (
+                    "\n" + manifest_spec.strip() + "\n"
+                )
             if post_image:
                 prompt += (
                     "\n## Post-Image (current file content)\n"
@@ -544,6 +550,7 @@ def build_sampling_l1_provider(
     graph_impact_context: str = "",
     contract_spec: str = "",
     focus_spec: str = "",
+    manifest_spec: str = "",
 ) -> "Callable":
     """Build L1 provider that dispatches via MCP sampling.
 
@@ -592,6 +599,10 @@ def build_sampling_l1_provider(
                 "You are a " + role + ". Review this diff.\n"
                 + REVIEW_JSON_CONTRACT
             )
+            if manifest_spec:
+                prompt += (
+                    "\n" + manifest_spec.strip() + "\n"
+                )
             if post_image:
                 prompt += "\n## Post-Image (current file content)\n" + post_image + "\n"
             if conventions_digest:

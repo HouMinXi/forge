@@ -267,6 +267,9 @@ class StateMachine:
         self._state.mode = self.mode
         self._state.source_hash = self.source_hash
         self._state.baseline_spec_repr = self.baseline_spec_repr
+        if self._state.env_manifest is None and self.cwd and self.cwd.exists():
+            from .manifest import extract_manifest
+            self._state.env_manifest = extract_manifest(self.cwd).to_dict()
         if self.mode == Mode.LOCAL:
             verdict = self._run_local()
         elif self.mode == Mode.CI:
@@ -1025,6 +1028,7 @@ class StateMachine:
             diff_files=diff_files,
             diff_text=diff_text,
             reviewer_excerpts=l1_excerpts,
+            manifest=self._state.env_manifest,
         )
         self._persist_state()
         if self.post_round_hook is not None:
@@ -1543,7 +1547,6 @@ class StateMachine:
           - source in style_downgrade.pass_names or description matches keyword -> STYLE
         Fail-open: ledger read failure or missing gate.yaml silently degrades.
         """
-        import os
         import sys
         import yaml
         from pathlib import PurePath
