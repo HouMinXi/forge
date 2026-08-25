@@ -6,6 +6,7 @@ from pathlib import Path
 
 from code_forge import receipt as receipt_module
 from code_forge.disposition import Disposition
+from code_forge.manifest import ManifestTier
 from code_forge.receipt import write_receipts
 from code_forge.state import StateFinding
 from code_forge.verify import run_verify
@@ -338,6 +339,7 @@ class TestBuildExcerpts:
             diff_sha256=diff_sha,
             source_files=[Path("src/foo.py")],
             cwd=tmp_path,
+            manifest_tier=ManifestTier.DECLARED,
         )
 
         r = json.loads(
@@ -348,7 +350,7 @@ class TestBuildExcerpts:
         finding_conf = r["findings"][0]
         assert "basis" in finding_conf
         assert finding_conf["basis"] == {
-            "authority": "llm-trained",
+            "authority": "llm-docs-pinned",
             "falsification_survived": True,
             "convergence_rounds": 3,
         }
@@ -356,7 +358,7 @@ class TestBuildExcerpts:
         finding_dism = r["findings"][1]
         assert "basis" in finding_dism
         assert finding_dism["basis"] == {
-            "authority": "llm-trained",
+            "authority": "llm-docs-pinned",
             "falsification_survived": False,
             "convergence_rounds": 3,
         }
