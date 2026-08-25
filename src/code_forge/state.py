@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from .disposition import Disposition, DISPOSITION_PROTOCOL_VERSION
 from .errors import CorruptedStateError, SchemaVersionMismatchError
@@ -182,6 +182,8 @@ class State:
     cost_total_duration: float = 0.0
     cost_passes: int = 0
     cost_per_pass: list[dict] = field(default_factory=list)
+    # Phase 52 addition: env_manifest snapshot
+    env_manifest: Optional[dict[str, Any]] = None
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -294,6 +296,9 @@ def load_state(path: Path) -> Optional[State]:
     state.cost_passes = cost_data.get("passes", 0)
     state.cost_per_pass = cost_data.get("per_pass", [])
 
+    # Phase 52 additions: env_manifest snapshot
+    state.env_manifest = data.get("env_manifest")
+
     return state
 
 
@@ -350,6 +355,7 @@ def save_state(state: State, path: Path) -> None:
             "passes": state.cost_passes,
             "per_pass": state.cost_per_pass,
         },
+        "env_manifest": state.env_manifest,
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")

@@ -5,12 +5,14 @@
 Pure data transformation: State + tool_versions -> SARIF log dict.
 Caller (cli.py CI path) handles I/O.
 """
+
 from __future__ import annotations
 
 from typing import Any, Optional
 
 from .basis import derive_basis
 from .disposition import Disposition
+from .manifest import EnvManifest, ManifestTier
 from .state import (
     State,
     StateFinding,
@@ -53,14 +55,13 @@ def _suppressions_for(disposition: Disposition) -> Optional[list[dict[str, Any]]
     if disposition == Disposition.DISMISSED:
         return [{"kind": "external"}]
     if disposition == Disposition.FIXED:
-        return [{
-            "kind": "inSource",
-            "properties": {"fix_commit": None},
-        }]
-    raise ValueError(
-        "unknown Disposition %r; sarif.py mapping table needs update"
-        % disposition
-    )
+        return [
+            {
+                "kind": "inSource",
+                "properties": {"fix_commit": None},
+            }
+        ]
+    raise ValueError("unknown Disposition %r; sarif.py mapping table needs update" % disposition)
 
 
 def build_sarif_log(
@@ -70,6 +71,7 @@ def build_sarif_log(
     backend_name: Optional[str] = None,
     backend_model: Optional[str] = None,
     advisories: Optional[list] = None,
+    manifest: Optional[EnvManifest | dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Build SARIF 2.1.0 log dict.
 
@@ -94,7 +96,9 @@ def build_sarif_log(
             "build_sarif_log called with PENDING verdict on a LOCAL "
             "run; HOLD UX should have resolved it. Caller bug."
         )
-    run = _build_run(state, tool_versions, forge_version)
+    if manifest is None and getattr(state, "env_manifest", None) is not None:
+        manifest = state.env_manifest
+    run = _build_run(state, tool_versions, forge_version, manifest=manifest)
     if backend_name is not None and state.cost_passes > 0:
         run.setdefault("properties", {})["tokenCost"] = {
             "inputTokens": state.cost_total_input,
@@ -120,6 +124,9 @@ def build_sarif_log(
             }
             for a in advisories
         ]
+    if manifest is not None:
+        manifest_dict = manifest.to_dict() if isinstance(manifest, EnvManifest) else manifest
+        run.setdefault("properties", {})["manifest"] = manifest_dict
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
@@ -131,6 +138,7 @@ def _build_run(
     state: State,
     tool_versions: dict[str, str],
     forge_version: str,
+    manifest: Optional[EnvManifest | dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Build SARIF run dict.
 
@@ -142,19 +150,26 @@ def _build_run(
     v2.x adds rules[] when fingerprint generation evolves (Phase 3).
     Documented as known v2.0 limitation in Out of Scope.
     """
+    if manifest is not None and isinstance(manifest, EnvManifest):
+        manifest_tier = manifest.tier
+    elif manifest is not None and isinstance(manifest, dict):
+        try:
+            manifest_tier = ManifestTier(manifest.get("tier", "declared"))
+        except (ValueError, KeyError):
+            manifest_tier = ManifestTier.DECLARED
+    else:
+        manifest_tier = ManifestTier.DECLARED
     rounds = max(1, state.round)
     return {
         "tool": {
             "driver": {
                 "name": "code-forge",
-                "semanticVersion": _build_semantic_version(
-                    forge_version, tool_versions
-                ),
+                "semanticVersion": _build_semantic_version(forge_version, tool_versions),
                 "informationUri": "https://github.com/HouMinXi/code-forge",
             },
         },
         "results": [
-            _finding_to_result(f, convergence_rounds=rounds)
+            _finding_to_result(f, convergence_rounds=rounds, manifest_tier=manifest_tier)
             for f in state.findings
         ],
     }
@@ -173,9 +188,7 @@ def _build_semantic_version(
     corrupt the format string -- pre-validated upstream by registry
     loader; this builder trusts the input.
     """
-    tools_str = " ".join(
-        "%s=%s" % (t, v) for t, v in sorted(tool_versions.items())
-    )
+    tools_str = " ".join("%s=%s" % (t, v) for t, v in sorted(tool_versions.items()))
     if tools_str:
         return "code-forge %s [%s]" % (forge_version, tools_str)
     return "code-forge %s []" % forge_version
@@ -184,21 +197,30 @@ def _build_semantic_version(
 def _finding_to_result(
     finding: StateFinding,
     convergence_rounds: int = 1,
+    manifest_tier: ManifestTier = ManifestTier.DECLARED,
 ) -> dict[str, Any]:
     """Convert StateFinding -> SARIF result dict."""
+    props = _build_properties(
+        finding,
+        convergence_rounds=convergence_rounds,
+        manifest_tier=manifest_tier,
+    )
+    level = DISPOSITION_TO_LEVEL[finding.disposition]
+    if props.get("env_capped"):
+        if level == "error":
+            level = "warning"
+        elif level == "warning":
+            level = "note"
     result: dict[str, Any] = {
         "ruleId": finding.fingerprint,
-        "level": DISPOSITION_TO_LEVEL[finding.disposition],
+        "level": level,
         "message": {"text": finding.description},
         "locations": [_build_location(finding)],
     }
     suppressions = _suppressions_for(finding.disposition)
     if suppressions is not None:
         result["suppressions"] = suppressions
-    result["properties"] = _build_properties(
-        finding,
-        convergence_rounds=convergence_rounds,
-    )
+    result["properties"] = props
     return result
 
 
@@ -238,6 +260,7 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
 def _build_properties(
     finding: StateFinding,
     convergence_rounds: int = 1,
+    manifest_tier: ManifestTier = ManifestTier.DECLARED,
 ) -> dict[str, Any]:
     """Optional fields (anchor, evidence_files, error, basis) -> properties dict.
 
@@ -252,8 +275,14 @@ def _build_properties(
     if finding.error is not None:
         props["error"] = finding.error
     props["source"] = finding.source
-    basis = derive_basis(finding, convergence_rounds=convergence_rounds)
+    basis = derive_basis(
+        finding,
+        convergence_rounds=convergence_rounds,
+        manifest_tier=manifest_tier,
+    )
     props["basis"] = basis.to_dict()
+    if basis.not_verified_against_declared_env:
+        props["env_capped"] = True
     return props
 
 
@@ -266,14 +295,15 @@ def _count_pass_outcomes(
     Empty findings -> (3,3) all-completed (clean run).
     """
     pass_outcomes = derive_pass_outcomes(l1_findings)
-    completed = sum(
-        1 for v in pass_outcomes.values()
-        if v == PassOutcome.COMPLETED
-    )
+    completed = sum(1 for v in pass_outcomes.values() if v == PassOutcome.COMPLETED)
     return (completed, len(_PASS_NAMES))
 
 
-def format_summary(state: State, advisory_count: int = 0) -> str:
+def format_summary(
+    state: State,
+    advisory_count: int = 0,
+    manifest: Optional[EnvManifest | ManifestTier | str | dict[str, Any]] = None,
+) -> str:
     """One-line stderr summary per LAYER0-07.
 
     Format matches regex:
@@ -301,15 +331,13 @@ def format_summary(state: State, advisory_count: int = 0) -> str:
         if f.source == "INFRA":
             infra += 1
     total = len(state.findings)
-    line = (
-        "code-forge: %s findings=%d confirmed=%d uncertain=%d "
-        "dismissed=%d fixed=%d" % (
-            state.verdict.value, total,
-            counts[Disposition.CONFIRMED],
-            counts[Disposition.UNCERTAIN],
-            counts[Disposition.DISMISSED],
-            counts[Disposition.FIXED],
-        )
+    line = "code-forge: %s findings=%d confirmed=%d uncertain=%d dismissed=%d fixed=%d" % (
+        state.verdict.value,
+        total,
+        counts[Disposition.CONFIRMED],
+        counts[Disposition.UNCERTAIN],
+        counts[Disposition.DISMISSED],
+        counts[Disposition.FIXED],
     )
     if infra:
         line += " infra=%d" % infra
@@ -318,4 +346,16 @@ def format_summary(state: State, advisory_count: int = 0) -> str:
     completed, total = _count_pass_outcomes(state.findings)
     if completed < total:
         line += " passes=%d/%d" % (completed, total)
+    if manifest is None and getattr(state, "env_manifest", None) is not None:
+        manifest = state.env_manifest
+    if manifest is not None:
+        if isinstance(manifest, EnvManifest):
+            tier_value = manifest.tier.value
+        elif isinstance(manifest, ManifestTier):
+            tier_value = manifest.value
+        elif isinstance(manifest, dict):
+            tier_value = manifest.get("tier", "declared")
+        else:
+            tier_value = str(manifest)
+        line += " [manifest: %s]" % tier_value
     return line

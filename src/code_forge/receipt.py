@@ -9,8 +9,10 @@ from __future__ import annotations
 import datetime
 import json
 from pathlib import Path
+from typing import Any, Optional
 
 from .basis import derive_basis
+from .manifest import EnvManifest, ManifestTier
 from .state import (
     StateFinding,
     PassOutcome,
@@ -86,9 +88,35 @@ def write_receipts(
     diff_files: dict[str, list[int]] | None = None,
     diff_text: str | None = None,
     reviewer_excerpts: list[dict] | None = None,
+    manifest: Optional[EnvManifest | ManifestTier | dict[str, Any] | str] = None,
+    manifest_tier: Optional[ManifestTier] = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
     receipts_dir.mkdir(parents=True, exist_ok=True)
+    if manifest_tier is not None:
+        effective_tier = manifest_tier
+    elif manifest is not None:
+        if isinstance(manifest, ManifestTier):
+            effective_tier = manifest
+        elif isinstance(manifest, EnvManifest):
+            effective_tier = manifest.tier
+        elif isinstance(manifest, dict):
+            try:
+                effective_tier = ManifestTier(manifest.get("tier", "declared"))
+            except (ValueError, KeyError):
+                effective_tier = ManifestTier.DECLARED
+        else:
+            try:
+                effective_tier = ManifestTier(str(manifest))
+            except ValueError:
+                effective_tier = ManifestTier.DECLARED
+    else:
+        try:
+            from .manifest import extract_manifest
+            effective_tier = extract_manifest(cwd).tier
+        except Exception:
+            effective_tier = ManifestTier.DECLARED
+
     by_pass = _split_by_pass(l1_findings)
     cycle = round_index + 1
     # One write time for the whole round. A per-pass offset is not ordered
@@ -122,7 +150,9 @@ def write_receipts(
                     "line": f.line_range[0] if f.line_range else 0,
                     "description": f.description,
                     "disposition": f.disposition.value,
-                    "basis": derive_basis(f, convergence_rounds=cycle).to_dict(),
+                    "basis": derive_basis(
+                        f, convergence_rounds=cycle, manifest_tier=effective_tier
+                    ).to_dict(),
                 }
                 for f in pass_findings
             ],

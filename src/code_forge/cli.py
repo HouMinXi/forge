@@ -86,6 +86,7 @@ def _emit_ci_output(
     post_emit_hook: Optional[Callable[[], None]] = None,
     backend_name: Optional[str] = None,
     backend_model: Optional[str] = None,
+    manifest: Optional[Any] = None,
 ) -> None:
     """Emit SARIF to stdout and summary to stderr in CI mode.
 
@@ -112,10 +113,13 @@ def _emit_ci_output(
         final_state, tool_versions, forge_version=__version__,
         backend_name=backend_name, backend_model=backend_model,
         advisories=advisories or None,
+        manifest=manifest,
     )
     print(json.dumps(log_dict), file=sys.stdout)
     print(
-        format_summary(final_state, advisory_count=len(advisories)),
+        format_summary(
+            final_state, advisory_count=len(advisories), manifest=manifest
+        ),
         file=sys.stderr,
     )
     if post_emit_hook is not None:
@@ -898,14 +902,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _make_subagent_spawn(
     backend, conv_digest: str, post_image: str, contract_spec: str = "",
-    focus_spec: str = "",
+    focus_spec: str = "", manifest_spec: str = "",
 ):
     """Factory for subagent spawn_fn. Module-level for testability.
 
     Returns a spawn_fn(pass_name, diff_text) -> str that calls llm_invoke
     per pass with a fresh context (no shared session). The prompt contains
     only the diff, post-image content, conventions digest, contract spec,
-    and pass role -- no implementer session context.
+    manifest spec, and pass role -- no implementer session context.
 
     Args:
         backend: BackendConfig for llm_invoke. None is not accepted:
@@ -914,6 +918,8 @@ def _make_subagent_spawn(
         conv_digest: conventions digest string, may be "".
         post_image: post-image content of changed files, may be "".
         contract_spec: cross-repo contract reference, may be "".
+        focus_spec: review focus string, may be "".
+        manifest_spec: rendered environment manifest block, may be "".
     """
     _PASS_ROLES = {
         "qodo": "structural code reviewer: correctness and logic errors",
@@ -929,6 +935,10 @@ def _make_subagent_spawn(
             "You are a " + role + ". Review this diff.\n"
             + REVIEW_JSON_CONTRACT
         )
+        if manifest_spec:
+            prompt += (
+                "\n" + manifest_spec.strip() + "\n"
+            )
         if post_image:
             prompt += (
                 "\n## Post-Image (current file content)\n"
@@ -2799,10 +2809,14 @@ def _dispatch_subagent(
         backend=backend, warn_fn=warn,
     )
     _focus_spec_c = _merge_focus_spec(yaml_focus, _focus_file_content, warn)
+    from .manifest import extract_manifest
+    _manifest_c = extract_manifest(cwd)
+    _manifest_spec_c = _manifest_c.to_prompt_block()
     _subagent_spawn = _make_subagent_spawn(
         backend, _conv_digest, _post_image,
         contract_spec=_contract_spec_c,
         focus_spec=_focus_spec_c,
+        manifest_spec=_manifest_spec_c,
     )
     _c_taint = TaintRunner()
     _c_runtime = RuntimeRunner(backend=backend)
@@ -3374,12 +3388,17 @@ def _run(args, env, cwd: Path) -> Verdict:
     from .llm_invoke import TruncationBreaker
     truncation_breaker = TruncationBreaker(threshold=5)
 
+    from .manifest import extract_manifest
+    _manifest_a = extract_manifest(cwd)
+    _manifest_spec_a = _manifest_a.to_prompt_block()
+
     l1_provider = build_l1_provider(
         engine_choice, resolved, backend=backend,
         conventions_digest=_conv_digest_a,
         post_image=_post_image_a,
         graph_impact_context=_graph_impact_context,
         contract_spec=_contract_spec_a,
+        manifest_spec=_manifest_spec_a,
         breaker=breaker,
         continuation_breaker=truncation_breaker,
         max_attempts=retry_cfg.get("max_attempts", 5),
@@ -3491,6 +3510,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                     backend_model=(
                         backend.model if backend.type == "api" else None
                     ),
+                    manifest=_manifest_a,
                 )
     except LLMInvokeError as exc:
         # re-wrap LLMInvokeError as CliError
