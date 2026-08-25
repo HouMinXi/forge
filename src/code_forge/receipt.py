@@ -10,6 +10,7 @@ import datetime
 import json
 from pathlib import Path
 
+from .basis import derive_basis
 from .state import (
     StateFinding,
     PassOutcome,
@@ -121,6 +122,7 @@ def write_receipts(
                     "line": f.line_range[0] if f.line_range else 0,
                     "description": f.description,
                     "disposition": f.disposition.value,
+                    "basis": derive_basis(f, convergence_rounds=cycle).to_dict(),
                 }
                 for f in pass_findings
             ],

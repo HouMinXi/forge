@@ -600,3 +600,64 @@ class TestTokenCost:
             == result_without["runs"][0]["results"]
         )
         assert len(result_with["runs"][0]["results"]) == 2
+
+
+class TestEpistemicBasisSarifIntegration:
+    """SARIF epistemic basis disclosure property integration."""
+
+    def test_sarif_log_includes_epistemic_basis(self):
+        f_l0 = _make_finding(Disposition.CONFIRMED, fingerprint="fp-l0", source="L0")
+        f_l1_conf = _make_finding(Disposition.CONFIRMED, fingerprint="fp-l1-conf", source="L1")
+        f_l1_dism = _make_finding(Disposition.DISMISSED, fingerprint="fp-l1-dism", source="L1")
+        f_mutant = _make_finding(Disposition.CONFIRMED, fingerprint="fp-mutant", source="MUTANT")
+
+        state = _make_state(verdict=Verdict.PASS, findings=[f_l0, f_l1_conf, f_l1_dism, f_mutant])
+        state.round = 3
+
+        result = build_sarif_log(state, {}, "2.0.0a1")
+        results = result["runs"][0]["results"]
+
+        assert len(results) == 4
+        # f_l0
+        assert results[0]["properties"]["basis"] == {
+            "authority": "deterministic-executed",
+            "falsification_survived": True,
+            "convergence_rounds": 3,
+        }
+        # f_l1_conf
+        assert results[1]["properties"]["basis"] == {
+            "authority": "llm-trained",
+            "falsification_survived": True,
+            "convergence_rounds": 3,
+        }
+        # f_l1_dism
+        assert results[2]["properties"]["basis"] == {
+            "authority": "llm-trained",
+            "falsification_survived": False,
+            "convergence_rounds": 3,
+        }
+        # f_mutant
+        assert results[3]["properties"]["basis"] == {
+            "authority": "deterministic-executed",
+            "falsification_survived": True,
+            "convergence_rounds": 3,
+        }
+
+    def test_sarif_log_clamps_zero_round_to_one(self):
+        finding = _make_finding(Disposition.CONFIRMED, source="L0")
+        state = _make_state(verdict=Verdict.PASS, findings=[finding])
+        state.round = 0
+
+        result = build_sarif_log(state, {}, "2.0.0a1")
+        basis = result["runs"][0]["results"][0]["properties"]["basis"]
+        assert basis["convergence_rounds"] == 1
+
+    def test_sarif_refuses_unclassifiable_finding_source(self):
+        finding = _make_finding(Disposition.CONFIRMED, source="UNREGISTERED_SOURCE")
+        state = _make_state(verdict=Verdict.PASS, findings=[finding])
+        with pytest.raises(
+            ValueError,
+            match=r"unknown finding source 'UNREGISTERED_SOURCE'; add to basis derivation table",
+        ):
+            build_sarif_log(state, {}, "2.0.0a1")
+

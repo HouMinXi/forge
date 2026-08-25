@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from .basis import derive_basis
 from .disposition import Disposition
 from .state import (
     State,
@@ -141,6 +142,7 @@ def _build_run(
     v2.x adds rules[] when fingerprint generation evolves (Phase 3).
     Documented as known v2.0 limitation in Out of Scope.
     """
+    rounds = max(1, state.round)
     return {
         "tool": {
             "driver": {
@@ -151,7 +153,10 @@ def _build_run(
                 "informationUri": "https://github.com/HouMinXi/code-forge",
             },
         },
-        "results": [_finding_to_result(f) for f in state.findings],
+        "results": [
+            _finding_to_result(f, convergence_rounds=rounds)
+            for f in state.findings
+        ],
     }
 
 
@@ -176,7 +181,10 @@ def _build_semantic_version(
     return "code-forge %s []" % forge_version
 
 
-def _finding_to_result(finding: StateFinding) -> dict[str, Any]:
+def _finding_to_result(
+    finding: StateFinding,
+    convergence_rounds: int = 1,
+) -> dict[str, Any]:
     """Convert StateFinding -> SARIF result dict."""
     result: dict[str, Any] = {
         "ruleId": finding.fingerprint,
@@ -187,7 +195,10 @@ def _finding_to_result(finding: StateFinding) -> dict[str, Any]:
     suppressions = _suppressions_for(finding.disposition)
     if suppressions is not None:
         result["suppressions"] = suppressions
-    result["properties"] = _build_properties(finding)
+    result["properties"] = _build_properties(
+        finding,
+        convergence_rounds=convergence_rounds,
+    )
     return result
 
 
@@ -224,8 +235,11 @@ def _build_location(finding: StateFinding) -> dict[str, Any]:
     }
 
 
-def _build_properties(finding: StateFinding) -> dict[str, Any]:
-    """Optional fields (anchor, evidence_files, error) -> properties dict.
+def _build_properties(
+    finding: StateFinding,
+    convergence_rounds: int = 1,
+) -> dict[str, Any]:
+    """Optional fields (anchor, evidence_files, error, basis) -> properties dict.
 
     Absent fields are OMITTED, not emitted as null. Keeps SARIF compact
     for integrators that pretty-print.
@@ -238,6 +252,8 @@ def _build_properties(finding: StateFinding) -> dict[str, Any]:
     if finding.error is not None:
         props["error"] = finding.error
     props["source"] = finding.source
+    basis = derive_basis(finding, convergence_rounds=convergence_rounds)
+    props["basis"] = basis.to_dict()
     return props
 
 
