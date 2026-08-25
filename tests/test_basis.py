@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <[EMAIL_REDACTED]>
 """Unit tests for code_forge.basis module (Phase 51: BASIS-DISCLOSE & Phase 52: ENV-MANIFEST)."""
+
 from __future__ import annotations
 
 from typing import Any, cast
@@ -10,7 +11,7 @@ import pytest
 from code_forge.basis import (
     AUTHORITY_DETERMINISTIC_EXECUTED,
     AUTHORITY_LLM_DOCS_LATEST,
-    AUTHORITY_LLM_TRAINED,
+    AUTHORITY_LLM_DOCS_PINNED,
     EpistemicBasis,
     derive_basis,
 )
@@ -52,13 +53,13 @@ class TestEpistemicBasisDataclass:
 
     def test_to_dict(self):
         basis = EpistemicBasis(
-            authority=AUTHORITY_LLM_TRAINED,
+            authority=AUTHORITY_LLM_DOCS_PINNED,
             falsification_survived=False,
             convergence_rounds=3,
             not_verified_against_declared_env=True,
         )
         assert basis.to_dict() == {
-            "authority": "llm-trained",
+            "authority": "llm-docs-pinned",
             "falsification_survived": False,
             "convergence_rounds": 3,
             "not_verified_against_declared_env": True,
@@ -96,7 +97,13 @@ class TestDeriveBasis:
     )
     def test_deterministic_sources_authority_and_survival(self, source: str):
         # Deterministic sources under DECLARED tier
-        for disp in (Disposition.CONFIRMED, Disposition.DISMISSED, Disposition.UNCERTAIN, Disposition.FIXED, Disposition.STYLE):
+        for disp in (
+            Disposition.CONFIRMED,
+            Disposition.DISMISSED,
+            Disposition.UNCERTAIN,
+            Disposition.FIXED,
+            Disposition.STYLE,
+        ):
             finding = _make_finding(source=source, disposition=disp)
             basis = derive_basis(finding, convergence_rounds=2, manifest_tier=ManifestTier.DECLARED)
             assert basis.authority == AUTHORITY_DETERMINISTIC_EXECUTED
@@ -121,7 +128,7 @@ class TestDeriveBasis:
     ):
         finding = _make_finding(source="L1", disposition=disposition)
         basis = derive_basis(finding, convergence_rounds=4, manifest_tier=ManifestTier.DECLARED)
-        assert basis.authority == AUTHORITY_LLM_TRAINED
+        assert basis.authority == AUTHORITY_LLM_DOCS_PINNED
         assert basis.falsification_survived is expected_survived
         assert basis.convergence_rounds == 4
         assert basis.not_verified_against_declared_env is False
@@ -137,10 +144,10 @@ class TestDeriveBasis:
     def test_absent_manifest_degrades_version_sensitive_mutant(self):
         finding = _make_finding(source="MUTANT", disposition=Disposition.CONFIRMED)
         basis = derive_basis(finding, convergence_rounds=2, manifest_tier=ManifestTier.ABSENT)
-        assert basis.authority == AUTHORITY_LLM_DOCS_LATEST
+        assert basis.authority == AUTHORITY_DETERMINISTIC_EXECUTED
         assert basis.falsification_survived is True
         assert basis.convergence_rounds == 2
-        assert basis.not_verified_against_declared_env is True
+        assert basis.not_verified_against_declared_env is False
 
     @pytest.mark.parametrize(
         "source",
@@ -165,7 +172,7 @@ class TestDeriveBasis:
     def test_observed_manifest_does_not_degrade(self):
         finding_l1 = _make_finding(source="L1", disposition=Disposition.CONFIRMED)
         basis_l1 = derive_basis(finding_l1, manifest_tier=ManifestTier.OBSERVED)
-        assert basis_l1.authority == AUTHORITY_LLM_TRAINED
+        assert basis_l1.authority == AUTHORITY_LLM_DOCS_LATEST
         assert basis_l1.not_verified_against_declared_env is False
 
         finding_mut = _make_finding(source="MUTANT", disposition=Disposition.CONFIRMED)

@@ -26,6 +26,7 @@
   (p) mixed findings correctness
   (q) _suppressions_for unknown Disposition raises ValueError
 """
+
 import re
 from unittest.mock import Mock
 
@@ -179,10 +180,12 @@ class TestFixedFinding:
 
         sarif_result = result["runs"][0]["results"][0]
         assert sarif_result["level"] == "note"
-        assert sarif_result["suppressions"] == [{
-            "kind": "inSource",
-            "properties": {"fix_commit": None},
-        }]
+        assert sarif_result["suppressions"] == [
+            {
+                "kind": "inSource",
+                "properties": {"fix_commit": None},
+            }
+        ]
 
 
 class TestLineRangeHandling:
@@ -217,9 +220,7 @@ class TestLineRangeHandling:
 
     def test_line_range_more_than_two(self):
         """(g4) line_range >2 elements -> first two used."""
-        finding = _make_finding(
-            Disposition.CONFIRMED, line_range=[10, 20, 30, 40]
-        )
+        finding = _make_finding(Disposition.CONFIRMED, line_range=[10, 20, 30, 40])
         location = _build_location(finding)
 
         region = location["physicalLocation"]["region"]
@@ -270,9 +271,7 @@ class TestErrorFieldHandling:
 
     def test_error_present(self):
         """(j2) error present -> properties.error."""
-        finding = _make_finding(
-            Disposition.CONFIRMED, error="parse error: unexpected EOF"
-        )
+        finding = _make_finding(Disposition.CONFIRMED, error="parse error: unexpected EOF")
         props = _build_properties(finding)
 
         assert props["error"] == "parse error: unexpected EOF"
@@ -289,9 +288,7 @@ class TestRuleIdMapping:
     """(k) ruleId == fingerprint."""
 
     def test_rule_id_equals_fingerprint(self):
-        finding = _make_finding(
-            Disposition.CONFIRMED, fingerprint="fp-unique-123"
-        )
+        finding = _make_finding(Disposition.CONFIRMED, fingerprint="fp-unique-123")
         state = _make_state(Verdict.FAIL, [finding])
         result = build_sarif_log(state, {}, "2.0.0a1")
 
@@ -303,9 +300,7 @@ class TestMessageMapping:
     """(l) message.text == description."""
 
     def test_message_text_equals_description(self):
-        finding = _make_finding(
-            Disposition.CONFIRMED, description="detailed error message here"
-        )
+        finding = _make_finding(Disposition.CONFIRMED, description="detailed error message here")
         state = _make_state(Verdict.FAIL, [finding])
         result = build_sarif_log(state, {}, "2.0.0a1")
 
@@ -382,13 +377,15 @@ class TestFormatSummaryInfraCount:
         findings = [
             _make_finding(Disposition.CONFIRMED, source="L0"),
             _make_finding(
-                Disposition.CONFIRMED, source="INFRA",
+                Disposition.CONFIRMED,
+                source="INFRA",
                 fingerprint="fp-infra-1",
                 file="<llm-invoke>",
                 description="invoke-fail-qodo",
             ),
             _make_finding(
-                Disposition.CONFIRMED, source="INFRA",
+                Disposition.CONFIRMED,
+                source="INFRA",
                 fingerprint="fp-infra-2",
                 file="<llm-invoke>",
                 description="invoke-fail-expert",
@@ -425,6 +422,7 @@ class TestPendingVerdictRaises:
         findings with no human at the keyboard. It must produce a log,
         not a crash."""
         from code_forge.state import Mode
+
         state = _make_state(Verdict.PENDING, [])
         state.mode = Mode.CI
         log = build_sarif_log(state, {}, "2.0.0a1")
@@ -441,6 +439,7 @@ class TestPendingVerdictRaises:
     def test_format_summary_pending_ci_passes(self):
         """CI PENDING is a legitimate terminal state."""
         from code_forge.state import Mode
+
         state = _make_state(Verdict.PENDING, [])
         state.mode = Mode.CI
         line = format_summary(state)
@@ -477,10 +476,12 @@ class TestMixedFindings:
 
         # FIXED
         assert results[3]["level"] == "note"
-        assert results[3]["suppressions"] == [{
-            "kind": "inSource",
-            "properties": {"fix_commit": None},
-        }]
+        assert results[3]["suppressions"] == [
+            {
+                "kind": "inSource",
+                "properties": {"fix_commit": None},
+            }
+        ]
 
 
 class TestUnknownDispositionRaises:
@@ -551,8 +552,11 @@ class TestTokenCost:
         """tokenCost emitted when backend_name provided and passes > 0."""
         state = self._make_cost_state()
         result = build_sarif_log(
-            state, {}, "2.0.0a1",
-            backend_name="mimo", backend_model="mimo-v2.5-pro",
+            state,
+            {},
+            "2.0.0a1",
+            backend_name="mimo",
+            backend_model="mimo-v2.5-pro",
         )
         tc = result["runs"][0]["properties"]["tokenCost"]
         assert tc["inputTokens"] == 100
@@ -568,20 +572,19 @@ class TestTokenCost:
         state = self._make_cost_state()
         result = build_sarif_log(state, {}, "2.0.0a1", backend_name=None)
         run = result["runs"][0]
-        assert "properties" not in run or "tokenCost" not in run.get(
-            "properties", {}
-        )
+        assert "properties" not in run or "tokenCost" not in run.get("properties", {})
 
     def test_sarif_log_zero_passes(self):
         """No tokenCost when cost_passes is 0 (no review ran)."""
         state = self._make_cost_state(cost_passes=0)
         result = build_sarif_log(
-            state, {}, "2.0.0a1", backend_name="mimo",
+            state,
+            {},
+            "2.0.0a1",
+            backend_name="mimo",
         )
         run = result["runs"][0]
-        assert "properties" not in run or "tokenCost" not in run.get(
-            "properties", {}
-        )
+        assert "properties" not in run or "tokenCost" not in run.get("properties", {})
 
     def test_sarif_log_preserves_results(self):
         """tokenCost does not alter findings in results."""
@@ -591,14 +594,14 @@ class TestTokenCost:
         ]
         state = self._make_cost_state(findings=findings)
         result_with = build_sarif_log(
-            state, {}, "2.0.0a1",
-            backend_name="mimo", backend_model="mimo-v2.5-pro",
+            state,
+            {},
+            "2.0.0a1",
+            backend_name="mimo",
+            backend_model="mimo-v2.5-pro",
         )
         result_without = build_sarif_log(state, {}, "2.0.0a1")
-        assert (
-            result_with["runs"][0]["results"]
-            == result_without["runs"][0]["results"]
-        )
+        assert result_with["runs"][0]["results"] == result_without["runs"][0]["results"]
         assert len(result_with["runs"][0]["results"]) == 2
 
 
@@ -626,13 +629,13 @@ class TestEpistemicBasisSarifIntegration:
         }
         # f_l1_conf
         assert results[1]["properties"]["basis"] == {
-            "authority": "llm-trained",
+            "authority": "llm-docs-pinned",
             "falsification_survived": True,
             "convergence_rounds": 3,
         }
         # f_l1_dism
         assert results[2]["properties"]["basis"] == {
-            "authority": "llm-trained",
+            "authority": "llm-docs-pinned",
             "falsification_survived": False,
             "convergence_rounds": 3,
         }
@@ -693,12 +696,14 @@ class TestManifestSarifIntegration:
             tier=ManifestTier.ABSENT,
             raw_summary="absent (no lockfile or toolchain found)",
         )
-        # L1 is version-sensitive -> should be downgraded from error to warning
-        f_l1 = _make_finding(Disposition.CONFIRMED, fingerprint="fp-l1", source="L1")
-        # L0 is non-version-sensitive -> should remain error
+        # L1 CONFIRMED is version-sensitive -> error downgraded to warning
+        f_l1_conf = _make_finding(Disposition.CONFIRMED, fingerprint="fp-l1-conf", source="L1")
+        # L1 UNCERTAIN is version-sensitive -> warning downgraded to note
+        f_l1_unc = _make_finding(Disposition.UNCERTAIN, fingerprint="fp-l1-unc", source="L1")
+        # L0 is non-version-sensitive -> error remains error
         f_l0 = _make_finding(Disposition.CONFIRMED, fingerprint="fp-l0", source="L0")
 
-        state = _make_state(verdict=Verdict.FAIL, findings=[f_l1, f_l0])
+        state = _make_state(verdict=Verdict.FAIL, findings=[f_l1_conf, f_l1_unc, f_l0])
         sarif = build_sarif_log(state, {}, "2.0.0a1", manifest=manifest)
         results = sarif["runs"][0]["results"]
 
@@ -707,9 +712,14 @@ class TestManifestSarifIntegration:
         assert results[0]["properties"]["basis"]["authority"] == "llm-docs-latest"
         assert results[0]["properties"]["basis"]["not_verified_against_declared_env"] is True
 
-        assert results[1]["level"] == "error"
-        assert "env_capped" not in results[1]["properties"]
-        assert results[1]["properties"]["basis"]["authority"] == "deterministic-executed"
+        assert results[1]["level"] == "note"
+        assert results[1]["properties"]["env_capped"] is True
+        assert results[1]["properties"]["basis"]["authority"] == "llm-docs-latest"
+        assert results[1]["properties"]["basis"]["not_verified_against_declared_env"] is True
+
+        assert results[2]["level"] == "error"
+        assert "env_capped" not in results[2]["properties"]
+        assert results[2]["properties"]["basis"]["authority"] == "deterministic-executed"
 
     def test_format_summary_includes_manifest_tier(self):
         from code_forge.manifest import EnvManifest, ManifestTier
@@ -727,5 +737,3 @@ class TestManifestSarifIntegration:
         manifest_absent = EnvManifest(tier=ManifestTier.ABSENT)
         summary_absent = format_summary(state, manifest=manifest_absent)
         assert "[manifest: absent]" in summary_absent
-
-

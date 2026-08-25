@@ -5,12 +5,12 @@
 Provides mechanical derivation of epistemic authority and falsification
 survival status for findings emitted across deterministic and LLM passes.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Final
 
-from .claim import derive_claim_type
 from .disposition import Disposition
 from .manifest import ManifestTier
 from .state import StateFinding
@@ -21,17 +21,19 @@ AUTHORITY_LLM_TRAINED: Final[str] = "llm-trained"
 AUTHORITY_LLM_DOCS_LATEST: Final[str] = "llm-docs-latest"
 AUTHORITY_LLM_DOCS_PINNED: Final[str] = "llm-docs-pinned"
 
-_DETERMINISTIC_SOURCES: Final[frozenset[str]] = frozenset({
-    "L0",
-    "MUTANT",
-    "E2E_CHECK",
-    "COVERAGE",
-    "INFRA",
-    "FIXVAL",
-    "LINT",
-    "FORMAT",
-    "SECURITY",
-})
+_DETERMINISTIC_SOURCES: Final[frozenset[str]] = frozenset(
+    {
+        "L0",
+        "MUTANT",
+        "E2E_CHECK",
+        "COVERAGE",
+        "INFRA",
+        "FIXVAL",
+        "LINT",
+        "FORMAT",
+        "SECURITY",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -62,22 +64,19 @@ def derive_basis(
 ) -> EpistemicBasis:
     """Derive EpistemicBasis from a StateFinding mechanically.
 
-    Deterministic sources are backed by executed verification tools.
-    L1 sources reflect LLM generative reasoning against falsifier outcomes.
-    When manifest_tier is ABSENT and the finding is version-sensitive
-    (L1 or MUTANT), authority is capped at AUTHORITY_LLM_DOCS_LATEST
-    and not_verified_against_declared_env is set to True.
+    Deterministic sources are backed by executed verification tools and
+    are invariant: manifest_tier NEVER modifies or caps their authority,
+    even when the environment is ABSENT (their claims are grounded in
+    executed tools, not in LLM recall of a declared environment).
+    L1 sources reflect LLM generative reasoning against falsifier
+    outcomes and are version-sensitive: the tier of the environment
+    manifest selects their epistemic authority per the 3-tier matrix:
+      - DECLARED:  llm-docs-pinned, not_verified_against_declared_env=False
+      - OBSERVED:  llm-docs-latest, not_verified_against_declared_env=False
+      - ABSENT:    llm-docs-latest, not_verified_against_declared_env=True
     Unknown sources raise ValueError to prevent unclassified authority leak.
     """
     if finding.source in _DETERMINISTIC_SOURCES:
-        if (manifest_tier == ManifestTier.ABSENT
-                and derive_claim_type(finding.source).version_sensitive):
-            return EpistemicBasis(
-                authority=AUTHORITY_LLM_DOCS_LATEST,
-                falsification_survived=True,
-                convergence_rounds=convergence_rounds,
-                not_verified_against_declared_env=True,
-            )
         return EpistemicBasis(
             authority=AUTHORITY_DETERMINISTIC_EXECUTED,
             falsification_survived=True,
@@ -86,19 +85,23 @@ def derive_basis(
 
     if finding.source == "L1":
         survived = finding.disposition != Disposition.DISMISSED
-        if manifest_tier == ManifestTier.ABSENT:
+        if manifest_tier == ManifestTier.DECLARED:
+            return EpistemicBasis(
+                authority=AUTHORITY_LLM_DOCS_PINNED,
+                falsification_survived=survived,
+                convergence_rounds=convergence_rounds,
+            )
+        if manifest_tier == ManifestTier.OBSERVED:
             return EpistemicBasis(
                 authority=AUTHORITY_LLM_DOCS_LATEST,
                 falsification_survived=survived,
                 convergence_rounds=convergence_rounds,
-                not_verified_against_declared_env=True,
             )
         return EpistemicBasis(
-            authority=AUTHORITY_LLM_TRAINED,
+            authority=AUTHORITY_LLM_DOCS_LATEST,
             falsification_survived=survived,
             convergence_rounds=convergence_rounds,
+            not_verified_against_declared_env=True,
         )
 
-    raise ValueError(
-        f"unknown finding source {finding.source!r}; add to basis derivation table"
-    )
+    raise ValueError(f"unknown finding source {finding.source!r}; add to basis derivation table")

@@ -5,6 +5,7 @@
 Pure data transformation: State + tool_versions -> SARIF log dict.
 Caller (cli.py CI path) handles I/O.
 """
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -54,14 +55,13 @@ def _suppressions_for(disposition: Disposition) -> Optional[list[dict[str, Any]]
     if disposition == Disposition.DISMISSED:
         return [{"kind": "external"}]
     if disposition == Disposition.FIXED:
-        return [{
-            "kind": "inSource",
-            "properties": {"fix_commit": None},
-        }]
-    raise ValueError(
-        "unknown Disposition %r; sarif.py mapping table needs update"
-        % disposition
-    )
+        return [
+            {
+                "kind": "inSource",
+                "properties": {"fix_commit": None},
+            }
+        ]
+    raise ValueError("unknown Disposition %r; sarif.py mapping table needs update" % disposition)
 
 
 def build_sarif_log(
@@ -125,9 +125,7 @@ def build_sarif_log(
             for a in advisories
         ]
     if manifest is not None:
-        manifest_dict = (
-            manifest.to_dict() if isinstance(manifest, EnvManifest) else manifest
-        )
+        manifest_dict = manifest.to_dict() if isinstance(manifest, EnvManifest) else manifest
         run.setdefault("properties", {})["manifest"] = manifest_dict
     return {
         "$schema": SARIF_SCHEMA_URI,
@@ -166,9 +164,7 @@ def _build_run(
         "tool": {
             "driver": {
                 "name": "code-forge",
-                "semanticVersion": _build_semantic_version(
-                    forge_version, tool_versions
-                ),
+                "semanticVersion": _build_semantic_version(forge_version, tool_versions),
                 "informationUri": "https://github.com/HouMinXi/code-forge",
             },
         },
@@ -192,9 +188,7 @@ def _build_semantic_version(
     corrupt the format string -- pre-validated upstream by registry
     loader; this builder trusts the input.
     """
-    tools_str = " ".join(
-        "%s=%s" % (t, v) for t, v in sorted(tool_versions.items())
-    )
+    tools_str = " ".join("%s=%s" % (t, v) for t, v in sorted(tool_versions.items()))
     if tools_str:
         return "code-forge %s [%s]" % (forge_version, tools_str)
     return "code-forge %s []" % forge_version
@@ -212,8 +206,11 @@ def _finding_to_result(
         manifest_tier=manifest_tier,
     )
     level = DISPOSITION_TO_LEVEL[finding.disposition]
-    if props.get("env_capped") and level == "error":
-        level = "warning"
+    if props.get("env_capped"):
+        if level == "error":
+            level = "warning"
+        elif level == "warning":
+            level = "note"
     result: dict[str, Any] = {
         "ruleId": finding.fingerprint,
         "level": level,
@@ -279,7 +276,8 @@ def _build_properties(
         props["error"] = finding.error
     props["source"] = finding.source
     basis = derive_basis(
-        finding, convergence_rounds=convergence_rounds,
+        finding,
+        convergence_rounds=convergence_rounds,
         manifest_tier=manifest_tier,
     )
     props["basis"] = basis.to_dict()
@@ -297,10 +295,7 @@ def _count_pass_outcomes(
     Empty findings -> (3,3) all-completed (clean run).
     """
     pass_outcomes = derive_pass_outcomes(l1_findings)
-    completed = sum(
-        1 for v in pass_outcomes.values()
-        if v == PassOutcome.COMPLETED
-    )
+    completed = sum(1 for v in pass_outcomes.values() if v == PassOutcome.COMPLETED)
     return (completed, len(_PASS_NAMES))
 
 
@@ -336,15 +331,13 @@ def format_summary(
         if f.source == "INFRA":
             infra += 1
     total = len(state.findings)
-    line = (
-        "code-forge: %s findings=%d confirmed=%d uncertain=%d "
-        "dismissed=%d fixed=%d" % (
-            state.verdict.value, total,
-            counts[Disposition.CONFIRMED],
-            counts[Disposition.UNCERTAIN],
-            counts[Disposition.DISMISSED],
-            counts[Disposition.FIXED],
-        )
+    line = "code-forge: %s findings=%d confirmed=%d uncertain=%d dismissed=%d fixed=%d" % (
+        state.verdict.value,
+        total,
+        counts[Disposition.CONFIRMED],
+        counts[Disposition.UNCERTAIN],
+        counts[Disposition.DISMISSED],
+        counts[Disposition.FIXED],
     )
     if infra:
         line += " infra=%d" % infra

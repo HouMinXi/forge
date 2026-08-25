@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <minxi@hou.email>
 """Unit tests for code_forge.manifest module (Phase 52: ENV-MANIFEST)."""
+
 from __future__ import annotations
 
 import json
@@ -119,11 +120,7 @@ class TestLockfileParsers:
     def test_parse_requirements_txt(self, tmp_path: Path):
         req_file = tmp_path / "requirements.txt"
         req_file.write_text(
-            "# comment line\n"
-            "-r base.txt\n\n"
-            "pytest>=8.0.0\n"
-            "pyyaml==6.0.1\n"
-            "black\n",
+            "# comment line\n-r base.txt\n\npytest>=8.0.0\npyyaml==6.0.1\nblack\n",
             encoding="utf-8",
         )
         deps = _parse_requirements_txt(req_file)
@@ -172,7 +169,7 @@ class TestLockfileParsers:
     def test_parse_cargo_lock(self, tmp_path: Path):
         lock_file = tmp_path / "Cargo.lock"
         content = (
-            'version = 3\n\n'
+            "version = 3\n\n"
             '[[package]]\nname = "serde"\nversion = "1.0.197"\n\n'
             '[[package]]\nname = "tokio"\nversion = "1.36.0"\n'
         )
@@ -229,13 +226,19 @@ class TestExtractManifest:
     def test_extract_corrupted_lockfile_graceful_degradation(self, tmp_path: Path):
         # Corrupted JSON in package-lock.json -> does not crash, falls back
         (tmp_path / "package-lock.json").write_text("{corrupted-json", encoding="utf-8")
-        with patch("code_forge.manifest._probe_toolchain", return_value=("node v20.11.0", "node", "20.11.0", "node", {})):
+        with patch(
+            "code_forge.manifest._probe_toolchain",
+            return_value=("node v20.11.0", "node", "20.11.0", "node", {}),
+        ):
             manifest = extract_manifest(tmp_path)
             assert manifest.tier == ManifestTier.OBSERVED
             assert manifest.runtime_name == "node"
 
     def test_extract_observed_toolchain_fallback(self, tmp_path: Path):
-        with patch("code_forge.manifest._probe_toolchain", return_value=("python 3.14.0", "python", "3.14.0", "python3", {})):
+        with patch(
+            "code_forge.manifest._probe_toolchain",
+            return_value=("python 3.14.0", "python", "3.14.0", "python3", {}),
+        ):
             manifest = extract_manifest(tmp_path)
             assert manifest.tier == ManifestTier.OBSERVED
             assert manifest.runtime == "python 3.14.0"
@@ -250,3 +253,14 @@ class TestExtractManifest:
             assert manifest.tier == ManifestTier.ABSENT
             assert manifest.runtime == ""
             assert manifest.dependencies == {}
+
+    def test_probe_toolchain_uses_three_second_timeout(self, tmp_path: Path):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "Python 3.14.0\n"
+            from code_forge.manifest import _probe_toolchain
+
+            _probe_toolchain()
+            assert mock_run.called
+            for call in mock_run.call_args_list:
+                assert call.kwargs.get("timeout") == 3.0

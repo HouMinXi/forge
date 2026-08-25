@@ -8,6 +8,7 @@ EnvManifest describing the declared or observed dependency environment.
 Falls back to toolchain probes when no lockfile is found, and to ABSENT
 when neither is available.
 """
+
 from __future__ import annotations
 
 import json
@@ -124,7 +125,7 @@ def _parse_requirements_txt(path: Path) -> dict[str, str]:
         for sep in ("==", ">=", "<=", "~=", "!=", ">", "<"):
             if sep in line:
                 pkg, ver = line.split(sep, 1)
-                deps[pkg.strip()] = (sep + ver.strip())
+                deps[pkg.strip()] = sep + ver.strip()
                 break
         else:
             deps[line] = "*"
@@ -169,7 +170,7 @@ def _parse_pnpm_lock_yaml(path: Path) -> dict[str, str]:
             at_idx = head.rfind("@")
             if at_idx > 0:
                 name = head[:at_idx]
-                version = head[at_idx + 1:]
+                version = head[at_idx + 1 :]
                 deps[name] = version
     return deps
 
@@ -248,8 +249,10 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "--version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=2.0,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3.0,
             )
             if r.returncode == 0 and r.stdout.strip():
                 out = r.stdout.strip()
@@ -264,8 +267,10 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "--version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=2.0,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3.0,
             )
             if r.returncode == 0 and r.stdout.strip():
                 out = r.stdout.strip()
@@ -280,8 +285,10 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=2.0,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3.0,
             )
             if r.returncode == 0 and r.stdout.strip():
                 out = r.stdout.strip()
@@ -297,8 +304,10 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "--version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=2.0,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3.0,
             )
             if r.returncode == 0 and r.stdout.strip():
                 out = r.stdout.strip()
