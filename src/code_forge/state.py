@@ -184,6 +184,8 @@ class State:
     cost_per_pass: list[dict] = field(default_factory=list)
     # Phase 52 addition: env_manifest snapshot
     env_manifest: Optional[dict[str, Any]] = None
+    # Phase 53a addition: exec_evidence snapshot
+    exec_evidence: Optional[dict[str, Any]] = None
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -299,6 +301,9 @@ def load_state(path: Path) -> Optional[State]:
     # Phase 52 additions: env_manifest snapshot
     state.env_manifest = data.get("env_manifest")
 
+    # Phase 53a additions: exec_evidence snapshot
+    state.exec_evidence = data.get("exec_evidence")
+
     return state
 
 
@@ -356,6 +361,7 @@ def save_state(state: State, path: Path) -> None:
             "per_pass": state.cost_per_pass,
         },
         "env_manifest": state.env_manifest,
+        "exec_evidence": state.exec_evidence,
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     tmp = path.with_suffix(".tmp")

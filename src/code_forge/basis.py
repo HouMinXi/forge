@@ -9,7 +9,7 @@ survival status for findings emitted across deterministic and LLM passes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, Optional
 
 from .disposition import Disposition
 from .manifest import ManifestTier
@@ -44,6 +44,7 @@ class EpistemicBasis:
     falsification_survived: bool
     convergence_rounds: int
     not_verified_against_declared_env: bool = False
+    exec_evidence: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert EpistemicBasis to JSON-serializable dictionary."""
@@ -54,6 +55,8 @@ class EpistemicBasis:
         }
         if self.not_verified_against_declared_env:
             d["not_verified_against_declared_env"] = True
+        if self.exec_evidence is not None:
+            d["exec_evidence"] = self.exec_evidence
         return d
 
 
@@ -61,6 +64,7 @@ def derive_basis(
     finding: StateFinding,
     convergence_rounds: int = 1,
     manifest_tier: ManifestTier = ManifestTier.DECLARED,
+    exec_evidence: Optional[str] = None,
 ) -> EpistemicBasis:
     """Derive EpistemicBasis from a StateFinding mechanically.
 
@@ -75,7 +79,19 @@ def derive_basis(
       - OBSERVED:  llm-docs-latest, not_verified_against_declared_env=False
       - ABSENT:    llm-docs-latest, not_verified_against_declared_env=True
     Unknown sources raise ValueError to prevent unclassified authority leak.
+
+    When exec_evidence == "fail_before" and finding is L1/CONFIRMED,
+    the basis records exec_evidence="fail_before" (EXEC-03 strengthening).
     """
+    # Resolve exec_evidence for L1 CONFIRMED findings only
+    effective_exec = None
+    if (
+        exec_evidence == "fail_before"
+        and finding.source == "L1"
+        and finding.disposition != Disposition.DISMISSED
+    ):
+        effective_exec = "fail_before"
+
     if finding.source in _DETERMINISTIC_SOURCES:
         return EpistemicBasis(
             authority=AUTHORITY_DETERMINISTIC_EXECUTED,
@@ -90,18 +106,21 @@ def derive_basis(
                 authority=AUTHORITY_LLM_DOCS_PINNED,
                 falsification_survived=survived,
                 convergence_rounds=convergence_rounds,
+                exec_evidence=effective_exec,
             )
         if manifest_tier == ManifestTier.OBSERVED:
             return EpistemicBasis(
                 authority=AUTHORITY_LLM_DOCS_LATEST,
                 falsification_survived=survived,
                 convergence_rounds=convergence_rounds,
+                exec_evidence=effective_exec,
             )
         return EpistemicBasis(
             authority=AUTHORITY_LLM_DOCS_LATEST,
             falsification_survived=survived,
             convergence_rounds=convergence_rounds,
             not_verified_against_declared_env=True,
+            exec_evidence=effective_exec,
         )
 
     raise ValueError(f"unknown finding source {finding.source!r}; add to basis derivation table")

@@ -127,6 +127,8 @@ def build_sarif_log(
     if manifest is not None:
         manifest_dict = manifest.to_dict() if isinstance(manifest, EnvManifest) else manifest
         run.setdefault("properties", {})["manifest"] = manifest_dict
+    if getattr(state, "exec_evidence", None) is not None:
+        run.setdefault("properties", {})["exec_evidence"] = state.exec_evidence
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
@@ -160,6 +162,10 @@ def _build_run(
     else:
         manifest_tier = ManifestTier.DECLARED
     rounds = max(1, state.round)
+    # Resolve exec_evidence status for finding-level basis threading
+    _exec_ev: Optional[str] = None
+    if getattr(state, "exec_evidence", None) is not None:
+        _exec_ev = state.exec_evidence.get("status") if isinstance(state.exec_evidence, dict) else None
     return {
         "tool": {
             "driver": {
@@ -169,7 +175,10 @@ def _build_run(
             },
         },
         "results": [
-            _finding_to_result(f, convergence_rounds=rounds, manifest_tier=manifest_tier)
+            _finding_to_result(
+                f, convergence_rounds=rounds, manifest_tier=manifest_tier,
+                exec_evidence=_exec_ev,
+            )
             for f in state.findings
         ],
     }
@@ -198,12 +207,14 @@ def _finding_to_result(
     finding: StateFinding,
     convergence_rounds: int = 1,
     manifest_tier: ManifestTier = ManifestTier.DECLARED,
+    exec_evidence: Optional[str] = None,
 ) -> dict[str, Any]:
     """Convert StateFinding -> SARIF result dict."""
     props = _build_properties(
         finding,
         convergence_rounds=convergence_rounds,
         manifest_tier=manifest_tier,
+        exec_evidence=exec_evidence,
     )
     level = DISPOSITION_TO_LEVEL[finding.disposition]
     if props.get("env_capped"):
@@ -261,6 +272,7 @@ def _build_properties(
     finding: StateFinding,
     convergence_rounds: int = 1,
     manifest_tier: ManifestTier = ManifestTier.DECLARED,
+    exec_evidence: Optional[str] = None,
 ) -> dict[str, Any]:
     """Optional fields (anchor, evidence_files, error, basis) -> properties dict.
 
@@ -279,6 +291,7 @@ def _build_properties(
         finding,
         convergence_rounds=convergence_rounds,
         manifest_tier=manifest_tier,
+        exec_evidence=exec_evidence,
     )
     props["basis"] = basis.to_dict()
     if basis.not_verified_against_declared_env:
@@ -358,4 +371,10 @@ def format_summary(
         else:
             tier_value = str(manifest)
         line += " [manifest: %s]" % tier_value
+    # Phase 53a: exec_evidence status
+    exec_ev = getattr(state, "exec_evidence", None)
+    if exec_ev is not None and isinstance(exec_ev, dict):
+        exec_status = exec_ev.get("status", "")
+        if exec_status:
+            line += " exec=%s" % exec_status
     return line
