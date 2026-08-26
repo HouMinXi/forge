@@ -33,6 +33,7 @@ _SOURCE_TO_CLAIM: dict[str, ClaimType] = {
     "FORMAT": ClaimType(type="lint", version_sensitive=False),
     "SECURITY": ClaimType(type="lint", version_sensitive=False),
     "EXEC": ClaimType(type="exec", version_sensitive=False),
+    "RULEPACK": ClaimType(type="rulepack", version_sensitive=False),
 }
 
 

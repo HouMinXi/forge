@@ -313,6 +313,7 @@ def run_cross_repo(
                     from .graph_triage import GraphTriageRunner
                     from .legacy import LegacyRunner
                     from .runtime import RuntimeRunner
+                    from .rulepack import RulepackRunner
                     from .taint import TaintRunner
 
                     advisory_runners = [
@@ -321,6 +322,7 @@ def run_cross_repo(
                         GraphTriageRunner(),
                         DaemonStateRunner(backend=backend),
                         LegacyRunner(),
+                        RulepackRunner(),
                         CrossRepoImpactRunner(),
                     ]
                 else:

@@ -1,0 +1,55 @@
+rules:
+  - id: no-document-write
+    pattern: document.write(...)
+    languages:
+      - javascript
+      - typescript
+    message: Avoid document.write; it blocks page parsing and can cause performance issues.
+    severity: WARNING
+
+  - id: client-passive-event-listeners
+    pattern: |
+      $TARGET.addEventListener($EVENT, $HANDLER)
+    pattern-not: |
+      $TARGET.addEventListener($EVENT, $HANDLER, {passive: true})
+    languages:
+      - javascript
+      - typescript
+    message: Use passive event listeners for touch/wheel events to improve scroll performance.
+    severity: WARNING
+
+  - id: server-hoist-static-io
+    pattern: |
+      $FS.readFileSync(...)
+    languages:
+      - javascript
+      - typescript
+    message: Avoid synchronous blocking IO in server contexts; hoist static reads to module scope or use async APIs.
+    severity: WARNING
+
+  - id: dangerously-set-inner-html
+    pattern: |
+      <div dangerouslySetInnerHTML={$X} />
+    languages:
+      - javascript
+      - typescript
+    message: dangerouslySetInnerHTML can lead to XSS; ensure HTML is sanitized or prefer safe rendering.
+    severity: ERROR
+
+  - id: no-img-tag
+    pattern: |
+      <img $... />
+    languages:
+      - javascript
+      - typescript
+    message: Use next/image Image component instead of a raw img tag for automatic optimization.
+    severity: WARNING
+
+  - id: barrel-import-next
+    pattern: |
+      import { $X } from "next/$MOD"
+    languages:
+      - javascript
+      - typescript
+    message: Prefer direct imports over Next.js barrel paths to reduce bundle size.
+    severity: WARNING

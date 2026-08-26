@@ -75,7 +75,8 @@ class StateFinding:
     id: str
     fingerprint: str
     source: Literal[
-        "L0", "L1", "MUTANT", "E2E_CHECK", "COVERAGE", "INFRA", "FIXVAL", "EXEC"
+        "L0", "L1", "MUTANT", "E2E_CHECK", "COVERAGE", "INFRA", "FIXVAL",
+        "EXEC", "RULEPACK",
     ]
     disposition: Disposition
     file: str

@@ -93,6 +93,7 @@ class TestDeriveBasis:
             "LINT",
             "FORMAT",
             "SECURITY",
+            "RULEPACK",
         ],
     )
     def test_deterministic_sources_authority_and_survival(self, source: str):
