@@ -90,6 +90,7 @@ def write_receipts(
     reviewer_excerpts: list[dict] | None = None,
     manifest: Optional[EnvManifest | ManifestTier | dict[str, Any] | str] = None,
     manifest_tier: Optional[ManifestTier] = None,
+    exec_evidence: Optional[str] = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
     receipts_dir.mkdir(parents=True, exist_ok=True)
@@ -151,7 +152,8 @@ def write_receipts(
                     "description": f.description,
                     "disposition": f.disposition.value,
                     "basis": derive_basis(
-                        f, convergence_rounds=cycle, manifest_tier=effective_tier
+                        f, convergence_rounds=cycle, manifest_tier=effective_tier,
+                        exec_evidence=exec_evidence,
                     ).to_dict(),
                 }
                 for f in pass_findings
