@@ -240,6 +240,9 @@ class StateMachine:
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
     clean_round_threshold: int = field(default=DEFAULT_CLEAN_ROUND_THRESHOLD)
     advisory_runners: "list[AxisRunner]" = field(default_factory=list)
+    # Phase 53a: execution falsification (EXEC-FALSIFY v1)
+    exec_falsify: bool = False
+    exec_falsify_timeout: int = 120
     _state: State = field(default_factory=State, init=False)
 
     @property
@@ -277,6 +280,16 @@ class StateMachine:
             verdict = self._run_ci()
         else:
             raise ValueError("unknown mode: %s" % self.mode)
+
+        # Phase 53a EXEC-FALSIFY: run once after the mode loop returns a
+        # verdict, before advisory axes and the final progress emit.
+        # Timing per plan Task 2.3: after L1 candidate generation and
+        # final convergence/verdict evaluation, before receipt persistence
+        # of the terminal state (receipts within _execute_round predate
+        # the verdict and carry no exec evidence by design; the terminal
+        # SARIF/receipt consumers read State.exec_evidence).
+        if self.exec_falsify:
+            self._run_exec_falsifier()
 
         # Advisory axes run once after convergence, regardless of verdict
         #. Covers PASS, HOLD/PENDING, ESCALATED.
@@ -1767,6 +1780,42 @@ class StateMachine:
             )
 
         return ""
+
+    def _run_exec_falsifier(self) -> None:
+        """Phase 53a EXEC-FALSIFY: execute the declared test command.
+
+        Runs ExecFalsifier against the reviewed tree (cwd). Evidence is
+        asymmetric per EXEC-03:
+          - FAIL_BEFORE strengthens the basis of confirmed L1 findings
+            (recorded on State.exec_evidence; SARIF/_build_run threads it
+            into derive_basis for every finding -- derive_basis itself
+            gates L1-CONFIRMED-only).
+          - PASS_AFTER is receipt-level ONLY: saved to State.exec_evidence,
+            never alters finding dispositions or basis.
+          - TIMEOUT/UNAVAILABLE: saved to State.exec_evidence as an
+            explicit disclosure that never reads as clean.
+        Tier gate (EXEC-02) lives inside ExecFalsifier: non-DECLARED
+        manifests return UNAVAILABLE without spawning a subprocess.
+        """
+        from .exec_falsify import ExecFalsifier
+
+        falsifier = ExecFalsifier(
+            manifest=self._state.env_manifest,
+            timeout_seconds=self.exec_falsify_timeout,
+        )
+        evidence = falsifier.run(self.cwd)
+        self._state.exec_evidence = evidence.to_dict()
+        self._persist_state()
+        progress.emit(
+            "exec-falsify: status=%s duration=%.1fs"
+            % (evidence.status.value, evidence.duration_s)
+        )
+        # EXEC-03 asymmetry: FAIL_BEFORE passes "fail_before" down to the
+        # basis layer via State.exec_evidence (sarif.py _build_run reads
+        # state.exec_evidence["status"] and threads it into derive_basis).
+        # PASS_AFTER / TIMEOUT / UNAVAILABLE deliberately do NOT strengthen
+        # any finding basis: the string saved on State is the full evidence
+        # dict; only derive_basis decides what strengthens a basis.
 
     def _run_advisory_axes(self) -> None:
         """Post-convergence dispatch point for advisory axes.

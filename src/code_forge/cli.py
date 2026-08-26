@@ -436,6 +436,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="enable canary laziness check for inline outlet (opt-in)",
     )
     review_parser.add_argument(
+        "--exec-falsify", action="store_true",
+        help="run the declared test command during review "
+             "(Phase 53a EXEC-FALSIFY; tier-gated to DECLARED "
+             "manifests; budget from gate.yaml exec_falsify."
+             "timeout_seconds, default 120s)",
+    )
+    review_parser.add_argument(
         "--contract", default=None, metavar="FILE",
         help="path to per-change intent contract (use - for stdin); "
              "state invariants-to-verify and residual risks, "
@@ -2950,6 +2957,8 @@ def _startup_banner_line(
     backend_name: str,
     timeout_s: int | None,
     timeout_note: str = "",
+    exec_falsify: bool = False,
+    exec_falsify_timeout: int = 120,
 ) -> str:
     """One stderr line stating what review is about to run.
 
@@ -2982,11 +2991,14 @@ def _startup_banner_line(
     backend_name = "".join(
         c for c in backend_name if c.isprintable()
     )
-    return (
+    line = (
         "code-forge: reviewing %s (diff: %s); mode: %s; backend: %s; "
         "LLM timeout: %s"
         % (target, diff_str, mode, backend_name, timeout_str)
     )
+    if exec_falsify:
+        line += "; exec-falsify: on (budget %ds)" % exec_falsify_timeout
+    return line
 
 
 def _run(args, env, cwd: Path) -> Verdict:
@@ -3461,6 +3473,20 @@ def _run(args, env, cwd: Path) -> Verdict:
             )
         except Exception:  # noqa: BLE001
             pass
+    # Phase 53a EXEC-FALSIFY: resolve flag + gate.yaml budget.
+    _exec_falsify = bool(getattr(args, "exec_falsify", False))
+    _exec_falsify_timeout = 120
+    if _exec_falsify:
+        from .gate_check import validate_exec_falsify_config
+        _exec_section = gate_data.get("exec_falsify")
+        if _exec_section is None:
+            # CLI flag without a gate.yaml block: default budget.
+            pass
+        else:
+            validate_exec_falsify_config(_exec_section)
+            _exec_falsify_timeout = int(
+                _exec_section.get("timeout_seconds", 120)
+            )
     print(
         _startup_banner_line(
             repo_name=_repo_display_name(cwd),
@@ -3472,6 +3498,8 @@ def _run(args, env, cwd: Path) -> Verdict:
             timeout_note=_banner_timeout_note(
                 backend, env.get("FORGE_LLM_TIMEOUT_S")
             ),
+            exec_falsify=_exec_falsify,
+            exec_falsify_timeout=_exec_falsify_timeout,
         ),
         file=sys.stderr,
     )
@@ -3493,6 +3521,8 @@ def _run(args, env, cwd: Path) -> Verdict:
                 max_rounds=max_rounds,
                 max_fix_attempts=max_fix,
                 state_path=state_path,
+                exec_falsify=_exec_falsify,
+                exec_falsify_timeout=_exec_falsify_timeout,
                 coverage_l1_active=coverage_l1_active,
                 coverage_exempt_patterns=coverage_exempt,
                 clean_round_threshold=_clean_threshold,
@@ -3541,6 +3571,8 @@ def _run_hold_loop(
     pre_graph_findings=None,
     input_fn=input, output_fn=print,
     wall_t0=None,
+    exec_falsify=False,
+    exec_falsify_timeout=120,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
     for cycle in range(MAX_HOLD_CYCLES):
@@ -3586,6 +3618,8 @@ def _run_hold_loop(
                 _graph_triage_runner, _daemon_state_runner,
                 _legacy_runner,
             ],
+            exec_falsify=exec_falsify,
+            exec_falsify_timeout=exec_falsify_timeout,
         )
         verdict = sm.run()
         # CLI-08 B6: load final state from disk for cost fields.

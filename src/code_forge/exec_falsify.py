@@ -125,8 +125,7 @@ class ExecFalsifier:
                 timeout=self._timeout,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True,
-                errors="replace",
+                text=True, encoding="utf-8", errors="replace",
             )
         except subprocess.TimeoutExpired:
             return ExecEvidence(

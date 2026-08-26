@@ -157,7 +157,47 @@ def load_gate_config(
     if "style_downgrade" in data:
         validate_style_downgrade_config(data["style_downgrade"])
 
+    # Validate optional exec_falsify block (Phase 53a EXEC-FALSIFY v1)
+    if "exec_falsify" in data:
+        validate_exec_falsify_config(data["exec_falsify"])
+
     return data
+
+
+def validate_exec_falsify_config(section: object) -> None:
+    """Validate exec_falsify section of gate.yaml (Phase 53a).
+
+    Schema:
+        exec_falsify:
+          timeout_seconds: int  # default 120, bounded [10, 1800]
+
+    Raises:
+        ValueError: on non-mapping section, non-integer or
+            out-of-bounds timeout_seconds, or unknown keys.
+    """
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'exec_falsify' must be a mapping, got: %s"
+            % type(section).__name__
+        )
+    for key in section:
+        if key != "timeout_seconds":
+            raise ValueError(
+                "gate.yaml 'exec_falsify' unknown key: %r "
+                "(only timeout_seconds is supported)" % key
+            )
+    if "timeout_seconds" in section:
+        ts = section["timeout_seconds"]
+        if not isinstance(ts, int) or isinstance(ts, bool):
+            raise ValueError(
+                "exec_falsify.timeout_seconds must be an integer, got: %r"
+                % (ts,)
+            )
+        if not (10 <= ts <= 1800):
+            raise ValueError(
+                "exec_falsify.timeout_seconds must be within [10, 1800], "
+                "got: %d" % ts
+            )
 
 
 def validate_pinned_paths(section: object) -> None:
