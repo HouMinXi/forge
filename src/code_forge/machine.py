@@ -49,7 +49,7 @@ from .falsify import Falsifier
 from .mutation import launch_detached_mutation
 from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
 from .hold import check_escalated_frozen
-from .llm_invoke import Usage
+from .llm_invoke import LLMInvokeError, Usage
 from .parsers.base import Finding, ToolError
 from . import progress
 from .state import (
@@ -258,6 +258,7 @@ class StateMachine:
         self._advisories: "list[AdvisoryFinding]" = []
         self._preexisting_buf: "list[AdvisoryFinding]" = []
         self._rounds_with_failed_pass: int = 0
+        self._rounds_with_falsify_infra: int = 0
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -796,6 +797,7 @@ class StateMachine:
         self._round_cached_tokens += usage.cached_input_tokens
         self._round_duration += duration
         l1_findings: list[StateFinding] = []
+        falsify_infra_failures: list[str] = []
         total = len(l1_candidates)
         for i, f in enumerate(l1_candidates, 1):
             if f.source == "INFRA":
@@ -812,6 +814,24 @@ class StateMachine:
                     "falsify %d/%d: done %s (%.1fs)"
                     % (i, total, f.disposition,
                        time.monotonic() - t_falsify)
+                )
+            except LLMInvokeError as exc:
+                # The backend could not answer, so there is no verdict.
+                # UNCERTAIN keeps the finding unadjudicated (the
+                # disposition vocabulary is not this fix's to change),
+                # but the round is marked infra-blocked so the guard
+                # below can stop a run whose backend stays down instead
+                # of resetting the clean-round counter forever.
+                f.disposition = Disposition.UNCERTAIN
+                f.error = "falsify() backend unavailable: %s" % exc
+                falsify_infra_failures.append(f.fingerprint)
+                self._state.infra_errors.append(
+                    "falsify backend unavailable on %s: %s"
+                    % (f.fingerprint, exc)
+                )
+                progress.emit(
+                    "falsify %d/%d: backend unavailable (%.1fs)"
+                    % (i, total, time.monotonic() - t_falsify)
                 )
             except RuntimeError as exc:
                 f.disposition = Disposition.UNCERTAIN
@@ -833,7 +853,50 @@ class StateMachine:
                 )
                 raise
             l1_findings.append(f)
+        self._check_falsify_can_still_converge(falsify_infra_failures)
         return (l1_findings, l1_excerpts)
+
+    def _check_falsify_can_still_converge(
+        self, infra_failures: list[str]
+    ) -> None:
+        """Stop a run whose falsifier backend keeps failing to answer.
+
+        Sibling of _check_l1_can_still_converge, for the other half of
+        the round. A falsify that cannot reach its backend leaves the
+        finding UNCERTAIN, and clause (d) of the fixpoint check treats
+        any UNCERTAIN as a reset -- so a backend that stays down resets
+        the clean-round counter every round until max_total_rounds, at
+        30-180s per call. The 2026-08-27 measurement was three hours to
+        learn nothing.
+
+        HOLD does not rescue this either: _should_enter_hold requires
+        zero unfixed CONFIRMED, so one real finding open alongside N
+        unreachable-backend UNCERTAINs never holds.
+
+        Consecutive rounds, not cumulative, matching the L1 guard: a
+        backend that fails once and recovers is a transient that the
+        retry budget inside llm_invoke already absorbs, and stopping on
+        that would be worse than the problem.
+        """
+        if not infra_failures:
+            self._rounds_with_falsify_infra = 0
+            return
+        self._rounds_with_falsify_infra += 1
+        self._state.infra_errors.append(
+            "round %d: falsify could not reach the backend for %d "
+            "finding(s): %s"
+            % (self._state.round, len(infra_failures), infra_failures)
+        )
+        if self._rounds_with_falsify_infra >= 3:
+            raise TimeoutBreaker(
+                "%d consecutive rounds where the falsifier could not "
+                "reach its backend (latest: %d finding(s) unadjudicated). "
+                "Each unanswered finding stays UNCERTAIN, which resets the "
+                "clean-round counter, so this review cannot converge no "
+                "matter how many rounds remain. Fix the backend or switch "
+                "to another one rather than waiting."
+                % (self._rounds_with_falsify_infra, len(infra_failures))
+            )
 
     def _check_l1_can_still_converge(
         self, l1_findings: list[StateFinding]

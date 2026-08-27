@@ -10,7 +10,7 @@ from typing import Optional
 from .backend import BackendConfig
 from .disposition import Disposition
 from .falsify import Falsifier
-from .llm_invoke import LLMInvokeError, llm_invoke
+from .llm_invoke import llm_invoke
 from .state import StateFinding
 
 _PROMPT_PREFIX = (
@@ -40,15 +40,20 @@ class RealFalsifier(Falsifier):
             + "Lines: " + str(finding.line_range) + "\n"
             + "Description: " + finding.description + "\n"
         )
-        try:
-            result = llm_invoke(
-                prompt,
-                backend=self._backend,
-                expected_keys=frozenset({"verdict", "reasoning"}),
-            )
-            response = result.content
-        except LLMInvokeError:
-            return Disposition.UNCERTAIN
+        # LLMInvokeError deliberately propagates. Returning UNCERTAIN here
+        # would make an unreachable backend indistinguishable from a
+        # finding the verifier genuinely could not decide, and the
+        # convergence check treats any UNCERTAIN as a reason to reset the
+        # clean-round counter. A run whose backend is down would then
+        # grind to max_total_rounds learning nothing. llm_invoke already
+        # owns the retry budget; exhausting it is an infrastructure
+        # outcome, and the caller routes it as one.
+        result = llm_invoke(
+            prompt,
+            backend=self._backend,
+            expected_keys=frozenset({"verdict", "reasoning"}),
+        )
+        response = result.content
 
         if not isinstance(response, dict):
             return Disposition.UNCERTAIN

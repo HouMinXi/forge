@@ -36,12 +36,29 @@ class TestRealFalsifier:
         with patch("code_forge.falsify_real.llm_invoke", return_value=resp):
             assert RealFalsifier().falsify(_make_finding()) == Disposition.UNCERTAIN
 
-    def test_uncertain_on_invoke_error(self):
+    def test_invoke_error_propagates(self):
+        """Backend failure is not a verdict.
+
+        This assertion is INVERTED from its original form (241ae61,
+        "Subprocess failure returns UNCERTAIN"). That design made an
+        unreachable backend indistinguishable from a finding the
+        verifier genuinely could not decide, and the fixpoint check
+        resets the clean-round counter on any UNCERTAIN -- so a dead
+        backend reset the counter every round until max_total_rounds,
+        at 30-180s per call. Measured 2026-08-27: three hours of a
+        review that could not converge.
+
+        The caller (machine.py falsify loop) now catches this, records
+        it to infra_errors, and stops the run after three consecutive
+        rounds of it. llm_invoke already owns the retry budget;
+        exhausting it is an infrastructure outcome, not a judgement.
+        """
         with patch(
             "code_forge.falsify_real.llm_invoke",
             side_effect=LLMInvokeError("timeout"),
         ):
-            assert RealFalsifier().falsify(_make_finding()) == Disposition.UNCERTAIN
+            with pytest.raises(LLMInvokeError):
+                RealFalsifier().falsify(_make_finding())
 
     def test_rejects_fixed_verdict(self):
         resp = _make_llm_result({"verdict": "FIXED", "reasoning": "n/a"})
