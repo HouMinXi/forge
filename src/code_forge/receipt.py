@@ -90,7 +90,7 @@ def write_receipts(
     reviewer_excerpts: list[dict] | None = None,
     manifest: Optional[EnvManifest | ManifestTier | dict[str, Any] | str] = None,
     manifest_tier: Optional[ManifestTier] = None,
-    exec_evidence: Optional[str] = None,
+    exec_evidence: Optional[dict[str, Any] | str] = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
     receipts_dir.mkdir(parents=True, exist_ok=True)
@@ -129,6 +129,15 @@ def write_receipts(
     assembled_excerpts = _build_excerpts(reviewer_excerpts)
     pass_outcomes = derive_pass_outcomes(l1_findings)
 
+    exec_status: Optional[str] = None
+    exec_evidence_dict: Optional[dict[str, Any]] = None
+    if isinstance(exec_evidence, dict):
+        exec_evidence_dict = exec_evidence
+        exec_status = str(exec_evidence.get("status", "")) if exec_evidence.get("status") else None
+    elif isinstance(exec_evidence, str):
+        exec_status = exec_evidence
+        exec_evidence_dict = {"status": exec_evidence}
+
     for pass_idx, (pass_name, skill_name) in enumerate(
         zip(_PASS_NAMES, _SKILL_NAMES)
     ):
@@ -153,7 +162,7 @@ def write_receipts(
                     "disposition": f.disposition.value,
                     "basis": derive_basis(
                         f, convergence_rounds=cycle, manifest_tier=effective_tier,
-                        exec_evidence=exec_evidence,
+                        exec_evidence=exec_status,
                     ).to_dict(),
                 }
                 for f in pass_findings
@@ -196,6 +205,9 @@ def write_receipts(
                 ]
             ),
         }
+
+        if exec_evidence_dict is not None:
+            receipt["exec_evidence"] = exec_evidence_dict
 
         path = receipts_dir / ("receipt-c%dp%d.json" % (cycle, pass_num))
         path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")

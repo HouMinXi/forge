@@ -88,7 +88,7 @@ class TestDeriveBasis:
             "MUTANT",
             "E2E_CHECK",
             "COVERAGE",
-            "INFRA",
+            "EXEC",
             "FIXVAL",
             "LINT",
             "FORMAT",
@@ -110,6 +110,13 @@ class TestDeriveBasis:
             assert basis.falsification_survived is True
             assert basis.convergence_rounds == 2
             assert basis.not_verified_against_declared_env is False
+
+    def test_infra_basis_authority_unavailable(self):
+        finding = _make_finding(source="INFRA", disposition=Disposition.CONFIRMED)
+        basis = derive_basis(finding, convergence_rounds=2)
+        assert basis.authority == "infra-unavailable"
+        assert basis.falsification_survived is False
+        assert basis.convergence_rounds == 2
 
     @pytest.mark.parametrize(
         ("disposition", "expected_survived"),
@@ -155,7 +162,7 @@ class TestDeriveBasis:
             "L0",
             "E2E_CHECK",
             "COVERAGE",
-            "INFRA",
+            "EXEC",
             "FIXVAL",
             "LINT",
             "FORMAT",
@@ -168,6 +175,28 @@ class TestDeriveBasis:
         assert basis.authority == AUTHORITY_DETERMINISTIC_EXECUTED
         assert basis.falsification_survived is True
         assert basis.not_verified_against_declared_env is False
+
+    @pytest.mark.parametrize(
+        ("disposition", "expected_exec"),
+        [
+            (Disposition.CONFIRMED, "fail_before"),
+            (Disposition.UNCERTAIN, None),
+            (Disposition.FIXED, None),
+            (Disposition.STYLE, None),
+            (Disposition.DISMISSED, None),
+        ],
+    )
+    def test_fail_before_strengthens_confirmed_l1_only(
+        self, disposition: Disposition, expected_exec: str | None
+    ):
+        finding = _make_finding(source="L1", disposition=disposition)
+        basis = derive_basis(
+            finding,
+            convergence_rounds=2,
+            manifest_tier=ManifestTier.DECLARED,
+            exec_evidence="fail_before",
+        )
+        assert basis.exec_evidence == expected_exec
 
     def test_observed_manifest_does_not_degrade(self):
         finding_l1 = _make_finding(source="L1", disposition=Disposition.CONFIRMED)

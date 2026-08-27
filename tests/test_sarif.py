@@ -737,3 +737,14 @@ class TestManifestSarifIntegration:
         manifest_absent = EnvManifest(tier=ManifestTier.ABSENT)
         summary_absent = format_summary(state, manifest=manifest_absent)
         assert "[manifest: absent]" in summary_absent
+
+    def test_suppressions_for_style(self):
+        suppressions = _suppressions_for(Disposition.STYLE)
+        assert suppressions == [{"kind": "external"}]
+
+    def test_format_summary_style_handling(self):
+        finding = _make_finding(Disposition.STYLE, source="L1")
+        state = _make_state(verdict=Verdict.PASS, findings=[finding])
+        summary = format_summary(state)
+        assert "findings=1" in summary
+        assert "style=1" in summary

@@ -66,6 +66,18 @@ test:
         with pytest.raises(ValueError, match="command.*required"):
             load_gate_config("gate.yaml", fs_open=m)
 
+    def test_non_string_command_element_in_load_gate_config_raises(self):
+        """ValueError when test.command has non-string elements."""
+        yaml_content = "test:\n  command: [pytest, 42]\n"
+        m = mock_open(read_data=yaml_content)
+        with pytest.raises(ValueError, match="elements must be strings"):
+            load_gate_config("gate.yaml", fs_open=m)
+
+        yaml_content_bool = "test:\n  command: [pytest, false]\n"
+        m_bool = mock_open(read_data=yaml_content_bool)
+        with pytest.raises(ValueError, match="elements must be strings"):
+            load_gate_config("gate.yaml", fs_open=m_bool)
+
 
     def test_missing_test_section_error_contains_snippet(self):
         """Error message includes a pasteable YAML snippet."""
@@ -114,6 +126,13 @@ class TestValidateCommandSafety:
             validate_command_safety(["python3", "-c", "import os; os.system('ls')"])
         with pytest.raises(ValueError, match="metacharacter"):
             validate_command_safety(["pytest", "tests/", "|", "grep", "PASS"])
+
+    def test_non_string_element_rejected(self):
+        """Non-string elements rejected."""
+        with pytest.raises(ValueError, match="must be strings"):
+            validate_command_safety(["pytest", 42])  # type: ignore[list-item]
+        with pytest.raises(ValueError, match="must be strings"):
+            validate_command_safety(["pytest", False])  # type: ignore[list-item]
 
 
 class TestTranslateExitCode:
@@ -1234,8 +1253,6 @@ class TestDaemonStateValidation:
 
     def test_daemon_state_valid(self):
         """Valid daemon_state section passes validation."""
-        from code_forge.gate_check import validate_daemon_state
-
         yaml_content = """
 test:
   command: ["python3", "-m", "pytest"]

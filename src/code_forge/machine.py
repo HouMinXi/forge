@@ -243,6 +243,7 @@ class StateMachine:
     # Phase 53a: execution falsification (EXEC-FALSIFY v1)
     exec_falsify: bool = False
     exec_falsify_timeout: int = 120
+    exec_falsify_command: Optional[list[str]] = None
     _state: State = field(default_factory=State, init=False)
 
     @property
@@ -280,16 +281,6 @@ class StateMachine:
             verdict = self._run_ci()
         else:
             raise ValueError("unknown mode: %s" % self.mode)
-
-        # Phase 53a EXEC-FALSIFY: run once after the mode loop returns a
-        # verdict, before advisory axes and the final progress emit.
-        # Timing per plan Task 2.3: after L1 candidate generation and
-        # final convergence/verdict evaluation, before receipt persistence
-        # of the terminal state (receipts within _execute_round predate
-        # the verdict and carry no exec evidence by design; the terminal
-        # SARIF/receipt consumers read State.exec_evidence).
-        if self.exec_falsify:
-            self._run_exec_falsifier()
 
         # Advisory axes run once after convergence, regardless of verdict
         #. Covers PASS, HOLD/PENDING, ESCALATED.
@@ -1064,6 +1055,8 @@ class StateMachine:
         )
         merged = self._apply_promotion_stickiness(merged)
         self._state.findings = merged
+        if self.exec_falsify:
+            self._run_exec_falsifier()
         self._append_round_snapshot(
             round_index, l0_findings, l1_findings, l2_findings, e2e_findings
         )
@@ -1105,6 +1098,7 @@ class StateMachine:
             diff_text=diff_text,
             reviewer_excerpts=l1_excerpts,
             manifest=self._state.env_manifest,
+            exec_evidence=self._state.exec_evidence,
         )
         self._persist_state()
         if self.post_round_hook is not None:
@@ -1802,20 +1796,35 @@ class StateMachine:
         falsifier = ExecFalsifier(
             manifest=self._state.env_manifest,
             timeout_seconds=self.exec_falsify_timeout,
+            command=self.exec_falsify_command,
         )
         evidence = falsifier.run(self.cwd)
         self._state.exec_evidence = evidence.to_dict()
+        # EXEC-03 asymmetry: a FAIL_BEFORE execution result is itself a
+        # deterministic finding that blocks the verdict. PASS_AFTER is only
+        # receipt-level; TIMEOUT/UNAVAILABLE do not create findings.
+        if evidence.status.value == "fail_before":
+            self._state.findings.append(
+                StateFinding(
+                    id="exec-falsify-fail_before",
+                    fingerprint="exec-falsify-fail_before",
+                    source="EXEC",
+                    disposition=Disposition.CONFIRMED,
+                    file="<exec-falsify>",
+                    line_range=[0],
+                    description="declared test/build command failed before review verdict: %s"
+                    % (evidence.command_argv or evidence.command),
+                    evidence_files=[],
+                )
+            )
         self._persist_state()
         progress.emit(
             "exec-falsify: status=%s duration=%.1fs"
             % (evidence.status.value, evidence.duration_s)
         )
-        # EXEC-03 asymmetry: FAIL_BEFORE passes "fail_before" down to the
-        # basis layer via State.exec_evidence (sarif.py _build_run reads
-        # state.exec_evidence["status"] and threads it into derive_basis).
-        # PASS_AFTER / TIMEOUT / UNAVAILABLE deliberately do NOT strengthen
-        # any finding basis: the string saved on State is the full evidence
-        # dict; only derive_basis decides what strengthens a basis.
+        # State.exec_evidence threads through SARIF/receipt basis for any
+        # L1-CONFIRMED strengthening; the EXEC finding above carries the
+        # verdict-blocking failure independently.
 
     def _run_advisory_axes(self) -> None:
         """Post-convergence dispatch point for advisory axes.

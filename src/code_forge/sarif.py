@@ -44,15 +44,13 @@ def _suppressions_for(disposition: Disposition) -> Optional[list[dict[str, Any]]
     """Return suppressions array or None to omit.
 
     Disposition -> suppressions array. CONFIRMED + UNCERTAIN have no
-    suppressions (raw, blocking-relevant signal). DISMISSED + FIXED carry
-    kind=external + kind=inSource respectively per LAYER0-07.
-    Explicit dispatch on all 4 known states + ValueError default.
-    Silent None on unknown disposition (e.g., enum gained 5th state) would
-    emit wrong SARIF; loud raise surfaces the issue at deploy time.
+    suppressions (raw, blocking-relevant signal). DISMISSED + STYLE carry
+    kind=external; FIXED carries kind=inSource per LAYER0-07.
+    Explicit dispatch on all 5 known states + ValueError default.
     """
     if disposition in (Disposition.CONFIRMED, Disposition.UNCERTAIN):
         return None
-    if disposition == Disposition.DISMISSED:
+    if disposition in (Disposition.DISMISSED, Disposition.STYLE):
         return [{"kind": "external"}]
     if disposition == Disposition.FIXED:
         return [
@@ -337,6 +335,7 @@ def format_summary(
         Disposition.UNCERTAIN: 0,
         Disposition.DISMISSED: 0,
         Disposition.FIXED: 0,
+        Disposition.STYLE: 0,
     }
     infra = 0
     for f in state.findings:
@@ -352,6 +351,8 @@ def format_summary(
         counts[Disposition.DISMISSED],
         counts[Disposition.FIXED],
     )
+    if counts[Disposition.STYLE]:
+        line += " style=%d" % counts[Disposition.STYLE]
     if infra:
         line += " infra=%d" % infra
     if advisory_count:

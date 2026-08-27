@@ -27,7 +27,7 @@ _DETERMINISTIC_SOURCES: Final[frozenset[str]] = frozenset(
         "MUTANT",
         "E2E_CHECK",
         "COVERAGE",
-        "INFRA",
+        "EXEC",
         "FIXVAL",
         "LINT",
         "FORMAT",
@@ -88,9 +88,16 @@ def derive_basis(
     if (
         exec_evidence == "fail_before"
         and finding.source == "L1"
-        and finding.disposition != Disposition.DISMISSED
+        and finding.disposition == Disposition.CONFIRMED
     ):
         effective_exec = "fail_before"
+
+    if finding.source == "INFRA":
+        return EpistemicBasis(
+            authority="infra-unavailable",
+            falsification_survived=False,
+            convergence_rounds=convergence_rounds,
+        )
 
     if finding.source in _DETERMINISTIC_SOURCES:
         return EpistemicBasis(

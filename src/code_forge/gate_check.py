@@ -81,6 +81,9 @@ def load_gate_config(
         raise ValueError("'test.command' must be a list")
     if not test["command"]:
         raise ValueError("'test.command' cannot be empty")
+    for arg in test["command"]:
+        if not isinstance(arg, str) or isinstance(arg, bool):
+            raise ValueError("'test.command' elements must be strings")
 
     # Optional fields with defaults
     if "env" in test and not isinstance(test.get("env"), dict):
@@ -805,7 +808,7 @@ def validate_command_safety(command: list[str]) -> None:
 
     # No element may contain shell metacharacters
     for arg in command:
-        if not isinstance(arg, str):
+        if not isinstance(arg, str) or isinstance(arg, bool):
             raise ValueError("command elements must be strings")
         for char in SHELL_METACHARACTERS:
             if char in arg:

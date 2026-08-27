@@ -3476,6 +3476,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     # Phase 53a EXEC-FALSIFY: resolve flag + gate.yaml budget.
     _exec_falsify = bool(getattr(args, "exec_falsify", False))
     _exec_falsify_timeout = 120
+    _exec_falsify_command = None
     if _exec_falsify:
         from .gate_check import validate_exec_falsify_config
         _exec_section = gate_data.get("exec_falsify")
@@ -3487,6 +3488,9 @@ def _run(args, env, cwd: Path) -> Verdict:
             _exec_falsify_timeout = int(
                 _exec_section.get("timeout_seconds", 120)
             )
+        _test_section = gate_data.get("test")
+        if isinstance(_test_section, dict) and "command" in _test_section:
+            _exec_falsify_command = _test_section.get("command")
     print(
         _startup_banner_line(
             repo_name=_repo_display_name(cwd),
@@ -3523,6 +3527,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 state_path=state_path,
                 exec_falsify=_exec_falsify,
                 exec_falsify_timeout=_exec_falsify_timeout,
+                exec_falsify_command=_exec_falsify_command,
                 coverage_l1_active=coverage_l1_active,
                 coverage_exempt_patterns=coverage_exempt,
                 clean_round_threshold=_clean_threshold,
@@ -3573,6 +3578,7 @@ def _run_hold_loop(
     wall_t0=None,
     exec_falsify=False,
     exec_falsify_timeout=120,
+    exec_falsify_command=None,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
     for cycle in range(MAX_HOLD_CYCLES):
@@ -3620,6 +3626,7 @@ def _run_hold_loop(
             ],
             exec_falsify=exec_falsify,
             exec_falsify_timeout=exec_falsify_timeout,
+            exec_falsify_command=exec_falsify_command,
         )
         verdict = sm.run()
         # CLI-08 B6: load final state from disk for cost fields.
