@@ -620,6 +620,7 @@ async def test_forge_review_with_contract_writes_tempfile():
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_forge_review_whole_file_string_forwards_path_to_cli():
     """forge_review(whole_file='src/foo.py') appends '--whole-file' 'src/foo.py'."""
     with (
@@ -754,6 +755,167 @@ async def test_forge_review_whole_file_sampling_fallback_forwards_paths(tmp_path
         assert "--whole-file" in cli_args
         idx = cli_args.index("--whole-file")
         assert cli_args[idx + 1] == "hello.py"
+
+
+
+
+@pytest.mark.asyncio
+async def test_forge_review_with_baseline_and_head():
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(baseline="main", head="HEAD")
+        args = mock_cli.call_args[0]
+        assert "--baseline" in args
+        assert "main" in args
+        assert "--head" in args
+        assert "HEAD" in args
+
+
+@pytest.mark.asyncio
+async def test_forge_review_with_baseline_only():
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(baseline="HEAD~3")
+        args = mock_cli.call_args[0]
+        assert "--baseline" in args
+        assert "HEAD~3" in args
+        assert "--head" not in args
+
+
+@pytest.mark.asyncio
+async def test_forge_review_with_head_only():
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(head="INDEX")
+        args = mock_cli.call_args[0]
+        assert "--head" in args
+        assert "INDEX" in args
+        assert "--baseline" not in args
+
+
+@pytest.mark.asyncio
+async def test_build_review_context_with_baseline_and_head(tmp_path):
+    import subprocess
+    from code_forge.mcp_server import _build_review_context
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+
+    f = repo / "file.txt"
+    f.write_text("v1\n")
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)
+
+    f.write_text("v2\n")
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "c2"], cwd=repo, check=True)
+
+    resolved, source_hash, baseline_repr = _build_review_context(
+        repo, committed=False, baseline="HEAD~1", head="HEAD"
+    )
+    assert baseline_repr == "git:HEAD~1"
+    assert resolved.git_diff is not None
+    assert "-v1" in resolved.git_diff
+    assert "+v2" in resolved.git_diff
+
+
+@pytest.mark.asyncio
+async def test_build_review_context_committed_conflicts(tmp_path):
+    from code_forge.mcp_server import _build_review_context
+
+    with pytest.raises(ToolError, match="--committed cannot be combined with --baseline"):
+        _build_review_context(tmp_path, committed=True, baseline="HEAD~2")
+
+    with pytest.raises(ToolError, match="--committed cannot be combined with --head"):
+        _build_review_context(tmp_path, committed=True, head="HEAD")
+
+
+@pytest.mark.asyncio
+async def test_build_review_context_invalid_baseline(tmp_path):
+    import subprocess
+    from code_forge.mcp_server import _build_review_context
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    (repo / "file.txt").write_text("v1\n")
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)
+
+    with pytest.raises(ToolError, match="baseline resolution failed"):
+        _build_review_context(repo, committed=False, baseline="nonexistent_ref_xyz")
+
+
+@pytest.mark.asyncio
+async def test_sampling_passes_baseline_and_head():
+    from code_forge.mcp_server import forge_review
+
+    ctx = MagicMock()
+    ctx.session.client_params.capabilities.sampling = MagicMock()
+
+    with (
+        patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
+        patch("code_forge.mcp_server._workspace_for",
+              new_callable=AsyncMock, return_value=_resolve_workspace()),
+        patch("code_forge.mcp_server._dispatch_sampling",
+              new_callable=AsyncMock, return_value=_make_simple_result("ok", 0)) as mock_disp,
+    ):
+        await forge_review(baseline="main", head="HEAD", ctx=ctx)
+        mock_disp.assert_called_once()
+        assert mock_disp.call_args.kwargs.get("baseline") == "main"
+        assert mock_disp.call_args.kwargs.get("head") == "HEAD"
+
+
+@pytest.mark.asyncio
+async def test_sampling_fallback_preserves_baseline_and_head():
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, p3, p4 = _sampling_dispatch_patches("truncated", ["deepseek"])
+    with p1, p2, p3, p4, patch(
+        "code_forge.mcp_server._run_cli_budgeted",
+        new_callable=AsyncMock,
+        return_value=("fallback ran", 0, 1.0, ""),
+    ) as mock_cli:
+        await _dispatch_sampling(
+            session=MagicMock(),
+            committed=False,
+            workspace=_resolve_workspace(),
+            baseline="origin/main",
+            head="HEAD",
+        )
+        args = mock_cli.call_args[0]
+        assert "--baseline" in args
+        assert "origin/main" in args
+        assert "--head" in args
+        assert "HEAD" in args
+
+
 
 
 @pytest.mark.asyncio

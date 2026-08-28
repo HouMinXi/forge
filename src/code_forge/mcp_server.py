@@ -803,6 +803,7 @@ def _normalize_whole_file(
 
 def _build_review_context(
     cwd: Path, committed: bool, staged: bool = False,
+    baseline: str = "", head: str = "",
     whole_files: list[str] | None = None,
 ) -> tuple[ResolvedReview, str, str]:
     """Build review context for in-process sampling path.
@@ -813,9 +814,11 @@ def _build_review_context(
     from code_forge.baseline import (
         EmptyBaseline,
         GitRefBaseline,
+        SnapshotBaseline,
         resolve_baseline,
         serialize_baseline_spec,
     )
+    from code_forge.errors import BaselineResolutionError
     from code_forge.git import is_git_repo
     from code_forge.source import compute_source_hash
 
@@ -824,21 +827,42 @@ def _build_review_context(
         head_spec = GitRefBaseline("WORKING") if is_git_repo(cwd) else None
         paths = [Path(p) for p in whole_files]
     elif committed:
+        if baseline:
+            raise ToolError("--committed cannot be combined with --baseline")
+        if head:
+            raise ToolError("--committed cannot be combined with --head")
         baseline_spec = GitRefBaseline("HEAD~1")
         head_spec = GitRefBaseline("HEAD")
         paths = []
     else:
-        if staged:
+        if baseline:
+            if baseline == "empty":
+                baseline_spec = EmptyBaseline()
+            elif (
+                baseline.startswith(".code-forge/snapshots/")
+                or (baseline.endswith(".json") and "snapshots" in baseline)
+            ):
+                baseline_spec = SnapshotBaseline(path=Path(baseline))
+            else:
+                baseline_spec = GitRefBaseline(baseline)
+        else:
+            baseline_spec = GitRefBaseline("HEAD")
+
+        if head:
+            head_spec = GitRefBaseline(head)
+        elif staged:
             # INDEX = staged changes only (forge_gate_check path)
             head_spec = GitRefBaseline("INDEX")
         else:
             # WORKING = unstaged working tree changes (forge_review default)
             # cli.py:2387 defaults to WORKING, not INDEX
             head_spec = GitRefBaseline("WORKING")
-        baseline_spec = GitRefBaseline("HEAD")
         paths = []
 
-    resolved = resolve_baseline(baseline_spec, head_spec, paths, cwd)
+    try:
+        resolved = resolve_baseline(baseline_spec, head_spec, paths, cwd)
+    except BaselineResolutionError as exc:
+        raise ToolError("baseline resolution failed: %s" % exc) from exc
     # Note: cli.py:1716-1723 branches on mode_hint (git vs non-git).
     # MCP sampling always uses committed/staged (git context), so git_diff
     # path is correct here. Non-git workspaces would need files= path.
@@ -912,6 +936,8 @@ async def _dispatch_sampling(
     staged: bool = False,  # True for gate-check (INDEX), False for review (WORKING)
     contract_spec: str = "",
     focus_spec: str = "",
+    baseline: str = "",
+    head: str = "",
     whole_files: list[str] | None = None,
 ) -> CallToolResult:
     """Run forge review in-process via MCP sampling transport.
@@ -933,7 +959,8 @@ async def _dispatch_sampling(
     from code_forge.machine import Mode, StateMachine
 
     resolved, source_hash, baseline_repr = _build_review_context(
-        workspace, committed, staged=staged, whole_files=whole_files
+        workspace, committed, staged=staged,
+        baseline=baseline, head=head, whole_files=whole_files,
     )
 
     # Lazy import per file convention (see _backend_names_for at line 237).
@@ -1041,6 +1068,10 @@ async def _dispatch_sampling(
                         "--outlet", "subprocess"]
             if committed:
                 cli_args.append("--committed")
+            if baseline:
+                cli_args.extend(["--baseline", baseline])
+            if head:
+                cli_args.extend(["--head", head])
             if whole_files:
                 cli_args.append("--whole-file")
                 cli_args.extend(whole_files)
@@ -1102,6 +1133,8 @@ async def _dispatch_sampling(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
 )
 async def forge_review(
+    baseline: str = "",
+    head: str = "",
     backend: str = "",
     contract: str = "",
     focus: str = "",
@@ -1140,6 +1173,8 @@ async def forge_review(
             staged=False,
             contract_spec=contract,
             focus_spec=focus,
+            baseline=baseline,
+            head=head,
             whole_files=whole_files,
         )
 
@@ -1147,6 +1182,10 @@ async def forge_review(
     _validate_backend(backend, workspace)
 
     cli_args: list[str] = ["review", "--no-color"]
+    if baseline:
+        cli_args.extend(["--baseline", baseline])
+    if head:
+        cli_args.extend(["--head", head])
     if backend:
         cli_args.extend(["--backend", backend])
     if committed:
@@ -1204,6 +1243,7 @@ async def forge_gate_check(
             workspace=workspace,
             backend_name=backend,
             staged=True,
+            baseline=baseline,
             # contract_spec intentionally omitted
         )
 
