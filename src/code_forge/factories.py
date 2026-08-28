@@ -527,7 +527,10 @@ def build_l1_provider(
                     ))
                     continue
 
-            for sf in _json_to_state_findings(validated, pass_name):
+            for sf in _json_to_state_findings(
+                    validated, pass_name,
+                    backend=backend.name if backend else None,
+            ):
                 if sf.fingerprint in seen:
                     continue
                 seen.add(sf.fingerprint)
@@ -759,7 +762,9 @@ def build_sampling_l1_provider(
                     ))
                     continue
 
-            for sf in _json_to_state_findings(validated, pass_name):
+            for sf in _json_to_state_findings(
+                    validated, pass_name, backend="mcp-sampling",
+            ):
                 if sf.fingerprint in seen:
                     continue
                 seen.add(sf.fingerprint)

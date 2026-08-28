@@ -298,3 +298,44 @@ def test_telemetry_fields_round_trip(tmp_path):
     assert got[0].ctx_contract is False
     assert got[0].ctx_whole_file is True
     assert got[0].ctx_canary is False
+
+
+def test_state_finding_carries_backend_through_serialization(tmp_path):
+    """StateFinding.backend must survive state.json round-trip.
+
+    The ledger writer reads backend off the finding, so a field that
+    does not persist across a state reload silently writes "" for every
+    finding recovered from disk mid-review.
+    """
+    from code_forge.state import _finding_to_dict, _finding_from_dict
+    from code_forge.state import StateFinding as SF
+    from code_forge.disposition import Disposition
+
+    f = SF(
+        id="f1",
+        fingerprint="fp1",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="src/a.py",
+        line_range=[1, 2],
+        description="d",
+        backend="mimo-pro",
+    )
+    back = _finding_from_dict(_finding_to_dict(f))
+    assert back.backend == "mimo-pro"
+
+
+def test_state_finding_backend_defaults_for_legacy_state(tmp_path):
+    """A state.json written before this field must still load."""
+    from code_forge.state import _finding_from_dict
+
+    legacy = {
+        "id": "f1",
+        "fingerprint": "fp1",
+        "source": "L1",
+        "disposition": "CONFIRMED",
+        "file": "src/a.py",
+        "line_range": [1],
+        "description": "d",
+    }
+    assert _finding_from_dict(legacy).backend is None

@@ -1162,7 +1162,10 @@ def _run_test_assertion_review(
     try:
         result = llm_invoke(prompt, backend=backend)
         validated = validate_reviewer_json(result.content)
-        return _json_to_state_findings(validated, "test-assertion")
+        return _json_to_state_findings(
+            validated, "test-assertion",
+            backend=backend.name if backend else None,
+        )
     except Exception:
         return []
 
