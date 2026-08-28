@@ -56,3 +56,68 @@ def test_sampling_attribution_is_not_a_model_guess():
         _one_finding_payload(), "qodo", backend="mcp-sampling",
     )
     assert out[0].backend == "mcp-sampling"
+
+
+def test_ledger_row_carries_backend_from_finding():
+    """_build_ledger_row reads backend off the finding it is given.
+
+    The whole threading chain exists to land here. If this argument is
+    dropped, every row writes "" and the attribution is unrecoverable --
+    the review has already run.
+    """
+    from unittest.mock import MagicMock
+    from code_forge.machine import StateMachine
+    from code_forge.ledger import TerminalState
+
+    sm = MagicMock(spec=StateMachine)
+    sm.resolved_review = MagicMock(base_sha="a" * 40, head_sha="b" * 40)
+    sm.ctx_graph_triage = True
+    sm.ctx_contract = False
+    sm.ctx_whole_file = False
+    sm.ctx_canary = True
+
+    row = StateMachine._build_ledger_row(
+        sm,
+        fingerprint="fp",
+        file="src/a.py",
+        line=1,
+        axis_claim="runtime",
+        pass_provenance="L1",
+        terminal_state=TerminalState.FIXED,
+        evidence_class="fix_applied",
+        ts="2026-08-27T00:00:00Z",
+        repo_root="/repo",
+        backend="mimo-pro",
+    )
+    assert row.backend == "mimo-pro"
+    assert row.ctx_graph_triage is True
+    assert row.ctx_canary is True
+    assert row.ctx_contract is False
+
+
+def test_ledger_row_backend_empty_when_finding_has_none():
+    """A finding forge raised itself carries no model name."""
+    from unittest.mock import MagicMock
+    from code_forge.machine import StateMachine
+    from code_forge.ledger import TerminalState
+
+    sm = MagicMock(spec=StateMachine)
+    sm.resolved_review = MagicMock(base_sha="a" * 40, head_sha="b" * 40)
+    sm.ctx_graph_triage = False
+    sm.ctx_contract = False
+    sm.ctx_whole_file = False
+    sm.ctx_canary = False
+
+    row = StateMachine._build_ledger_row(
+        sm,
+        fingerprint="fp",
+        file="",
+        line=0,
+        axis_claim="clean",
+        pass_provenance="CI",
+        terminal_state=TerminalState.UNADJUDICATED,
+        evidence_class="clean_pass",
+        ts="2026-08-27T00:00:00Z",
+        repo_root="/repo",
+    )
+    assert row.backend == ""
