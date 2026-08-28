@@ -81,7 +81,13 @@ class TerminalState(str, Enum):
 
 @dataclass(frozen=True)
 class LedgerRow:
-    """One row of the outcome ledger. Schema v1."""
+    """One row of the outcome ledger. Schema v1.1.
+
+    The backend and ctx_* fields carry model attribution: which backend
+    raised a finding, and which auxiliary context the pipeline fed the
+    review that round. They are additive with defaults so v1 rows -- every
+    row written before this schema -- keep parsing.
+    """
 
     fingerprint: str
     repo_root: str
@@ -95,6 +101,14 @@ class LedgerRow:
     evidence_class: str
     ts: str  # ISO-8601 UTC
     version_sensitive: bool = False
+    # Backend that produced the finding; "" for human-entered mark rows.
+    backend: str = ""
+    # Auxiliary context this review round fed the model. Pipeline-internal
+    # only: what the CALLING agent consulted is invisible to forge.
+    ctx_graph_triage: bool = False
+    ctx_contract: bool = False
+    ctx_whole_file: bool = False
+    ctx_canary: bool = False
 
 
 def _ledger_path(cwd: Path) -> Path:
@@ -178,6 +192,14 @@ def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
                     evidence_class=data["evidence_class"],
                     ts=data["ts"],
                     version_sensitive=data.get("version_sensitive", False),
+                    # .get with a default, never data[...]: v1 rows carry
+                    # none of these and a KeyError here would silently skip
+                    # the entire pre-enrichment ledger.
+                    backend=data.get("backend", ""),
+                    ctx_graph_triage=data.get("ctx_graph_triage", False),
+                    ctx_contract=data.get("ctx_contract", False),
+                    ctx_whole_file=data.get("ctx_whole_file", False),
+                    ctx_canary=data.get("ctx_canary", False),
                 )
             except (KeyError, ValueError, TypeError) as exc:
                 print(
