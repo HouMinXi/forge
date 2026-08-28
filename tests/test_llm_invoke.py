@@ -84,6 +84,22 @@ class TestReadWithDeadlineIdle:
 
 
 class TestLLMInvoke:
+    @pytest.fixture(autouse=True)
+    def _stub_claude_on_path(self):
+        """Resolve the CLI binary without requiring it to be installed.
+
+        Every test in this class mocks Popen, so none of them runs the
+        real binary -- they assert on the argv we build. But llm_invoke
+        calls shutil.which() before Popen, outside the mock boundary, so
+        on a machine without `claude` the lookup raises and the argv
+        assertions never execute. Stubbing the lookup keeps the suite
+        machine-independent; tests that need the not-found path patch
+        shutil.which themselves and win, because the inner patch applies
+        last.
+        """
+        with patch("shutil.which", return_value="/usr/bin/claude"):
+            yield
+
     def test_returns_llm_result_on_success(self):
         mock_proc = _make_mock_proc(stdout=json.dumps({"findings": []}))
 
@@ -1252,6 +1268,12 @@ class TestLLMResult:
 
 
 class TestSubprocessCleanup:
+    @pytest.fixture(autouse=True)
+    def _stub_claude_on_path(self):
+        """Same reason as TestLLMInvoke: Popen is mocked, the lookup is not."""
+        with patch("shutil.which", return_value="/usr/bin/claude"):
+            yield
+
     def test_subprocess_cleanup_on_timeout(self, tmp_path):
         """Verify _kill_tree is called on timeout to prevent orphan processes."""
         mock_proc = _make_mock_proc()
