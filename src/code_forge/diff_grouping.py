@@ -62,7 +62,7 @@ _INTEGRATION_CHURN = 2
 _PASSES_PER_GROUP = 3
 _NO_LLM_ROLES = frozenset({"config", "docs"})
 
-_TEST_SUFFIXES = (".py",)
+_PYTHON_SUFFIXES = (".py",)
 _CONFIG_SUFFIXES = (".yaml", ".yml", ".json", ".toml", ".cfg", ".ini")
 _DOC_SUFFIXES = (".md", ".rst", ".txt")
 
@@ -130,7 +130,7 @@ def classify_file(fpath: str, by_file: dict[str, list[dict]]) -> tuple[str, str]
         return "config", "n/a"
     if fpath.endswith(_DOC_SUFFIXES):
         return "docs", "n/a"
-    if not fpath.endswith(_TEST_SUFFIXES):
+    if not fpath.endswith(_PYTHON_SUFFIXES):
         return "other", "n/a"
 
     prof = churn_profile(by_file[fpath])
@@ -208,7 +208,12 @@ def build_edges(
     file_defined: dict[str, set[str]] = {}
     file_used: dict[str, set[str]] = {}
     for fpath in by_file:
-        file_defined[fpath], file_used[fpath] = extract_names(repo_root / fpath)
+        # sem emits repository-relative paths, but Path("/abs") on the right
+        # of a join silently discards repo_root and sends the read outside the
+        # tree. Strip the leading separator so a malformed or hostile entry
+        # can only ever resolve inside the repo.
+        rel = fpath.lstrip("/\\")
+        file_defined[fpath], file_used[fpath] = extract_names(repo_root / rel)
 
     edges: dict[str, set[str]] = defaultdict(set)
     for user_file, used_names in file_used.items():
@@ -243,16 +248,18 @@ def _attach_tests(by_file, roles, file_defined, file_used):
 
 def build_groups(
     by_file: dict[str, list[dict]],
-    edges: dict[str, set[str]],
     file_defined: dict[str, set[str]],
     file_used: dict[str, set[str]],
-) -> list[Group]:
+) -> tuple[list[Group], list[str]]:
     """Partition the changed files into review groups.
 
-    Sorted iteration throughout, so the output is byte-identical run to run.
+    Returns (groups, orphan_tests). Def-use edges are deliberately absent from
+    the signature: they do not partition anything, and taking them would imply
+    otherwise. Sorted iteration throughout, so the output is byte-identical
+    run to run.
     """
     roles = {f: classify_file(f, by_file) for f in by_file}
-    attached, _orphans = _attach_tests(by_file, roles, file_defined, file_used)
+    attached, orphans = _attach_tests(by_file, roles, file_defined, file_used)
 
     groups: list[Group] = []
     placed: set[str] = set()
@@ -301,7 +308,7 @@ def build_groups(
     missing = set(by_file) - placed
     if missing:
         raise AssertionError("files left ungrouped: %s" % sorted(missing))
-    return groups
+    return groups, orphans
 
 
 def cross_group_edges(
@@ -347,9 +354,8 @@ def group_diff(changes: list[dict], repo_root: Path) -> GroupingResult:
         return GroupingResult()
 
     edges, file_defined, file_used = build_edges(by_file, repo_root)
-    groups = build_groups(by_file, edges, file_defined, file_used)
+    groups, orphans = build_groups(by_file, file_defined, file_used)
     roles = {f: classify_file(f, by_file) for f in by_file}
-    _attached, orphans = _attach_tests(by_file, roles, file_defined, file_used)
 
     return GroupingResult(
         groups=groups,

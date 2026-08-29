@@ -10,6 +10,7 @@ to a measurement recorded there.
 
 from code_forge.diff_grouping import (
     Group,
+    build_edges,
     build_groups,
     churn_profile,
     classify_file,
@@ -130,6 +131,38 @@ class TestExtractNames:
         f.write_text("def (((\n")
         assert extract_names(f) == (set(), set())
 
+    def test_deleted_or_missing_file_yields_empty_sets(self, tmp_path):
+        """A file the diff deletes is not on disk any more.
+
+        extract_names reads the post-change worktree, so a deletion means the
+        read fails. That must degrade to "no symbols", not raise -- a
+        deletion-heavy diff would otherwise take the whole grouping down.
+        """
+        assert extract_names(tmp_path / "never_existed.py") == (set(), set())
+
+
+class TestPathSafety:
+    """Paths come from sem, so they are external input."""
+
+    def test_absolute_path_cannot_escape_the_repo(self, tmp_path):
+        """Path("/abs") on the right of a join discards the left side.
+
+        An absolute entry would send the read outside the repository
+        entirely. Stripping the separator keeps every read inside.
+        """
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.py").write_text("SECRET = 1\n")
+
+        repo = tmp_path / "repo"
+        (repo / "outside").mkdir(parents=True)
+        (repo / "outside" / "secret.py").write_text("INSIDE = 2\n")
+
+        by_file = {str(outside / "secret.py"): [_entity("x")]}
+        _edges, file_defined, _used = build_edges(by_file, repo)
+        defined = next(iter(file_defined.values()))
+        assert "SECRET" not in defined, "read escaped the repo root"
+
 
 class TestBuildGroups:
     """Roles partition; edges attach tests. No transitive closure."""
@@ -141,7 +174,7 @@ class TestBuildGroups:
             "tests/test_engine.py": [_entity("tests/test_engine.py")],
             "c.yaml": [_entity("c.yaml")],
         }
-        groups = build_groups(by_file, {}, {}, {})
+        groups = build_groups(by_file, {}, {})[0]
         placed = [m for g in groups for m in g.members]
         assert sorted(placed) == sorted(by_file)
         assert len(placed) == len(set(placed))
@@ -158,11 +191,22 @@ class TestBuildGroups:
             "src/machine.py": [_entity("src/machine.py", "modified")],
             "src/state.py": [_entity("src/state.py", "modified")],
         }
-        edges = {
-            "src/cli.py": {"src/machine.py"},
-            "src/machine.py": {"src/rulepack.py", "src/state.py"},
+        # The symbols that make it a chain: cli uses machine, machine uses
+        # rulepack and state. Connectivity-based grouping pulled all four
+        # together on exactly this shape.
+        file_defined = {
+            "src/rulepack.py": {"RulepackRunner"},
+            "src/machine.py": {"StateMachine"},
+            "src/state.py": {"State"},
+            "src/cli.py": set(),
         }
-        groups = build_groups(by_file, edges, {}, {})
+        file_used = {
+            "src/cli.py": {"StateMachine"},
+            "src/machine.py": {"RulepackRunner", "State"},
+            "src/rulepack.py": set(),
+            "src/state.py": set(),
+        }
+        groups, _ = build_groups(by_file, file_defined, file_used)
         engine = [g for g in groups if g.role == "engine"]
         assert len(engine) == 1
         assert engine[0].members == ["src/rulepack.py"]
@@ -188,7 +232,7 @@ class TestBuildGroups:
             # the name says nothing; the symbols say beta
             "tests/test_misleading_name.py": {"Beta"},
         }
-        groups = build_groups(by_file, {}, file_defined, file_used)
+        groups = build_groups(by_file, file_defined, file_used)[0]
         owner = {m: g for g in groups for m in g.members}
         assert owner["tests/test_misleading_name.py"] is owner["src/beta.py"]
 
@@ -203,7 +247,7 @@ class TestBuildGroups:
             "src/b.py": [_entity("src/b.py", "modified")],
             "tests/test_a.py": [_entity("tests/test_a.py")],
         }
-        groups = build_groups(by_file, {}, {}, {})
+        groups = build_groups(by_file, {}, {})[0]
         reviewed = [g for g in groups if g.role not in ("config", "docs")]
         assert reviewed, "expected at least one reviewable group"
         for g in reviewed:
@@ -219,11 +263,11 @@ class TestBuildGroups:
             "tests/test_a.py": [_entity("tests/test_a.py")],
             "z.yaml": [_entity("z.yaml")],
         }
-        first = [(g.name, g.members, g.passes) for g in build_groups(by_file, {}, {}, {})]
+        first = [(g.name, g.members, g.passes) for g in build_groups(by_file, {}, {})[0]]
         for _ in range(5):
             again = [
                 (g.name, g.members, g.passes)
-                for g in build_groups(by_file, {}, {}, {})
+                for g in build_groups(by_file, {}, {})[0]
             ]
             assert again == first
 
@@ -290,7 +334,7 @@ class TestNonPythonSourceIsStillReviewed:
 
     def test_shell_file_gets_review_passes(self):
         by_file = {"hooks/check.sh": [_entity("hooks/check.sh", "modified")]}
-        groups = build_groups(by_file, {}, {}, {})
+        groups = build_groups(by_file, {}, {})[0]
         owner = [g for g in groups if "hooks/check.sh" in g.members]
         assert len(owner) == 1
         assert owner[0].passes == 3, (
@@ -303,7 +347,7 @@ class TestNonPythonSourceIsStillReviewed:
             "README.md": [_entity("README.md", "modified")],
             "c.yaml": [_entity("c.yaml", "modified")],
         }
-        groups = build_groups(by_file, {}, {}, {})
+        groups = build_groups(by_file, {}, {})[0]
         for g in groups:
             assert g.passes == 0, (
                 "%s is deterministic-check territory, not LLM territory"
