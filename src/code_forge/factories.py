@@ -271,46 +271,51 @@ def build_l1_provider(
         ]
 
         # -- Build all prompts before execution -------------------------
+        # The three passes differ by one role sentence and share everything
+        # else, so the shared body is built ONCE and every prompt opens with
+        # those identical bytes. Backends cache on a common leading prefix:
+        # emitting the role first broke that prefix at character zero and made
+        # each pass pay full price for the same diff and post-image.
         from .diff import annotated_diff_prompt_block
         annotated_diff = annotated_diff_prompt_block(diff_text)
-        prompts = []
-        for _pn, role in pass_configs:
-            prompt = (
-                "You are a " + role + ". Review this diff.\n"
-                + REVIEW_JSON_CONTRACT
+
+        shared = REVIEW_JSON_CONTRACT
+        if manifest_spec:
+            shared += (
+                "\n" + manifest_spec.strip() + "\n"
             )
-            if manifest_spec:
-                prompt += (
-                    "\n" + manifest_spec.strip() + "\n"
-                )
-            if post_image:
-                prompt += (
-                    "\n## Post-Image (current file content)\n"
-                    + post_image + "\n"
-                )
-            if conventions_digest:
-                prompt += (
-                    "\n## Conventions Digest\n"
-                    + conventions_digest + "\n"
-                )
-            if graph_impact_context:
-                prompt += (
-                    "\n## Blast Radius Context\n"
-                    + graph_impact_context + "\n"
-                )
-            if contract_spec:
-                prompt += (
-                    "\n## Design Intent\n"
-                    + contract_spec + "\n"
-                )
-            if focus_spec:
-                prompt += (
-                    "\n## Review Focus\n" + focus_spec
-                    + "\nPrioritize findings in these areas; in your response, "
-                    + "state whether each area was checked.\n"
-                )
-            prompt += annotated_diff
-            prompts.append(prompt)
+        if post_image:
+            shared += (
+                "\n## Post-Image (current file content)\n"
+                + post_image + "\n"
+            )
+        if conventions_digest:
+            shared += (
+                "\n## Conventions Digest\n"
+                + conventions_digest + "\n"
+            )
+        if graph_impact_context:
+            shared += (
+                "\n## Blast Radius Context\n"
+                + graph_impact_context + "\n"
+            )
+        if contract_spec:
+            shared += (
+                "\n## Design Intent\n"
+                + contract_spec + "\n"
+            )
+        if focus_spec:
+            shared += (
+                "\n## Review Focus\n" + focus_spec
+                + "\nPrioritize findings in these areas; in your response, "
+                + "state whether each area was checked.\n"
+            )
+        shared += annotated_diff
+
+        prompts = [
+            shared + "\nYou are a " + role + ". Review this diff.\n"
+            for _pn, role in pass_configs
+        ]
 
         # -- Execute passes ---------------------------------------------
         # CLI backends use a module-global _active_proc that is not
@@ -594,34 +599,37 @@ def build_sampling_l1_provider(
         ]
 
         # -- Build all prompts before execution -------------------------
+        # Shared body first, role sentence last -- same reason as the
+        # subprocess provider above: a common leading prefix is what a
+        # backend can cache across the three passes.
         from .diff import annotated_diff_prompt_block
         annotated_diff = annotated_diff_prompt_block(diff_text)
-        prompts = []
-        for _pn, role in pass_configs:
-            prompt = (
-                "You are a " + role + ". Review this diff.\n"
-                + REVIEW_JSON_CONTRACT
+
+        shared = REVIEW_JSON_CONTRACT
+        if manifest_spec:
+            shared += (
+                "\n" + manifest_spec.strip() + "\n"
             )
-            if manifest_spec:
-                prompt += (
-                    "\n" + manifest_spec.strip() + "\n"
-                )
-            if post_image:
-                prompt += "\n## Post-Image (current file content)\n" + post_image + "\n"
-            if conventions_digest:
-                prompt += "\n## Conventions Digest\n" + conventions_digest + "\n"
-            if graph_impact_context:
-                prompt += "\n## Blast Radius Context\n" + graph_impact_context + "\n"
-            if contract_spec:
-                prompt += "\n## Design Intent\n" + contract_spec + "\n"
-            if focus_spec:
-                prompt += (
-                    "\n## Review Focus\n" + focus_spec
-                    + "\nPrioritize findings in these areas; in your response, "
-                    + "state whether each area was checked.\n"
-                )
-            prompt += annotated_diff
-            prompts.append(prompt)
+        if post_image:
+            shared += "\n## Post-Image (current file content)\n" + post_image + "\n"
+        if conventions_digest:
+            shared += "\n## Conventions Digest\n" + conventions_digest + "\n"
+        if graph_impact_context:
+            shared += "\n## Blast Radius Context\n" + graph_impact_context + "\n"
+        if contract_spec:
+            shared += "\n## Design Intent\n" + contract_spec + "\n"
+        if focus_spec:
+            shared += (
+                "\n## Review Focus\n" + focus_spec
+                + "\nPrioritize findings in these areas; in your response, "
+                + "state whether each area was checked.\n"
+            )
+        shared += annotated_diff
+
+        prompts = [
+            shared + "\nYou are a " + role + ". Review this diff.\n"
+            for _pn, role in pass_configs
+        ]
 
         # -- Execute passes concurrently via asyncio.gather -------------
         _system_prompt = (

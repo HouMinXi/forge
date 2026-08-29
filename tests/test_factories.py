@@ -3,6 +3,7 @@
 """STATE-10 factory + AutoFixer + revert_fn tests."""
 
 import inspect
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1260,3 +1261,148 @@ class TestPassTokenLine:
         line = _pass_token_line("deepseek", "expert",
                                 Usage(16974, 8605, 0))
         assert line == "[deepseek:expert] 16974 in / 8605 out tokens\n"
+
+
+ROLE_NAMES = (
+    "structural code reviewer: correctness and logic errors",
+    "senior engineer: SOLID, architecture, security",
+    "adversarial QE: assume bugs exist",
+)
+
+
+class TestSharedPromptPrefix:
+    """The three passes must share a byte-identical leading prefix.
+
+    Each pass differs from its siblings by one role sentence out of a prompt
+    that is otherwise identical -- measured at 99.98 percent shared bytes on a
+    real 14-file diff. Backends cache on a common leading prefix, so putting
+    the role sentence first breaks the cache at character zero and every pass
+    pays full price for the same tokens.
+
+    These tests pin the ordering property, not the wording: they read the
+    prompts the provider actually builds and compare them to each other.
+    """
+
+    @staticmethod
+    def _captured_prompts(resolved, **kwargs):
+        """Run the provider against a stubbed backend, return the prompts."""
+        from code_forge.factories import build_l1_provider
+
+        seen = []
+
+        def _capture(prompt, *a, **kw):
+            seen.append(prompt)
+            return _stub_llm_response(findings_json=[], excerpts_json=[])
+
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_capture):
+            provider = build_l1_provider("real", resolved, **kwargs)
+            provider()
+        return seen
+
+    def test_passes_share_a_leading_prefix(self):
+        """The common prefix must cover nearly the whole prompt."""
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        prompts = self._captured_prompts(
+            resolved,
+            post_image="## src/a.py\nline1\nadded\nline2\n" * 40,
+            conventions_digest="snake_case for functions\n" * 10,
+        )
+        assert len(prompts) == 3
+
+        common = os.path.commonprefix(prompts)
+        shortest = min(len(p) for p in prompts)
+        # The role sentences are the only intended difference, so the shared
+        # prefix should be nearly everything. A prefix under half the prompt
+        # means something non-shared was emitted early.
+        assert len(common) > shortest * 0.9, (
+            "shared prefix is %d chars of a %d char prompt; the passes are "
+            "diverging early and no backend can cache across them"
+            % (len(common), shortest)
+        )
+
+    def test_role_sentence_is_not_at_the_start(self):
+        """Nothing pass-specific may be emitted before the shared body."""
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        prompts = self._captured_prompts(resolved)
+
+        common = os.path.commonprefix(prompts)
+        # The role NAMES are what differ; each must fall past the shared
+        # prefix. ("You are a " itself is common to all three and may sit
+        # inside the prefix -- only the role that follows it is per-pass.)
+        for prompt, role in zip(prompts, ROLE_NAMES):
+            assert role not in common, (
+                "role %r appears in the shared prefix" % role
+            )
+            assert role in prompt[len(common):], (
+                "role %r is not in this pass's divergent tail" % role
+            )
+        tails = [p[len(common):] for p in prompts]
+        assert all(t.strip() for t in tails), "a pass has an empty tail"
+        assert len(set(tails)) == 3, "the three tails are not distinct"
+
+    def test_diff_body_is_inside_the_shared_prefix(self):
+        """The expensive part -- the diff -- must be shared, not repeated late."""
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        prompts = self._captured_prompts(resolved)
+
+        common = os.path.commonprefix(prompts)
+        assert "src/a.py" in common, (
+            "the diff body falls outside the shared prefix, so each pass "
+            "re-sends it uncached"
+        )
+
+
+class TestSamplingSharedPromptPrefix:
+    """Same prefix contract, on the MCP sampling provider.
+
+    This path builds its own prompts (build_sampling_l1_provider) and a test
+    that only exercises the subprocess provider stays green with this one
+    reverted -- verified by injecting the old ordering here alone.
+    """
+
+    @staticmethod
+    def _captured_prompts(resolved):
+        import asyncio
+        import threading
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+
+        seen = []
+
+        async def _fake_sampling(session, prompt, **kw):
+            seen.append(prompt)
+            return LLMResult(
+                content='{"findings": [], "code_excerpts": []}',
+                usage=LLMUsage(input_tokens=10, output_tokens=10),
+                duration_s=0.1,
+            )
+
+        loop = asyncio.new_event_loop()
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+        try:
+            with patch("code_forge.llm_invoke.invoke_sampling",
+                       side_effect=_fake_sampling):
+                provider = build_sampling_l1_provider(
+                    session=SimpleNamespace(), loop=loop, resolved=resolved,
+                )
+                provider()
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            t.join(timeout=5)
+        return seen
+
+    def test_sampling_passes_share_a_leading_prefix(self):
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        prompts = self._captured_prompts(resolved)
+        assert len(prompts) == 3
+
+        common = os.path.commonprefix(prompts)
+        shortest = min(len(p) for p in prompts)
+        assert len(common) > shortest * 0.9, (
+            "sampling: shared prefix is %d chars of a %d char prompt"
+            % (len(common), shortest)
+        )
+        assert "src/a.py" in common, (
+            "sampling: the diff body falls outside the shared prefix"
+        )
