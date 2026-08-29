@@ -856,3 +856,43 @@ class TestSplitDiffForFiles:
             "+fresh\n"
         )
         assert split_diff_for_files(diff, ["src/new.py"]) == diff
+
+
+class TestDescribeFabricatedLines:
+    """Name the claimed lines a diff's post-image does not contain."""
+
+    def test_returns_empty_when_every_line_is_present(self):
+        from code_forge.diff import describe_fabricated_lines
+        got = describe_fabricated_lines({1: "a", 2: "b", 3: "c"}, 1, 3)
+        assert got == ""
+
+    def test_names_a_line_past_the_end_of_the_post_image(self):
+        from code_forge.diff import describe_fabricated_lines
+        got = describe_fabricated_lines({1: "a", 2: "b"}, 1, 4)
+        assert got == "3, 4"
+
+    def test_names_a_line_in_the_gap_between_two_hunks(self):
+        """Unchanged regions between hunks are absent, not empty strings."""
+        from code_forge.diff import describe_fabricated_lines
+        got = describe_fabricated_lines({1: "a", 2: "b", 9: "i"}, 1, 9)
+        assert got == "3, 4, 5, 6, 7, 8"
+
+    def test_the_cap_bounds_a_reviewer_supplied_end_line(self):
+        """end_line comes from the reviewer and nothing on disk limits it.
+
+        Without the cap a claim of end_line=1000000 would build a
+        million-element list and a log line to match.
+        """
+        from code_forge.diff import describe_fabricated_lines
+        got = describe_fabricated_lines({}, 1, 500, cap=3)
+        assert got == "1, 2, 3, ..."
+
+    def test_no_ellipsis_when_the_count_lands_exactly_on_the_cap(self):
+        from code_forge.diff import describe_fabricated_lines
+        got = describe_fabricated_lines({}, 1, 3, cap=3)
+        assert got == "1, 2, 3"
+
+    def test_a_single_line_range_is_handled(self):
+        from code_forge.diff import describe_fabricated_lines
+        assert describe_fabricated_lines({}, 7, 7) == "7"
+        assert describe_fabricated_lines({7: "x"}, 7, 7) == ""

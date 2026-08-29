@@ -8,10 +8,16 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
 from .basis import derive_basis
+from .diff import (
+    _extract_post_image_lines,
+    describe_fabricated_lines,
+    parse_diff_hunks,
+)
 from .manifest import EnvManifest, ManifestTier
 from .state import (
     StateFinding,
@@ -78,6 +84,61 @@ def _build_excerpts(
     return out
 
 
+def _warn_on_fabricated_excerpts(
+    diff_text: str | None,
+    excerpts: list[dict] | None,
+) -> None:
+    """Warn about excerpts verify will refuse, while the round can react.
+
+    verify already rejects an excerpt covering lines the diff never
+    produced, but it runs at the end of the round -- after the passes
+    have been spent. Reporting the same thing here costs one walk over
+    the excerpt list and reaches the reviewer in time to matter.
+
+    Purely diagnostic. verify stays the gate; nothing here blocks the
+    receipt write, and a malformed diff degrades to silence rather than
+    taking the round down with it.
+    """
+    if not diff_text or not excerpts:
+        return
+
+    log = logging.getLogger(__name__)
+    try:
+        post_image = _extract_post_image_lines(diff_text)
+        _, exempt_files = parse_diff_hunks(diff_text)
+    except Exception as err:
+        log.debug("pre-flight: post-image extraction failed: %s", err)
+        return
+
+    for excerpt in excerpts:
+        start = excerpt.get("start_line")
+        end = excerpt.get("end_line")
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        fname = excerpt.get("file", "")
+        # Binary, rename, and mode-change files have no post-image, so
+        # every line of an excerpt against one would read as invented.
+        # verify exempts them; this has to agree or it cries wolf on
+        # every review that touches an image.
+        if fname in exempt_files:
+            continue
+        file_lines = post_image.get(fname)
+        if file_lines is None:
+            log.warning(
+                "pre-flight: excerpt %s:%d-%d references file %s "
+                "not in the diff; verify will refuse this",
+                fname, start, end, fname,
+            )
+            continue
+        fabricated = describe_fabricated_lines(file_lines, start, end)
+        if fabricated:
+            log.warning(
+                "pre-flight: excerpt %s:%d-%d references lines %s "
+                "not in diff post-image; verify will refuse this",
+                fname, start, end, fabricated,
+            )
+
+
 def write_receipts(
     receipts_dir: Path,
     round_index: int,
@@ -127,6 +188,7 @@ def write_receipts(
     written = []
 
     assembled_excerpts = _build_excerpts(reviewer_excerpts)
+    _warn_on_fabricated_excerpts(diff_text, assembled_excerpts)
     pass_outcomes = derive_pass_outcomes(l1_findings)
 
     exec_status: Optional[str] = None
