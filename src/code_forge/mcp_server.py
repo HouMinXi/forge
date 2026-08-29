@@ -809,7 +809,9 @@ def _build_review_context(
     """Build review context for in-process sampling path.
 
     Returns (resolved, source_hash, baseline_repr).
-    Equivalent to cli.py:1697-1724 but without argparse args object.
+    Equivalent to cli._build_baseline_specs but without an argparse args
+    object. Named rather than cited by line: the CLI shifts under this
+    file constantly and a line number here goes stale silently.
     """
     from code_forge.baseline import (
         EmptyBaseline,
@@ -855,7 +857,8 @@ def _build_review_context(
             head_spec = GitRefBaseline("INDEX")
         else:
             # WORKING = unstaged working tree changes (forge_review default)
-            # cli.py:2387 defaults to WORKING, not INDEX
+            # The CLI's --head help text declares the same default; kept in
+            # sync by name, not by line number.
             head_spec = GitRefBaseline("WORKING")
         paths = []
 
@@ -1127,6 +1130,9 @@ async def _dispatch_sampling(
     name="forge_review",
     description=(
         "Run the forge review pipeline on the current git diff. "
+        "baseline/head name an explicit commit range; leave them empty "
+        "(the default) to review the working tree. An empty string means "
+        "'not supplied', so it cannot be used to request an empty range. "
         "Long-running: returns inline if <20s, otherwise returns job_id for "
         "polling via forge_job_status."
     ),

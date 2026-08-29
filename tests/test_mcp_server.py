@@ -620,7 +620,6 @@ async def test_forge_review_with_contract_writes_tempfile():
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_forge_review_whole_file_string_forwards_path_to_cli():
     """forge_review(whole_file='src/foo.py') appends '--whole-file' 'src/foo.py'."""
     with (
@@ -3030,3 +3029,73 @@ async def test_dispatch_sampling_conn_kind_never_falls_back():
                 session=MagicMock(), committed=False,
                 workspace=_resolve_workspace())
     mock_cli.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_baseline_is_treated_as_omitted():
+    """An empty string means 'not supplied', per the tool description.
+
+    Pinned because the forwarding uses a truthiness test: anyone
+    switching it to `is not None` would start sending `--baseline ''`
+    to the CLI, which resolves it as a git ref and fails obscurely.
+    """
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(baseline="", head="")
+        args = mock_cli.call_args[0]
+        assert "--baseline" not in args
+        assert "--head" not in args
+
+
+@pytest.mark.asyncio
+async def test_committed_with_baseline_reaches_the_cli_that_rejects_it():
+    """The MCP layer delegates conflict rejection to the CLI.
+
+    cli.py refuses --committed alongside --baseline. This tool does not
+    pre-validate, so the combination is forwarded and the CLI errors.
+    Pinned so the delegation is a recorded decision rather than an
+    oversight: if MCP-side validation is added later, this test is the
+    one that should change, deliberately.
+    """
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 2, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(baseline="main", committed=True)
+        args = mock_cli.call_args[0]
+        assert "--baseline" in args
+        assert "--committed" in args
+
+
+@pytest.mark.asyncio
+async def test_a_ref_that_looks_like_a_flag_stays_a_value():
+    """baseline/head become argv elements, never parsed as flags.
+
+    argv is passed as a list, so a value like '--allow-main' lands in
+    the slot after '--baseline' and is read as a ref, not as a second
+    flag. Pinned against a future refactor to a shell string.
+    """
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(baseline="--allow-main")
+        args = list(mock_cli.call_args[0])
+        assert args[args.index("--baseline") + 1] == "--allow-main"
