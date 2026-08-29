@@ -119,6 +119,11 @@
           "type": "integer",
           "minimum": 0,
           "description": "Entity changes at or below this count pool a file into the shared integration group. Must be below engine_churn. Default 2."
+        },
+        "max_prompt_tokens": {
+          "type": "integer",
+          "minimum": 8192,
+          "description": "Estimated assembled-prompt tokens at which L1 review switches to grouped mode. Default 32000."
         }
       }
     },

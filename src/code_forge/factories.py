@@ -233,6 +233,7 @@ def build_l1_provider(
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
     continuation_breaker=None,
+    split_context: str = "",
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -309,6 +310,10 @@ def build_l1_provider(
                 "\n## Review Focus\n" + focus_spec
                 + "\nPrioritize findings in these areas; in your response, "
                 + "state whether each area was checked.\n"
+            )
+        if split_context:
+            shared += (
+                "\n## Split Review Context\n" + split_context + "\n"
             )
         shared += annotated_diff
 
@@ -547,6 +552,69 @@ def build_l1_provider(
                 total_duration)
 
     return _provider
+
+
+def build_grouped_l1_provider(
+    engine: str,
+    group_specs: list[dict],
+    **shared_kwargs,
+) -> "Callable":
+    """Build one L1 provider that fans a review out over per-group providers.
+
+    Each spec is a dict: name, resolved (ResolvedReview carrying the group's
+    slice of the diff), post_image, conventions_digest, split_context.
+    Everything else (backend, contract_spec, graph_impact_context, ...) is
+    shared and passed straight through to build_l1_provider.
+
+    machine.py sees one provider either way, so cycle-counter semantics are
+    unchanged: a clean round is one where every group's three passes came
+    back clean. Groups run SEQUENTIALLY -- CLI backends share a module-global
+    _active_proc and parallel groups would corrupt it. Findings are merged
+    and deduplicated by fingerprint: a defect sitting on a group boundary
+    gets reported once, not twice.
+    """
+    providers = [
+        (
+            spec["name"],
+            build_l1_provider(
+                engine,
+                spec["resolved"],
+                post_image=spec.get("post_image", ""),
+                conventions_digest=spec.get("conventions_digest", ""),
+                split_context=spec.get("split_context", ""),
+                **shared_kwargs,
+            ),
+        )
+        for spec in group_specs
+    ]
+
+    def _composite():
+        from .llm_invoke import Usage  # lazy, same as _provider
+
+        all_findings = []
+        all_excerpts = []
+        seen = set()
+        total_input = 0
+        total_output = 0
+        total_cached = 0
+        total_duration = 0.0
+        for name, provider in providers:
+            findings, excerpts, usage, duration = provider()
+            for f in findings:
+                if f.fingerprint in seen:
+                    continue
+                seen.add(f.fingerprint)
+                all_findings.append(f)
+            all_excerpts.extend(excerpts)
+            total_input += usage.input_tokens
+            total_output += usage.output_tokens
+            total_cached += usage.cached_input_tokens
+            total_duration += duration
+        return (all_findings, all_excerpts,
+                Usage(total_input, total_output, total_cached),
+                total_duration)
+
+    return _composite
 
 
 def build_sampling_l1_provider(

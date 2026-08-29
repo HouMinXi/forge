@@ -48,6 +48,11 @@ KNOWN_CHANGE_TYPES = frozenset(
 _ENGINE_CHURN = 10
 _INTEGRATION_CHURN = 2
 
+# Assembled-prompt budget for the single-pass path. Over this, the review
+# switches to grouped mode. See max_prompt_tokens_from_gate_config for the
+# derivation.
+_MAX_PROMPT_TOKENS = 32000
+
 
 def _check_thresholds(engine_churn: int, integration_churn: int) -> None:
     for name, value, floor in (
@@ -147,7 +152,9 @@ def thresholds_from_gate_config(config: dict) -> tuple[int, int]:
         raise ValueError(
             "gate.yaml 'grouping' section must be a mapping, got %r" % (section,)
         )
-    unknown = sorted(set(section) - {"engine_churn", "integration_churn"})
+    unknown = sorted(set(section) - {
+        "engine_churn", "integration_churn", "max_prompt_tokens",
+    })
     if unknown:
         raise ValueError(
             "gate.yaml 'grouping' has unknown keys: %s" % ", ".join(unknown)
@@ -159,6 +166,32 @@ def thresholds_from_gate_config(config: dict) -> tuple[int, int]:
     except ValueError as e:
         raise ValueError("gate.yaml 'grouping': %s" % e) from e
     return engine, integration
+
+
+def max_prompt_tokens_from_gate_config(config: dict) -> int:
+    """The assembled-prompt size at which review switches to grouped mode.
+
+    Default 32000 tokens: measured on the diff that motivated grouping, a
+    21.5K call completed cleanly while a 59K call truncated, and 32K leaves
+    the backend's 65536-token output budget roughly half free for thinking
+    plus findings. Below the floor a config makes grouping trigger on
+    diffs so small the split itself is the cost, so it is rejected.
+    """
+    section = config.get("grouping") or {}
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'grouping' section must be a mapping, got %r" % (section,)
+        )
+    value = section.get("max_prompt_tokens", _MAX_PROMPT_TOKENS)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            "max_prompt_tokens must be an int, got %r" % (value,)
+        )
+    if value < 8192:
+        raise ValueError(
+            "max_prompt_tokens must be >= 8192, got %d" % value
+        )
+    return value
 
 
 def classify_file(

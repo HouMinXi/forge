@@ -1406,3 +1406,144 @@ class TestSamplingSharedPromptPrefix:
         assert "src/a.py" in common, (
             "sampling: the diff body falls outside the shared prefix"
         )
+
+
+class TestSplitContextInPrompt:
+    """build_l1_provider carries a split-context block for grouped review."""
+
+    def test_split_context_lands_in_shared_body(self):
+        from code_forge.factories import build_l1_provider
+
+        seen = []
+
+        def _capture(prompt, *a, **kw):
+            seen.append(prompt)
+            return _stub_llm_response(findings_json=[], excerpts_json=[
+                {"file": "src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+            ])
+
+        resolved = _make_resolved_with_diff(_ONE_FILE_DIFF)
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_capture):
+            build_l1_provider(
+                "real", resolved,
+                split_context="cli.py (integration) uses RulepackRunner",
+            )()
+        assert seen
+        for prompt in seen:
+            assert "## Split Review Context" in prompt
+            assert "cli.py (integration) uses RulepackRunner" in prompt
+
+    def test_empty_split_context_adds_nothing(self):
+        from code_forge.factories import build_l1_provider
+
+        seen = []
+
+        def _capture(prompt, *a, **kw):
+            seen.append(prompt)
+            return _stub_llm_response(findings_json=[], excerpts_json=[
+                {"file": "src/a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2"},
+            ])
+
+        resolved = _make_resolved_with_diff(_ONE_FILE_DIFF)
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_capture):
+            build_l1_provider("real", resolved)()
+        assert seen
+        for prompt in seen:
+            assert "## Split Review Context" not in prompt
+
+
+class TestGroupedL1Provider:
+    """The composite provider fans one review out over group providers.
+
+    machine.py must not change: the composite returns one merged result, so
+    cycle semantics are untouched. Groups run sequentially -- CLI backends
+    share a module-global _active_proc and parallel groups would corrupt it.
+    """
+
+    @staticmethod
+    def _spec(name, diff_text, split_context=""):
+        return {
+            "name": name,
+            "resolved": _make_resolved_with_diff(diff_text),
+            "post_image": "",
+            "conventions_digest": "",
+            "split_context": split_context,
+        }
+
+    def _run(self, specs, reply_per_call):
+        from code_forge.factories import build_grouped_l1_provider
+
+        prompts = []
+
+        def _capture(prompt, *a, **kw):
+            prompts.append(prompt)
+            return reply_per_call(len(prompts) - 1)
+
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_capture):
+            provider = build_grouped_l1_provider("real", specs)
+            result = provider()
+        return result, prompts
+
+    _B_ONLY_DIFF = (
+        "diff --git a/src/b.py b/src/b.py\n"
+        "--- a/src/b.py\n"
+        "+++ b/src/b.py\n"
+        "@@ -1 +1,2 @@\n"
+        " keep\n"
+        "+new\n"
+    )
+
+    def test_each_group_gets_three_passes_with_its_own_diff(self):
+        def reply(i):
+            return _stub_llm_response(findings_json=[{
+                "file": "src/a.py", "line": 2,
+                "description": "finding-%d" % i, "severity": "P3",
+            }], excerpts_json=[])
+
+        specs = [
+            self._spec("engine:a.py", _ONE_FILE_DIFF, "ctx-A"),
+            self._spec("covered:b.py", self._B_ONLY_DIFF, "ctx-B"),
+        ]
+        (findings, _ex, usage, _dur), prompts = self._run(specs, reply)
+        assert len(prompts) == 6, "2 groups x 3 passes"
+        a_prompts = [p for p in prompts[:3]]
+        b_prompts = [p for p in prompts[3:]]
+        assert all("ctx-A" in p and "ctx-B" not in p for p in a_prompts)
+        assert all("ctx-B" in p and "ctx-A" not in p for p in b_prompts)
+        # group A's diff section never leaks into group B's prompt
+        assert all("src/a.py" in p for p in a_prompts)
+        assert all("src/a.py" not in p for p in b_prompts)
+        assert len(findings) == 6  # distinct descriptions -> distinct fps
+
+    def test_identical_finding_across_groups_dedupes(self):
+        same = [{
+            "file": "src/a.py", "line": 2,
+            "description": "same defect seen twice", "severity": "P2",
+        }]
+
+        def reply(i):
+            return _stub_llm_response(findings_json=same, excerpts_json=[])
+
+        specs = [
+            self._spec("g1", _ONE_FILE_DIFF),
+            self._spec("g2", _ONE_FILE_DIFF),
+        ]
+        (findings, _ex, _u, _d), _ = self._run(specs, reply)
+        matches = [f for f in findings if "same defect seen twice" in f.description]
+        assert len(matches) == 1, "boundary finding must be reported once"
+
+    def test_usage_sums_across_groups(self):
+        def reply(i):
+            return _stub_llm_response(findings_json=[{
+                "file": "src/a.py", "line": 2,
+                "description": "f%d" % i, "severity": "P3",
+            }], excerpts_json=[])
+
+        specs = [self._spec("g1", _ONE_FILE_DIFF),
+                 self._spec("g2", _TWO_FILE_DIFF)]
+        (_f, _e, usage, _d), _ = self._run(specs, reply)
+        # _stub_llm_response returns Usage(10, 10) per call, 6 calls total
+        assert usage.input_tokens == 60
+        assert usage.output_tokens == 60
