@@ -636,6 +636,24 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 # comment so the next reviewer sees the full map without re-deriving it.
 _REVIEW_ENVELOPE_KEYS: frozenset[str] = frozenset({"findings", "code_excerpts", "surfaces"})
 
+# Envelopes whose truncated form may be salvaged for the fields that did
+# arrive (see _salvage_truncated_object).  Deliberately a whitelist, not a
+# default: an envelope qualifies only when NO partial reading of it can be
+# mistaken for a benign result.
+#
+#   verdict/reasoning (falsify) -- qualifies.  "verdict" precedes the prose
+#   that overruns, and every value it can carry (CONFIRMED / DISMISSED /
+#   UNCERTAIN / anything unknown -> UNCERTAIN) is an explicit judgement.
+#   There is no value whose absence reads as "nothing to report".
+#
+#   findings/code_excerpts/surfaces (L1, RUNTIME) -- does NOT qualify.  A
+#   response cut after `"findings": []` salvages into a clean review, which
+#   is exactly the false green the cycle counter must never see.  These
+#   callers retry instead; a retry costs tokens, a false green costs the gate.
+_SALVAGEABLE_ENVELOPES: frozenset[frozenset[str]] = frozenset({
+    frozenset({"verdict", "reasoning"}),
+})
+
 # Provider-specific error code classification.
 # Keys: provider name (BackendConfig.name substring match).
 # Values: dict of body error code (str) -> "retryable" | "non-retryable".
@@ -833,20 +851,32 @@ def _extract_json_from_text(
     appear in model prose before the real envelope (F1 fix). None uses
     _REVIEW_ENVELOPE_KEYS (the default for all review-pass callers).
 
-    Callers and their expected_keys (maintain this list when adding new axes):
-      factories.py:272   L1 passes            findings / code_excerpts  (default)
-      cli.py:586         _spawn L1 passes     findings / code_excerpts  (default)
-      cli.py:678         test-assertion pass  findings / code_excerpts  (default)
-      runtime.py:320     RUNTIME axis         surfaces / findings       (default)
-      falsify_real.py:44 falsify              verdict / reasoning       (explicit)
-      daemon_state.py Q1:   external_state                              (explicit)
-      daemon_state.py Q2Q3: conflicts                                   (explicit)
+    Callers pass expected_keys through llm_invoke; this function is called
+    only from within this module (the parse-retry paths in _invoke_api and
+    _invoke_cli).  The envelopes in use, by the caller that requests them:
+      factories.py / cli.py / runtime.py   findings / code_excerpts /
+                                           surfaces          (default)
+      falsify_real.py:54  falsify          verdict / reasoning  (explicit)
+      daemon_state.py:412 Q1               external_state       (explicit)
+      daemon_state.py:453 Q2Q3             conflicts            (explicit)
+      contract_loader.py:282 contract      summary              (explicit)
+      backend.py:1042     probe            ok                   (explicit)
+    Adding a caller with new keys: pass expected_keys and update this list.
+    Adding one that should also survive truncation: see
+    _SALVAGEABLE_ENVELOPES, and read the warning there first.
 
     Scans left-to-right for '{' only; all forge envelopes are dicts, never
     bare arrays.  No attempt cap: raw_decode fails in O(1) for invalid JSON
-    (exits at the first non-JSON character), so the total scan remains
-    O(n) amortised across all '{' positions even when many invalid braces
+    (exits at the first non-JSON character), so the scan stays O(n)
+    amortised across all '{' positions even when many invalid braces
     precede the real envelope (F2 fix).
+
+    That bound holds for every envelope except the whitelisted salvage
+    path, where a failed raw_decode is followed by a scan of the rest of
+    the text (_salvage_truncated_object), making the worst case O(n*m) for
+    m brace positions.  Accepted because the whitelist admits only the
+    falsify envelope, whose responses are a single small object rather
+    than model prose full of braces.
 
     Returns None if no valid envelope can be extracted.
     """
@@ -858,10 +888,77 @@ def _extract_json_from_text(
         try:
             obj, _ = decoder.raw_decode(text, i)
         except json.JSONDecodeError:
-            continue
+            if keys not in _SALVAGEABLE_ENVELOPES:
+                continue
+            obj = _salvage_truncated_object(text, i, decoder)
+            if obj is None:
+                continue
         if isinstance(obj, dict) and obj.keys() & keys:
             return obj
     return None
+
+
+def _salvage_truncated_object(
+    text: str,
+    start: int,
+    decoder: json.JSONDecoder,
+) -> dict | None:
+    """Recover the complete leading fields of an object cut off mid-value.
+
+    raw_decode needs a closed object, so a response whose last field ran
+    past the output budget yields nothing at all -- including the fields
+    that arrived intact before the cut.  That matters for the falsify
+    envelope in particular: "verdict" is the only field any caller reads
+    and it precedes the free-form "reasoning" prose that actually
+    overruns.  Discarding a complete verdict because the explanation
+    after it was clipped costs a full retry of the same call.
+
+    Strategy: walk back from the end to the last structural boundary at
+    depth 1 (a comma or the opening brace outside any string), truncate
+    there, close the object, and decode that.  Only whole key/value
+    pairs survive; a pair cut anywhere inside itself is dropped rather
+    than guessed at, so no value is ever invented or half-read.
+
+    Returns None when nothing complete precedes the cut, or when the
+    text was not truncated at all (a genuinely malformed object stays
+    malformed -- this is a salvage path, not a lenient parser).
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    last_boundary = -1
+
+    for j in range(start, len(text)):
+        c = text[j]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
+                in_string = False
+            continue
+        if c == '"':
+            in_string = True
+        elif c in "{[":
+            depth += 1
+        elif c in "}]":
+            depth -= 1
+            if depth == 0:
+                # Object closes on its own: not truncated, so whatever
+                # made raw_decode fail is a real syntax error.
+                return None
+        elif c == "," and depth == 1:
+            last_boundary = j
+
+    if last_boundary < 0:
+        return None
+    candidate = text[start:last_boundary] + "}"
+    try:
+        obj, _ = decoder.raw_decode(candidate, 0)
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
