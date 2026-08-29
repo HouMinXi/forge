@@ -1,0 +1,45 @@
+name: vercel-react
+version: "1.0"
+source: https://github.com/vercel/next.js/tree/canary/packages/eslint-plugin-next
+rules:
+  - id: no-document-write
+    title: Avoid document.write
+    category: performance
+    impact_tier: medium
+    languages: [javascript, typescript]
+    source: https://developer.mozilla.org/en-US/docs/Web/API/Document/write
+
+  - id: client-passive-event-listeners
+    title: Use passive event listeners in the browser
+    category: performance
+    impact_tier: medium
+    languages: [javascript, typescript]
+    source: https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener#using_passive_listeners
+
+  - id: server-hoist-static-io
+    title: Avoid synchronous blocking IO in server contexts
+    category: performance
+    impact_tier: medium
+    languages: [javascript, typescript]
+    source: https://nextjs.org/docs/app/building-your-application/optimizing/static-exports
+
+  - id: dangerously-set-inner-html
+    title: Avoid dangerouslySetInnerHTML
+    category: security
+    impact_tier: high
+    languages: [javascript, typescript]
+    source: https://react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html
+
+  - id: no-img-tag
+    title: Prefer next/image over img tags
+    category: performance
+    impact_tier: medium
+    languages: [javascript, typescript]
+    source: https://nextjs.org/docs/app/building-your-application/optimizing/images
+
+  - id: barrel-import-next
+    title: Avoid Next.js barrel imports
+    category: bundle-size
+    impact_tier: low
+    languages: [javascript, typescript]
+    source: https://nextjs.org/docs/app/api-reference/config/typescript

@@ -2801,6 +2801,7 @@ def _dispatch_subagent(
     from .legacy import LegacyRunner
     from .graph_triage import GraphTriageRunner
     from .daemon_state import DaemonStateRunner
+    from .rulepack import RulepackRunner
 
     _post_image, _conv_digest = _assemble_post_image(
         cwd, resolved.git_diff or ""
@@ -2834,6 +2835,7 @@ def _dispatch_subagent(
     # GraphTriageRunner fetches fresh findings on its advisory pass.
     _c_daemon = DaemonStateRunner(backend=backend)
     _c_legacy = LegacyRunner()
+    _c_rulepack = RulepackRunner()
     verdict = run_outlet_c(
         resolved_review=resolved,
         source_hash=source_hash,
@@ -2843,7 +2845,10 @@ def _dispatch_subagent(
         registry=registry,
         backend=backend,
         engine=engine_choice,
-        advisory_runners=[_c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy],
+        advisory_runners=[
+            _c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy,
+            _c_rulepack,
+        ],
     )
     # Test-assertion review gate: advisory findings to stderr.
     # D8 exception: not recorded in receipts (see _run_test_assertion_review).
@@ -3589,6 +3594,7 @@ def _run_hold_loop(
         from .legacy import LegacyRunner
         from .graph_triage import GraphTriageRunner
         from .daemon_state import DaemonStateRunner
+        from .rulepack import RulepackRunner
 
         _taint_runner = TaintRunner()
         _runtime_runner = RuntimeRunner(backend=backend)
@@ -3596,6 +3602,7 @@ def _run_hold_loop(
         _graph_triage_runner._cached_findings = pre_graph_findings
         _daemon_state_runner = DaemonStateRunner(backend=backend)
         _legacy_runner = LegacyRunner()
+        _rulepack_runner = RulepackRunner()
         sm = StateMachine(
             mode=mode,
             falsifier=falsifier,
@@ -3622,7 +3629,7 @@ def _run_hold_loop(
             advisory_runners=[
                 _taint_runner, _runtime_runner,
                 _graph_triage_runner, _daemon_state_runner,
-                _legacy_runner,
+                _legacy_runner, _rulepack_runner,
             ],
             exec_falsify=exec_falsify,
             exec_falsify_timeout=exec_falsify_timeout,

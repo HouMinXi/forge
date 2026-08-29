@@ -1044,6 +1044,9 @@ class StateMachine:
         l0_findings = self._run_l0_phase()
         if self.mode == Mode.LOCAL:
             self._apply_autofix_loop_to(l0_findings)
+        # Pre-convergence promotion bridge: configured rulepack rules become
+        # genuine StateFindings so they block and reset cycle counters.
+        rulepack_findings = self._run_rulepack_blocking_phase()
         l1_findings, l1_excerpts = self._run_l1_phase()
         self._check_l1_can_still_converge(l1_findings)
         l2_findings = self._run_l2_phase()
@@ -1051,14 +1054,15 @@ class StateMachine:
         coverage_findings = self._run_coverage_phase()
         merged = self._merge_findings(
             l0_findings, l1_findings, l2_findings, e2e_findings,
-            coverage_findings,
+            coverage_findings, rulepack_findings,
         )
         merged = self._apply_promotion_stickiness(merged)
         self._state.findings = merged
         if self.exec_falsify:
             self._run_exec_falsifier()
         self._append_round_snapshot(
-            round_index, l0_findings, l1_findings, l2_findings, e2e_findings
+            round_index, l0_findings, l1_findings, l2_findings, e2e_findings,
+            rulepack_findings,
         )
         # CLI-08 H3: accumulate cost AFTER full round (L0+L1+L2+E2E done).
         # B7: "pass" = 1-3 within round (qodo/expert/adversarial),
@@ -1826,6 +1830,67 @@ class StateMachine:
         # L1-CONFIRMED strengthening; the EXEC finding above carries the
         # verdict-blocking failure independently.
 
+    def _run_rulepack_blocking_phase(self) -> list[StateFinding]:
+        """Pre-convergence bridge for blocking-promoted rulepack rules.
+
+        Rules named in gate.yaml `rulepacks_blocking` are converted from
+        advisory RulepackRunner findings into genuine StateFindings with
+        source=RULEPACK and disposition=CONFIRMED, causing them to block
+        the review verdict and reset the cycle counter.
+        """
+        from .gate_check import load_gate_config
+        from .rulepack import RulepackRunner
+
+        try:
+            gate_config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
+        except Exception:
+            return []
+
+        blocking_ids = gate_config.get("rulepacks_blocking", [])
+        if not blocking_ids:
+            return []
+
+        runner = RulepackRunner()
+        runner.source_files = list(self._source_files())
+        advisories = runner.run(self.resolved_review.git_diff or "", self.cwd)
+        self._state.infra_errors.extend(runner.infra_errors)
+
+        findings: list[StateFinding] = []
+        for adv in advisories:
+            # Advisory id format: rulepack:{pack}:{file}:{line}:{rule_id}
+            parts = adv.id.split(":")
+            if len(parts) < 3:
+                continue
+            rule_id = parts[-1]
+            if rule_id not in blocking_ids:
+                continue
+            pack_name = parts[1]
+            file = adv.file
+            line = adv.line_range[0] if adv.line_range else 0
+            desc = adv.description
+            fingerprint = (
+                "rulepack:%s:%s:%s:%s:%s"
+                % (
+                    pack_name,
+                    rule_id,
+                    file,
+                    line,
+                    hashlib.sha256(desc.encode("utf-8")).hexdigest()[:12],
+                )
+            )
+            findings.append(
+                StateFinding(
+                    id=fingerprint,
+                    fingerprint=fingerprint,
+                    source="RULEPACK",
+                    disposition=Disposition.CONFIRMED,
+                    file=file,
+                    line_range=list(adv.line_range),
+                    description=desc,
+                )
+            )
+        return findings
+
     def _run_advisory_axes(self) -> None:
         """Post-convergence dispatch point for advisory axes.
 
@@ -1965,14 +2030,16 @@ class StateMachine:
         l2_findings: list[StateFinding] = None,
         e2e_findings: list[StateFinding] = None,
         coverage_findings: list[StateFinding] = None,
+        rulepack_findings: list[StateFinding] = None,
     ) -> list[StateFinding]:
-        """Merge L0 + L1 + L2 + E2E + COVERAGE by fingerprint.
+        """Merge L0 + L1 + L2 + E2E + COVERAGE + RULEPACK by fingerprint.
 
         FP-04: L0 wins on conflict. Merge order (lowest priority first;
         higher overwrites): coverage/e2e (lowest) -> l2 -> l1 -> l0
         (highest). COVERAGE fingerprints use a "coverage:" prefix and E2E
         a "e2e-" prefix; neither collides with L0/L1/L2 fingerprints, so
-        the ordering is defensive correctness.
+        the ordering is defensive correctness. Rulepack findings share
+        deterministic source and are merged at L0 priority.
         """
         merged: dict[str, StateFinding] = {}
         # coverage + e2e lowest priority: insert first so l2/l1/l0 win.
@@ -1985,6 +2052,8 @@ class StateMachine:
         for f in l1_findings:
             merged[f.fingerprint] = f
         for f in l0_findings:
+            merged[f.fingerprint] = f
+        for f in (rulepack_findings or []):
             merged[f.fingerprint] = f
         return list(merged.values())
 
@@ -2020,6 +2089,7 @@ class StateMachine:
         l1_findings: list[StateFinding],
         l2_findings: list[StateFinding] = None,
         e2e_findings: list[StateFinding] = None,
+        rulepack_findings: list[StateFinding] = None,
     ) -> None:
         """Append per-round snapshot to round_history for STATE-05."""
         snapshot = {
@@ -2031,6 +2101,9 @@ class StateMachine:
             ],
             "e2e_fingerprints": [
                 f.fingerprint for f in (e2e_findings or [])
+            ],
+            "rulepack_fingerprints": [
+                f.fingerprint for f in (rulepack_findings or [])
             ],
             "dispositions": {
                 f.fingerprint: f.disposition.value

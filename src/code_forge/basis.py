@@ -32,6 +32,7 @@ _DETERMINISTIC_SOURCES: Final[frozenset[str]] = frozenset(
         "LINT",
         "FORMAT",
         "SECURITY",
+        "RULEPACK",
     }
 )
 
