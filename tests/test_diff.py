@@ -762,3 +762,97 @@ diff --git a/m.py b/m.py
         assert "--- a/old.py" in result
         assert "+++ /dev/null" in result
         assert "[----] -a" in result
+
+
+class TestSplitDiffForFiles:
+    """Split a unified diff into the sections belonging to given files.
+
+    Grouped review needs each group's share of the diff as standalone text.
+    A member with no section (a binary or pure rename entry has no hunks and
+    sem can still report it) is skipped, not an error.
+    """
+
+    DIFF = (
+        "diff --git a/src/a.py b/src/a.py\n"
+        "--- a/src/a.py\n"
+        "+++ b/src/a.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " one\n"
+        "+two\n"
+        " three\n"
+        "diff --git a/src/b.py b/src/b.py\n"
+        "--- a/src/b.py\n"
+        "+++ b/src/b.py\n"
+        "@@ -1 +1,2 @@\n"
+        " keep\n"
+        "+new\n"
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n"
+        "+++ b/README.md\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+
+    def test_single_member_returns_only_its_section(self):
+        from code_forge.diff import split_diff_for_files
+        out = split_diff_for_files(self.DIFF, ["src/b.py"])
+        assert "src/b.py" in out
+        assert "+new" in out
+        assert "src/a.py" not in out
+        assert "README.md" not in out
+
+    def test_multiple_members_preserve_diff_order(self):
+        from code_forge.diff import split_diff_for_files
+        out = split_diff_for_files(self.DIFF, ["README.md", "src/a.py"])
+        # asked in reverse order, emitted in the diff's own order
+        assert out.index("src/a.py") < out.index("README.md")
+        assert "src/b.py" not in out
+
+    def test_all_members_round_trip(self):
+        from code_forge.diff import split_diff_for_files
+        members = ["src/a.py", "src/b.py", "README.md"]
+        out = split_diff_for_files(self.DIFF, members)
+        assert out == self.DIFF
+
+    def test_absent_member_is_skipped(self):
+        from code_forge.diff import split_diff_for_files
+        out = split_diff_for_files(self.DIFF, ["src/a.py", "src/ghost.py"])
+        assert "src/a.py" in out
+        assert "ghost" not in out
+
+    def test_empty_diff(self):
+        from code_forge.diff import split_diff_for_files
+        assert split_diff_for_files("", ["a.py"]) == ""
+
+    def test_deleted_file_section_kept(self):
+        from code_forge.diff import split_diff_for_files
+        diff = (
+            "diff --git a/src/old.py b/src/old.py\n"
+            "deleted file mode 100644\n"
+            "--- a/src/old.py\n"
+            "+++ /dev/null\n"
+            "@@ -1 +0,0 @@\n"
+            "-gone\n"
+            "diff --git a/src/b.py b/src/b.py\n"
+            "--- a/src/b.py\n"
+            "+++ b/src/b.py\n"
+            "@@ -1 +1,2 @@\n"
+            " keep\n"
+            "+new\n"
+        )
+        out = split_diff_for_files(diff, ["src/old.py"])
+        assert "-gone" in out
+        assert "src/b.py" not in out
+
+    def test_new_file_section_kept(self):
+        from code_forge.diff import split_diff_for_files
+        diff = (
+            "diff --git a/src/new.py b/src/new.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/src/new.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+fresh\n"
+        )
+        assert split_diff_for_files(diff, ["src/new.py"]) == diff

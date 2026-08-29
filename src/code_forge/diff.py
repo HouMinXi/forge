@@ -166,6 +166,48 @@ def get_changed_files(diff_text: str) -> list[str]:
     return sorted(changed.keys())
 
 
+def split_diff_for_files(diff_text: str, members: list[str]) -> str:
+    """Return the sections of a unified diff belonging to `members`.
+
+    Splits on `diff --git` headers and keeps each section whose path is in
+    `members`, in the diff's original order. The path is read from the
+    `+++ b/<path>` line, falling back to `--- a/<path>` for deletions, so
+    paths containing spaces survive (the `diff --git` line itself is
+    ambiguous for those).
+
+    A member with no section (binary or pure-rename entries carry no hunks,
+    and a path listing tool may still report the file) is skipped rather
+    than treated as an error: nothing about such a file can be reviewed as
+    text anyway.
+    """
+    if not diff_text:
+        return ""
+    wanted = set(members)
+    sections: list[tuple[str | None, str]] = []
+    current: list[str] = []
+    for line in diff_text.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            if current:
+                sections.append(_section_entry(current))
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        sections.append(_section_entry(current))
+    return "".join(text for path, text in sections if path in wanted)
+
+
+def _section_entry(lines: list[str]) -> tuple[str | None, str]:
+    """(post-change path, verbatim section text) for one diff section."""
+    old_path: str | None = None
+    for line in lines:
+        if line.startswith("+++ b/"):
+            return line[len("+++ b/"):].rstrip("\n"), "".join(lines)
+        if line.startswith("--- a/"):
+            old_path = line[len("--- a/"):].rstrip("\n")
+    return old_path, "".join(lines)
+
+
 def parse_diff_hunks(
     diff_text: str,
 ) -> tuple[dict[str, list[dict]], list[str]]:

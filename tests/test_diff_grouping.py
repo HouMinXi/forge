@@ -442,3 +442,37 @@ class TestThresholdConfiguration:
             classify_file("a.py", by_file, integration_churn=-1)
         with pytest.raises(ValueError):
             classify_file("a.py", by_file, engine_churn=10, integration_churn=10)
+
+
+class TestMaxPromptTokens:
+    """The A-floor budget: when grouping triggers at all."""
+
+    def test_default_is_32000(self):
+        from code_forge.diff_grouping import max_prompt_tokens_from_gate_config
+        assert max_prompt_tokens_from_gate_config({}) == 32000
+
+    def test_override(self):
+        from code_forge.diff_grouping import max_prompt_tokens_from_gate_config
+        assert max_prompt_tokens_from_gate_config(
+            {"grouping": {"max_prompt_tokens": 50000}}
+        ) == 50000
+
+    def test_invalid_raises(self):
+        import pytest
+        from code_forge.diff_grouping import max_prompt_tokens_from_gate_config
+        with pytest.raises(ValueError, match="max_prompt_tokens"):
+            max_prompt_tokens_from_gate_config(
+                {"grouping": {"max_prompt_tokens": 1000}}
+            )
+        with pytest.raises(ValueError, match="max_prompt_tokens"):
+            max_prompt_tokens_from_gate_config(
+                {"grouping": {"max_prompt_tokens": True}}
+            )
+
+    def test_thresholds_helper_still_accepts_the_new_key(self):
+        """thresholds_from_gate_config must not reject max_prompt_tokens."""
+        from code_forge.diff_grouping import thresholds_from_gate_config
+        engine, integration = thresholds_from_gate_config(
+            {"grouping": {"engine_churn": 20, "max_prompt_tokens": 50000}}
+        )
+        assert (engine, integration) == (20, 2)

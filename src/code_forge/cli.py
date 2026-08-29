@@ -1039,6 +1039,57 @@ def _window_file_text(
     return "\n".join(out), True
 
 
+def _estimate_l1_prompt_tokens(
+    diff_text: str,
+    post_image: str,
+    conventions_digest: str,
+    graph_impact_context: str,
+    contract_spec: str,
+    manifest_spec: str,
+    focus_spec: str,
+) -> int:
+    """Rough input-token estimate for one assembled L1 prompt.
+
+    chars // 4, over exactly the blocks build_l1_provider puts into the
+    shared body. Deliberately crude: it only has to answer "will this call
+    truncate", so it aims conservative, not exact.
+    """
+    from .reviewer_json import REVIEW_JSON_CONTRACT
+    total = (
+        len(diff_text) + len(post_image) + len(conventions_digest)
+        + len(graph_impact_context) + len(contract_spec)
+        + len(manifest_spec) + len(focus_spec)
+        + len(REVIEW_JSON_CONTRACT)
+    )
+    return total // 4
+
+
+def _split_context_for_group(group_name: str, cross_group_edges: list) -> str:
+    """One group's view of the contracts the split hid from it.
+
+    Each cross-group edge touching this group becomes one line naming the
+    symbols on the contract and which group holds the other half. A few
+    hundred tokens against the tens of thousands a full neighbour group
+    would cost.
+    """
+    lines = []
+    for e in cross_group_edges:
+        if e["from_group"] != group_name and e["to_group"] != group_name:
+            continue
+        symbols = ", ".join(e["symbols"][:8])
+        lines.append(
+            "- %s (%s) uses %s from %s (%s)"
+            % (e["from"], e["from_group"], symbols, e["to"], e["to_group"])
+        )
+    if not lines:
+        return ""
+    return (
+        "This diff was split into review groups. Contracts crossing this "
+        "group's boundary -- the other half is reviewed separately:\n"
+        + "\n".join(lines)
+    )
+
+
 def _assemble_post_image(
     cwd: Path, diff_text: str, context_lines: int = 40,
 ) -> tuple[str, str]:
@@ -3412,18 +3463,96 @@ def _run(args, env, cwd: Path) -> Verdict:
     _manifest_a = extract_manifest(cwd)
     _manifest_spec_a = _manifest_a.to_prompt_block()
 
-    l1_provider = build_l1_provider(
-        engine_choice, resolved, backend=backend,
-        conventions_digest=_conv_digest_a,
-        post_image=_post_image_a,
-        graph_impact_context=_graph_impact_context,
-        contract_spec=_contract_spec_a,
-        manifest_spec=_manifest_spec_a,
-        breaker=breaker,
-        continuation_breaker=truncation_breaker,
-        max_attempts=retry_cfg.get("max_attempts", 5),
-        initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
+    from .diff_grouping import (
+        group_diff,
+        max_prompt_tokens_from_gate_config,
+        thresholds_from_gate_config,
     )
+    _group_budget = max_prompt_tokens_from_gate_config(gate_data)
+    _l1_est_tokens = _estimate_l1_prompt_tokens(
+        resolved.git_diff or "", _post_image_a, _conv_digest_a,
+        _graph_impact_context, _contract_spec_a, _manifest_spec_a, "",
+    )
+    if _l1_est_tokens <= _group_budget:
+        l1_provider = build_l1_provider(
+            engine_choice, resolved, backend=backend,
+            conventions_digest=_conv_digest_a,
+            post_image=_post_image_a,
+            graph_impact_context=_graph_impact_context,
+            contract_spec=_contract_spec_a,
+            manifest_spec=_manifest_spec_a,
+            breaker=breaker,
+            continuation_breaker=truncation_breaker,
+            max_attempts=retry_cfg.get("max_attempts", 5),
+            initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
+        )
+    else:
+        from .graph_triage import _run_sem
+        from .diff import split_diff_for_files
+
+        _changes = _run_sem(resolved.git_diff or "", cwd)
+        _grouping = group_diff(
+            _changes, cwd, *thresholds_from_gate_config(gate_data),
+        )
+        _review_groups = [g for g in _grouping.groups if g.passes > 0]
+        if not _review_groups:
+            # sem produced nothing usable -- degrade to the single-diff
+            # path loudly rather than reviewing nothing.
+            warn(
+                "grouping: estimated %d tokens over budget %d but sem "
+                "returned no entities; falling back to single-pass review "
+                "(truncation risk stands)" % (_l1_est_tokens, _group_budget)
+            )
+            l1_provider = build_l1_provider(
+                engine_choice, resolved, backend=backend,
+                conventions_digest=_conv_digest_a,
+                post_image=_post_image_a,
+                graph_impact_context=_graph_impact_context,
+                contract_spec=_contract_spec_a,
+                manifest_spec=_manifest_spec_a,
+                breaker=breaker,
+                continuation_breaker=truncation_breaker,
+                max_attempts=retry_cfg.get("max_attempts", 5),
+                initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
+            )
+        else:
+            import dataclasses as _dc
+            _specs = []
+            for _g in _review_groups:
+                _gdiff = split_diff_for_files(
+                    resolved.git_diff or "", _g.members,
+                )
+                _pi_g, _conv_g = _assemble_post_image(cwd, _gdiff)
+                _specs.append({
+                    "name": _g.name,
+                    "resolved": _dc.replace(
+                        resolved, git_diff=_gdiff,
+                        source_files=[Path(m) for m in _g.members],
+                    ),
+                    "post_image": _pi_g,
+                    "conventions_digest": _conv_g,
+                    "split_context": _split_context_for_group(
+                        _g.name, _grouping.cross_group_edges,
+                    ),
+                })
+            print(
+                "grouping: %d files -> %d review groups "
+                "(est %d tok > budget %d)"
+                % (len({m for g in _review_groups for m in g.members}),
+                   len(_review_groups), _l1_est_tokens, _group_budget),
+                file=sys.stderr,
+            )
+            from .factories import build_grouped_l1_provider
+            l1_provider = build_grouped_l1_provider(
+                engine_choice, _specs, backend=backend,
+                graph_impact_context=_graph_impact_context,
+                contract_spec=_contract_spec_a,
+                manifest_spec=_manifest_spec_a,
+                breaker=breaker,
+                continuation_breaker=truncation_breaker,
+                max_attempts=retry_cfg.get("max_attempts", 5),
+                initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
+            )
 
     # Coverage gate inputs: L1 examines every changed file only when it
     # actually runs over a diff (engine != stub AND a non-empty git diff).
