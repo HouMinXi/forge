@@ -232,3 +232,110 @@ def test_append_writes_valid_one_json_per_line(tmp_path):
         assert "terminal_state" in parsed
         assert "base_sha" in parsed
         assert "head_sha" in parsed
+
+def test_v1_row_without_telemetry_fields_still_parses(tmp_path, capsys):
+    """A pre-enrichment row must survive the reader, not be skipped.
+
+    Every historical row lacks backend and the ctx_* flags. Reading them
+    with data[...] instead of data.get(...) raises KeyError, and iter_rows
+    turns that into a skipped line -- silently dropping the entire
+    existing ledger rather than failing loudly.
+    """
+    d = tmp_path / ".code-forge"
+    d.mkdir()
+    v1 = {
+        "fingerprint": "fp-v1",
+        "repo_root": "/repo",
+        "base_sha": "a" * 40,
+        "head_sha": "b" * 40,
+        "file": "src/x.py",
+        "line": 42,
+        "axis_claim": "runtime",
+        "pass_provenance": "expert",
+        "terminal_state": "FIXED",
+        "evidence_class": "fix_applied",
+        "ts": "2026-08-01T00:00:00Z",
+    }
+    (d / "ledger.jsonl").write_text(json.dumps(v1) + "\n", encoding="utf-8")
+
+    rows = list(iter_rows(tmp_path))
+
+    assert len(rows) == 1, "v1 row was dropped: %s" % capsys.readouterr().err
+    assert rows[0].fingerprint == "fp-v1"
+    assert rows[0].backend == ""
+    assert rows[0].ctx_graph_triage is False
+    assert rows[0].ctx_contract is False
+    assert rows[0].ctx_whole_file is False
+    assert rows[0].ctx_canary is False
+
+
+def test_telemetry_fields_round_trip(tmp_path):
+    """backend and the four ctx flags survive append -> iter."""
+    row = LedgerRow(
+        fingerprint="fp-v11",
+        repo_root="/repo",
+        base_sha="c" * 40,
+        head_sha="d" * 40,
+        file="src/y.py",
+        line=7,
+        axis_claim="security",
+        pass_provenance="adversarial",
+        terminal_state=TerminalState.DISPROVED,
+        evidence_class="disproved_by_source",
+        ts="2026-08-27T00:00:00Z",
+        backend="mimo-pro",
+        ctx_graph_triage=True,
+        ctx_contract=False,
+        ctx_whole_file=True,
+        ctx_canary=False,
+    )
+    append_row(tmp_path, row)
+
+    got = list(iter_rows(tmp_path))
+    assert len(got) == 1
+    assert got[0].backend == "mimo-pro"
+    assert got[0].ctx_graph_triage is True
+    assert got[0].ctx_contract is False
+    assert got[0].ctx_whole_file is True
+    assert got[0].ctx_canary is False
+
+
+def test_state_finding_carries_backend_through_serialization(tmp_path):
+    """StateFinding.backend must survive state.json round-trip.
+
+    The ledger writer reads backend off the finding, so a field that
+    does not persist across a state reload silently writes "" for every
+    finding recovered from disk mid-review.
+    """
+    from code_forge.state import _finding_to_dict, _finding_from_dict
+    from code_forge.state import StateFinding as SF
+    from code_forge.disposition import Disposition
+
+    f = SF(
+        id="f1",
+        fingerprint="fp1",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="src/a.py",
+        line_range=[1, 2],
+        description="d",
+        backend="mimo-pro",
+    )
+    back = _finding_from_dict(_finding_to_dict(f))
+    assert back.backend == "mimo-pro"
+
+
+def test_state_finding_backend_defaults_for_legacy_state(tmp_path):
+    """A state.json written before this field must still load."""
+    from code_forge.state import _finding_from_dict
+
+    legacy = {
+        "id": "f1",
+        "fingerprint": "fp1",
+        "source": "L1",
+        "disposition": "CONFIRMED",
+        "file": "src/a.py",
+        "line_range": [1],
+        "description": "d",
+    }
+    assert _finding_from_dict(legacy).backend is None

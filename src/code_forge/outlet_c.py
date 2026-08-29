@@ -112,7 +112,12 @@ def _run_chunk(
         try:
             validated = validate_reviewer_json(raw)
             findings.extend(
-                _json_to_state_findings(validated, pass_name),
+                # Outlet C spawns a subprocess per pass and never holds a
+                # BackendConfig, so it names the outlet rather than
+                # inventing a model.
+                _json_to_state_findings(
+                    validated, pass_name, backend="subagent",
+                ),
             )
             all_excerpts.extend(_collect_excerpts(validated))
         except ValueError as e:

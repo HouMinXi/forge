@@ -86,6 +86,9 @@ class StateFinding:
     anchor: Optional[dict] = None
     evidence_files: Optional[list[str]] = None
     is_timeout: bool = False
+    # Backend that produced this finding. None for findings forge raises
+    # itself (L0, MUTANT, INFRA); the ledger writer turns None into "".
+    backend: Optional[str] = None
 
 
 def derive_pass_outcomes(
@@ -205,6 +208,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
         anchor=d.get("anchor"),
         evidence_files=d.get("evidence_files"),
         is_timeout=d.get("is_timeout", False),
+        backend=d.get("backend"),
     )
 
 
@@ -324,6 +328,7 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "anchor": f.anchor,
         "evidence_files": f.evidence_files,
         "is_timeout": f.is_timeout,
+        "backend": f.backend,
     }
     return d
 

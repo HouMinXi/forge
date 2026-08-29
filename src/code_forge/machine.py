@@ -244,6 +244,14 @@ class StateMachine:
     exec_falsify: bool = False
     exec_falsify_timeout: int = 120
     exec_falsify_command: Optional[list[str]] = None
+    # Auxiliary context this review was given, recorded per ledger row so
+    # a later precision figure can separate runs that had graph triage or
+    # a contract from runs that had neither. Pipeline-internal only: what
+    # the calling agent consulted is invisible here and is not claimed.
+    ctx_graph_triage: bool = False
+    ctx_contract: bool = False
+    ctx_whole_file: bool = False
+    ctx_canary: bool = False
     _state: State = field(default_factory=State, init=False)
 
     @property
@@ -1397,8 +1405,15 @@ class StateMachine:
         ts: str,
         version_sensitive: bool = False,
         repo_root: str | None = None,
+        backend: str | None = None,
     ) -> LedgerRow:
-        """Construct a LedgerRow from review state (shared between local and CI writers)."""
+        """Construct a LedgerRow from review state (shared between local and CI writers).
+
+        backend names the model behind this finding; rows forge raises
+        itself pass None and record "". The ctx_* flags describe what
+        auxiliary context the pipeline fed the review that produced it,
+        and are read off the machine rather than passed per row.
+        """
         base = self.resolved_review.base_sha
         head = self.resolved_review.head_sha
         resolved_root = repo_root or str(resolve_ledger_root(self.cwd).resolve())
@@ -1415,6 +1430,11 @@ class StateMachine:
             evidence_class=evidence_class,
             ts=ts,
             version_sensitive=version_sensitive,
+            backend=backend or "",
+            ctx_graph_triage=self.ctx_graph_triage,
+            ctx_contract=self.ctx_contract,
+            ctx_whole_file=self.ctx_whole_file,
+            ctx_canary=self.ctx_canary,
         )
 
     def _write_ledger_rows(self) -> int:
@@ -1474,6 +1494,7 @@ class StateMachine:
                 evidence_class=evidence,
                 ts=ts,
                 version_sensitive=ct.version_sensitive,
+                backend=f.backend,
                 repo_root=str(ledger_root.resolve()),
             )
             ledger_append(ledger_root, row)
@@ -1598,6 +1619,7 @@ class StateMachine:
                     ts=ts,
                     version_sensitive=ct.version_sensitive,
                     repo_root=str(ledger_root.resolve()),
+                    backend=f.backend,
                 )
                 ledger_append(ledger_root, row)
                 existing.add((f.fingerprint, base, head))

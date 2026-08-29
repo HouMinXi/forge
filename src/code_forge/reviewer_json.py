@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Optional
 
 _REQUIRED_FIELDS = {"findings", "code_excerpts"}
 _FINDING_REQUIRED = {"file", "line", "severity", "description"}
@@ -152,11 +153,17 @@ def _collect_excerpts(data: dict) -> list[dict]:
     return data.get("code_excerpts", [])
 
 
-def _json_to_state_findings(data: dict, pass_name: str) -> list:
+def _json_to_state_findings(
+    data: dict, pass_name: str, backend: Optional[str] = None,
+) -> list:
     """Convert validated reviewer JSON findings to StateFinding list.
 
     Shared by outlet_c.py (Outlet C) and factories.py (Outlet A) to
     ensure identical fingerprint computation across both code paths.
+
+    backend names the model that produced these findings, so the ledger
+    can attribute them later. It stays optional: a caller with nothing
+    truthful to name leaves it None rather than guessing.
     """
     from .disposition import Disposition
     from .state import StateFinding
@@ -179,5 +186,6 @@ def _json_to_state_findings(data: dict, pass_name: str) -> list:
             file=file_path,
             line_range=[line, line],
             description="[%s] %s" % (pass_name, desc),
+            backend=backend,
         ))
     return findings
