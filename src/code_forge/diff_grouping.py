@@ -48,6 +48,23 @@ KNOWN_CHANGE_TYPES = frozenset(
 _ENGINE_CHURN = 10
 _INTEGRATION_CHURN = 2
 
+
+def _check_thresholds(engine_churn: int, integration_churn: int) -> None:
+    for name, value, floor in (
+        ("engine_churn", engine_churn, 1),
+        ("integration_churn", integration_churn, 0),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("%s must be an int, got %r" % (name, value))
+        if value < floor:
+            raise ValueError("%s must be >= %d, got %d" % (name, floor, value))
+    if integration_churn >= engine_churn:
+        raise ValueError(
+            "integration_churn (%d) must be below engine_churn (%d); "
+            "overlapping ranges leave the boundary ambiguous"
+            % (integration_churn, engine_churn)
+        )
+
 # Every reviewable group gets the full three passes. Measured across 30
 # receipts in this repo: qodo found 12 distinct findings, expert 15,
 # adversarial 15, union 40, and each pair overlapped by exactly 1. One pass
@@ -116,7 +133,40 @@ def churn_profile(entities: list[dict]) -> dict[str, int]:
     }
 
 
-def classify_file(fpath: str, by_file: dict[str, list[dict]]) -> tuple[str, str]:
+def thresholds_from_gate_config(config: dict) -> tuple[int, int]:
+    """Map gate.yaml's optional `grouping:` section onto churn thresholds.
+
+    Takes the already-parsed gate config; file loading lives with the caller.
+    Absent section means defaults. Unknown keys are rejected outright -- a
+    typo like `engin_churn` must fail loudly, not silently re-apply defaults.
+    """
+    section = config.get("grouping")
+    if section is None:
+        return _ENGINE_CHURN, _INTEGRATION_CHURN
+    if not isinstance(section, dict):
+        raise ValueError(
+            "gate.yaml 'grouping' section must be a mapping, got %r" % (section,)
+        )
+    unknown = sorted(set(section) - {"engine_churn", "integration_churn"})
+    if unknown:
+        raise ValueError(
+            "gate.yaml 'grouping' has unknown keys: %s" % ", ".join(unknown)
+        )
+    engine = section.get("engine_churn", _ENGINE_CHURN)
+    integration = section.get("integration_churn", _INTEGRATION_CHURN)
+    try:
+        _check_thresholds(engine, integration)
+    except ValueError as e:
+        raise ValueError("gate.yaml 'grouping': %s" % e) from e
+    return engine, integration
+
+
+def classify_file(
+    fpath: str,
+    by_file: dict[str, list[dict]],
+    engine_churn: int = _ENGINE_CHURN,
+    integration_churn: int = _INTEGRATION_CHURN,
+) -> tuple[str, str]:
     """Return (role, direction) for one changed file.
 
     Role drives grouping; direction is carried alongside for reporting. Role
@@ -133,6 +183,7 @@ def classify_file(fpath: str, by_file: dict[str, list[dict]]) -> tuple[str, str]
     if not fpath.endswith(_PYTHON_SUFFIXES):
         return "other", "n/a"
 
+    _check_thresholds(engine_churn, integration_churn)
     prof = churn_profile(by_file[fpath])
     if prof["deleted"] > prof["added"]:
         direction = "deletion"
@@ -143,9 +194,9 @@ def classify_file(fpath: str, by_file: dict[str, list[dict]]) -> tuple[str, str]
     else:
         direction = "edit"
 
-    if prof["total"] >= _ENGINE_CHURN:
+    if prof["total"] >= engine_churn:
         role = "engine"
-    elif prof["total"] <= _INTEGRATION_CHURN:
+    elif prof["total"] <= integration_churn:
         role = "integration"
     else:
         role = "source"
@@ -250,6 +301,8 @@ def build_groups(
     by_file: dict[str, list[dict]],
     file_defined: dict[str, set[str]],
     file_used: dict[str, set[str]],
+    engine_churn: int = _ENGINE_CHURN,
+    integration_churn: int = _INTEGRATION_CHURN,
 ) -> tuple[list[Group], list[str]]:
     """Partition the changed files into review groups.
 
@@ -258,7 +311,10 @@ def build_groups(
     otherwise. Sorted iteration throughout, so the output is byte-identical
     run to run.
     """
-    roles = {f: classify_file(f, by_file) for f in by_file}
+    roles = {
+        f: classify_file(f, by_file, engine_churn, integration_churn)
+        for f in by_file
+    }
     attached, orphans = _attach_tests(by_file, roles, file_defined, file_used)
 
     groups: list[Group] = []
@@ -341,12 +397,20 @@ def cross_group_edges(
     return out
 
 
-def group_diff(changes: list[dict], repo_root: Path) -> GroupingResult:
+def group_diff(
+    changes: list[dict],
+    repo_root: Path,
+    engine_churn: int = _ENGINE_CHURN,
+    integration_churn: int = _INTEGRATION_CHURN,
+) -> GroupingResult:
     """Group one diff's entity changes. The module's entry point.
 
     `changes` is what `sem diff --format json` puts under "changes", which
-    graph_triage._run_sem already returns.
+    graph_triage._run_sem already returns. Threshold overrides come from
+    gate.yaml's optional `grouping:` section; absent that, the defaults
+    calibrated on forge's own history apply.
     """
+    _check_thresholds(engine_churn, integration_churn)
     by_file: dict[str, list[dict]] = defaultdict(list)
     for c in changes:
         by_file[c["filePath"]].append(c)
@@ -354,8 +418,13 @@ def group_diff(changes: list[dict], repo_root: Path) -> GroupingResult:
         return GroupingResult()
 
     edges, file_defined, file_used = build_edges(by_file, repo_root)
-    groups, orphans = build_groups(by_file, file_defined, file_used)
-    roles = {f: classify_file(f, by_file) for f in by_file}
+    groups, orphans = build_groups(
+        by_file, file_defined, file_used, engine_churn, integration_churn
+    )
+    roles = {
+        f: classify_file(f, by_file, engine_churn, integration_churn)
+        for f in by_file
+    }
 
     return GroupingResult(
         groups=groups,

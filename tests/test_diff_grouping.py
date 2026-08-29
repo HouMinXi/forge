@@ -353,3 +353,92 @@ class TestNonPythonSourceIsStillReviewed:
                 "%s is deterministic-check territory, not LLM territory"
                 % g.name
             )
+
+
+class TestGateConfigThresholds:
+    """The gate.yaml `grouping:` section maps onto the module's parameters."""
+
+    def test_absent_section_uses_defaults(self):
+        from code_forge.diff_grouping import (
+            _ENGINE_CHURN, _INTEGRATION_CHURN, thresholds_from_gate_config,
+        )
+        assert thresholds_from_gate_config({}) == (_ENGINE_CHURN, _INTEGRATION_CHURN)
+        assert thresholds_from_gate_config({"test": {"command": ["pytest"]}}) == (
+            _ENGINE_CHURN, _INTEGRATION_CHURN,
+        )
+
+    def test_section_overrides(self):
+        from code_forge.diff_grouping import thresholds_from_gate_config
+        assert thresholds_from_gate_config(
+            {"grouping": {"engine_churn": 20}}
+        ) == (20, 2)
+        assert thresholds_from_gate_config(
+            {"grouping": {"engine_churn": 20, "integration_churn": 5}}
+        ) == (20, 5)
+
+    def test_bad_section_is_a_loud_config_error(self):
+        import pytest
+        from code_forge.diff_grouping import thresholds_from_gate_config
+        with pytest.raises(ValueError, match="grouping"):
+            thresholds_from_gate_config({"grouping": {"engine_churn": "ten"}})
+        with pytest.raises(ValueError):
+            thresholds_from_gate_config(
+                {"grouping": {"engine_churn": 5, "integration_churn": 9}}
+            )
+        with pytest.raises(ValueError, match="grouping"):
+            thresholds_from_gate_config({"grouping": "enabled"})
+
+    def test_unknown_keys_rejected(self):
+        import pytest
+        from code_forge.diff_grouping import thresholds_from_gate_config
+        with pytest.raises(ValueError, match="engin_churn"):
+            thresholds_from_gate_config(
+                {"grouping": {"engin_churn": 10}}
+            )
+
+
+class TestThresholdConfiguration:
+    """Churn thresholds are overridable, with the defaults preserved.
+
+    gate.yaml gains an optional `grouping:` section; the module takes the
+    values as parameters so it stays free of config-file concerns. A project
+    whose files are much larger or much smaller than forge's own needs the
+    dial without forking the module.
+    """
+
+    def test_engine_threshold_override(self):
+        by_file = {"a.py": [_entity("a.py") for _ in range(6)]}
+        role, _ = classify_file("a.py", by_file)
+        assert role == "source"
+        role, _ = classify_file("a.py", by_file, engine_churn=5)
+        assert role == "engine"
+
+    def test_integration_threshold_override(self):
+        by_file = {"a.py": [_entity("a.py") for _ in range(4)]}
+        role, _ = classify_file("a.py", by_file)
+        assert role == "source"
+        role, _ = classify_file("a.py", by_file, integration_churn=4)
+        assert role == "integration"
+
+    def test_defaults_unchanged(self):
+        by_file = {"a.py": [_entity("a.py") for _ in range(10)]}
+        role, _ = classify_file("a.py", by_file)
+        assert role == "engine", "default engine threshold must stay 10"
+
+    def test_group_diff_accepts_overrides(self, tmp_path):
+        (tmp_path / "a.py").write_text("def f():\n    pass\n")
+        changes = [_entity("a.py") for _ in range(6)]
+        default = group_diff(changes, tmp_path)
+        assert default.groups[0].role == "integration"
+        overridden = group_diff(changes, tmp_path, engine_churn=5)
+        assert overridden.groups[0].role == "engine"
+
+    def test_invalid_threshold_raises(self):
+        import pytest
+        by_file = {"a.py": [_entity("a.py")]}
+        with pytest.raises(ValueError, match="engine_churn"):
+            classify_file("a.py", by_file, engine_churn=0)
+        with pytest.raises(ValueError, match="integration_churn"):
+            classify_file("a.py", by_file, integration_churn=-1)
+        with pytest.raises(ValueError):
+            classify_file("a.py", by_file, engine_churn=10, integration_churn=10)
