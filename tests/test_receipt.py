@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+import logging
 import types
 from pathlib import Path
 
@@ -362,3 +363,140 @@ class TestBuildExcerpts:
             "falsification_survived": False,
             "convergence_rounds": 3,
         }
+
+
+class TestExcerptPreflight:
+    """Warn at receipt-write time about excerpts verify will refuse.
+
+    verify already rejects an excerpt covering lines the diff never
+    produced, but it runs at the end of the round.  By then the round
+    has spent its passes.  Saying the same thing while the receipts are
+    being written gives the reviewer the answer at a point where it can
+    still act on it, and costs one pass over the excerpt list.
+
+    The warning never blocks: verify remains the gate.  This is a
+    diagnostic that happens to arrive earlier.
+    """
+
+    _DIFF = (
+        "diff --git a/src/foo.py b/src/foo.py\n"
+        "--- a/src/foo.py\n"
+        "+++ b/src/foo.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " line1\n"
+        "+added\n"
+        " line2\n"
+    )
+
+    def test_warns_when_an_excerpt_covers_a_line_the_diff_never_made(
+        self, tmp_path, caplog,
+    ):
+        # Post-image holds lines 1-3; the excerpt claims up to 99.
+        with caplog.at_level(logging.WARNING):
+            write_receipts(
+                receipts_dir=tmp_path / ".code-forge" / "receipts",
+                round_index=0,
+                l1_findings=[_finding("qodo", "fp1")],
+                diff_sha256=hashlib.sha256(b"d").hexdigest(),
+                source_files=[Path("src/foo.py")],
+                cwd=tmp_path,
+                diff_text=self._DIFF,
+                reviewer_excerpts=[{
+                    "file": "src/foo.py",
+                    "start_line": 1,
+                    "end_line": 99,
+                    "content": "line1\nadded\nline2\n",
+                }],
+            )
+        assert "pre-flight" in caplog.text
+        assert "not in diff post-image" in caplog.text
+
+    def test_silent_when_every_claimed_line_exists(self, tmp_path, caplog):
+        with caplog.at_level(logging.WARNING):
+            write_receipts(
+                receipts_dir=tmp_path / ".code-forge" / "receipts",
+                round_index=0,
+                l1_findings=[_finding("qodo", "fp1")],
+                diff_sha256=hashlib.sha256(b"d").hexdigest(),
+                source_files=[Path("src/foo.py")],
+                cwd=tmp_path,
+                diff_text=self._DIFF,
+                reviewer_excerpts=[{
+                    "file": "src/foo.py",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "content": "line1\nadded\nline2\n",
+                }],
+            )
+        assert "pre-flight" not in caplog.text
+
+    def test_warns_when_the_file_is_absent_from_the_diff(
+        self, tmp_path, caplog,
+    ):
+        with caplog.at_level(logging.WARNING):
+            write_receipts(
+                receipts_dir=tmp_path / ".code-forge" / "receipts",
+                round_index=0,
+                l1_findings=[_finding("qodo", "fp1")],
+                diff_sha256=hashlib.sha256(b"d").hexdigest(),
+                source_files=[Path("src/foo.py")],
+                cwd=tmp_path,
+                diff_text=self._DIFF,
+                reviewer_excerpts=[{
+                    "file": "src/never_touched.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "content": "whatever\n",
+                }],
+            )
+        assert "not in the diff" in caplog.text
+
+    def test_a_binary_file_excerpt_does_not_cry_wolf(self, tmp_path, caplog):
+        """Exempt files have no post-image; every line would look invented.
+
+        verify exempts binary/rename/mode-change entries, so the
+        pre-flight has to exempt them too or it warns on every review
+        that touches an image.
+        """
+        binary_diff = (
+            "diff --git a/logo.png b/logo.png\n"
+            "index 1111111..2222222 100644\n"
+            "Binary files a/logo.png and b/logo.png differ\n"
+        )
+        with caplog.at_level(logging.WARNING):
+            write_receipts(
+                receipts_dir=tmp_path / ".code-forge" / "receipts",
+                round_index=0,
+                l1_findings=[_finding("qodo", "fp1")],
+                diff_sha256=hashlib.sha256(b"d").hexdigest(),
+                source_files=[Path("logo.png")],
+                cwd=tmp_path,
+                diff_text=binary_diff,
+                reviewer_excerpts=[{
+                    "file": "logo.png",
+                    "start_line": 1,
+                    "end_line": 50,
+                    "content": "binary\n",
+                }],
+            )
+        assert "pre-flight" not in caplog.text
+
+    def test_receipts_are_still_written_when_a_warning_fires(self, tmp_path):
+        """The pre-flight is diagnostic; it must not abort the write."""
+        write_receipts(
+            receipts_dir=tmp_path / ".code-forge" / "receipts",
+            round_index=0,
+            l1_findings=[_finding("qodo", "fp1")],
+            diff_sha256=hashlib.sha256(b"d").hexdigest(),
+            source_files=[Path("src/foo.py")],
+            cwd=tmp_path,
+            diff_text=self._DIFF,
+            reviewer_excerpts=[{
+                "file": "src/foo.py",
+                "start_line": 1,
+                "end_line": 99,
+                "content": "x\n",
+            }],
+        )
+        files = list((tmp_path / ".code-forge" / "receipts").glob("*.json"))
+        assert len(files) == 3

@@ -2186,3 +2186,85 @@ class TestLegacyCheck6Coverage:
         assert "< 60%" in r.reason
         assert "largest uncovered: src/f.py (7 lines)" in r.reason
         assert re.match(r"coverage \d+% < 60% cycle \d+", r.reason)
+
+
+class TestPreflightAgreesWithVerify:
+    """The pre-flight warning must fire on exactly what verify refuses.
+
+    The pre-flight in receipt.py exists to say early what verify says
+    late. If the two ever disagree it is worse than not having it: a
+    warning on something verify accepts trains reviewers to ignore the
+    channel, and silence on something verify rejects is a promise the
+    gate then breaks. This pins them together so a change to either
+    side that splits them fails here.
+    """
+
+    _DIFF = (
+        "diff --git a/src/f.py b/src/f.py\n"
+        "--- a/src/f.py\n"
+        "+++ b/src/f.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def f():\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+
+    def _preflight_warns(self, excerpt):
+        import io
+        import logging
+        from code_forge.receipt import _warn_on_fabricated_excerpts
+
+        buf = io.StringIO()
+        handler = logging.StreamHandler(buf)
+        handler.setLevel(logging.WARNING)
+        log = logging.getLogger("code_forge.receipt")
+        log.addHandler(handler)
+        previous = log.level
+        log.setLevel(logging.WARNING)
+        try:
+            _warn_on_fabricated_excerpts(self._DIFF, [excerpt])
+        finally:
+            log.removeHandler(handler)
+            log.setLevel(previous)
+        return "pre-flight" in buf.getvalue()
+
+    def _verify_passes(self, tmp_path, excerpt):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 2\n")
+        sha = _sha(self._DIFF)
+        diff_files = parse_diff_files(self._DIFF)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"][0] = dict(
+                    excerpt, rationale="checked")
+                (rd / ("receipt-c%dp%d.json" % (c, p))).write_text(
+                    json.dumps(receipt))
+        return run_verify(
+            tmp_path, sha, diff_files, diff_text=self._DIFF).passed
+
+    def test_a_truthful_excerpt_is_accepted_by_both(self, tmp_path):
+        excerpt = {
+            "file": "src/f.py", "start_line": 1, "end_line": 2,
+            "content": "def f():\n    return 2",
+        }
+        assert self._preflight_warns(excerpt) is False
+        assert self._verify_passes(tmp_path, excerpt) is True
+
+    def test_a_padded_tail_is_refused_by_both(self, tmp_path):
+        excerpt = {
+            "file": "src/f.py", "start_line": 1, "end_line": 3,
+            "content": "def f():\n    return 2\n    extra()",
+        }
+        assert self._preflight_warns(excerpt) is True
+        assert self._verify_passes(tmp_path, excerpt) is False
+
+    def test_an_unknown_file_is_refused_by_both(self, tmp_path):
+        excerpt = {
+            "file": "src/never.py", "start_line": 1, "end_line": 2,
+            "content": "anything\n",
+        }
+        assert self._preflight_warns(excerpt) is True
+        assert self._verify_passes(tmp_path, excerpt) is False
