@@ -105,6 +105,23 @@
         }
       }
     },
+    "grouping": {
+      "type": "object",
+      "description": "Semantic diff grouping for L1 review decomposition. All fields optional; omit the section for defaults.",
+      "additionalProperties": false,
+      "properties": {
+        "engine_churn": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Entity changes at or above this count make a file its own engine group. Default 10."
+        },
+        "integration_churn": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entity changes at or below this count pool a file into the shared integration group. Must be below engine_churn. Default 2."
+        }
+      }
+    },
     "siblings": {
       "type": "array",
       "description": "Cross-repo sibling repositories for joint review. Each entry specifies a local repo path and a ref range.",
