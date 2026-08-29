@@ -851,20 +851,32 @@ def _extract_json_from_text(
     appear in model prose before the real envelope (F1 fix). None uses
     _REVIEW_ENVELOPE_KEYS (the default for all review-pass callers).
 
-    Callers and their expected_keys (maintain this list when adding new axes):
-      factories.py:272   L1 passes            findings / code_excerpts  (default)
-      cli.py:586         _spawn L1 passes     findings / code_excerpts  (default)
-      cli.py:678         test-assertion pass  findings / code_excerpts  (default)
-      runtime.py:320     RUNTIME axis         surfaces / findings       (default)
-      falsify_real.py:44 falsify              verdict / reasoning       (explicit)
-      daemon_state.py Q1:   external_state                              (explicit)
-      daemon_state.py Q2Q3: conflicts                                   (explicit)
+    Callers pass expected_keys through llm_invoke; this function is called
+    only from within this module (the parse-retry paths in _invoke_api and
+    _invoke_cli).  The envelopes in use, by the caller that requests them:
+      factories.py / cli.py / runtime.py   findings / code_excerpts /
+                                           surfaces          (default)
+      falsify_real.py:54  falsify          verdict / reasoning  (explicit)
+      daemon_state.py:412 Q1               external_state       (explicit)
+      daemon_state.py:453 Q2Q3             conflicts            (explicit)
+      contract_loader.py:282 contract      summary              (explicit)
+      backend.py:1042     probe            ok                   (explicit)
+    Adding a caller with new keys: pass expected_keys and update this list.
+    Adding one that should also survive truncation: see
+    _SALVAGEABLE_ENVELOPES, and read the warning there first.
 
     Scans left-to-right for '{' only; all forge envelopes are dicts, never
     bare arrays.  No attempt cap: raw_decode fails in O(1) for invalid JSON
-    (exits at the first non-JSON character), so the total scan remains
-    O(n) amortised across all '{' positions even when many invalid braces
+    (exits at the first non-JSON character), so the scan stays O(n)
+    amortised across all '{' positions even when many invalid braces
     precede the real envelope (F2 fix).
+
+    That bound holds for every envelope except the whitelisted salvage
+    path, where a failed raw_decode is followed by a scan of the rest of
+    the text (_salvage_truncated_object), making the worst case O(n*m) for
+    m brace positions.  Accepted because the whitelist admits only the
+    falsify envelope, whose responses are a single small object rather
+    than model prose full of braces.
 
     Returns None if no valid envelope can be extracted.
     """

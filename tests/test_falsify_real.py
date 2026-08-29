@@ -268,26 +268,50 @@ class TestSalvageInternals:
         assert got == {"verdict": "CONFIRMED"}
 
     def test_escaped_quote_does_not_end_the_string(self):
-        """Prose containing escaped quotes still salvages correctly.
+        """A quote escaped inside prose must not end the string.
 
-        Note on coverage honesty: disabling the escape branch does NOT
-        fail this test, and no valid-JSON prefix can make it fail.
-        Escaped quotes arrive in pairs, so a scanner that ignores the
-        backslash opens and closes the string an even number of extra
-        times and lands in the same state.  Only an odd count would
-        diverge, and that is not JSON any backend can emit.  The branch
-        is kept because json.JSONDecoder's own grammar has it and
-        removing it would make the scanner subtly non-conformant, not
-        because a test pins it.
+        Without the escape branch the scanner leaves the string one
+        quote early, and every comma in the remaining prose then looks
+        structural.  It cuts at the last of them and hands back a
+        fragment that does not decode -- so the verdict is lost even
+        though it arrived intact.
         """
         from code_forge.llm_invoke import _extract_json_from_text
         truncated = (
-            '{"verdict": "UNCERTAIN", '
-            '"reasoning": "The docstring says \\"safe\\", but, notably, the'
+            '{"verdict": "CONFIRMED", '
+            '"reasoning": "he said \\"hi, there\\" ok and then cut'
         )
         got = _extract_json_from_text(
             truncated, expected_keys=frozenset({"verdict", "reasoning"}),
         )
-        assert got is not None
-        assert got["verdict"] == "UNCERTAIN"
-        assert "reasoning" not in got
+        assert got == {"verdict": "CONFIRMED"}
+
+    def test_escaped_quote_ahead_of_the_cut_keeps_the_prose_field(self):
+        """The same guard where the salvaged field is the prose itself."""
+        from code_forge.llm_invoke import _extract_json_from_text
+        truncated = (
+            '{"reasoning": "say \\" then, stop", "verdict": "DISMISSED"'
+        )
+        got = _extract_json_from_text(
+            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+        )
+        assert got == {"reasoning": 'say " then, stop'}
+
+    def test_a_lone_pair_without_a_trailing_comma_is_not_salvaged(self):
+        """Salvage needs a top-level comma; one unterminated pair has none.
+
+        '{"verdict": "CONFIRMED"' (cut before the closing brace, no second
+        field) yields nothing, because the scanner records boundaries at
+        commas and there is none.  Left as-is deliberately: closing an
+        object at a point no delimiter marks means trusting that the value
+        ended where the text did, and a value cut mid-token
+        ('"CONFIRM') would then decode as a shorter, wrong verdict.  The
+        model is asked for two fields and a cut this early is an outage
+        rather than a budget overrun, which the retry path handles.
+        """
+        from code_forge.llm_invoke import _extract_json_from_text
+        got = _extract_json_from_text(
+            '{"verdict": "CONFIRMED"',
+            expected_keys=frozenset({"verdict", "reasoning"}),
+        )
+        assert got is None
