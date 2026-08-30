@@ -210,6 +210,12 @@ class EvalSummary:
         advisory_caught: pure-RUNTIME entries where advisory keyword match >= majority.
         advisory_missed: pure-RUNTIME entries where advisory keyword match < majority.
         results: per-entry results list.
+
+    Derived metrics (properties, not fields, so they cannot drift from the
+    counts they come from): precision, recall, f1, signal_to_noise. Each
+    returns None rather than 0.0 when its denominator is zero -- an
+    abstention and a score of zero are different claims, and a report that
+    merges them lets an empty run read as a catastrophic one.
     """
 
     total: int
@@ -225,6 +231,55 @@ class EvalSummary:
     findings_hit: int = 0
     findings_misses: int = 0
     findings_fp: int = 0
+
+    @property
+    def precision(self) -> float | None:
+        """Share of emitted findings that matched the answer key.
+
+        None when nothing was emitted: no claim was made, so no claim can
+        be wrong. Distinct from 0.0, which means findings were emitted and
+        every one of them was a false positive.
+        """
+        emitted = self.findings_hit + self.findings_fp
+        if emitted == 0:
+            return None
+        return self.findings_hit / emitted
+
+    @property
+    def recall(self) -> float | None:
+        """Share of known defects the review found.
+
+        None when the corpus carries no answer key to be measured against.
+        """
+        if self.findings_expected == 0:
+            return None
+        return self.findings_hit / self.findings_expected
+
+    @property
+    def f1(self) -> float | None:
+        """Harmonic mean of precision and recall.
+
+        None when either component is None, and also when both are 0.0 --
+        the harmonic mean is then 0/0, a division that cannot be performed
+        rather than a score of nothing.
+        """
+        p, r = self.precision, self.recall
+        if p is None or r is None:
+            return None
+        if p + r == 0:
+            return None
+        return 2 * p * r / (p + r)
+
+    @property
+    def signal_to_noise(self) -> float | None:
+        """Hits per false positive (CR-Bench SNR).
+
+        None when there were no false positives: infinitely good is not a
+        number, and printing inf in a report invites it being read as one.
+        """
+        if self.findings_fp == 0:
+            return None
+        return self.findings_hit / self.findings_fp
 
 
 def _is_pure_runtime_advisory(result: EvalResult) -> bool:
@@ -327,10 +382,45 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
     )
 
 
+_RATIO_DISPLAY_MIN_ENTRIES = 30
+"""Corpus size below which format_table abstains from printing ratios.
+
+Phase 17 (17-03-PLAN.md, Pitfall 4) fixed the rule that the table shows raw
+counts, never percentages, because a ratio over nine entries is false
+precision. Phase 57 sizes the corpus at >=60 so ratios become meaningful,
+which retires the premise but not the concern. This threshold is the seam:
+below it the table says n/a and why, above it the ratios print.
+
+Deliberately lower than the corpus floor of 60. The two numbers answer
+different questions -- "is a ratio meaningful to read" versus "is a ratio
+stable enough to publish" -- and conflating them would either hide readable
+numbers or bless unstable ones.
+"""
+
+
+def _fmt_ratio(value: float | None) -> str:
+    """Percentage, or 'n/a' when the metric abstained.
+
+    format specs raise TypeError on None, and a crash in the reporting path
+    is a self-inflicted false negative: the run produced numbers and we
+    failed to show them.
+    """
+    return "n/a" if value is None else f"{value:.1%}"
+
+
+def _fmt_plain(value: float | None) -> str:
+    """Bare ratio (not a percentage), or 'n/a'. Same None contract."""
+    return "n/a" if value is None else f"{value:.2f}"
+
+
 def format_table(summary: EvalSummary) -> str:
     """Format eval summary as a human-readable ASCII table for stderr.
 
-    Uses raw counts "Caught: 7/9", never ratios (carry-forward 2).
+    Raw counts throughout ("Caught: 7/9"), per carry-forward 2. Derived
+    ratios (precision, recall, F1, SNR) print only at
+    _RATIO_DISPLAY_MIN_ENTRIES or more entries; below that the line states
+    the abstention and its reason. The counts they derive from print either
+    way, so nothing is hidden by the threshold.
     Skip rate shown beside catch count.
     Advisory counts shown when non-zero.
 
@@ -410,6 +500,29 @@ def format_table(summary: EvalSummary) -> str:
                 summary.findings_fp,
             )
         )
+
+        # Derived ratios. Phase 17 fixed a rule here -- raw counts, never
+        # percentages -- because a ratio over n=9 is false precision. That
+        # holds and the counts above are still printed unconditionally. The
+        # ratios appear only once the corpus is large enough to read them,
+        # and below that threshold the line says why rather than vanishing:
+        # a reader must be able to tell abstention from breakage.
+        if summary.total >= _RATIO_DISPLAY_MIN_ENTRIES:
+            lines.append(
+                "Precision %s | Recall %s | F1 %s | Signal-to-noise %s"
+                % (
+                    _fmt_ratio(summary.precision),
+                    _fmt_ratio(summary.recall),
+                    _fmt_ratio(summary.f1),
+                    _fmt_plain(summary.signal_to_noise),
+                )
+            )
+        else:
+            lines.append(
+                "Precision/Recall/F1: n/a (n=%d, need %d -- a ratio over a "
+                "corpus this small is false precision)"
+                % (summary.total, _RATIO_DISPLAY_MIN_ENTRIES)
+            )
 
     return "\n".join(lines)
 
