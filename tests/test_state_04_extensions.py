@@ -3,7 +3,6 @@
 """Tests for State.py 02-04 extensions (4 cases a-d)."""
 
 import json
-from pathlib import Path
 
 from code_forge.state import State, load_state, save_state
 

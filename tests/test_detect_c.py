@@ -3,11 +3,8 @@
 """Tests for C language detection (cppcheck)."""
 from pathlib import Path
 
-import pytest
 
 from code_forge.detect import (
-    C_CPP_TOOL_REGISTRY,
-    DetectionResult,
     detect_toolchain,
     generate_tools_yaml,
 )

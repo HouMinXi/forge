@@ -307,7 +307,8 @@ class TestWholeFileFlag:
         """--whole-file in git repo -> EmptyBaseline + WORKING head."""
         from code_forge.baseline import EmptyBaseline, GitRefBaseline
         from code_forge.cli import _build_baseline_specs
-        import argparse, subprocess
+        import argparse
+        import subprocess
         subprocess.run(
             ["git", "init", str(tmp_path)],
             check=True, capture_output=True,

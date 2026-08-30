@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview

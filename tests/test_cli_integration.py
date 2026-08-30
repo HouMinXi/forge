@@ -16,6 +16,14 @@ import pytest
 
 from code_forge import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS, EXIT_TIMEOUT
 from code_forge.cli import main
+
+# Phase 15 helpers, imported at module scope with the rest. They sat
+# beside their test section until E402 flagged them; nothing here needs
+# to run before the import, so the section comment stayed and the
+# imports moved.
+from code_forge.cli import _run_test_assertion_review, _make_subagent_spawn
+from code_forge.llm_invoke import LLMResult as _LLMResult, Usage as _Usage
+from unittest.mock import patch as _patch
 from code_forge.errors import CliError
 
 
@@ -984,9 +992,6 @@ class TestRealMimoApiSmoke:
 # and A-leg build_l1_provider conventions_digest + post_image threading.
 # ---------------------------------------------------------------------------
 
-from code_forge.cli import _run_test_assertion_review, _make_subagent_spawn
-from code_forge.llm_invoke import LLMResult as _LLMResult, Usage as _Usage
-from unittest.mock import patch as _patch
 
 
 def _make_valid_reviewer_json_p15():

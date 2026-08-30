@@ -10,7 +10,7 @@ from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
 from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine
-from code_forge.state import Mode, StateFinding, Verdict
+from code_forge.state import Mode, StateFinding
 
 
 def _make_finding(fp="fp-ord-1", disp=Disposition.CONFIRMED):

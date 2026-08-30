@@ -28,7 +28,7 @@ from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
-from code_forge.ledger import TerminalState, iter_rows, known_terminal_fingerprints, resolve_ledger_root
+from code_forge.ledger import TerminalState, iter_rows, known_terminal_fingerprints
 from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding, Verdict
 
@@ -617,7 +617,7 @@ def test_known_terminal_fingerprints_escaped(tmp_path):
 def test_known_terminal_fingerprints_latest_wins(tmp_path):
     """Multiple rows per fingerprint, latest is FIXED → {fp}."""
     (tmp_path / ".code-forge").mkdir(parents=True, exist_ok=True)
-    ledger_file = tmp_path / ".code-forge" / "ledger.jsonl"
+    _ledger_file = tmp_path / ".code-forge" / "ledger.jsonl"
     # First row: UNADJUDICATED
     _write_ledger_line(tmp_path, "fp-multi", "UNADJUDICATED")
     # Second row: FIXED (latest)

@@ -5,10 +5,8 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from code_forge.cli import _build_parser, main
 from code_forge.errors import CliError

@@ -6,11 +6,9 @@ Tests the GENERATED shell script, not the Python generator.
 Golden Rule 3: prove the real hook works by executing it.
 """
 
-import os
 import stat
 import subprocess
 import textwrap
-from pathlib import Path
 
 import pytest
 

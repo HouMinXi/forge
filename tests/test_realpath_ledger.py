@@ -14,7 +14,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
 
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview

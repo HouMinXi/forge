@@ -23,7 +23,6 @@ import unittest
 
 from code_forge.backend import BackendConfig
 from code_forge.canary import (
-    Canary,
     evaluate_canary_coverage,
     partition_canary_findings,
 )

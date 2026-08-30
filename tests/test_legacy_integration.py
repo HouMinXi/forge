@@ -13,11 +13,9 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from code_forge.advisory import AdvisoryFinding
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier

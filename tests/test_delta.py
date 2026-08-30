@@ -91,8 +91,15 @@ class TestFilterDelta:
         delta, all_f = filter_delta([f1, f2], changed)
         assert len(delta) == 1
         assert len(all_f) == 2
-        # all_findings is a separate copy
-        assert all_f is not [f1, f2]
+        # all_findings is a separate copy. `is not [f1, f2]` was always
+        # true -- a fresh list literal is never the same object as
+        # anything -- so the assertion held regardless of what
+        # filter_delta returned. Compare against the list actually passed
+        # in, which is the object it could have aliased.
+        original = [f1, f2]
+        delta2, all_f2 = filter_delta(original, changed)
+        assert all_f2 is not original
+        assert all_f2 == original
 
     def test_tool_error_passes_through(self):
         """ToolError items pass through unchanged (not filtered by line)."""

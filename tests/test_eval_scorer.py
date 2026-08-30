@@ -9,7 +9,6 @@ import pytest
 from code_forge.eval.corpus import CorpusEntry
 from code_forge.eval.scorer import (
     EvalResult,
-    EvalSummary,
     compute_summary,
     format_table,
     write_json_report,

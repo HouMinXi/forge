@@ -20,14 +20,18 @@ def setUpModule():
         sys.path.insert(0, root_path)
 
 
-# Ensure paths are available at import time for module-level imports
+# Ensure paths are available at import time for module-level imports.
+# The imports below MUST follow this call: they resolve through the
+# sys.path entries it inserts, so hoisting them to the top of the file
+# (what E402 asks for) breaks collection outright. noqa rather than a
+# move, because the rule is right in general and wrong here.
 setUpModule()
 
-from gap_detector import classify_finding, is_exact_dup, find_cross_source_dup
-from migration import DIMENSION_RENAME_MAP, SEED_KEYWORD_DICTIONARIES
-from llm_parser import compute_text_hash
-from escalation import check_triggers
-from cli.adapters.github_pr import _detect_source_tool
+from gap_detector import classify_finding, is_exact_dup, find_cross_source_dup  # noqa: E402
+from migration import DIMENSION_RENAME_MAP, SEED_KEYWORD_DICTIONARIES  # noqa: E402
+from llm_parser import compute_text_hash  # noqa: E402
+from escalation import check_triggers  # noqa: E402
+from cli.adapters.github_pr import _detect_source_tool  # noqa: E402
 
 # Import path for seed test parse functions
 _seed_path = os.path.join(
@@ -35,7 +39,7 @@ _seed_path = os.path.join(
 )
 if _seed_path not in sys.path:
     sys.path.insert(0, _seed_path)
-from run_seed_tests import _parse_before_state, _parse_after_state
+from run_seed_tests import _parse_before_state, _parse_after_state  # noqa: E402 -- follows the sys.path insert above
 
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')

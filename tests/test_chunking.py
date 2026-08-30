@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock
 
-import pytest
 
 from code_forge.disposition import Disposition
 from code_forge.outlet_c import (

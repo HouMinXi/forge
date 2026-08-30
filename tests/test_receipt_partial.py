@@ -11,11 +11,9 @@ Validates:
 from __future__ import annotations
 
 import json
-import re
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from code_forge.disposition import Disposition
 from code_forge.receipt import write_receipts

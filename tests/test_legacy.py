@@ -6,7 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from code_forge.advisory import AdvisoryFinding
 from code_forge.disposition import Disposition

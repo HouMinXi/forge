@@ -777,7 +777,7 @@ class TestDoctorLive:
              patch("code_forge.backend.probe_backend_live") as live:
             for ctx in self._green_ctx():
                 stack.enter_context(ctx)
-            rc = run_doctor(cwd=ws, env={}, live=True)
+            _rc = run_doctor(cwd=ws, env={}, live=True)
         live.assert_not_called()
         out = capsys.readouterr().out
         assert "skipped" in out

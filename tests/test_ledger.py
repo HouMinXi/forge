@@ -11,7 +11,6 @@ import json
 from enum import Enum
 from pathlib import Path
 
-import pytest
 
 from code_forge.ledger import (
     LedgerRow,

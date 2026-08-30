@@ -2,12 +2,9 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """STATE-11 lock integration tests."""
 
-import os
 import sys
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from code_forge import EXIT_BUSY, EXIT_PASS
 from code_forge.cli import main
@@ -28,7 +25,6 @@ class TestLockBusy:
 
         # Mock _run to raise ForgeLockBusy (simulates lock conflict
         # at any point inside the pipeline).
-        from code_forge.cli import _run as real_run
         with patch(
             "code_forge.cli._run",
             side_effect=ForgeLockBusy(

@@ -5,7 +5,6 @@
 Covers: merge helper, trust hash, gate.yaml extraction, CLI flag wiring,
 builder injection, MCP wiring, and trust command behavior.
 """
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -95,7 +94,7 @@ class TestRecordTrustFocusHash:
     def test_records_focus_hash(self):
         from code_forge.trust import record_trust, hash_focus_text
         gate_data = {"review_focus": "my focus", "backends": {"cli": {"type": "cli"}}}
-        with patch("code_forge.trust._load_trust_store", return_value={}) as mock_load, \
+        with patch("code_forge.trust._load_trust_store", return_value={}), \
              patch("code_forge.trust._save_trust_store") as mock_save:
             record_trust(Path("/fake/gate.yaml"), gate_data)
             saved = mock_save.call_args[0][0]
@@ -178,7 +177,7 @@ class TestBuilderFocusInjection:
             mock_result = MagicMock()
             mock_result.content = '{"findings": []}'
             mock_invoke.return_value = mock_result
-            prompt = spawn("qodo", "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n")
+            _prompt = spawn("qodo", "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n")
             # Verify llm_invoke was called and the prompt contained focus
             call_args = mock_invoke.call_args
             assert call_args is not None
@@ -194,7 +193,7 @@ class TestBuilderFocusInjection:
             git_diff="--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n",
             source_files=[], baseline_content=None,
         )
-        captured = []
+        _captured = []
         fake_result = MagicMock()
         fake_result.content = '{"findings": [], "code_excerpts": []}'
         provider = build_l1_provider(

@@ -16,11 +16,9 @@ import sys
 import textwrap
 from pathlib import Path
 
-import pytest
 
 from code_forge.install_hooks import (
     _build_planning_leak_guard,
-    generate_hook_content,
     run_install_hooks,
 )
 

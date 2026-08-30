@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from code_forge.advisory import AdvisoryFinding, AxisRunner
+from code_forge.advisory import AdvisoryFinding
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier

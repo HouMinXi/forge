@@ -4,10 +4,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from code_forge.machine import _default_l0_runner
-from code_forge.parsers.base import Finding, ToolError
+from code_forge.parsers.base import Finding
 
 
 def _make_registry(tool_name="test-tool", output_format="sarif"):

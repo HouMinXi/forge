@@ -2,7 +2,6 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for STATE-09 CI fresh-start (4 cases a-d)."""
 
-import json
 import logging
 from pathlib import Path
 
@@ -11,7 +10,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
-from code_forge.state import Mode, State, StateFinding, Verdict, save_state
+from code_forge.state import Mode, State, StateFinding, save_state
 
 
 def _make_finding(fp="fp-fs-1", disp=Disposition.CONFIRMED):
@@ -138,7 +137,7 @@ class TestLocalLoadsState:
             max_total_rounds=3,
             max_fix_attempts=3,
         )
-        verdict = machine.run()
+        _verdict = machine.run()
 
         # fix_attempts preserved from loaded state
         assert machine._state.fix_attempts.get("fp-unc", 0) >= 3

@@ -4,7 +4,7 @@
 
 from code_forge import EXIT_PASS, EXIT_FAIL
 from code_forge.parsers.base import Finding, ToolError
-from code_forge.verdict import Verdict, determine_verdict
+from code_forge.verdict import determine_verdict
 
 
 def _make_finding(**kwargs):

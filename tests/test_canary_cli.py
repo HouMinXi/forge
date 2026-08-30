@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 import io
 import os
-import sys
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -323,7 +322,6 @@ class TestCanaryProviderPrompt:
 
     def test_prompt_has_original_field(self):
         """The canary provider prompt requests 'original' in the JSON schema."""
-        from code_forge.cli import _build_parser
         # Verify the prompt template string in the source code
         import inspect
         import code_forge.cli as cli_mod

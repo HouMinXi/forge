@@ -3,11 +3,8 @@
 """Tests for JS/TS language detection (ESLint)."""
 from pathlib import Path
 
-import pytest
 
 from code_forge.detect import (
-    JS_TOOL_REGISTRY,
-    DetectionResult,
     detect_toolchain,
     generate_tools_yaml,
 )

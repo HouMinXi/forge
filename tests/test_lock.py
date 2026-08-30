@@ -568,7 +568,7 @@ class TestSignalChainSigIgn:
         old = signal.getsignal(signal.SIGINT)
         try:
             signal.signal(signal.SIGINT, signal.SIG_IGN)
-            with ForgeLock(lock_path) as lock:
+            with ForgeLock(lock_path):
                 assert lock_path.exists()
                 # Simulate signal delivery via the installed handler
                 handler = signal.getsignal(signal.SIGINT)
@@ -592,7 +592,7 @@ class TestSignalChainCallable:
         old = signal.getsignal(signal.SIGINT)
         try:
             signal.signal(signal.SIGINT, prev_handler)
-            with ForgeLock(lock_path) as lock:
+            with ForgeLock(lock_path):
                 assert lock_path.exists()
                 handler = signal.getsignal(signal.SIGINT)
                 handler(signal.SIGINT, None)

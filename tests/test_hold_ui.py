@@ -2,13 +2,12 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for HOLD UX (a-h)."""
 
-import json
 
 import pytest
 
 from code_forge.disposition import Disposition
 from code_forge.hold import HoldAborted, run_hold_ui
-from code_forge.state import State, StateFinding, save_state
+from code_forge.state import State, StateFinding
 
 
 def _make_state(*findings):

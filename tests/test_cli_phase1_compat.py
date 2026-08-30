@@ -2,12 +2,10 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """CLI backward compatibility tests for deprecated and preserved flags."""
 
-import subprocess
-import sys
 
 import pytest
 
-from code_forge.cli import _build_parser, main
+from code_forge.cli import _build_parser
 
 
 class TestPreservedFlags:

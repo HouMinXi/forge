@@ -6,7 +6,6 @@ JSON output via --output, --runs validation, exit code on bad corpus path.
 """
 from __future__ import annotations
 
-import json
 import os
 import signal
 import sys
@@ -16,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Lazy-import test: ensure cli module can be loaded
-from code_forge.cli import _build_parser, main
+from code_forge.cli import _build_parser
 from code_forge.eval.corpus import CorpusEntry
 from code_forge.eval.scorer import EvalResult, EvalSummary
 

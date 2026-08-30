@@ -10,7 +10,6 @@ Covers:
 import os
 from pathlib import Path
 
-import pytest
 
 from code_forge.conventions import (
     _extract_python_public_names,

@@ -291,13 +291,12 @@ class TestIndependence:
         adversarial (adversarial QE). For each consecutive call pair (N, N+1):
         the role string from call N must NOT appear in call N+1's prompt.
         """
-        prompts = []
+        _prompts = []
 
         with patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
             mock_llm.return_value = _make_llm_result()
 
             def _spawn(pass_name, diff_text):
-                from code_forge.llm_invoke import llm_invoke
                 from code_forge.cli import _make_subagent_spawn
                 # build a real spawn closure and call llm_invoke with it
                 spawn = _make_subagent_spawn(
@@ -493,7 +492,7 @@ class TestOutletCInfraSourceTagging:
         def _raise_spawn(pn, dt):
             raise RuntimeError("spawn exploded")
 
-        result = run_outlet_c(
+        _result = run_outlet_c(
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
             cwd=tmp_path,
@@ -510,7 +509,7 @@ class TestOutletCInfraSourceTagging:
 
     def test_outlet_c_schema_fail_tagged_infra(self, tmp_path):
         """schema-fail finding has source=INFRA and disposition=CONFIRMED."""
-        result = run_outlet_c(
+        _result = run_outlet_c(
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
             cwd=tmp_path,

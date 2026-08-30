@@ -10,7 +10,7 @@ from code_forge.disposition import Disposition, MAX_FIX_ATTEMPTS_PER_FINGERPRINT
 from code_forge.falsify import StubFalsifier
 from code_forge.hold import check_escalated_frozen, run_hold_ui
 from code_forge.machine import StateMachine
-from code_forge.state import Mode, State, StateFinding, Verdict, save_state
+from code_forge.state import Mode, State, StateFinding, Verdict
 
 
 def _make_finding(fp="fp-ef-1", disp=Disposition.CONFIRMED):

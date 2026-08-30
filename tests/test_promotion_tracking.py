@@ -14,7 +14,6 @@ from code_forge.state import (
     Mode,
     State,
     StateFinding,
-    Verdict,
     load_state,
     save_state,
 )
