@@ -201,7 +201,7 @@ class TestFindingsAggregation:
         assert s.findings_misses == 1
         assert s.findings_fp == 2
 
-    def test_summary_skips_skipped_entries(self):
+    def test_summary_charges_recall_for_skipped_entries(self):
         from code_forge.eval.scorer import EvalResult, compute_summary
         e = self._entry(2)
         r = EvalResult(
@@ -209,7 +209,14 @@ class TestFindingsAggregation:
             skipped_reason="nope",
         )
         s = compute_summary([r])
-        assert s.findings_expected == 0
+        # Phase 56-2: was 0. A skipped entry used to leave both numerator
+        # and denominator, so the defect it carried cost nothing -- and the
+        # entries that get skipped under a budget are the expensive ones,
+        # which are the hard defects. Recall now pays for it; precision
+        # still does not, since nothing was emitted to be wrong.
+        assert s.findings_expected == 2
+        assert s.findings_hit == 0
+        assert s.findings_skipped_entries == 1
 
     def test_table_has_findings_line(self):
         from code_forge.eval.scorer import compute_summary, format_table
@@ -819,5 +826,12 @@ class TestR4Fixes:
             skipped_reason="", findings_evidence=False,
         )
         s = compute_summary([r])
-        assert s.findings_expected == 0
-        assert s.findings_misses == 0
+        # Phase 56-2: was 0/0. An entry that ran but produced no state
+        # evidence is a second exclusion path beside skipped_reason, on the
+        # findings_evidence half of the same condition. Same treatment for
+        # the same reason: the defect was there, it was not reported, and
+        # how the run failed to produce evidence is not the corpus's
+        # problem.
+        assert s.findings_expected == 1
+        assert s.findings_misses == 1
+        assert s.findings_skipped_entries == 1

@@ -26,7 +26,8 @@ from code_forge.eval.scorer import EvalResult, compute_summary, score_findings
 
 # --- The ledger -------------------------------------------------------
 #
-# tests/test_eval_corpus_findings.py, all ten findings_* assertions:
+# tests/test_eval_corpus_findings.py, all ten findings_* assertions.
+# Status: 56-2 has landed and both predicted rows moved. Nothing else did.
 #
 # line  assertion                    before  after  cause
 # ----  ---------------------------  ------  -----  ---------------------
@@ -43,6 +44,12 @@ from code_forge.eval.scorer import EvalResult, compute_summary, score_findings
 #
 # Seven unchanged rows are asserted here too. A phase that only proves what
 # it meant to change has not shown it left the rest alone.
+#
+# When 56-2 landed the suite failed in exactly four places: the two rows
+# above and the two before-snapshots in this file. No fifth. That is what
+# the ledger was for -- an unpredicted failure would have meant the change
+# reached further than intended, and there was no way to tell without
+# having written the prediction down first.
 
 
 def _finding(file: str = "a.py", lines: tuple = (1, 2), desc: str = "bad thing"):
@@ -128,17 +135,17 @@ class TestScoringInvariant:
         assert score_findings(entry, confirmed) == (0, 1, 1)
 
 
-class TestLedgerBeforeState:
-    """The before-values in the ledger table, asserted rather than asserted-to.
+class TestLedgerAfter56_2:
+    """The two rows the ledger predicted would move, now moved.
 
-    These run green at 4acbabb. The two marked CHANGES-IN-56-2 flip when
-    that task lands and are updated there, in the same commit, with the
-    cause named. Any other row flipping is a bug in Phase 56.
+    Renamed from TestLedgerBeforeState when 56-2 landed. The before-values
+    are kept in the comments below so the delta stays legible after the
+    fact: a reader can see what changed and why without going to git.
     """
 
     def test_scored_entry_counts_unchanged_by_phase_56(self):
         # Ledger rows 199-202: an ordinary scored entry. Phase 56 must not
-        # move these.
+        # move these, and did not.
         entry = _entry(3)
         result = EvalResult(
             entry=entry,
@@ -155,8 +162,10 @@ class TestLedgerBeforeState:
         assert summary.findings_hit == 2
         assert summary.findings_fp == 2
 
-    def test_skipped_entry_before_56_2(self):
-        # Ledger row 212. CHANGES IN 56-2: expected 0 -> 2.
+    def test_skipped_entry_after_56_2(self):
+        # Ledger row 212. WAS 0, NOW 2 -- cause: 56-2. A skipped entry's
+        # expected findings are counted so recall pays for the entry the
+        # pipeline could not score.
         result = EvalResult(
             entry=_entry(2),
             actual_verdict="SKIPPED",
@@ -164,14 +173,19 @@ class TestLedgerBeforeState:
             caught_count=0,
             skipped_reason="nope",
         )
-        assert compute_summary([result]).findings_expected == 0
+        summary = compute_summary([result])
+        assert summary.findings_expected == 2
+        assert summary.findings_hit == 0
+        assert summary.recall == 0.0
+        # Precision abstains: nothing was emitted, so nothing was wrong.
+        assert summary.precision is None
 
-    def test_evidenceless_entry_before_56_2(self):
-        # Ledger rows 822-823. CHANGES IN 56-2: expected 0 -> 1,
-        # misses 0 -> 1. A separate exclusion from skipped_reason, on the
-        # findings_evidence half of scorer.py:308 -- missed by the first
-        # draft of the plan and found by grepping every findings_*
-        # assertion rather than trusting the one the review named.
+    def test_evidenceless_entry_after_56_2(self):
+        # Ledger rows 822-823. WAS 0/0, NOW 1/1 -- cause: 56-2. A separate
+        # exclusion from skipped_reason, on the findings_evidence half of
+        # the same condition. Missed by the first draft of the plan and
+        # found by grepping every findings_* assertion rather than trusting
+        # the one the review named.
         result = EvalResult(
             entry=_entry(1),
             actual_verdict="HOLD",
@@ -181,5 +195,29 @@ class TestLedgerBeforeState:
             findings_evidence=False,
         )
         summary = compute_summary([result])
-        assert summary.findings_expected == 0
-        assert summary.findings_misses == 0
+        assert summary.findings_expected == 1
+        assert summary.findings_misses == 1
+
+    def test_both_exclusion_paths_are_counted_together(self):
+        # The two rows above are one event class from the metric's point of
+        # view, and the skip counter says so.
+        summary = compute_summary(
+            [
+                EvalResult(
+                    entry=_entry(1, name="skip"),
+                    actual_verdict="SKIPPED",
+                    runs=0,
+                    caught_count=0,
+                    skipped_reason="nope",
+                ),
+                EvalResult(
+                    entry=_entry(1, name="noev"),
+                    actual_verdict="HOLD",
+                    runs=1,
+                    caught_count=1,
+                    skipped_reason="",
+                    findings_evidence=False,
+                ),
+            ]
+        )
+        assert summary.findings_skipped_entries == 2

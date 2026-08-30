@@ -231,6 +231,7 @@ class EvalSummary:
     findings_hit: int = 0
     findings_misses: int = 0
     findings_fp: int = 0
+    findings_skipped_entries: int = 0
 
     @property
     def precision(self) -> float | None:
@@ -357,13 +358,27 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
     findings_expected = 0
     findings_hit = 0
     findings_fp = 0
+    findings_skipped_entries = 0
     for r in results:
-        if r.skipped_reason:
+        if not r.entry.expected_findings:
+            # No answer key: nothing to be right or wrong about.
             continue
-        if r.entry.expected_findings and r.findings_evidence:
+        if r.skipped_reason or not r.findings_evidence:
+            # Two ways an entry can fail to produce a scoreable result: it
+            # was skipped outright, or it ran and yielded no state evidence.
+            # Both used to drop out of the numerator AND the denominator,
+            # so an entry the pipeline failed on cost nothing -- and under a
+            # budget the entries that fail are the expensive ones, meaning
+            # the hard defects. The defect was there and it was not
+            # reported; how the run failed is not the corpus's problem.
+            # Recall pays. Precision does not: a tool that emitted nothing
+            # has made no claim that can be wrong.
             findings_expected += len(r.entry.expected_findings)
-            findings_hit += r.finding_hits
-            findings_fp += r.finding_fps
+            findings_skipped_entries += 1
+            continue
+        findings_expected += len(r.entry.expected_findings)
+        findings_hit += r.finding_hits
+        findings_fp += r.finding_fps
 
     return EvalSummary(
         total=len(results),
@@ -378,6 +393,7 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
         findings_hit=findings_hit,
         findings_misses=findings_expected - findings_hit,
         findings_fp=findings_fp,
+        findings_skipped_entries=findings_skipped_entries,
         results=results,
     )
 
