@@ -383,6 +383,24 @@ Code Change
   components mapping raises an uncertain finding when a hub and a
   dependent both change in the same diff and no integration test under
   the dependent's paths matches the configured test patterns.
+- **Execution before the verdict.** The reviewed diff is run, not just
+  read. A declared environment is verified against its lockfile by
+  sha256; the run happens in a disposable directory so the reviewed tree
+  stays read-only; a timeout kills the whole descendant process group.
+  The evidence is asymmetric on purpose -- a test failing before the fix
+  is a verdict input, a test passing after it is recorded but cannot
+  confirm a finding. When the environment cannot be grounded, the report
+  says so instead of reasoning against a version the build never used.
+- **Large diffs do not silently review as clean.** Past a token budget a
+  diff is split along def-use lines and each group reviewed separately,
+  with the shared prompt prefix placed ahead of the per-pass role
+  sentence so the backend can cache it. Measured on a 14-file diff that
+  previously lost all three passes to truncation and returned zero
+  findings: 15/15 passes completed, 16-22 findings per cycle, billed
+  input per pass down from 65,748 to 21,987 tokens. Under-budget diffs
+  keep the byte-identical single-pass path. A reply truncated inside its
+  own reasoning is salvaged only where the verdict is already complete,
+  never into a clean round.
 
 ## Honest limitations
 
