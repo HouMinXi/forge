@@ -37,7 +37,7 @@ import yaml
 
 from code_forge.eval.corpus import CorpusEntry, valid_line_range
 from code_forge.eval.scorer import (
-    pick_best_findings,
+    mean_findings,
     score_findings,
 )
 from code_forge.eval.scorer import EvalResult, advisory_caught
@@ -666,10 +666,19 @@ def replay_entry(
     else:
         actual_verdict = "PASS"
 
-    # Findings-level aggregation across runs: use the best run.
-    finding_hits, finding_misses, finding_fps = pick_best_findings(
-        per_run_findings
-    )
+    # Findings-level aggregation across runs: mean, with the spread
+    # reported beside it. This was pick_best_findings, which took the run
+    # with the most hits and fewest false positives -- best-of-N selection
+    # inflates recall and hides variance, and a self-measurement that does
+    # that produces exactly the kind of number nobody can quote.
+    (
+        finding_hits,
+        finding_misses,
+        finding_fps,
+        finding_hits_se,
+        finding_fps_se,
+        finding_runs,
+    ) = mean_findings(per_run_findings)
 
     # Evidence flag: an entry whose answer key never saw a single
     # run's state evidence must not be counted as all-missed -- the
@@ -686,6 +695,9 @@ def replay_entry(
         finding_hits=finding_hits,
         finding_misses=finding_misses,
         finding_fps=finding_fps,
+        finding_hits_se=finding_hits_se,
+        finding_fps_se=finding_fps_se,
+        finding_runs=finding_runs,
         findings_evidence=findings_evidence,
     )
 

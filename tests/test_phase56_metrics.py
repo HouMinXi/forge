@@ -198,3 +198,56 @@ class TestRatioDisplayThreshold:
         # The threshold gates the ratios, never the counts they come from.
         for n in (9, 30):
             assert "Findings-level:" in format_table(self._many(n))
+
+
+class TestJsonReportCarriesMetrics:
+    """The report is the artifact a number gets quoted from.
+
+    format_table abstains below thirty entries; the JSON does not, because
+    it is read by tools rather than skimmed, and because a number that
+    exists only on a terminal cannot be traced back to later.
+    """
+
+    def _write(self, tmp_path, summary):
+        import json
+
+        from code_forge.eval.scorer import write_json_report
+
+        out = tmp_path / "report.json"
+        write_json_report(summary, out)
+        return json.loads(out.read_text())
+
+    def test_metrics_are_present(self, tmp_path):
+        data = self._write(tmp_path, _summary(expected=10, hits=6, fps=4))
+        assert data["precision"] == pytest.approx(0.60)
+        assert data["recall"] == pytest.approx(0.60)
+        assert data["f1"] == pytest.approx(0.60)
+
+    def test_abstention_serialises_as_null_not_zero(self, tmp_path):
+        # The whole point of returning None: a consumer must be able to
+        # tell "not measured" from "measured, zero".
+        data = self._write(tmp_path, _summary(expected=3, hits=0, fps=0))
+        assert data["precision"] is None
+        assert data["f1"] is None
+        assert data["precision"] != 0.0
+
+    def test_measured_zero_serialises_as_zero(self, tmp_path):
+        data = self._write(tmp_path, _summary(expected=5, hits=0, fps=7))
+        assert data["precision"] == 0.0
+        assert data["precision"] is not None
+
+    def test_aggregation_rule_is_named(self, tmp_path):
+        # A report that does not say how it combined its runs can be
+        # misread as best-of-N by anyone who remembers the old behaviour.
+        data = self._write(tmp_path, _summary(expected=10, hits=6, fps=4))
+        assert data["aggregation"] == "mean-of-n"
+
+    def test_skip_count_is_present(self, tmp_path):
+        data = self._write(tmp_path, _summary(expected=10, hits=6, fps=4))
+        assert data["findings_skipped_entries"] == 0
+
+    def test_ratios_appear_below_the_table_threshold(self, tmp_path):
+        # One entry: format_table would abstain, the JSON must not.
+        data = self._write(tmp_path, _summary(expected=10, hits=6, fps=4))
+        assert data["total"] == 1
+        assert data["f1"] is not None

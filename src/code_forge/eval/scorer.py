@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,6 +157,57 @@ def score_findings(
     return (hits, len(expected) - hits, fps)
 
 
+def mean_findings(
+    per_run: list[tuple[int, int, int]],
+) -> tuple[float, float, float, float, float, int]:
+    """Mean per-run (hits, misses, fps) with standard error on hits and fps.
+
+    Returns (hits, misses, fps, hits_se, fps_se, n_runs).
+
+    This is the aggregation that feeds reported metrics. It replaced
+    `pick_best_findings` at the replay call site: taking the best of N runs
+    inflates recall and hides the spread, which is the methodology that
+    makes vendor self-benchmarks unquotable and therefore the one thing a
+    self-measurement must not do.
+
+    Mean rather than a majority vote, for two reasons. `score_findings`
+    returns scalar counts, so two runs each reporting (1, 1, 0) are
+    indistinguishable between "both matched the same expected finding" and
+    "each matched a different one" -- voting needs an identity the counts
+    have already discarded. And majority-of-n maps per-run detection
+    probability p to 3p^2-2p^3 at n=3, lifting p=0.8 to 0.896 while pushing
+    p=0.3 to 0.216: it would flatter easy defects and penalise hard ones,
+    trading an optimistic bias for one aimed at the cases that matter most.
+
+    Standard error uses the sample standard deviation (n-1 denominator):
+    these runs are a sample of the tool's behaviour, not the population of
+    every run it could produce. A single run reports SE 0.0, which is an
+    absence of spread rather than a claim of consistency -- callers see
+    n_runs beside it.
+    """
+    n = len(per_run)
+    if n == 0:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0)
+
+    hits = [float(h) for h, _, _ in per_run]
+    misses = [float(m) for _, m, _ in per_run]
+    fps = [float(f) for _, _, f in per_run]
+
+    def _se(values: list[float]) -> float:
+        if len(values) < 2:
+            return 0.0
+        return statistics.stdev(values) / math.sqrt(len(values))
+
+    return (
+        statistics.fmean(hits),
+        statistics.fmean(misses),
+        statistics.fmean(fps),
+        _se(hits),
+        _se(fps),
+        n,
+    )
+
+
 def pick_best_findings(
     per_run: list[tuple[int, int, int]],
 ) -> tuple[int, int, int]:
@@ -190,9 +242,19 @@ class EvalResult:
     caught_count: int
     skipped_reason: str
     advisory_caught_count: int = 0
-    finding_hits: int = 0
-    finding_misses: int = 0
-    finding_fps: int = 0
+    # Floats since 56-3: these are means across runs, not counts from one.
+    # A three-run entry finding a defect twice reports 0.667, and rounding
+    # that to an int would quietly restore the optimism the mean exists to
+    # remove.
+    finding_hits: float = 0.0
+    finding_misses: float = 0.0
+    finding_fps: float = 0.0
+    # Spread across those runs. Zero for a single run: an absence of
+    # measured spread, not a claim of consistency -- finding_runs says
+    # which.
+    finding_hits_se: float = 0.0
+    finding_fps_se: float = 0.0
+    finding_runs: int = 0
     findings_evidence: bool = True
 
 
@@ -228,9 +290,11 @@ class EvalSummary:
     advisory_missed: int
     results: list[EvalResult]
     findings_expected: int = 0
-    findings_hit: int = 0
-    findings_misses: int = 0
-    findings_fp: int = 0
+    # Floats since 56-3: summed from per-entry means, so a corpus total can
+    # legitimately be fractional.
+    findings_hit: float = 0.0
+    findings_misses: float = 0.0
+    findings_fp: float = 0.0
     findings_skipped_entries: int = 0
 
     @property
@@ -356,8 +420,8 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
                 false_positive += 1
 
     findings_expected = 0
-    findings_hit = 0
-    findings_fp = 0
+    findings_hit = 0.0
+    findings_fp = 0.0
     findings_skipped_entries = 0
     for r in results:
         if not r.entry.expected_findings:
@@ -563,6 +627,23 @@ def write_json_report(summary: EvalSummary, output_path: Path) -> None:
         "findings_hit": summary.findings_hit,
         "findings_misses": summary.findings_misses,
         "findings_fp": summary.findings_fp,
+        # Derived metrics. None serialises to null, which every consumer
+        # (jq, json.loads, pandas) tells apart from 0.0 -- the distinction
+        # between "not measured" and "measured, zero" survives the wire.
+        # Unlike format_table these carry no size threshold: a report is
+        # read by tools, and false precision is a presentation concern.
+        "precision": summary.precision,
+        "recall": summary.recall,
+        "f1": summary.f1,
+        "signal_to_noise": summary.signal_to_noise,
+        # How much of the corpus could not be scored. A recall figure
+        # without this beside it cannot be sized: a run that skipped forty
+        # percent of its entries reads exactly like a complete one.
+        "findings_skipped_entries": summary.findings_skipped_entries,
+        # Names the aggregation in force, so a report can never be read
+        # without knowing how its numbers were combined. This is the field
+        # that would have made the old best-of-N behaviour visible.
+        "aggregation": "mean-of-n",
         "results": [
             {
                 "entry": {
@@ -592,6 +673,13 @@ def write_json_report(summary: EvalSummary, output_path: Path) -> None:
                 "finding_hits": r.finding_hits,
                 "finding_misses": r.finding_misses,
                 "finding_fps": r.finding_fps,
+                # Per-entry spread across its runs. Without these the
+                # variance the mean was introduced to expose would live
+                # only in memory, and a reader could not tell a stable
+                # entry from one the tool answers differently every time.
+                "finding_hits_se": r.finding_hits_se,
+                "finding_fps_se": r.finding_fps_se,
+                "finding_runs": r.finding_runs,
             }
             for r in summary.results
         ],
