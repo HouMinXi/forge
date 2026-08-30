@@ -620,6 +620,143 @@ async def test_forge_review_with_contract_writes_tempfile():
 
 
 @pytest.mark.asyncio
+async def test_forge_review_whole_file_string_forwards_path_to_cli():
+    """forge_review(whole_file='src/foo.py') appends '--whole-file' 'src/foo.py'."""
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(whole_file="src/foo.py")
+        args = mock_cli.call_args[0]
+        assert "--whole-file" in args
+        wf_idx = args.index("--whole-file")
+        assert args[wf_idx + 1] == "src/foo.py"
+
+
+@pytest.mark.asyncio
+async def test_forge_review_whole_file_list_forwards_paths_to_cli():
+    """forge_review(whole_file=['src/a.py', 'src/b.py']) appends all paths."""
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+        patch(
+            "code_forge.mcp_server._run_cli_budgeted",
+            new_callable=AsyncMock,
+            return_value=("output", 0, 1.0, ""),
+        ) as mock_cli,
+    ):
+        await forge_review(whole_file=["src/a.py", "src/b.py"])
+        args = mock_cli.call_args[0]
+        assert "--whole-file" in args
+        wf_idx = args.index("--whole-file")
+        assert args[wf_idx + 1: wf_idx + 3] == ("src/a.py", "src/b.py")
+
+
+@pytest.mark.asyncio
+async def test_forge_review_whole_file_bool_true_raises_tool_error():
+    """forge_review(whole_file=True) raises ToolError explaining paths are required."""
+    with (
+        patch("code_forge.mcp_server._check_backend"),
+        patch("code_forge.mcp_server._validate_backend"),
+    ):
+        with pytest.raises(ToolError, match="whole_file requires one or more file paths"):
+            await forge_review(whole_file=True)
+
+
+@pytest.mark.asyncio
+async def test_forge_review_whole_file_sampling_builds_empty_baseline(tmp_path):
+    """Sampling mode with whole_file resolves empty baseline and sets ctx_whole_file."""
+    import subprocess
+    from code_forge.state import Verdict
+
+    mock_session = MagicMock()
+    mock_session.client_params.capabilities.sampling = MagicMock()
+
+    test_file = tmp_path / "hello.py"
+    test_file.write_text("print('hello')\n")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    with (
+        patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
+        patch("code_forge.mcp_server._workspace_for", new_callable=AsyncMock, return_value=tmp_path),
+        patch("code_forge.factories.build_sampling_l1_provider"),
+        patch("code_forge.machine.StateMachine") as mock_sm_cls,
+    ):
+        mock_sm = MagicMock()
+        mock_sm.run.return_value = Verdict.PASS
+        mock_sm.active_findings = []
+        mock_sm_cls.return_value = mock_sm
+
+        mock_ctx = MagicMock()
+        mock_ctx.session = mock_session
+
+        res = await forge_review(
+            whole_file=["hello.py"],
+            ctx=mock_ctx,
+            project_dir=str(tmp_path),
+        )
+        assert isinstance(res, CallToolResult)
+        assert mock_sm_cls.call_count == 1
+        _, sm_kwargs = mock_sm_cls.call_args
+        assert sm_kwargs["ctx_whole_file"] is True
+        resolved = sm_kwargs["resolved_review"]
+        assert resolved.source_files == [Path("hello.py")]
+
+
+@pytest.mark.asyncio
+async def test_forge_review_whole_file_sampling_fallback_forwards_paths(tmp_path):
+    """When sampling fails with recoverable error, CLI fallback preserves whole_file paths."""
+    import subprocess
+    from code_forge.llm_invoke import LLMInvokeError
+
+    mock_session = MagicMock()
+    mock_session.client_params.capabilities.sampling = MagicMock()
+
+    test_file = tmp_path / "hello.py"
+    test_file.write_text("print('hello')\n")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    with (
+        patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
+        patch("code_forge.mcp_server._workspace_for", new_callable=AsyncMock, return_value=tmp_path),
+        patch("code_forge.mcp_server._backend_names_for", return_value=["mimo-pro"]),
+        patch("code_forge.factories.build_sampling_l1_provider"),
+        patch("code_forge.machine.StateMachine") as mock_sm_cls,
+        patch("code_forge.mcp_server._dispatch_cli", new_callable=AsyncMock) as mock_dispatch_cli,
+    ):
+        mock_sm = MagicMock()
+        mock_sm.run.side_effect = LLMInvokeError("truncated response", kind="truncated")
+        mock_sm_cls.return_value = mock_sm
+
+        mock_ctx = MagicMock()
+        mock_ctx.session = mock_session
+
+        await forge_review(
+            whole_file=["hello.py"],
+            ctx=mock_ctx,
+            project_dir=str(tmp_path),
+        )
+        assert mock_dispatch_cli.call_count == 1
+        cli_args = mock_dispatch_cli.call_args[0][0]
+        assert "--whole-file" in cli_args
+        idx = cli_args.index("--whole-file")
+        assert cli_args[idx + 1] == "hello.py"
+
+
+@pytest.mark.asyncio
 async def test_forge_review_timeout_returns_job_ref():
     mock_task = MagicMock(spec=asyncio.Task)
     mock_proc = MagicMock()

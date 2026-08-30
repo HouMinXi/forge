@@ -757,20 +757,76 @@ def _validate_backend(backend: str, workspace: Path) -> None:
         )
 
 
+def _normalize_whole_file(
+    whole_file: list[str] | str | bool | None,
+    workspace: Path | None = None,
+) -> list[str]:
+    """Normalize and validate whole_file parameter into relative paths.
+
+    Accepts:
+      - None / False / empty: returns []
+      - str: single file path -> [path]
+      - list[str]: list of file paths -> [path, ...]
+      - True: raises ToolError (paths required)
+    """
+    if whole_file is None or whole_file is False or whole_file == "" or whole_file == []:
+        return []
+    if whole_file is True:
+        raise ToolError(
+            "whole_file requires one or more file paths "
+            "(e.g. whole_file='src/foo.py' or whole_file=['src/foo.py'])"
+        )
+    if isinstance(whole_file, str):
+        raw_paths = [whole_file]
+    elif isinstance(whole_file, (list, tuple)):
+        raw_paths = list(whole_file)
+    else:
+        raise ToolError("Invalid whole_file parameter: expected string or list of strings")
+
+    normalized: list[str] = []
+    cwd = workspace or Path.cwd()
+    cwd_resolved = cwd.resolve()
+    for p in raw_paths:
+        if not isinstance(p, str) or not p.strip():
+            raise ToolError("--whole-file: path must be a non-empty string")
+        pp = Path(p)
+        if pp.is_absolute():
+            raise ToolError("--whole-file: path must be relative, got: %s" % p)
+        resolved_p = (cwd / pp).resolve()
+        try:
+            resolved_p.relative_to(cwd_resolved)
+        except ValueError:
+            raise ToolError("--whole-file: path escapes repo root: %s" % p)
+        normalized.append(p)
+    return normalized
+
+
 def _build_review_context(
     cwd: Path, committed: bool, staged: bool = False,
+    whole_files: list[str] | None = None,
 ) -> tuple[ResolvedReview, str, str]:
     """Build review context for in-process sampling path.
 
     Returns (resolved, source_hash, baseline_repr).
     Equivalent to cli.py:1697-1724 but without argparse args object.
     """
-    from code_forge.baseline import GitRefBaseline, resolve_baseline, serialize_baseline_spec
+    from code_forge.baseline import (
+        EmptyBaseline,
+        GitRefBaseline,
+        resolve_baseline,
+        serialize_baseline_spec,
+    )
+    from code_forge.git import is_git_repo
     from code_forge.source import compute_source_hash
 
-    if committed:
+    if whole_files:
+        baseline_spec = EmptyBaseline()
+        head_spec = GitRefBaseline("WORKING") if is_git_repo(cwd) else None
+        paths = [Path(p) for p in whole_files]
+    elif committed:
         baseline_spec = GitRefBaseline("HEAD~1")
         head_spec = GitRefBaseline("HEAD")
+        paths = []
     else:
         if staged:
             # INDEX = staged changes only (forge_gate_check path)
@@ -780,12 +836,16 @@ def _build_review_context(
             # cli.py:2387 defaults to WORKING, not INDEX
             head_spec = GitRefBaseline("WORKING")
         baseline_spec = GitRefBaseline("HEAD")
+        paths = []
 
-    resolved = resolve_baseline(baseline_spec, head_spec, [], cwd)
+    resolved = resolve_baseline(baseline_spec, head_spec, paths, cwd)
     # Note: cli.py:1716-1723 branches on mode_hint (git vs non-git).
     # MCP sampling always uses committed/staged (git context), so git_diff
     # path is correct here. Non-git workspaces would need files= path.
-    source_hash = compute_source_hash(git_diff=resolved.git_diff or "")
+    if resolved.mode_hint == "git":
+        source_hash = compute_source_hash(git_diff=resolved.git_diff or "")
+    else:
+        source_hash = compute_source_hash(files=resolved.source_files)
     baseline_repr = serialize_baseline_spec(baseline_spec)
     return resolved, source_hash, baseline_repr
 
@@ -852,6 +912,7 @@ async def _dispatch_sampling(
     staged: bool = False,  # True for gate-check (INDEX), False for review (WORKING)
     contract_spec: str = "",
     focus_spec: str = "",
+    whole_files: list[str] | None = None,
 ) -> CallToolResult:
     """Run forge review in-process via MCP sampling transport.
 
@@ -871,7 +932,9 @@ async def _dispatch_sampling(
     from code_forge.llm_invoke import LLMInvokeError
     from code_forge.machine import Mode, StateMachine
 
-    resolved, source_hash, baseline_repr = _build_review_context(workspace, committed, staged=staged)
+    resolved, source_hash, baseline_repr = _build_review_context(
+        workspace, committed, staged=staged, whole_files=whole_files
+    )
 
     # Lazy import per file convention (see _backend_names_for at line 237).
     from code_forge import cli
@@ -933,6 +996,7 @@ async def _dispatch_sampling(
         resolved_review=resolved,
         source_hash=source_hash,
         baseline_spec_repr=baseline_repr,
+        ctx_whole_file=bool(whole_files),
         cwd=workspace,
         registry={},
         l1_provider=l1_provider,
@@ -977,6 +1041,9 @@ async def _dispatch_sampling(
                         "--outlet", "subprocess"]
             if committed:
                 cli_args.append("--committed")
+            if whole_files:
+                cli_args.append("--whole-file")
+                cli_args.extend(whole_files)
 
             cap = _job_cap_s(workspace, backend_name or "")
             return await _dispatch_cli(
@@ -1039,7 +1106,7 @@ async def forge_review(
     contract: str = "",
     focus: str = "",
     committed: bool = False,
-    whole_file: bool = False,
+    whole_file: list[str] | str | bool | None = None,
     canary: bool = False,
     allow_main: bool = False,
     project_dir: str = "",
@@ -1047,6 +1114,10 @@ async def forge_review(
 ) -> CallToolResult:
     """Run forge review pipeline."""
     workspace = await _workspace_for(ctx, project_dir=project_dir)
+    whole_files = _normalize_whole_file(whole_file, workspace=workspace)
+    if whole_files and committed:
+        raise ToolError("whole_file cannot be combined with committed=True")
+
     from code_forge.outlet_resolver import load_outlet_from_gate
 
     outlet = os.environ.get("FORGE_OUTLET")
@@ -1069,6 +1140,7 @@ async def forge_review(
             staged=False,
             contract_spec=contract,
             focus_spec=focus,
+            whole_files=whole_files,
         )
 
     _check_backend(workspace)
@@ -1079,8 +1151,9 @@ async def forge_review(
         cli_args.extend(["--backend", backend])
     if committed:
         cli_args.append("--committed")
-    if whole_file:
+    if whole_files:
         cli_args.append("--whole-file")
+        cli_args.extend(whole_files)
     if canary:
         cli_args.append("--canary")
 
