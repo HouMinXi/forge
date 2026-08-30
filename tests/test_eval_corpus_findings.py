@@ -223,8 +223,13 @@ class TestFindingsAggregation:
         e = self._entry(1)
         s = compute_summary([self._result(e, hits=1, fps=1)])
         text = format_table(s)
-        assert "Findings-level: hit 1/1" in text
-        assert "false positives 1" in text
+        # Phase 56-3: was "hit 1/1" / "false positives 1". The counts are
+        # means across runs now, so the table renders them with %.2f --
+        # %d floored 1.33 to 1 and printed "hit 1/2 (missed 0)", a line
+        # that contradicts itself. Whole numbers gain trailing zeros;
+        # the value asserted here is unchanged.
+        assert "Findings-level: hit 1.00/1" in text
+        assert "false positives 1.00" in text
 
     def test_json_report_carries_findings(self, tmp_path):
         from code_forge.eval.scorer import compute_summary, write_json_report

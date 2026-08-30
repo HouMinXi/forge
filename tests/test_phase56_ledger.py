@@ -42,6 +42,17 @@ from code_forge.eval.scorer import EvalResult, compute_summary, score_findings
 # 822   findings_expected == 0            0      1  56-2 (no evidence)
 # 823   findings_misses == 0              0      1  56-2 (no evidence)
 #
+# One more row moved after review, in 56-3's cleanup rather than in 56-2:
+#
+# 226   "hit 1/1" in table          "1/1"  "1.00/1"  56-3 (%d -> %.2f)
+# 227   "false positives 1"           "1"    "1.00"  56-3 (%d -> %.2f)
+#
+# Not a metric-definition change: the value is identical, the rendering
+# is not. %d floored a fractional mean and printed "hit 1/2 (missed 0)",
+# which sums to 2 only if the reader ignores the arithmetic. Recorded
+# here because a formatting change that moves an assertion is exactly
+# what this table exists to keep distinguishable from a regression.
+#
 # Seven unchanged rows are asserted here too. A phase that only proves what
 # it meant to change has not shown it left the rest alone.
 #

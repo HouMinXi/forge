@@ -571,8 +571,13 @@ def format_table(summary: EvalSummary) -> str:
     if summary.findings_expected > 0:
         findings_total = summary.findings_expected
         lines.append("")
+        # %.2f, not %d: these are means across runs since 56-3. An entry
+        # found in two of three runs contributes 0.667, and %d would floor
+        # the corpus total -- reintroducing at the last step exactly the
+        # optimism the mean was adopted to remove. findings_expected stays
+        # an integer count and is formatted as one.
         lines.append(
-            "Findings-level: hit %d/%d (missed %d), false positives %d"
+            "Findings-level: hit %.2f/%d (missed %.2f), false positives %.2f"
             % (
                 summary.findings_hit,
                 findings_total,

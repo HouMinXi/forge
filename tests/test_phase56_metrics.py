@@ -251,3 +251,59 @@ class TestJsonReportCarriesMetrics:
         data = self._write(tmp_path, _summary(expected=10, hits=6, fps=4))
         assert data["total"] == 1
         assert data["f1"] is not None
+
+
+class TestFractionalCountsSurviveTheTable:
+    """The table prints means, so it must not floor them.
+
+    Found in review of 56-3 (phase56-impl-r1, R1-1). The counts became
+    floats when best-of-N was replaced by the mean, but format_table still
+    rendered them with %d -- flooring 1.33 hits to 1 and undoing at the
+    last step the correction the mean exists to make. Cosmetic only in the
+    sense that the JSON was right; the table is what a person reads.
+    """
+
+    def _table(self, hits, fps, expected):
+        s = _summary(expected=expected, hits=hits, fps=fps)
+        return format_table(s)
+
+    def test_fractional_hits_are_not_floored(self):
+        table = self._table(hits=4 / 3, fps=0.0, expected=2)
+        assert "1.33" in table
+        # The old %d rendering; its absence is the regression guard.
+        assert "hit 1/2" not in table
+
+    def test_fractional_false_positives_are_not_floored(self):
+        table = self._table(hits=0.0, fps=5 / 3, expected=2)
+        assert "1.67" in table
+
+    def test_fractional_misses_are_not_floored(self):
+        # missed is computed as expected - hits, so it inherits the float.
+        table = self._table(hits=4 / 3, fps=0.0, expected=3)
+        assert "1.67" in table  # 3 - 1.333
+
+    def test_whole_numbers_still_read_cleanly(self):
+        # A single run yields whole counts; they should not look noisy.
+        table = self._table(hits=2.0, fps=1.0, expected=4)
+        assert "hit 2.00/4" in table
+        assert "false positives 1.00" in table
+
+    def test_expected_total_stays_an_integer(self):
+        # findings_expected is a count of answer-key entries, not a mean.
+        table = self._table(hits=1.0, fps=0.0, expected=7)
+        assert "/7 " in table or "/7\n" in table or table.rstrip().endswith("/7")
+
+    def test_hit_and_missed_still_sum_to_the_total(self):
+        # The sharper edge of R1-1: %d floored 1.33 to 1 and 0.67 to 0,
+        # printing "hit 1/2 (missed 0)" -- a line that contradicts itself.
+        # Parsed back out of the rendered text, because the arithmetic
+        # being checked is the arithmetic a reader does.
+        import re
+
+        table = self._table(hits=4 / 3, fps=0.0, expected=2)
+        m = re.search(
+            r"hit ([\d.]+)/(\d+) \(missed ([\d.]+)\)", table
+        )
+        assert m, table
+        hit, total, missed = float(m[1]), int(m[2]), float(m[3])
+        assert hit + missed == pytest.approx(total)
