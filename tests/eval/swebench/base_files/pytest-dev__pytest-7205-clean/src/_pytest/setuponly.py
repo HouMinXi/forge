@@ -1,0 +1,72 @@
+import pytest
+
+
+def pytest_addoption(parser):
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            tw.write(" (fixtures used: {})".format(", ".join(deps)))
+
+    if hasattr(fixturedef, "cached_param"):
+        tw.write("[{}]".format(fixturedef.cached_param))
+
+    tw.flush()
+

@@ -61,6 +61,11 @@ code_forge = ["skills/**/*", "skills/**/.gitkeep", "rules/**/*", "gate.schema.js
 
 [tool.ruff]
 line-length = 105
+# Reconstructed base files are deliberately not valid Python: padding to a
+# hunk's start line splits class and function bodies. They are input data
+# for diff-mode review, not source, and linting them reports the corpus
+# working as designed as if it were a defect.
+exclude = ["tests/eval/*/base_files"]
 
 [tool.pytest.ini_options]
 markers = [

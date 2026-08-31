@@ -1,0 +1,1706 @@
+entries:
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-13033-bug.diff
+  expected_findings:
+  - description: 'TimeSeries: misleading exception when required column check fails.'
+    file: astropy/timeseries/core.py
+    line_range:
+    - 55
+    - 60
+  - description: 'TimeSeries: misleading exception when required column check fails.'
+    file: astropy/timeseries/core.py
+    line_range:
+    - 76
+    - 84
+  expected_verdict: HOLD
+  name: astropy__astropy-13033-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-13033-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-13033-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14096-bug.diff
+  expected_findings:
+  - description: Subclassed SkyCoord gives misleading attribute access message
+    file: astropy/coordinates/sky_coordinate.py
+    line_range:
+    - 894
+    - 903
+  expected_verdict: HOLD
+  name: astropy__astropy-14096-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14096-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-14096-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14182-bug.diff
+  expected_findings:
+  - description: Please support header rows in RestructuredText output
+    file: astropy/io/ascii/rst.py
+    line_range:
+    - 27
+    - 33
+  - description: Please support header rows in RestructuredText output
+    file: astropy/io/ascii/rst.py
+    line_range:
+    - 39
+    - 50
+  - description: Please support header rows in RestructuredText output
+    file: astropy/io/ascii/rst.py
+    line_range:
+    - 57
+    - 66
+  expected_verdict: HOLD
+  name: astropy__astropy-14182-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14182-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-14182-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14309-bug.diff
+  expected_findings:
+  - description: 'IndexError: tuple index out of range in identify_format (io.registry)'
+    file: astropy/io/fits/connect.py
+    line_range:
+    - 65
+    - 74
+  expected_verdict: HOLD
+  name: astropy__astropy-14309-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14309-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-14309-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14598-bug.diff
+  expected_findings:
+  - description: Inconsistency in double single-quote ('') management in FITS Card
+    file: astropy/io/fits/card.py
+    line_range:
+    - 66
+    - 72
+  - description: Inconsistency in double single-quote ('') management in FITS Card
+    file: astropy/io/fits/card.py
+    line_range:
+    - 859
+    - 865
+  expected_verdict: HOLD
+  name: astropy__astropy-14598-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14598-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-14598-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14995-bug.diff
+  expected_findings:
+  - description: In v5.3, NDDataRef mask propagation fails when one of the operand
+      does not have a mask
+    file: astropy/nddata/mixins/ndarithmetic.py
+    line_range:
+    - 520
+    - 529
+  expected_verdict: HOLD
+  name: astropy__astropy-14995-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-14995-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-14995-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-7336-bug.diff
+  expected_findings:
+  - description: units.quantity_input decorator fails for constructors with type hinted
+      return value -> None
+    file: astropy/units/decorators.py
+    line_range:
+    - 220
+    - 226
+  expected_verdict: HOLD
+  name: astropy__astropy-7336-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-7336-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-7336-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-7606-bug.diff
+  expected_findings:
+  - description: Unit equality comparison with None raises TypeError for UnrecognizedUnit
+    file: astropy/units/core.py
+    line_range:
+    - 728
+    - 734
+  - description: Unit equality comparison with None raises TypeError for UnrecognizedUnit
+    file: astropy/units/core.py
+    line_range:
+    - 1710
+    - 1717
+  expected_verdict: HOLD
+  name: astropy__astropy-7606-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/astropy__astropy-7606-clean.diff
+  expected_verdict: PASS
+  name: astropy__astropy-7606-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-12143-bug.diff
+  expected_findings:
+  - description: Possible data loss in admin changeform view when using regex special
+      characters in formset prefix
+    file: django/contrib/admin/options.py
+    line_range:
+    - 1631
+    - 1637
+  expected_verdict: HOLD
+  name: django__django-12143-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-12143-clean.diff
+  expected_verdict: PASS
+  name: django__django-12143-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-12663-bug.diff
+  expected_findings:
+  - description: Using SimpleLazyObject with a nested subquery annotation fails.
+    file: django/db/models/sql/query.py
+    line_range:
+    - 233
+    - 239
+  expected_verdict: HOLD
+  name: django__django-12663-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-12663-clean.diff
+  expected_verdict: PASS
+  name: django__django-12663-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-13089-bug.diff
+  expected_findings:
+  - description: cache.backends.db._cull sometimes fails with 'NoneType' object is
+      not subscriptable
+    file: django/core/cache/backends/db.py
+    line_range:
+    - 267
+    - 275
+  expected_verdict: HOLD
+  name: django__django-13089-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-13089-clean.diff
+  expected_verdict: PASS
+  name: django__django-13089-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-14373-bug.diff
+  expected_findings:
+  - description: DateFormat.Y() is not zero-padded.
+    file: django/utils/dateformat.py
+    line_range:
+    - 313
+    - 320
+  expected_verdict: HOLD
+  name: django__django-14373-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-14373-clean.diff
+  expected_verdict: PASS
+  name: django__django-14373-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-15098-bug.diff
+  expected_findings:
+  - description: Internationalisation didn't support language locale containing both
+      script and region.
+    file: django/utils/translation/trans_real.py
+    line_range:
+    - 43
+    - 49
+  expected_verdict: HOLD
+  name: django__django-15098-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-15098-clean.diff
+  expected_verdict: PASS
+  name: django__django-15098-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-15103-bug.diff
+  expected_findings:
+  - description: Make the element_id argument of json_script optional
+    file: django/template/defaultfilters.py
+    line_range:
+    - 83
+    - 92
+  - description: Make the element_id argument of json_script optional
+    file: django/utils/html.py
+    line_range:
+    - 61
+    - 67
+  - description: Make the element_id argument of json_script optional
+    file: django/utils/html.py
+    line_range:
+    - 69
+    - 78
+  expected_verdict: HOLD
+  name: django__django-15103-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-15103-clean.diff
+  expected_verdict: PASS
+  name: django__django-15103-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-15375-bug.diff
+  expected_findings:
+  - description: aggregate() with 'default' after annotate() crashes.
+    file: django/db/models/aggregates.py
+    line_range:
+    - 65
+    - 71
+  expected_verdict: HOLD
+  name: django__django-15375-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-15375-clean.diff
+  expected_verdict: PASS
+  name: django__django-15375-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-16595-bug.diff
+  expected_findings:
+  - description: Migration optimizer does not reduce multiple AlterField
+    file: django/db/migrations/operations/fields.py
+    line_range:
+    - 247
+    - 255
+  expected_verdict: HOLD
+  name: django__django-16595-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/django__django-16595-clean.diff
+  expected_verdict: PASS
+  name: django__django-16595-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-20488-bug.diff
+  expected_findings:
+  - description: test_huge_range_log is failing...
+    file: lib/matplotlib/image.py
+    line_range:
+    - 532
+    - 540
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-20488-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-20488-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-20488-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-20676-bug.diff
+  expected_findings:
+  - description: interactive SpanSelector incorrectly forces axes limits to include
+      0
+    file: lib/matplotlib/widgets.py
+    line_range:
+    - 2156
+    - 2162
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-20676-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-20676-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-20676-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-21568-bug.diff
+  expected_findings:
+  - description: '[Bug]: Datetime axis with usetex is unclear'
+    file: lib/matplotlib/dates.py
+    line_range:
+    - 595
+    - 602
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-21568-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-21568-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-21568-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-22719-bug.diff
+  expected_findings:
+  - description: '[Bug]: Confusing deprecation warning when empty data passed to axis
+      with category units'
+    file: lib/matplotlib/category.py
+    line_range:
+    - 58
+    - 64
+  - description: '[Bug]: Confusing deprecation warning when empty data passed to axis
+      with category units'
+    file: lib/matplotlib/category.py
+    line_range:
+    - 230
+    - 236
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-22719-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-22719-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-22719-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-22865-bug.diff
+  expected_findings:
+  - description: '[Bug]: Colorbar with drawedges=True and extend=''both'' does not
+      draw edges at extremities'
+    file: lib/matplotlib/colorbar.py
+    line_range:
+    - 651
+    - 658
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-22865-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-22865-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-22865-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-25122-bug.diff
+  expected_findings:
+  - description: '[Bug]: Windows correction is not correct in `mlab._spectral_helper`'
+    file: lib/matplotlib/mlab.py
+    line_range:
+    - 395
+    - 406
+  - description: '[Bug]: Windows correction is not correct in `mlab._spectral_helper`'
+    file: lib/matplotlib/mlab.py
+    line_range:
+    - 424
+    - 433
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-25122-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-25122-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-25122-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-25479-bug.diff
+  expected_findings:
+  - description: Confusing (broken?) colormap name handling
+    file: lib/matplotlib/cm.py
+    line_range:
+    - 146
+    - 151
+  - description: Confusing (broken?) colormap name handling
+    file: lib/matplotlib/colors.py
+    line_range:
+    - 774
+    - 780
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-25479-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-25479-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-25479-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-26466-bug.diff
+  expected_findings:
+  - description: Updating an array passed as the xy parameter to annotate updates
+      the anottation
+    file: lib/matplotlib/text.py
+    line_range:
+    - 1389
+    - 1395
+  - description: Updating an array passed as the xy parameter to annotate updates
+      the anottation
+    file: lib/matplotlib/text.py
+    line_range:
+    - 1407
+    - 1419
+  - description: Updating an array passed as the xy parameter to annotate updates
+      the anottation
+    file: lib/matplotlib/text.py
+    line_range:
+    - 1443
+    - 1453
+  - description: Updating an array passed as the xy parameter to annotate updates
+      the anottation
+    file: lib/matplotlib/text.py
+    line_range:
+    - 1456
+    - 1462
+  expected_verdict: HOLD
+  name: matplotlib__matplotlib-26466-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/matplotlib__matplotlib-26466-clean.diff
+  expected_verdict: PASS
+  name: matplotlib__matplotlib-26466-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/mwaskom__seaborn-3069-bug.diff
+  expected_findings:
+  - description: Nominal scale should be drawn the same way as categorical scales
+    file: seaborn/_core/plot.py
+    line_range:
+    - 25
+    - 31
+  - description: Nominal scale should be drawn the same way as categorical scales
+    file: seaborn/_core/plot.py
+    line_range:
+    - 1238
+    - 1244
+  - description: Nominal scale should be drawn the same way as categorical scales
+    file: seaborn/_core/plot.py
+    line_range:
+    - 1631
+    - 1636
+  - description: Nominal scale should be drawn the same way as categorical scales
+    file: seaborn/_core/plot.py
+    line_range:
+    - 1644
+    - 1649
+  expected_verdict: HOLD
+  name: mwaskom__seaborn-3069-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/mwaskom__seaborn-3069-clean.diff
+  expected_verdict: PASS
+  name: mwaskom__seaborn-3069-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-1142-bug.diff
+  expected_findings:
+  - description: requests.get is ALWAYS sending content length
+    file: requests/models.py
+    line_range:
+    - 386
+    - 398
+  expected_verdict: HOLD
+  name: psf__requests-1142-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-1142-clean.diff
+  expected_verdict: PASS
+  name: psf__requests-1142-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-1724-bug.diff
+  expected_findings:
+  - description: Unicode method names cause UnicodeDecodeError for some requests in
+      Python 2.7.2
+    file: requests/sessions.py
+    line_range:
+    - 12
+    - 18
+  - description: Unicode method names cause UnicodeDecodeError for some requests in
+      Python 2.7.2
+    file: requests/sessions.py
+    line_range:
+    - 309
+    - 314
+  expected_verdict: HOLD
+  name: psf__requests-1724-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-1724-clean.diff
+  expected_verdict: PASS
+  name: psf__requests-1724-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-1766-bug.diff
+  expected_findings:
+  - description: quote qop options in Digest Auth
+    file: requests/auth.py
+    line_range:
+    - 105
+    - 111
+  - description: quote qop options in Digest Auth
+    file: requests/auth.py
+    line_range:
+    - 144
+    - 150
+  expected_verdict: HOLD
+  name: psf__requests-1766-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-1766-clean.diff
+  expected_verdict: PASS
+  name: psf__requests-1766-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-2317-bug.diff
+  expected_findings:
+  - description: method = builtin_str(method) problem
+    file: requests/sessions.py
+    line_range:
+    - 13
+    - 19
+  - description: method = builtin_str(method) problem
+    file: requests/sessions.py
+    line_range:
+    - 425
+    - 431
+  expected_verdict: HOLD
+  name: psf__requests-2317-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-2317-clean.diff
+  expected_verdict: PASS
+  name: psf__requests-2317-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-2931-bug.diff
+  expected_findings:
+  - description: Request with binary payload fails due to calling to_native_string
+    file: requests/models.py
+    line_range:
+    - 81
+    - 87
+  - description: Request with binary payload fails due to calling to_native_string
+    file: requests/models.py
+    line_range:
+    - 385
+    - 390
+  expected_verdict: HOLD
+  name: psf__requests-2931-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-2931-clean.diff
+  expected_verdict: PASS
+  name: psf__requests-2931-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-5414-bug.diff
+  expected_findings:
+  - description: Getting http://.example.com raises UnicodeError
+    file: requests/models.py
+    line_range:
+    - 403
+    - 409
+  expected_verdict: HOLD
+  name: psf__requests-5414-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/psf__requests-5414-clean.diff
+  expected_verdict: PASS
+  name: psf__requests-5414-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-2905-bug.diff
+  expected_findings:
+  - description: Variable.__setitem__ coercing types on objects with a values property
+    file: xarray/core/variable.py
+    line_range:
+    - 218
+    - 224
+  expected_verdict: HOLD
+  name: pydata__xarray-2905-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-2905-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-2905-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-3305-bug.diff
+  expected_findings:
+  - description: DataArray.quantile does not honor `keep_attrs`
+    file: xarray/core/dataset.py
+    line_range:
+    - 4768
+    - 4774
+  - description: DataArray.quantile does not honor `keep_attrs`
+    file: xarray/core/variable.py
+    line_range:
+    - 1592
+    - 1598
+  - description: DataArray.quantile does not honor `keep_attrs`
+    file: xarray/core/variable.py
+    line_range:
+    - 1615
+    - 1620
+  - description: DataArray.quantile does not honor `keep_attrs`
+    file: xarray/core/variable.py
+    line_range:
+    - 1623
+    - 1629
+  - description: DataArray.quantile does not honor `keep_attrs`
+    file: xarray/core/variable.py
+    line_range:
+    - 1651
+    - 1664
+  expected_verdict: HOLD
+  name: pydata__xarray-3305-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-3305-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-3305-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-3993-bug.diff
+  expected_findings:
+  - description: DataArray.integrate has a 'dim' arg, but Dataset.integrate has a
+      'coord' arg
+    file: xarray/core/dataarray.py
+    line_range:
+    - 3481
+    - 3501
+  - description: DataArray.integrate has a 'dim' arg, but Dataset.integrate has a
+      'coord' arg
+    file: xarray/core/dataarray.py
+    line_range:
+    - 3503
+    - 3508
+  - description: DataArray.integrate has a 'dim' arg, but Dataset.integrate has a
+      'coord' arg
+    file: xarray/core/dataarray.py
+    line_range:
+    - 3528
+    - 3534
+  - description: DataArray.integrate has a 'dim' arg, but Dataset.integrate has a
+      'coord' arg
+    file: xarray/core/dataset.py
+    line_range:
+    - 5963
+    - 5970
+  - description: DataArray.integrate has a 'dim' arg, but Dataset.integrate has a
+      'coord' arg
+    file: xarray/core/dataset.py
+    line_range:
+    - 5972
+    - 5982
+  expected_verdict: HOLD
+  name: pydata__xarray-3993-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-3993-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-3993-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-4356-bug.diff
+  expected_findings:
+  - description: 'sum: min_count is not available for reduction with more than one
+      dimensions'
+    file: xarray/core/nanops.py
+    line_range:
+    - 26
+    - 38
+  expected_verdict: HOLD
+  name: pydata__xarray-4356-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-4356-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-4356-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-4687-bug.diff
+  expected_findings:
+  - description: xr.where not preserving attributes
+    file: xarray/core/computation.py
+    line_range:
+    - 1727
+    - 1733
+  - description: xr.where not preserving attributes
+    file: xarray/core/computation.py
+    line_range:
+    - 1743
+    - 1748
+  - description: xr.where not preserving attributes
+    file: xarray/core/computation.py
+    line_range:
+    - 1808
+    - 1813
+  - description: xr.where not preserving attributes
+    file: xarray/core/computation.py
+    line_range:
+    - 1817
+    - 1822
+  expected_verdict: HOLD
+  name: pydata__xarray-4687-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-4687-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-4687-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-6744-bug.diff
+  expected_findings:
+  - description: '"center" kwarg ignored when manually iterating over DataArrayRolling'
+    file: xarray/core/rolling.py
+    line_range:
+    - 267
+    - 282
+  expected_verdict: HOLD
+  name: pydata__xarray-6744-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-6744-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-6744-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-7229-bug.diff
+  expected_findings:
+  - description: '`xr.where(..., keep_attrs=True)` overwrites coordinate attributes'
+    file: xarray/core/computation.py
+    line_range:
+    - 1855
+    - 1869
+  - description: '`xr.where(..., keep_attrs=True)` overwrites coordinate attributes'
+    file: xarray/core/computation.py
+    line_range:
+    - 1874
+    - 1879
+  expected_verdict: HOLD
+  name: pydata__xarray-7229-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-7229-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-7229-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-7233-bug.diff
+  expected_findings:
+  - description: ds.Coarsen.construct demotes non-dimensional coordinates to variables
+    file: xarray/core/rolling.py
+    line_range:
+    - 973
+    - 979
+  expected_verdict: HOLD
+  name: pydata__xarray-7233-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pydata__xarray-7233-clean.diff
+  expected_verdict: PASS
+  name: pydata__xarray-7233-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-4661-bug.diff
+  expected_findings:
+  - description: Make pylint XDG Base Directory Specification compliant
+    file: pylint/config/__init__.py
+    line_range:
+    - 36
+    - 41
+  - description: Make pylint XDG Base Directory Specification compliant
+    file: pylint/config/__init__.py
+    line_range:
+    - 63
+    - 69
+  - description: Make pylint XDG Base Directory Specification compliant
+    file: setup.cfg
+    line_range:
+    - 42
+    - 47
+  - description: Make pylint XDG Base Directory Specification compliant
+    file: setup.cfg
+    line_range:
+    - 74
+    - 80
+  - description: Make pylint XDG Base Directory Specification compliant
+    file: setup.cfg
+    line_range:
+    - 82
+    - 87
+  expected_verdict: HOLD
+  name: pylint-dev__pylint-4661-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-4661-clean.diff
+  expected_verdict: PASS
+  name: pylint-dev__pylint-4661-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-6528-bug.diff
+  expected_findings:
+  - description: Pylint does not respect ignores in `--recursive=y` mode
+    file: pylint/lint/expand_modules.py
+    line_range:
+    - 46
+    - 51
+  - description: Pylint does not respect ignores in `--recursive=y` mode
+    file: pylint/lint/expand_modules.py
+    line_range:
+    - 61
+    - 70
+  - description: Pylint does not respect ignores in `--recursive=y` mode
+    file: pylint/lint/pylinter.py
+    line_range:
+    - 31
+    - 37
+  - description: Pylint does not respect ignores in `--recursive=y` mode
+    file: pylint/lint/pylinter.py
+    line_range:
+    - 564
+    - 571
+  - description: Pylint does not respect ignores in `--recursive=y` mode
+    file: pylint/lint/pylinter.py
+    line_range:
+    - 579
+    - 584
+  expected_verdict: HOLD
+  name: pylint-dev__pylint-6528-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-6528-clean.diff
+  expected_verdict: PASS
+  name: pylint-dev__pylint-6528-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-7277-bug.diff
+  expected_findings:
+  - description: '`pylint` removes first item from `sys.path` when running from `runpy`.'
+    file: pylint/__init__.py
+    line_range:
+    - 96
+    - 104
+  expected_verdict: HOLD
+  name: pylint-dev__pylint-7277-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-7277-clean.diff
+  expected_verdict: PASS
+  name: pylint-dev__pylint-7277-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-8898-bug.diff
+  expected_findings:
+  - description: bad-names-rgxs mangles regular expressions with commas
+    file: pylint/config/argument.py
+    line_range:
+    - 114
+    - 120
+  - description: bad-names-rgxs mangles regular expressions with commas
+    file: pylint/utils/__init__.py
+    line_range:
+    - 14
+    - 19
+  - description: bad-names-rgxs mangles regular expressions with commas
+    file: pylint/utils/__init__.py
+    line_range:
+    - 32
+    - 37
+  - description: bad-names-rgxs mangles regular expressions with commas
+    file: pylint/utils/utils.py
+    line_range:
+    - 22
+    - 28
+  - description: bad-names-rgxs mangles regular expressions with commas
+    file: pylint/utils/utils.py
+    line_range:
+    - 253
+    - 258
+  expected_verdict: HOLD
+  name: pylint-dev__pylint-8898-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pylint-dev__pylint-8898-clean.diff
+  expected_verdict: PASS
+  name: pylint-dev__pylint-8898-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-10051-bug.diff
+  expected_findings:
+  - description: caplog.get_records and caplog.clear conflict
+    file: src/_pytest/logging.py
+    line_range:
+    - 40
+    - 46
+  - description: caplog.get_records and caplog.clear conflict
+    file: src/_pytest/logging.py
+    line_range:
+    - 345
+    - 350
+  - description: caplog.get_records and caplog.clear conflict
+    file: src/_pytest/logging.py
+    line_range:
+    - 440
+    - 446
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-10051-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-10051-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-10051-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-10356-bug.diff
+  expected_findings:
+  - description: Consider MRO when obtaining marks for classes
+    file: src/_pytest/mark/structures.py
+    line_range:
+    - 355
+    - 366
+  - description: Consider MRO when obtaining marks for classes
+    file: src/_pytest/mark/structures.py
+    line_range:
+    - 388
+    - 394
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-10356-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-10356-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-10356-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-5631-bug.diff
+  expected_findings:
+  - description: ValueError when collecting tests that patch an array
+    file: src/_pytest/compat.py
+    line_range:
+    - 64
+    - 76
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-5631-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-5631-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-5631-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-5809-bug.diff
+  expected_findings:
+  - description: Lexer "python3" in --pastebin feature causes HTTP errors
+    file: src/_pytest/pastebin.py
+    line_range:
+    - 77
+    - 87
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-5809-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-5809-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-5809-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-6197-bug.diff
+  expected_findings:
+  - description: 'Regression in 5.2.3: pytest tries to collect random __init__.py
+      files'
+    file: src/_pytest/python.py
+    line_range:
+    - 251
+    - 271
+  - description: 'Regression in 5.2.3: pytest tries to collect random __init__.py
+      files'
+    file: src/_pytest/python.py
+    line_range:
+    - 432
+    - 445
+  - description: 'Regression in 5.2.3: pytest tries to collect random __init__.py
+      files'
+    file: src/_pytest/python.py
+    line_range:
+    - 639
+    - 645
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-6197-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-6197-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-6197-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-7205-bug.diff
+  expected_findings:
+  - description: BytesWarning when using --setup-show with bytes parameter
+    file: src/_pytest/setuponly.py
+    line_range:
+    - 1
+    - 4
+  - description: BytesWarning when using --setup-show with bytes parameter
+    file: src/_pytest/setuponly.py
+    line_range:
+    - 66
+    - 72
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-7205-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-7205-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-7205-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-7236-bug.diff
+  expected_findings:
+  - description: unittest.TestCase.tearDown executed on skipped tests when running
+      --pdb
+    file: src/_pytest/unittest.py
+    line_range:
+    - 41
+    - 47
+  - description: unittest.TestCase.tearDown executed on skipped tests when running
+      --pdb
+    file: src/_pytest/unittest.py
+    line_range:
+    - 89
+    - 95
+  - description: unittest.TestCase.tearDown executed on skipped tests when running
+      --pdb
+    file: src/_pytest/unittest.py
+    line_range:
+    - 220
+    - 226
+  - description: unittest.TestCase.tearDown executed on skipped tests when running
+      --pdb
+    file: src/_pytest/unittest.py
+    line_range:
+    - 301
+    - 303
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-7236-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-7236-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-7236-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-7324-bug.diff
+  expected_findings:
+  - description: Pytest crashes the interpreter on debug build for 3.8+
+    file: src/_pytest/mark/expression.py
+    line_range:
+    - 127
+    - 132
+  - description: Pytest crashes the interpreter on debug build for 3.8+
+    file: src/_pytest/mark/expression.py
+    line_range:
+    - 161
+    - 167
+  - description: Pytest crashes the interpreter on debug build for 3.8+
+    file: src/_pytest/mark/expression.py
+    line_range:
+    - 172
+    - 178
+  expected_verdict: HOLD
+  name: pytest-dev__pytest-7324-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/pytest-dev__pytest-7324-clean.diff
+  expected_verdict: PASS
+  name: pytest-dev__pytest-7324-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-10297-bug.diff
+  expected_findings:
+  - description: linear_model.RidgeClassifierCV's Parameter store_cv_values issue
+    file: sklearn/linear_model/ridge.py
+    line_range:
+    - 1212
+    - 1229
+  - description: linear_model.RidgeClassifierCV's Parameter store_cv_values issue
+    file: sklearn/linear_model/ridge.py
+    line_range:
+    - 1301
+    - 1314
+  - description: linear_model.RidgeClassifierCV's Parameter store_cv_values issue
+    file: sklearn/linear_model/ridge.py
+    line_range:
+    - 1333
+    - 1342
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-10297-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-10297-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-10297-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-10844-bug.diff
+  expected_findings:
+  - description: fowlkes_mallows_score returns RuntimeWarning when variables get too
+      big
+    file: sklearn/metrics/cluster/supervised.py
+    line_range:
+    - 852
+    - 862
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-10844-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-10844-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-10844-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-11578-bug.diff
+  expected_findings:
+  - description: For probabilistic scorers, LogisticRegressionCV(multi_class='multinomial')
+      uses OvR to calculate scores
+    file: sklearn/linear_model/logistic.py
+    line_range:
+    - 922
+    - 928
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-11578-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-11578-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-11578-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-12973-bug.diff
+  expected_findings:
+  - description: 'LassoLarsIC: unintuitive copy_X behaviour'
+    file: sklearn/linear_model/least_angle.py
+    line_range:
+    - 1479
+    - 1485
+  - description: 'LassoLarsIC: unintuitive copy_X behaviour'
+    file: sklearn/linear_model/least_angle.py
+    line_range:
+    - 1490
+    - 1496
+  - description: 'LassoLarsIC: unintuitive copy_X behaviour'
+    file: sklearn/linear_model/least_angle.py
+    line_range:
+    - 1498
+    - 1507
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-12973-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-12973-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-12973-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-14087-bug.diff
+  expected_findings:
+  - description: IndexError thrown with LogisticRegressionCV and refit=False
+    file: sklearn/linear_model/logistic.py
+    line_range:
+    - 2170
+    - 2176
+  - description: IndexError thrown with LogisticRegressionCV and refit=False
+    file: sklearn/linear_model/logistic.py
+    line_range:
+    - 2180
+    - 2187
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-14087-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-14087-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-14087-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-14629-bug.diff
+  expected_findings:
+  - description: AttributeError with cross_val_predict(method='predict_proba') when
+      using MultiOuputClassifier
+    file: sklearn/multioutput.py
+    line_range:
+    - 325
+    - 330
+  - description: AttributeError with cross_val_predict(method='predict_proba') when
+      using MultiOuputClassifier
+    file: sklearn/multioutput.py
+    line_range:
+    - 420
+    - 426
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-14629-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-14629-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-14629-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-25747-bug.diff
+  expected_findings:
+  - description: FeatureUnion not working when aggregating data and pandas transform
+      output selected
+    file: sklearn/utils/_set_output.py
+    line_range:
+    - 34
+    - 40
+  - description: FeatureUnion not working when aggregating data and pandas transform
+      output selected
+    file: sklearn/utils/_set_output.py
+    line_range:
+    - 55
+    - 62
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-25747-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-25747-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-25747-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-26194-bug.diff
+  expected_findings:
+  - description: Thresholds can exceed 1 in `roc_curve` while providing probability
+      estimate
+    file: sklearn/metrics/_ranking.py
+    line_range:
+    - 1016
+    - 1025
+  - description: Thresholds can exceed 1 in `roc_curve` while providing probability
+      estimate
+    file: sklearn/metrics/_ranking.py
+    line_range:
+    - 1036
+    - 1041
+  - description: Thresholds can exceed 1 in `roc_curve` while providing probability
+      estimate
+    file: sklearn/metrics/_ranking.py
+    line_range:
+    - 1056
+    - 1062
+  - description: Thresholds can exceed 1 in `roc_curve` while providing probability
+      estimate
+    file: sklearn/metrics/_ranking.py
+    line_range:
+    - 1083
+    - 1089
+  expected_verdict: HOLD
+  name: scikit-learn__scikit-learn-26194-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/scikit-learn__scikit-learn-26194-clean.diff
+  expected_verdict: PASS
+  name: scikit-learn__scikit-learn-26194-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-7440-bug.diff
+  expected_findings:
+  - description: glossary duplicate term with a different case
+    file: sphinx/domains/std.py
+    line_range:
+    - 305
+    - 311
+  - description: glossary duplicate term with a different case
+    file: sphinx/domains/std.py
+    line_range:
+    - 565
+    - 571
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-7440-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-7440-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-7440-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-7889-bug.diff
+  expected_findings:
+  - description: Autodoc extension's mock file throws TypeError for generic-typed
+      classes.
+    file: sphinx/ext/autodoc/mock.py
+    line_range:
+    - 52
+    - 59
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-7889-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-7889-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-7889-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-8265-bug.diff
+  expected_findings:
+  - description: docstring default arg is broken
+    file: sphinx/pycode/ast.py
+    line_range:
+    - 166
+    - 179
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-8265-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-8265-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-8265-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-8548-bug.diff
+  expected_findings:
+  - description: autodoc inherited-members won't work for inherited attributes (data
+      members).
+    file: sphinx/ext/autodoc/__init__.py
+    line_range:
+    - 1584
+    - 1590
+  - description: autodoc inherited-members won't work for inherited attributes (data
+      members).
+    file: sphinx/ext/autodoc/importer.py
+    line_range:
+    - 14
+    - 20
+  - description: autodoc inherited-members won't work for inherited attributes (data
+      members).
+    file: sphinx/ext/autodoc/importer.py
+    line_range:
+    - 251
+    - 258
+  - description: autodoc inherited-members won't work for inherited attributes (data
+      members).
+    file: sphinx/ext/autodoc/importer.py
+    line_range:
+    - 297
+    - 319
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-8548-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-8548-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-8548-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-8638-bug.diff
+  expected_findings:
+  - description: Instance variables link to other variables of the same name in the
+      project
+    file: sphinx/domains/python.py
+    line_range:
+    - 354
+    - 360
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-8638-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-8638-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-8638-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-9320-bug.diff
+  expected_findings:
+  - description: '`sphinx-quickstart` with existing conf.py doesn''t exit easily'
+    file: sphinx/cmd/quickstart.py
+    line_range:
+    - 95
+    - 100
+  - description: '`sphinx-quickstart` with existing conf.py doesn''t exit easily'
+    file: sphinx/cmd/quickstart.py
+    line_range:
+    - 223
+    - 229
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-9320-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-9320-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-9320-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-9367-bug.diff
+  expected_findings:
+  - description: 1-element tuple rendered incorrectly
+    file: sphinx/pycode/ast.py
+    line_range:
+    - 213
+    - 222
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-9367-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-9367-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-9367-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-9698-bug.diff
+  expected_findings:
+  - description: An index entry with parens was registered for `py:method` directive
+      with `:property:` option
+    file: sphinx/domains/python.py
+    line_range:
+    - 796
+    - 802
+  expected_verdict: HOLD
+  name: sphinx-doc__sphinx-9698-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sphinx-doc__sphinx-9698-clean.diff
+  expected_verdict: PASS
+  name: sphinx-doc__sphinx-9698-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-12096-bug.diff
+  expected_findings:
+  - description: evalf does not call _imp_ recursively
+    file: sympy/core/function.py
+    line_range:
+    - 507
+    - 513
+  expected_verdict: HOLD
+  name: sympy__sympy-12096-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-12096-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-12096-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-13551-bug.diff
+  expected_findings:
+  - description: Product(n + 1 / 2**k, [k, 0, n-1]) is incorrect
+    file: sympy/concrete/products.py
+    line_range:
+    - 282
+    - 289
+  expected_verdict: HOLD
+  name: sympy__sympy-13551-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-13551-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-13551-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-13647-bug.diff
+  expected_findings:
+  - description: Matrix.col_insert() no longer seems to work correctly.
+    file: sympy/matrices/common.py
+    line_range:
+    - 86
+    - 92
+  expected_verdict: HOLD
+  name: sympy__sympy-13647-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-13647-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-13647-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-13974-bug.diff
+  expected_findings:
+  - description: Evaluating powers of `TensorProduct`
+    file: sympy/physics/quantum/tensorproduct.py
+    line_range:
+    - 18
+    - 23
+  - description: Evaluating powers of `TensorProduct`
+    file: sympy/physics/quantum/tensorproduct.py
+    line_range:
+    - 310
+    - 327
+  - description: Evaluating powers of `TensorProduct`
+    file: sympy/physics/quantum/tensorproduct.py
+    line_range:
+    - 335
+    - 349
+  - description: Evaluating powers of `TensorProduct`
+    file: sympy/physics/quantum/tensorproduct.py
+    line_range:
+    - 382
+    - 388
+  expected_verdict: HOLD
+  name: sympy__sympy-13974-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-13974-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-13974-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-15345-bug.diff
+  expected_findings:
+  - description: mathematica_code gives wrong output with Max
+    file: sympy/printing/mathematica.py
+    line_range:
+    - 31
+    - 37
+  - description: mathematica_code gives wrong output with Max
+    file: sympy/printing/mathematica.py
+    line_range:
+    - 101
+    - 106
+  expected_verdict: HOLD
+  name: sympy__sympy-15345-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-15345-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-15345-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-15875-bug.diff
+  expected_findings:
+  - description: is_zero is incorrect on complex integer
+    file: sympy/core/add.py
+    line_range:
+    - 554
+    - 560
+  expected_verdict: HOLD
+  name: sympy__sympy-15875-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-15875-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-15875-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-20154-bug.diff
+  expected_findings:
+  - description: partitions() reusing the output dictionaries
+    file: sympy/utilities/iterables.py
+    line_range:
+    - 1738
+    - 1758
+  - description: partitions() reusing the output dictionaries
+    file: sympy/utilities/iterables.py
+    line_range:
+    - 1802
+    - 1810
+  - description: partitions() reusing the output dictionaries
+    file: sympy/utilities/iterables.py
+    line_range:
+    - 1842
+    - 1850
+  expected_verdict: HOLD
+  name: sympy__sympy-20154-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-20154-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-20154-clean
+- axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-20916-bug.diff
+  expected_findings:
+  - description: pprint unicode does not format subscripts on Greek letters
+    file: sympy/printing/conventions.py
+    line_range:
+    - 7
+    - 13
+  - description: pprint unicode does not format subscripts on Greek letters
+    file: sympy/printing/conventions.py
+    line_range:
+    - 60
+    - 66
+  expected_verdict: HOLD
+  name: sympy__sympy-20916-bug
+- asserts_no_findings: true
+  axis_tags:
+  - RUNTIME
+  diff_file: diffs/sympy__sympy-20916-clean.diff
+  expected_verdict: PASS
+  name: sympy__sympy-20916-clean

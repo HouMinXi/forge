@@ -19,7 +19,9 @@ forge.
 
 from __future__ import annotations
 
+import random
 import re
+from enum import Enum
 
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
 
@@ -248,3 +250,261 @@ def expected_findings_for(patch: str, problem_statement: str):
     if not findings:
         raise ValueError("patch contains no hunks")
     return findings
+
+
+class RejectReason(str, Enum):
+    """Why an instance cannot become a corpus entry.
+
+    Written verbatim into the provenance record, so these are a persisted
+    contract rather than internal labels. A corpus that reports only its
+    survivors cannot be audited -- the reader cannot tell a strict filter
+    from a broken one.
+    """
+
+    NO_SOURCE_FILES = "no_source_files"
+    TOO_MANY_FILES = "too_many_files"
+    TOO_MANY_HUNKS = "too_many_hunks"
+    HUNK_TOO_LARGE = "hunk_too_large"
+    UNUSABLE_STATEMENT = "unusable_statement"
+    PURE_ADDITION = "pure_addition"
+    REVERSAL_FAILED = "reversal_failed"
+
+
+MAX_FILES = 3
+MAX_HUNKS = 5
+MAX_HUNK_LINES = 50
+MIN_TITLE_CHARS = 20
+
+_NON_SOURCE_PREFIXES = ("docs/", "doc/", "tests/", "test/", "testing/")
+_NON_SOURCE_SUFFIXES = (".md", ".rst", ".txt", ".cfg", ".ini", ".toml")
+_TRACEBACK_MARKERS = ("Traceback", 'File "', "  at ")
+
+
+def _touched_files(patch: str) -> list[str]:
+    out = []
+    for line in patch.split("\n"):
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path != _NULL:
+                out.append(path[2:] if path.startswith("b/") else path)
+    return out
+
+
+def _is_source(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    if path.startswith(_NON_SOURCE_PREFIXES) or path.endswith(_NON_SOURCE_SUFFIXES):
+        return False
+    return not (name.startswith("test_") or name.endswith("_test.py"))
+
+
+def qualifies(instance: dict):
+    """None when the instance can become an entry, else a RejectReason.
+
+    Every threshold is a module constant rather than an argument. They are
+    qualification predicates -- they decide what counts as a valid test
+    case -- and relaxing one to raise the corpus count is the failure this
+    phase is most exposed to. Keeping them out of the call signature makes
+    such a change a visible diff rather than a caller's choice.
+    """
+    patch = instance["patch"]
+
+    files = _touched_files(patch)
+    if not any(_is_source(f) for f in files):
+        return RejectReason.NO_SOURCE_FILES
+    if len(files) > MAX_FILES:
+        return RejectReason.TOO_MANY_FILES
+
+    hunks = [ln for ln in patch.split("\n") if _HUNK_RE.match(ln)]
+    if len(hunks) > MAX_HUNKS:
+        return RejectReason.TOO_MANY_HUNKS
+    for ln in hunks:
+        m = _HUNK_RE.match(ln)
+        old = 1 if m.group(2) is None else int(m.group(2))
+        new = 1 if m.group(4) is None else int(m.group(4))
+        if max(old, new) > MAX_HUNK_LINES:
+            return RejectReason.HUNK_TOO_LARGE
+
+    title = _first_line(instance["problem_statement"])
+    if len(title) < MIN_TITLE_CHARS or title.startswith(_TRACEBACK_MARKERS):
+        return RejectReason.UNUSABLE_STATEMENT
+
+    # A fix that removes nothing adds a capability the code never had.
+    # Reversed, it deletes a working feature -- deliberate scope reduction
+    # to any reader, not a defect. Scoring a reviewer for missing it would
+    # measure nothing. A fix that ADDS a guard reverses into deleting one,
+    # which is a different cognitive task but still a real review target,
+    # and is kept.
+    body_removals = any(
+        ln.startswith("-") and not ln.startswith("---") for ln in patch.split("\n")
+    )
+    if not body_removals:
+        return RejectReason.PURE_ADDITION
+
+    return None
+
+
+def select_instances(instances: list[dict], cap: int = 8, seed: int = 20260830):
+    """Stratified sample of ALREADY-QUALIFIED instances, capped per repo.
+
+    An allocation parameter, not a filter: changing `cap` adds or removes
+    instances that qualified either way, and can never change which ones
+    qualify. That boundary is why the cap lives here and the thresholds
+    live in `qualifies` as constants.
+
+    Ids are sorted before sampling because the dataset's iteration order
+    is not a contract. A seeded sample over an unsorted pool reproduces
+    only by luck, and a corpus that cannot be regenerated cannot be
+    audited.
+    """
+    by_repo: dict[str, list[dict]] = {}
+    for inst in instances:
+        by_repo.setdefault(inst["repo"], []).append(inst)
+
+    picked = []
+    for repo in sorted(by_repo):
+        pool = sorted(by_repo[repo], key=lambda i: i["instance_id"])
+        rng = random.Random("%d:%s" % (seed, repo))
+        if len(pool) <= cap:
+            picked.extend(pool)
+        else:
+            picked.extend(rng.sample(pool, cap))
+    return sorted(picked, key=lambda i: i["instance_id"])
+
+
+_LIMITATIONS = (
+    "Base files are reconstructed from each patch's own context lines, so "
+    "they carry the hunk neighbourhood and nothing else. They are valid "
+    "input for diff-mode review, which reads the patch. They are NOT valid "
+    "Python: padding to the hunk's start line splits class and function "
+    "bodies, so any future pass that parses whole files will fail on these "
+    "entries. The review task is also harder than the real one, since the "
+    "reviewer sees no surrounding code -- state this wherever these "
+    "numbers are quoted."
+)
+
+
+def build_corpus(
+    instances: list[dict],
+    out_dir,
+    rejections: list[str] | None = None,
+    cap: int = 8,
+    seed: int = 20260830,
+) -> None:
+    """Write the corpus and the provenance record that makes it auditable.
+
+    Two entries per instance. The HOLD entry reviews the reversed patch --
+    the change that introduces the defect. The PASS entry reviews the fix
+    itself: a real change by the same authors in the same repo that
+    resolves a defect rather than causing one, which is what a clean
+    control has to be.
+
+    The PASS entries carry `asserts_no_findings`, without which they would
+    be treated as unannotated and contribute nothing to findings_fp. That
+    is the difference between negative controls that measure precision and
+    negative controls that are decoration.
+
+    Refuses to write into a directory that already holds a corpus. A
+    regenerated corpus must be a deliberate act, because the provenance
+    hashes are what prove the entries were not edited after scoring.
+    """
+    import hashlib
+    import json
+    import pathlib
+
+    import yaml
+
+    out = pathlib.Path(out_dir)
+    if (out / "corpus.yaml").exists():
+        raise FileExistsError("corpus already exists at %s" % out)
+    (out / "diffs").mkdir(parents=True, exist_ok=True)
+
+    entries = []
+    for inst in instances:
+        iid = inst["instance_id"]
+        patch = inst["patch"]
+        reversed_patch = reverse_patch(patch)
+
+        # The two shapes need DIFFERENT base trees, which is easy to miss
+        # because both derive from one instance. The clean entry applies
+        # the fix, so its base is the pre-fix file -- reconstructed from
+        # the original patch. The bug entry applies the REVERSED fix, so
+        # its base is the post-fix file, which is the reversed patch's own
+        # pre-image. Reconstructing both from the original patch leaves
+        # every bug entry unappliable, and the corpus would look complete
+        # while skipping half of itself.
+        base_by_suffix = {
+            "bug": reconstruct_base_files(reversed_patch),
+            "clean": reconstruct_base_files(patch),
+        }
+
+        for suffix, verdict, diff_text in (
+            ("bug", "HOLD", reversed_patch),
+            ("clean", "PASS", patch),
+        ):
+            name = "%s-%s" % (iid, suffix)
+            rel = "diffs/%s.diff" % name
+            (out / rel).write_text(diff_text, encoding="utf-8")
+
+            base_dir = out / "base_files" / name
+            for path, text in base_by_suffix[suffix].items():
+                target = base_dir / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+            base_dir.mkdir(parents=True, exist_ok=True)
+
+            entry = {
+                "name": name,
+                "diff_file": rel,
+                "expected_verdict": verdict,
+                "axis_tags": ["RUNTIME"],
+            }
+            if verdict == "HOLD":
+                found = expected_findings_for(patch, inst["problem_statement"])
+                entry["expected_findings"] = [
+                    {
+                        "file": f.file,
+                        "description": f.description,
+                        **(
+                            {"line_range": list(f.line_range)}
+                            if f.line_range is not None
+                            else {}
+                        ),
+                    }
+                    for f in found
+                ]
+            else:
+                entry["asserts_no_findings"] = True
+            entries.append(entry)
+
+    (out / "corpus.yaml").write_text(
+        yaml.safe_dump({"entries": entries}), encoding="utf-8"
+    )
+
+    counts: dict[str, int] = {}
+    for reason in rejections or []:
+        counts[reason] = counts.get(reason, 0) + 1
+
+    provenance = {
+        "dataset": "princeton-nlp/SWE-bench_Verified",
+        "split": "test",
+        "generated_by": "code_forge.eval.swebench.build_corpus",
+        "cap": cap,
+        "seed": seed,
+        "instances_selected": len(instances),
+        "hold_entries": sum(1 for e in entries if e["expected_verdict"] == "HOLD"),
+        "pass_entries": sum(1 for e in entries if e["expected_verdict"] == "PASS"),
+        "rejections": counts,
+        "limitations": _LIMITATIONS,
+        "diff_sha256": {
+            e["diff_file"]: hashlib.sha256(
+                (out / e["diff_file"]).read_bytes()
+            ).hexdigest()
+            for e in entries
+        },
+        "corpus_sha256": hashlib.sha256(
+            (out / "corpus.yaml").read_bytes()
+        ).hexdigest(),
+    }
+    (out / "PROVENANCE.json").write_text(
+        json.dumps(provenance, indent=2) + "\n", encoding="utf-8"
+    )
