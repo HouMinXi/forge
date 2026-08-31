@@ -118,3 +118,57 @@ class TestTheCommittedCorpusMatchesItsRecord:
         # The clean controls are the half that makes precision measurable;
         # losing them would leave every ratio at 1.0 and look like success.
         assert len(clean) > 0
+
+
+class TestSelectionIsPinned:
+    """The seed must produce the same selection, not merely be recorded.
+
+    Review t_3848264c: the byte-for-byte rebuild happened once, by hand,
+    on one machine. Nothing in the suite held it. These do -- without the
+    dataset, by driving the selection over synthetic instances.
+    """
+
+    def test_the_same_seed_selects_the_same_instances(self):
+        from code_forge.eval.swebench import select_instances
+
+        pool = [
+            {"instance_id": "r%d-%d" % (r, i), "repo": "o/r%d" % r}
+            for r in range(5)
+            for i in range(20)
+        ]
+        first = [x["instance_id"] for x in select_instances(pool, cap=8)]
+        second = [x["instance_id"] for x in select_instances(pool, cap=8)]
+        assert first == second
+
+    def test_input_order_does_not_change_the_selection(self):
+        import random
+
+        from code_forge.eval.swebench import select_instances
+
+        pool = [
+            {"instance_id": "r%d-%d" % (r, i), "repo": "o/r%d" % r}
+            for r in range(5)
+            for i in range(20)
+        ]
+        shuffled = list(pool)
+        random.Random(99).shuffle(shuffled)
+        # The dataset's iteration order is not a contract; a corpus that
+        # cannot be regenerated cannot be audited.
+        assert sorted(x["instance_id"] for x in select_instances(pool, cap=8)) == sorted(
+            x["instance_id"] for x in select_instances(shuffled, cap=8)
+        )
+
+    def test_the_committed_selection_matches_its_manifest(self):
+        import pathlib
+
+        import yaml
+
+        root = pathlib.Path(__file__).parent / "eval" / "swebench"
+        entries = yaml.safe_load(
+            (root / "corpus.yaml").read_text(encoding="utf-8")
+        )["entries"]
+        names = {e["name"] for e in entries}
+        # Every committed diff is claimed by an entry, and every entry has
+        # its diff. A regeneration that dropped or orphaned files fails here.
+        on_disk = {p.stem for p in (root / "diffs").glob("*.diff")}
+        assert names == on_disk

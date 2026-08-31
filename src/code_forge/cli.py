@@ -1395,6 +1395,19 @@ def _run_eval(args) -> int:
             _backend_config = dict(_entry)
             break
 
+    # Fail here rather than let the harness substitute its placeholder
+    # backend (localhost:0). A typo in --backend would otherwise run the
+    # whole corpus against a port nothing listens on, and the operator
+    # would be told the reviewer connected to nothing -- not that the
+    # backend they named does not exist (R2-F2, R3-F5).
+    if _backend_config is None:
+        print(
+            "unknown backend: %s. Not present in %s or in the user config."
+            % (args.backend, _gate_path),
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+
     # Load corpus
     try:
         entries = load_corpus(args.corpus)

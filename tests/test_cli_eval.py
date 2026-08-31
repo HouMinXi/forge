@@ -120,6 +120,10 @@ class TestRunEval:
 
         with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
              patch("code_forge.eval.runner.replay_entry", return_value=result), \
+             patch(
+                 "code_forge.cli._load_gate_backends",
+                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+             ), \
              patch("code_forge.eval.scorer.compute_summary") as mock_summary, \
              patch("code_forge.eval.scorer.format_table", return_value="table-output"):
 
@@ -158,6 +162,10 @@ class TestRunEval:
 
         with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
              patch("code_forge.eval.runner.replay_entry", return_value=result), \
+             patch(
+                 "code_forge.cli._load_gate_backends",
+                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+             ), \
              patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
              patch("code_forge.eval.scorer.format_table", return_value="t"), \
              patch("code_forge.eval.scorer.write_json_report") as mock_write:
@@ -188,6 +196,10 @@ class TestRunEval:
 
         with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
              patch("code_forge.eval.runner.replay_entry", return_value=result) as mock_replay, \
+             patch(
+                 "code_forge.cli._load_gate_backends",
+                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+             ), \
              patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
              patch("code_forge.eval.scorer.format_table", return_value="t"):
 

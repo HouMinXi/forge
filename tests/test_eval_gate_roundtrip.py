@@ -21,13 +21,19 @@ class TestGateYamlRoundTrip:
             backend_config={
                 "type": "api",
                 "model": "m",
-                "headers": {"A": "B"},
+                # A TUPLE, which is the whole point. An earlier version of
+                # this test passed a dict here and stayed green against the
+                # yaml.dump it was written to catch -- caught by review
+                # t_3848264c, and the same shape as the trust-directory test
+                # that asserted around its subject instead of through it.
+                "headers": (("A", "B"),),
             },
         )
         # safe_load, because that is what every reader of this file uses,
-        # including _create_gate_yaml itself on the merge path.
+        # including _create_gate_yaml itself on the merge path. yaml.dump
+        # would have tagged the tuple !!python/tuple and safe_load refuses it.
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert loaded["backends"]["b"]["headers"] == {"A": "B"}
+        assert loaded["backends"]["b"]["headers"] == [["A", "B"]]
 
     def test_a_nested_tuple_survives_too(self, tmp_path):
         path = _create_gate_yaml(

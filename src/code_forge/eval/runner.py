@@ -896,23 +896,43 @@ def _run_single(
     except subprocess.TimeoutExpired:
         return False, "infra: code-forge review timeout after %ds" % timeout_s
 
-    if returncode != 0 and _is_infra_failure(stderr_text):
-        return False, "infra: backend failure: %s" % stderr_text[:200]
+    # An outage diagnosis only applies when nothing was reviewed. A real
+    # HOLD whose finding text happens to quote "Connection refused" --
+    # reviewing networking code makes that likely, not exotic -- wrote
+    # state.json, and reclassifying it as infra would drop a genuine
+    # verdict from the corpus (R1-F2).
+    if returncode != 0 and not _state_json_written(temp_dir):
+        if _is_infra_failure(stderr_text):
+            return False, "infra: backend failure: %s" % stderr_text[:200]
 
-    # A misconfigured harness must never read as a review verdict. The two
-    # ways the child can decline to review at all -- refusing the backend as
-    # untrusted, or not finding it after falling back to the user config --
-    # both exit non-zero with nothing written, which the line below would
-    # otherwise report as flagged=True: a HOLD that no reviewer produced.
-    # On a clean entry it inverts the measurement outright, scoring a setup
-    # failure as an over-block. Checked after _is_infra_failure so a genuine
-    # backend outage keeps its own more specific reason.
-    if returncode != 0:
-        for marker, why in (
-            ("Untrusted repo backends ignored", "harness gate.yaml was not trusted"),
-            ("unknown backend", "harness backend did not reach the child"),
-        ):
-            if marker in stderr_text:
-                return False, "infra: %s: %s" % (why, stderr_text[:160])
+    # Structural, not lexical: a review that ran wrote state.json, and one
+    # that did not, did not. Everything else here was guesswork about how
+    # the child phrases its failures -- and the guesses were incomplete in
+    # both directions. Review t_3848264c enumerated the exits the earlier
+    # string matching still let through: AuthenticationError, RateLimitError,
+    # InsufficientQuota, BadRequestError, a busy lock, a missing credential.
+    # Each exits non-zero having written nothing, and the line below would
+    # report every one as flagged=True -- a HOLD no reviewer produced, and
+    # on a clean control an over-block that inverts the measurement.
+    #
+    # The file's presence answers the only question that matters, without
+    # needing to anticipate the wording. Checked after _is_infra_failure so
+    # a diagnosed outage keeps its more specific reason.
+    if returncode != 0 and not _state_json_written(temp_dir):
+        return False, (
+            "infra: review produced no state.json (rc=%d): %s"
+            % (returncode, stderr_text[:160] or "no stderr")
+        )
 
     return returncode != 0, ""
+
+
+def _state_json_written(temp_dir: str) -> bool:
+    """Whether the child got far enough to persist a review state.
+
+    The machine writes state.json as it goes, so its presence means the
+    review pipeline ran, whatever the exit code says afterwards. Its
+    absence on a non-zero exit means the child died before reviewing --
+    setup, credentials, a held lock -- and there is no verdict to read.
+    """
+    return (Path(temp_dir) / ".code-forge" / "state.json").exists()

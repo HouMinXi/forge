@@ -14,6 +14,8 @@ throughout.
 
 import pathlib
 
+import pytest
+
 import code_forge.eval.runner as runner
 from code_forge.trust import _trust_store_path
 
@@ -100,7 +102,7 @@ class TestSetupFailureIsNotAVerdict:
             "Untrusted repo backends ignored. Run 'code-forge trust' to enable.\n",
         )
         assert flagged is False
-        assert "not trusted" in reason
+        assert "no state.json" in reason
 
     def test_a_missing_backend_is_infra_not_a_hold(self, monkeypatch, tmp_path):
         flagged, reason = self._run(
@@ -108,13 +110,7 @@ class TestSetupFailureIsNotAVerdict:
             "code-forge: error: unknown backend 'harness' (configured: deepseek)\n",
         )
         assert flagged is False
-        assert "did not reach the child" in reason
-
-    def test_a_real_finding_still_flags(self, monkeypatch, tmp_path):
-        # The guard must not swallow an honest HOLD.
-        flagged, reason = self._run(monkeypatch, tmp_path, "1 CONFIRMED finding\n")
-        assert flagged is True, "reason=%r" % (reason,)
-        assert reason == ""
+        assert "no state.json" in reason
 
 
 def _stub_entry():
@@ -174,3 +170,135 @@ class TestL0DoesNotBlockTheReview:
         (gate_dir / "tools.yaml").write_text("tools: {mine: {}}\n", encoding="utf-8")
         runner._create_gate_yaml(tmp_path, "harness", {"type": "api", "model": "m"})
         assert "mine" in (gate_dir / "tools.yaml").read_text(encoding="utf-8")
+
+
+class TestStateJsonIsTheSignal:
+    """The classifier asks whether a review happened, not how it phrased failing.
+
+    Review t_3848264c enumerated what the earlier substring matching still
+    let through -- AuthenticationError, RateLimitError, InsufficientQuota,
+    BadRequestError, a busy lock, a missing credential -- each exiting
+    non-zero having written nothing, each scored as a HOLD no reviewer
+    produced. Anticipating wording is not a strategy that terminates;
+    the file's presence answers the question outright.
+    """
+
+    def _run(self, monkeypatch, tmp_path, stderr_text, write_state, returncode=2):
+        def fake_review(cmd, temp_dir, env, timeout_s):
+            if write_state:
+                p = pathlib.Path(temp_dir) / ".code-forge"
+                p.mkdir(parents=True, exist_ok=True)
+                (p / "state.json").write_text('{"findings": []}', encoding="utf-8")
+            return returncode, stderr_text
+
+        monkeypatch.setattr(runner, "_run_review", fake_review)
+        monkeypatch.setattr(runner, "record_trust", lambda *a, **kw: None)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "m.py").write_text("a = 1\n", encoding="utf-8")
+        diff = tmp_path / "d.diff"
+        diff.write_text(
+            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+            "@@ -1 +1 @@\n-a = 1\n+a = 2\n",
+            encoding="utf-8",
+        )
+        return runner._run_single(_stub_entry(), diff, str(repo), "harness")
+
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "openai.AuthenticationError: invalid api key\n",
+            "openai.RateLimitError: 429 too many requests\n",
+            "InsufficientQuota: credit balance is too low\n",
+            "BadRequestError: model not found\n",
+            "another code-forge holds the lock on this repo\n",
+            "code-forge: error: MIMO_PRO_API_KEY is not set\n",
+            "",  # no stderr at all, which no substring rule can catch
+        ],
+    )
+    def test_a_child_that_never_reviewed_is_infra(self, monkeypatch, tmp_path, stderr):
+        flagged, reason = self._run(monkeypatch, tmp_path, stderr, write_state=False)
+        assert flagged is False
+        assert "no state.json" in reason
+
+    def test_a_real_hold_survives_infra_wording_in_its_findings(
+        self, monkeypatch, tmp_path
+    ):
+        """Reviewing networking code makes this collision likely, not exotic."""
+        flagged, reason = self._run(
+            monkeypatch, tmp_path,
+            "1 CONFIRMED: retry loop swallows Connection refused\n",
+            write_state=True,
+        )
+        assert flagged is True
+        assert reason == ""
+
+    def test_a_genuine_outage_keeps_its_specific_reason(self, monkeypatch, tmp_path):
+        flagged, reason = self._run(
+            monkeypatch, tmp_path,
+            "APIConnectionError: Connection refused\n",
+            write_state=False,
+        )
+        assert flagged is False
+        assert "backend failure" in reason
+
+
+class TestUnknownBackendFailsBeforeTheCorpus:
+    """A typo must not run 150 entries against a port nothing listens on.
+
+    Without this, an unresolvable --backend fell through to the harness's
+    placeholder (localhost:0), and the operator was told the reviewer
+    could not connect -- not that the backend they named does not exist.
+    """
+
+    def _eval(self, tmp_path, backend, monkeypatch, capsys):
+        import argparse
+
+        from code_forge import cli
+
+        gate = tmp_path / ".code-forge" / "gate.yaml"
+        gate.parent.mkdir(parents=True)
+        gate.write_text(
+            "backends:\n  real:\n    type: api\n    format: openai\n    model: m\n"
+            "    base_url: https://example.invalid/v1\n"
+            "    api_key_env: EXAMPLE_KEY\n",
+            encoding="utf-8",
+        )
+        corpus = tmp_path / "corpus.yaml"
+        corpus.write_text("entries: []\n", encoding="utf-8")
+
+        # Trust it, or the loader discards repo backends and BOTH names
+        # resolve to nothing -- which would make the negative case pass for
+        # the wrong reason.
+        import yaml as _yaml
+
+        from code_forge.trust import record_trust
+
+        xdg = tmp_path / ".xdg"
+        (xdg / "code-forge").mkdir(parents=True)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+        record_trust(
+            gate,
+            _yaml.safe_load(gate.read_text(encoding="utf-8")),
+            config_dir=xdg / "code-forge",
+        )
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_load_user_backends_raw", lambda: {}, raising=False)
+        args = argparse.Namespace(
+            corpus=corpus, backend=backend, runs=1, output=None,
+        )
+        rc = cli._run_eval(args)
+        return rc, capsys.readouterr()
+
+    def test_a_typo_stops_before_any_entry_runs(self, tmp_path, monkeypatch, capsys):
+        rc, out = self._eval(tmp_path, "reeal", monkeypatch, capsys)
+        assert rc != 0
+        assert "unknown backend" in out.err
+        assert "reeal" in out.err
+
+    def test_a_known_backend_is_not_rejected(self, tmp_path, monkeypatch, capsys):
+        rc, out = self._eval(tmp_path, "real", monkeypatch, capsys)
+        # Empty corpus, so it gets past resolution and finds nothing to do.
+        assert "unknown backend" not in out.err

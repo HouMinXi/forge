@@ -64,8 +64,18 @@ class TestReplayEntry:
     ) -> None:
         """replay_entry returns EvalResult with correct caught_count."""
         # git init and git apply succeed; the review exits 1 (HOLD).
+        # It must also leave state.json behind: a non-zero exit with no
+        # state is now classified as a setup failure, not a verdict, since
+        # a child that never reviewed cannot have found anything.
         mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
-        mock_review.return_value = (1, "")
+
+        def _review_writing_state(cmd, temp_dir, env, timeout_s):
+            d = Path(temp_dir) / ".code-forge"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "state.json").write_text('{"findings": []}', encoding="utf-8")
+            return (1, "")
+
+        mock_review.side_effect = _review_writing_state
 
         diff_dir = tmp_path / "corpus"
         diff_dir.mkdir()
