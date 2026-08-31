@@ -172,3 +172,79 @@ def reverse_patch(patch: str) -> str:
             out.append(line)
     flush()
     return "\n".join(out)
+
+
+def _first_line(statement: str) -> str:
+    """The defect title, taken as the statement's first non-empty line.
+
+    Measured across the 500 instances: median 62 characters, and in every
+    sample inspected the title of the defect. The full statement runs a
+    median 1185 characters and carries reproduction code, which matters
+    because score_findings matches on shared terms -- a long description
+    makes a hit trivial to satisfy, inflating recall without the tool
+    having improved.
+    """
+    for raw in statement.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        # Markdown headings are common in these statements and the marks
+        # are not part of the title.
+        return line.lstrip("#").strip()
+    return ""
+
+
+def expected_findings_for(patch: str, problem_statement: str):
+    """Answer key for one instance: one ExpectedFinding per hunk.
+
+    Per-hunk rather than per-file, because scorer.py compares line ranges
+    and returns on that alone when both sides have one -- it never falls
+    back to description matching. A per-file key on a multi-hunk patch
+    therefore makes every hunk but one unhittable, and a per-file key on a
+    multi-file patch turns one defect into N expected findings that 1:1
+    matching can only satisfy once.
+
+    The range is the reversed hunk's new side, since the entry under
+    review is the reversed patch and the defect occupies the lines it
+    adds. A hunk whose reversed new side is empty gets `line_range=None`
+    rather than an inverted range: 32% of hunks are pure insertions in the
+    fix, and (start, start-1) is rejected by valid_line_range, taking
+    load_corpus down before anything is scored.
+
+    Raises ValueError when the statement has no usable first line or the
+    patch has no hunks -- both mean the instance cannot become an entry,
+    and returning an empty list would let it become one silently.
+    """
+    from code_forge.eval.corpus import ExpectedFinding
+
+    description = _first_line(problem_statement)
+    if not description:
+        raise ValueError("problem statement has no usable first line")
+
+    findings = []
+    current_file = None
+    for line in patch.split("\n"):
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path != _NULL:
+                current_file = path[2:] if path.startswith("b/") else path
+            continue
+        m = _HUNK_RE.match(line)
+        if not m or current_file is None:
+            continue
+        # Reversing swaps the sides, so the reversed patch's new side is
+        # this patch's old side.
+        start = int(m.group(1))
+        count = 1 if m.group(2) is None else int(m.group(2))
+        line_range = (start, start + count - 1) if count > 0 else None
+        findings.append(
+            ExpectedFinding(
+                file=current_file,
+                description=description,
+                line_range=line_range,
+            )
+        )
+
+    if not findings:
+        raise ValueError("patch contains no hunks")
+    return findings
