@@ -127,6 +127,16 @@ def score_findings(
     """
     expected = entry.expected_findings
     if not expected:
+        # Two different situations reach here. An entry that was never
+        # annotated has nothing to be right or wrong about, and scores
+        # zero across the board -- the Phase 56 contract, pinned by the
+        # ledger. An entry that ASSERTS no finding belongs to it is a
+        # different claim: every actual finding contradicts it, and is a
+        # false positive. Without that distinction a corpus of only
+        # defective entries reports precision 1.0 for a reviewer that
+        # flags everything.
+        if entry.asserts_no_findings:
+            return (0, 0, len(confirmed))
         return (0, 0, 0)
     # Maximum bipartite matching (Kuhn's augmenting paths): the
     # greedy first-match pass can under-count when one actual could
@@ -424,8 +434,11 @@ def compute_summary(results: list[EvalResult]) -> EvalSummary:
     findings_fp = 0.0
     findings_skipped_entries = 0
     for r in results:
-        if not r.entry.expected_findings:
-            # No answer key: nothing to be right or wrong about.
+        if not r.entry.expected_findings and not r.entry.asserts_no_findings:
+            # No answer key: nothing to be right or wrong about. An entry
+            # that ASSERTS an empty key is not in this case -- it is
+            # scored, and its false positives are the whole reason it is
+            # in the corpus.
             continue
         if r.skipped_reason or not r.findings_evidence:
             # Two ways an entry can fail to produce a scoreable result: it

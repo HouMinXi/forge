@@ -68,6 +68,15 @@ class CorpusEntry:
             adds findings scoring on top of the verdict quadrant: each
             expected finding must appear in the run's CONFIRMED findings.
             Empty (default) keeps the verdict-only scoring unchanged.
+        asserts_no_findings: this entry is annotated to say that NO finding
+            belongs to it, so every finding raised against it is a false
+            positive. Distinct from an empty expected_findings, which means
+            the entry was never annotated and is therefore not scored at
+            the findings level at all. The difference matters because a
+            corpus of only-defective entries cannot measure precision: a
+            reviewer that flags everything scores 1.0. Clean entries are
+            what make the ratio falsifiable, and they only work if their
+            false positives are counted.
     """
 
     name: str
@@ -76,6 +85,7 @@ class CorpusEntry:
     axis_tags: list[str]
     expected_advisory: list[str] = field(default_factory=list)
     expected_findings: list[ExpectedFinding] = field(default_factory=list)
+    asserts_no_findings: bool = False
 
 
 def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
@@ -125,6 +135,7 @@ def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
                     raw.get("expected_findings", []),
                     raw["name"],
                 ),
+                asserts_no_findings=bool(raw.get("asserts_no_findings", False)),
             )
         )
     return entries

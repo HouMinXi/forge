@@ -647,7 +647,7 @@ def replay_entry(
             # Findings-level scoring: read CONFIRMED findings BEFORE
             # cleanup and score against the entry's answer key. A run
             # without state evidence (None) does not participate.
-            if entry.expected_findings:
+            if entry.expected_findings or entry.asserts_no_findings:
                 confirmed = _read_confirmed_findings(temp_dir)
                 if confirmed is not None:
                     per_run_findings.append(
