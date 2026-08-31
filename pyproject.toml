@@ -48,6 +48,14 @@ vertex = [
 mcp = [
     "mcp>=1.27,<2",
 ]
+# Only the corpus GENERATOR needs this -- building tests/eval/swebench from
+# SWE-bench_Verified. The generated corpus is committed, so running an
+# evaluation, or the test suite, does not pull it in. Kept separate from dev
+# for that reason: it is a heavy dependency (pyarrow, pandas) that most
+# contributors never execute.
+eval-corpus = [
+    "datasets>=5.0,<6",
+]
 
 [project.scripts]
 code-forge = "code_forge.cli:main"
