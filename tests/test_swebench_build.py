@@ -28,13 +28,13 @@ def _inst(iid, repo="org/proj", path="m.py"):
 
 class TestEmitsBothShapes:
     def test_each_instance_yields_a_hold_and_a_pass(self, tmp_path):
-        build_corpus([_inst("a-1"), _inst("a-2")], tmp_path)
+        build_corpus([_inst("a-1"), _inst("a-2")], tmp_path, rejections=[])
         entries = load_corpus(tmp_path / "corpus.yaml")
         verdicts = sorted(e.expected_verdict for e in entries)
         assert verdicts == ["HOLD", "HOLD", "PASS", "PASS"]
 
     def test_the_hold_entry_reviews_the_reversed_patch(self, tmp_path):
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         hold = [
             e for e in load_corpus(tmp_path / "corpus.yaml")
             if e.expected_verdict == "HOLD"
@@ -45,7 +45,7 @@ class TestEmitsBothShapes:
         assert "-good" in diff
 
     def test_the_pass_entry_reviews_the_fix_itself(self, tmp_path):
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         clean = [
             e for e in load_corpus(tmp_path / "corpus.yaml")
             if e.expected_verdict == "PASS"
@@ -65,7 +65,7 @@ class TestEmitsBothShapes:
         import pathlib
 
         d = pathlib.Path(tempfile.mkdtemp())
-        build_corpus([_inst("a-1")], d)
+        build_corpus([_inst("a-1")], d, rejections=[])
         clean = [
             e for e in load_corpus(d / "corpus.yaml")
             if e.expected_verdict == "PASS"
@@ -74,7 +74,7 @@ class TestEmitsBothShapes:
         assert clean.expected_findings == []
 
     def test_hold_entries_carry_the_answer_key(self, tmp_path):
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         hold = [
             e for e in load_corpus(tmp_path / "corpus.yaml")
             if e.expected_verdict == "HOLD"
@@ -85,7 +85,7 @@ class TestEmitsBothShapes:
 
 class TestBaseFiles:
     def test_each_entry_gets_a_base_tree(self, tmp_path):
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         entries = load_corpus(tmp_path / "corpus.yaml")
         for e in entries:
             assert (tmp_path / "base_files" / e.name / "m.py").exists()
@@ -98,7 +98,7 @@ class TestBaseFiles:
         """
         import subprocess
 
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         for e in load_corpus(tmp_path / "corpus.yaml"):
             work = tmp_path / "work" / e.name
             work.mkdir(parents=True)
@@ -132,7 +132,7 @@ class TestProvenance:
         assert prov["rejections"]["too_many_hunks"] == 1
 
     def test_hashes_every_generated_diff(self, tmp_path):
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         prov = json.loads((tmp_path / "PROVENANCE.json").read_text())
         entries = load_corpus(tmp_path / "corpus.yaml")
         assert set(prov["diff_sha256"]) == {e.diff_file for e in entries}
@@ -145,13 +145,13 @@ class TestProvenance:
     def test_records_the_split(self, tmp_path):
         """Precision cannot be read without knowing how many entries
         could have produced a false positive."""
-        build_corpus([_inst("a-1"), _inst("a-2")], tmp_path)
+        build_corpus([_inst("a-1"), _inst("a-2")], tmp_path, rejections=[])
         prov = json.loads((tmp_path / "PROVENANCE.json").read_text())
         assert prov["hold_entries"] == 2
         assert prov["pass_entries"] == 2
 
     def test_records_the_selection_parameters(self, tmp_path):
-        build_corpus([_inst("a-1")], tmp_path, cap=8, seed=20260830)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[], cap=8, seed=20260830)
         prov = json.loads((tmp_path / "PROVENANCE.json").read_text())
         assert prov["cap"] == 8
         assert prov["seed"] == 20260830
@@ -163,13 +163,13 @@ class TestProvenance:
         so a future pass that adds the latter meets a recorded limitation
         rather than a mystery.
         """
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         prov = json.loads((tmp_path / "PROVENANCE.json").read_text())
         assert "diff" in prov["limitations"].lower()
 
 
 class TestRefusesToOverwrite:
     def test_will_not_clobber_an_existing_corpus(self, tmp_path):
-        build_corpus([_inst("a-1")], tmp_path)
+        build_corpus([_inst("a-1")], tmp_path, rejections=[])
         with pytest.raises(FileExistsError):
-            build_corpus([_inst("a-2")], tmp_path)
+            build_corpus([_inst("a-2")], tmp_path, rejections=[])

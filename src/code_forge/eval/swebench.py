@@ -209,9 +209,14 @@ def expected_findings_for(patch: str, problem_statement: str):
     The range is the reversed hunk's new side, since the entry under
     review is the reversed patch and the defect occupies the lines it
     adds. A hunk whose reversed new side is empty gets `line_range=None`
-    rather than an inverted range: 32% of hunks are pure insertions in the
-    fix, and (start, start-1) is rejected by valid_line_range, taking
-    load_corpus down before anything is scored.
+    rather than an inverted range. Measured across the 500 instances this
+    is rare -- 1 hunk in 1220 -- but one is enough: (start, start-1) is
+    rejected by valid_line_range, which takes load_corpus down before
+    anything is scored, and `@@ -10,0` is legal git. An earlier draft of
+    this comment claimed 32%, conflating "no + line in the reversed body"
+    (391 of 1220, true and harmless, since header counts include context)
+    with "header count of zero" (1 of 1220, the case that actually
+    breaks).
 
     Raises ValueError when the statement has no usable first line or the
     patch has no hunks -- both mean the instance cannot become an entry,
@@ -228,7 +233,18 @@ def expected_findings_for(patch: str, problem_statement: str):
     for line in patch.split("\n"):
         if line.startswith("+++ "):
             path = line[4:].strip()
-            if path != _NULL:
+            if path == _NULL:
+                # The fix DELETES this file. Reversed, the entry restores
+                # it, and there is no post-image path to point a finding
+                # at. Clearing rather than leaving the previous value is
+                # the point: a stale current_file would file this hunk's
+                # findings against the previous file in the patch, where
+                # nothing matches and the answer key is unhittable. No
+                # instance in the current corpus deletes a source file, so
+                # this costs nothing today and silently corrupts the key
+                # the first time one does.
+                current_file = None
+            else:
                 current_file = path[2:] if path.startswith("b/") else path
             continue
         m = _HUNK_RE.match(line)
@@ -379,14 +395,21 @@ _LIMITATIONS = (
     "bodies, so any future pass that parses whole files will fail on these "
     "entries. The review task is also harder than the real one, since the "
     "reviewer sees no surrounding code -- state this wherever these "
-    "numbers are quoted."
+    "numbers are quoted. "
+    "Descriptions are the problem statement's first line verbatim, and "
+    "SWE-bench statements are written by reporters: some name the desired "
+    "fix or a failing test rather than the defect. This does not affect "
+    "scoring for this corpus -- every answer key carries a line range, and "
+    "the scorer only falls back to description tokens when one is absent "
+    "-- but it makes individual keys less self-explanatory, and a corpus "
+    "built with fewer ranges would expose it."
 )
 
 
 def build_corpus(
     instances: list[dict],
     out_dir,
-    rejections: list[str] | None = None,
+    rejections: list[str],
     cap: int = 8,
     seed: int = 20260830,
 ) -> None:
@@ -480,8 +503,14 @@ def build_corpus(
         yaml.safe_dump({"entries": entries}), encoding="utf-8"
     )
 
+    # Required rather than optional: an omitted list and a genuinely
+    # empty one produce the same empty provenance map, and a corpus whose
+    # record shows no rejections is indistinguishable from one whose
+    # caller forgot to pass them. The rejection counts are how a reader
+    # tells a strict filter from a broken one, so they cannot be
+    # accidentally absent.
     counts: dict[str, int] = {}
-    for reason in rejections or []:
+    for reason in rejections:
         counts[reason] = counts.get(reason, 0) + 1
 
     provenance = {

@@ -12,10 +12,13 @@ and it was wrong three ways, each measured across the 500 instances:
   recall 1/N.
 - Per-hunk puts the answer key at the granularity the matcher works at.
 
-The zero-count case is the sharp edge: 32% of hunks in a reversed patch add
-no lines at all (they were pure insertions in the fix). The obvious range
-formula yields (start, start - 1) there, which valid_line_range rejects,
-and load_corpus raises before a single entry is scored.
+The zero-count case is the sharp edge, though rarer than an earlier draft
+of this docstring claimed. 1 hunk in 1220 has a zero header count; the 32%
+figure that used to appear here counted reversed hunks with no + line in
+their BODY, which is a different and harmless thing, because header counts
+include context lines. One is still enough: the obvious range formula
+yields (start, start - 1), which valid_line_range rejects, and load_corpus
+raises before a single entry is scored.
 """
 
 import pytest
@@ -173,3 +176,34 @@ class TestLoadsThroughTheRealLoader:
         mpath.write_text(yaml.safe_dump(manifest))
         entries = load_corpus(mpath)
         assert entries[0].expected_findings[0].line_range is None
+
+
+class TestDeletedFile:
+    """A deleted source file must not inherit the previous file's path.
+
+    Found in review (R1-F1). No instance in the current corpus deletes a
+    source file, so the bug is invisible today and would corrupt the
+    answer key the first time one did: the deleted file's hunks would be
+    filed against whichever file preceded it in the patch, where nothing
+    matches and the expectation can never be hit.
+    """
+
+    def test_hunks_after_a_deletion_are_not_attributed_to_the_previous_file(self):
+        p = (
+            "diff --git a/keep.py b/keep.py\n--- a/keep.py\n+++ b/keep.py\n"
+            "@@ -1,2 +1,2 @@\n ctx\n-bad\n"
+            "diff --git a/gone.py b/gone.py\ndeleted file mode 100644\n"
+            "--- a/gone.py\n+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n-line one\n-line two\n"
+        )
+        found = expected_findings_for(p, "the defect title")
+        assert [f.file for f in found] == ["keep.py"]
+
+    def test_a_deletion_alone_yields_no_findings(self):
+        p = (
+            "diff --git a/gone.py b/gone.py\ndeleted file mode 100644\n"
+            "--- a/gone.py\n+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n-line one\n-line two\n"
+        )
+        with pytest.raises(ValueError):
+            expected_findings_for(p, "the defect title")
