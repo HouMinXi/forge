@@ -69,6 +69,70 @@ def _swap_file_header(line: str) -> str:
     return ("--- " if to_minus else "+++ ") + path
 
 
+def reconstruct_base_files(patch: str) -> dict[str, str]:
+    """Rebuild enough of each touched file for `git apply` to accept patch.
+
+    Returns {path: content}. `git apply` verifies that a hunk's context
+    and removed lines match the file at the hunk's line numbers; it does
+    not care what lies between hunks. So the pre-image of each hunk,
+    placed at its start line with blank padding in between, is sufficient
+    -- and needs no repository clone.
+
+    A file the patch CREATES is deliberately absent from the result. git
+    refuses to create a file that already exists, so a stub there breaks
+    the patch it was meant to enable. That failure is inverted from the
+    usual one and easy to miss.
+
+    Two limits, recorded rather than hidden. The padding splits class and
+    function bodies, so most reconstructions are not valid Python -- fine
+    for diff-mode review, fatal for any pass that parses whole files. And
+    a reviewer sees only the hunk neighbourhood, never the surrounding
+    module, which makes the review task harder than the real one. Both
+    belong in the provenance record wherever these numbers are quoted.
+    """
+    files: dict[str, str] = {}
+    path: str | None = None
+    creates = False
+    lines: dict[int, str] = {}
+    cursor = 0
+
+    def commit() -> None:
+        if path is None or creates or not lines:
+            return
+        size = max(lines)
+        body = [lines.get(n, "") for n in range(1, size + 1)]
+        files[path] = "\n".join(body) + "\n"
+
+    for line in patch.split("\n"):
+        if line.startswith("diff --git "):
+            commit()
+            path, creates, lines, cursor = None, False, {}, 0
+        elif line.startswith("new file mode "):
+            creates = True
+        elif line.startswith("--- "):
+            src = line[4:]
+            # The pre-image path. /dev/null means the file is created,
+            # already flagged by the mode line but stated in both places.
+            if src == _NULL:
+                creates = True
+            elif src.startswith(("a/", "b/")):
+                path = src[2:]
+            else:
+                path = src
+        elif line.startswith("@@"):
+            m = _HUNK_RE.match(line)
+            if m is not None:
+                cursor = int(m.group(1))
+        elif cursor and (line.startswith(" ") or line.startswith("-")):
+            # Context and removed lines are both present in the pre-image;
+            # added lines are not.
+            lines[cursor] = line[1:]
+            cursor += 1
+
+    commit()
+    return files
+
+
 def reverse_patch(patch: str) -> str:
     """Return the diff that introduces the defect this patch fixes.
 
@@ -84,8 +148,8 @@ def reverse_patch(patch: str) -> str:
     def flush() -> None:
         if not pending:
             return
-        swapped = [_swap_file_header(l) for l in pending]
-        swapped.sort(key=lambda l: 0 if l.startswith("--- ") else 1)
+        swapped = [_swap_file_header(h) for h in pending]
+        swapped.sort(key=lambda h: 0 if h.startswith("--- ") else 1)
         out.extend(swapped)
         pending.clear()
 

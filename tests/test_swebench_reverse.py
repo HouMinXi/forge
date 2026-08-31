@@ -33,8 +33,8 @@ class TestHeaderOrder:
             "+new\n"
         )
         out = reverse_patch(fix).split("\n")
-        minus = next(i for i, l in enumerate(out) if l.startswith("--- "))
-        plus = next(i for i, l in enumerate(out) if l.startswith("+++ "))
+        minus = next(i for i, t in enumerate(out) if t.startswith("--- "))
+        plus = next(i for i, t in enumerate(out) if t.startswith("+++ "))
         assert minus < plus
 
     def test_header_paths_swap_sides(self):
@@ -180,7 +180,7 @@ class TestFileCreationAndDeletion:
             "+x\n"
         )
         out = reverse_patch(fix).split("\n")
-        mode = next(l for l in out if "file mode" in l)
+        mode = next(t for t in out if "file mode" in t)
         assert mode.startswith("deleted"), (
             "a reversed creation must declare a deletion; git validates "
             "the mode line against the /dev/null side"
