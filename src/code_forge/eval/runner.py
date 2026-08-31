@@ -541,7 +541,7 @@ def _create_gate_yaml(
             existing = loaded
 
     if backend_config is not None:
-        harness_backend = dict(backend_config)
+        harness_backend = _to_config_shape(backend_config)
     else:
         harness_backend = {
             "type": "api",
@@ -557,10 +557,108 @@ def _create_gate_yaml(
     existing["backends"] = backends
 
     gate_path.write_text(
-        yaml.dump(existing, default_flow_style=False),
+        # safe_dump, not dump: backend_config comes from dataclasses.asdict,
+        # so fields like env_set arrive as tuples, and yaml.dump writes them
+        # with a !!python/tuple tag that safe_load then refuses. Every reader
+        # of this file -- including the one three lines up -- uses safe_load,
+        # so the writer that does not is the one that is wrong. Left
+        # unfixed, eval dies on any backend whose config carries a tuple.
+        yaml.safe_dump(_plain(existing), default_flow_style=False),
         encoding="utf-8",
     )
+    _create_tools_yaml(gate_dir)
     return gate_path
+
+
+def _create_tools_yaml(gate_dir: Path) -> None:
+    """Give L0 a real but inert toolchain, so detection does not run.
+
+    Without a tools.yaml, forge probes the temp repo for linters and
+    raises "No toolchain detected" when it finds none -- a hard error
+    before any review happens, which the harness would otherwise score
+    as a reviewer that found nothing.
+
+    An EMPTY registry does not work: detect.py:622 treats a tools.yaml
+    whose registry is empty the same as an absent one and falls through
+    to detection anyway. So the entry has to be real, and the harness
+    needs one that reports nothing rather than one that reports on this
+    corpus. `true` is that: it exits 0 with no output, and the SARIF
+    parser reads no output as no findings.
+
+    Inert rather than borrowed from the repo under test, for a reason
+    specific to this corpus: base files are reconstructed from patch
+    context and padded to each hunk's start line, so they are not valid
+    Python. Running ruff over them reports the reconstruction working as
+    designed as though it were the defect under test, putting noise into
+    a false-positive count that no reviewer produced.
+
+    Left alone if the applied diff created one -- an entry that ships a
+    tools.yaml is testing that path.
+    """
+    tools_path = gate_dir / "tools.yaml"
+    if tools_path.exists():
+        return
+    tools_path.write_text(
+        yaml.safe_dump(
+            {
+                "tools": {
+                    "noop": {
+                        "command": "true",
+                        "file_patterns": ["*.nomatch"],
+                        "output_format": "sarif",
+                    }
+                }
+            },
+            default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _plain(value):
+    """Recursively convert tuples to lists so safe_dump accepts them.
+
+    safe_dump refuses a tuple outright rather than coercing it, and the
+    distinction does not survive a YAML round-trip anyway -- a list is what
+    comes back either way.
+    """
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
+
+
+def _to_config_shape(backend_config: dict) -> dict:
+    """Translate an internal BackendConfig dict back into config keys.
+
+    backend_config arrives from dataclasses.asdict, whose field names are
+    the loader's INTERNAL shape, not the file format. backend.py:416
+    rejects env_unset and env_set on sight -- "'env_unset' is an internal
+    field name, not a config key" -- so writing asdict's output verbatim
+    produces a gate.yaml the loader refuses, and the harness backend never
+    reaches the child at all.
+
+    The env pair maps to `env: {unset: [...], set: {...}}`, which the
+    loader accepts only on cli backends; on an api backend those fields
+    are unreachable anyway, since there is no child process to shape. So
+    they are carried for cli and dropped for everything else, which is
+    what the loader would have produced reading the original file.
+    """
+    out = {k: v for k, v in backend_config.items() if k not in ("env_set", "env_unset")}
+    if backend_config.get("type") != "cli":
+        return out
+
+    env: dict = {}
+    unset = backend_config.get("env_unset") or ()
+    if unset:
+        env["unset"] = list(unset)
+    pairs = backend_config.get("env_set") or ()
+    if pairs:
+        env["set"] = {name: value for name, value in pairs}
+    if env:
+        out["env"] = env
+    return out
 
 
 def replay_entry(
@@ -774,9 +872,20 @@ def _run_single(
     eval_env["XDG_CONFIG_HOME"] = str(xdg_dir)
     eval_env["FORGE_SKIP_WORKTREE_CHECK"] = "1"
 
-    # Pass xdg_dir directly to avoid mutating os.environ (thread-safe).
+    # Pass the trust directory directly to avoid mutating os.environ
+    # (thread-safe). It must be xdg_dir/code-forge, NOT xdg_dir: the child
+    # resolves its trust store as $XDG_CONFIG_HOME/code-forge/trusted.json
+    # (trust.py:_config_dir), so writing to xdg_dir/trusted.json puts the
+    # grant one directory above where the reader looks. The grant is then
+    # never found, the harness backend is discarded as untrusted, and the
+    # child falls back to the user config -- where the harness backend does
+    # not exist. That surfaces as "unknown backend", the review never runs,
+    # no state.json is written, and the entry scores as though the reviewer
+    # found nothing. A silent zero, not an error.
+    trust_dir = xdg_dir / "code-forge"
+    trust_dir.mkdir(parents=True, exist_ok=True)
     gate_data = yaml.safe_load(gate_path.read_text(encoding="utf-8"))
-    record_trust(gate_path, gate_data, config_dir=xdg_dir)
+    record_trust(gate_path, gate_data, config_dir=trust_dir)
 
     timeout_s = _review_timeout_s()
     try:
@@ -789,5 +898,21 @@ def _run_single(
 
     if returncode != 0 and _is_infra_failure(stderr_text):
         return False, "infra: backend failure: %s" % stderr_text[:200]
+
+    # A misconfigured harness must never read as a review verdict. The two
+    # ways the child can decline to review at all -- refusing the backend as
+    # untrusted, or not finding it after falling back to the user config --
+    # both exit non-zero with nothing written, which the line below would
+    # otherwise report as flagged=True: a HOLD that no reviewer produced.
+    # On a clean entry it inverts the measurement outright, scoring a setup
+    # failure as an over-block. Checked after _is_infra_failure so a genuine
+    # backend outage keeps its own more specific reason.
+    if returncode != 0:
+        for marker, why in (
+            ("Untrusted repo backends ignored", "harness gate.yaml was not trusted"),
+            ("unknown backend", "harness backend did not reach the child"),
+        ):
+            if marker in stderr_text:
+                return False, "infra: %s: %s" % (why, stderr_text[:160])
 
     return returncode != 0, ""

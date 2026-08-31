@@ -1369,7 +1369,6 @@ def _run_eval(args) -> int:
     # Do NOT read gate.yaml raw here; that bypasses the trust check (SEC-02).
     # _run_eval must not raise CliError (non-review convention); catch it here.
     _gate_path = Path.cwd() / ".code-forge" / "gate.yaml"
-    import dataclasses as _dc
     try:
         _eval_cfgs, _eval_gd = _load_gate_backends(_gate_path)
         _eval_cfgs = _merge_user_into(_eval_cfgs, _eval_gd)
@@ -1379,10 +1378,21 @@ def _run_eval(args) -> int:
             file=sys.stderr,
         )
         _eval_cfgs = []
+        _eval_gd = {}
+    # Hand the harness the backend's ORIGINAL yaml entry, not asdict of the
+    # parsed dataclass. asdict emits all 26 fields including defaults and
+    # internal names (env_set, env_unset), and the loader rejects both those
+    # names and any field that does not apply to the backend's type -- so
+    # the harness would write a gate.yaml that forge itself refuses to read,
+    # leaving the child with no backend and the entry scored as a reviewer
+    # that found nothing. The source entry already parsed once, by
+    # definition.
     _backend_config = None
-    for _cfg in _eval_cfgs:
-        if _cfg.name == args.backend:
-            _backend_config = _dc.asdict(_cfg)
+    from .user_config import load_user_backends as _load_user_raw
+    for _source in (_eval_gd.get("backends", {}), _load_user_raw() or {}):
+        _entry = _source.get(args.backend) if isinstance(_source, dict) else None
+        if isinstance(_entry, dict):
+            _backend_config = dict(_entry)
             break
 
     # Load corpus
