@@ -46,7 +46,7 @@ vertex = [
     "requests>=2.20.0",
 ]
 mcp = [
-    "mcp>=1.27,<2",
+    "mcp>=1.27,<3",
 ]
 # Only the corpus GENERATOR needs this -- building tests/eval/swebench from
 # SWE-bench_Verified. The generated corpus is committed, so running an
