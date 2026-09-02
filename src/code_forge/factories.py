@@ -256,6 +256,7 @@ def build_l1_provider(
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
         _collect_excerpts,
+        _dedup_by_fingerprint,
         _json_to_state_findings,
         validate_reviewer_json,
     )
@@ -537,14 +538,13 @@ def build_l1_provider(
                     ))
                     continue
 
-            for sf in _json_to_state_findings(
+            all_candidates.extend(_dedup_by_fingerprint(
+                _json_to_state_findings(
                     validated, pass_name,
                     backend=backend.name if backend else None,
-            ):
-                if sf.fingerprint in seen:
-                    continue
-                seen.add(sf.fingerprint)
-                all_candidates.append(sf)
+                ),
+                seen,
+            ))
         if not is_cli:
             total_duration = _parallel_wall
         return (all_candidates, all_excerpts,
@@ -590,6 +590,7 @@ def build_grouped_l1_provider(
 
     def _composite():
         from .llm_invoke import Usage  # lazy, same as _provider
+        from .reviewer_json import _dedup_by_fingerprint  # lazy, same as _provider
 
         all_findings = []
         all_excerpts = []
@@ -600,11 +601,7 @@ def build_grouped_l1_provider(
         total_duration = 0.0
         for name, provider in providers:
             findings, excerpts, usage, duration = provider()
-            for f in findings:
-                if f.fingerprint in seen:
-                    continue
-                seen.add(f.fingerprint)
-                all_findings.append(f)
+            all_findings.extend(_dedup_by_fingerprint(findings, seen))
             all_excerpts.extend(excerpts)
             total_input += usage.input_tokens
             total_output += usage.output_tokens
@@ -650,6 +647,7 @@ def build_sampling_l1_provider(
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
         _collect_excerpts,
+        _dedup_by_fingerprint,
         _json_to_state_findings,
         validate_reviewer_json,
     )
@@ -838,13 +836,12 @@ def build_sampling_l1_provider(
                     ))
                     continue
 
-            for sf in _json_to_state_findings(
+            all_candidates.extend(_dedup_by_fingerprint(
+                _json_to_state_findings(
                     validated, pass_name, backend="mcp-sampling",
-            ):
-                if sf.fingerprint in seen:
-                    continue
-                seen.add(sf.fingerprint)
-                all_candidates.append(sf)
+                ),
+                seen,
+            ))
 
         total_duration = _parallel_wall
         return (all_candidates, all_excerpts, Usage(0, 0), total_duration)

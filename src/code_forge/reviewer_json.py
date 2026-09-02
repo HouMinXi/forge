@@ -187,6 +187,33 @@ def _location_fingerprint(
     return hashlib.sha256(fp_src.encode()).hexdigest()[:16]
 
 
+def _dedup_by_fingerprint(
+    findings: list, seen=None,
+) -> list:
+    """Fold findings to one per fingerprint, first-in-wins.
+
+    A finding whose fingerprint was already seen is dropped regardless
+    of severity; the first occurrence in insertion order survives.  The
+    `seen` set may carry state from earlier folds (the provider loops
+    pass the same set across passes) so the dedup holds across an entire
+    fold, not just within one batch.
+
+    Shared by every L1 fold site -- build_l1_provider,
+    build_grouped_l1_provider and build_sampling_l1_provider in
+    factories.py, plus the L1 chunk fold in outlet_c.py -- so the
+    "first-in-wins" claim is true on every path, not just one.
+    """
+    if seen is None:
+        seen = set()
+    kept = []
+    for f in findings:
+        if f.fingerprint in seen:
+            continue
+        seen.add(f.fingerprint)
+        kept.append(f)
+    return kept
+
+
 def _json_to_state_findings(
     data: dict, pass_name: str, backend: Optional[str] = None,
 ) -> list:

@@ -24,6 +24,7 @@ from .machine import StateMachine
 from .reviewer_json import (
     validate_reviewer_json,
     _collect_excerpts,
+    _dedup_by_fingerprint,
     _json_to_state_findings,
 )
 from .state import Mode, StateFinding, Verdict, _PASS_NAMES
@@ -198,13 +199,9 @@ def run_outlet_c(
             )
             total_duration += c_dur
 
-        # Dedup by fingerprint.
-        seen: set[str] = set()
-        deduped: list[StateFinding] = []
-        for f in all_findings:
-            if f.fingerprint not in seen:
-                seen.add(f.fingerprint)
-                deduped.append(f)
+        # Dedup by fingerprint (shared first-in-wins helper, same fold
+        # semantics as every factories.py L1 site).
+        deduped = _dedup_by_fingerprint(all_findings)
         return (deduped, all_excerpts, total_usage, total_duration)
 
     sm = StateMachine(

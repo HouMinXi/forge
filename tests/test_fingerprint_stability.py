@@ -16,8 +16,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-import pytest
-
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
@@ -166,29 +164,67 @@ class TestBucketCollision:
         )
 
     def test_first_in_wins_dedup(self):
-        """When two findings share a fingerprint, factories dedup keeps
-        the first one encountered.  This test pins the insertion-order
-        behaviour rather than severity-based selection."""
-        data = {"findings": [
-            {"file": "chat.ts", "line": 979, "severity": "P3",
-             "description": "minor style issue"},
-            {"file": "chat.ts", "line": 982, "severity": "P1",
-             "description": "critical logic error"},
-        ], "code_excerpts": []}
-        findings = _json_to_state_findings(data, "qodo")
-        # Both produce the same fp (same bucket)
-        assert findings[0].fingerprint == findings[1].fingerprint
-        # Dedup filter (as used in factories.py) keeps the first
-        seen = set()
-        kept = []
-        for f in findings:
-            if f.fingerprint not in seen:
-                seen.add(f.fingerprint)
-                kept.append(f)
-        assert len(kept) == 1
-        assert "minor style" in kept[0].description, (
-            "first-in-wins: insertion order, not severity"
+        """When two genuine defects share a fingerprint, the REAL L1 fold
+        in factories.py keeps the first one encountered.  This drives
+        build_l1_provider end-to-end (llm_invoke stubbed) with two
+        same-bucket findings from the same pass -- the exact collision
+        the location-stable fingerprint creates -- and pins that the
+        survivor is the first in insertion order, not the higher
+        severity.  Breaking factories.py's dedup must make this red.
+        """
+        import json
+        from unittest.mock import patch as _patch
+
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+
+        resolved = ResolvedReview(
+            source_files=[Path("chat.ts")],
+            baseline_content=None,
+            git_diff=(
+                "diff --git a/chat.ts b/chat.ts\n"
+                "--- a/chat.ts\n"
+                "+++ b/chat.ts\n"
+                "@@ -975,3 +975,5 @@\n"
+                " export class X {}\n"
+                "+  private dead(): void {}\n"
+            ),
+            mode_hint="git",
         )
+        payload = json.dumps({
+            "findings": [
+                {"file": "chat.ts", "line": 979, "severity": "P3",
+                 "description": "minor style issue"},
+                {"file": "chat.ts", "line": 982, "severity": "P1",
+                 "description": "critical logic error"},
+            ],
+            "code_excerpts": [{"file": "chat.ts", "start_line": 975,
+                               "end_line": 985, "content": "x"}],
+        })
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
+            mock_invoke.return_value = LLMResult(
+                content=payload,
+                usage=LLMUsage(input_tokens=10, output_tokens=10),
+                duration_s=0.1,
+            )
+            provider = build_l1_provider("real", resolved)
+            findings, excerpts, usage, duration = provider()
+
+        # build_l1_provider runs three passes (qodo/expert/adversarial);
+        # each pass's two same-bucket findings fold to ONE survivor.
+        assert mock_invoke.call_count >= 1
+        # Every survivor is the first-in-wins member of its pass pair.
+        l1 = [f for f in findings if f.source == "L1"]
+        assert len(l1) == 3, (
+            "one survivor per pass, got %d: %s"
+            % (len(l1), [f.description for f in l1])
+        )
+        for f in l1:
+            assert "minor style" in f.description, (
+                "first-in-wins by insertion order, not severity: %s"
+                % f.description
+            )
+            assert "critical logic error" not in f.description
 
     def test_different_passes_same_bucket_survive(self):
         """Even if two findings are at the same bucket, different passes
