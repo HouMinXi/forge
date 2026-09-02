@@ -153,6 +153,40 @@ def _collect_excerpts(data: dict) -> list[dict]:
     return data.get("code_excerpts", [])
 
 
+_LINE_BUCKET_SIZE: int = 10
+"""Quantisation step for location-stable fingerprints.
+
+Lines rounded to the nearest multiple of this value are treated as the
+same location.  The value 10 absorbs the +/-3 line jitter measured on
+real LLM outputs (e.g. 979/981/982 all round to 980) while keeping
+genuinely distant lines distinct.
+"""
+
+
+def _location_fingerprint(
+    file_path: str, line: int, pass_name: str,
+) -> str:
+    """Compute a location-stable fingerprint for an L1 finding.
+
+    The fingerprint is determined by (file, line_bucket, pass_name) only,
+    NOT by description text.  This means a model that restates the same
+    issue in different words across rounds produces the same fingerprint,
+    so the convergence state machine treats it as the same finding rather
+    than a new one that resets the clean-round counter.
+
+    Two genuinely different findings at the same file+line_bucket from the
+    same pass collapse into one fingerprint.  That is acceptable: a single
+    pass rarely reports two semantically distinct issues at the exact same
+    line, and when it does the dedup layer keeps whichever it encounters
+    first (insertion order, not severity).  This is an explicit trade-off:
+    location stability for convergence is worth losing a rare same-bucket
+    duplicate.
+    """
+    bucket = round(line / _LINE_BUCKET_SIZE) * _LINE_BUCKET_SIZE
+    fp_src = "%s:%d:%s" % (file_path, bucket, pass_name)
+    return hashlib.sha256(fp_src.encode()).hexdigest()[:16]
+
+
 def _json_to_state_findings(
     data: dict, pass_name: str, backend: Optional[str] = None,
 ) -> list:
@@ -176,8 +210,7 @@ def _json_to_state_findings(
         except (ValueError, TypeError):
             line = 0
         desc = f_raw.get("description") or ""
-        fp_src = "%s:%d:%s" % (file_path, line, desc)
-        fp = hashlib.sha256(fp_src.encode()).hexdigest()[:16]
+        fp = _location_fingerprint(file_path, line, pass_name)
         findings.append(StateFinding(
             id="l1-%s-%s" % (pass_name, fp),
             fingerprint=fp,

@@ -1065,6 +1065,7 @@ class StateMachine:
             coverage_findings, rulepack_findings,
         )
         merged = self._apply_promotion_stickiness(merged)
+        merged = self._apply_dismissed_stickiness(merged)
         self._state.findings = merged
         if self.exec_falsify:
             self._run_exec_falsifier()
@@ -2102,6 +2103,40 @@ class StateMachine:
                         prior_was_uncertain = True
                 if prior_was_uncertain:
                     f.disposition = Disposition.UNCERTAIN
+        return findings
+
+    # Terminal dispositions that stick across rounds when a finding is
+    # re-reported at the same location.  FIXED is excluded because a
+    # re-reported finding after a fix is a genuine regression.
+    _STICKY_TERMINAL_DISPOSITIONS: frozenset = frozenset({
+        "DISMISSED", "STYLE",
+    })
+
+    def _apply_dismissed_stickiness(
+        self, findings: list[StateFinding]
+    ) -> list[StateFinding]:
+        """Carry forward DISMISSED/STYLE dispositions from prior rounds.
+
+        With location-stable fingerprints, a finding that was DISMISSED
+        (human or falsifier) in a prior round and reappears with the same
+        fingerprint should retain its terminal disposition rather than
+        reverting to UNCERTAIN and resetting the clean-round counter.
+
+        This prevents non-convergence when a model restates the same
+        dismissed issue each round: without this carry-forward, each
+        restatement would appear as a new UNCERTAIN finding that triggers
+        a counter reset via clause (d).
+        """
+        if not self._state.round_history:
+            return findings
+        # Collect all prior dispositions from the most recent snapshot.
+        prior_disps = self._state.round_history[-1].get(
+            "dispositions", {}
+        )
+        for f in findings:
+            prior = prior_disps.get(f.fingerprint)
+            if prior in self._STICKY_TERMINAL_DISPOSITIONS:
+                f.disposition = Disposition(prior)
         return findings
 
     def _append_round_snapshot(

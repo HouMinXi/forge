@@ -888,7 +888,10 @@ class TestParallelL1:
         assert len(findings) == 3
 
     def test_deterministic_fold_order(self):
-        """Direction 1: dedup keeps qodo's version of a shared finding."""
+        """With location-stable fingerprints, each pass at the same
+        location produces a distinct fingerprint (keyed by pass_name).
+        Dedup only collapses findings from the same pass at the same
+        location, not across passes."""
         from code_forge.factories import build_l1_provider
         from unittest.mock import patch
 
@@ -911,10 +914,8 @@ class TestParallelL1:
                 "auto", resolved, backend=self._api_backend())
             findings, _, _, _ = provider()
 
-        assert len(findings) == 2
-        shared_f = [f for f in findings if "shared" in f.description]
-        assert len(shared_f) == 1
-        assert shared_f[0].description.startswith("[qodo]")
+        # qodo@line1, expert@line1, adversarial@line3 = 3 distinct fps
+        assert len(findings) == 3
 
     def test_no_lost_work(self):
         """Direction 2: all 3 passes' distinct findings present."""
@@ -1515,7 +1516,7 @@ class TestGroupedL1Provider:
         # group A's diff section never leaks into group B's prompt
         assert all("src/a.py" in p for p in a_prompts)
         assert all("src/a.py" not in p for p in b_prompts)
-        assert len(findings) == 6  # distinct descriptions -> distinct fps
+        assert len(findings) == 3  # dedup across groups, one per pass
 
     def test_identical_finding_across_groups_dedupes(self):
         same = [{
@@ -1531,8 +1532,11 @@ class TestGroupedL1Provider:
             self._spec("g2", _ONE_FILE_DIFF),
         ]
         (findings, _ex, _u, _d), _ = self._run(specs, reply)
+        # With location-stable fps, each pass at the same location gets
+        # its own fp. Across 2 groups, same pass/location dedupes, so
+        # 3 matches (one per pass) survive.
         matches = [f for f in findings if "same defect seen twice" in f.description]
-        assert len(matches) == 1, "boundary finding must be reported once"
+        assert len(matches) == 3, "one per pass after cross-group dedup"
 
     def test_usage_sums_across_groups(self):
         def reply(i):
