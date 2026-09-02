@@ -1,7 +1,57 @@
 # Configuration Reference
 
-code-forge is configured through environment variables and an optional
-`gate.yaml` file. Most users need only environment variables.
+code-forge is configured through environment variables, user-level defaults,
+and an optional repository-level `gate.yaml` file. Most users need only
+environment variables.
+
+## Configuration Scope & Inheritance
+
+Configuration resolves across two tiers (ADR-0009):
+
+1. **User-level configuration** (`~/.config/code-forge/config.yaml`):
+   Global defaults, machine-local API keys, and default backend selections.
+   Inherited automatically by all projects on the host via `_merge_user_into`.
+2. **Project-level configuration** (`.code-forge/gate.yaml`):
+   Repository-specific quality gates, rulepacks, and project backend overrides.
+   Overrides user-level settings on key collision.
+
+```
+Resolution Precedence:
+  CLI Flags (--backend, --mode)
+    > Environment Variables (FORGE_BACKEND, FORGE_OUTLET)
+      > Project gate.yaml (.code-forge/gate.yaml)
+        > User config.yaml (~/.config/code-forge/config.yaml)
+          > Built-in defaults
+```
+
+### Trust and repository backends
+
+A repository can name any endpoint and any credential environment variable,
+so a `gate.yaml` arriving over `git pull` could otherwise redirect a review to
+a host of its author's choosing. code-forge therefore hashes the
+credential-bearing fields of the `backends` block and stores the hash keyed by
+the file's real path. A block whose hash has moved is dropped, with one line
+on stderr:
+
+```
+code-forge: trust invalidated: credential-related fields changed in
+gate.yaml. Run 'code-forge trust' to re-authorize.
+```
+
+The review still runs -- it falls back to whatever else resolves, which on
+most hosts means the user-level config. That is the failure worth knowing
+about: editing `base_url` or `api_key_env` and not re-authorizing leaves a
+review that looks fine and used a different backend than the one you edited.
+Re-authorize after every such edit:
+
+```bash
+code-forge trust                 # in the repository
+scripts/forge-provider.py trust  # audit every gate.yaml on the host
+```
+
+`scripts/forge-provider.py` re-seals automatically after any change it makes.
+
+---
 
 ## Environment Variables
 
