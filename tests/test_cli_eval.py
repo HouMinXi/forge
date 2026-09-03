@@ -305,6 +305,71 @@ class TestRunEval:
         assert recs[0]["verdict"] == "SKIPPED"
         assert "backend down" in recs[0]["skipped_reason"]
 
+    def test_serial_skip_reason_matches_the_ledger(self, tmp_path):
+        """The report and the ledger must agree on why an entry skipped.
+
+        They are read side by side when a run is being explained, and a
+        reader should not have to assume two independent formattings of
+        the same exception agree. An exception whose __str__ is not
+        stable makes the difference observable -- with two str() calls
+        the report and the ledger disagree, which is the defect.
+        """
+        from code_forge.cli import _run_eval
+
+        class _Drifting(Exception):
+            """Formats differently each time, like a message carrying a
+            timestamp or a retry counter."""
+
+            def __init__(self):
+                super().__init__("drift")
+                self.n = 0
+
+            def __str__(self):
+                self.n += 1
+                return "attempt %d failed" % self.n
+
+        entry = self._make_entry()
+        ledger = tmp_path / "live.jsonl"
+        captured = {}
+
+        def _capture(results):
+            captured["results"] = list(results)
+            return EvalSummary(
+                total=1, caught=0, missed=0, correct_pass=0,
+                false_positive=0, skipped=1, results=list(results),
+                advisory_caught=0, advisory_missed=0,
+            )
+
+        mock_args = MagicMock()
+        mock_args.corpus = tmp_path / "corpus.yaml"
+        mock_args.backend = "test-backend"
+        mock_args.runs = None
+        mock_args.output = None
+        mock_args.jobs = 1
+        mock_args.resume_log = ledger
+        mock_args.fresh = False
+        mock_args.arm_depth = 1
+        mock_args.arm_engine = "real"
+
+        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
+             patch("code_forge.eval.runner.replay_entry",
+                   side_effect=_Drifting()), \
+             patch(
+                 "code_forge.cli._load_gate_backends",
+                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+             ), \
+             patch("code_forge.eval.scorer.compute_summary", side_effect=_capture), \
+             patch("code_forge.eval.scorer.format_table", return_value="t"):
+
+            rc = _run_eval(mock_args)
+
+        assert rc == 0
+        recs = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
+        assert recs[0]["skipped_reason"] == captured["results"][0].skipped_reason, (
+            "ledger says %r, report says %r"
+            % (recs[0]["skipped_reason"], captured["results"][0].skipped_reason)
+        )
+
     def test_run_eval_file_not_found(self, capsys, tmp_path):
         """Missing corpus file returns EXIT_CLI_ERROR."""
         from code_forge.cli import _run_eval

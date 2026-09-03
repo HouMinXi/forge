@@ -1600,16 +1600,23 @@ def _run_eval(args) -> int:
                 # resume's retry cap can stop it. Serial used to crash
                 # before _record, so a resume restarted the same entry
                 # forever. Same contract now: record, continue.
+                #
+                # One reason string, used for both the in-memory result
+                # and the ledger row: two str(exc) calls on the same
+                # exception agree today, but a caller reading the report
+                # and the ledger side by side should not have to assume
+                # that. Truncated once, at the same width _record uses.
                 wall_s = time.monotonic() - _t0
+                reason = str(exc)[:400]
                 result = EvalResult(
                     entry=entry,
                     actual_verdict="SKIPPED",
                     runs=0,
                     caught_count=0,
-                    skipped_reason=str(exc)[:400],
+                    skipped_reason=reason,
                 )
                 results.append(result)
-                _record(entry, None, wall_s, error=exc)
+                _record(entry, None, wall_s, error=reason)
                 continue
             results.append(result)
             _record(entry, result, time.monotonic() - _t0)
