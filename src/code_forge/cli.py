@@ -787,6 +787,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output", type=Path, default=None,
         help="path for JSON results file",
     )
+    eval_parser.add_argument(
+        "--jobs", type=int, default=1,
+        help="max concurrent entries (default 1 = serial)",
+    )
 
     # --- LEDGER subcommand: view or rule on outcome ledger rows ---
     ledger_parser = subparsers.add_parser(
@@ -1360,10 +1364,20 @@ def _run_eval(args) -> int:
         print("--runs must be >= 1", file=sys.stderr)
         return EXIT_CLI_ERROR
 
+    # Validate --jobs (must be >= 1).  Mirrors the --runs check above:
+    # guard on identity first so a caller that never set the attribute
+    # (or set it to a sentinel) does not reach the comparison.
+    jobs = getattr(args, "jobs", None)
+    if not isinstance(jobs, int):
+        jobs = 1
+    if jobs < 1:
+        print("--jobs must be >= 1", file=sys.stderr)
+        return EXIT_CLI_ERROR
+
     # Lazy imports (cli.py convention)
     from .eval.corpus import load_corpus
     from .eval.runner import replay_entry
-    from .eval.scorer import compute_summary, format_table, write_json_report
+    from .eval.scorer import EvalResult, compute_summary, format_table, write_json_report
 
     # Load backend config through the trust guard (same path as review).
     # Do NOT read gate.yaml raw here; that bypasses the trust check (SEC-02).
@@ -1420,18 +1434,59 @@ def _run_eval(args) -> int:
         print("corpus error: %s" % exc, file=sys.stderr)
         return EXIT_CLI_ERROR
 
-    # Replay each entry
+    # Replay entries (serial or parallel depending on --jobs)
     corpus_dir = args.corpus.parent
-    results = []
-    for entry in entries:
-        result = replay_entry(
-            entry,
+    if jobs > 1:
+        from .eval.pool import run_pool
+
+        def _progress(done, total, name, wall_s):
+            print(
+                "  [%d/%d] %s (%.1fs)" % (done, total, name, wall_s),
+                file=sys.stderr,
+            )
+
+        pool_results = run_pool(
+            entries,
             corpus_dir=corpus_dir,
             backend_name=args.backend,
             runs=args.runs,
             backend_config=_backend_config,
+            jobs=jobs,
+            progress_cb=_progress,
         )
-        results.append(result)
+        results = []
+        for pe in pool_results:
+            if pe.hung:
+                # Hung entry: record as SKIPPED so it counts in the
+                # report but does not distort verdicts.
+                results.append(EvalResult(
+                    entry=pe.entry,
+                    actual_verdict="SKIPPED",
+                    runs=0,
+                    caught_count=0,
+                    skipped_reason=pe.error or "hung",
+                ))
+            elif pe.error:
+                results.append(EvalResult(
+                    entry=pe.entry,
+                    actual_verdict="SKIPPED",
+                    runs=0,
+                    caught_count=0,
+                    skipped_reason=pe.error,
+                ))
+            else:
+                results.append(pe.result)
+    else:
+        results = []
+        for entry in entries:
+            result = replay_entry(
+                entry,
+                corpus_dir=corpus_dir,
+                backend_name=args.backend,
+                runs=args.runs,
+                backend_config=_backend_config,
+            )
+            results.append(result)
 
     # Compute summary + output
     summary = compute_summary(results)
