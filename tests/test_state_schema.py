@@ -263,12 +263,18 @@ class TestAutoCreateDirectory:
 
 
 class TestStateFindingFieldCount:
-    """Guard: field-count assertion catches drift in _finding_from_dict."""
+    """Guard: field-count assertion catches drift in _finding_from_dict.
+
+    Adding a field to StateFinding without teaching _finding_from_dict
+    to read it makes the field vanish on every state.json round trip,
+    silently. This count is the tripwire; update it in the same commit
+    that adds the field, after confirming the reader was updated too.
+    """
 
     def test_field_count(self):
-        expected = 12  # id, fingerprint, source, disposition, file,
+        expected = 13  # id, fingerprint, source, disposition, file,
         # line_range, description, error, anchor, evidence_files,
-        # is_timeout, backend
+        # is_timeout, backend, severity
         assert len(fields(StateFinding)) == expected
 
 

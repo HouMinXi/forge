@@ -89,6 +89,17 @@ class StateFinding:
     # Backend that produced this finding. None for findings forge raises
     # itself (L0, MUTANT, INFRA); the ledger writer turns None into "".
     backend: Optional[str] = None
+    # Severity the reviewer assigned, "P0".."P3". None for findings forge
+    # raises itself, which have no reviewer opinion to carry.
+    #
+    # Before this field existed, _severity_tier recovered severity by
+    # looking for a "P1:" prefix on the description -- but an L1
+    # description is "[qodo] <text>", so no L1 finding ever matched and
+    # every one of them fell through to the source-based default. A P0
+    # remote-execution finding and a P3 naming nit were indistinguishable
+    # to the convergence gate, and the P3-only density path was
+    # unreachable.
+    severity: Optional[str] = None
 
 
 def derive_pass_outcomes(
@@ -209,6 +220,10 @@ def _finding_from_dict(d: dict) -> StateFinding:
         evidence_files=d.get("evidence_files"),
         is_timeout=d.get("is_timeout", False),
         backend=d.get("backend"),
+        # .get keeps state.json files written before this field existed
+        # loadable; they simply carry no reviewer severity, which is the
+        # same position they were in when they were written.
+        severity=d.get("severity"),
     )
 
 

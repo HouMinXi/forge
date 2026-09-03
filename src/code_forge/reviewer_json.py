@@ -259,5 +259,9 @@ def _json_to_state_findings(
             line_range=[line, line],
             description="[%s] %s" % (pass_name, desc),
             backend=backend,
+            # Validated against _VALID_SEVERITIES above; carried through
+            # rather than dropped, so the convergence gate can tell a P0
+            # from a P3 instead of defaulting every L1 finding to P1.
+            severity=f_raw.get("severity"),
         ))
     return findings

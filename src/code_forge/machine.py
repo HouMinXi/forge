@@ -178,13 +178,29 @@ class _FixpointResult(str, Enum):
     CYCLE_RESTART = "CYCLE_RESTART"
 
 
+_VALID_TIERS = ("P0", "P1", "P2", "P3")
+
+
 def _severity_tier(finding: StateFinding) -> str:
     """Return severity tier "P0"/"P1"/"P2"/"P3" for a CONFIRMED StateFinding.
 
-    Parse the description prefix first. Unprefixed L0/L1 findings default
-    to "P1" (infrastructure failures are blocking by nature). All other
-    unprefixed findings default to "P2".
+    The reviewer's own severity wins when it is present. That is the
+    whole point of asking for it: a P0 remote-execution finding and a P3
+    naming nit should not reach the convergence gate as the same thing.
+
+    Falls back to the description prefix, then to a source-based default,
+    for findings forge raises itself (L0, MUTANT, INFRA) which carry no
+    reviewer opinion.
+
+    History worth keeping: this function used to consult ONLY the
+    description prefix. L1 descriptions are formatted "[qodo] <text>", so
+    the prefix never matched and every L1 finding silently became P1 --
+    which made the P3-only density path below unreachable and turned
+    every nit into a RESET.
     """
+    sev = finding.severity
+    if sev is not None and sev in _VALID_TIERS:
+        return sev
     desc = finding.description or ""
     for prefix in ("P0:", "P1:", "P2:", "P3:"):
         if desc.startswith(prefix):
