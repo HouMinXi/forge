@@ -76,6 +76,48 @@ class TestClaimClassification:
     def test_other_behavioural_shapes(self, desc):
         assert asserts_library_behaviour(desc) is not None
 
+    @pytest.mark.parametrize("desc", [
+        "aiohttp deprecates the sync client",
+        "httpx raises ReadTimeout rather than ConnectTimeout",
+        "boto3 deprecates the resource interface in v2",
+        "requests.Session returns a new connection pool each call",
+        "numpy.bool_ subclasses int rather than bool",
+        "pandas coerces the dtype to object here",
+    ])
+    def test_libraries_outside_any_allowlist(self, desc):
+        """Round 9 caught the first version relying on 17 hardcoded names.
+
+        An allowlist cannot cover libraries written after it. The subject
+        now has to LOOK like an external module reference instead.
+        """
+        assert asserts_library_behaviour(desc) is not None
+
+    @pytest.mark.parametrize("desc", [
+        "the early return at line 812 leaves the lock held",
+        "this function returns None on the error path",
+        "_record raises TypeError when result is None",
+        "the loop returns early when the list is empty",
+        "_severity_tier returns P1 for unprefixed findings",
+    ])
+    def test_claims_about_the_diff_stay_out(self, desc):
+        """The widened pattern must not swallow ordinary logic claims.
+
+        These use the same verbs. If they matched, most findings would
+        need receipts, everything would land UNCERTAIN, and the gate
+        would be worse than not having it.
+        """
+        assert asserts_library_behaviour(desc) is None
+
+    def test_case_is_the_signal_for_a_class_name(self):
+        """Capitalisation distinguishes a class name from a plain word.
+
+        "redis returns Cached" names a type; "redis returns cached" is
+        prose. Compiling these patterns with IGNORECASE collapses the
+        two, and then any bare word after the verb reads as a class.
+        """
+        assert asserts_library_behaviour("redis returns Cached") is not None
+        assert asserts_library_behaviour("redis returns cached") is None
+
     def test_empty_description(self):
         assert asserts_library_behaviour("") is None
 

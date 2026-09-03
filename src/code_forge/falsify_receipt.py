@@ -40,8 +40,46 @@ from typing import Optional
 _BEHAVIOURAL_CLAIM_PATTERNS = (
     # "<lib> >= X.Y does/registers/returns/raises ..."
     r"\b[\w.]+\s*[><=]=?\s*[\d.]+\s+\w*\s*(?:does|registers|returns|raises|adds|removes|changes)",
-    # "numpy registers np.bool_ in ..." / "pandas returns a copy"
-    r"\b(?:numpy|pandas|scipy|torch|tensorflow|django|flask|requests|sqlalchemy|pydantic|asyncio|numbers|json|pathlib|os|sys|re|itertools|functools|collections|typing)\b[^.!?\n]{0,80}?\b(?:registers|returns|raises|inherits|implements|is registered|is a subclass|subclasses|coerces|promotes|deprecat\w+)",
+    # "<lib> registers X in ..." / "pandas returns a copy".
+    #
+    # The subject must look like an EXTERNAL module reference: a dotted
+    # path (numpy.bool_, requests.Session) or a bare lowercase package
+    # name (aiohttp, httpx, boto3). An allowlist was the wrong shape --
+    # it ran to 17 names and still missed every library written after
+    # it -- but so is matching any identifier: "this function returns
+    # None on the error path" and "_record raises TypeError" are claims
+    # about the diff, and demanding receipts for those would downgrade
+    # most findings and make the gate useless.
+    #
+    # Leading underscore excluded (project-internal), and `this|the|it`
+    # excluded as subjects for the same reason.
+    r"(?<![\w.])(?!this\b|the\b|it\b|_)"
+    r"(?:[a-z][\w]*\.[\w.]+|[a-z][a-z0-9_]{2,})"
+    r"\b[^.!?\n]{0,60}?"
+    r"\b(?:registers|is registered|inherits from|implements|"
+    r"is a subclass|subclasses|coerces|promotes|deprecat\w+)\b",
+    # Behavioural verbs that are also common in ordinary logic claims.
+    # A dotted subject is enough on its own -- "requests.Session returns
+    # a new pool" is unambiguously about a library.
+    r"(?<![\w.])[a-z][\w]*\.[\w.]+\b[^.!?\n]{0,60}?"
+    r"\b(?:returns|raises|yields|accepts)\b",
+    # A BARE package name with those verbs needs a library-shaped object
+    # too: an exception/class name (ReadTimeout, ValueError) or one of
+    # the copy/view/reference distinctions libraries document. Without
+    # that, "the loop returns early" and "httpx raises ReadTimeout" are
+    # the same shape to a regex.
+    #
+    # Common code nouns are excluded as subjects along with this/the/it:
+    # "function returns None" and "helper raises ValueError" are about
+    # the diff, and they satisfy every structural test otherwise.
+    r"(?<![\w.])(?!this\b|the\b|it\b|_)"
+    r"(?!(?:function|method|helper|caller|callee|wrapper|handler|loop|"
+    r"branch|guard|check|test|code|line|block|path|call)\b)"
+    r"[a-z][a-z0-9_]{2,}\b"
+    r"[^.!?\n]{0,40}?\b(?:returns|raises|yields)\b\s+"
+    r"(?:a |an |the )?"
+    r"(?:[A-Z]\w*(?:Error|Exception|Timeout|Warning)?|"
+    r"cop(?:y|ies)|view|reference|generator|coroutine|iterator)\b",
     # "isinstance(x, Y) is True/False" -- an assertion with a truth value
     r"\bisinstance\s*\([^)]*\)\s+(?:is|returns|evaluates to)\s+(?:True|False)",
     # "the <lib> API guarantees/documents ..."
@@ -51,7 +89,12 @@ _BEHAVIOURAL_CLAIM_PATTERNS = (
 )
 
 _COMPILED = tuple(
-    re.compile(p, re.IGNORECASE) for p in _BEHAVIOURAL_CLAIM_PATTERNS
+    # Case matters: several patterns use capitalisation as the signal
+    # that a word is a class or exception name. Under IGNORECASE,
+    # "[A-Z]\w*" matches "early" and "the loop returns early" becomes a
+    # library claim. Anything genuinely case-insensitive spells its
+    # alternatives out.
+    re.compile(p) for p in _BEHAVIOURAL_CLAIM_PATTERNS
 )
 
 
