@@ -119,7 +119,18 @@ def read_records(path: Path) -> tuple[list[dict], bool]:
     if lines and lines[-1] == "":
         lines.pop()
     if truncated and lines:
-        lines.pop()  # discard the incomplete trailing line
+        # A missing newline usually means a torn write, but not always:
+        # a manual edit or an external tool can leave a complete record
+        # without one. Parse it before discarding -- dropping a valid
+        # record makes resume re-run an entry that already finished, and
+        # nothing reports that it happened.
+        tail = lines[-1]
+        try:
+            json.loads(tail)
+        except json.JSONDecodeError:
+            lines.pop()  # genuinely torn
+        else:
+            truncated = False  # complete record, just unterminated
 
     records: list[dict] = []
     for i, line in enumerate(lines):

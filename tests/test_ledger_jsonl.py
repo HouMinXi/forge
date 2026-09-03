@@ -12,7 +12,6 @@ actual kill, which is the property being claimed.
 """
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
@@ -63,6 +62,24 @@ class TestAppendAndRead:
         recs, truncated = read_records(p)
         assert truncated is True
         assert [r["entry_id"] for r in recs] == ["e1"]
+
+    def test_complete_final_line_without_newline_is_kept(self, tmp_path):
+        """A valid last record must survive a missing trailing newline.
+
+        Dropping it makes resume re-run an entry that already finished,
+        and nothing reports that it happened. The torn-write case is
+        distinguished by whether the line parses, not by the newline
+        alone.
+        """
+        p = tmp_path / "l.jsonl"
+        append_record(p, make_record(_key("e1"), "PASS"))
+        raw = p.read_bytes()
+        assert raw.endswith(b"\n")
+        p.write_bytes(raw[:-1])  # strip the newline, keep valid JSON
+
+        recs, truncated = read_records(p)
+        assert [r["entry_id"] for r in recs] == ["e1"]
+        assert truncated is False, "a parseable final line is not torn"
 
     def test_corruption_before_the_last_line_raises(self, tmp_path):
         """A mid-file parse failure is not a torn write.

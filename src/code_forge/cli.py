@@ -1484,8 +1484,10 @@ def _run_eval(args) -> int:
 
     if resume_log is not None:
         if getattr(args, "fresh", False):
-            if resume_log.exists():
-                resume_log.unlink()
+            # unlink(missing_ok=True) rather than exists()-then-unlink:
+            # the two-step form races a concurrent writer and raises
+            # FileNotFoundError if anything removes the file in between.
+            resume_log.unlink(missing_ok=True)
         else:
             try:
                 done, torn = load_state(resume_log)
