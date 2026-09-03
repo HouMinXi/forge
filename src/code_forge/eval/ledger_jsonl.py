@@ -107,15 +107,25 @@ def read_records(path: Path) -> tuple[list[dict], bool]:
     rather than silently skipped -- quietly dropping a mid-file record
     would make the resume think an entry never ran and duplicate it.
     """
-    if not path.exists():
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        # exists()-then-read races a concurrent unlink the same way
+        # --fresh's exists()-then-unlink did. Missing is empty, not an
+        # error: the first resume of a new ledger looks exactly like this.
         return [], False
-
-    raw = path.read_bytes()
     if not raw:
         return [], False
 
     truncated = not raw.endswith(b"\n")
-    lines = raw.decode("utf-8", errors="replace").split("\n")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            "ledger %s is not valid UTF-8: %s "
+            "(replacement would silently mint a parseable record)" % (path, exc)
+        ) from exc
+    lines = text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
     if truncated and lines:
@@ -219,9 +229,24 @@ def make_record(
     return rec
 
 
-def iter_arm_records(path: Path, depth: int, engine: str) -> Iterator[dict]:
-    """Records belonging to one arm, for reporting."""
+def iter_arm_records(
+    path: Path,
+    depth: int,
+    engine: str,
+    backend: Optional[str] = None,
+) -> Iterator[dict]:
+    """Records belonging to one arm, for reporting.
+
+    Resume identity is (entry_id, depth, engine, backend). Filtering
+    only on depth and engine would mix backends that share a ledger --
+    the same failure a shared key would cause on resume, moved into
+    the report. ``backend=None`` keeps the old "all backends" view for
+    callers that have not yet split the file.
+    """
     records, _ = read_records(path)
     for rec in records:
-        if rec.get("depth") == depth and rec.get("engine") == engine:
-            yield rec
+        if rec.get("depth") != depth or rec.get("engine") != engine:
+            continue
+        if backend is not None and rec.get("backend") != backend:
+            continue
+        yield rec

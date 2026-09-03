@@ -6,6 +6,7 @@ JSON output via --output, --runs validation, exit code on bad corpus path.
 """
 from __future__ import annotations
 
+import json
 import os
 import signal
 import sys
@@ -241,6 +242,68 @@ class TestRunEval:
         assert rc == EXIT_CLI_ERROR
         captured = capsys.readouterr()
         assert "--runs must be >= 1" in captured.err
+
+    def test_arm_depth_rejects_zero(self, capsys):
+        """depth 0 has no semantic meaning and would never match a report axis."""
+        from code_forge.cli import _run_eval
+        from code_forge.exit_codes import EXIT_CLI_ERROR
+
+        mock_args = MagicMock()
+        mock_args.corpus = Path("/tmp/nonexistent.yaml")
+        mock_args.backend = "test"
+        mock_args.runs = None
+        mock_args.jobs = 1
+        mock_args.arm_depth = 0
+        mock_args.output = None
+
+        rc = _run_eval(mock_args)
+        assert rc == EXIT_CLI_ERROR
+        captured = capsys.readouterr()
+        assert "--arm-depth must be >= 1" in captured.err
+
+    def test_serial_raise_is_recorded_as_skipped(self, tmp_path, capsys):
+        """Serial path must not crash-restart the same entry forever.
+
+        Pool records a consistent raise as SKIPPED so the retry cap can
+        stop it. Serial used to raise before _record.
+        """
+        from code_forge.cli import _run_eval
+
+        entry = self._make_entry()
+        ledger = tmp_path / "live.jsonl"
+        mock_args = MagicMock()
+        mock_args.corpus = tmp_path / "corpus.yaml"
+        mock_args.backend = "test-backend"
+        mock_args.runs = None
+        mock_args.output = None
+        mock_args.jobs = 1
+        mock_args.resume_log = ledger
+        mock_args.fresh = False
+        mock_args.arm_depth = 1
+        mock_args.arm_engine = "real"
+
+        summary = EvalSummary(
+            total=1, caught=0, missed=0, correct_pass=0,
+            false_positive=0, skipped=1, results=[],
+            advisory_caught=0, advisory_missed=0,
+        )
+
+        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
+             patch("code_forge.eval.runner.replay_entry",
+                   side_effect=RuntimeError("backend down")), \
+             patch(
+                 "code_forge.cli._load_gate_backends",
+                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+             ), \
+             patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
+             patch("code_forge.eval.scorer.format_table", return_value="t"):
+
+            rc = _run_eval(mock_args)
+
+        assert rc == 0
+        recs = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
+        assert recs[0]["verdict"] == "SKIPPED"
+        assert "backend down" in recs[0]["skipped_reason"]
 
     def test_run_eval_file_not_found(self, capsys, tmp_path):
         """Missing corpus file returns EXIT_CLI_ERROR."""

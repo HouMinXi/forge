@@ -26,6 +26,7 @@ from code_forge.eval.ledger_jsonl import (
     DEFAULT_RETRY_CAP,
     ResumeKey,
     append_record,
+    iter_arm_records,
     load_state,
     make_record,
     pending_keys,
@@ -95,6 +96,38 @@ class TestAppendAndRead:
         append_record(p, make_record(_key("e3"), "PASS"))
         with pytest.raises(ValueError, match="corrupt at line 2"):
             read_records(p)
+
+    def test_invalid_utf8_raises_instead_of_replacing(self, tmp_path):
+        """errors=replace can mint a parseable record from garbage.
+
+        A 0xff byte inside a JSON string becomes U+FFFD and the line
+        still loads; resume then treats a corrupted entry as done.
+        """
+        p = tmp_path / "l.jsonl"
+        append_record(p, make_record(_key("e1"), "PASS"))
+        p.write_bytes(p.read_bytes() + b'{"entry_id":"\xff"}\n')
+        with pytest.raises(ValueError, match="not valid UTF-8"):
+            read_records(p)
+
+    def test_missing_file_after_unlink_is_empty(self, tmp_path):
+        """read_bytes FileNotFoundError is the exists()-then-read race."""
+        recs, truncated = read_records(tmp_path / "gone.jsonl")
+        assert recs == []
+        assert truncated is False
+
+    def test_iter_arm_records_filters_backend(self, tmp_path):
+        """Resume key includes backend; the report must too.
+
+        Filtering only on depth+engine mixes backends that share a
+        ledger -- the same failure a shared key would cause on resume.
+        """
+        p = tmp_path / "l.jsonl"
+        append_record(p, make_record(_key("e1", backend="a"), "PASS"))
+        append_record(p, make_record(_key("e1", backend="b"), "HOLD"))
+        append_record(p, make_record(_key("e2", depth=2, backend="a"), "PASS"))
+        got = list(iter_arm_records(p, depth=1, engine="real", backend="a"))
+        assert [r["entry_id"] for r in got] == ["e1"]
+        assert all(r["backend"] == "a" for r in got)
 
 
 class TestResumeSemantics:

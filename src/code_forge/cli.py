@@ -1391,6 +1391,13 @@ def _run_eval(args) -> int:
         print("--jobs must be >= 1", file=sys.stderr)
         return EXIT_CLI_ERROR
 
+    arm_depth = getattr(args, "arm_depth", 1)
+    if not isinstance(arm_depth, int):
+        arm_depth = 1
+    if arm_depth < 1:
+        print("--arm-depth must be >= 1", file=sys.stderr)
+        return EXIT_CLI_ERROR
+
     # Lazy imports (cli.py convention)
     from .eval.corpus import load_corpus
     from .eval.runner import replay_entry
@@ -1463,9 +1470,6 @@ def _run_eval(args) -> int:
     resume_log = getattr(args, "resume_log", None)
     if not isinstance(resume_log, Path):
         resume_log = None
-    arm_depth = getattr(args, "arm_depth", 1)
-    if not isinstance(arm_depth, int):
-        arm_depth = 1
     arm_engine = getattr(args, "arm_engine", "real")
     if not isinstance(arm_engine, str):
         arm_engine = "real"
@@ -1519,6 +1523,14 @@ def _run_eval(args) -> int:
                 skipped_reason=str(error)[:400],
             ))
             return
+        if result is None:
+            # The success path needs a result. Current call sites pass
+            # error= when result is None; this makes the invariant loud
+            # instead of crashing on None.actual_verdict later.
+            raise TypeError(
+                "_record needs a result when error is None "
+                "(entry %s)" % getattr(entry, "name", entry)
+            )
         append_record(resume_log, make_record(
             _ledger_key(entry),
             result.actual_verdict,
@@ -1575,13 +1587,30 @@ def _run_eval(args) -> int:
         results = []
         for entry in entries:
             _t0 = time.monotonic()
-            result = replay_entry(
-                entry,
-                corpus_dir=corpus_dir,
-                backend_name=args.backend,
-                runs=args.runs,
-                backend_config=_backend_config,
-            )
+            try:
+                result = replay_entry(
+                    entry,
+                    corpus_dir=corpus_dir,
+                    backend_name=args.backend,
+                    runs=args.runs,
+                    backend_config=_backend_config,
+                )
+            except Exception as exc:
+                # Pool path records a consistent raise as SKIPPED so
+                # resume's retry cap can stop it. Serial used to crash
+                # before _record, so a resume restarted the same entry
+                # forever. Same contract now: record, continue.
+                wall_s = time.monotonic() - _t0
+                result = EvalResult(
+                    entry=entry,
+                    actual_verdict="SKIPPED",
+                    runs=0,
+                    caught_count=0,
+                    skipped_reason=str(exc)[:400],
+                )
+                results.append(result)
+                _record(entry, None, wall_s, error=exc)
+                continue
             results.append(result)
             _record(entry, result, time.monotonic() - _t0)
 
