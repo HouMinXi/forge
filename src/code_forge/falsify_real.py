@@ -10,6 +10,7 @@ from typing import Optional
 from .backend import BackendConfig
 from .disposition import Disposition
 from .falsify import Falsifier
+from .falsify_receipt import check_receipt
 from .llm_invoke import llm_invoke
 from .state import StateFinding
 
@@ -22,9 +23,18 @@ _PROMPT_PREFIX = (
     "(7) check for intentional design, (8) test multi-step conditions, "
     "(9) anti-hallucination: does the symbol actually exist?, "
     "(10) debate: author vs reviewer perspective.\n\n"
+    "If your verdict rests on how an external library, API or runtime "
+    "BEHAVES -- not on the logic of the code under review -- you must "
+    "supply an execution receipt: the exact command that demonstrates "
+    "the behaviour and its actual output.  Without one, such a verdict "
+    "will be downgraded to UNCERTAIN, because neither you nor the "
+    "reviewer can check a library's behaviour by reasoning about it.\n\n"
     'Respond JSON only:\n'
     '{"verdict": "CONFIRMED" | "DISMISSED" | "UNCERTAIN", '
-    '"reasoning": "..."}\n\n'
+    '"reasoning": "...", '
+    '"receipt": {"command": "...", "output": "..."}}\n\n'
+    "Omit receipt entirely when the finding is about the diff's own "
+    "logic.\n\n"
     "Finding:\n"
 )
 
@@ -65,6 +75,23 @@ class RealFalsifier(Falsifier):
                 "(LLM returned FIXED for %s)" % finding.fingerprint
             )
         try:
-            return Disposition(verdict_str)
+            disposition = Disposition(verdict_str)
         except ValueError:
             return Disposition.UNCERTAIN
+
+        # A verdict that turns on library behaviour needs an execution
+        # receipt. Without one the model is reasoning about behaviour it
+        # cannot observe, which is how a one-line-falsifiable claim about
+        # numpy reached CONFIRMED after 4287 seconds. Downgrading to
+        # UNCERTAIN routes it to a human instead of pretending it was
+        # checked.
+        #
+        # DISMISSED is downgraded too, not just CONFIRMED: an unverified
+        # dismissal buries a real defect, which is the worse direction to
+        # be wrong in.
+        if disposition in (Disposition.CONFIRMED, Disposition.DISMISSED):
+            check = check_receipt(finding.description, response)
+            if check.should_downgrade:
+                return Disposition.UNCERTAIN
+
+        return disposition
