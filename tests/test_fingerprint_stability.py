@@ -20,6 +20,7 @@ from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
+from code_forge.llm_invoke import Usage
 from code_forge.machine import (
     Mode,
     StateMachine,
@@ -57,7 +58,7 @@ def _make_sm(tmp_path, git_diff=None):
         autofixer=StubAutoFixer(),
         revert_fn=lambda f: None,
         l0_runner=lambda r, f: ([], []),
-        l1_provider=lambda r: [],
+        l1_provider=lambda: ([], [], Usage(), 0.0),
     )
 
 
@@ -105,7 +106,7 @@ class TestLocationFingerprint:
         assert findings1[0].fingerprint == findings2[0].fingerprint
 
     def test_line_jitter_within_bucket(self):
-        """Lines 979, 981, 982 (all in the same 5-line bucket) produce
+        """Lines 979, 981, 982 (all in the same 10-line bucket) produce
         the same fingerprint.  This is the specific jitter pattern from
         the field report."""
         fps = {_location_fingerprint("chat.ts", line, "qodo")

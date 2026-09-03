@@ -2109,14 +2109,25 @@ class StateMachine:
     # Terminal dispositions that stick across rounds when a finding is
     # re-reported at the same location.  FIXED is excluded because a
     # re-reported finding after a fix is a genuine regression.
+    # Built from the enum members rather than written as literals: the
+    # values stored in round_history are Disposition(...).value, so a
+    # rename of either member would silently stop matching if this set
+    # carried its own copy of the strings.
     _STICKY_TERMINAL_DISPOSITIONS: frozenset = frozenset({
-        "DISMISSED", "STYLE",
+        Disposition.DISMISSED.value, Disposition.STYLE.value,
     })
 
     def _apply_dismissed_stickiness(
         self, findings: list[StateFinding]
     ) -> list[StateFinding]:
         """Carry forward DISMISSED/STYLE dispositions from prior rounds.
+
+        Mutates the findings in place and returns the same list, so a
+        caller holding a reference sees the updated dispositions. That
+        is deliberate -- the state machine works on one set of finding
+        objects per round and copying here would leave two versions of
+        the same finding alive, with the caller's copy the stale one.
+        Named "apply" rather than "with_" for the same reason.
 
         With location-stable fingerprints, a finding that was DISMISSED
         (human or falsifier) in a prior round and reappears with the same

@@ -181,6 +181,18 @@ def _location_fingerprint(
     first (insertion order, not severity).  This is an explicit trade-off:
     location stability for convergence is worth losing a rare same-bucket
     duplicate.
+
+    Bucketing rounds to the NEAREST multiple rather than flooring, and
+    that is load-bearing.  Floor division puts a hard edge every ten
+    lines, so the measured 979/981/982 jitter straddles it and splits
+    into two fingerprints -- the exact failure this function exists to
+    prevent.  Rounding centres the bucket on the reported line instead,
+    so jitter of +/-5 stays together wherever it falls.
+
+    Python's round() is round-half-to-even, so a line landing exactly on
+    a .5 boundary (975, 985) picks the even neighbour.  That makes the
+    boundary case look arbitrary, but it is stable: the same line always
+    produces the same bucket, which is all the fingerprint requires.
     """
     bucket = round(line / _LINE_BUCKET_SIZE) * _LINE_BUCKET_SIZE
     fp_src = "%s:%d:%s" % (file_path, bucket, pass_name)
