@@ -25,6 +25,7 @@ from code_forge.machine import (
     StateMachine,
     _FixpointResult,
 )
+from code_forge.state import Verdict
 from code_forge.reviewer_json import (
     _json_to_state_findings,
     _location_fingerprint,
@@ -417,3 +418,220 @@ class TestNonConvergenceScenario:
         # so they don't trigger clause (a) or (d)
         result = sm._fixpoint_reached()
         assert result == _FixpointResult.CLEAN
+
+
+# ===========================================================================
+# GAP 1: dismissal survives a gap round (finding absent for one round)
+# ===========================================================================
+
+class TestGapRoundDismissalStickiness:
+    """A model may not restate every finding every round.  If a finding
+    is DISMISSED in round 1, absent in round 2, and restated in round 3,
+    the DISMISSED disposition must carry forward across the gap.
+
+    This is the specific scenario from the field report:
+      round 1 DISMISSED, ABSENT round 2, restated round 3 -> DISMISSED
+    (was: CONFIRMED, because only round_history[-1] was checked).
+    """
+
+    def test_dismissed_survives_gap_round(self, tmp_path):
+        """DISMISSED in round 1, absent in round 2, restated in round 3
+        -> still DISMISSED, not reverted to UNCERTAIN."""
+        sm = _make_sm(tmp_path)
+        fp = _location_fingerprint("chat.ts", 982, "qodo")
+        # Round history: round 1 had DISMISSED, round 2 did NOT mention
+        # this fp at all (gap round).
+        sm._state.round_history = [
+            {"dispositions": {fp: "DISMISSED"}},  # round 1
+            {"dispositions": {}},                  # round 2: absent
+        ]
+        # Round 3: model restates the finding as UNCERTAIN
+        findings = [_sf(fp, "[qodo] dead code", disp=Disposition.UNCERTAIN)]
+        result = sm._apply_dismissed_stickiness(findings)
+        assert result[0].disposition == Disposition.DISMISSED, (
+            "DISMISSED must survive a gap round, got %s"
+            % result[0].disposition
+        )
+
+    def test_dismissed_survives_multiple_gap_rounds(self, tmp_path):
+        """DISMISSED in round 1, absent in rounds 2-4, restated
+        in round 5 -> still DISMISSED."""
+        sm = _make_sm(tmp_path)
+        fp = _location_fingerprint("combo.ts", 128, "expert")
+        sm._state.round_history = [
+            {"dispositions": {fp: "DISMISSED"}},   # round 1
+            {"dispositions": {}},                   # round 2: absent
+            {"dispositions": {}},                   # round 3: absent
+            {"dispositions": {}},                   # round 4: absent
+        ]
+        findings = [_sf(fp, "unused import", disp=Disposition.UNCERTAIN)]
+        result = sm._apply_dismissed_stickiness(findings)
+        assert result[0].disposition == Disposition.DISMISSED
+
+    def test_later_reconfirmation_overrides_dismissed(self, tmp_path):
+        """If a later round explicitly set CONFIRMED (non-terminal),
+        that override is respected -- DISMISSED does not leak through."""
+        sm = _make_sm(tmp_path)
+        fp = _location_fingerprint("chat.ts", 982, "qodo")
+        sm._state.round_history = [
+            {"dispositions": {fp: "DISMISSED"}},    # round 1: dismissed
+            {"dispositions": {fp: "CONFIRMED"}},    # round 2: re-confirmed
+        ]
+        # Round 3: re-reported as UNCERTAIN
+        findings = [_sf(fp, "dead code", disp=Disposition.UNCERTAIN)]
+        result = sm._apply_dismissed_stickiness(findings)
+        # CONFIRMED is not a sticky terminal disposition, so the
+        # current disposition (UNCERTAIN) should remain.
+        assert result[0].disposition == Disposition.UNCERTAIN, (
+            "explicit re-confirmation must override earlier DISMISSED"
+        )
+
+    def test_gap_round_dismissed_does_not_block_convergence(self, tmp_path):
+        """Integration: after a gap round, the DISMISSED stickiness
+        prevents the fixpoint check from resetting the counter."""
+        sm = _make_sm(tmp_path)
+        fp = _location_fingerprint("chat.ts", 982, "qodo")
+        sm._state.round_history = [
+            {"dispositions": {fp: "DISMISSED"}},   # round 1
+            {"dispositions": {}},                   # round 2: gap
+            {"dispositions": {fp: "DISMISSED"}},   # round 3 (after stickiness)
+        ]
+        # Apply stickiness to the current finding
+        finding = _sf(fp, "[qodo] dead code", disp=Disposition.UNCERTAIN)
+        findings = sm._apply_dismissed_stickiness([finding])
+        sm._state.findings = findings
+        assert findings[0].disposition == Disposition.DISMISSED
+
+        # fixpoint: DISMISSED is not CONFIRMED or UNCERTAIN -> CLEAN
+        result = sm._fixpoint_reached()
+        assert result == _FixpointResult.CLEAN
+
+
+# ===========================================================================
+# GAP 2: HOLD path writes dismissed findings to ledger
+# ===========================================================================
+
+class TestHoldLedgerPersistence:
+    """When LOCAL enters HOLD, DISMISSED findings must be written to the
+    ledger so they survive and suppress re-reported findings in future
+    rounds.  Previously, _write_ledger_rows only ran on the PASS path
+    via _finalize_local_terminal."""
+
+    def test_hold_path_writes_dismissed_to_ledger(self, tmp_path):
+        """The HOLD exit path in _run_local must write DISMISSED findings
+        as DISPROVED rows to the ledger.
+
+        This is an integration test: we drive StateMachine.run() in LOCAL
+        mode where L1 produces findings that enter HOLD (UNCERTAIN present,
+        no unfixed CONFIRMED), and verify the ledger gets a DISPROVED row for any
+        DISMISSED finding.  Without the GAP 2 fix (_write_ledger_rows() on the
+        HOLD path in machine.py:712), this test FAILS because the ledger remains empty.
+        """
+        import subprocess
+        from code_forge.ledger import iter_rows, TerminalState
+        from code_forge.llm_invoke import Usage
+
+        # Initialise git so resolve_ledger_root works
+        subprocess.run(["git", "init"], cwd=str(tmp_path),
+                       capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"],
+                       cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"],
+                       cwd=str(tmp_path), capture_output=True, check=True)
+        (tmp_path / "test.py").write_text("pass\n")
+        subprocess.run(["git", "add", "."], cwd=str(tmp_path),
+                       capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "init"],
+                       cwd=str(tmp_path), capture_output=True, check=True)
+
+        resolved = ResolvedReview(
+            source_files=[Path("test.py")],
+            baseline_content=None,
+            git_diff=(
+                "diff --git a/test.py b/test.py\n"
+                "--- a/test.py\n"
+                "+++ b/test.py\n"
+                "@@ -1,1 +1,2 @@\n"
+                " pass\n"
+                "+x = 1\n"
+            ),
+            mode_hint="git",
+            base_sha="aaa",
+            head_sha="bbb",
+        )
+
+        fp_dismissed = _location_fingerprint("test.py", 2, "qodo")
+        fp_uncertain = _location_fingerprint("test.py", 50, "expert")
+
+        candidates = [
+            _sf(fp_dismissed, "dead code", disp=Disposition.CONFIRMED,
+                file="test.py", line=2),
+            _sf(fp_uncertain, "magic number", disp=Disposition.CONFIRMED,
+                file="test.py", line=50),
+        ]
+
+        class _CustomFalsifier(StubFalsifier):
+            def falsify(self, finding):
+                if finding.fingerprint == fp_dismissed:
+                    return Disposition.DISMISSED
+                return Disposition.UNCERTAIN
+
+        sm = StateMachine(
+            resolved_review=resolved,
+            falsifier=_CustomFalsifier(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            mode=Mode.LOCAL,
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            l0_runner=lambda r, f: ([], []),
+            l1_provider=lambda: (candidates, [], Usage(), 0.0),
+        )
+
+        verdict = sm.run()
+        assert verdict == Verdict.PENDING
+        assert sm._state.hold_reason is not None
+
+        # Verify DISMISSED -> DISPROVED row written
+        ledger_rows = list(iter_rows(tmp_path))
+        disproved = [r for r in ledger_rows
+                     if r.terminal_state == TerminalState.DISPROVED]
+        assert len(disproved) == 1, (
+            "expected 1 DISPROVED row in ledger from HOLD path, got %d"
+            % len(disproved)
+        )
+        assert disproved[0].fingerprint == fp_dismissed
+
+    def test_hold_ledger_suppresses_next_round(self, tmp_path):
+        """After HOLD writes a DISPROVED row, known_terminal_fingerprints
+        should return that fingerprint for suppression."""
+        from code_forge.ledger import (
+            known_terminal_fingerprints, append_row,
+            TerminalState, LedgerRow,
+        )
+        import subprocess
+        from datetime import datetime, timezone
+
+        subprocess.run(["git", "init"], cwd=str(tmp_path),
+                       capture_output=True, check=True)
+        fp = _location_fingerprint("test.py", 2, "qodo")
+        row = LedgerRow(
+            fingerprint=fp,
+            repo_root=str(tmp_path),
+            base_sha="aaa",
+            head_sha="bbb",
+            file="test.py",
+            line=2,
+            axis_claim="defect",
+            pass_provenance="L1",
+            terminal_state=TerminalState.DISPROVED,
+            evidence_class="falsifier_rejected",
+            ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        append_row(tmp_path, row)
+        known = known_terminal_fingerprints(tmp_path)
+        assert fp in known, (
+            "DISPROVED fingerprint must appear in known_terminal_fingerprints"
+        )

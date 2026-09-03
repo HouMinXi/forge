@@ -709,6 +709,7 @@ class StateMachine:
                     % uncertain_count
                 )
                 self._state.verdict = Verdict.PENDING
+                self._write_ledger_rows()
                 self._persist_state()
                 return Verdict.PENDING
 
@@ -2122,19 +2123,29 @@ class StateMachine:
         fingerprint should retain its terminal disposition rather than
         reverting to UNCERTAIN and resetting the clean-round counter.
 
-        This prevents non-convergence when a model restates the same
-        dismissed issue each round: without this carry-forward, each
-        restatement would appear as a new UNCERTAIN finding that triggers
-        a counter reset via clause (d).
+        Search backward through the entire round_history, not just the
+        most recent snapshot.  A model may skip restating a finding for
+        one or more rounds (a "gap round"); only checking [-1] would
+        lose the dismissal in that case.
+
+        Semantics: the most recent round_history entry that mentions the
+        fingerprint wins.  If that entry's disposition is terminal
+        (DISMISSED/STYLE), it sticks.  If a later round explicitly
+        re-confirmed the finding (non-terminal disposition), that
+        override is respected -- the earlier DISMISSED does not leak
+        through a deliberate re-confirmation.
         """
         if not self._state.round_history:
             return findings
-        # Collect all prior dispositions from the most recent snapshot.
-        prior_disps = self._state.round_history[-1].get(
-            "dispositions", {}
-        )
+        # Build a map: fingerprint -> most recent disposition across all
+        # round_history entries.  Iterate forward so later entries
+        # overwrite earlier ones; the final value is the most recent.
+        latest_disps: dict[str, str] = {}
+        for snapshot in self._state.round_history:
+            for fp, disp in snapshot.get("dispositions", {}).items():
+                latest_disps[fp] = disp
         for f in findings:
-            prior = prior_disps.get(f.fingerprint)
+            prior = latest_disps.get(f.fingerprint)
             if prior in self._STICKY_TERMINAL_DISPOSITIONS:
                 f.disposition = Disposition(prior)
         return findings
