@@ -109,6 +109,50 @@ class TestFallbacksStillWork:
             _finding(severity="URGENT", description="no prefix", source="L0")
         ) == "P1"
 
+    @pytest.mark.parametrize("bogus", ["", "  ", "p1", "P1 ", "P4", "0"])
+    def test_near_miss_severities_all_fall_through(self, bogus):
+        """Case, whitespace and off-by-one values are not tiers.
+
+        "p1" and "P1 " are the dangerous ones: they look right to a
+        human reading state.json, and an `in` check against the tuple
+        rejects them, but a looser comparison would not.
+        """
+        assert _severity_tier(
+            _finding(severity=bogus, description="no prefix", source="MUTANT")
+        ) == "P2"
+
+
+class TestParserRejectsBogusSeverity:
+    """_json_to_state_findings is importable and called directly.
+
+    Upstream validation is a convention, not a guarantee -- the tests in
+    this file bypass it themselves. An unrecognised value must land as
+    None rather than being carried into the gate.
+    """
+
+    def test_direct_call_with_a_bogus_severity_stores_none(self):
+        data = {"findings": [{
+            "file": "a.py", "line": 1,
+            "severity": "URGENT", "description": "x",
+        }], "code_excerpts": []}
+        findings = _json_to_state_findings(data, "qodo")
+        assert findings[0].severity is None
+
+    def test_direct_call_with_a_missing_severity_stores_none(self):
+        data = {"findings": [{
+            "file": "a.py", "line": 1, "description": "x",
+        }], "code_excerpts": []}
+        findings = _json_to_state_findings(data, "qodo")
+        assert findings[0].severity is None
+
+    def test_a_valid_severity_still_survives_a_direct_call(self):
+        data = {"findings": [{
+            "file": "a.py", "line": 1,
+            "severity": "P0", "description": "x",
+        }], "code_excerpts": []}
+        findings = _json_to_state_findings(data, "qodo")
+        assert findings[0].severity == "P0"
+
 
 class TestPersistence:
     def test_severity_survives_a_state_json_round_trip(self):

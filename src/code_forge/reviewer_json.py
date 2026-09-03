@@ -262,6 +262,18 @@ def _json_to_state_findings(
             # Validated against _VALID_SEVERITIES above; carried through
             # rather than dropped, so the convergence gate can tell a P0
             # from a P3 instead of defaulting every L1 finding to P1.
-            severity=f_raw.get("severity"),
+            #
+            # Re-checked here rather than trusting validate_reviewer_json:
+            # this function is importable and gets called directly (the
+            # tests do it), so the validation upstream is a convention
+            # rather than a guarantee. An unrecognised value becomes None,
+            # which _severity_tier treats as "no reviewer opinion" and
+            # falls back for -- the same position it was in before this
+            # field existed.
+            severity=(
+                f_raw.get("severity")
+                if f_raw.get("severity") in _VALID_SEVERITIES
+                else None
+            ),
         ))
     return findings
