@@ -791,6 +791,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--jobs", type=int, default=1,
         help="max concurrent entries (default 1 = serial)",
     )
+    eval_parser.add_argument(
+        "--resume-log", type=Path, default=None,
+        help="JSONL ledger; entries already recorded there are skipped, "
+             "so a killed run restarts where it stopped",
+    )
+    eval_parser.add_argument(
+        "--fresh", action="store_true",
+        help="ignore --resume-log contents and re-run every entry",
+    )
+    eval_parser.add_argument(
+        "--arm-depth", type=int, default=1,
+        help="depth coordinate recorded in the resume ledger",
+    )
+    eval_parser.add_argument(
+        "--arm-engine", default="real",
+        help="falsification engine coordinate recorded in the ledger",
+    )
 
     # --- LEDGER subcommand: view or rule on outcome ledger rows ---
     ledger_parser = subparsers.add_parser(
@@ -1436,6 +1453,79 @@ def _run_eval(args) -> int:
 
     # Replay entries (serial or parallel depending on --jobs)
     corpus_dir = args.corpus.parent
+
+    # Resume: drop entries this arm already recorded, and append each
+    # outcome as it lands so a kill costs one entry rather than the run.
+    # Type-guard rather than identity-guard: a caller that hands us an
+    # object with every attribute (a test double, say) would otherwise
+    # satisfy "is not None" and take the ledger path with a value that
+    # is not a path. Same shape as the --jobs check above.
+    resume_log = getattr(args, "resume_log", None)
+    if not isinstance(resume_log, Path):
+        resume_log = None
+    arm_depth = getattr(args, "arm_depth", 1)
+    if not isinstance(arm_depth, int):
+        arm_depth = 1
+    arm_engine = getattr(args, "arm_engine", "real")
+    if not isinstance(arm_engine, str):
+        arm_engine = "real"
+
+    from .eval.ledger_jsonl import (
+        ResumeKey, append_record, load_state, make_record,
+    )
+
+    def _ledger_key(entry):
+        return ResumeKey(
+            entry_id=entry.name,
+            depth=arm_depth,
+            engine=arm_engine,
+            backend=args.backend,
+        )
+
+    if resume_log is not None:
+        if getattr(args, "fresh", False):
+            if resume_log.exists():
+                resume_log.unlink()
+        else:
+            try:
+                done, torn = load_state(resume_log)
+            except ValueError as exc:
+                print("Resume ledger unusable: %s" % exc, file=sys.stderr)
+                return EXIT_CLI_ERROR
+            if torn:
+                print(
+                    "Resume ledger had a torn trailing line; that entry "
+                    "will be re-run.",
+                    file=sys.stderr,
+                )
+            before = len(entries)
+            entries = [e for e in entries if _ledger_key(e) not in done]
+            if before != len(entries):
+                print(
+                    "Resuming: %d of %d entries already recorded."
+                    % (before - len(entries), before),
+                    file=sys.stderr,
+                )
+
+    def _record(entry, result, wall_s=0.0, error=None):
+        """Append one outcome to the ledger, if resuming is enabled."""
+        if resume_log is None:
+            return
+        if error is not None:
+            append_record(resume_log, make_record(
+                _ledger_key(entry), "SKIPPED", wall_s=wall_s,
+                skipped_reason=str(error)[:400],
+            ))
+            return
+        append_record(resume_log, make_record(
+            _ledger_key(entry),
+            result.actual_verdict,
+            runs=result.runs,
+            caught=result.caught_count,
+            wall_s=wall_s,
+            skipped_reason=result.skipped_reason or "",
+        ))
+
     if jobs > 1:
         from .eval.pool import run_pool
 
@@ -1466,6 +1556,7 @@ def _run_eval(args) -> int:
                     caught_count=0,
                     skipped_reason=pe.error or "hung",
                 ))
+                _record(pe.entry, None, pe.wall_s, error=pe.error or "hung")
             elif pe.error:
                 results.append(EvalResult(
                     entry=pe.entry,
@@ -1474,11 +1565,14 @@ def _run_eval(args) -> int:
                     caught_count=0,
                     skipped_reason=pe.error,
                 ))
+                _record(pe.entry, None, pe.wall_s, error=pe.error)
             else:
                 results.append(pe.result)
+                _record(pe.entry, pe.result, pe.wall_s)
     else:
         results = []
         for entry in entries:
+            _t0 = time.monotonic()
             result = replay_entry(
                 entry,
                 corpus_dir=corpus_dir,
@@ -1487,6 +1581,7 @@ def _run_eval(args) -> int:
                 backend_config=_backend_config,
             )
             results.append(result)
+            _record(entry, result, time.monotonic() - _t0)
 
     # Compute summary + output
     summary = compute_summary(results)
