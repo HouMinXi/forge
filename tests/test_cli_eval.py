@@ -370,6 +370,30 @@ class TestRunEval:
             % (recs[0]["skipped_reason"], captured["results"][0].skipped_reason)
         )
 
+    def test_fresh_without_resume_log_is_refused(self, capsys):
+        """--fresh against no ledger cannot do what it says.
+
+        Accepting it silently lets a user believe they cleared state
+        that was never there. Three review passes flagged this
+        independently across three rounds.
+        """
+        from code_forge.cli import _run_eval
+        from code_forge.exit_codes import EXIT_CLI_ERROR
+
+        mock_args = MagicMock()
+        mock_args.corpus = Path("/tmp/nonexistent.yaml")
+        mock_args.backend = "test-backend"
+        mock_args.runs = None
+        mock_args.jobs = 1
+        mock_args.arm_depth = 1
+        mock_args.resume_log = None
+        mock_args.fresh = True
+        mock_args.output = None
+
+        rc = _run_eval(mock_args)
+        assert rc == EXIT_CLI_ERROR
+        assert "--fresh has no effect without --resume-log" in capsys.readouterr().err
+
     def test_run_eval_file_not_found(self, capsys, tmp_path):
         """Missing corpus file returns EXIT_CLI_ERROR."""
         from code_forge.cli import _run_eval

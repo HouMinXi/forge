@@ -226,7 +226,9 @@ class TestConcurrentWriters:
         assert len(recs) == 6 * 40, "lost or merged lines: got %d" % len(recs)
         assert len({r["entry_id"] for r in recs}) == 6 * 40
 
-    def test_record_reaches_the_file_in_exactly_one_write(self, tmp_path):
+    def test_record_reaches_the_file_in_exactly_one_write(
+        self, tmp_path, monkeypatch,
+    ):
         """The atomicity argument rests on one write per record.
 
         O_APPEND is atomic per write call, not per logical line, so a
@@ -243,11 +245,11 @@ class TestConcurrentWriters:
             writes.append(len(data))
             return real_write(fd, data)
 
-        os.write = counting_write
-        try:
-            append_record(p, make_record(_key("e1"), "PASS", runs=1))
-        finally:
-            os.write = real_write
+        # monkeypatch rather than assigning os.write directly: a direct
+        # assignment leaks to every other test if this one dies between
+        # the swap and the finally, and the module-scope name is shared.
+        monkeypatch.setattr(os, "write", counting_write)
+        append_record(p, make_record(_key("e1"), "PASS", runs=1))
 
         assert len(writes) == 1, (
             "record must reach the file in one write, saw %d: %r"

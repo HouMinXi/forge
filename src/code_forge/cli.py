@@ -1398,6 +1398,27 @@ def _run_eval(args) -> int:
         print("--arm-depth must be >= 1", file=sys.stderr)
         return EXIT_CLI_ERROR
 
+    # --fresh only means anything against a ledger. Silently doing
+    # nothing lets a user believe they cleared state that was never
+    # there; three review passes flagged this independently. Checked
+    # here with the other argument validation rather than after the
+    # corpus loads, because a contradictory pair of flags should fail
+    # before any work starts.
+    #
+    # `is True` rather than truthiness: argparse store_true gives a real
+    # bool, and a test double's auto-attribute is truthy but carries no
+    # intent. Same identity-before-value shape as the guards above.
+    _resume_log = getattr(args, "resume_log", None)
+    if not isinstance(_resume_log, Path) and (
+        getattr(args, "fresh", False) is True
+    ):
+        print(
+            "--fresh has no effect without --resume-log (there is no "
+            "ledger to discard)",
+            file=sys.stderr,
+        )
+        return EXIT_CLI_ERROR
+
     # Lazy imports (cli.py convention)
     from .eval.corpus import load_corpus
     from .eval.runner import replay_entry
