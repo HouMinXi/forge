@@ -55,3 +55,8 @@ dogfood/
 .code-forge/cache/
 .worktrees/
 REVIEW.md
+
+# Eval corpus is a build artefact: regenerated from SWE-bench Verified by
+# code_forge.eval.build_corpus at a pinned seed, ~40MB of diffs and base
+# files. The generator travels with the code; the output does not.
+.eval-corpus/
