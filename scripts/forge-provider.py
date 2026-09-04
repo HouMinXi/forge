@@ -369,6 +369,33 @@ def insert_backend(path, spec, stamp, dry_run):
     return True, None
 
 
+def rename_backend(path, old, new, stamp, dry_run):
+    """Rewrite one backend's key line. Returns (did_rename, reason).
+
+    Only the key line is touched. A backend name also appears in comments
+    and in other backends' prose, and rewriting those changes meaning --
+    including, measured, a `headers:` sub-key nested in a neighbour.
+    """
+    text = read_config(path)
+    if not find_backend(text, old):
+        return False, "not declared"
+    if find_backend(text, new):
+        return False, f"'{new}' already exists"
+    new_text = re.sub(
+        rf"^([ \t]+){re.escape(old)}:(?=[ \t]*\r?$)",
+        lambda m, n=new: f"{m.group(1)}{n}:",
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if new_text == text:
+        return False, "key line did not match"
+    if not dry_run:
+        backup(path, stamp)
+        write_config(path, new_text)
+    return True, None
+
+
 def set_default(path, name, stamp, dry_run):
     """Make one backend the default and clear the flag from the rest.
 
@@ -730,6 +757,139 @@ def cmd_set(args):
     return 0
 
 
+def cmd_sync(args):
+    """Bring every config on this machine to one backend, in one command.
+
+    Setting up a new machine took four invocations -- rename the old key,
+    add the backend where it was missing, set the default, check trust --
+    and each one probes the endpoint again and re-seals trust again. Worse,
+    getting the order wrong leaves a repo whose gate.yaml still names a
+    backend the fleet retired, and a repo-level gate.yaml wins over the
+    user-level config by name, so that repo keeps reviewing on the old one
+    with nothing on screen to say so.
+
+    Order matters and is fixed here: rename first (so an existing
+    declaration is recognised rather than duplicated), then add where it is
+    still absent, then make it the default.
+    """
+    key = resolve_key(args.key_pass, args.key_env)
+    if not key:
+        print(f"could not resolve a key from "
+              f"{args.key_pass or args.key_env}", file=sys.stderr)
+        return 2
+
+    key_env = args.key_env or (args.name.upper().replace("-", "_")
+                               + "_API_KEY")
+    spec = {
+        "name": args.name,
+        "base_url": args.base_url,
+        "model": args.model,
+        "format": args.format,
+        "key_env": key_env,
+        "max_tokens": args.max_tokens,
+        "timeout_s": args.timeout_s,
+    }
+    for field in ("name", "base_url", "model", "format", "key_env"):
+        try:
+            yaml_scalar(str(spec[field]), field)
+        except ValueError as exc:
+            print(f"refusing to write: {exc}", file=sys.stderr)
+            return 2
+
+    # One probe for the whole run. The individual subcommands each probe,
+    # which on a four-step setup means four identical round trips.
+    print(f"probing {spec['base_url']} ({spec['format']}, {spec['model']})"
+          " ... ", end="", flush=True)
+    ok, detail = probe(spec["base_url"], spec["model"], key, spec["format"])
+    print(detail)
+    if not ok:
+        print("\nendpoint did not answer; nothing written", file=sys.stderr)
+        return 3
+
+    stamp = dt.datetime.now().strftime(BACKUP_FMT)
+    dry = args.dry_run
+    touched = []
+
+    renamed = []
+    for old in args.from_name or []:
+        if old == args.name:
+            continue
+        for path in find_configs():
+            if not find_backend(read_config(path), old):
+                continue
+            did, why = rename_backend(path, old, args.name, stamp, dry)
+            if did:
+                renamed.append((path, old))
+                touched.append(path)
+            elif why:
+                print(f"  skipped {path}: {why}")
+    if renamed:
+        verb = "would rename" if dry else "renamed"
+        for path, old in renamed:
+            print(f"  {verb} '{old}' -> '{args.name}' in {path}")
+
+    added = []
+    for path in find_configs():
+        did, why = insert_backend(path, spec, stamp, dry)
+        if did:
+            added.append(path)
+            touched.append(path)
+        elif why not in ("already declared", None):
+            print(f"  skipped {path}: {why}")
+    if added:
+        verb = "would add" if dry else "added"
+        for path in added:
+            print(f"  {verb} '{args.name}' to {path}")
+
+    # Fields can differ from the requested ones in a config that already
+    # declared this backend -- an older base_url, a retired key env. Those
+    # are exactly the drift this command exists to remove.
+    updated = []
+    edits = [("base_url", args.base_url), ("model", args.model),
+             ("format", args.format), ("api_key_env", key_env),
+             ("max_tokens", args.max_tokens), ("timeout_s", args.timeout_s)]
+    for path in find_configs():
+        if path in added or not find_backend(read_config(path), args.name):
+            continue
+        changed_fields = []
+        for field, value in edits:
+            if value is None:
+                continue
+            did, _ = write_field(path, args.name, field, value, stamp, dry)
+            if did:
+                changed_fields.append(field)
+        if changed_fields:
+            updated.append((path, changed_fields))
+            touched.append(path)
+    for path, fields in updated:
+        verb = "would update" if dry else "updated"
+        print(f"  {verb} {path}: {', '.join(fields)}")
+
+    defaulted = []
+    for path in find_configs():
+        did, _ = set_default(path, args.name, stamp, dry)
+        if did:
+            defaulted.append(path)
+            touched.append(path)
+    if defaulted:
+        verb = "would make" if dry else "made"
+        for path in defaulted:
+            print(f"  {verb} '{args.name}' the default in {path}")
+
+    print(f"\n{'would touch' if dry else 'touched'} "
+          f"{len(set(touched))} file(s): "
+          f"{len(renamed)} renamed, {len(added)} added, "
+          f"{len(updated)} updated, {len(defaulted)} defaulted")
+
+    if touched:
+        report_trust(reseal_trust(sorted(set(touched)), dry), dry)
+    if touched and not dry:
+        print(f"backups: <file>{stamp}")
+        print(f"\nexport {key_env} in your shell rc "
+              + (f"(pass {args.key_pass})" if args.key_pass else ""))
+    return 0
+
+
 def cmd_default(args):
     stamp = dt.datetime.now().strftime(BACKUP_FMT)
     configs = find_configs()
@@ -844,22 +1004,12 @@ def cmd_rename(args):
         return 1
 
     for path in touched:
-        text = read_config(path)
-        # Only the key line. A backend name can also appear in a comment or in
-        # some other backend's prose, and rewriting those changes meaning.
-        new_text = re.sub(
-            rf"^([ \t]+){re.escape(args.old)}:([ \t\r]*)$",
-            lambda m, n=args.new: f"{m.group(1)}{n}:{m.group(2)}",
-            text,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        if new_text == text:
-            continue
-        print(f"  {path}")
-        if not args.dry_run:
-            backup(path, stamp)
-            write_config(path, new_text)
+        did, why = rename_backend(path, args.old, args.new, stamp,
+                                  args.dry_run)
+        if did:
+            print(f"  {path}")
+        elif why:
+            print(f"  skipped {path}: {why}")
 
     verb = "would rename" if args.dry_run else "renamed"
     print(f"\n{verb} '{args.old}' -> '{args.new}' in {len(touched)} file(s)")
@@ -904,6 +1054,29 @@ def main():
     p.add_argument("--timeout-s", type=int)
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_set)
+
+    p = sub.add_parser(
+        "sync",
+        help="one command: point this whole machine at one backend",
+        description="Rename any older names onto NAME, declare it where it "
+                    "is missing, align its fields, and make it the review "
+                    "default -- with a single probe and a single trust "
+                    "re-seal. This is the command for setting up a machine.",
+    )
+    p.add_argument("name")
+    p.add_argument("--base-url", required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("--format", choices=["anthropic", "openai"],
+                   default="anthropic")
+    p.add_argument("--from-name", action="append", metavar="OLD",
+                   help="an older backend name to rename onto NAME; "
+                        "repeatable")
+    p.add_argument("--key-pass", help="pass(1) entry holding the key")
+    p.add_argument("--key-env", help="env var name (default: NAME_API_KEY)")
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
+    p.add_argument("--timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_sync)
 
     p = sub.add_parser("default", help="make one backend the review default")
     p.add_argument("name")

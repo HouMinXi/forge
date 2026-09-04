@@ -612,6 +612,133 @@ class TestRename:
         assert fp.read_config(p) == before
 
 
+class TestSync:
+    """`sync` is the whole-machine setup path: rename, add, align, default.
+
+    Doing this by hand took four invocations on a new machine, and getting
+    the order wrong left a repo-level gate.yaml still naming the retired
+    backend -- which outranks the user config, so that repo kept reviewing
+    somewhere else with nothing on screen to say so.
+    """
+
+    def _args(self, name, **kw):
+        import types
+        fields = dict(name=name, base_url="https://new.example/anthropic",
+                      model="new-model", format="anthropic", from_name=None,
+                      key_env="NEW_KEY", key_pass=None, timeout_s=2400,
+                      max_tokens=65536, dry_run=False)
+        fields.update(kw)
+        return types.SimpleNamespace(**fields)
+
+    def _tree(self, monkeypatch, tmp_path, files):
+        for rel, text in files.items():
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+        monkeypatch.setattr(fp, "SEARCH_ROOT", tmp_path)
+        monkeypatch.setattr(fp, "USER_CONFIG", tmp_path / "none.yaml")
+        monkeypatch.setattr(fp, "resolve_key", lambda *a, **k: "test-key")
+        monkeypatch.setattr(fp, "probe", lambda *a, **k: (True, "200 OK"))
+
+    def test_one_call_renames_adds_and_defaults(self, tmp_path, monkeypatch,
+                                                capsys):
+        """The three states a machine can be in, handled in one pass."""
+        self._tree(monkeypatch, tmp_path, {
+            # declares the old name
+            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+            # declares nothing relevant
+            "code/two/.code-forge/gate.yaml": GATE,
+        })
+        rc = fp.cmd_sync(self._args("newname", from_name=["oldname"]))
+        assert rc == 0
+
+        one = yaml.safe_load(
+            fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml"))
+        two = yaml.safe_load(
+            fp.read_config(tmp_path / "code/two/.code-forge/gate.yaml"))
+        # renamed in one, added in two, and the default moved in both
+        assert "oldname" not in one["backends"]
+        assert one["backends"]["newname"]["default"] is True
+        assert two["backends"]["newname"]["default"] is True
+        assert one["backends"]["alpha"].get("default") is not True
+
+    def test_a_renamed_backend_gets_the_requested_fields(
+            self, tmp_path, monkeypatch, capsys):
+        """Renaming alone leaves the old machine's URL and key env in place.
+
+        Measured on a real setup: the config carried an openai base_url and
+        a retired MIMO_API_KEY under the new name, so reviews resolved a key
+        that no longer existed.
+        """
+        self._tree(monkeypatch, tmp_path, {
+            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+        })
+        fp.cmd_sync(self._args("newname", from_name=["oldname"]))
+        entry = yaml.safe_load(
+            fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml")
+        )["backends"]["newname"]
+        assert entry["base_url"] == "https://new.example/anthropic"
+        assert entry["api_key_env"] == "NEW_KEY"
+        assert entry["format"] == "anthropic"
+
+    def test_running_it_twice_changes_nothing(self, tmp_path, monkeypatch,
+                                              capsys):
+        """Non-idempotence here means a boundary or comparison is wrong."""
+        self._tree(monkeypatch, tmp_path, {
+            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+            "code/two/.code-forge/gate.yaml": GATE,
+        })
+        fp.cmd_sync(self._args("newname", from_name=["oldname"]))
+        after_first = {
+            p: fp.read_config(p)
+            for p in fp.find_configs()
+        }
+        capsys.readouterr()
+        fp.cmd_sync(self._args("newname", from_name=["oldname"]))
+        out = capsys.readouterr().out
+        assert "0 renamed, 0 added, 0 updated, 0 defaulted" in out
+        for p, text in after_first.items():
+            assert fp.read_config(p) == text
+
+    def test_a_dry_run_previews_without_writing(self, tmp_path, monkeypatch,
+                                                capsys):
+        """A preview names each file and leaves every one of them untouched.
+
+        Counts alone are not enough here: this command reaches every repo on
+        the machine, and which repo it is about to convert is the thing you
+        check before letting it run.
+        """
+        self._tree(monkeypatch, tmp_path, {
+            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+            "code/two/.code-forge/gate.yaml": GATE,
+        })
+        before = {p: fp.read_config(p) for p in fp.find_configs()}
+
+        rc = fp.cmd_sync(self._args("newname", from_name=["oldname"],
+                                    dry_run=True))
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert str(tmp_path / "code/one/.code-forge/gate.yaml") in out
+        assert str(tmp_path / "code/two/.code-forge/gate.yaml") in out
+        assert "would rename" in out and "would add" in out
+
+        for p, text in before.items():
+            assert fp.read_config(p) == text
+
+    def test_nothing_is_written_when_the_endpoint_is_down(
+            self, tmp_path, monkeypatch, capsys):
+        """A probe failure must not leave the machine half-converted."""
+        self._tree(monkeypatch, tmp_path, {
+            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+        })
+        monkeypatch.setattr(fp, "probe", lambda *a, **k: (False, "timeout"))
+        before = fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml")
+        rc = fp.cmd_sync(self._args("newname", from_name=["oldname"]))
+        assert rc == 3
+        assert fp.read_config(
+            tmp_path / "code/one/.code-forge/gate.yaml") == before
+
+
 class TestTrustCommand:
     """`trust` reports the configs forge is currently refusing."""
 
