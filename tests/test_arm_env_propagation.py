@@ -251,12 +251,27 @@ class TestResolutionPathStaysReal:
         )
 
     def test_cli_passes_the_arm_depth_as_an_override(self):
+        # Behavioural: the arm builder must put the depth in the overrides
+        # dict that reaches run_pool. An earlier version matched a literal
+        # in cli.py and broke when the same behaviour moved into
+        # _arm_env_overrides, which is a move this test should not notice.
+        from code_forge.cli import _arm_env_overrides
+
+        class _Args:
+            arm_depth = 3
+            arm_engine = "real"
+
+        assert _arm_env_overrides(_Args())["FORGE_CLEAN_ROUND_THRESHOLD"] == "3"
+
+    def test_run_pool_receives_the_arm_overrides(self):
+        # The other half: whatever the builder produces has to be what the
+        # CLI hands to run_pool, not a separately constructed dict.
         from pathlib import Path
 
         import code_forge.cli as cli_mod
 
         src = Path(cli_mod.__file__).read_text()
-        assert '"FORGE_CLEAN_ROUND_THRESHOLD": args.arm_depth,' in src
+        assert "env_overrides=_arm_env_overrides(args)" in src
 
     def test_cli_resolution_shape_unchanged(self):
         from pathlib import Path

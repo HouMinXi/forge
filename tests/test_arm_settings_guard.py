@@ -116,9 +116,17 @@ class TestWiring:
         assert 'infra: arm settings absent' in src
 
     def test_cli_claims_the_depth_knob(self):
-        from pathlib import Path
+        # Behavioural rather than textual: the arm builder must claim the
+        # depth knob it sets. An earlier version asserted on a literal in
+        # cli.py's source and broke when the same behaviour moved into
+        # _arm_env_overrides -- it was tracking where the code lived, not
+        # what it did.
+        from code_forge.cli import _arm_env_overrides
 
-        import code_forge.cli as cli_mod
+        class _Args:
+            arm_depth = 2
+            arm_engine = "real"
 
-        src = Path(cli_mod.__file__).read_text()
-        assert '"FORGE_ARM_REQUIRES": "FORGE_CLEAN_ROUND_THRESHOLD"' in src
+        out = _arm_env_overrides(_Args())
+        assert out["FORGE_CLEAN_ROUND_THRESHOLD"] == "2"
+        assert "FORGE_CLEAN_ROUND_THRESHOLD" in out["FORGE_ARM_REQUIRES"]

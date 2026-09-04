@@ -1366,6 +1366,34 @@ def _handle_smoke_run(args, cwd: Path) -> int:
     return exit_code
 
 
+def _arm_env_overrides(args) -> dict:
+    """Settings this eval arm imposes on the reviews it runs.
+
+    Two jobs. It carries the arm's knobs to the pool workers by value,
+    because forkserver children snapshot the environment when the server
+    starts and would otherwise all run at whichever arm went first. And it
+    declares those knobs in FORGE_ARM_REQUIRES, so the runner refuses to
+    spend a review whose environment lost one rather than producing a
+    plausible run at forge's defaults.
+
+    Only knobs the arm actually varies are declared. The falsification
+    engine and round cap come from the environment the operator set for the
+    whole arm, so they are claimed only when present -- claiming an unset
+    knob would fail every ordinary eval run.
+    """
+    overrides = {
+        "FORGE_CLEAN_ROUND_THRESHOLD": str(args.arm_depth),
+    }
+    claimed = ["FORGE_CLEAN_ROUND_THRESHOLD"]
+    for knob in ("FORGE_FALSIFICATION_ENGINE", "FORGE_MAX_TOTAL_ROUNDS"):
+        value = os.environ.get(knob, "").strip()
+        if value:
+            overrides[knob] = value
+            claimed.append(knob)
+    overrides["FORGE_ARM_REQUIRES"] = ",".join(claimed)
+    return overrides
+
+
 def _run_eval(args) -> int:
     """Handle ``code-forge eval`` subcommand.
 
@@ -1619,14 +1647,7 @@ def _run_eval(args) -> int:
             # Passed rather than inherited: forkserver children snapshot the
             # environment when the server starts, so setting this here in the
             # parent reaches the first arm's workers and no later arm's.
-            env_overrides={
-                "FORGE_CLEAN_ROUND_THRESHOLD": args.arm_depth,
-                # Names what this arm is claiming. runner refuses to spend a
-                # review whose environment lost one of these, rather than
-                # producing a plausible run at forge's defaults that nothing
-                # downstream can distinguish from a real result.
-                "FORGE_ARM_REQUIRES": "FORGE_CLEAN_ROUND_THRESHOLD",
-            },
+            env_overrides=_arm_env_overrides(args),
         )
         results = []
         # The ledger is written from _progress as each entry lands, so this
