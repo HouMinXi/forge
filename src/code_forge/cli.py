@@ -1564,9 +1564,29 @@ def _run_eval(args) -> int:
     if jobs > 1:
         from .eval.pool import run_pool
 
+        # Phase 58 runs three depth arms concurrently for ~30 hours, so a
+        # progress line has to say which arm it belongs to and roughly how
+        # much of that arm is left. Without the label, three interleaved
+        # streams of "[7/150]" on one terminal are unreadable; without the
+        # estimate, a wedged pool looks exactly like a slow one until the
+        # per-entry timeout fires hours later.
+        #
+        # The label reuses the arm coordinates already recorded in the
+        # ledger, so a progress line and a ledger row name the same arm.
+        _run_label = "d%s/%s" % (args.arm_depth, args.arm_engine)
+        _t_start = time.monotonic()
+
         def _progress(done, total, name, wall_s):
+            elapsed = time.monotonic() - _t_start
+            # Mean over completed entries, not this entry's wall time: entry
+            # cost varies several-fold, so the last one is a poor predictor.
+            remaining = ""
+            if done:
+                eta_s = (elapsed / done) * (total - done)
+                remaining = "  ~%.1fh left" % (eta_s / 3600.0)
             print(
-                "  [%d/%d] %s (%.1fs)" % (done, total, name, wall_s),
+                "  [%s] [%d/%d] %s (%.1fs)%s"
+                % (_run_label, done, total, name, wall_s, remaining),
                 file=sys.stderr,
             )
 
