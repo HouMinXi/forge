@@ -212,7 +212,7 @@ def run_pool(
                 pe.wall_s = time.monotonic() - t0
                 pe.error = str(exc)
             if progress_cb:
-                progress_cb(i + 1, total, entry.name, pe.wall_s)
+                progress_cb(i + 1, total, entry.name, pe.wall_s, pe)
         return results
 
     # Parallel path: one future per entry.
@@ -280,7 +280,7 @@ def run_pool(
 
             done_count += 1
             if progress_cb:
-                progress_cb(done_count, total, pe.entry.name, pe.wall_s)
+                progress_cb(done_count, total, pe.entry.name, pe.wall_s, pe)
     finally:
         # A cancelled-but-running worker keeps the interpreter alive on
         # __exit__, which is exactly the stall the timeout exists to

@@ -387,11 +387,18 @@ class TestPoolProgress:
 
     @patch("code_forge.eval.pool.replay_entry", side_effect=_fake_replay)
     def test_progress_callback_fires(self, mock_replay):
-        """progress_cb is called once per entry with (done, total, name, wall)."""
+        """progress_cb gets (done, total, name, wall, pool_entry) per entry.
+
+        The fifth argument arrived in Phase 58-3. The ledger is written from
+        this callback so rows reach disk while the run is still going; the
+        entry is what carries the verdict to record. Asserting on it here
+        means a pool that stops passing it fails at this test rather than
+        silently producing an empty ledger for a five-hour run.
+        """
         calls = []
 
-        def _cb(done, total, name, wall_s):
-            calls.append((done, total, name))
+        def _cb(done, total, name, wall_s, pool_entry=None):
+            calls.append((done, total, name, pool_entry))
 
         entries = [_make_entry("p%d-bug" % i) for i in range(3)]
         run_pool(
@@ -405,6 +412,10 @@ class TestPoolProgress:
         assert calls[0][0] == 1
         assert calls[1][0] == 2
         assert calls[2][0] == 3
+        assert all(c[3] is not None for c in calls), (
+            "every call must carry its PoolEntry; without it the ledger "
+            "write in cli._progress has no verdict to record"
+        )
 
 
 class TestPoolEdgeCases:

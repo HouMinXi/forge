@@ -1576,7 +1576,7 @@ def _run_eval(args) -> int:
         _run_label = "d%s/%s" % (args.arm_depth, args.arm_engine)
         _t_start = time.monotonic()
 
-        def _progress(done, total, name, wall_s):
+        def _progress(done, total, name, wall_s, pool_entry=None):
             elapsed = time.monotonic() - _t_start
             # Mean over completed entries, not this entry's wall time: entry
             # cost varies several-fold, so the last one is a poor predictor.
@@ -1589,6 +1589,24 @@ def _run_eval(args) -> int:
                 % (_run_label, done, total, name, wall_s, remaining),
                 file=sys.stderr,
             )
+            # Record here rather than after run_pool returns. run_pool only
+            # returns once every entry is finished, so a ledger written from
+            # its result list is empty for the whole run: a 150-entry arm
+            # killed at entry 149 resumed from zero. Measured on the first
+            # 58-3 launch -- three entries complete, ledger file not even
+            # created. The resume machinery from 58-2 is only as useful as
+            # the point at which rows reach disk.
+            if pool_entry is None:
+                return
+            if pool_entry.hung:
+                _record(
+                    pool_entry.entry, None, wall_s,
+                    error=pool_entry.error or "hung",
+                )
+            elif pool_entry.error:
+                _record(pool_entry.entry, None, wall_s, error=pool_entry.error)
+            elif pool_entry.result is not None:
+                _record(pool_entry.entry, pool_entry.result, wall_s)
 
         pool_results = run_pool(
             entries,
@@ -1606,6 +1624,8 @@ def _run_eval(args) -> int:
             },
         )
         results = []
+        # The ledger is written from _progress as each entry lands, so this
+        # loop only builds the in-memory result list for the report.
         for pe in pool_results:
             if pe.hung:
                 # Hung entry: record as SKIPPED so it counts in the
@@ -1617,7 +1637,6 @@ def _run_eval(args) -> int:
                     caught_count=0,
                     skipped_reason=pe.error or "hung",
                 ))
-                _record(pe.entry, None, pe.wall_s, error=pe.error or "hung")
             elif pe.error:
                 results.append(EvalResult(
                     entry=pe.entry,
@@ -1626,10 +1645,8 @@ def _run_eval(args) -> int:
                     caught_count=0,
                     skipped_reason=pe.error,
                 ))
-                _record(pe.entry, None, pe.wall_s, error=pe.error)
             else:
                 results.append(pe.result)
-                _record(pe.entry, pe.result, pe.wall_s)
     else:
         results = []
         for entry in entries:
