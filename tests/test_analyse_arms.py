@@ -37,6 +37,7 @@ def _load():
 
 _aa = _load()
 _fmt = _aa._fmt
+_lines = _aa._lines
 _mean_se = _aa._mean_se
 load = _aa.load
 main = _aa.main
@@ -151,6 +152,71 @@ class TestMixedCoordinatesAreRefused:
         path.write_text("\n".join(json.dumps(r) for r in rows))
         main([str(path)])
         assert "MIXED COORDINATES" in capsys.readouterr().out
+
+
+class TestNumbersAreTraceable:
+    """The plan requires every headline number to point at ledger lines."""
+
+    def test_verdict_lines_partition_the_file_exactly(self):
+        rows = [
+            _row("a", verdict="HOLD"), _row("b", verdict="PASS"),
+            _row("c", verdict="HOLD"), _row("d", verdict="SKIPPED"),
+        ]
+        s = summarise(rows, "x")
+        claimed = [n for nums in s["verdict_lines"].values() for n in nums]
+        assert sorted(claimed) == [1, 2, 3, 4], (
+            "line sets must cover every row exactly once, or a count and "
+            "its citation disagree"
+        )
+
+    def test_each_claimed_line_carries_the_verdict_attributed_to_it(self):
+        rows = [
+            _row("a", verdict="HOLD"), _row("b", verdict="PASS"),
+            _row("c", verdict="HOLD"),
+        ]
+        s = summarise(rows, "x")
+        for verdict, nums in s["verdict_lines"].items():
+            for n in nums:
+                assert rows[n - 1]["verdict"] == verdict
+
+    def test_line_numbers_are_one_based(self):
+        # They name lines in a file a human will open, not list indices.
+        s = summarise([_row("only", verdict="HOLD")], "x")
+        assert s["verdict_lines"]["HOLD"] == [1]
+
+    def test_scored_lines_name_the_rows_behind_the_metrics(self):
+        rows = [_row("a"), _row("b", findings=(1, 0, 0)), _row("c")]
+        s = summarise(rows, "x")
+        assert s["scored_lines"] == [2]
+
+    def test_truncated_line_lists_say_how_many_were_hidden(self):
+        # A citation that trails off cannot be checked for completeness.
+        from_lines = _lines(list(range(1, 21)), cap=3)
+        assert from_lines.startswith("1,2,3")
+        assert "+17 more" in from_lines
+
+    def test_short_line_lists_are_not_truncated(self):
+        assert _lines([1, 2, 3]) == "1,2,3"
+
+    def test_traceability_holds_on_the_real_arm_ledger(self):
+        # Guards against the citation logic drifting from the ledger format
+        # actually being produced. Skipped when no run has happened here.
+        import pathlib
+
+        led = pathlib.Path(
+            "/home/houminxi/code/forge/.planning/eval/"
+            "phase-58-3/arm-d1.jsonl"
+        )
+        if not led.exists():
+            pytest.skip("no 58-3 ledger on this machine")
+        rows = load(led)
+        s = summarise(rows, "x")
+        raw = led.read_text().splitlines()
+        for verdict, nums in s["verdict_lines"].items():
+            for n in nums:
+                assert json.loads(raw[n - 1])["verdict"] == verdict
+        claimed = [n for nums in s["verdict_lines"].values() for n in nums]
+        assert sorted(claimed) == list(range(1, len(raw) + 1))
 
 
 class TestLedgerShapes:

@@ -54,19 +54,34 @@ def _fmt(value: float | None, pct: bool = False) -> str:
 
 
 def summarise(rows: list[dict], label: str) -> dict:
-    """Per-arm summary, reporting only what the ledger actually carries."""
-    scored = [r for r in rows if "finding_hits" in r]
+    """Per-arm summary, reporting only what the ledger actually carries.
+
+    Rows arrive in ledger order, so their index is a coordinate a reader can
+    use: line N of the file. Every aggregate records which lines it came
+    from, because a number nobody can trace back to specific rows cannot be
+    checked -- and checking is the only thing that separates a measurement
+    from an assertion.
+    """
+    scored = [
+        (i, r) for i, r in enumerate(rows, 1) if "finding_hits" in r
+    ]
     walls = [r["wall_s"] for r in rows if r.get("wall_s")]
     wall_mean, wall_se = _mean_se(walls)
+
+    verdict_lines: dict[str, list[int]] = {}
+    for i, r in enumerate(rows, 1):
+        verdict_lines.setdefault(r.get("verdict", "?"), []).append(i)
 
     out = {
         "label": label,
         "entries": len(rows),
         "verdicts": Counter(r.get("verdict", "?") for r in rows),
+        "verdict_lines": verdict_lines,
         "wall_mean": wall_mean,
         "wall_se": wall_se,
         "wall_total_h": sum(walls) / 3600.0 if walls else 0.0,
         "scored": len(scored),
+        "scored_lines": [i for i, _ in scored],
         "precision": None,
         "recall": None,
         "f1": None,
@@ -77,9 +92,9 @@ def summarise(rows: list[dict], label: str) -> dict:
     if not scored:
         return out
 
-    hits = sum(r["finding_hits"] for r in scored)
-    misses = sum(r["finding_misses"] for r in scored)
-    fps = sum(r["finding_fps"] for r in scored)
+    hits = sum(r["finding_hits"] for _, r in scored)
+    misses = sum(r["finding_misses"] for _, r in scored)
+    fps = sum(r["finding_fps"] for _, r in scored)
     out.update(hits=hits, misses=misses, fps=fps)
 
     # Zero denominators stay None. A precision of 0.0 when nothing was
@@ -95,12 +110,27 @@ def summarise(rows: list[dict], label: str) -> dict:
     return out
 
 
+def _lines(nums: list[int], cap: int = 6) -> str:
+    """Render line numbers compactly, keeping them checkable.
+
+    Truncation names the count it hid rather than trailing off, so a reader
+    knows whether they are looking at the whole set.
+    """
+    if len(nums) <= cap:
+        return ",".join(str(n) for n in nums)
+    head = ",".join(str(n) for n in nums[:cap])
+    return "%s (+%d more)" % (head, len(nums) - cap)
+
+
 def print_arm(s: dict, source: pathlib.Path) -> None:
     print("%s  (n=%d, %s)" % (s["label"], s["entries"], source.name))
     verdicts = ", ".join(
         "%s=%d" % (k, v) for k, v in sorted(s["verdicts"].items())
     )
     print("  verdicts:   %s" % verdicts)
+    for name in sorted(s["verdict_lines"]):
+        print("    %-9s lines %s" % (
+            name, _lines(s["verdict_lines"][name])))
     print("  wall/entry: %s s (SE %s)  total %.1f h" % (
         "%.0f" % s["wall_mean"] if s["wall_mean"] else "n/a",
         "%.0f" % s["wall_se"] if s["wall_se"] is not None else "n/a",
@@ -109,6 +139,7 @@ def print_arm(s: dict, source: pathlib.Path) -> None:
     if s["scored"]:
         print("  findings:   hits=%d misses=%d fps=%d  (scored %d/%d)" % (
             s["hits"], s["misses"], s["fps"], s["scored"], s["entries"]))
+        print("    scored lines %s" % _lines(s["scored_lines"]))
         print("  precision=%s recall=%s f1=%s" % (
             _fmt(s["precision"], pct=True),
             _fmt(s["recall"], pct=True),
