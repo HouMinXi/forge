@@ -1621,6 +1621,11 @@ def _run_eval(args) -> int:
             # parent reaches the first arm's workers and no later arm's.
             env_overrides={
                 "FORGE_CLEAN_ROUND_THRESHOLD": args.arm_depth,
+                # Names what this arm is claiming. runner refuses to spend a
+                # review whose environment lost one of these, rather than
+                # producing a plausible run at forge's defaults that nothing
+                # downstream can distinguish from a real result.
+                "FORGE_ARM_REQUIRES": "FORGE_CLEAN_ROUND_THRESHOLD",
             },
         )
         results = []

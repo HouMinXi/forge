@@ -123,6 +123,43 @@ def _review_timeout_s() -> int:
     return value if value > 0 else _DEFAULT_REVIEW_TIMEOUT_S
 
 
+# Knobs an arm may set. The guard demands a variable only when the arm
+# declared it, so ordinary eval runs -- which set none of these -- are
+# unaffected. FORGE_ARM_REQUIRES names which ones this arm is claiming.
+_ARM_KNOBS = (
+    "FORGE_CLEAN_ROUND_THRESHOLD",
+    "FORGE_FALSIFICATION_ENGINE",
+    "FORGE_MAX_TOTAL_ROUNDS",
+)
+
+
+def _missing_arm_settings(env: dict) -> list[str]:
+    """Names of arm knobs this arm claimed but that are absent from env.
+
+    Phase 58 varies review depth and the falsification engine across arms
+    and compares the results. Every knob crosses two boundaries on its way
+    to a review: parent to pool worker, then worker to the review
+    subprocess. A knob that fails either crossing does not raise anything.
+    The arm runs at forge's defaults, produces real-looking numbers, and
+    answers a different question than the one asked -- and there is nothing
+    in the output that distinguishes that from a genuine result.
+
+    Empty strings count as absent. Passing FORGE_MAX_TOTAL_ROUNDS="" is how
+    a shell exports an unset variable, and forge's env_resolver treats it
+    as unset, so accepting it here would defeat the check for the exact
+    case most likely to occur.
+    """
+    claimed = env.get("FORGE_ARM_REQUIRES", "")
+    if not claimed.strip():
+        return []
+    wanted = [k.strip() for k in claimed.split(",") if k.strip()]
+    unknown = [k for k in wanted if k not in _ARM_KNOBS]
+    if unknown:
+        # A typo in the claim would otherwise silently guard nothing.
+        return ["unknown knob %s" % k for k in unknown]
+    return [k for k in wanted if not env.get(k, "").strip()]
+
+
 def _run_review(cmd: list[str], cwd: str, env: dict, timeout_s: int):
     """Run one review to completion or abandon it, leaving nothing behind.
 
@@ -888,6 +925,17 @@ def _run_single(
     record_trust(gate_path, gate_data, config_dir=trust_dir)
 
     timeout_s = _review_timeout_s()
+    missing = _missing_arm_settings(eval_env)
+    if missing:
+        # Refuse before spending a review rather than discovering it in the
+        # results. A knob that fails to reach the child produces a plausible
+        # run at forge's defaults: the arm looks like it ran, its numbers are
+        # real, and they answer a different question than the one asked.
+        # Nothing downstream can tell that apart from a genuine result.
+        return False, (
+            "infra: arm settings absent from the review environment: %s"
+            % ", ".join(missing)
+        )
     try:
         returncode, stderr_text = _run_review(
             ["code-forge", "review", "--backend", backend_name],
