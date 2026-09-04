@@ -12,6 +12,7 @@ executor.
 """
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import time
@@ -77,6 +78,7 @@ def _worker(
     backend_name: str,
     runs: Optional[int],
     backend_config: Optional[dict],
+    env_overrides: Optional[dict] = None,
 ) -> tuple[EvalResult, float]:
     """Run one entry in its own process with its own scratch tree.
 
@@ -90,8 +92,21 @@ def _worker(
     this function registers that directory against the entry name so a
     collision raises instead of silently interleaving two entries
     through one .code-forge/state.json.
+
+    env_overrides are applied here rather than inherited.  Measured on
+    Python 3.14: forkserver snapshots the environment when the server
+    process starts, so a parent that sets FORGE_CLEAN_ROUND_THRESHOLD
+    after that point has children that still read the old value -- the
+    first depth arm's value reached its children, every later arm's did
+    not, and unsetting the variable in the parent left children reading
+    the stale one.  A depth sweep built on inheritance would run three
+    arms at one depth and report three nearly identical result sets with
+    no error anywhere.  Passing the value as an argument removes the
+    dependency on how the pool starts its children.
     """
     t0 = time.monotonic()
+    if env_overrides:
+        os.environ.update({k: str(v) for k, v in env_overrides.items()})
     tracked: list[str] = []
     real_mkdtemp = tempfile.mkdtemp
 
@@ -129,6 +144,7 @@ def run_pool(
     jobs: int = 4,
     entry_timeout_s: int = 3600,
     progress_cb=None,
+    env_overrides: Optional[dict] = None,
 ) -> list[PoolEntry]:
     """Run entries through the eval pipeline with bounded concurrency.
 
@@ -173,6 +189,13 @@ def run_pool(
 
     if jobs == 1:
         # Serial path: no process pool overhead, same interface.
+        #
+        # The overrides are applied in this process because there is no
+        # child to carry them.  replay_entry already mutates os.environ
+        # here (see the note on the parallel path below), so this adds no
+        # new sharing hazard.
+        if env_overrides:
+            os.environ.update({k: str(v) for k, v in env_overrides.items()})
         for i, entry in enumerate(entries):
             pe = results[i]
             t0 = time.monotonic()
@@ -224,6 +247,7 @@ def run_pool(
                 backend_name,
                 runs,
                 backend_config,
+                env_overrides,
             )
             future_to_idx[future] = i
 

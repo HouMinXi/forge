@@ -1598,6 +1598,12 @@ def _run_eval(args) -> int:
             backend_config=_backend_config,
             jobs=jobs,
             progress_cb=_progress,
+            # Passed rather than inherited: forkserver children snapshot the
+            # environment when the server starts, so setting this here in the
+            # parent reaches the first arm's workers and no later arm's.
+            env_overrides={
+                "FORGE_CLEAN_ROUND_THRESHOLD": args.arm_depth,
+            },
         )
         results = []
         for pe in pool_results:
