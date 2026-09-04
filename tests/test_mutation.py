@@ -533,15 +533,109 @@ class TestVenvFallback:
         assert len(skipped) == 1
 
 
+def test_real_cli_tests_do_not_use_collection_time_skipif():
+    """The three real-CLI tests skip at run time, not at collection.
+
+    A collection-time skipif on shutil.which('mutmut') is the defect
+    this file used to have: it froze the PATH at import and then
+    failed the survivor assertion when the binary was gone by the
+    time the body ran.
+    """
+    from pathlib import Path
+    import ast
+
+    src = Path(__file__).read_text()
+    tree = ast.parse(src)
+    real_cli = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "TestMutationRealCLI":
+            real_cli = node
+            break
+    assert real_cli is not None
+    for item in real_cli.body:
+        if not isinstance(item, ast.FunctionDef):
+            continue
+        for deco in item.decorator_list:
+            text = ast.unparse(deco)
+            assert "skipif" not in text, (
+                "%s still uses collection-time skipif: %s"
+                % (item.name, text)
+            )
+            assert "which" not in text or "mutmut" not in text
+
+
+def _skip_unless_mutmut_on_path():
+    """Skip at run time, not collection.
+
+    skipif(shutil.which("mutmut") is None) is evaluated once, when the
+    module is collected. A later test that patches shutil.which, or a
+    binary that appears and then disappears (this machine keeps the
+    mutmut package but the script renamed mutmut.disabled-for-review
+    so review workers do not pick it up), leaves the skipif false and
+    the body running against a missing binary. run_mutation then
+    returns MUTATION_SKIPPED and the positive-survivor assertion
+    fails instead of skipping.
+
+    Measured 2026-09-04: full suite FAILED this test with findings=
+    MUTATION_SKIPPED / mutmut not installed, while a solo run of the
+    same test SKIPPED. Collection and execution saw different PATH
+    states.
+    """
+    if shutil.which("mutmut") is None:
+        pytest.skip("mutmut not installed")
+
+
 class TestMutationRealCLI:
     """Real mutmut CLI smoke tests (skipped if mutmut not installed).
 
     Uses cwd parameter to run_mutation -- no os.chdir().
     """
 
-    @pytest.mark.skipif(
-        shutil.which("mutmut") is None, reason="mutmut not installed"
-    )
+    def test_skips_when_which_goes_none_after_collection(self, tmp_path, monkeypatch):
+        """Collection-time skipif is the wrong gate for this test.
+
+        Reproduce the measured failure: the skip condition is false at
+        collection (or never re-checked), then shutil.which returns None
+        when the body runs. The body must skip, not fail the survivor
+        assertion.
+        """
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "add.py").write_text(
+            "def add(a, b):\n"
+            "    return a + b\n"
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_add.py").write_text(
+            "from add import add\n"
+            "def test_add():\n"
+            "    result = add(1, 2)\n"
+            "    assert isinstance(result, int)\n"
+        )
+
+        # Reproduce the measured suite failure: skipif did not fire
+        # (or fired against a different PATH), then run_mutation saw
+        # no mutmut and the survivor assertion failed. Runtime skip
+        # must fire here instead.
+        _skip_unless_mutmut_on_path()
+        findings, infra_errors = run_mutation(
+            diff_files=["src/add.py"],
+            baseline_cmd=["python3", "-m", "pytest", "tests/"],
+            cwd=tmp_path,
+        )
+        mutant_findings = [
+            f for f in findings
+            if f.source == "MUTANT" and f.disposition == Disposition.CONFIRMED
+            and f.id != "MUTATION_ERROR"
+        ]
+        assert len(mutant_findings) > 0, (
+            "no real mutants survived -- "
+            "either mutmut did not run or all were killed\n"
+            "findings=%s\ninfra_errors=%s" % (findings, infra_errors)
+        )
+
     def test_real_mutmut_produces_findings(self, tmp_path):
         """Test 18: real mutmut produces MUTANT survivors on a toothless test.
 
@@ -552,6 +646,7 @@ class TestMutationRealCLI:
         This is the regression test for the silent false-pass from
         attempts 1 and 2 where mutmut silently ran against empty dirs.
         """
+        _skip_unless_mutmut_on_path()
         # Build minimal project: src/add.py + weak test
         src_dir = tmp_path / "src"
         src_dir.mkdir()
@@ -593,15 +688,13 @@ class TestMutationRealCLI:
             "findings=%s\ninfra_errors=%s" % (findings, infra_errors)
         )
 
-    @pytest.mark.skipif(
-        shutil.which("mutmut") is None, reason="mutmut not installed"
-    )
     def test_real_mutmut_runs_without_usage_error(self, tmp_path):
         """Test 19: real mutmut CLI accepts our invocation on a good test.
 
         Uses a strong test (checks return value). All mutants should be
         killed; zero MUTATION_ERROR findings.
         """
+        _skip_unless_mutmut_on_path()
         src_dir = tmp_path / "src"
         src_dir.mkdir()
         (src_dir / "add.py").write_text(
@@ -628,11 +721,9 @@ class TestMutationRealCLI:
             "infra_errors: %s" % (error_findings, infra_errors)
         )
 
-    @pytest.mark.skipif(
-        shutil.which("mutmut") is None, reason="mutmut not installed"
-    )
     def test_cleanup_after_run(self, tmp_path):
         """Test 20: mutants/ dir and setup.cfg are cleaned up after run."""
+        _skip_unless_mutmut_on_path()
         src_dir = tmp_path / "src"
         src_dir.mkdir()
         (src_dir / "add.py").write_text(
