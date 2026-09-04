@@ -206,12 +206,21 @@ def make_record(
     wall_s: float = 0.0,
     skipped_reason: str = "",
     rounds: Optional[int] = None,
+    findings: Optional[tuple[int, int, int]] = None,
 ) -> dict:
     """Build one ledger record.
 
     ``verdict`` carries SKIPPED explicitly rather than being inferred
     from a missing field, so a reader never has to guess whether an entry
     was skipped or simply written by an older version of this code.
+
+    ``findings`` is the (hits, misses, fps) tuple from score_findings.
+    Phase 58-4 compares the falsification gate on against off at a fixed
+    round cap, and a capped arm exits ESCALATED where the gated arm may
+    exit PASS -- so comparing verdicts would measure the cap rather than
+    the gate. Findings are what the arms can be compared on, and they have
+    to be in the ledger because that is the artifact a killed run resumes
+    from and the report traces its numbers to.
     """
     rec = dict(key.as_dict())
     rec.update(
@@ -226,6 +235,19 @@ def make_record(
         rec["skipped_reason"] = skipped_reason
     if rounds is not None:
         rec["rounds"] = rounds
+    if findings is not None:
+        try:
+            hits, misses, fps = findings
+        except ValueError as exc:
+            # A caller passing the wrong arity would otherwise write a
+            # partial record or crash mid-append, leaving the ledger with a
+            # line the resume reader cannot parse.
+            raise ValueError(
+                "findings must be (hits, misses, fps), got %r" % (findings,)
+            ) from exc
+        rec["finding_hits"] = hits
+        rec["finding_misses"] = misses
+        rec["finding_fps"] = fps
     return rec
 
 

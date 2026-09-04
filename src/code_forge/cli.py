@@ -1587,6 +1587,15 @@ def _run_eval(args) -> int:
             caught=result.caught_count,
             wall_s=wall_s,
             skipped_reason=result.skipped_reason or "",
+            # 58-4 compares arms on findings rather than verdicts: a capped
+            # arm exits ESCALATED where a gated one may exit PASS, so a
+            # verdict comparison would measure the cap. None when the entry
+            # carried no finding-level expectations to score against.
+            findings=(
+                (result.finding_hits, result.finding_misses,
+                 result.finding_fps)
+                if result.finding_runs else None
+            ),
         ))
 
     if jobs > 1:
