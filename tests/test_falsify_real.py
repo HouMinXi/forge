@@ -63,7 +63,8 @@ class TestRealFalsifier:
     def test_rejects_fixed_verdict(self):
         resp = _make_llm_result({"verdict": "FIXED", "reasoning": "n/a"})
         with patch("code_forge.falsify_real.llm_invoke", return_value=resp):
-            with pytest.raises(ValueError, match="FIXED"):
+            from code_forge.llm_invoke import FalsifyProtocolError
+            with pytest.raises(FalsifyProtocolError, match="FIXED"):
                 RealFalsifier().falsify(_make_finding())
 
     def test_unknown_verdict_is_a_protocol_error(self):

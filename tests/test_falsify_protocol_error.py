@@ -54,12 +54,28 @@ def test_valid_verdict_still_returns_disposition():
             == Disposition.DISMISSED
 
 
-def test_fixed_still_raises_value_error():
+def test_fixed_is_a_protocol_error_not_a_crash(tmp_path):
+    """Review round 1 on ee45427: FIXED raised a bare ValueError, which
+    falls past machine.py's LLMInvokeError/RuntimeError arms into the
+    re-raising except Exception and aborts the review. It is the same
+    class of violation as an unknown verdict and gets the same arm."""
     with patch("code_forge.falsify_real.llm_invoke") as inv:
         inv.return_value = LLMResult(
             content={"verdict": "FIXED", "reasoning": "x"})
-        with pytest.raises(ValueError):
+        with pytest.raises(FalsifyProtocolError, match="only verify"):
             RealFalsifier(backend=MagicMock()).falsify(_finding())
+
+    from tests.test_runtime_machine import _make_sm
+    sm = _make_sm(tmp_path)
+    sm.falsifier = RealFalsifier(backend=MagicMock())
+    f = _finding()
+    sm.l1_provider = lambda: ([f], [], Usage(), 0.0)
+    with patch("code_forge.falsify_real.llm_invoke") as inv:
+        inv.return_value = LLMResult(
+            content={"verdict": "FIXED", "reasoning": "x"})
+        sm._run_l1_phase()          # must not raise
+    assert f.disposition == Disposition.UNCERTAIN
+    assert f.error.startswith("falsify() protocol violation:")
 
 
 def test_protocol_error_attributed_in_state(tmp_path):

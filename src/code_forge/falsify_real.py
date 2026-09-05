@@ -76,10 +76,13 @@ class RealFalsifier(Falsifier):
                 % finding.fingerprint, raw=response)
         verdict_str = response["verdict"]
         if verdict_str == "FIXED":
-            raise ValueError(
-                "FIXED is not a valid falsifier output "
-                "(LLM returned FIXED for %s)" % finding.fingerprint
-            )
+            # FIXED is a Disposition member but not a falsifier verdict
+            # (only the verify path may set it). Same protocol violation
+            # as an unknown string; a plain ValueError here would escape
+            # machine.py's infra arms and abort the whole review.
+            raise FalsifyProtocolError(
+                "falsifier returned FIXED for %s; only verify may set it"
+                % finding.fingerprint, raw=response)
         try:
             disposition = Disposition(verdict_str)
         except (ValueError, TypeError):
