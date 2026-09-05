@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import threading
 import time
 from enum import Enum
 import traceback
@@ -169,6 +170,22 @@ def _default_l0_runner(
             )
     return state_findings, infra_errors
 
+
+
+def _falsify_workers(total: int) -> int:
+    """Pool size for the falsify loop.
+
+    FORGE_FALSIFY_WORKERS overrides; default 4, never more than the
+    number of candidates. Non-numeric or <1 values fall back to 1 so a
+    typo degrades to the old serial behaviour rather than crashing.
+    """
+    import os
+    raw = os.environ.get("FORGE_FALSIFY_WORKERS", "")
+    try:
+        n = int(raw) if raw else 4
+    except ValueError:
+        n = 1
+    return max(1, min(n, max(total, 1)))
 
 class _FixpointResult(str, Enum):
     """Return type of _fixpoint_reached: signals CLEAN, full RESET, or CYCLE_RESTART."""
@@ -842,10 +859,17 @@ class StateMachine:
         l1_findings: list[StateFinding] = []
         falsify_infra_failures: list[str] = []
         total = len(l1_candidates)
-        for i, f in enumerate(l1_candidates, 1):
+        # Candidates are independent (one finding in, one verdict out),
+        # and each real falsify call is ~60 s of model time, so they run
+        # on a small pool. map() keeps input order; the per-candidate
+        # bookkeeping is serialised under _lock. FORGE_FALSIFY_WORKERS=1
+        # restores the serial loop.
+        _lock = threading.Lock()
+
+        def _one(item):
+            i, f = item
             if f.source == "INFRA":
-                l1_findings.append(f)
-                continue
+                return f
             progress.emit(
                 "falsify %d/%d: %s:%s (%s)"
                 % (i, total, f.file, f.line_range, f.fingerprint)
@@ -866,11 +890,12 @@ class StateMachine:
                 # following the schema are different problems to fix.
                 f.disposition = Disposition.UNCERTAIN
                 f.error = "falsify() protocol violation: %s" % exc
-                falsify_infra_failures.append(f.fingerprint)
-                self._state.infra_errors.append(
-                    "falsify protocol violation on %s: %s"
-                    % (f.fingerprint, exc)
-                )
+                with _lock:
+                    falsify_infra_failures.append(f.fingerprint)
+                    self._state.infra_errors.append(
+                        "falsify protocol violation on %s: %s"
+                        % (f.fingerprint, exc)
+                    )
                 progress.emit(
                     "falsify %d/%d: protocol violation (%.1fs)"
                     % (i, total, time.monotonic() - t_falsify)
@@ -884,11 +909,12 @@ class StateMachine:
                 # of resetting the clean-round counter forever.
                 f.disposition = Disposition.UNCERTAIN
                 f.error = "falsify() backend unavailable: %s" % exc
-                falsify_infra_failures.append(f.fingerprint)
-                self._state.infra_errors.append(
-                    "falsify backend unavailable on %s: %s"
-                    % (f.fingerprint, exc)
-                )
+                with _lock:
+                    falsify_infra_failures.append(f.fingerprint)
+                    self._state.infra_errors.append(
+                        "falsify backend unavailable on %s: %s"
+                        % (f.fingerprint, exc)
+                    )
                 progress.emit(
                     "falsify %d/%d: backend unavailable (%.1fs)"
                     % (i, total, time.monotonic() - t_falsify)
@@ -896,9 +922,10 @@ class StateMachine:
             except RuntimeError as exc:
                 f.disposition = Disposition.UNCERTAIN
                 f.error = "falsify() raised: %s" % exc
-                self._state.infra_errors.append(
-                    "falsify exception on %s: %s" % (f.fingerprint, exc)
-                )
+                with _lock:
+                    self._state.infra_errors.append(
+                        "falsify exception on %s: %s" % (f.fingerprint, exc)
+                    )
                 progress.emit(
                     "falsify %d/%d: failed (%.1fs)"
                     % (i, total, time.monotonic() - t_falsify)
@@ -912,7 +939,19 @@ class StateMachine:
                     % (i, total, time.monotonic() - t_falsify)
                 )
                 raise
-            l1_findings.append(f)
+            return f
+
+        workers = _falsify_workers(total)
+        items = list(enumerate(l1_candidates, 1))
+        if workers <= 1 or total <= 1:
+            for item in items:
+                l1_findings.append(_one(item))
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                # map() re-raises the first exception in input order,
+                # which preserves the re-raise arm's semantics.
+                l1_findings.extend(pool.map(_one, items))
         self._check_falsify_can_still_converge(falsify_infra_failures)
         return (l1_findings, l1_excerpts)
 
