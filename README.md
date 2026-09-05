@@ -1,5 +1,7 @@
 # code-forge
 
+English | [简体中文](README.zh-CN.md)
+
 [![PyPI version](https://img.shields.io/pypi/v/code-review-forge.svg?cacheSeconds=300)](https://pypi.org/project/code-review-forge/)
 [![Python](https://img.shields.io/pypi/pyversions/code-review-forge.svg?cacheSeconds=300)](https://pypi.org/project/code-review-forge/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/HouMinXi/forge/blob/main/LICENSE)
@@ -402,6 +404,22 @@ Code Change
   own reasoning is salvaged only where the verdict is already complete,
   never into a clean round.
 
+## Measured quality
+
+Measured on 150 entries built from SWE-bench Verified (75 real defect diffs
+and 75 clean controls from 11 repositories), one run per entry, backend
+`mimo-v2.5-pro`. At the default three clean rounds, entry-level: recall
+0.800, precision 0.588, F1 0.678. Finding-level at the same depth:
+precision 40.1%, recall 49.3%, F1 0.442. Going from one clean round to
+three raised recall (52 to 60 of 75 defects caught) and left precision
+where it was. Turning the falsification gate off makes every one of the
+150 entries exit HOLD, including all 75 clean controls.
+
+These numbers are point estimates with no error bar, and they are not
+comparable to published figures from other tools because the ground truth
+differs. The full tables, the corpus construction, and the caveats are in
+[docs/EVALUATION.md](docs/EVALUATION.md).
+
 ## Honest limitations
 
 - **No cross-repo impact.** code-forge reviews a single repository.
@@ -528,6 +546,11 @@ A backward-compatible symlink at `test-library/` points to
 
 ## Documentation
 
+- [docs/ROADMAP.md](docs/ROADMAP.md) -- shipped milestones, the current one, and what is next
+- [docs/EVALUATION.md](docs/EVALUATION.md) -- measured review quality on a SWE-bench Verified corpus
+- [docs/REFERENCES.md](docs/REFERENCES.md) -- the papers the design leans on and what each is used for
+- [docs/manual.md](docs/manual.md) -- end-to-end walkthrough (English and Chinese)
+- [docs/configuration.md](docs/configuration.md) -- field-by-field configuration reference
 - `evidence/cross-model-complementarity.md` -- why 3 different review passes
 - `evidence/design-iterations.md` -- how the pipeline evolved
 - `evidence/ground-truth-verification.md` -- why smoke tests must inject bugs
