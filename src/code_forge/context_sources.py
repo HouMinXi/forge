@@ -23,7 +23,10 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import TYPE_CHECKING, Callable, Optional, Protocol
+
+if TYPE_CHECKING:
+    from .advisory import AdvisoryFinding
 
 
 @dataclass(frozen=True)
@@ -86,10 +89,16 @@ class GraphTriageSource:
 
 
 def _gate_cfg(repo_root: Path) -> dict:
+    """gate.yaml as a dict; absent file is {}.
+
+    A malformed or unreadable file is NOT {}: that would let
+    _detect_backend pick a backend the operator disabled. It propagates
+    so gather() records it under this source's name.
+    """
+    from .gate_check import load_gate_config
     try:
-        from .gate_check import load_gate_config
         return load_gate_config(repo_root / ".code-forge" / "gate.yaml")
-    except (FileNotFoundError, ValueError, OSError):
+    except FileNotFoundError:
         return {}
 
 
@@ -107,7 +116,7 @@ def _graphdb_head_sha(db: Path) -> Optional[str]:
     return row[0] if row and row[0] else None
 
 
-def _adapt_advisory(f, source: str) -> FactRow:
+def _adapt_advisory(f: "AdvisoryFinding", source: str) -> FactRow:
     """Parse the AdvisoryFinding description exactly as cli.py did.
 
     Description shape: "name (impact: N downstream) -- top dependents: a, b".

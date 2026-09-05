@@ -205,3 +205,17 @@ def test_graph_source_surfaces_runner_infra_errors(tmp_path, monkeypatch):
     src = GraphTriageSource(tmp_path)
     with pytest.raises(RuntimeError, match="sem timed out"):
         src.facts(["f.py"], "diff")
+
+
+def test_malformed_gate_yaml_is_an_error_not_empty_config(tmp_path, monkeypatch):
+    """Review round 1: swallowing ValueError let a broken gate.yaml
+    re-enable a backend the operator disabled. It must surface."""
+    (tmp_path / ".code-forge").mkdir()
+    (tmp_path / ".code-forge" / "gate.yaml").write_text("gate: [unclosed\n")
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    res = gather([GraphTriageSource(tmp_path)], ["f.py"], "diff", head_sha=None)
+    assert res.rows == []
+    # Must be the YAML error itself, not the downstream "no backend"
+    # RuntimeError a swallowing _gate_cfg would let the runner reach.
+    assert len(res.errors) == 1
+    assert res.errors[0].startswith("graph_triage: ValueError: Invalid YAML")
