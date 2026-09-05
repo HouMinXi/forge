@@ -11,7 +11,7 @@ from .backend import BackendConfig
 from .disposition import Disposition
 from .falsify import Falsifier
 from .falsify_receipt import check_receipt
-from .llm_invoke import llm_invoke
+from .llm_invoke import FalsifyProtocolError, llm_invoke
 from .state import StateFinding
 
 _PROMPT_PREFIX = (
@@ -66,9 +66,15 @@ class RealFalsifier(Falsifier):
         response = result.content
 
         if not isinstance(response, dict):
-            return Disposition.UNCERTAIN
+            raise FalsifyProtocolError(
+                "falsifier returned non-dict content for %s"
+                % finding.fingerprint, raw=response)
 
-        verdict_str = response.get("verdict", "UNCERTAIN")
+        if "verdict" not in response:
+            raise FalsifyProtocolError(
+                "falsifier response lacks 'verdict' for %s"
+                % finding.fingerprint, raw=response)
+        verdict_str = response["verdict"]
         if verdict_str == "FIXED":
             raise ValueError(
                 "FIXED is not a valid falsifier output "
@@ -76,8 +82,10 @@ class RealFalsifier(Falsifier):
             )
         try:
             disposition = Disposition(verdict_str)
-        except ValueError:
-            return Disposition.UNCERTAIN
+        except (ValueError, TypeError):
+            raise FalsifyProtocolError(
+                "falsifier verdict %r not in Disposition for %s"
+                % (verdict_str, finding.fingerprint), raw=response)
 
         # A verdict that turns on library behaviour needs an execution
         # receipt. Without one the model is reasoning about behaviour it

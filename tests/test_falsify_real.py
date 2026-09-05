@@ -66,10 +66,15 @@ class TestRealFalsifier:
             with pytest.raises(ValueError, match="FIXED"):
                 RealFalsifier().falsify(_make_finding())
 
-    def test_uncertain_on_unknown_verdict(self):
+    def test_unknown_verdict_is_a_protocol_error(self):
+        # Contract change (Phase 59-A1): an unknown verdict used to map to
+        # UNCERTAIN silently; it is now a FalsifyProtocolError so the
+        # ledger can tell "model broke the schema" from "model unsure".
+        from code_forge.llm_invoke import FalsifyProtocolError
         resp = _make_llm_result({"verdict": "BOGUS", "reasoning": "n/a"})
         with patch("code_forge.falsify_real.llm_invoke", return_value=resp):
-            assert RealFalsifier().falsify(_make_finding()) == Disposition.UNCERTAIN
+            with pytest.raises(FalsifyProtocolError):
+                RealFalsifier().falsify(_make_finding())
 
 
 class TestVerdictSurvivesTruncatedReasoning:
@@ -146,14 +151,17 @@ class TestVerdictSurvivesTruncatedReasoning:
         got = _extract_json_from_text(
             truncated, expected_keys=frozenset({"verdict", "reasoning"}),
         )
-        # Recovery is allowed; RealFalsifier maps unknown -> UNCERTAIN.
+        # Recovery is allowed; RealFalsifier then rejects the bogus
+        # verdict as a protocol error (Phase 59-A1).
         if got is not None:
             assert got["verdict"] == "MAYBE"
 
-    def test_falsifier_maps_a_salvaged_bogus_verdict_to_uncertain(self):
+    def test_falsifier_rejects_a_salvaged_bogus_verdict(self):
+        from code_forge.llm_invoke import FalsifyProtocolError
         resp = _make_llm_result({"verdict": "MAYBE", "reasoning": ""})
         with patch("code_forge.falsify_real.llm_invoke", return_value=resp):
-            assert RealFalsifier().falsify(_make_finding()) is Disposition.UNCERTAIN
+            with pytest.raises(FalsifyProtocolError):
+                RealFalsifier().falsify(_make_finding())
 
 
 class TestSalvageDoesNotFakeACleanReview:

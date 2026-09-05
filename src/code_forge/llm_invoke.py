@@ -125,6 +125,22 @@ class TruncationBreakerError(LLMInvokeError):
         )
 
 
+class FalsifyProtocolError(LLMInvokeError):
+    """The falsifier backend answered, but outside the contract.
+
+    Non-dict content, missing verdict key, or a verdict outside
+    {CONFIRMED, DISMISSED, UNCERTAIN}. Subclasses LLMInvokeError so the
+    state machine's infra path catches it; machine.py gives it its own
+    except arm so the ledger names the cause instead of reporting a
+    backend outage. Not retryable: the same prompt to the same model
+    tends to produce the same shape.
+    """
+
+    def __init__(self, message: str, raw=None):
+        super().__init__(message, kind="protocol", retryable=False)
+        self.raw = raw
+
+
 class TruncationBreaker:
     """Run-level counter of truncation events, thread-safe.
 

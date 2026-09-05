@@ -49,7 +49,7 @@ from .falsify import Falsifier
 from .mutation import launch_detached_mutation
 from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
 from .hold import check_escalated_frozen
-from .llm_invoke import LLMInvokeError, Usage
+from .llm_invoke import FalsifyProtocolError, LLMInvokeError, Usage
 from .parsers.base import Finding, ToolError
 from . import progress
 from .state import (
@@ -843,6 +843,23 @@ class StateMachine:
                     "falsify %d/%d: done %s (%.1fs)"
                     % (i, total, f.disposition,
                        time.monotonic() - t_falsify)
+                )
+            except FalsifyProtocolError as exc:
+                # The backend answered, but not in the contract (non-dict,
+                # no verdict key, unknown verdict). Same infra routing as
+                # an outage so the convergence guard sees it, but named
+                # separately: a dead backend and a model that stopped
+                # following the schema are different problems to fix.
+                f.disposition = Disposition.UNCERTAIN
+                f.error = "falsify() protocol violation: %s" % exc
+                falsify_infra_failures.append(f.fingerprint)
+                self._state.infra_errors.append(
+                    "falsify protocol violation on %s: %s"
+                    % (f.fingerprint, exc)
+                )
+                progress.emit(
+                    "falsify %d/%d: protocol violation (%.1fs)"
+                    % (i, total, time.monotonic() - t_falsify)
                 )
             except LLMInvokeError as exc:
                 # The backend could not answer, so there is no verdict.
