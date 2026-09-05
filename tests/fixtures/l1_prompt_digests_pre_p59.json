@@ -1,0 +1,20 @@
+{
+  "source_tree": "c79308c87fe090b0b73aea2826e05f23b46b7ae6",
+  "cases": {
+    "A_two_rows": {
+      "qodo": "49d0ddd723227b128d3fad54eae1972b72b570fd86167b430b5ccf8bcdf47da9",
+      "expert": "0b90c3705402181900904cc0396d0890f435366e1598427bda6593cb5448120d",
+      "adversarial": "a9dca5e81e00a2c57796e15f5e871b3b9552dd64d0101ba8236485543ac53113"
+    },
+    "B_empty": {
+      "qodo": "f7267d42ea54d1f8476d10b843c7d65965c95279650a9d47aa57ad7fbb0649bc",
+      "expert": "62463c00fe1205e54e89a5b6bd7bfd819b1fb1cd866e3ad6dd9a97a08b874707",
+      "adversarial": "130919843021b3d94a5cf3863bb1cb4812882c5ef5787ca417780b9a02d2da01"
+    },
+    "C_exception_as_empty": {
+      "qodo": "f7267d42ea54d1f8476d10b843c7d65965c95279650a9d47aa57ad7fbb0649bc",
+      "expert": "62463c00fe1205e54e89a5b6bd7bfd819b1fb1cd866e3ad6dd9a97a08b874707",
+      "adversarial": "130919843021b3d94a5cf3863bb1cb4812882c5ef5787ca417780b9a02d2da01"
+    }
+  }
+}
