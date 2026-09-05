@@ -65,7 +65,7 @@ def summarise(rows: list[dict], label: str) -> dict:
     scored = [
         (i, r) for i, r in enumerate(rows, 1) if "finding_hits" in r
     ]
-    walls = [r["wall_s"] for r in rows if r.get("wall_s")]
+    walls = [r["wall_s"] for r in rows if r.get("wall_s") is not None]
     wall_mean, wall_se = _mean_se(walls)
 
     verdict_lines: dict[str, list[int]] = {}
@@ -132,7 +132,7 @@ def print_arm(s: dict, source: pathlib.Path) -> None:
         print("    %-9s lines %s" % (
             name, _lines(s["verdict_lines"][name])))
     print("  wall/entry: %s s (SE %s)  total %.1f h" % (
-        "%.0f" % s["wall_mean"] if s["wall_mean"] else "n/a",
+        "%.0f" % s["wall_mean"] if s["wall_mean"] is not None else "n/a",
         "%.0f" % s["wall_se"] if s["wall_se"] is not None else "n/a",
         s["wall_total_h"],
     ))

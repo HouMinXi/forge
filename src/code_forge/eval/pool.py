@@ -105,8 +105,7 @@ def _worker(
     dependency on how the pool starts its children.
     """
     t0 = time.monotonic()
-    if env_overrides:
-        os.environ.update({k: str(v) for k, v in env_overrides.items()})
+    saved_env = _apply_env_overrides(env_overrides)
     tracked: list[str] = []
     real_mkdtemp = tempfile.mkdtemp
 
@@ -129,7 +128,30 @@ def _worker(
         tempfile.mkdtemp = real_mkdtemp
         for path in tracked:
             _release_tree(path)
+        _restore_env(saved_env)
     return result, time.monotonic() - t0
+
+
+def _apply_env_overrides(env_overrides: Optional[dict]) -> dict:
+    """Apply overrides to os.environ; return what to hand _restore_env.
+
+    Returns {key: prior_value_or_None}. A None marks a key that did not
+    exist before, so restore deletes it rather than writing "None".
+    """
+    saved: dict = {}
+    if env_overrides:
+        for k, v in env_overrides.items():
+            saved[k] = os.environ.get(k)
+            os.environ[k] = str(v)
+    return saved
+
+
+def _restore_env(saved: dict) -> None:
+    for k, prior in saved.items():
+        if prior is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = prior
 
 
 # -- Pool orchestrator -----------------------------------------------------
@@ -191,28 +213,30 @@ def run_pool(
         # Serial path: no process pool overhead, same interface.
         #
         # The overrides are applied in this process because there is no
-        # child to carry them.  replay_entry already mutates os.environ
-        # here (see the note on the parallel path below), so this adds no
-        # new sharing hazard.
-        if env_overrides:
-            os.environ.update({k: str(v) for k, v in env_overrides.items()})
-        for i, entry in enumerate(entries):
-            pe = results[i]
-            t0 = time.monotonic()
-            try:
-                pe.result = replay_entry(
-                    entry,
-                    corpus_dir=corpus_dir,
-                    backend_name=backend_name,
-                    runs=runs,
-                    backend_config=backend_config,
-                )
-                pe.wall_s = time.monotonic() - t0
-            except Exception as exc:
-                pe.wall_s = time.monotonic() - t0
-                pe.error = str(exc)
-            if progress_cb:
-                progress_cb(i + 1, total, entry.name, pe.wall_s, pe)
+        # child to carry them, and restored on the way out so a caller
+        # that runs two arms in one process does not carry the first
+        # arm's knobs into the second (review 2026-09-05).
+        saved_env = _apply_env_overrides(env_overrides)
+        try:
+            for i, entry in enumerate(entries):
+                pe = results[i]
+                t0 = time.monotonic()
+                try:
+                    pe.result = replay_entry(
+                        entry,
+                        corpus_dir=corpus_dir,
+                        backend_name=backend_name,
+                        runs=runs,
+                        backend_config=backend_config,
+                    )
+                    pe.wall_s = time.monotonic() - t0
+                except Exception as exc:
+                    pe.wall_s = time.monotonic() - t0
+                    pe.error = str(exc)
+                if progress_cb:
+                    progress_cb(i + 1, total, entry.name, pe.wall_s, pe)
+        finally:
+            _restore_env(saved_env)
         return results
 
     # Parallel path: one future per entry.
