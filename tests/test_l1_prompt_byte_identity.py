@@ -198,3 +198,20 @@ def test_cli_wires_every_provider_construction_site():
     # in cli any more (it lives in context_sources._adapt_advisory).
     assert '" (impact: "' not in src
     assert "gather(" in src and "render_blast_radius(" in src
+
+
+def test_cli_context_block_degrades_not_aborts(tmp_path, monkeypatch):
+    """Review round 0 on b90e799: get_changed_files and the renderers sit
+    outside gather()'s per-source isolation. A surprise there must warn
+    and leave context empty, matching the old block, not abort."""
+    import inspect
+
+    from code_forge import cli
+
+    src = inspect.getsource(cli._run)
+    i_try = src.index("    try:\n        _ctx = gather(")
+    i_exc = src.index("    except Exception as exc:", i_try)
+    assert "get_changed_files(" in src[i_try:i_exc]
+    assert "render_blast_radius(" in src[i_try:i_exc]
+    assert "render_context_sources(" in src[i_try:i_exc]
+    assert 'warn("context sources unavailable' in src[i_exc:i_exc + 400]

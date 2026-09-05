@@ -3743,25 +3743,37 @@ def _run(args, env, cwd: Path) -> Verdict:
     _context_sources_text = ""
     _pre_graph_findings: list = []
     _graph_source = GraphTriageSource(cwd)
-    _ctx = gather(
-        [_graph_source],
-        get_changed_files(resolved.git_diff or ""),
-        resolved.git_diff or "",
-        head_sha=getattr(resolved, "head_sha", None),
-        allow_unsnapshotted=bool(
-            getattr(args, "allow_unsnapshotted_context", False)
-        ),
-        on_error=lambda name, msg: warn(
-            "context source %s failed: %s" % (name, msg)
-        ),
-    )
-    for _skipped in _ctx.skipped:
-        warn("context source skipped (stale snapshot): %s" % _skipped)
-    _graph_impact_context = render_blast_radius(
-        [r for r in _ctx.rows if r.source == "graph_triage"]
-    )
-    _context_sources_text = render_context_sources(_ctx)
-    _pre_graph_findings = list(_graph_source.findings_cache or [])
+    # gather() isolates each source; the two calls outside it
+    # (get_changed_files on the diff, the renderers) are pure functions
+    # of already-validated input, but a surprise there must degrade to
+    # "no context" with a warning, as the old block did, not abort the
+    # review. Context is advisory; the review is not.
+    try:
+        _ctx = gather(
+            [_graph_source],
+            get_changed_files(resolved.git_diff or ""),
+            resolved.git_diff or "",
+            head_sha=getattr(resolved, "head_sha", None),
+            allow_unsnapshotted=bool(
+                getattr(args, "allow_unsnapshotted_context", False)
+            ),
+            on_error=lambda name, msg: warn(
+                "context source %s failed: %s" % (name, msg)
+            ),
+        )
+        for _skipped in _ctx.skipped:
+            warn("context source skipped (stale snapshot): %s" % _skipped)
+        _graph_impact_context = render_blast_radius(
+            [r for r in _ctx.rows if r.source == "graph_triage"]
+        )
+        _context_sources_text = render_context_sources(_ctx)
+        _pre_graph_findings = list(_graph_source.findings_cache or [])
+    except Exception as exc:  # noqa: BLE001 - advisory path, named
+        warn("context sources unavailable: %s: %s"
+             % (type(exc).__name__, exc))
+        _graph_impact_context = ""
+        _context_sources_text = ""
+        _pre_graph_findings = []
 
     falsifier = build_falsifier(engine_choice, backend=backend)
     autofixer = build_autofixer(resolved)

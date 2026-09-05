@@ -219,3 +219,24 @@ def test_malformed_gate_yaml_is_an_error_not_empty_config(tmp_path, monkeypatch)
     # RuntimeError a swallowing _gate_cfg would let the runner reach.
     assert len(res.errors) == 1
     assert res.errors[0].startswith("graph_triage: ValueError: Invalid YAML")
+
+
+def test_findings_cache_is_replaced_not_accumulated(tmp_path, monkeypatch):
+    """Review round 0 on b90e799 asked whether findings_cache grows across
+    facts() calls. It is assigned, not appended; pin that."""
+    from code_forge import graph_triage as gt
+
+    calls = {"n": 0}
+
+    class _Runner:
+        def __init__(self):
+            self.infra_errors = []
+        def run(self, diff, root):
+            calls["n"] += 1
+            return [_adv("f%d (impact: 1 downstream)" % calls["n"], "f.py")]
+    monkeypatch.setattr(gt, "GraphTriageRunner", _Runner)
+    src = GraphTriageSource(tmp_path)
+    src.facts(["f.py"], "d")
+    src.facts(["f.py"], "d")
+    assert len(src.findings_cache) == 1
+    assert src.findings_cache[0].description.startswith("f2")
