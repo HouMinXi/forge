@@ -71,6 +71,10 @@ class GraphTriageSource:
 
     repo_root: Path
     name: str = "graph_triage"
+    # The raw AdvisoryFindings from the last facts() call. cli.py seeds
+    # each hold-cycle's GraphTriageRunner._cached_findings from this so
+    # sem/graph.db is queried once per review, not once per round.
+    findings_cache: Optional[list] = None
 
     def snapshot_sha(self) -> Optional[str]:
         from .graph_triage import _detect_backend
@@ -85,6 +89,7 @@ class GraphTriageSource:
         findings = runner.run(diff_text, self.repo_root)
         if runner.infra_errors:
             raise RuntimeError("; ".join(runner.infra_errors))
+        self.findings_cache = list(findings)
         return [_adapt_advisory(f, self.name) for f in findings]
 
 

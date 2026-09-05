@@ -443,6 +443,13 @@ def _build_parser() -> argparse.ArgumentParser:
              "timeout_seconds, default 120s)",
     )
     review_parser.add_argument(
+        "--allow-unsnapshotted-context", action="store_true",
+        dest="allow_unsnapshotted_context",
+        help="use context sources (graph triage, MCP facts) whose index "
+             "was built at a commit other than the review head. Off by "
+             "default: stale facts read as authoritative.",
+    )
+    review_parser.add_argument(
         "--contract", default=None, metavar="FILE",
         help="path to per-change intent contract (use - for stdin); "
              "state invariants-to-verify and residual risks, "
@@ -3719,46 +3726,42 @@ def _run(args, env, cwd: Path) -> Verdict:
         backend=backend, warn_fn=warn,
     )
 
-    # Pre-loop graph triage: build impact context for L1 prompt.
-    # Runs once before the hold loop; findings are NOT added to
-    # advisories (prompt context only). The runner is discarded
-    # after building the context string.
+    # Pre-loop context sources (Phase 59-B1/B2): blast radius from graph
+    # triage today, MCP fact servers next. gather() runs each source in
+    # its own try/except and records failures by name; the old inline
+    # block turned every exception into an empty table. The rendered
+    # table is byte-identical to what that block produced
+    # (tests/test_l1_prompt_byte_identity.py holds the pre-change
+    # digests), and findings_cache seeds each hold-cycle's runner as
+    # before so sem/graph.db is still queried once per review.
+    from .context_sources import (
+        GraphTriageSource, gather, render_blast_radius,
+        render_context_sources,
+    )
+    from .diff import get_changed_files
     _graph_impact_context = ""
+    _context_sources_text = ""
     _pre_graph_findings: list = []
-    try:
-        from .graph_triage import GraphTriageRunner as _PreGT
-        _pre_graph = _PreGT()
-        _pre_graph_findings = _pre_graph.run(
-            resolved.git_diff or "", cwd,
-        )
-        if _pre_graph_findings:
-            _rows = []
-            for _f in _pre_graph_findings:
-                _desc = _f.description
-                # Parse "name (impact: N downstream) -- top dependents: a, b"
-                _parts = _desc.split(" (impact: ", 1)
-                _ename = _parts[0] if _parts else "unknown"
-                _downstream = "0"
-                _deps = ""
-                if len(_parts) > 1:
-                    _rest = _parts[1]
-                    _dp = _rest.split(" downstream)", 1)
-                    _downstream = _dp[0] if _dp else "0"
-                    if len(_dp) > 1 and "-- top dependents: " in _dp[1]:
-                        _deps = _dp[1].split(
-                            "-- top dependents: ", 1
-                        )[1].strip()
-                _rows.append(
-                    "| %s | %s | %s | %s |"
-                    % (_ename, _f.file, _downstream, _deps)
-                )
-            _graph_impact_context = (
-                "| Entity | File | Downstream | Top Dependents |\n"
-                "|--------|------|------------|----------------|\n"
-                + "\n".join(_rows)
-            )
-    except Exception:
-        _pre_graph_findings = []
+    _graph_source = GraphTriageSource(cwd)
+    _ctx = gather(
+        [_graph_source],
+        get_changed_files(resolved.git_diff or ""),
+        resolved.git_diff or "",
+        head_sha=getattr(resolved, "head_sha", None),
+        allow_unsnapshotted=bool(
+            getattr(args, "allow_unsnapshotted_context", False)
+        ),
+        on_error=lambda name, msg: warn(
+            "context source %s failed: %s" % (name, msg)
+        ),
+    )
+    for _skipped in _ctx.skipped:
+        warn("context source skipped (stale snapshot): %s" % _skipped)
+    _graph_impact_context = render_blast_radius(
+        [r for r in _ctx.rows if r.source == "graph_triage"]
+    )
+    _context_sources_text = render_context_sources(_ctx)
+    _pre_graph_findings = list(_graph_source.findings_cache or [])
 
     falsifier = build_falsifier(engine_choice, backend=backend)
     autofixer = build_autofixer(resolved)
@@ -3789,6 +3792,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             conventions_digest=_conv_digest_a,
             post_image=_post_image_a,
             graph_impact_context=_graph_impact_context,
+            context_sources_text=_context_sources_text,
             contract_spec=_contract_spec_a,
             manifest_spec=_manifest_spec_a,
             breaker=breaker,
@@ -3818,6 +3822,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 conventions_digest=_conv_digest_a,
                 post_image=_post_image_a,
                 graph_impact_context=_graph_impact_context,
+                context_sources_text=_context_sources_text,
                 contract_spec=_contract_spec_a,
                 manifest_spec=_manifest_spec_a,
                 breaker=breaker,
@@ -3856,6 +3861,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             l1_provider = build_grouped_l1_provider(
                 engine_choice, _specs, backend=backend,
                 graph_impact_context=_graph_impact_context,
+                context_sources_text=_context_sources_text,
                 contract_spec=_contract_spec_a,
                 manifest_spec=_manifest_spec_a,
                 breaker=breaker,

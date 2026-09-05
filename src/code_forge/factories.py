@@ -234,6 +234,7 @@ def build_l1_provider(
     initial_delay_s: float = 2.0,
     continuation_breaker=None,
     split_context: str = "",
+    context_sources_text: str = "",
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -300,6 +301,14 @@ def build_l1_provider(
             shared += (
                 "\n## Blast Radius Context\n"
                 + graph_impact_context + "\n"
+            )
+        if context_sources_text:
+            # Phase 59-B2: facts from context_sources.gather (MCP servers
+            # and the like). Empty text adds nothing, so every prompt
+            # built before this parameter existed is byte-identical.
+            shared += (
+                "\n## Context Sources\n"
+                + context_sources_text + "\n"
             )
         if contract_spec:
             shared += (
@@ -624,6 +633,7 @@ def build_sampling_l1_provider(
     contract_spec: str = "",
     focus_spec: str = "",
     manifest_spec: str = "",
+    context_sources_text: str = "",
 ) -> "Callable":
     """Build L1 provider that dispatches via MCP sampling.
 
@@ -682,6 +692,8 @@ def build_sampling_l1_provider(
             shared += "\n## Conventions Digest\n" + conventions_digest + "\n"
         if graph_impact_context:
             shared += "\n## Blast Radius Context\n" + graph_impact_context + "\n"
+        if context_sources_text:
+            shared += "\n## Context Sources\n" + context_sources_text + "\n"
         if contract_spec:
             shared += "\n## Design Intent\n" + contract_spec + "\n"
         if focus_spec:
