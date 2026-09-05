@@ -170,11 +170,12 @@ class TestResolutionPathStaysReal:
         from code_forge.eval import pool as pool_mod
 
         src = inspect.getsource(pool_mod._worker)
-        assert "if env_overrides:" in src
-        assert (
-            "os.environ.update({k: str(v) for k, v in env_overrides.items()})"
-            in src
-        )
+        # c79308c moved the apply into _apply_env_overrides so it can be
+        # undone in finally; the mirror now points at that helper.
+        assert "_apply_env_overrides(env_overrides)" in src
+        helper = inspect.getsource(pool_mod._apply_env_overrides)
+        assert "os.environ[k] = str(v)" in helper
+        assert "_restore_env(saved_env)" in src
 
     def test_run_pool_forwards_overrides_on_both_paths(self):
         # An earlier version of this test counted occurrences of the word
