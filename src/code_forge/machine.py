@@ -712,6 +712,20 @@ class StateMachine:
             else:
                 self._state.consecutive_clean_rounds = 0
 
+            # Record the fixpoint with the round it belongs to and
+            # persist again. _execute_round already persisted before
+            # the fixpoint ran, so without this the file always shows
+            # the PREVIOUS round's counter and no reason for the move;
+            # anyone reading state.json mid-run or after a kill misreads
+            # it (observed 2026-09-05: five rounds on disk at clean=0
+            # that were CLEAN/RESET/CLEAN/CLEAN/RESET in memory).
+            if self._state.round_history:
+                self._state.round_history[-1]["fixpoint"] = _fp.name
+                self._state.round_history[-1]["clean_rounds_after"] = (
+                    self._state.consecutive_clean_rounds
+                )
+            self._persist_state()
+
             if self._state.consecutive_clean_rounds >= _threshold:
                 self._finalize_local_terminal()
                 return self._state.verdict
