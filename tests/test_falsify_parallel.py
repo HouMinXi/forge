@@ -38,7 +38,11 @@ def _f(i: int, source="L1") -> StateFinding:
 
 
 class _SlowFalsifier:
-    def __init__(self, delay: float, verdicts=None):
+    def __init__(self, delay: float, verdicts=None, backend_type="api"):
+        from types import SimpleNamespace
+        # An API backend is the parallel case; CLI backends are forced
+        # serial (module-global _active_proc in llm_invoke).
+        self._backend = SimpleNamespace(type=backend_type)
         self.delay = delay
         self.verdicts = verdicts or {}
         self.seen: list[str] = []
@@ -166,3 +170,43 @@ def test_infra_convergence_guard_still_sees_failures(tmp_path):
     sm.l1_provider = lambda: (cands, [], Usage(), 0.0)
     sm._run_l1_phase()
     assert sorted(got["fps"]) == ["fp-0", "fp-2"]
+
+
+def test_cli_backend_forces_serial(tmp_path, monkeypatch):
+    """Review round 0 on ebf6235: llm_invoke's CLI path keeps the child
+    in a module-global _active_proc for signal cleanup; two in flight
+    clobber each other. L1 passes already serialise on CLI backends
+    (factories.py:329); falsify must too, regardless of the env knob."""
+    monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "4")
+    sm = _make_sm(tmp_path)
+    fals = _SlowFalsifier(0.05, backend_type="cli")
+    sm.falsifier = fals
+    cands = [_f(i) for i in range(4)]
+    sm.l1_provider = lambda: (cands, [], Usage(), 0.0)
+    sm._run_l1_phase()
+    assert fals.max_concurrent == 1
+
+
+def test_api_backend_runs_parallel(tmp_path, monkeypatch):
+    monkeypatch.delenv("FORGE_FALSIFY_WORKERS", raising=False)
+    sm = _make_sm(tmp_path)
+    fals = _SlowFalsifier(0.2, backend_type="api")
+    sm.falsifier = fals
+    cands = [_f(i) for i in range(4)]
+    sm.l1_provider = lambda: (cands, [], Usage(), 0.0)
+    sm._run_l1_phase()
+    assert fals.max_concurrent >= 2
+
+
+def test_falsifier_without_backend_is_serial(tmp_path, monkeypatch):
+    """A falsifier that exposes no backend (stub, or a third-party one)
+    gets the conservative default."""
+    monkeypatch.delenv("FORGE_FALSIFY_WORKERS", raising=False)
+    sm = _make_sm(tmp_path)
+    fals = _SlowFalsifier(0.05)
+    del fals._backend
+    sm.falsifier = fals
+    cands = [_f(i) for i in range(4)]
+    sm.l1_provider = lambda: (cands, [], Usage(), 0.0)
+    sm._run_l1_phase()
+    assert fals.max_concurrent == 1

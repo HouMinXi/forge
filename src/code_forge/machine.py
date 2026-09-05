@@ -172,14 +172,23 @@ def _default_l0_runner(
 
 
 
-def _falsify_workers(total: int) -> int:
+def _falsify_workers(total: int, falsifier=None) -> int:
     """Pool size for the falsify loop.
 
-    FORGE_FALSIFY_WORKERS overrides; default 4, never more than the
+    Serial (1) when the falsifier's backend is a CLI subprocess:
+    llm_invoke keeps the running child in a module-global _active_proc
+    for signal cleanup, and two in flight would clobber each other
+    (the same reason build_l1_provider runs CLI passes one at a time,
+    factories.py:329). API backends carry no such state.
+
+    Otherwise FORGE_FALSIFY_WORKERS, default 4, never more than the
     number of candidates. Non-numeric or <1 values fall back to 1 so a
     typo degrades to the old serial behaviour rather than crashing.
     """
     import os
+    backend = getattr(falsifier, "_backend", None)
+    if backend is None or getattr(backend, "type", "cli") == "cli":
+        return 1
     raw = os.environ.get("FORGE_FALSIFY_WORKERS", "")
     try:
         n = int(raw) if raw else 4
@@ -863,7 +872,14 @@ class StateMachine:
         # and each real falsify call is ~60 s of model time, so they run
         # on a small pool. map() keeps input order; the per-candidate
         # bookkeeping is serialised under _lock. FORGE_FALSIFY_WORKERS=1
-        # restores the serial loop.
+        # restores the serial loop, and _falsify_workers forces 1 for
+        # CLI backends (module-global _active_proc in llm_invoke).
+        #
+        # Thread-safety preconditions for anything added inside _one:
+        # progress.emit holds its own lock (progress.py:66); the
+        # falsifier must be reentrant (RealFalsifier holds only the
+        # backend config; llm_invoke's API path keeps no shared state);
+        # every write to self._state or the two lists goes under _lock.
         _lock = threading.Lock()
 
         def _one(item):
@@ -941,7 +957,7 @@ class StateMachine:
                 raise
             return f
 
-        workers = _falsify_workers(total)
+        workers = _falsify_workers(total, self.falsifier)
         items = list(enumerate(l1_candidates, 1))
         if workers <= 1 or total <= 1:
             for item in items:
