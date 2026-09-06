@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import http.client
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
@@ -1792,7 +1793,10 @@ def _invoke_openai(
         ) from exc
     except TimeoutError:
         raise  # preserve non-retryable timeout handling in retry loop
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
+        # HTTPException covers IncompleteRead (chunked body cut short)
+        # and friends: a response that stops mid-body is the same event
+        # as a reset socket, and it is not an OSError subclass.
         raise LLMInvokeError(
             "connection error from %s backend: %s" % (backend.name, exc),
             retryable=True,
@@ -1943,7 +1947,10 @@ def _invoke_anthropic(
         ) from exc
     except TimeoutError:
         raise  # preserve non-retryable timeout handling in retry loop
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
+        # HTTPException covers IncompleteRead (chunked body cut short)
+        # and friends: a response that stops mid-body is the same event
+        # as a reset socket, and it is not an OSError subclass.
         raise LLMInvokeError(
             "connection error from %s backend: %s" % (backend.name, exc),
             retryable=True,
@@ -2142,7 +2149,10 @@ def _invoke_vertex(
         ) from exc
     except TimeoutError:
         raise  # preserve non-retryable timeout handling in retry loop
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
+        # HTTPException covers IncompleteRead (chunked body cut short)
+        # and friends: a response that stops mid-body is the same event
+        # as a reset socket, and it is not an OSError subclass.
         raise LLMInvokeError(
             "connection error from %s backend: %s" % (backend.name, exc),
             retryable=True,
