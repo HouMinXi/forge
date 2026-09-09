@@ -12,6 +12,7 @@ Validates:
 """
 from __future__ import annotations
 
+import json
 import os
 from unittest.mock import MagicMock
 
@@ -133,7 +134,7 @@ class TestRunChunk:
         """All passes succeed -> no INFRA findings."""
         # Mock spawn_fn returns valid JSON with at least one excerpt.
         mock_spawn = MagicMock(
-            return_value='{"findings": [], "code_excerpts": [{"file": "foo.py", "start_line": 1, "end_line": 3, "content": "test"}]}'
+            return_value='{"findings": [], "code_excerpts": [{"file": "foo.py", "start_line": 1, "end_line": 3, "content": "x = 1\\ny = 2\\nz = 3"}]}'
         )
         findings, excerpts, usage, dur = _run_chunk(
             SMALL_DIFF, mock_spawn, ("qodo", "expert", "adversarial"),
@@ -148,7 +149,7 @@ class TestRunChunk:
         def spawn_fn(pass_name, diff):
             if pass_name == "expert":
                 raise TimeoutError("timed out")
-            return '{"findings": [], "code_excerpts": [{"file": "foo.py", "start_line": 1, "end_line": 3, "content": "test"}]}'
+            return '{"findings": [], "code_excerpts": [{"file": "foo.py", "start_line": 1, "end_line": 3, "content": "x = 1\\ny = 2\\nz = 3"}]}'
 
         findings, _, _, _ = _run_chunk(
             SMALL_DIFF, spawn_fn, ("qodo", "expert", "adversarial"),
@@ -275,3 +276,91 @@ class TestBugInjectProofs:
         # Bug-inject: skip concat -> chunk2 findings missing.
         only_chunk1 = chunk1_findings
         assert len(only_chunk1) == 1  # would miss chunk2's finding
+
+
+class TestRunChunkAttemptedCollector:
+    """Direct _run_chunk attempted-collection semantics.
+
+    None (default) means the caller wants no audit collection; an
+    explicitly passed empty list must be populated (``is not None``
+    semantics, never truthiness).
+    """
+
+    _VALID = (
+        '{"findings": [], "code_excerpts": [{'
+        '"file": "foo.py", "start_line": 1, "end_line": 3, '
+        '"content": "x = 1\\ny = 2\\nz = 3"}]}'
+    )
+
+    def _mixed_spawn(self, pass_name, diff):
+        if pass_name == "qodo":
+            return self._VALID
+        if pass_name == "expert":
+            # Parseable but schema-invalid; carries a payload-provided
+            # pass_name that the loop must override with its own.
+            return json.dumps({
+                "findings": "not-a-list",
+                "code_excerpts": [],
+                "pass_name": "payload-lie",
+                "marker": "expert-m1",
+            })
+        if pass_name == "adversarial":
+            return "NOT JSON AT ALL {{{"
+        raise AssertionError("unexpected pass %r" % (pass_name,))
+
+    def test_no_collector_mixed_inputs_no_crash(self):
+        """attempted=None default: valid + schema-invalid + non-JSON."""
+        findings, excerpts, _, _ = _run_chunk(
+            SMALL_DIFF, self._mixed_spawn, ("qodo", "expert", "adversarial"),
+        )
+        # Accepted excerpts only from the valid pass, loop pass_name.
+        assert len(excerpts) == 1
+        assert excerpts[0]["file"] == "foo.py"
+        assert excerpts[0]["pass_name"] == "qodo"
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert {f.id for f in infra} == {
+            "l1-expert-schema-fail", "l1-adversarial-schema-fail",
+        }
+
+    def test_no_collector_spawn_error_no_crash(self):
+        """attempted=None default: spawn exception must not crash."""
+        def _raise(pass_name, diff):
+            raise RuntimeError("boom")
+
+        findings, excerpts, _, _ = _run_chunk(
+            SMALL_DIFF, _raise, ("qodo",),
+        )
+        assert excerpts == []
+        assert len(findings) == 1
+        assert findings[0].id == "l1-qodo-spawn-fail"
+
+    def test_empty_list_populated_is_not_none(self):
+        """Explicitly passed EMPTY list is populated with loop pass_name."""
+        attempted: list[dict] = []
+        findings, excerpts, _, _ = _run_chunk(
+            SMALL_DIFF, self._mixed_spawn,
+            ("qodo", "expert", "adversarial"), attempted=attempted,
+        )
+        # The empty list was populated, not treated as absent.
+        assert len(attempted) == 1
+        item = attempted[0]
+        assert item["marker"] == "expert-m1"
+        assert item["pass_name"] == "expert"
+        # Accepted/attempted separation: accepted carry the valid loop
+        # pass_name; attempted carry their own loop-owned pass_name.
+        assert [e["pass_name"] for e in excerpts] == ["qodo"]
+        assert item["pass_name"] != "payload-lie"
+
+    def test_collector_spawn_error_appends_nothing(self):
+        """Spawn exceptions record INFRA findings, no attempted payload."""
+        attempted: list[dict] = []
+
+        def _raise(pass_name, diff):
+            raise RuntimeError("boom")
+
+        findings, excerpts, _, _ = _run_chunk(
+            SMALL_DIFF, _raise, ("qodo",), attempted=attempted,
+        )
+        assert attempted == []
+        assert excerpts == []
+        assert findings[0].id == "l1-qodo-spawn-fail"

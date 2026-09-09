@@ -777,7 +777,7 @@ class TestTimeoutBreakerIntegration:
             call_count += 1
             if call_count == 5:
                 class MockResult:
-                    content = '{"findings": [], "code_excerpts": [{"file": "f", "content": "c", "start_line": 1, "end_line": 2}]}'
+                    content = '{"findings": [], "code_excerpts": [{"file": "f", "content": "c\\nd", "start_line": 1, "end_line": 2}]}'
                     class usage:
                         input_tokens = 0
                         output_tokens = 0

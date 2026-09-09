@@ -594,3 +594,204 @@ class TestRealLegsWiring:
             max_total_rounds=4,
         )
         assert result == Verdict.PASS
+
+
+# ---------------------------------------------------------------------------
+# Attempted-evidence forwarding (outlet-c correction)
+# ---------------------------------------------------------------------------
+
+_THREE_FILE_DIFF = (
+    "diff --git a/file1.py b/file1.py\n"
+    "--- a/file1.py\n"
+    "+++ b/file1.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " x = 1\n"
+    " y = 2\n"
+    "+z = 3\n"
+    "diff --git a/file2.py b/file2.py\n"
+    "--- a/file2.py\n"
+    "+++ b/file2.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " a = 1\n"
+    " b = 2\n"
+    "+c = 3\n"
+    "diff --git a/file3.py b/file3.py\n"
+    "--- a/file3.py\n"
+    "+++ b/file3.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " m = 1\n"
+    " n = 2\n"
+    "+o = 3\n"
+)
+
+_BINARY_DIFF = (
+    "diff --git a/image.png b/image.png\n"
+    "Binary files /dev/null and b/image.png differ\n"
+)
+
+
+def _attempted_spawn_factory(marker_prefix):
+    """Per-pass schema-invalid payloads with distinct markers.
+
+    Each payload also carries a payload-provided pass_name lie that the
+    loop must override with its own pass name.
+    """
+    def _spawn(pass_name, diff_text):
+        chunk_tag = "unknown-chunk"
+        for fname in ("file1.py", "file2.py", "file3.py",
+                      "test.py", "image.png"):
+            if fname in diff_text:
+                chunk_tag = fname
+                break
+        return json.dumps({
+            "findings": "not-a-list",
+            "code_excerpts": [],
+            "pass_name": "payload-lie",
+            "marker": "%s-%s" % (marker_prefix, pass_name),
+            "chunk_tag": chunk_tag,
+        })
+    return _spawn
+
+
+def _read_attempted(cwd):
+    attempted_dir = cwd / ".code-forge" / "receipts" / "attempted"
+    out = {}
+    for fp in attempted_dir.glob("*.json"):
+        data = json.loads(fp.read_text())
+        assert data["attempted"] is True
+        out.setdefault(data["pass_name"], []).append(data["payload"])
+    return out
+
+
+class TestAttemptedForwardingUnderThreshold:
+    """Under-threshold route: attempted payloads reach real receipts."""
+
+    def test_attempted_reaches_receipts(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(
+            "FORGE_DIFF_CHUNK_THRESHOLD_KB", raising=False,
+        )
+        result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=tmp_path,
+            spawn_fn=_attempted_spawn_factory("under"),
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        assert result != Verdict.PASS
+        by_pass = _read_attempted(tmp_path)
+        assert set(by_pass) == {"qodo", "expert", "adversarial"}
+        for pname, payloads in by_pass.items():
+            assert len(payloads) == 1
+            assert payloads[0]["marker"] == "under-%s" % pname
+            assert payloads[0]["pass_name"] == pname
+
+
+class TestAttemptedForwardingSplitFallback:
+    """Split-fallback route (binary-only diff over threshold)."""
+
+    def test_binary_diff_attempted_reaches_receipts(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "0")
+        resolved = ResolvedReview(
+            source_files=[Path("image.png")],
+            baseline_content=None,
+            git_diff=_BINARY_DIFF,
+            mode_hint="git",
+        )
+        result = run_outlet_c(
+            resolved_review=resolved,
+            source_hash=hashlib.sha256(_BINARY_DIFF.encode()).hexdigest(),
+            cwd=tmp_path,
+            spawn_fn=_attempted_spawn_factory("fallback"),
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        assert result != Verdict.PASS
+        by_pass = _read_attempted(tmp_path)
+        assert set(by_pass) == {"qodo", "expert", "adversarial"}
+        for pname, payloads in by_pass.items():
+            assert payloads[0]["marker"] == "fallback-%s" % pname
+            assert payloads[0]["pass_name"] == pname
+
+
+class TestAttemptedForwardingPerFileChunks:
+    """Per-file chunk loop: every chunk's attempts land in one list."""
+
+    def test_all_chunks_attempted_collected(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "0")
+        resolved = ResolvedReview(
+            source_files=[
+                Path("file1.py"), Path("file2.py"), Path("file3.py"),
+            ],
+            baseline_content=None,
+            git_diff=_THREE_FILE_DIFF,
+            mode_hint="git",
+        )
+        result = run_outlet_c(
+            resolved_review=resolved,
+            source_hash=hashlib.sha256(_THREE_FILE_DIFF.encode()).hexdigest(),
+            cwd=tmp_path,
+            spawn_fn=_attempted_spawn_factory("chunks"),
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        assert result != Verdict.PASS
+        by_pass = _read_attempted(tmp_path)
+        assert set(by_pass) == {"qodo", "expert", "adversarial"}
+        for pname, payloads in by_pass.items():
+            # 3 chunks x 1 pass entry each.
+            assert len(payloads) == 3
+            assert {p["chunk_tag"] for p in payloads} == {
+                "file1.py", "file2.py", "file3.py",
+            }
+            for p in payloads:
+                assert p["marker"] == "chunks-%s" % pname
+                assert p["pass_name"] == pname
+
+
+class TestAttemptedNoRetentionAcrossInvocations:
+    """A new provider invocation starts with a fresh attempted list."""
+
+    def test_second_run_has_no_first_run_attempts(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.delenv(
+            "FORGE_DIFF_CHUNK_THRESHOLD_KB", raising=False,
+        )
+        run1 = tmp_path / "run1"
+        run1.mkdir()
+        run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=run1,
+            spawn_fn=_attempted_spawn_factory("run1"),
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        run2 = tmp_path / "run2"
+        run2.mkdir()
+        result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=run2,
+            spawn_fn=_attempted_spawn_factory("run2"),
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        assert result != Verdict.PASS
+        by_pass = _read_attempted(run2)
+        assert set(by_pass) == {"qodo", "expert", "adversarial"}
+        for pname, payloads in by_pass.items():
+            assert len(payloads) == 1
+            assert payloads[0]["marker"] == "run2-%s" % pname
+        texts = [
+            fp.read_text()
+            for fp in (
+                run2 / ".code-forge" / "receipts" / "attempted"
+            ).glob("*.json")
+        ]
+        assert all("run1" not in t for t in texts)

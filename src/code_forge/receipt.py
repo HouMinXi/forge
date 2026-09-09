@@ -152,8 +152,16 @@ def write_receipts(
     manifest: Optional[EnvManifest | ManifestTier | dict[str, Any] | str] = None,
     manifest_tier: Optional[ManifestTier] = None,
     exec_evidence: Optional[dict[str, Any] | str] = None,
+    attempted_excerpts: list[dict] | None = None,
+    reviewed_repositories: dict[str, str] | None = None,
 ) -> list[Path]:
     """Write 3 receipt files (one per pass) for a round."""
+    repository_manifest = None
+    if reviewed_repositories is not None:
+        from .receipt_scope import repository_scope
+        from .verify import parse_diff_files
+        diff_text, repository_manifest = repository_scope(reviewed_repositories)
+        diff_files = parse_diff_files(diff_text)
     receipts_dir.mkdir(parents=True, exist_ok=True)
     if manifest_tier is not None:
         effective_tier = manifest_tier
@@ -180,6 +188,13 @@ def write_receipts(
             effective_tier = ManifestTier.DECLARED
 
     by_pass = _split_by_pass(l1_findings)
+    # UNTRUSTED findings are audit data carried in state, not attested
+    # review findings: their evidence failed validation, so they must
+    # not appear in receipts (derive_basis would also reject the source).
+    by_pass = {
+        p: [f for f in fs if f.source != "UNTRUSTED"]
+        for p, fs in by_pass.items()
+    }
     cycle = round_index + 1
     # One write time for the whole round. A per-pass offset is not ordered
     # against the next round, and rounds finish faster than it spans, so it
@@ -187,9 +202,42 @@ def write_receipts(
     now = datetime.datetime.now(datetime.timezone.utc)
     written = []
 
-    assembled_excerpts = _build_excerpts(reviewer_excerpts)
-    _warn_on_fabricated_excerpts(diff_text, assembled_excerpts)
+    excerpts_by_pass: dict[str, list[dict]] = {p: [] for p in _PASS_NAMES}
+    if reviewer_excerpts:
+        for exc in reviewer_excerpts:
+            if not isinstance(exc, dict):
+                raise ValueError("reviewer_excerpt item is not a dict: %r" % (exc,))
+            pname = exc.get("pass_name")
+            if pname not in _PASS_NAMES:
+                raise ValueError(
+                    "excerpt missing or invalid trusted pass_name: %r" % (pname,)
+                )
+            excerpts_by_pass[pname].append(exc)
+
+    assembled_by_pass = {
+        pname: _build_excerpts(excerpts_by_pass[pname])
+        for pname in _PASS_NAMES
+    }
+    all_assembled = [exc for p_excs in assembled_by_pass.values() for exc in p_excs]
+    _warn_on_fabricated_excerpts(diff_text, all_assembled)
     pass_outcomes = derive_pass_outcomes(l1_findings)
+
+    # Correct pass status BEFORE write: a pass whose excerpts do not match
+    # the frozen diff post-image is not COMPLETED evidence, even when the
+    # response passed schema validation (a schema-valid excerpt can still
+    # carry a wrong literal). Mark it FAILED so the receipt itself tells
+    # the truth instead of run_verify being the only place that can tell.
+    if diff_text:
+        from .verify import validate_excerpts_against_diff
+
+        for pname in _PASS_NAMES:
+            if pass_outcomes.get(pname) != PassOutcome.COMPLETED:
+                continue
+            errs = validate_excerpts_against_diff(
+                diff_text, assembled_by_pass[pname]
+            )
+            if errs:
+                pass_outcomes[pname] = PassOutcome.SCHEMA_FAIL
 
     exec_status: Optional[str] = None
     exec_evidence_dict: Optional[dict[str, Any]] = None
@@ -247,7 +295,7 @@ def write_receipts(
                 for f in pass_findings
                 if f.source != "INFRA"
             ],
-            "code_excerpts": assembled_excerpts,
+            "code_excerpts": assembled_by_pass[pass_name],
             # self-reported, not measured -- audit-only
             "covered_line_ranges": [
                 {
@@ -268,11 +316,37 @@ def write_receipts(
             ),
         }
 
+        if repository_manifest is not None:
+            receipt["reviewed_repositories"] = repository_manifest
         if exec_evidence_dict is not None:
             receipt["exec_evidence"] = exec_evidence_dict
 
         path = receipts_dir / ("receipt-c%dp%d.json" % (cycle, pass_num))
         path.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
         written.append(path)
+
+    # Preserve attempted evidence as auditable failure artifacts: raw
+    # reviewer payloads whose excerpts failed validation, tagged with the
+    # loop-owned pass name. Stored under attempted/ so run_verify never
+    # reads them as accepted code_excerpts; never repaired.
+    if attempted_excerpts:
+        attempted_dir = receipts_dir / "attempted"
+        attempted_dir.mkdir(parents=True, exist_ok=True)
+        for idx, attempted in enumerate(attempted_excerpts):
+            if not isinstance(attempted, dict):
+                continue
+            pname = attempted.get("pass_name", "unknown")
+            art = {
+                "attempted": True,
+                "cycle": cycle,
+                "pass_name": pname,
+                "payload": attempted,
+            }
+            pass_num = (
+                _PASS_NAMES.index(pname) + 1 if pname in _PASS_NAMES else 0
+            )
+            fname = "attempted-c%dp%d-%d.json" % (cycle, pass_num, idx)
+            (attempted_dir / fname).write_text(
+                json.dumps(art, indent=2), encoding="utf-8")
 
     return written

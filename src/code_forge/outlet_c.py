@@ -86,12 +86,18 @@ def _run_chunk(
     chunk_diff: str,
     spawn_fn: Callable[[str, str], str],
     pass_names: tuple[str, ...],
+    *,
+    attempted: list[dict] | None = None,
 ) -> tuple[list[StateFinding], list[dict], Usage, float]:
     """Run all passes on one diff chunk.
 
     Returns (findings, excerpts, usage, duration). On spawn/schema
     failure for a pass, appends an INFRA finding and continues to
-    the next pass (same behavior as the original loop).
+    the next pass (same behavior as the original loop). When the
+    caller passes an `attempted` list, schema-failed parseable
+    payloads are appended to it as audit artifacts; the excerpts
+    list itself only carries accepted evidence. None means the
+    caller did not request audit collection.
     """
     findings: list[StateFinding] = []
     all_excerpts: list[dict] = []
@@ -120,7 +126,7 @@ def _run_chunk(
                     validated, pass_name, backend="subagent",
                 ),
             )
-            all_excerpts.extend(_collect_excerpts(validated))
+            all_excerpts.extend(_collect_excerpts(validated, pass_name=pass_name))
         except ValueError as e:
             findings.append(StateFinding(
                 id="l1-%s-schema-fail" % pass_name,
@@ -131,6 +137,14 @@ def _run_chunk(
                 line_range=[0, 0],
                 description="schema validation failed: %s" % e,
             ))
+            from .factories import _raw_response_data
+
+            raw_data = _raw_response_data(raw)
+            if raw_data is not None:
+                if attempted is not None:
+                    attempted_item = dict(raw_data)
+                    attempted_item["pass_name"] = pass_name
+                    attempted.append(attempted_item)
     return (findings, all_excerpts, Usage(), 0.0)
 
 ReviewerSpawnFn = Callable[[str, str], str]
@@ -149,24 +163,39 @@ def run_outlet_c(
     backend: "object | None" = None,
     advisory_runners: "list | None" = None,
     engine: str = "auto",
+    context_rows: "list | None" = None,
 ) -> Verdict:
-    """Run Outlet C through StateMachine with reviewer excerpt passthrough."""
+    """Run Outlet C through StateMachine with reviewer excerpt passthrough.
+
+    `context_rows` are the gathered context-source facts (graph triage,
+    removed-symbol readers) the main-line falsifier also sees; the
+    fallback falsifier built here must not be the one production judge
+    that reviews blind."""
     if registry is None:
         registry = {}
     if advisory_runners is None:
         advisory_runners = []
     if falsifier is None:
         from .factories import build_falsifier
-        falsifier = build_falsifier(engine, backend=backend)
+        falsifier = build_falsifier(
+            engine, backend=backend, diff_text=resolved_review.git_diff,
+            context_rows=context_rows,
+        )
 
     def _l1_provider() -> tuple[list[StateFinding], list[dict], Usage, float]:
         diff = resolved_review.git_diff or ""
         threshold_kb = _read_chunk_threshold_kb()
         diff_kb = len(diff.encode("utf-8")) / 1024
 
+        attempted: list[dict] = []
+        _l1_provider.attempted_excerpts = attempted
+
         if threshold_kb > 0 and diff_kb <= threshold_kb:
             # Under threshold: single chunk (original behavior).
-            return _run_chunk(diff, spawn_fn, _PASS_NAMES)
+            result = _run_chunk(
+                diff, spawn_fn, _PASS_NAMES, attempted=attempted,
+            )
+            return result
 
         # Over threshold: chunk by file.
         chunks = _split_diff_by_file(diff)
@@ -177,7 +206,10 @@ def run_outlet_c(
                 "chunking parse produced 0 chunks from %.1fKB diff, "
                 "falling through to un-chunked path", diff_kb,
             )
-            return _run_chunk(diff, spawn_fn, _PASS_NAMES)
+            result = _run_chunk(
+                diff, spawn_fn, _PASS_NAMES, attempted=attempted,
+            )
+            return result
 
         all_findings: list[StateFinding] = []
         all_excerpts: list[dict] = []
@@ -185,7 +217,7 @@ def run_outlet_c(
         total_duration = 0.0
         for chunk in chunks:
             c_findings, c_excerpts, c_usage, c_dur = _run_chunk(
-                chunk, spawn_fn, _PASS_NAMES,
+                chunk, spawn_fn, _PASS_NAMES, attempted=attempted,
             )
             all_findings.extend(c_findings)
             all_excerpts.extend(c_excerpts)

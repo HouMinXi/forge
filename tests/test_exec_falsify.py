@@ -378,6 +378,7 @@ class TestExecFalsifyMachineWiring:
         from code_forge.baseline import ResolvedReview
         from code_forge.falsify import StubFalsifier
         from code_forge.machine import StateMachine
+        from code_forge.registry import ToolConfig
 
         def mock_l0(registry, files):
             return (findings, [])
@@ -399,7 +400,16 @@ class TestExecFalsifyMachineWiring:
             source_hash="src-hash",
             baseline_spec_repr="empty",
             cwd=tmp_path,
-            registry={},
+            registry={
+                "mock_l0": ToolConfig(
+                    name="mock_l0",
+                    command="true",
+                    args=[],
+                    output_format="ruff",
+                    file_patterns=["*.py"],
+                )
+            },
+            coverage_l1_active=False,
             l0_runner=mock_l0,
             exec_falsify=exec_falsify,
             exec_falsify_timeout=timeout,

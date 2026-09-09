@@ -798,17 +798,39 @@ def test_findings_attributed_label(
     assert "main.py" not in sibling_section, "cross-contamination: primary diff in sibling"
 
 
-def test_run_cross_repo_stub_primary_pass(
+def test_run_cross_repo_real_primary_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """run_cross_repo() with stub engine on two real repos returns PASS."""
+    """run_cross_repo() with real L1 evidence on two real repos returns PASS."""
     from code_forge.cross_repo import run_cross_repo
+    from code_forge.falsify import StubFalsifier
+    from code_forge.llm_invoke import Usage
     from code_forge.state import Mode, Verdict
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
         tmp_path, monkeypatch, "sibling",
         filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+    from code_forge.receipt_scope import repository_scope
+    _, manifest = repository_scope({
+        'primary': get_sibling_diff(primary, 'main..feature'),
+        'sibling': get_sibling_diff(sibling, 'main..feature'),
+    })
+    excerpts = [
+        {'pass_name': p, 'file': '%s@%s/%s' % (label, manifest[label], filename),
+         'start_line': 1, 'end_line': 1, 'content': content, 'rationale': 'witnessed'}
+        for p in ('qodo', 'expert', 'adversarial')
+        for label, filename, content in (
+            ('primary', 'main.py', 'x = 2'), ('sibling', 'lib.py', 'y = 2'))
+    ]
+    monkeypatch.setattr(
+        "code_forge.factories.build_l1_provider",
+        lambda *a, **kw: (lambda: ([], excerpts, Usage(), 0.0)),
+    )
+    monkeypatch.setattr(
+        "code_forge.factories.build_falsifier",
+        lambda *a, **kw: StubFalsifier(),
     )
     result = run_cross_repo(
         primary_path=primary,
@@ -821,7 +843,7 @@ def test_run_cross_repo_stub_primary_pass(
         }],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
-        engine_choice="stub",
+        engine_choice="real",
         backend=None,
         max_rounds=3,
         max_fix_attempts=1,
@@ -973,16 +995,37 @@ def test_receipt_naming_primary(
 
     Verifies both label prefixes because run_cross_repo copies ALL per-repo
     receipts into the primary's .code-forge/ directory.  Runs with real
-    StateMachine + stub engine; the stub produces receipts because
-    write_receipts runs at the end of each round regardless of findings.
+    StateMachine with mocked L1 evidence and StubFalsifier.
     """
     from code_forge.cross_repo import run_cross_repo
+    from code_forge.falsify import StubFalsifier
+    from code_forge.llm_invoke import Usage
     from code_forge.state import Mode, Verdict
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
         tmp_path, monkeypatch, "sibling",
         filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+    from code_forge.receipt_scope import repository_scope
+    _, manifest = repository_scope({
+        'primary': get_sibling_diff(primary, 'main..feature'),
+        'sibling': get_sibling_diff(sibling, 'main..feature'),
+    })
+    excerpts = [
+        {'pass_name': p, 'file': '%s@%s/%s' % (label, manifest[label], filename),
+         'start_line': 1, 'end_line': 1, 'content': content, 'rationale': 'witnessed'}
+        for p in ('qodo', 'expert', 'adversarial')
+        for label, filename, content in (
+            ('primary', 'main.py', 'x = 2'), ('sibling', 'lib.py', 'y = 2'))
+    ]
+    monkeypatch.setattr(
+        "code_forge.factories.build_l1_provider",
+        lambda *a, **kw: (lambda: ([], excerpts, Usage(), 0.0)),
+    )
+    monkeypatch.setattr(
+        "code_forge.factories.build_falsifier",
+        lambda *a, **kw: StubFalsifier(),
     )
     result = run_cross_repo(
         primary_path=primary,
@@ -995,7 +1038,7 @@ def test_receipt_naming_primary(
         }],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
-        engine_choice="stub",
+        engine_choice="real",
         backend=None,
         max_rounds=3,
         max_fix_attempts=1,
@@ -1066,6 +1109,7 @@ def test_primary_receives_joint_diff_as_l1_context(
     spy at call time, so the closure captures it.
     """
     from code_forge.cross_repo import run_cross_repo
+    from code_forge.falsify import StubFalsifier
     from code_forge.llm_invoke import Usage
     from code_forge.state import Mode, Verdict
 
@@ -1075,15 +1119,31 @@ def test_primary_receives_joint_diff_as_l1_context(
         filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
     )
 
+    from code_forge.receipt_scope import repository_scope
+    _, manifest = repository_scope({
+        'primary': get_sibling_diff(primary, 'main..feature'),
+        'sibling': get_sibling_diff(sibling, 'main..feature'),
+    })
+    excerpts = [
+        {'pass_name': p, 'file': '%s@%s/%s' % (label, manifest[label], filename),
+         'start_line': 1, 'end_line': 1, 'content': content, 'rationale': 'witnessed'}
+        for p in ('qodo', 'expert', 'adversarial')
+        for label, filename, content in (
+            ('primary', 'main.py', 'x = 2'), ('sibling', 'lib.py', 'y = 2'))
+    ]
     spy_calls = []
 
     def _spy_build_l1_provider(engine_choice_arg, resolved, **kwargs):
         spy_calls.append(resolved.git_diff)
-        return lambda: ([], [], Usage(), 0.0)
+        return lambda: ([], excerpts, Usage(), 0.0)
 
     monkeypatch.setattr(
         "code_forge.factories.build_l1_provider",
         _spy_build_l1_provider,
+    )
+    monkeypatch.setattr(
+        "code_forge.factories.build_falsifier",
+        lambda *a, **kw: StubFalsifier(),
     )
 
     result = run_cross_repo(
@@ -1097,7 +1157,7 @@ def test_primary_receives_joint_diff_as_l1_context(
         }],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
-        engine_choice="stub",
+        engine_choice="real",
         backend=None,
         max_rounds=3,
         max_fix_attempts=1,
@@ -1239,3 +1299,219 @@ def test_empty_per_repo_findings_graceful() -> None:
     assert "=== [primary] ===" in captured
     assert "=== [sibling] ===" in captured
     assert len(captured) == 2
+
+
+def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime primary/sibling coverage matrix: primary+real L1=True, sibling=False, stub=False.
+
+    Ensures that StateMachine receives:
+      - primary + real L1: coverage_l1_active=True
+      - sibling no-op L1: coverage_l1_active=False
+      - explicit stub primary: coverage_l1_active=False
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.llm_invoke import Usage
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+
+    captured_kwargs: dict[str, dict] = {}
+
+    class _MockStateMachine:
+        def __init__(self, *args, **kwargs):
+            label = str(kwargs.get("baseline_spec_repr"))
+            captured_kwargs[label] = kwargs
+            self._state = type("State", (), {
+                "verdict": Verdict.PASS,
+                "findings": [],
+                "round_history": [],
+                "infra_errors": [],
+            })()
+
+        def run(self):
+            return Verdict.PASS
+
+    monkeypatch.setattr("code_forge.machine.StateMachine", _MockStateMachine)
+    monkeypatch.setattr(
+        "code_forge.factories.build_l1_provider",
+        lambda *a, **kw: (lambda: ([], [], Usage(), 0.0)),
+    )
+    monkeypatch.setattr(
+        "code_forge.factories.build_falsifier",
+        lambda *a, **kw: None,
+    )
+
+    # 1. Real L1 engine choice: primary=True, sibling=False
+    captured_kwargs.clear()
+    run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="real",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert captured_kwargs["primary"]["coverage_l1_active"] is True, (
+        "primary + real L1 must have coverage_l1_active=True"
+    )
+    assert captured_kwargs["sibling"]["coverage_l1_active"] is False, (
+        "sibling no-op must have coverage_l1_active=False"
+    )
+
+    # 2. Stub engine choice: primary=False, sibling=False
+    captured_kwargs.clear()
+    run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    assert captured_kwargs["primary"]["coverage_l1_active"] is False, (
+        "explicit stub primary must have coverage_l1_active=False"
+    )
+    assert captured_kwargs["sibling"]["coverage_l1_active"] is False, (
+        "sibling stub must have coverage_l1_active=False"
+    )
+
+
+def test_cross_repo_real_l1_primary_retains_receipt_enforcement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Primary with real L1 and empty evidence must fail receipt acceptance; sibling does not.
+
+    A real primary provider must retain receipt enforcement even with a stub
+    falsifier (MCP sampling shape). Empty evidence from a real L1 must fail
+    with RECEIPT_INVALID (unwitnessed hunk), whereas sibling with no-op L1
+    (coverage_l1_active=False) is exempted from hunk witnessing.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.llm_invoke import Usage
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(tmp_path, monkeypatch, "primary")
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+    )
+
+    # Mock build_l1_provider on primary to return an active provider that returns empty evidence
+    monkeypatch.setattr(
+        "code_forge.factories.build_l1_provider",
+        lambda *a, **kw: (lambda: ([], [], Usage(), 0.0)),
+    )
+    # Stub falsifier (MCP sampling shape)
+    monkeypatch.setattr(
+        "code_forge.factories.build_falsifier",
+        lambda *a, **kw: None,
+    )
+
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="real",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+    )
+    # Primary fails due to receipt acceptance unwitnessed hunk
+    assert result == Verdict.FAIL
+
+
+def test_cross_repo_unreviewed_file_without_l0_or_l1_fails_with_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without active L1 or matching L0, unreviewed files must fail with COVERAGE diagnostic.
+
+    Demonstrates that unreviewed files cannot falsely pass when L1 is inactive.
+    With coverage_exempt_patterns=['*'], this falsely passes.
+    On the corrected path, run_cross_repo returns FAIL and reports a COVERAGE diagnostic.
+    """
+    from code_forge.cross_repo import run_cross_repo
+    from code_forge.machine import StateMachine
+    from code_forge.state import Mode, Verdict
+
+    primary = _make_repo(
+        tmp_path, monkeypatch, "primary",
+        filename="unreviewed.py", content_v1="a = 1\n", content_v2="a = 2\n",
+    )
+    sibling = _make_repo(
+        tmp_path, monkeypatch, "sibling",
+        filename="lib.py", content_v1="b = 1\n", content_v2="b = 2\n",
+    )
+
+    captured_sm = {}
+    orig_init = StateMachine.__init__
+
+    def _spy_init(self, *args, **kwargs):
+        orig_init(self, *args, **kwargs)
+        captured_sm[kwargs.get("baseline_spec_repr")] = self
+
+    monkeypatch.setattr(StateMachine, "__init__", _spy_init)
+
+    messages = []
+    result = run_cross_repo(
+        primary_path=primary,
+        primary_ref="main..feature",
+        primary_label="primary",
+        siblings=[{
+            "repo": str(sibling),
+            "ref": "main..feature",
+            "label": "sibling",
+        }],
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode=Mode.LOCAL,
+        engine_choice="stub",
+        backend=None,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
+        output_fn=messages.append,
+    )
+    assert result == Verdict.FAIL
+    assert any("primary returned PENDING (HOLD)" in m for m in messages)
+    primary_sm = captured_sm["primary"]
+    coverage_findings = [
+        f for f in primary_sm._state.findings if f.source == "COVERAGE"
+    ]
+    assert len(coverage_findings) > 0, (
+        "Expected COVERAGE finding on unreviewed primary file"
+    )
+    assert any(
+        "no review layer examined this file" in f.description
+        for f in coverage_findings
+    )

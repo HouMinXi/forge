@@ -117,3 +117,127 @@ class TestReviewJsonContract:
         """
         assert "start_line and end_line are post-image line numbers" in REVIEW_JSON_CONTRACT
         assert "the @@ header's old-side start is not a source line" in REVIEW_JSON_CONTRACT
+
+
+def _rj_exc(**kw):
+    base = {"file": "a.py", "start_line": 1, "end_line": 2,
+            "content": "x = 1\ny = 2"}
+    base.update(kw)
+    return base
+
+
+def _rj_data(excerpts):
+    return {"findings": [], "code_excerpts": excerpts}
+
+
+class TestProducerEvidenceShapeRed:
+    """Task 1 RED: producer-side excerpt shape (validate_reviewer_json).
+
+    Contract: design "Contracts / Excerpts" + plan Task 1. The model's
+    JSON, file names and coordinates are untrusted, so the producer must
+    enforce exact range/content parity, positive ordered integer
+    coordinates (bool is not an integer), typed fields and non-blank
+    content before any receipt is written. Each test below fails against
+    the pinned base, which checks only presence and int-ness of the two
+    coordinates.
+    """
+
+    def test_underlength_rejected(self):
+        data = _rj_data([_rj_exc(end_line=3)])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_overflow_rejected(self):
+        data = _rj_data([_rj_exc(end_line=1)])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_bool_start_line_rejected(self):
+        data = _rj_data([_rj_exc(start_line=True)])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_bool_end_line_rejected(self):
+        data = _rj_data([_rj_exc(end_line=True)])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_zero_start_line_rejected(self):
+        data = _rj_data([_rj_exc(start_line=0, end_line=0,
+                                 content="x = 1")])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_negative_start_line_rejected(self):
+        data = _rj_data([_rj_exc(start_line=-1, end_line=1,
+                                 content="l-1\nl0\nl1")])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_content_int_rejected(self):
+        data = _rj_data([_rj_exc(content=5)])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_content_none_rejected(self):
+        data = _rj_data([_rj_exc(content=None)])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_content_mixed_list_rejected(self):
+        """A list containing null/numbers/objects fails; the writer must
+        not stringify it into fake evidence."""
+        data = _rj_data([_rj_exc(content=["x = 1", None, 5])])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_empty_content_rejected(self):
+        data = _rj_data([_rj_exc(content="")])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_whitespace_only_content_rejected(self):
+        data = _rj_data([_rj_exc(content="   \n  ")])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+    def test_non_string_file_rejected(self):
+        data = _rj_data([_rj_exc(file=5)])
+        with pytest.raises(ValueError):
+            validate_reviewer_json(data)
+
+
+class TestProducerEvidenceShapePins:
+    """Shapes the producer already handles; pinned so the shared-helper
+    refactor keeps accepting or rejecting them as today."""
+
+    def test_float_start_line_rejected(self):
+        data = _rj_data([_rj_exc(start_line=1.5)])
+        with pytest.raises(ValueError, match="must be int"):
+            validate_reviewer_json(data)
+
+    def test_string_start_line_rejected(self):
+        data = _rj_data([_rj_exc(start_line="1")])
+        with pytest.raises(ValueError, match="must be int"):
+            validate_reviewer_json(data)
+
+    def test_null_start_line_rejected(self):
+        data = _rj_data([_rj_exc(start_line=None)])
+        with pytest.raises(ValueError, match="must be int"):
+            validate_reviewer_json(data)
+
+    def test_reversed_range_rejected(self):
+        data = _rj_data([_rj_exc(start_line=3, end_line=2)])
+        with pytest.raises(ValueError, match="start_line 3 > end_line 2"):
+            validate_reviewer_json(data)
+
+    def test_non_dict_excerpt_rejected(self):
+        data = _rj_data(["not a dict"])
+        with pytest.raises(ValueError, match="is not a dict"):
+            validate_reviewer_json(data)
+
+    def test_all_string_line_list_accepted(self):
+        """The writer joins an all-string list with newlines, so the
+        producer keeps accepting that shape."""
+        data = _rj_data([_rj_exc(content=["x = 1", "y = 2"])])
+        assert validate_reviewer_json(data) == data

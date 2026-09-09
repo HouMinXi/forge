@@ -1,0 +1,651 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 5,
+  "mode": "LOCAL",
+  "source_hash": "16be641282b739cdb862145f777348fd98e79687ec8071443a783646190a19f7",
+  "findings": [
+    {
+      "id": "e2e-layer1",
+      "fingerprint": "e2e-l1:82b7d7f6297ff236",
+      "source": "E2E_CHECK",
+      "disposition": "DISMISSED",
+      "file": "",
+      "line_range": [],
+      "description": "cross-component change spans groups {scripts, src}; signature changed in {scripts/run_falsify_calibration.py, src/code_forge/cli.py, src/code_forge/context_sources.py, src/code_forge/cross_repo.py, src/code_forge/eval/runner.py, src/code_forge/factories.py, src/code_forge/falsify_real.py, src/code_forge/llm_invoke.py, src/code_forge/outlet_c.py}; is there an e2e test for the joined path?",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": null
+    },
+    {
+      "id": "MUTATION_SKIPPED",
+      "fingerprint": "mutation-unavailable",
+      "source": "MUTANT",
+      "disposition": "DISMISSED",
+      "file": "",
+      "line_range": [],
+      "description": "mutmut not installed (soft dependency)",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": null
+    },
+    {
+      "id": "l1-qodo-572de8b446369937",
+      "fingerprint": "572de8b446369937",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        48,
+        48
+      ],
+      "description": "[qodo] FactRow is a frozen dataclass but contains mutable dict fields (snippets, enclosing). While the code comments state they're never mutated after construction, frozen dataclasses with mutable fields break immutability guarantees and make instances unhashable. Consider using MappingProxyType or making the class non-frozen.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-5859725e41c3420b",
+      "fingerprint": "5859725e41c3420b",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        48,
+        48
+      ],
+      "description": "[expert] Mutable dict fields on frozen FactRow break its hashability contract. FactRow is decorated @dataclass(frozen=True), which auto-generates __hash__. The new snippets and enclosing fields are plain dict (not Mapping or MappingProxyType), so any attempt to hash a FactRow instance\u2014including putting it in a set or using it as a dict key\u2014will raise TypeError: unhashable type: 'dict'. Before this change all FactRow fields were str or Optional[int], so the class was safely hashable. Either annotate the fields as Mapping[str, str] (with an explicit cast or MappingProxyType at construction) or add eq=False to the field() calls if they should not participate in __eq__/__hash__.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-af12b0f6894fd738",
+      "fingerprint": "af12b0f6894fd738",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        322,
+        322
+      ],
+      "description": "[expert] _self_reads and _readers silently swallow OSError/SubprocessError and return an empty list. The module docstring (line 13-14) states 'a provider that raises is recorded as an error, not swallowed into an empty table', yet these helper methods do exactly that: a missing git binary or permission error produces zero readers with no error signal. The gather() function has an exception recorder that would surface such errors if they propagated. Consider letting these exceptions rise (or logging them into a side-channel) so the caller can distinguish 'no readers found' from 'git grep unavailable'.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-98f985bcaf6517aa",
+      "fingerprint": "98f985bcaf6517aa",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        461,
+        461
+      ],
+      "description": "[adversarial] The else branch in `_dropped_parameters_by_file` unconditionally strips the first character via `line[1:]`, relying on the assumption that every non-`-`/non-`+` line that reaches the else branch starts with a space (i.e. is a context line). While all other prefix types (`---`, `+++`, `@@`, `diff`, `index`) are filtered earlier, any future addition of a filter or a malformed diff with a bare line would have its first character silently stripped. The idiomatic and defensive pattern is `line[1:] if line.startswith(' ') else line` (or equivalently `line[1:] if line.startswith(' ') else line`). This avoids a silent data-corruption class of bug if the early filters change.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-qodo-52c68a90d3dffaa2",
+      "fingerprint": "52c68a90d3dffaa2",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        712,
+        712
+      ],
+      "description": "[qodo] _keep_state raises ValueError on path traversal; if entry_name from corpus.yaml escapes root, the ValueError propagates out of the try/finally in replay_entry, masking whatever exception _run_single raised and skipping shutil.rmtree. The guard is correct, but raising inside finally risks both losing the original error and leaking the temp dir. A logged early-return would be safer.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-qodo-b93e6dbf56b2afad",
+      "fingerprint": "b93e6dbf56b2afad",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "scripts/run_falsify_calibration.py",
+      "line_range": [
+        107,
+        107
+      ],
+      "description": "[qodo] The finally block runs `git checkout -q -- .` with check=True. If the checkout fails (unlikely but possible: dirty worktree, FS error), the CalledProcessError propagates and masks any result or exception from the try block. A bare except that logs the checkout failure and re-raises the original result would preserve both pieces of information.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-qodo-07ad909fd6f58fb0",
+      "fingerprint": "07ad909fd6f58fb0",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "scripts/run_falsify_calibration.py",
+      "line_range": [
+        172,
+        172
+      ],
+      "description": "[qodo] _load_items validates 'expected' but not required keys 'id', 'finding', 'entry', 'finding.file', 'finding.line_range', or 'finding.description'. A malformed expected.json raises KeyError mid-loop rather than a clear validation error at load time. Adding explicit key checks in _load_items would fail fast with an actionable message.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-b0f63184c4542c5a",
+      "fingerprint": "b0f63184c4542c5a",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "scripts/run_falsify_calibration.py",
+      "line_range": [
+        78,
+        78
+      ],
+      "description": "[expert] StubFalsifier's backing temp file is unlinked immediately after construction (line 78). If StubFalsifier lazily reads from the file path on each falsify() call rather than caching the contents in memory, every subsequent judge.falsify(sf) in the main loop will read from a deleted file and raise FileNotFoundError or silently fall back to a default. The try/finally ensures cleanup even if the constructor raises, which is good, but the real engine doesn't have this problem (it passes config in-memory). Verify that StubFalsifier reads the file once at __init__ time; if it doesn't, move the unlink to a destructor or use an atexit handler.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-caca7dbeb421517b",
+      "fingerprint": "caca7dbeb421517b",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "scripts/run_falsify_calibration.py",
+      "line_range": [
+        208,
+        208
+      ],
+      "description": "[expert] If all items fail as INFRA (every LLMInvokeError increments infra, agree stays 0), total > 0 and the percentage computation on line 208 is safe. However, agree / total on line 211 is integer division in Python 3 (both are int), always yielding 0 or 1, never a fraction. The result is correct only because 0/total < 0.9 and total/total >= 0.9, but the float division on line 208 (100.0 * agree / total) and the int division on line 211 use different semantics. Consider using agree / total >= args.min_agree with explicit float or making agree and total floats for consistency with the 0.9 threshold.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-1fbf2dfb12be9448",
+      "fingerprint": "1fbf2dfb12be9448",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/llm_invoke.py",
+      "line_range": [
+        1796,
+        1796
+      ],
+      "description": "[expert] http.client.HTTPException is already a subclass of OSError (via socket.error), so adding it to the except tuple is redundant: OSError already catches it. The comment and the explicit name do serve as documentation (making it obvious that IncompleteRead is caught), but the code does not change runtime behavior. If you want the documentation benefit without redundancy, use a comment in the existing OSError handler.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-456c184877fa45d5",
+      "fingerprint": "456c184877fa45d5",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        711,
+        711
+      ],
+      "description": "[expert] In _keep_state, dst = (root / entry_name / 'state.json').resolve() -- if entry_name contains a symlink component, resolve() follows it. The root not in dst.parents check catches escapes, but a symlink that stays within root would still be followed. This is fine for the eval use case (the operator controls corpus.yaml), but the comment 'this is the write side' could be tightened to note that symlinks are followed.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    }
+  ],
+  "dispositions": {
+    "e2e-layer1": "DISMISSED",
+    "MUTATION_SKIPPED": "DISMISSED",
+    "l1-qodo-572de8b446369937": "UNCERTAIN",
+    "l1-expert-5859725e41c3420b": "CONFIRMED",
+    "l1-expert-af12b0f6894fd738": "UNCERTAIN",
+    "l1-adversarial-98f985bcaf6517aa": "DISMISSED",
+    "l1-qodo-52c68a90d3dffaa2": "DISMISSED",
+    "l1-qodo-b93e6dbf56b2afad": "CONFIRMED",
+    "l1-qodo-07ad909fd6f58fb0": "UNCERTAIN",
+    "l1-expert-b0f63184c4542c5a": "UNCERTAIN",
+    "l1-expert-caca7dbeb421517b": "DISMISSED",
+    "l1-expert-1fbf2dfb12be9448": "DISMISSED",
+    "l1-expert-456c184877fa45d5": "DISMISSED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:main",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "e683fb0961927fef",
+        "9217e129b342dd70",
+        "58dcbeeee8d5e9fd",
+        "52c68a90d3dffaa2",
+        "8785ac7e9067d9be",
+        "67fde91cc218078f",
+        "1fbf2dfb12be9448",
+        "fc046e680bf22e22"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "e683fb0961927fef": "UNCERTAIN",
+        "9217e129b342dd70": "CONFIRMED",
+        "58dcbeeee8d5e9fd": "DISMISSED",
+        "52c68a90d3dffaa2": "DISMISSED",
+        "8785ac7e9067d9be": "UNCERTAIN",
+        "67fde91cc218078f": "DISMISSED",
+        "1fbf2dfb12be9448": "UNCERTAIN",
+        "fc046e680bf22e22": "CONFIRMED"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    },
+    {
+      "round": 1,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "04bf32b39d9d29d9",
+        "5ed4448e3332400f",
+        "14b313d8c6907828",
+        "a09884aa776b95bb",
+        "52c68a90d3dffaa2",
+        "f6fb4537f5b87b85",
+        "64f3bfa7a7605a77",
+        "9492742600497a1f",
+        "23d61f30551955b3",
+        "e542838ff11c8ac6"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "04bf32b39d9d29d9": "CONFIRMED",
+        "5ed4448e3332400f": "UNCERTAIN",
+        "14b313d8c6907828": "CONFIRMED",
+        "a09884aa776b95bb": "UNCERTAIN",
+        "52c68a90d3dffaa2": "DISMISSED",
+        "f6fb4537f5b87b85": "DISMISSED",
+        "64f3bfa7a7605a77": "UNCERTAIN",
+        "9492742600497a1f": "DISMISSED",
+        "23d61f30551955b3": "CONFIRMED",
+        "e542838ff11c8ac6": "UNCERTAIN"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    },
+    {
+      "round": 2,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "04bf32b39d9d29d9",
+        "822fdfeeabbd3db1",
+        "74162f13c34b6bd0",
+        "5859725e41c3420b",
+        "e9bb23b8d345b936",
+        "20c419f2733ff031",
+        "af811a3a7eafad16",
+        "fc046e680bf22e22",
+        "421373c8c289434c",
+        "10837c073d21234a",
+        "8ff2c83bfa488556",
+        "31ef8db5b63b983f"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "04bf32b39d9d29d9": "DISMISSED",
+        "822fdfeeabbd3db1": "UNCERTAIN",
+        "74162f13c34b6bd0": "CONFIRMED",
+        "5859725e41c3420b": "CONFIRMED",
+        "e9bb23b8d345b936": "DISMISSED",
+        "20c419f2733ff031": "CONFIRMED",
+        "af811a3a7eafad16": "UNCERTAIN",
+        "fc046e680bf22e22": "DISMISSED",
+        "421373c8c289434c": "DISMISSED",
+        "10837c073d21234a": "UNCERTAIN",
+        "8ff2c83bfa488556": "DISMISSED",
+        "31ef8db5b63b983f": "CONFIRMED"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    },
+    {
+      "round": 3,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "da2518e9fec21deb",
+        "5859725e41c3420b",
+        "e9bb23b8d345b936",
+        "82a754592367f3d8",
+        "0bc45683026dcf3d",
+        "c256ab9def210a8b",
+        "64f3bfa7a7605a77",
+        "23d61f30551955b3",
+        "8785ac7e9067d9be"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "da2518e9fec21deb": "DISMISSED",
+        "5859725e41c3420b": "CONFIRMED",
+        "e9bb23b8d345b936": "DISMISSED",
+        "82a754592367f3d8": "CONFIRMED",
+        "0bc45683026dcf3d": "UNCERTAIN",
+        "c256ab9def210a8b": "DISMISSED",
+        "64f3bfa7a7605a77": "UNCERTAIN",
+        "23d61f30551955b3": "CONFIRMED",
+        "8785ac7e9067d9be": "UNCERTAIN"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    },
+    {
+      "round": 4,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "invoke-fail-qodo",
+        "b35e7e97e5a87dc5",
+        "456c184877fa45d5",
+        "a039989a1ec61953",
+        "f2182c6a801cbcf3"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "invoke-fail-qodo": "CONFIRMED",
+        "b35e7e97e5a87dc5": "CONFIRMED",
+        "456c184877fa45d5": "DISMISSED",
+        "a039989a1ec61953": "DISMISSED",
+        "f2182c6a801cbcf3": "DISMISSED"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    },
+    {
+      "round": 5,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "572de8b446369937",
+        "5859725e41c3420b",
+        "af12b0f6894fd738",
+        "98f985bcaf6517aa",
+        "52c68a90d3dffaa2",
+        "b93e6dbf56b2afad",
+        "07ad909fd6f58fb0",
+        "b0f63184c4542c5a",
+        "caca7dbeb421517b",
+        "1fbf2dfb12be9448",
+        "456c184877fa45d5"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "572de8b446369937": "UNCERTAIN",
+        "5859725e41c3420b": "CONFIRMED",
+        "af12b0f6894fd738": "UNCERTAIN",
+        "98f985bcaf6517aa": "DISMISSED",
+        "52c68a90d3dffaa2": "DISMISSED",
+        "b93e6dbf56b2afad": "CONFIRMED",
+        "07ad909fd6f58fb0": "UNCERTAIN",
+        "b0f63184c4542c5a": "UNCERTAIN",
+        "caca7dbeb421517b": "DISMISSED",
+        "1fbf2dfb12be9448": "DISMISSED",
+        "456c184877fa45d5": "DISMISSED"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    }
+  ],
+  "infra_errors": [
+    "mutmut not found on PATH",
+    "mutmut not found on PATH",
+    "mutmut not found on PATH",
+    "mutmut not found on PATH",
+    "round 4: pass(es) did not complete: {'qodo': 'error'}",
+    "mutmut not found on PATH",
+    "mutmut not found on PATH"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 146973,
+    "total_output_tokens": 307251,
+    "total_cached_tokens": 754560,
+    "total_duration_s": 4107.4000599219,
+    "passes": 18,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 48699,
+        "output": 14144,
+        "cached": 2240,
+        "duration_s": 179.104
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 48699,
+        "output": 14144,
+        "cached": 2240,
+        "duration_s": 179.104
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 48699,
+        "output": 14144,
+        "cached": 2240,
+        "duration_s": 179.104
+      },
+      {
+        "pass": 1,
+        "cycle": 1,
+        "input": 59,
+        "output": 22822,
+        "cached": 50880,
+        "duration_s": 245.24
+      },
+      {
+        "pass": 2,
+        "cycle": 1,
+        "input": 59,
+        "output": 22822,
+        "cached": 50880,
+        "duration_s": 245.24
+      },
+      {
+        "pass": 3,
+        "cycle": 1,
+        "input": 59,
+        "output": 22822,
+        "cached": 50880,
+        "duration_s": 245.24
+      },
+      {
+        "pass": 1,
+        "cycle": 2,
+        "input": 59,
+        "output": 17528,
+        "cached": 50880,
+        "duration_s": 255.018
+      },
+      {
+        "pass": 2,
+        "cycle": 2,
+        "input": 59,
+        "output": 17528,
+        "cached": 50880,
+        "duration_s": 255.018
+      },
+      {
+        "pass": 3,
+        "cycle": 2,
+        "input": 59,
+        "output": 17528,
+        "cached": 50880,
+        "duration_s": 255.018
+      },
+      {
+        "pass": 1,
+        "cycle": 3,
+        "input": 59,
+        "output": 17540,
+        "cached": 50880,
+        "duration_s": 187.652
+      },
+      {
+        "pass": 2,
+        "cycle": 3,
+        "input": 59,
+        "output": 17540,
+        "cached": 50880,
+        "duration_s": 187.652
+      },
+      {
+        "pass": 3,
+        "cycle": 3,
+        "input": 59,
+        "output": 17540,
+        "cached": 50880,
+        "duration_s": 187.652
+      },
+      {
+        "pass": 1,
+        "cycle": 4,
+        "input": 56,
+        "output": 13639,
+        "cached": 45760,
+        "duration_s": 333.18
+      },
+      {
+        "pass": 2,
+        "cycle": 4,
+        "input": 56,
+        "output": 13639,
+        "cached": 45760,
+        "duration_s": 333.18
+      },
+      {
+        "pass": 3,
+        "cycle": 4,
+        "input": 56,
+        "output": 13639,
+        "cached": 45760,
+        "duration_s": 333.18
+      },
+      {
+        "pass": 1,
+        "cycle": 5,
+        "input": 59,
+        "output": 16742,
+        "cached": 50880,
+        "duration_s": 168.94
+      },
+      {
+        "pass": 2,
+        "cycle": 5,
+        "input": 59,
+        "output": 16742,
+        "cached": 50880,
+        "duration_s": 168.94
+      },
+      {
+        "pass": 3,
+        "cycle": 5,
+        "input": 59,
+        "output": 16742,
+        "cached": 50880,
+        "duration_s": 168.94
+      }
+    ]
+  },
+  "env_manifest": {
+    "tier": "observed",
+    "runtime": "python 3.14.6",
+    "dependencies": {},
+    "raw_summary": "observed: python 3.14.6",
+    "runtime_name": "python",
+    "runtime_version": "3.14.6",
+    "runtime_bin": "python3"
+  },
+  "exec_evidence": null
+}

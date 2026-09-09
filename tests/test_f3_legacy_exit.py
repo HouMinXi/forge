@@ -15,6 +15,7 @@ from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
 from code_forge.machine import StateMachine
+from code_forge.registry import ToolConfig
 from code_forge.state import Mode, StateFinding, Verdict
 
 
@@ -78,8 +79,17 @@ class TestP1PreExistingToAdvisory:
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,
-            registry={},
+            registry={
+                "mock_l0": ToolConfig(
+                    name="mock_l0",
+                    command="true",
+                    args=[],
+                    output_format="ruff",
+                    file_patterns=["*.py"],
+                )
+            },
             l0_runner=mock_l0,
+            coverage_l1_active=False,
         )
         verdict = machine.run()
 
@@ -120,6 +130,7 @@ class TestP1PreExistingToAdvisory:
             cwd=tmp_path,
             registry={},
             l0_runner=mock_l0,
+            coverage_l1_active=False,
         )
         verdict = machine.run()
 
@@ -147,6 +158,7 @@ class TestP1PreExistingToAdvisory:
             cwd=tmp_path,
             registry={},
             l0_runner=mock_l0,
+            coverage_l1_active=False,
         )
         verdict = machine.run()
 
@@ -247,6 +259,7 @@ class TestP5AdvisoryDedup:
             cwd=tmp_path,
             registry={},
             l0_runner=mock_l0,
+            coverage_l1_active=False,
         )
         machine.run()
         assert len(machine._advisories) == 1
@@ -276,6 +289,7 @@ class TestP7AbsolutePathClassifiedNew:
             cwd=tmp_path,
             registry={},
             l0_runner=mock_l0,
+            coverage_l1_active=False,
         )
         verdict = machine.run()
         # Absolute path on changed line -> NOT advisory, drives verdict.
@@ -306,6 +320,7 @@ class TestR7CiModeStillFails:
             cwd=tmp_path,
             registry={},
             l0_runner=mock_l0,
+            coverage_l1_active=False,
         )
         verdict = machine.run()
         assert verdict == Verdict.FAIL

@@ -565,3 +565,34 @@ class TestStderrCapture:
             [sys.executable, str(script)], str(tmp_path), dict(os.environ), 60
         )
         assert len(stderr) <= _STDERR_TAIL_BYTES
+
+
+# ---- review R4 (2d6d58f): the write-side guard raised ValueError past
+# a finally that only caught OSError ----------------------------------------
+
+def test_keep_state_escape_does_not_mask_the_original_exception(tmp_path, monkeypatch):
+    """The path-traversal guard in _keep_state raises ValueError. The
+    caller's finally must treat that like a failed copy -- report and
+    continue to rmtree -- not let it replace whatever exception brought
+    us into the finally."""
+    from code_forge.eval import runner as r
+    calls = []
+    monkeypatch.setattr(r.shutil, "rmtree", lambda *a, **k: calls.append("rmtree"))
+    monkeypatch.setattr(r, "_keep_state",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("escapes")))
+    # exercise the same try/except shape the runner uses
+    import io, sys
+    err = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", err)
+    try:
+        try:
+            raise RuntimeError("original")
+        finally:
+            r._keep_state_guarded("tmp", "keep", "../x")
+            r.shutil.rmtree("tmp", ignore_errors=True)
+    except RuntimeError as exc:
+        assert str(exc) == "original"
+    else:
+        raise AssertionError("original exception was swallowed")
+    assert calls == ["rmtree"]
+    assert "could not keep" in err.getvalue()

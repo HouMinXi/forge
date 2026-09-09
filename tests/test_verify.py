@@ -26,7 +26,7 @@ def _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):
         "findings_count": 0, "findings": [],
         "anchors": [{"file": "src/f.py", "line": 1, "text": "def f():"}],
         "code_excerpts": [
-            {"file": "src/f.py", "start_line": 1, "end_line": 3,
+            {"file": "src/f.py", "start_line": 1, "end_line": 2,
              "content": "def f():\n    return 1\n",
              "rationale": "checked"}
         ],
@@ -787,11 +787,11 @@ class TestHardenedVerify:
         sha = _sha(_HARDEN_DIFF)
         diff_files = parse_diff_files(_HARDEN_DIFF)
         inflated = [
-            {"file": "foo.py", "start_line": 1, "end_line": 3,
+            {"file": "foo.py", "start_line": 1, "end_line": 1,
              "content": "x = 1"},
-            {"file": "foo.py", "start_line": 6, "end_line": 8,
+            {"file": "foo.py", "start_line": 6, "end_line": 6,
              "content": "a = 1"},
-            {"file": "bar.py", "start_line": 1, "end_line": 3,
+            {"file": "bar.py", "start_line": 1, "end_line": 1,
              "content": "p = 1"},
         ]
         _write_hardened(rd, sha, excerpts=inflated)
@@ -1590,7 +1590,7 @@ class TestOutOfHunkExcerpts:
                 # Add excerpt for a file that does not appear in the diff at all
                 receipt["code_excerpts"].append({
                     "file": "src/other.py", "start_line": 1, "end_line": 2,
-                    "content": "x = 1\n",
+                    "content": "x = 1\ny = 2\n",
                     "rationale": "stray"
                 })
                 name = "receipt-c%dp%d.json" % (c, p)
@@ -2268,3 +2268,201 @@ class TestPreflightAgreesWithVerify:
         }
         assert self._preflight_warns(excerpt) is True
         assert self._verify_passes(tmp_path, excerpt) is False
+
+
+# ---------------------------------------------------------------------------
+# Task 1 RED: symmetric evidence validation (receipt-chain repair).
+#
+# Contract: docs/superpowers/specs/2026-09-08-receipt-chain-design.md,
+# section "Contracts / Excerpts", and plan Task 1. The excerpt predicates
+# must hold identically at production time (validate_reviewer_json via a
+# shared helper) and at gate time (run_verify): exact line-count parity,
+# positive ordered integer coordinates, typed fields, non-blank content,
+# literal post-image match under rstrip only, and anchoring in the frozen
+# diff post-image -- never the mutable working tree.
+#
+# Several of these fail against the pinned base (TDD RED): verify.py
+# rejects only overflow while the short tail is silently dropped, so an
+# underlength excerpt still verifies whenever the shown lines keep
+# coverage above the 60% floor.
+# ---------------------------------------------------------------------------
+
+# Two-hunk unified diff on one file. Post-image lines are
+# {1: "x = 1", 2: "y = 2", 3: "z = 3",
+#  10: "a = 1", 11: "b = 2", 12: "c = 3"}; lines 4-9 are the gap between
+# the hunks and belong to no post-image line. parse_diff_files yields 6
+# diff lines, so the 60% floor needs 4 shown lines per cycle.
+_T1_DIFF = (
+    "diff --git a/src/f.py b/src/f.py\n"
+    "--- a/src/f.py\n"
+    "+++ b/src/f.py\n"
+    "@@ -1,2 +1,3 @@\n"
+    " x = 1\n"
+    "+y = 2\n"
+    " z = 3\n"
+    "@@ -10,2 +10,3 @@\n"
+    " a = 1\n"
+    "+b = 2\n"
+    " c = 3\n"
+)
+
+_T1_E1 = {"file": "src/f.py", "start_line": 1, "end_line": 3,
+          "content": "x = 1\ny = 2\nz = 3"}
+_T1_E2 = {"file": "src/f.py", "start_line": 10, "end_line": 12,
+          "content": "a = 1\nb = 2\nc = 3"}
+
+
+def _t1_write(tmp_path, excerpts):
+    """Write 9 clean receipts (3 cycles x 3 passes) carrying excerpts."""
+    from copy import deepcopy
+    rd = tmp_path / ".code-forge" / "receipts"
+    rd.mkdir(parents=True)
+    sha = _sha(_T1_DIFF)
+    diff_files = parse_diff_files(_T1_DIFF)
+    for c in range(1, 4):
+        for p in range(1, 4):
+            (rd / ("receipt-c%dp%d.json" % (c, p))).write_text(
+                json.dumps(_hreceipt(c, p, sha,
+                                     excerpts=deepcopy(excerpts))))
+    return sha, diff_files
+
+
+class TestTask1TwoHunkFixture:
+    """The honest control and the diff facts it rests on must pass."""
+
+    def test_honest_control_passes(self, tmp_path):
+        sha, diff_files = _t1_write(tmp_path, [_T1_E1, _T1_E2])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
+        assert r.passed, r.reason
+
+    def test_diff_facts_come_from_the_caller_diff_text(self, tmp_path):
+        """parse_diff_hunks gives the hunk map, _extract_post_image_lines
+        gives the post-image; both parse the frozen diff_text argument."""
+        from code_forge.diff import _extract_post_image_lines, parse_diff_hunks
+        hunk_map, exempt = parse_diff_hunks(_T1_DIFF)
+        assert exempt == []
+        assert [(h["start"], h["end"]) for h in hunk_map["src/f.py"]] == [
+            (1, 3), (10, 12)]
+        post = _extract_post_image_lines(_T1_DIFF)
+        assert [post["src/f.py"][ln].rstrip() for ln in (1, 2, 3)] == [
+            "x = 1", "y = 2", "z = 3"]
+        assert [post["src/f.py"][ln].rstrip() for ln in (10, 11, 12)] == [
+            "a = 1", "b = 2", "c = 3"]
+        assert 5 not in post["src/f.py"]
+
+
+class TestTask1UnderlengthIsRejected:
+    """Content must carry exactly end_line - start_line + 1 source lines.
+
+    Both shorter and longer payloads fail, even when the shown lines keep
+    total coverage above the old 60% gate -- otherwise a witness can claim
+    lines it never showed.
+    """
+
+    def test_thin_tail_with_high_coverage_is_rejected(self, tmp_path):
+        """Declares 10-12 but carries only two lines; shown coverage is
+        5/6 = 83% so the floor cannot be what convicts it."""
+        thin = {"file": "src/f.py", "start_line": 10, "end_line": 12,
+                "content": "a = 1\nb = 2"}
+        sha, diff_files = _t1_write(tmp_path, [_T1_E1, thin])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
+        assert not r.passed, (
+            "underlength excerpt verified: %s" % r.reason)
+
+    def test_declared_range_spanning_the_gap_is_rejected(self, tmp_path):
+        """Declares 1-12, crossing gap lines 4-9 that no post-image line
+        vouches for, while carrying only the first hunk. Every claimed
+        source line must be in the frozen post-image, not just the lines
+        the content happens to show."""
+        spanning = {"file": "src/f.py", "start_line": 1, "end_line": 12,
+                    "content": "x = 1\ny = 2\nz = 3"}
+        sha, diff_files = _t1_write(tmp_path, [spanning, _T1_E2])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
+        assert not r.passed, (
+            "gap-spanning excerpt verified: %s" % r.reason)
+
+
+class TestTask1OverflowAndLiteralPins:
+    """Overflow and literal mismatch already fail; rstrip-only tolerance
+    already passes. Pinned so the shared-helper refactor cannot move them."""
+
+    def test_overflow_is_rejected(self, tmp_path):
+        fat = {"file": "src/f.py", "start_line": 10, "end_line": 12,
+               "content": "a = 1\nb = 2\nc = 3\nextra = 4"}
+        sha, diff_files = _t1_write(tmp_path, [_T1_E1, fat])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
+        assert not r.passed
+        assert "declares 3 lines but carries 4" in r.reason
+
+    def test_punctuation_difference_is_rejected(self, tmp_path):
+        punct = {"file": "src/f.py", "start_line": 1, "end_line": 3,
+                 "content": "x = 1\ny = 2\nz = 3;"}
+        sha, diff_files = _t1_write(tmp_path, [punct, _T1_E2])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
+        assert not r.passed
+        assert "content mismatch" in r.reason
+
+    def test_trailing_whitespace_only_is_tolerated(self, tmp_path):
+        """The existing rule is rstrip only: trailing spaces pass, while
+        punctuation, indentation, coordinates and source text must match."""
+        padded = {"file": "src/f.py", "start_line": 1, "end_line": 3,
+                  "content": "x = 1\ny = 2   \nz = 3"}
+        sha, diff_files = _t1_write(tmp_path, [padded, _T1_E2])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
+        assert r.passed, r.reason
+
+
+class TestTask1DiffTextIsAuthoritative:
+    """Hardened verification reads the caller's frozen diff_text, never
+    the mutable working tree."""
+
+    def test_contradicting_working_tree_does_not_vouch(self, tmp_path):
+        (tmp_path / "src").mkdir(parents=True)
+        (tmp_path / "src" / "f.py").write_text("totally different\n")
+        sha, diff_files = _t1_write(tmp_path, [_T1_E1, _T1_E2])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
+        assert r.passed, r.reason
+
+
+class TestTask1ExemptFiles:
+    """Exempt files bypass hunk anchoring, but typed malformed inputs still fail."""
+
+    _BINARY_DIFF = (
+        "diff --git a/bin.dat b/bin.dat\n"
+        "Binary files a/bin.dat and b/bin.dat differ\n"
+    )
+
+    def test_exempt_binary_diff_with_valid_excerpt_passes(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha(self._BINARY_DIFF)
+        diff_files = parse_diff_files(self._BINARY_DIFF)
+        valid_exc = {
+            "file": "bin.dat", "start_line": 1, "end_line": 1,
+            "content": "binary content", "rationale": "checked"
+        }
+        for c in range(1, 4):
+            for p in range(1, 4):
+                (rd / f"receipt-c{c}p{p}.json").write_text(
+                    json.dumps(_hreceipt(c, p, sha, excerpts=[valid_exc]))
+                )
+        r = run_verify(tmp_path, sha, diff_files, diff_text=self._BINARY_DIFF)
+        assert r.passed, r.reason
+
+    def test_exempt_binary_diff_with_malformed_underlength_fails(self, tmp_path):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha(self._BINARY_DIFF)
+        diff_files = parse_diff_files(self._BINARY_DIFF)
+        bad_exc = {
+            "file": "bin.dat", "start_line": 1, "end_line": 3,
+            "content": "binary content", "rationale": "checked"
+        }
+        for c in range(1, 4):
+            for p in range(1, 4):
+                (rd / f"receipt-c{c}p{p}.json").write_text(
+                    json.dumps(_hreceipt(c, p, sha, excerpts=[bad_exc]))
+                )
+        r = run_verify(tmp_path, sha, diff_files, diff_text=self._BINARY_DIFF)
+        assert not r.passed
+        assert "declares 3 lines but carries 1" in r.reason

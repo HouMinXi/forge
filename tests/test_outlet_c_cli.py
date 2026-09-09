@@ -18,9 +18,24 @@ _SRC = pathlib.Path(__file__).parent.parent / "src" / "code_forge" / "cli.py"
 
 
 def _subagent_block() -> str:
+    """_dispatch_subagent from its def through the run_outlet_c( call it
+    makes, however much sits between them. A fixed character window
+    broke the moment a context gather was added ahead of the call."""
     src = _SRC.read_text()
     start = src.index('def _dispatch_subagent(')
-    return src[start: start + 2500]
+    call = src.index('run_outlet_c(', start)
+    # the call's closing paren: first ')' at depth 0 after the open
+    depth, i = 0, call + len('run_outlet_c')
+    while True:
+        ch = src[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    return src[start: i + 1]
 
 
 class TestSubagentDispatchLegs:

@@ -255,15 +255,24 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
                     raise CorruptedReceiptError(
                         "%s: %s.%s must be %s" % (
                             name, list_field, subfield, _TYPE_LABEL[subtype]))
-    # Excerpt line ranges must be ordered. An inverted range silently credits
-    # zero lines, which looks identical to an honest excerpt that sits outside
-    # the diff -- two different problems, one symptom, no way to tell apart.
+    # Excerpt line ranges must be ordered and positive. An inverted
+    # range silently credits zero lines, which looks identical to an
+    # honest excerpt that sits outside the diff -- two different
+    # problems, one symptom, no way to tell apart. A bool coordinate
+    # (JSON true/false) or a nonpositive one is not a source line and
+    # must not reach the checks below.
     for exc in obj.get("code_excerpts", []):
         s = exc.get("start_line")
         e = exc.get("end_line")
-        if isinstance(s, int) and isinstance(e, int) and s > e:
+        if not _is_type(s, int) or not _is_type(e, int):
+            continue
+        if s > e:
             raise CorruptedReceiptError(
                 "%s: code_excerpts start_line %d > end_line %d" % (name, s, e))
+        if s <= 0 or e <= 0:
+            raise CorruptedReceiptError(
+                "%s: code_excerpts start_line and end_line must be positive, got %r and %r"
+                % (name, s, e))
 
 
 def _load_receipts(rd: Path) -> list[dict]:
@@ -439,14 +448,209 @@ def _constant_offset(
     return None
 
 
+def validate_excerpt_evidence(
+    exc: dict,
+    hunk_map: dict[str, list[dict]] | None = None,
+    post_image: dict[str, dict[int, str]] | None = None,
+    exempt_files: list[str] | None = None,
+) -> str | None:
+    """Validate one excerpt's shape, line-count parity and literal anchoring.
+
+    Shared deterministic predicate used by both producer acceptance and
+    run_verify: returns an error message string when the excerpt is
+    invalid, or None when it is valid. Shape and line-count checks run
+    unconditionally; diff-anchoring and literal checks run only when the
+    caller supplies hunk_map/post_image/exempt_files parsed from the
+    frozen diff_text (never the mutable working tree).
+    """
+    exc_file = exc.get("file", "<unknown>")
+    exc_start = exc.get("start_line", None)
+    exc_end = exc.get("end_line", None)
+    if not isinstance(exc_file, str) or not exc_file.strip():
+        return "excerpt file must be a non-empty string"
+    if (
+        not isinstance(exc_start, int)
+        or isinstance(exc_start, bool)
+        or not isinstance(exc_end, int)
+        or isinstance(exc_end, bool)
+    ):
+        return "excerpt %s coordinates must be integers" % exc_file
+    if exc_start <= 0 or exc_end <= 0 or exc_start > exc_end:
+        return (
+            "excerpt %s:%r-%r has nonpositive or unordered range"
+            % (exc_file, exc_start, exc_end)
+        )
+    content = exc.get("content", "")
+    if isinstance(content, list):
+        # Preserve the writer's all-string list join; a mixed list is
+        # not evidence and must not be stringified into it.
+        if not all(isinstance(ln, str) for ln in content):
+            return "excerpt %s:%d-%d content list must contain only strings" % (
+                exc_file, exc_start, exc_end)
+        text = "\n".join(content)
+    elif isinstance(content, str):
+        text = content
+    else:
+        return "excerpt %s:%d-%d content must be a string" % (
+            exc_file, exc_start, exc_end)
+    if not text or not text.strip():
+        return "excerpt %s:%d has empty content" % (exc_file, exc_start)
+    claimed = exc_end - exc_start + 1
+    actual_lines = text.splitlines()
+    if len(actual_lines) != claimed:
+        return "excerpt %s:%d-%d declares %d lines but carries %d" % (
+            exc_file, exc_start, exc_end, claimed, len(actual_lines))
+    if hunk_map is None:
+        return None
+    exempt = exempt_files or []
+    if exc_file not in hunk_map and exc_file not in exempt:
+        return "excerpt %s:%d not in diff" % (exc_file, exc_start)
+    if exc_file in hunk_map and not any(
+        max(exc_start, h["start"]) <= min(exc_end, h["end"])
+        for h in hunk_map[exc_file]
+    ):
+        return (
+            "excerpt %s:%d-%d is outside every hunk; if the reviewer "
+            "read it for context rather than checking it, it belongs "
+            "in context_quotes" % (exc_file, exc_start, exc_end)
+        )
+    if post_image is None or exc_file in exempt:
+        return None
+    file_lines = post_image.get(exc_file, {})
+    excerpt_line_map = {
+        exc_start + i: line for i, line in enumerate(actual_lines)
+    }
+    overlap = set(excerpt_line_map) & set(file_lines)
+    if overlap:
+        for ln in sorted(overlap):
+            if excerpt_line_map[ln].rstrip() != file_lines[ln].rstrip():
+                offset = _constant_offset(
+                    excerpt_line_map, file_lines, -64, 65)
+                if offset is not None:
+                    return (
+                        "excerpt misnumbered by %+d at %s:%d-%d "
+                        "(claims %s:%d, actually %s:%d)" % (
+                            offset, exc_file, exc_start, exc_end,
+                            exc_file, ln, exc_file, ln + offset)
+                    )
+                return "excerpt content mismatch at %s:%d-%d (line %d)" % (
+                    exc_file, exc_start, exc_end, ln)
+    outside = set(excerpt_line_map) - set(file_lines)
+    if outside:
+        offset = _constant_offset(excerpt_line_map, file_lines, -64, 65)
+        if offset is not None:
+            ln = min(outside)
+            return (
+                "excerpt misnumbered by %+d at %s:%d-%d "
+                "(claims %s:%d, actually %s:%d)" % (
+                    offset, exc_file, exc_start, exc_end,
+                    exc_file, ln, exc_file, ln + offset)
+            )
+        return (
+            "excerpt %s:%d-%d claims line %d outside the diff "
+            "post-image; it cannot be verified" % (
+                exc_file, exc_start, exc_end, min(outside))
+        )
+    return None
+
+
+def _diff_validation_context(
+    diff_text: str,
+) -> tuple[dict[str, dict[int, str]], dict[str, list[dict]], list[str]]:
+    """Parse frozen diff text into (post_image, hunk_map, exempt_files).
+
+    Same parsing run_verify's hardened excerpt checks use; exposing it
+    lets the StateMachine validate a round's in-memory excerpts against
+    the same deterministic predicate instead of re-reading receipts from
+    disk (disk selection is not bound to the current run).
+    """
+    post_image: dict[str, dict[int, str]] = {}
+    hunk_map: dict[str, list[dict]] = {}
+    current_file: str | None = None
+    line_no = 0
+    for raw in diff_text.splitlines():
+        if raw.startswith("+++ b/"):
+            current_file = raw[6:]
+            line_no = 0
+            post_image.setdefault(current_file, {})
+            hunk_map.setdefault(current_file, [])
+        elif raw.startswith("@@") and current_file:
+            import re
+
+            m = re.search(r"\+(\d+)(?:,(\d+))?", raw)
+            if m:
+                line_no = int(m.group(1))
+                hunk_map[current_file].append(
+                    {"start": line_no, "end": line_no}
+                )
+        elif current_file and raw.startswith("+") and not raw.startswith("+++"):
+            if raw.startswith("++"):  # new-file marker
+                continue
+            post_image[current_file][line_no] = raw[1:]
+            line_no += 1
+        elif current_file and raw.startswith("-") and not raw.startswith("---"):
+            if raw.startswith("--"):  # deleted-file marker
+                continue
+            # Deleted lines shift nothing; keep line_no pinned for the
+            # post-image of surviving lines.
+            continue
+        elif current_file and line_no > 0:
+            # Context line: appears in the post-image, advances line_no.
+            post_image[current_file][line_no] = raw[1:]
+            line_no += 1
+    # Files whose entire diff is deletions have no post-image lines but
+    # are still in hunk_map; the excerpt check treats "in hunk_map" as
+    # requiring an anchor, which a deletion-only file cannot satisfy.
+    # They are exempt from literal checks because there is no post-image
+    # to match against.
+    exempt_files = [
+        f for f, lines in post_image.items() if not lines
+    ]
+    return post_image, hunk_map, exempt_files
+
+
+def validate_excerpts_against_diff(
+    diff_text: str, excerpts: list[dict]
+) -> list[str]:
+    """Validate excerpts against frozen diff text; return error strings.
+
+    Empty excerpts list is not an error here (coverage/witness policy is
+    enforced by the producer's coverage guard and run_verify's cycle
+    checks); this validates only the evidence actually offered, using the
+    same predicate run_verify applies to receipts on disk.
+    """
+    if not diff_text or not excerpts:
+        return []
+    post_image, hunk_map, exempt_files = _diff_validation_context(diff_text)
+    errors: list[str] = []
+    for exc in excerpts:
+        err = validate_excerpt_evidence(
+            exc, hunk_map, post_image, exempt_files
+        )
+        if err is not None:
+            errors.append(err)
+    return errors
+
+
 def run_verify(
     cwd: Path, diff_sha256: str,
     diff_files: dict[str, list[int]],
     hardened: bool = True,
     diff_text: str | None = None,
     required_cycles: int | None = None,
+    cycles: list[int] | None = None,
+    respect_floor: bool = True,
+    reviewed_repositories: dict[str, str] | None = None,
 ) -> VerifyResult:
     cp = 0
+    repository_manifest = None
+    if reviewed_repositories is not None:
+        from .receipt_scope import repository_scope
+        try:
+            diff_text, repository_manifest = repository_scope(reviewed_repositories)
+        except ValueError as exc:
+            return VerifyResult(False, str(exc), 1, cp)
+        diff_files = parse_diff_files(diff_text)
     # Validated here rather than at the CLI, because this is the public
     # entry point and the CLI is only one of its callers. Zero is the
     # sharp value: required becomes 0 so the count check passes
@@ -463,26 +667,60 @@ def run_verify(
             "required_cycles must be an integer >= 1, got %r"
             % (required_cycles,),
             1, cp)
+    # cycles pins the attested window to specific cycle numbers instead of
+    # "the last N on disk". The StateMachine uses it to attest exactly the
+    # cycles IT wrote this run, so a later run's higher cycles -- or old
+    # cycles seeded on disk -- can never vouch for (or mask) the current
+    # run's evidence. Duplicates and non-positive values are invalid: a
+    # cycle set is a set of distinct positive round numbers.
+    if cycles is not None:
+        if (
+            not isinstance(cycles, list)
+            or len(cycles) < 1
+            or any(
+                not isinstance(c, int) or isinstance(c, bool) or c < 1
+                for c in cycles
+            )
+            or len(set(cycles)) != len(cycles)
+        ):
+            return VerifyResult(
+                False,
+                "cycles must be a list of distinct positive ints, got %r"
+                % (cycles,),
+                1, cp)
     # The argument raises the bar the repo set; it never lowers it. The
     # floor belongs here and not in the CLI branch that used to hold it,
     # because a caller who can pass required_cycles=1 to a repo whose
     # gate.yaml demands 3 does not become trustworthy by arriving through
     # a different door -- and every non-CLI caller (the MCP server, a
     # test, an editor plugin) comes through one.
-    try:
-        floor = read_required_cycles(cwd)
-    except UnreadableGateError as exc:
-        return VerifyResult(False, "unreadable gate: %s" % exc, 1, cp)
-    required_cycles = (
-        floor if required_cycles is None else max(required_cycles, floor)
-    )
+    #
+    # respect_floor=False is the StateMachine's own terminal attestation,
+    # which passes the floor it ALREADY computed for its own run policy
+    # (CI attests exactly one cycle per the approved design; LOCAL attests
+    # its clean window). Re-raising by the repo floor there would make CI
+    # impossible on a repo configured for 3 cycles -- CI is one round by
+    # construction and must attest what it ran, not what LOCAL would.
+    if respect_floor:
+        try:
+            floor = read_required_cycles(cwd)
+        except UnreadableGateError as exc:
+            return VerifyResult(False, "unreadable gate: %s" % exc, 1, cp)
+        required_cycles = (
+            floor if required_cycles is None else max(required_cycles, floor)
+        )
+    elif required_cycles is None:
+        try:
+            required_cycles = read_required_cycles(cwd)
+        except UnreadableGateError as exc:
+            return VerifyResult(False, "unreadable gate: %s" % exc, 1, cp)
     required = required_cycles * PASSES_PER_CYCLE
     try:
         receipts = _load_receipts(cwd / ".code-forge" / "receipts")
     except CorruptedReceiptError as exc:
         return VerifyResult(False, "corrupt receipt: %s" % exc, 1, cp)
 
-    # 1. completeness: the last N consecutive cycles x passes 1-3, and
+    # 1. completeness: last N consecutive cycles
     # findings_count. Reviews that take more rounds write later cycle
     # numbers; the last N consecutive clean cycles are what matters,
     # regardless of what those numbers are.
@@ -496,12 +734,27 @@ def run_verify(
         return VerifyResult(False, msg, 1, cp)
     # Only the attested window may vouch. Compute last_n first,
     # then scope every structural check to those cycles.
-    cycles = sorted({r["cycle"] for r in receipts})
-    if len(cycles) < required_cycles:
-        return VerifyResult(
-            False, "fewer than %d cycles: %d" % (required_cycles, len(cycles)),
-            1, cp)
-    last_n = cycles[-required_cycles:]
+    cycles = sorted(set(cycles)) if cycles is not None else None
+    all_cycle_vals = sorted({r["cycle"] for r in receipts})
+    if cycles is not None:
+        # Pinned window: the caller names exactly which cycles vouch.
+        # The count check above already requires enough receipts on disk;
+        # the per-cycle checks below then apply to this set only.
+        last_n = cycles
+        if len(last_n) < required_cycles:
+            return VerifyResult(
+                False,
+                "attested window has %d cycle(s); repository verifier "
+                "floor demands %d: %s" % (
+                    len(last_n), required_cycles, last_n),
+                1, cp)
+    else:
+        if len(all_cycle_vals) < required_cycles:
+            return VerifyResult(
+                False, "fewer than %d cycles: %d" % (
+                    required_cycles, len(all_cycle_vals)),
+                1, cp)
+        last_n = all_cycle_vals[-required_cycles:]
     for i in range(len(last_n) - 1):
         if last_n[i + 1] - last_n[i] != 1:
             return VerifyResult(
@@ -510,6 +763,8 @@ def run_verify(
                                                         last_n),
                 1, cp)
     attested = [r for r in receipts if r["cycle"] in last_n]
+    if any(r.get("reviewed_repositories") != repository_manifest for r in attested):
+        return VerifyResult(False, "INFRA: reviewed repository/source identity mismatch", 1, cp)
 
     seen_keys = set()
     for r in attested:
@@ -520,6 +775,12 @@ def run_verify(
         if r["findings_count"] != len(r["findings"]):
             return VerifyResult(
                 False, "findings_count mismatch c%dp%d" % key, 1, cp)
+        if repository_manifest is not None and any(
+            not isinstance(f.get("file"), str) or f["file"] not in diff_files
+            for f in r["findings"]
+        ):
+            return VerifyResult(
+                False, "INFRA: finding repository/source identity mismatch", 1, cp)
     for c in last_n:
         passes = {p for (cyc, p) in seen_keys if cyc == c}
         # Exactly the three protocol passes, not merely at least them. Asking
@@ -582,18 +843,13 @@ def run_verify(
             if r.get("cycle") in last_n:
                 all_excerpts.extend(r.get("code_excerpts", []))
 
-        # STEP 0: excerpt field validation (before any field access)
+        # STEP 0: excerpt shape and line-count parity, via the shared
+        # helper (before any field access in STEP A). Underlength now
+        # fails instead of receiving partial credit.
         for exc in all_excerpts:
-            exc_file = exc.get("file", "<unknown>")
-            exc_start = exc.get("start_line", None)
-            exc_end = exc.get("end_line", None)
-            if (
-                exc_file == "<unknown>"
-                or not isinstance(exc_start, int)
-                or not isinstance(exc_end, int)
-                or not isinstance(exc.get("content"), str)
-            ):
-                return VerifyResult(False, "excerpt missing required fields", 5, cp)
+            err = validate_excerpt_evidence(exc)
+            if err is not None:
+                return VerifyResult(False, err, 5, cp)
 
         # STEP A: per-hunk witness check
         for file, hunks in hunk_map.items():
@@ -612,7 +868,11 @@ def run_verify(
                         5, cp,
                     )
 
-        # STEP B: excerpt-to-hunk anchoring
+        # STEP B: excerpt-to-hunk anchoring plus literal post-image
+        # match, via the same shared helper the producer uses. Every
+        # claimed source line must be in the frozen diff post-image and
+        # match under the existing trailing-whitespace rule only.
+        #
         # An excerpt names lines the reviewer says it checked, so every one has
         # to land somewhere this can check it -- the diff. Code read for
         # orientation but outside the diff is real and worth recording, and it
@@ -624,48 +884,9 @@ def run_verify(
         # the tree is not, so the tree can change between the reviewer reading
         # it and this running.
         for exc in all_excerpts:
-            content = exc.get("content", "")
-            if not content or not content.strip():
-                return VerifyResult(
-                    False,
-                    "excerpt %s:%d has empty content" % (exc["file"], exc["start_line"]),
-                    5, cp,
-                )
-            # The declared range must carry exactly the lines the
-            # excerpt claims to have checked. Content beyond the range
-            # maps to no line number, so STEP C would never compare it
-            # against the post-image -- a fabricated tail rides along
-            # unchecked.
-            claimed = exc["end_line"] - exc["start_line"] + 1
-            if claimed > 0 and len(content.splitlines()) > claimed:
-                return VerifyResult(
-                    False,
-                    "excerpt %s:%d-%d declares %d lines but carries %d" % (
-                        exc["file"], exc["start_line"], exc["end_line"],
-                        claimed, len(content.splitlines())),
-                    5, cp,
-                )
-            if exc["file"] not in hunk_map and exc["file"] not in exempt_files:
-                return VerifyResult(
-                    False,
-                    "excerpt %s:%d not in diff" % (exc["file"], exc["start_line"]),
-                    5, cp,
-                )
-            # Exempt files (binary/rename/mode-change) pass without overlap check --
-            # they have no hunks in hunk_map, so hunk anchoring cannot be verified.
-            # This is intentional: exempt files produce no coverage obligation.
-            if exc["file"] in hunk_map and not any(
-                max(exc["start_line"], h["start"]) <= min(exc["end_line"], h["end"])
-                for h in hunk_map[exc["file"]]
-            ):
-                return VerifyResult(
-                    False,
-                    "excerpt %s:%d-%d is outside every hunk; if the reviewer "
-                    "read it for context rather than checking it, it belongs "
-                    "in context_quotes" % (
-                        exc["file"], exc["start_line"], exc["end_line"]),
-                    5, cp,
-                )
+            err = validate_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
+            if err is not None:
+                return VerifyResult(False, err, 5, cp)
 
         # STEP C: content verification against diff post-image
         # The diff is immutable at verify time -- no TOCTOU with working tree.

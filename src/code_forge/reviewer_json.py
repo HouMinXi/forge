@@ -36,6 +36,9 @@ REVIEW_JSON_CONTRACT = (
     "covering each changed hunk.\n"
     "code_excerpts content must be actual source code lines, "
     "not diff format -- no +/- prefixes, no @@ headers.\n"
+    "Content must carry exactly end_line - start_line + 1 source lines.\n"
+    "Do not span diff gaps between hunks; split into separate excerpts per hunk.\n"
+    "Across each review cycle, code_excerpts must cover at least 60% of changed diff lines.\n"
     "Every code_excerpt must fall inside a diff hunk. An excerpt is the "
     "evidence that you checked a changed line, and a line the diff never "
     "touched is not something that claim can be checked against. Code you "
@@ -129,14 +132,43 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         for key in _EXCERPT_REQUIRED:
             if key not in exc:
                 raise ValueError("code_excerpt[%d] missing: %s" % (i, key))
-        if not isinstance(exc.get("start_line"), int):
-            raise ValueError("code_excerpt[%d] start_line must be int" % i)
-        if not isinstance(exc.get("end_line"), int):
-            raise ValueError("code_excerpt[%d] end_line must be int" % i)
-        if exc["start_line"] > exc["end_line"]:
+        exc_file = exc.get("file")
+        if not isinstance(exc_file, str) or not exc_file.strip():
+            raise ValueError("code_excerpt[%d] file must be a non-empty string" % i)
+        for coord in ("start_line", "end_line"):
+            v = exc.get(coord)
+            if not isinstance(v, int) or isinstance(v, bool):
+                raise ValueError("code_excerpt[%d] %s must be int" % (i, coord))
+        s = exc["start_line"]
+        e = exc["end_line"]
+        if s <= 0 or e <= 0:
             raise ValueError(
-                "code_excerpt[%d] start_line %d > end_line %d" % (
-                    i, exc["start_line"], exc["end_line"])
+                "code_excerpt[%d] start_line and end_line must be positive, "
+                "got %r and %r" % (i, s, e)
+            )
+        if s > e:
+            raise ValueError(
+                "code_excerpt[%d] start_line %d > end_line %d" % (i, s, e)
+            )
+        content = exc.get("content")
+        if isinstance(content, list):
+            if not all(isinstance(ln, str) for ln in content):
+                raise ValueError(
+                    "code_excerpt[%d] content list must contain only strings" % i
+                )
+            text = "\n".join(content)
+        elif isinstance(content, str):
+            text = content
+        else:
+            raise ValueError("code_excerpt[%d] content must be str" % i)
+        if not text.strip():
+            raise ValueError("code_excerpt[%d] content must not be empty" % i)
+        claimed = e - s + 1
+        actual = text.splitlines()
+        if len(actual) != claimed:
+            raise ValueError(
+                "code_excerpt[%d] %s:%d-%d declares %d lines but carries %d"
+                % (i, exc_file, s, e, claimed, len(actual))
             )
 
     if len(data["findings"]) == 0 and len(data["code_excerpts"]) == 0:
@@ -148,9 +180,24 @@ def validate_reviewer_json(raw: str | dict) -> dict:
     return data
 
 
-def _collect_excerpts(data: dict) -> list[dict]:
-    """Extract code_excerpts from validated reviewer JSON."""
-    return data.get("code_excerpts", [])
+_VALID_PASS_NAMES = frozenset({"qodo", "expert", "adversarial"})
+
+
+def _collect_excerpts(data: dict, *, pass_name: str) -> list[dict]:
+    """Extract code_excerpts from validated reviewer JSON with trusted pass attribution."""
+    if pass_name not in _VALID_PASS_NAMES:
+        raise ValueError(
+            "invalid pass_name %r, expected one of %s"
+            % (pass_name, sorted(_VALID_PASS_NAMES))
+        )
+    out = []
+    for exc in data.get("code_excerpts", []):
+        if not isinstance(exc, dict):
+            continue
+        fresh = dict(exc)
+        fresh["pass_name"] = pass_name
+        out.append(fresh)
+    return out
 
 
 _LINE_BUCKET_SIZE: int = 10

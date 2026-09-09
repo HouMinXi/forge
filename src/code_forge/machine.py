@@ -267,6 +267,7 @@ class StateMachine:
     baseline_spec_repr: str
     cwd: Path
     registry: dict
+    reviewed_repositories: dict[str, str] | None = None
     l0_runner: Callable = field(default=_default_l0_runner)
     l1_provider: L1Provider = field(default=lambda: ([], [], Usage(), 0.0))
     l2_runner: Callable = field(
@@ -313,6 +314,17 @@ class StateMachine:
         self._preexisting_buf: "list[AdvisoryFinding]" = []
         self._rounds_with_failed_pass: int = 0
         self._rounds_with_falsify_infra: int = 0
+        # Cycle numbers of the receipts THIS run wrote (round 0 -> cycle
+        # 1, etc.), collected so terminal acceptance can attest exactly
+        # the current run's window and never a stale one from disk.
+        self._written_cycles: list[int] = []
+        # The last clean window's cycles: rounds that reached the clean
+        # fixpoint. Terminal attestation scopes to these, so an earlier
+        # resolved finding cannot poison the clean tail.
+        self._clean_window_cycles: list[int] = []
+        self._last_receipt_write_errors: list[str] = []
+        self._excerpts_last_round: list[dict] = []
+        self._attempted_last_round: list[dict] = []
 
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
@@ -385,6 +397,32 @@ class StateMachine:
         self._execute_round(
             round_index=self._continuation_round_index(),
         )
+
+        # Receipt acceptance gate (bound to THIS run's evidence): a round
+        # whose in-memory excerpts do not match the frozen diff post-image
+        # must not yield a PASS verdict, and a receipt-write failure must
+        # persist non-PASS state rather than crash leaving a stale PASS.
+        gate_errors = self._receipt_gate_round_errors()
+        if gate_errors:
+            for err in gate_errors:
+                self._record_receipt_gate_failure(err)
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._persist_state()
+            self._write_ci_ledger_rows()
+            return Verdict.FAIL
+        # Terminal policy: attest exactly this run's receipts with the
+        # full verifier (coverage floor, hunk witness, completeness,
+        # stale-window). CI attests its one cycle, per approved design.
+        gate_errors = self._receipt_gate_terminal_errors()
+        if gate_errors:
+            for err in gate_errors:
+                self._record_receipt_gate_failure(err)
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._persist_state()
+            self._write_ci_ledger_rows()
+            return Verdict.FAIL
 
         # Check for prior mutation result
         result_path = self.cwd / ".code-forge" / "mutation-result.json"
@@ -669,7 +707,13 @@ class StateMachine:
         ESCALATED-frozen check at top of each iteration (after HOLD
         resume): if check_escalated_frozen() -> Verdict.ESCALATED.
         """
-        for round_index in range(self.max_total_rounds):
+        # LOCAL resumes cycle counting above the highest cycle on disk,
+        # same as CI: a reused receipts directory (old cycles from an
+        # earlier run) must not make this run's new receipts collide
+        # with, or be masked by, the old ones. Round 0 of this run is
+        # the continuation cycle.
+        start = self._continuation_round_index()
+        for round_index in range(start, start + self.max_total_rounds):
             if check_escalated_frozen(self._state):
                 self._append_round_snapshot(
                     round_index,
@@ -697,6 +741,18 @@ class StateMachine:
                 return Verdict.ESCALATED
             self._execute_round(round_index)
 
+            # Receipt acceptance gate: invalid evidence for the round just
+            # written fails fast with persisted non-PASS state instead of
+            # accumulating clean rounds toward a false PASS.
+            gate_errors = self._receipt_gate_round_errors()
+            if gate_errors:
+                for err in gate_errors:
+                    self._record_receipt_gate_failure(err)
+                self._state.verdict = Verdict.FAIL
+                self._state.converged = False
+                self._persist_state()
+                return Verdict.FAIL
+
             # Check consecutive_survivor_rounds
             mutant_survivors = sum(
                 1 for f in self._state.findings
@@ -723,6 +779,13 @@ class StateMachine:
             _fp = self._fixpoint_reached()
             if _fp == _FixpointResult.CLEAN:
                 self._state.consecutive_clean_rounds += 1
+                # Track the clean window: rounds whose receipts are
+                # clean evidence, scoped to the last `threshold` clean
+                # rounds for terminal attestation.
+                self._clean_window_cycles.append(round_index + 1)
+                self._clean_window_cycles = (
+                    self._clean_window_cycles[-self.clean_round_threshold:]
+                )
             elif _fp == _FixpointResult.CYCLE_RESTART:
                 # P2 / P3-density restart. The counter is already 0 here: clause (a)
                 # zeroes it on any finding's first (NEW) appearance, and a finding cannot
@@ -884,7 +947,11 @@ class StateMachine:
 
         def _one(item):
             i, f = item
-            if f.source == "INFRA":
+            if f.source in ("INFRA", "UNTRUSTED"):
+                # INFRA: an infra failure, not a code defect to falsify.
+                # UNTRUSTED: a candidate carried as audit data from a
+                # response whose evidence failed validation; never sent
+                # through semantic falsification as a code defect.
                 return f
             progress.emit(
                 "falsify %d/%d: %s:%s (%s)"
@@ -1050,6 +1117,12 @@ class StateMachine:
             % (self._state.round, failed)
         )
         if self._rounds_with_failed_pass >= 3:
+            # Persist bounded non-PASS before raising: a circuit breaker
+            # must not leave a stale PASS (or PENDING) state.json behind
+            # when it stops the run.
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._persist_state()
             raise TimeoutBreaker(
                 "%d consecutive rounds had a pass that did not complete "
                 "(latest: %s). Each one leaves a CONFIRMED infra finding, "
@@ -1143,6 +1216,129 @@ class StateMachine:
             )
             return []
 
+    def _receipt_diff(self) -> str | None:
+        if self.reviewed_repositories is not None:
+            from .receipt_scope import repository_scope
+            return repository_scope(self.reviewed_repositories)[0]
+        return self.resolved_review.git_diff
+
+    def _receipt_gate_round_errors(self) -> list[str]:
+        """Round-level gate: is THIS round's evidence even valid?
+
+        Validates what the producer collected this round against the
+        frozen diff (wrong literals, misnumbering), plus any receipt-write
+        I/O failure. Full policy (coverage floor, hunk witness,
+        completeness, stale-window) is enforced by
+        _receipt_gate_terminal_errors at the terminal.
+        """
+        errors: list[str] = []
+        for err in self._last_receipt_write_errors:
+            errors.append(err)
+        diff_text = self._receipt_diff()
+        excerpts = self._excerpts_last_round
+        if diff_text and excerpts:
+            from .verify import validate_excerpts_against_diff
+
+            errors.extend(validate_excerpts_against_diff(diff_text, excerpts))
+        return errors
+
+    def _receipt_gate_terminal_errors(self) -> list[str]:
+        """Terminal gate: attest exactly THIS run's receipts, full policy.
+
+        Pins run_verify to the last clean window this run wrote (CI: its
+        one cycle; LOCAL: the clean rounds that reached the fixpoint), so
+        older higher cycles on disk can neither vouch for nor mask the
+        current evidence. Rejects: coverage below the 60% floor,
+        unwitnessed hunks, non-consecutive/incomplete windows, stale
+        fresh-cycle mismatch, and hash/anchors mismatches -- using the
+        same verifier the CLI uses.
+        """
+        errors: list[str] = []
+        diff_text = self._receipt_diff()
+        if not diff_text:
+            # Nothing to verify against (non-git / stub reviews).
+            return errors
+        window = list(self._clean_window_cycles or self._written_cycles)
+        if not window:
+            # Nothing was written this run (writer I/O failure, non-git
+            # review). The round gate already surfaced the write failure
+            # as an infra finding; there is no receipt evidence to
+            # attest, and reporting "no receipts" here would mask it.
+            return errors
+        # Fresh-window check: the highest cycle on disk must be this
+        # run's latest written cycle. A valid run writing above the
+        # pre-existing max always satisfies this; a run whose own window
+        # is NOT the freshest (later cycles from another run, or a stale
+        # directory) is rejected.
+        try:
+            from .verify import _load_receipts
+
+            receipts = _load_receipts(self.cwd / ".code-forge" / "receipts")
+        except Exception as exc:  # noqa: BLE001
+            errors.append("receipts unreadable on disk: %s" % exc)
+            return errors
+        max_disk = max((r["cycle"] for r in receipts), default=0)
+        if max_disk != max(window):
+            errors.append(
+                "receipt window stale: disk holds cycle %d, this run "
+                "wrote up to %d" % (max_disk, max(window)))
+            return errors
+        from .verify import parse_diff_files, run_verify
+
+        # Trusted-setup exemption, never an output-based one: the machine
+        # already knows whether L1 genuinely ran (engine != stub AND a
+        # git diff exist; computed at cli.py:3889 and forwarded as
+        # coverage_l1_active). When L1 did not run there is no evidence
+        # to attest and nothing to witness. A REAL L1 provider that
+        # returned empty evidence keeps coverage_l1_active=True and goes
+        # through run_verify below, which rejects the unwitnessed hunks
+        # -- evidence loss is not exempted, stub setup is.
+        if not self.coverage_l1_active:
+            return errors
+
+        # CI attests its single cycle; LOCAL attests its clean window.
+        # respect_floor=False: the machine computed its own run policy;
+        # re-raising by the repo floor would break CI on a 3-cycle repo.
+        vr = run_verify(
+            self.cwd, self.source_hash, parse_diff_files(diff_text),
+            diff_text=diff_text,
+            required_cycles=1,
+            cycles=window,
+            respect_floor=False,
+            reviewed_repositories=self.reviewed_repositories,
+        )
+        if not vr.passed:
+            errors.append("receipt acceptance: %s" % vr.reason)
+        return errors
+
+    def _record_receipt_gate_failure(self, error: str) -> None:
+        """Persist a deterministic CONFIRMED finding for invalid evidence.
+
+        A CONFIRMED INFRA finding blocks convergence (clean rounds reset
+        on any new CONFIRMED) and makes the persisted state agree with
+        the returned verdict. The fingerprint is a stable hash of the
+        message so repeated rounds dedupe instead of inventing new
+        fingerprints each time.
+        """
+        import hashlib
+
+        fp = "receipt-%s" % hashlib.sha256(
+            error.encode("utf-8")).hexdigest()[:12]
+        if any(f.fingerprint == fp for f in self._state.findings):
+            return
+        self._state.findings.append(StateFinding(
+            id="RECEIPT_INVALID",
+            fingerprint=fp,
+            source="INFRA",
+            disposition=Disposition.CONFIRMED,
+            file="<receipt-evidence>",
+            line_range=[0, 0],
+            description=error,
+        ))
+        self._state.infra_errors.append(
+            "receipt: %s" % error
+        )
+
     def _execute_round(self, round_index: int) -> None:
         """STATE-08: both modes run L0 + L1 + L2 + E2E each round.
 
@@ -1159,6 +1355,12 @@ class StateMachine:
         # genuine StateFindings so they block and reset cycle counters.
         rulepack_findings = self._run_rulepack_blocking_phase()
         l1_findings, l1_excerpts = self._run_l1_phase()
+        self._excerpts_last_round = l1_excerpts
+        self._last_receipt_write_errors = []
+        # Attempted (schema-failed) payloads the producer retained for
+        # audit: written by the receipt writer as failure artifacts.
+        self._attempted_last_round = list(getattr(
+            self.l1_provider, "attempted_excerpts", None) or [])
         self._check_l1_can_still_converge(l1_findings)
         l2_findings = self._run_l2_phase()
         e2e_findings = self._run_e2e_phase()
@@ -1201,21 +1403,31 @@ class StateMachine:
         self._round_duration = 0.0
         from .receipt import write_receipts
         from .verify import parse_diff_files
-        diff_text = self.resolved_review.git_diff
+        diff_text = self._receipt_diff()
         diff_files = parse_diff_files(diff_text) if diff_text else None
-        write_receipts(
-            receipts_dir=self.cwd / ".code-forge" / "receipts",
-            round_index=round_index,
-            l1_findings=l1_findings,
-            diff_sha256=self.source_hash,
-            source_files=list(self._source_files()),
-            cwd=self.cwd,
-            diff_files=diff_files,
-            diff_text=diff_text,
-            reviewer_excerpts=l1_excerpts,
-            manifest=self._state.env_manifest,
-            exec_evidence=self._state.exec_evidence,
-        )
+        try:
+            write_receipts(
+                receipts_dir=self.cwd / ".code-forge" / "receipts",
+                round_index=round_index,
+                l1_findings=l1_findings,
+                diff_sha256=self.source_hash,
+                source_files=list(self._source_files()),
+                cwd=self.cwd,
+                diff_files=diff_files,
+                diff_text=diff_text,
+                reviewer_excerpts=l1_excerpts,
+                manifest=self._state.env_manifest,
+                exec_evidence=self._state.exec_evidence,
+                attempted_excerpts=self._attempted_last_round,
+                reviewed_repositories=self.reviewed_repositories,
+            )
+            self._written_cycles.append(round_index + 1)
+        except OSError as exc:
+            # A receipt-write failure must persist non-PASS state instead
+            # of crashing and leaving a stale PASS (or no) state.json.
+            self._last_receipt_write_errors = [
+                "receipt write failed: %s" % exc
+            ]
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
@@ -1280,7 +1492,8 @@ class StateMachine:
         """Severity-tiered fixpoint for LOCAL mode.
 
         Clauses (a) and (b) are safety nets that fire BEFORE severity tiering:
-          (a) Any NEW CONFIRMED finding (not in prior round) -> RESET
+          (a) Any NEW CONFIRMED finding (fingerprint never dispositioned in
+              any earlier round of this review) -> RESET
           (b) Any FIXED->CONFIRMED reversion -> RESET
         Only recurring CONFIRMED findings reach the tier check.
 
@@ -1307,15 +1520,31 @@ class StateMachine:
             for f in self._state.findings
         }
 
-        # Prior round dispositions (empty set for round 0)
+        # Previous round's dispositions, for clause (b) only (a FIXED
+        # that comes back CONFIRMED is a reversion against the round that
+        # fixed it). Clause (a) uses ever_seen below, not this.
         if len(history) >= 2:
             prior_disps = history[-2].get("dispositions", {})
         else:
             prior_disps = {}
 
-        # (a) zero NEW CONFIRMED this round -- any new finding = full reset
+        # Every fingerprint this review has already dispositioned, in any
+        # earlier round. "New" for clause (a) means new to the REVIEW.
+        # Measured 2026-09-06 (tests/fixtures/fixpoint/): three L1 passes
+        # at non-zero temperature draw a different sample of a large diff
+        # every round -- 24 of 28 live fingerprints in a six-round run
+        # appeared in exactly one round -- so "absent from the previous
+        # round" is true of most findings most of the time and the
+        # counter can never leave 0. A finding that was reported before
+        # and comes back is recurring, not new; whether it holds the
+        # review open is the severity tiers' question below.
+        ever_seen: set = set()
+        for past in history[:-1]:
+            ever_seen.update(past.get("dispositions", {}).keys())
+
+        # (a) a CONFIRMED fingerprint no earlier round has seen = full reset
         for fp, disp in current_disps.items():
-            if disp == Disposition.CONFIRMED and fp not in prior_disps:
+            if disp == Disposition.CONFIRMED and fp not in ever_seen:
                 return _FixpointResult.RESET
 
         # (b) zero FIXED->CONFIRMED reversions
@@ -1411,6 +1640,20 @@ class StateMachine:
         with FAIL; non-hollow proceed to PASS. Overfit guard runs on
         PASS status (advisory only, never blocking).
         """
+        # Receipt acceptance gate: never write terminal PASS while the
+        # current run's evidence fails the full verifier policy (coverage
+        # floor, hunk witness, completeness, stale-window).
+        gate_errors = self._receipt_gate_round_errors()
+        gate_errors.extend(self._receipt_gate_terminal_errors())
+        if gate_errors:
+            for err in gate_errors:
+                self._record_receipt_gate_failure(err)
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._write_ledger_rows()
+            self._persist_state()
+            return
+
         from .fixval import (
             FixvalSkip,
             FixvalStatus,

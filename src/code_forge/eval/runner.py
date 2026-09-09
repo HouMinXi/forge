@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -698,12 +699,42 @@ def _to_config_shape(backend_config: dict) -> dict:
     return out
 
 
+def _keep_state_guarded(temp_dir: str, keep_state_dir: str,
+                        entry_name: str) -> None:
+    """_keep_state for use inside a finally: a failed copy (OSError) or
+    a refused name (ValueError from the escape guard) is reported and
+    swallowed, so it neither masks the exception that brought us here
+    nor skips the rmtree that follows."""
+    try:
+        _keep_state(temp_dir, keep_state_dir, entry_name)
+    except (OSError, ValueError) as exc:
+        print("keep_state_dir: could not keep %s: %s"
+              % (entry_name, exc), file=sys.stderr)
+
+
+def _keep_state(temp_dir: str, keep_state_dir: str, entry_name: str) -> None:
+    src = Path(temp_dir) / ".code-forge" / "state.json"
+    if not src.exists():
+        return
+    # entry_name comes from corpus.yaml, the operator's own file, and is
+    # already a path segment on the read side (base_files/<name>). Still:
+    # this is the write side, so a name that would escape keep_state_dir
+    # is refused rather than honoured.
+    root = Path(keep_state_dir).resolve()
+    dst = (root / entry_name / "state.json").resolve()
+    if root not in dst.parents:
+        raise ValueError("entry name escapes keep_state_dir: %r" % entry_name)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
 def replay_entry(
     entry: CorpusEntry,
     corpus_dir: Path,
     backend_name: str,
     runs: Optional[int] = None,
     backend_config: Optional[dict] = None,
+    keep_state_dir: Optional[str] = None,
 ) -> EvalResult:
     """Run a single corpus entry through code-forge review via subprocess.
 
@@ -792,6 +823,13 @@ def replay_entry(
             if flagged:
                 caught_count += 1
         finally:
+            # The falsify calibration set (Phase 59-A2) needs the real
+            # L1 findings the falsifier saw, and they live only in this
+            # temp dir's state.json. Copy it out before the rmtree when
+            # asked; a run that died before writing state is not an
+            # error here (it is already SKIPPED above).
+            if keep_state_dir:
+                _keep_state_guarded(temp_dir, keep_state_dir, entry.name)
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     # Determine actual verdict (majority vote for multi-run)

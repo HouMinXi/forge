@@ -7,6 +7,7 @@ declarative and Phase 4 can swap impls without touching the CLI.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -22,7 +23,25 @@ from .falsify import Falsifier, StubFalsifier
 from . import progress
 from .e2e_check import run_e2e_check
 from .mutation import run_mutation
+from .reviewer_json import _json_to_state_findings, _strip_fence
 from .state import StateFinding
+
+
+def _raw_response_data(response) -> dict | None:
+    """Parse a raw reviewer response to a dict, tolerantly.
+
+    The transport may return a dict (probe fixtures) or a JSON string
+    (real backends, possibly fenced). None when it is not parseable as a
+    dict -- attempted evidence that cannot even be read back is still
+    recorded by the caller as an infra failure, just without payload.
+    """
+    if isinstance(response, dict):
+        return response
+    try:
+        data = json.loads(_strip_fence(response))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _pass_token_line(backend_name: str, pass_name: str, usage) -> str:
@@ -47,6 +66,8 @@ def _pass_token_line(backend_name: str, pass_name: str, usage) -> str:
 def build_falsifier(
     engine: str,
     backend=None,
+    diff_text=None,
+    context_rows=None,
 ) -> Falsifier:
     """STATE-10 engine factory.
 
@@ -61,13 +82,15 @@ def build_falsifier(
     if engine == "auto":
         try:
             from .falsify_real import RealFalsifier  # noqa: F401
-            return RealFalsifier(backend=backend)
+            return RealFalsifier(backend=backend, diff_text=diff_text,
+                             context_rows=context_rows)
         except ImportError:
             return StubFalsifier()
     if engine == "real":
         try:
             from .falsify_real import RealFalsifier
-            return RealFalsifier(backend=backend)
+            return RealFalsifier(backend=backend, diff_text=diff_text,
+                             context_rows=context_rows)
         except ImportError:
             raise NotImplementedError(
                 "--falsification-engine=real requires falsify_real.py "
@@ -235,6 +258,7 @@ def build_l1_provider(
     continuation_breaker=None,
     split_context: str = "",
     context_sources_text: str = "",
+    reviewed_repositories: dict[str, str] | None = None,
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -251,7 +275,16 @@ def build_l1_provider(
     from .llm_invoke import Usage
 
     if engine == "stub":
-        return lambda: ([], [], Usage(), 0.0)
+        def _stub_provider() -> tuple:
+            return ([], [], Usage(), 0.0)
+
+        # Trusted setup marker: the user explicitly asked for no L1
+        # review (--falsification-engine stub). The gate exempts this
+        # path BECAUSE the setup is trusted, never because receipts came
+        # back empty -- an empty result from a REAL producer is evidence
+        # loss and must not be exempted.
+        _stub_provider.is_stub_l1 = True
+        return _stub_provider
 
     from .llm_invoke import LLMInvokeError, llm_invoke
     from .reviewer_json import (
@@ -264,6 +297,13 @@ def build_l1_provider(
 
     def _provider() -> tuple:
         diff_text = resolved.git_diff or ""
+        # Attempted evidence for THIS invocation: raw reviewer responses
+        # whose excerpts failed validation, tagged with the loop-owned
+        # pass name. Kept as an attribute so the 4-tuple contract is
+        # unchanged while the machine can hand the attempts to the
+        # receipt writer for a durable audit artifact.
+        all_attempted: list[dict] = []
+        _provider.attempted_excerpts = all_attempted
         if not diff_text:
             return ([], [], Usage(), 0.0)
 
@@ -450,6 +490,9 @@ def build_l1_provider(
 
             try:
                 validated = validate_reviewer_json(response)
+                if reviewed_repositories is not None:
+                    from .receipt_scope import validate_scoped_paths
+                    validate_scoped_paths(validated, reviewed_repositories)
             except ValueError as exc:
                 from .disposition import Disposition
                 from .state import StateFinding
@@ -462,6 +505,31 @@ def build_l1_provider(
                     line_range=[0, 0],
                     description="schema validation failed: %s" % exc,
                 ))
+                # Preserve the exact attempted payload as audit data with
+                # loop-owned pass attribution -- never as accepted
+                # evidence, never repaired. The writer stores it in a
+                # dedicated artifact so the raw excerpt text survives.
+                raw_data = _raw_response_data(response)
+                if raw_data is not None:
+                    attempted = dict(raw_data)
+                    attempted["pass_name"] = pass_name
+                    all_attempted.append(attempted)
+                # Retain valid-shaped findings from a response whose
+                # excerpts failed validation as UNTRUSTED audit data: the
+                # candidate may still point at a real defect, and dropping
+                # it would hide the attempt. It is not CONFIRMED and never
+                # reaches semantic falsification as a code defect.
+                if isinstance(raw_data, dict) and isinstance(
+                    raw_data.get("findings"), list
+                ):
+                    for sf in _json_to_state_findings(
+                        raw_data, pass_name,
+                        backend=backend.name if backend else None,
+                    ):
+                        sf.source = "UNTRUSTED"
+                        sf.id = "l1-%s-untrusted-%s" % (
+                            pass_name, sf.fingerprint)
+                        all_candidates.append(sf)
                 if breaker is not None:
                     breaker.record_other_error()
                 continue
@@ -473,7 +541,7 @@ def build_l1_provider(
             # always recovers still trips the run-level threshold and
             # gets operator attention.
 
-            all_excerpts.extend(_collect_excerpts(validated))
+            all_excerpts.extend(_collect_excerpts(validated, pass_name=pass_name))
 
             # Coverage guard: when the pass reports zero findings,
             # verify that excerpts cover every changed file before
@@ -665,6 +733,9 @@ def build_sampling_l1_provider(
 
     def _provider() -> tuple:
         diff_text = resolved.git_diff or ""
+        # Attempted evidence for THIS invocation (see build_l1_provider).
+        all_attempted: list[dict] = []
+        _provider.attempted_excerpts = all_attempted
         if not diff_text:
             return ([], [], Usage(), 0.0)
 
@@ -789,9 +860,21 @@ def build_sampling_l1_provider(
                     line_range=[0, 0],
                     description="schema validation failed: %s" % exc,
                 ))
+                # Preserve the exact attempted payload (see the A-leg
+                # provider); the writer stores it as an audit artifact.
+                raw_data = _raw_response_data(response)
+                if raw_data is not None:
+                    attempted = dict(raw_data)
+                    attempted["pass_name"] = pass_name
+                    all_attempted.append(attempted)
+                if isinstance(raw_data, dict) and isinstance(raw_data.get("findings"), list):
+                    for sf in _json_to_state_findings(raw_data, pass_name):
+                        sf.source = "UNTRUSTED"
+                        sf.id = "l1-%s-untrusted-%s" % (pass_name, sf.fingerprint)
+                        all_candidates.append(sf)
                 continue
 
-            all_excerpts.extend(_collect_excerpts(validated))
+            all_excerpts.extend(_collect_excerpts(validated, pass_name=pass_name))
 
             # Coverage guard (same as build_l1_provider)
             if len(validated["findings"]) == 0 and diff_text:

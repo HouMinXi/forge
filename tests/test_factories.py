@@ -51,6 +51,24 @@ def _make_finding(fp: str = "fp-test") -> StateFinding:
     )
 
 
+def _close_unrun_coro(future):
+    """Close a coroutine that a mocked scheduler never runs.
+
+    The sampling tests stub ``asyncio.run_coroutine_threadsafe`` with a
+    pre-built future. The coroutine argument is created by the provider
+    but never scheduled, so it must be closed to avoid the
+    "coroutine was never awaited" RuntimeWarning at garbage collection.
+    The mock returns the exact supplied future; timeout and cancellation
+    assertions on it stay untouched.
+    """
+
+    def _replacement(coro, loop):
+        coro.close()
+        return future
+
+    return _replacement
+
+
 class TestBuildFalsifier:
     """STATE-10 engine factory."""
 
@@ -394,6 +412,7 @@ def _make_resolved_with_diff(diff_text):
     )
 
 
+
 class TestCoverageGuard:
     """Coverage guard: detect truncated clean passes."""
 
@@ -406,7 +425,7 @@ class TestCoverageGuard:
             findings_json=[],
             excerpts_json=[
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ],
         )
 
@@ -432,9 +451,9 @@ class TestCoverageGuard:
             findings_json=[],
             excerpts_json=[
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
                 {"file": "src/b.py", "start_line": 5,
-                 "end_line": 8, "content": "line5\nadded2\nline6"},
+                 "end_line": 8, "content": "line5\nadded2\nline6\nline8"},
             ],
         )
 
@@ -460,7 +479,7 @@ class TestCoverageGuard:
             ],
             excerpts_json=[
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ],
         )
 
@@ -503,9 +522,9 @@ class TestCoverageGuard:
             findings_json=[],
             excerpts_json=[
                 {"file": "/home/user/repo/src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
                 {"file": "/home/user/repo/lib/a.py", "start_line": 1,
-                 "end_line": 4, "content": "x\ny\nz"},
+                 "end_line": 4, "content": "x\ny\nz\nw"},
             ],
         )
 
@@ -541,7 +560,7 @@ class TestCoverageGuard:
             findings_json=[],
             excerpts_json=[
                 {"file": "b/foo.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ],
         )
 
@@ -588,7 +607,7 @@ class TestCoverageGuard:
             findings_json=[],
             excerpts_json=[
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ],
         )
 
@@ -652,7 +671,7 @@ class TestInvokeFailureHandling:
             findings_json=[],
             excerpts_json=[
                 {"file": "a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ],
         )
 
@@ -677,7 +696,7 @@ class TestInvokeFailureHandling:
             findings_json=[],
             excerpts_json=[
                 {"file": "a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ],
         )
 
@@ -705,8 +724,8 @@ class TestBuildSamplingL1Provider:
             content={
                 "findings": [],
                 "code_excerpts": [
-                    {"file": "src/a.py", "start_line": 1, "end_line": 4, "content": "line1\nadded\nline2"},
-                    {"file": "src/b.py", "start_line": 5, "end_line": 8, "content": "line5\nadded2\nline6"},
+                    {"file": "src/a.py", "start_line": 1, "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                    {"file": "src/b.py", "start_line": 5, "end_line": 8, "content": "line5\nadded2\nline6\nline8"},
                 ]
             },
             usage=Usage(0, 0),
@@ -718,7 +737,7 @@ class TestBuildSamplingL1Provider:
         future.set_result([good_resp, good_resp, good_resp])
 
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(session, loop, resolved)
             findings, excerpts, usage, duration = provider()
 
@@ -751,7 +770,7 @@ class TestBuildSamplingL1Provider:
         future.result.side_effect = concurrent.futures.TimeoutError()
 
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(concurrent.futures.TimeoutError):
                 provider()
@@ -777,7 +796,7 @@ class TestBuildSamplingL1Provider:
         ))
 
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(LLMInvokeError, match="truncated"):
                 provider()
@@ -807,7 +826,7 @@ class TestBuildSamplingL1Provider:
         ))
 
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(LLMInvokeError, match="empty"):
                 provider()
@@ -831,7 +850,7 @@ class TestBuildSamplingL1Provider:
         ])
 
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", return_value=future):
+             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(asyncio.CancelledError):
                 provider()
@@ -842,9 +861,9 @@ class TestParallelL1:
 
     _EXCERPTS = [
         {"file": "src/a.py", "start_line": 1, "end_line": 4,
-         "content": "line1\nadded\nline2"},
+         "content": "line1\nadded\nline2\nline4"},
         {"file": "src/b.py", "start_line": 5, "end_line": 8,
-         "content": "line5\nadded2\nline6"},
+         "content": "line5\nadded2\nline6\nline8"},
     ]
 
     @staticmethod
@@ -1044,7 +1063,7 @@ class TestParallelL1:
         with patch("code_forge.llm_invoke.invoke_sampling",
                    new_callable=MagicMock), \
              patch("asyncio.run_coroutine_threadsafe",
-                   return_value=future):
+                   side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(
                 MagicMock(), MagicMock(), resolved)
             findings, _, _, _ = provider()
@@ -1078,7 +1097,7 @@ class TestParallelL1:
         with patch("code_forge.llm_invoke.invoke_sampling",
                    new_callable=MagicMock), \
              patch("asyncio.run_coroutine_threadsafe",
-                   return_value=future):
+                   side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(
                 MagicMock(), MagicMock(), resolved)
             findings, _, _, _ = provider()
@@ -1104,7 +1123,7 @@ class TestDurationWallClock:
         good_resp = LLMResult(
             content=_stub_llm_response([], [
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ]).content,
             usage=LLMUsage(input_tokens=10, output_tokens=10),
             duration_s=0.1,
@@ -1143,7 +1162,7 @@ class TestDurationWallClock:
             return LLMResult(
                 content=_stub_llm_response([], [
                     {"file": "src/a.py", "start_line": 1,
-                     "end_line": 4, "content": "line1\nadded\nline2"},
+                     "end_line": 4, "content": "line1\nadded\nline2\nline4"},
                 ]).content,
                 usage=LLMUsage(input_tokens=10, output_tokens=10),
                 duration_s=0.1,
@@ -1172,7 +1191,7 @@ class TestDurationWallClock:
         good_resp = LLMResult(
             content={"findings": [], "code_excerpts": [
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ]},
             usage=LLMUsage(0, 0),
             duration_s=0.1,
@@ -1186,9 +1205,9 @@ class TestDurationWallClock:
         with patch("code_forge.llm_invoke.invoke_sampling",
                    new_callable=MagicMock), \
              patch("asyncio.run_coroutine_threadsafe",
-                   return_value=future), \
+                   side_effect=_close_unrun_coro(future)), \
              patch("code_forge.factories.time.monotonic",
-                    side_effect=clock):
+                   side_effect=clock):
             provider = build_sampling_l1_provider(
                 MagicMock(), MagicMock(), resolved)
             _, _, _, duration = provider()
@@ -1220,7 +1239,7 @@ class TestDurationWallClock:
             return LLMResult(
                 content=_stub_llm_response([], [
                     {"file": "src/a.py", "start_line": 1,
-                     "end_line": 4, "content": "line1\nadded\nline2"},
+                     "end_line": 4, "content": "line1\nadded\nline2\nline4"},
                 ]).content,
                 usage=LLMUsage(input_tokens=10, output_tokens=10),
                 duration_s=0.1,
@@ -1421,7 +1440,7 @@ class TestSplitContextInPrompt:
             seen.append(prompt)
             return _stub_llm_response(findings_json=[], excerpts_json=[
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ])
 
         resolved = _make_resolved_with_diff(_ONE_FILE_DIFF)
@@ -1444,7 +1463,7 @@ class TestSplitContextInPrompt:
             seen.append(prompt)
             return _stub_llm_response(findings_json=[], excerpts_json=[
                 {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2"},
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
             ])
 
         resolved = _make_resolved_with_diff(_ONE_FILE_DIFF)

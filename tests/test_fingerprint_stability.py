@@ -200,8 +200,12 @@ class TestBucketCollision:
                 {"file": "chat.ts", "line": 982, "severity": "P1",
                  "description": "critical logic error"},
             ],
-            "code_excerpts": [{"file": "chat.ts", "start_line": 975,
-                               "end_line": 985, "content": "x"}],
+            "code_excerpts": [{
+                "file": "chat.ts", "start_line": 975, "end_line": 985,
+                # 11 claimed lines (975..985 inclusive); carries all 11 so
+                # the shared line-count parity check stays satisfied.
+                "content": "\n".join("line %d" % n for n in range(975, 986)),
+            }],
         })
         with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
             mock_invoke.return_value = LLMResult(

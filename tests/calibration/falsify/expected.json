@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "frozen_at": "2ab151f4dcfc18ee2efb2ff5544184e70afc7ede",
+  "backend": "review-default (mimo-v2.5-pro)",
+  "dumped_from": "../../.planning/eval/phase-59/calibration-raw (depth=1, 2026-09-05)",
+  "items": [
+    {
+      "id": "c01",
+      "entry": "astropy__astropy-14182-bug",
+      "finding": {
+        "file": "astropy/io/ascii/rst.py",
+        "line_range": [
+          60,
+          60
+        ],
+        "description": "[adversarial] The __init__ method no longer accepts a header_rows parameter, which was used to specify multiple header rows. This removes functionality that was previously supported and could break existing code that relies on it."
+      },
+      "expected": "CONFIRMED",
+      "why": "reversed fix removes header_rows support from the RST writer",
+      "evidence": "answer key hunk rst.py:57-66 (header_rows param and __init__ signature removed)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c02",
+      "entry": "django__django-12143-bug",
+      "finding": {
+        "file": "django/contrib/admin/options.py",
+        "line_range": [
+          1634,
+          1634
+        ],
+        "description": "[expert] Removal of re.escape() on 'prefix' introduces a regex injection vulnerability. The prefix is interpolated directly into a regex pattern without escaping metacharacters. If the prefix contains regex special characters (e.g., '.', '*', '+', '[', etc.), they will be interpreted as regex operators rather than literal text. This could allow unintended form field matches, enabling edits to objects whose PKs were not meant to be captured. Although Django's default list_editable prefix is typically a safe string like 'form', the prefix can be overridden via get_changelist_formset(), making this exploitable depending on site configuration. The original re.escape() was intentional defense-in-depth and should not have been removed."
+      },
+      "expected": "CONFIRMED",
+      "why": "re.escape(prefix) removed before interpolating into a regex",
+      "evidence": "answer key hunk options.py:1631-1637 (`re.escape(prefix)` -> `prefix`)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c03",
+      "entry": "matplotlib__matplotlib-20488-bug",
+      "finding": {
+        "file": "lib/matplotlib/image.py",
+        "line_range": [
+          535,
+          535
+        ],
+        "description": "[qodo] The new code only handles s_vmin < 0, but fails to handle s_vmin == 0 for LogNorm. Since LogNorm requires positive values, s_vmin should be adjusted to a small positive value (e.g., eps) when it is zero or negative to avoid mathematical errors like log(0)."
+      },
+      "expected": "CONFIRMED",
+      "why": "LogNorm guard narrowed from <=0 to <0 lets vmin=0 reach log10",
+      "evidence": "answer key hunk image.py:532-538 (`s_vmin <= 0` -> `s_vmin < 0`)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c04",
+      "entry": "psf__requests-1142-bug",
+      "finding": {
+        "file": "requests/models.py",
+        "line_range": [
+          389,
+          389
+        ],
+        "description": "[qodo] Unconditional initialization of Content-Length to '0' changes behavior for GET and HEAD requests with no body, where previously the header was not set, potentially deviating from HTTP standards."
+      },
+      "expected": "CONFIRMED",
+      "why": "Content-Length: 0 sent on GET/HEAD with no body",
+      "evidence": "answer key hunk models.py:386-399 (elif method not in GET/HEAD guard removed)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c05",
+      "entry": "pydata__xarray-2905-bug",
+      "finding": {
+        "file": "xarray/core/variable.py",
+        "line_range": [
+          221,
+          221
+        ],
+        "description": "[adversarial] The change from explicitly checking for pandas objects to using `getattr(data, \"values\", data)` may cause unintended conversions for objects that have a `.values` attribute but are not pandas objects (e.g., dictionaries). This could lead to unexpected behavior or errors in subsequent code."
+      },
+      "expected": "CONFIRMED",
+      "why": "getattr(data, 'values') unwraps any object with .values, not only pandas",
+      "evidence": "answer key hunk variable.py:218-224 (isinstance pandas check -> getattr)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c06",
+      "entry": "pylint-dev__pylint-4661-bug",
+      "finding": {
+        "file": "pylint/config/__init__.py",
+        "line_range": [
+          66,
+          66
+        ],
+        "description": "[qodo] Setting PYLINT_HOME to '.pylint.d' when USER_HOME is '~' results in a relative path, which may cause incorrect storage location. The home directory shorthand should be expanded to an absolute path using os.path.expanduser or similar before joining."
+      },
+      "expected": "CONFIRMED",
+      "why": "cache dir moved back from the XDG-compliant appdirs path to ~/.pylint.d",
+      "evidence": "answer key hunk __init__.py:63-69 (appdirs.user_cache_dir -> os.path.join(USER_HOME, '.pylint.d'))",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c07",
+      "entry": "pytest-dev__pytest-10356-bug",
+      "finding": {
+        "file": "src/_pytest/mark/structures.py",
+        "line_range": [
+          358,
+          358
+        ],
+        "description": "[qodo] The refactored `get_unpacked_marks` loses MRO-aware mark collection. The old implementation with `consider_mro=True` (the default) explicitly walked `obj.__mro__`, calling `x.__dict__.get(\"pytestmark\", [])` on each class and flattening the results. The new implementation uses `getattr(obj, \"pytestmark\", [])`, which returns only the first `pytestmark` found via normal attribute lookup — it does **not** concatenate marks from all classes in the MRO chain. For a subclass `B(A)` where both define `pytestmark`, `getattr(B, \"pytestmark\", [])` returns only B's marks, silently dropping A's marks. Any caller that previously relied on the default `consider_mro=True` behavior (collecting marks from the full class hierarchy) will now get incomplete mark lists, potentially causing applied pytest marks to be silently lost."
+      },
+      "expected": "CONFIRMED",
+      "why": "get_unpacked_marks stops walking __mro__; marks on base classes are lost",
+      "evidence": "answer key hunk structures.py:355-372 (consider_mro loop removed)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c08",
+      "entry": "scikit-learn__scikit-learn-10297-bug",
+      "finding": {
+        "file": "sklearn/linear_model/ridge.py",
+        "line_range": [
+          1336,
+          1336
+        ],
+        "description": "[qodo] Removal of store_cv_values parameter from RidgeClassifierCV.__init__ while parent class likely still requires it. This creates an inconsistency where cv_values_ attribute documentation still references store_cv_values but the parameter is no longer available. If the parent class doesn't have a default value for store_cv_values, this will cause a TypeError at runtime."
+      },
+      "expected": "CONFIRMED",
+      "why": "RidgeClassifierCV loses store_cv_values while its docstring still promises cv_values_",
+      "evidence": "answer key hunk ridge.py:1333-1342 (store_cv_values param removed from __init__)",
+      "model_disposition_at_dump": "DISMISSED"
+    },
+    {
+      "id": "c09",
+      "entry": "sphinx-doc__sphinx-7440-bug",
+      "finding": {
+        "file": "sphinx/domains/std.py",
+        "line_range": [
+          568,
+          568
+        ],
+        "description": "[expert] Added lowercase=True to XRefRole for 'term', aligning cross-reference handling with term storage normalization. This may introduce unintended case-insensitivity if the domain previously relied on case-sensitive term matching."
+      },
+      "expected": "CONFIRMED",
+      "why": "term registration lowercased again: case-different glossary entries collide as duplicates",
+      "evidence": "answer key hunks std.py:305-311 and 565-571 (the two lower() sites)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c10",
+      "entry": "sympy__sympy-12096-bug",
+      "finding": {
+        "file": "sympy/core/function.py",
+        "line_range": [
+          510,
+          510
+        ],
+        "description": "[expert] Removed `evalf(prec)` on each argument before passing to `self._imp_()`. The prior contract was that `_imp_()` receives pre-evaluated (numeric) arguments; the new code passes raw symbolic args. `_imp_()` implementations typically forward directly to mpmath or Python math builtins that expect numeric inputs, so this silently changes the fallback contract and may produce wrong results or raise unexpected TypeErrors for any function whose `_imp_()` does not self-evaluate its arguments. The existing except clause catches `(AttributeError, TypeError, ValueError)` which masks the resulting TypeError, causing the method to return None instead of a valid Float — a silent data loss. If this was intentional (e.g., to avoid a recursive evalf loop), the fix should instead push the evalf call into each `_imp_` implementation or add a guard, not drop it at the call site."
+      },
+      "expected": "CONFIRMED",
+      "why": "_imp_ receives symbolic args; implemented_function(...).evalf() no longer recurses",
+      "evidence": "answer key hunk function.py:507-513 (`arg.evalf(prec)` -> `arg`)",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c11",
+      "entry": "astropy__astropy-13033-clean",
+      "finding": {
+        "file": "astropy/timeseries/core.py",
+        "line_range": [
+          84,
+          84
+        ],
+        "description": "[qodo] The condition uses len(required_columns) which will raise TypeError if required_columns is a scalar, but the error message handling suggests that scalars are supported, indicating an inconsistency."
+      },
+      "expected": "DISMISSED",
+      "why": "required_columns is a list at this call site; the new helper handles the scalar case for the message only",
+      "evidence": "core.py:55-63 helper branches on hasattr(__len__); line 84 len() is on self._required_columns, which every subclass defines as a list",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c12",
+      "entry": "django__django-12143-clean",
+      "finding": {
+        "file": "django/contrib/admin/options.py",
+        "line_range": [
+          1635,
+          1635
+        ],
+        "description": "[expert] The regex pattern escapes prefix but not self.model._meta.pk.name, which could contain regex metacharacters if defined unusually. Consider using re.escape on both for consistency and safety."
+      },
+      "expected": "DISMISSED",
+      "why": "pk.name is a Python identifier validated by the model metaclass; it cannot contain regex metacharacters",
+      "evidence": "the diff only restores re.escape(prefix); pk.name was never escaped upstream either",
+      "model_disposition_at_dump": "DISMISSED"
+    },
+    {
+      "id": "c13",
+      "entry": "matplotlib__matplotlib-20676-clean",
+      "finding": {
+        "file": "lib/matplotlib/widgets.py",
+        "line_range": [
+          2164,
+          2164
+        ],
+        "description": "[adversarial] The change replaces `self.extents` with positions derived from axis bounds (`get_xbound()` or `get_ybound()`) for initial edge handle setup. This alters the initial placement of handles, which may cause them to not reflect the current selection extents (`self.extents`), potentially leading to misaligned or incorrect handle positions at startup."
+      },
+      "expected": "DISMISSED",
+      "why": "this is the upstream fix (mpl#20676): seeding handles from self.extents extended the axis limits at construction",
+      "evidence": "using the axis bounds keeps xlim unchanged, which is the behaviour the upstream test asserts",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c14",
+      "entry": "psf__requests-1142-clean",
+      "finding": {
+        "file": "requests/models.py",
+        "line_range": [
+          395,
+          395
+        ],
+        "description": "[expert] Good change: removes unconditional Content-Length: 0 and correctly omits the header for GET/HEAD with no body, improving RFC 7231 compliance. The previous code always set Content-Length: 0 even for GET/HEAD, which could confuse intermediaries. Minor note: this is a subtle behavioral change for callers relying on GET requests always carrying Content-Length: 0 — this is reliance on a bug, but worth documenting in a changelog."
+      },
+      "expected": "DISMISSED",
+      "why": "the finding text itself says the change is correct; CONFIRMED on praise is a false positive",
+      "evidence": "models.py:395 guard is the upstream fix for requests#1142",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c15",
+      "entry": "pydata__xarray-3305-clean",
+      "finding": {
+        "file": "xarray/core/variable.py",
+        "line_range": [
+          1663,
+          1663
+        ],
+        "description": "[qodo] Use of deprecated 'interpolation' parameter in numpy.nanpercentile. In NumPy 1.22+, this should be 'method' instead. The current code will work but raises a FutureWarning in recent NumPy versions and will break in future releases."
+      },
+      "expected": "DISMISSED",
+      "why": "the parameter is pre-existing and untouched; the diff only threads keep_attrs through quantile",
+      "evidence": "hunks at variable.py:1592 and 1615 add keep_attrs only; interpolation= is in context lines",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c16",
+      "entry": "pylint-dev__pylint-7277-clean",
+      "finding": {
+        "file": "pylint/__init__.py",
+        "line_range": [
+          99,
+          99
+        ],
+        "description": "[qodo] Changing the unconditional sys.path.pop(0) to a conditional pop that only triggers when sys.path[0] is an empty string, '.' or the current working directory alters the function's behavior. Previously, the first element was always removed regardless of its value. This could break callers that rely on the original unconditional removal, especially if sys.path[0] contains other values that were meant to be removed."
+      },
+      "expected": "DISMISSED",
+      "why": "this is the upstream fix (pylint#7277): the unconditional pop removed a legitimate first entry",
+      "evidence": "upstream tests/test_self.py::test_modify_sys_path covers the three literals",
+      "model_disposition_at_dump": "UNCERTAIN"
+    },
+    {
+      "id": "c17",
+      "entry": "pytest-dev__pytest-10051-clean",
+      "finding": {
+        "file": "src/_pytest/logging.py",
+        "line_range": [
+          446,
+          446
+        ],
+        "description": "[adversarial] Changing self.handler.reset() to self.handler.clear() in the clear method may break if the handler object does not have a clear method, leading to AttributeError during log capture clearing."
+      },
+      "expected": "DISMISSED",
+      "why": "LogCaptureHandler.clear() is defined in the same file as part of this change; reset() was the misnamed one",
+      "evidence": "logging.py LogCaptureHandler defines clear(); the diff renames the call to match",
+      "model_disposition_at_dump": "DISMISSED"
+    },
+    {
+      "id": "c18",
+      "entry": "scikit-learn__scikit-learn-10844-clean",
+      "finding": {
+        "file": "sklearn/metrics/cluster/supervised.py",
+        "line_range": [
+          855,
+          855
+        ],
+        "description": "[adversarial] Casting contingency matrix to int64 to prevent potential integer overflow in dot product calculation, which could occur with large sample sizes or clustered data."
+      },
+      "expected": "DISMISSED",
+      "why": "the cast is the fix (sklearn#10844): int32 overflow in c.data**2 for large n; the finding restates it as a defect",
+      "evidence": "supervised.py:855 astype(np.int64) plus the sqrt refactor at 860 avoid the reported overflow",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c19",
+      "entry": "sphinx-doc__sphinx-7440-clean",
+      "finding": {
+        "file": "sphinx/domains/std.py",
+        "line_range": [
+          308,
+          308
+        ],
+        "description": "[qodo] Removal of '.lower()' in std.note_object makes glossary term registration case-sensitive. Combined with the removal of 'lowercase=True' in XRefRole, this change could break existing case-insensitive term references in Sphinx documentation, requiring updates to maintain functionality."
+      },
+      "expected": "DISMISSED",
+      "why": "removing lower() is the upstream fix (sphinx#7440): case-different glossary terms must not collide",
+      "evidence": "std.py:308 and 568 drop the normalisation together, so registration and xref agree",
+      "model_disposition_at_dump": "CONFIRMED"
+    },
+    {
+      "id": "c20",
+      "entry": "sympy__sympy-13551-clean",
+      "finding": {
+        "file": "sympy/concrete/products.py",
+        "line_range": [
+          285,
+          285
+        ],
+        "description": "[adversarial] The logarithmic transformation (exp(Sum(log(p)))) assumes p is positive and real for well-defined real logs; in symbolic computation, p may be negative, zero, or complex, leading to incorrect branch cuts, undefined behavior, or simplified results that differ from the original product semantics."
+      },
+      "expected": "DISMISSED",
+      "why": "exp(Sum(log)) is the upstream fix (sympy#13551); the additive split gave wrong products",
+      "evidence": "products.py:285 upstream commit; the q-Pochhammer test case the old code got wrong",
+      "model_disposition_at_dump": "CONFIRMED"
+    }
+  ]
+}

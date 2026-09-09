@@ -1,20 +1,49 @@
 {
   "source_tree": "c79308c87fe090b0b73aea2826e05f23b46b7ae6",
+  "revision": {
+    "reason": "receipt-chain repair: REVIEW_JSON_CONTRACT in reviewer_json.py gained explicit line-count parity, gap-splitting and per-cycle 60% coverage sentences. Prompt bytes changed, so every digest moved. Contract change is required by the repair plan (trusted pass attribution must not relax evidence shape); digests re-captured with scripts/capture_l1_digests.py logic on branch fix/receipt-chain base 2ab151f.",
+    "old_new": {
+      "A_two_rows": {
+        "old": {
+          "qodo": "49d0ddd723227b128d3fad54eae1972b72b570fd86167b430b5ccf8bcdf47da9",
+          "expert": "0b90c3705402181900904cc0396d0890f435366e1598427bda6593cb5448120d",
+          "adversarial": "a9dca5e81e00a2c57796e15f5e871b3b9552dd64d0101ba8236485543ac53113"
+        },
+        "new": {
+          "qodo": "74040e3cd718f3c49940a3d64e065665b4c3461e84a734b23973f836b2a677b4",
+          "expert": "bfe00c26415bfa28bff2d7080616d05bac1439ba480999af19c1bef59052b29f",
+          "adversarial": "0bf545c4158721b6702a6d4f9a9d7ebf993382c4e90d44b56debe693d1858c22"
+        }
+      },
+      "B_empty": {
+        "old": {
+          "qodo": "f7267d42ea54d1f8476d10b843c7d65965c95279650a9d47aa57ad7fbb0649bc",
+          "expert": "62463c00fe1205e54e89a5b6bd7bfd819b1fb1cd866e3ad6dd9a97a08b874707",
+          "adversarial": "130919843021b3d94a5cf3863bb1cb4812882c5ef5787ca417780b9a02d2da01"
+        },
+        "new": {
+          "qodo": "319ef360c3de5f074533847dde7ff45dc13822d7f82c4803d7024dd94e97e6e4",
+          "expert": "c5560b822f64312e71c76508a8addfae6612b93f02d1de234a94820e18f51a79",
+          "adversarial": "ee95bbbc777efc6c53c1700d5f599535d8a2dae02264d7c39f6611e7fe27deb1"
+        }
+      }
+    }
+  },
   "cases": {
     "A_two_rows": {
-      "qodo": "49d0ddd723227b128d3fad54eae1972b72b570fd86167b430b5ccf8bcdf47da9",
-      "expert": "0b90c3705402181900904cc0396d0890f435366e1598427bda6593cb5448120d",
-      "adversarial": "a9dca5e81e00a2c57796e15f5e871b3b9552dd64d0101ba8236485543ac53113"
+      "qodo": "74040e3cd718f3c49940a3d64e065665b4c3461e84a734b23973f836b2a677b4",
+      "expert": "bfe00c26415bfa28bff2d7080616d05bac1439ba480999af19c1bef59052b29f",
+      "adversarial": "0bf545c4158721b6702a6d4f9a9d7ebf993382c4e90d44b56debe693d1858c22"
     },
     "B_empty": {
-      "qodo": "f7267d42ea54d1f8476d10b843c7d65965c95279650a9d47aa57ad7fbb0649bc",
-      "expert": "62463c00fe1205e54e89a5b6bd7bfd819b1fb1cd866e3ad6dd9a97a08b874707",
-      "adversarial": "130919843021b3d94a5cf3863bb1cb4812882c5ef5787ca417780b9a02d2da01"
+      "qodo": "319ef360c3de5f074533847dde7ff45dc13822d7f82c4803d7024dd94e97e6e4",
+      "expert": "c5560b822f64312e71c76508a8addfae6612b93f02d1de234a94820e18f51a79",
+      "adversarial": "ee95bbbc777efc6c53c1700d5f599535d8a2dae02264d7c39f6611e7fe27deb1"
     },
     "C_exception_as_empty": {
-      "qodo": "f7267d42ea54d1f8476d10b843c7d65965c95279650a9d47aa57ad7fbb0649bc",
-      "expert": "62463c00fe1205e54e89a5b6bd7bfd819b1fb1cd866e3ad6dd9a97a08b874707",
-      "adversarial": "130919843021b3d94a5cf3863bb1cb4812882c5ef5787ca417780b9a02d2da01"
+      "qodo": "319ef360c3de5f074533847dde7ff45dc13822d7f82c4803d7024dd94e97e6e4",
+      "expert": "c5560b822f64312e71c76508a8addfae6612b93f02d1de234a94820e18f51a79",
+      "adversarial": "ee95bbbc777efc6c53c1700d5f599535d8a2dae02264d7c39f6611e7fe27deb1"
     }
   }
 }

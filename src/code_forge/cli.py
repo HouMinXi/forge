@@ -3161,6 +3161,7 @@ def _dispatch_subagent(
     resolved, source_hash, registry, engine_choice,
     _clean_threshold, cwd,
     yaml_focus="", _focus_file_content="",
+    allow_unsnapshotted_context: bool = False,
 ) -> "Verdict | None":
     """Subagent outlet dispatch. Returns Verdict if outlet=='subagent',
     None otherwise (caller continues to subprocess path)."""
@@ -3207,6 +3208,26 @@ def _dispatch_subagent(
     _c_daemon = DaemonStateRunner(backend=backend)
     _c_legacy = LegacyRunner()
     _c_rulepack = RulepackRunner()
+    # The main line gathers context sources after this early return;
+    # give the subagent outlet's falsifier the same reader facts.
+    _c_context_rows: list = []
+    try:
+        from .context_sources import RemovedSymbolReaders, gather
+        from .diff import get_changed_files
+        _c_ctx = gather(
+            [RemovedSymbolReaders(cwd)],
+            get_changed_files(resolved.git_diff or ""),
+            resolved.git_diff or "",
+            head_sha=getattr(resolved, "head_sha", None),
+            allow_unsnapshotted=allow_unsnapshotted_context,
+            on_error=lambda name, msg: warn(
+                "context source %s failed: %s" % (name, msg)
+            ),
+        )
+        _c_context_rows = list(_c_ctx.rows)
+    except Exception as exc:  # noqa: BLE001 - advisory path, named
+        warn("context sources unavailable: %s: %s"
+             % (type(exc).__name__, exc))
     verdict = run_outlet_c(
         resolved_review=resolved,
         source_hash=source_hash,
@@ -3216,6 +3237,7 @@ def _dispatch_subagent(
         registry=registry,
         backend=backend,
         engine=engine_choice,
+        context_rows=_c_context_rows,
         advisory_runners=[
             _c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy,
             _c_rulepack,
@@ -3677,6 +3699,9 @@ def _run(args, env, cwd: Path) -> Verdict:
         resolved, source_hash, registry, engine_choice,
         _clean_threshold, cwd,
         yaml_focus=yaml_focus, _focus_file_content=_focus_file_content,
+        allow_unsnapshotted_context=bool(
+            getattr(args, "allow_unsnapshotted_context", False)
+        ),
     )
     if _subagent_v is not None:
         return _subagent_v
@@ -3735,7 +3760,8 @@ def _run(args, env, cwd: Path) -> Verdict:
     # digests), and findings_cache seeds each hold-cycle's runner as
     # before so sem/graph.db is still queried once per review.
     from .context_sources import (
-        GraphTriageSource, gather, render_blast_radius,
+        GraphTriageSource,
+        RemovedSymbolReaders, gather, render_blast_radius,
         render_context_sources,
     )
     from .diff import get_changed_files
@@ -3743,6 +3769,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     _context_sources_text = ""
     _pre_graph_findings: list = []
     _graph_source = GraphTriageSource(cwd)
+    _context_rows: list = []
     # gather() isolates each source; the two calls outside it
     # (get_changed_files on the diff, the renderers) are pure functions
     # of already-validated input, but a surprise there must degrade to
@@ -3750,7 +3777,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     # review. Context is advisory; the review is not.
     try:
         _ctx = gather(
-            [_graph_source],
+            [_graph_source, RemovedSymbolReaders(cwd)],
             get_changed_files(resolved.git_diff or ""),
             resolved.git_diff or "",
             head_sha=getattr(resolved, "head_sha", None),
@@ -3768,14 +3795,19 @@ def _run(args, env, cwd: Path) -> Verdict:
         )
         _context_sources_text = render_context_sources(_ctx)
         _pre_graph_findings = list(_graph_source.findings_cache or [])
+        _context_rows = list(_ctx.rows)
     except Exception as exc:  # noqa: BLE001 - advisory path, named
         warn("context sources unavailable: %s: %s"
              % (type(exc).__name__, exc))
         _graph_impact_context = ""
         _context_sources_text = ""
         _pre_graph_findings = []
+        _context_rows = []
 
-    falsifier = build_falsifier(engine_choice, backend=backend)
+    falsifier = build_falsifier(
+        engine_choice, backend=backend, diff_text=resolved.git_diff,
+        context_rows=_context_rows,
+    )
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
 

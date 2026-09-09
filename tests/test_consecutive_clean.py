@@ -5,6 +5,7 @@ from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
 from code_forge.llm_invoke import Usage
 from code_forge.machine import StateMachine
+from code_forge.registry import ToolConfig
 from code_forge.state import Mode, StateFinding, Verdict, load_state
 
 
@@ -23,14 +24,27 @@ def _finding(fp="fp-1"):
     )
 
 
+def _tool(name="ruff", patterns=None):
+    return ToolConfig(
+        name=name,
+        command="true",
+        args=[],
+        output_format="ruff",
+        file_patterns=patterns or ["*.py"],
+    )
+
+
 class TestConsecutiveClean:
     def test_needs_3_clean_rounds_not_1(self, tmp_path):
         sm = StateMachine(
             mode=Mode.LOCAL, falsifier=StubFalsifier(),
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            baseline_spec_repr="HEAD", cwd=tmp_path,
+            registry={"ruff": _tool("ruff", ["*.py"])},
+            l0_runner=lambda _r, _f: ([], []),
             l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            coverage_l1_active=False,
         )
         assert sm.run() == Verdict.PASS
         state = load_state(tmp_path / ".code-forge" / "state.json")
@@ -63,8 +77,11 @@ class TestConsecutiveClean:
             mode=Mode.LOCAL, falsifier=StubFalsifier(),
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            baseline_spec_repr="HEAD", cwd=tmp_path,
+            registry={"ruff": _tool("ruff", ["*.py"])},
+            l0_runner=lambda _r, _f: ([], []),
             l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            coverage_l1_active=False,
         )
         sm.run()
         receipt_dir = tmp_path / ".code-forge" / "receipts"
@@ -149,8 +166,11 @@ class TestConsecutiveClean:
             mode=Mode.LOCAL, falsifier=StubFalsifier(),
             autofixer=StubAutoFixer(), revert_fn=lambda f: None,
             resolved_review=resolved, source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
+            baseline_spec_repr="HEAD", cwd=tmp_path,
+            registry={"ruff": _tool("ruff", ["*.py"])},
+            l0_runner=lambda _r, _f: ([], []),
             l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            coverage_l1_active=False,
         )
 
         base = datetime.datetime(

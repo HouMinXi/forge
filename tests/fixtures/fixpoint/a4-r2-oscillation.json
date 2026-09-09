@@ -1,0 +1,646 @@
+{
+  "schema_version": 1,
+  "disposition_protocol_version": 1,
+  "round": 2,
+  "mode": "LOCAL",
+  "source_hash": "bed527e7931a773dbf583811d6762f3c34fc10552b64946fdf3772de968cecb1",
+  "findings": [
+    {
+      "id": "e2e-layer1",
+      "fingerprint": "e2e-l1:82b7d7f6297ff236",
+      "source": "E2E_CHECK",
+      "disposition": "DISMISSED",
+      "file": "",
+      "line_range": [],
+      "description": "cross-component change spans groups {scripts, src}; signature changed in {scripts/run_falsify_calibration.py, src/code_forge/cli.py, src/code_forge/context_sources.py, src/code_forge/cross_repo.py, src/code_forge/eval/runner.py, src/code_forge/factories.py, src/code_forge/falsify_real.py, src/code_forge/llm_invoke.py, src/code_forge/outlet_c.py}; is there an e2e test for the joined path?",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": null
+    },
+    {
+      "id": "MUTATION_SKIPPED",
+      "fingerprint": "mutation-unavailable",
+      "source": "MUTANT",
+      "disposition": "DISMISSED",
+      "file": "",
+      "line_range": [],
+      "description": "mutmut not installed (soft dependency)",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": null
+    },
+    {
+      "id": "l1-qodo-0f131a726f172a89",
+      "fingerprint": "0f131a726f172a89",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        89,
+        89
+      ],
+      "description": "[qodo] snapshot_sha() calls _gate_cfg(self.repo_root) but _gate_cfg is not defined or imported in this module. This will raise NameError at runtime whenever snapshot_sha() is invoked on a GraphTriageSource where the backend is not graphdb or backend detection requires the gate config.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-qodo-09b7fe2534604b5e",
+      "fingerprint": "09b7fe2534604b5e",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        430,
+        430
+      ],
+      "description": "[qodo] Operator precedence in `depth <= 0 and \"(\" in text or (depth <= 0 and in_sig and \")\" in text)` makes the first branch (`depth <= 0 and \"(\" in text`) trigger prematurely on any line containing `(` that leaves depth \u2264 0 \u2014 including single-line `def foo(bar):` lines. The logic only works for single-line signatures because `_PARAM.findall` runs before the exit condition. For multi-line signatures where the closing `)` is on its own line, `_params_on` misses parameters on that final line because `in_sig` was set to False by the (erroneously) triggered first branch when the `def` line was processed.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-fa39d27eaae2da5f",
+      "fingerprint": "fa39d27eaae2da5f",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        430,
+        430
+      ],
+      "description": "[expert] Operator precedence ambiguity in _params_on: `depth <= 0 and \"(\" in text or (depth <= 0 and in_sig and \")\" in text)` relies on implicit `and`-before-`or` binding. The outer parens on the second disjunct do not disambiguate; the first disjunct has no parethsized grouping at all. Add explicit parentheses to make the intent (`(depth <= 0 and \"(\" in text) or (depth <= 0 and in_sig and \")\" in text)`) obvious to readers and resistant to future refactor mistakes.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-73ff71f8d093d346",
+      "fingerprint": "73ff71f8d093d346",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        272,
+        272
+      ],
+      "description": "[expert] Per-instance file cache is stored via `self.__dict__.setdefault(\"_file_cache\", {})`, bypassing the dataclass field mechanism. This is fragile: it defeats type checkers, is invisible to `fields()`, and will silently shadow any future field named `_file_cache`. Use a `field(default_factory=dict, init=False, repr=False)` for the cache.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-6bbccf4cb077a10f",
+      "fingerprint": "6bbccf4cb077a10f",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        346,
+        346
+      ],
+      "description": "[expert] In _readers(), the assignment-detection regex `re.compile(r\"(self\\.)?%s\\s*=[^=]\" % re.escape(ident))` is compiled once per call, but `_self_reads` (line 328) recompiles an equivalent regex on every iteration of the `for line in out.splitlines()` loop. Move the `re.match(...)` call to compile the regex once before the loop, consistent with the pattern used in _readers.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-a09884aa776b95bb",
+      "fingerprint": "a09884aa776b95bb",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        393,
+        393
+      ],
+      "description": "[adversarial] Both _removed_identifiers_by_file and _dropped_parameters_by_file derive the filename from the +++ diff header. For deleted files this header is '+++ /dev/null', so all removed identifiers and dropped parameters are attributed to '/dev/null'. In facts() the changed_files guard skips '/dev/null' (it is never in the list), so every symbol from a deleted file is silently dropped. Even without the guard, _self_reads('/dev/null', name) always returns empty, defeating Rule 2 entirely.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-14b313d8c6907828",
+      "fingerprint": "14b313d8c6907828",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        164,
+        164
+      ],
+      "description": "[adversarial] The _PARAM regex matches identifiers followed by =, comma, or closing paren. Python type annotations place ':' after the parameter name (name: Type), so typed parameters are never captured by _params_on. This causes dropped typed parameters to be invisible to Rule 2. Worse, the type name itself IS matched when followed by ',' or ')', producing false positives (e.g., Integer is captured instead of alpha in 'alpha: Integer,').",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-2c96fd9ea7b40c5e",
+      "fingerprint": "2c96fd9ea7b40c5e",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        429,
+        429
+      ],
+      "description": "[adversarial] The paren depth counter uses text.count('(') - text.count(')') which includes parentheses inside string-literal default values. If a default like x=')' appears in the signature, the unmatched ')' causes depth to drop to zero prematurely, setting in_sig to False and skipping all subsequent parameters on later lines.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-4e47b57f6a7781c0",
+      "fingerprint": "4e47b57f6a7781c0",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/context_sources.py",
+      "line_range": [
+        376,
+        376
+      ],
+      "description": "[adversarial] _looks_like_code requires at least one of '=','(','.',':','[' to treat a line as code. Valid code lines such as 'return variable' or 'yield value' that lack these characters are silently skipped, making identifiers on those lines invisible to Rule 1 (removed identifiers).",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-qodo-bce3a67728c79636",
+      "fingerprint": "bce3a67728c79636",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/cross_repo.py",
+      "line_range": [
+        338,
+        338
+      ],
+      "description": "[qodo] build_falsifier is called with diff_text but not context_rows. The primary review path (cli.py line 3782-3785) passes both diff_text and _context_rows from RemovedSymbolReaders, but the cross-repo path only passes diff_text. This means the falsifier's readers context (A4-0b arm) is unavailable in cross-repo reviews, reducing verification accuracy for refactor-shaped findings whose wrongness lives in a downstream reader outside the hunk.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-qodo-64f3bfa7a7605a77",
+      "fingerprint": "64f3bfa7a7605a77",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/outlet_c.py",
+      "line_range": [
+        160,
+        160
+      ],
+      "description": "[qodo] build_falsifier is called with diff_text but not context_rows. The main review path (cli.py) passes _context_rows from RemovedSymbolReaders, but the subagent outlet does not. Since the falsifier is constructed before _l1_provider runs, the context_rows are genuinely unavailable at this call site -- this is a structural limitation rather than an oversight. However, the falsifier's verification is less accurate without readers context for refactor-shaped changes.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-456c184877fa45d5",
+      "fingerprint": "456c184877fa45d5",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        706,
+        706
+      ],
+      "description": "[expert] Path traversal in _keep_state: entry_name (from corpus entry .name) is joined directly into the destination path without sanitization. A corpus entry named e.g. '../../../../etc/cron.d/evil' would write state.json outside keep_state_dir. The entry name comes from corpus.yaml which is user-supplied, but in practice operator-authored; still, defense-in-depth calls for a path traversal guard here (e.g. assert entry_name contains no path separators, or use Path(entry_name).name).",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-expert-9492742600497a1f",
+      "fingerprint": "9492742600497a1f",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "scripts/run_falsify_calibration.py",
+      "line_range": [
+        181,
+        181
+      ],
+      "description": "[expert] os.chdir(entry_dir) on line 173 is outside the try/finally block that restores cwd on line 191. If _make_falsifier (line 181) raises (e.g. SystemExit from build_falsifier, or ImportError propagated as NotImplementedError), the finally block at line 191 never runs and the process cwd is left changed for subsequent iterations. The chdir and its restore should be in the same try/finally.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-d47f3838011b1c3d",
+      "fingerprint": "d47f3838011b1c3d",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        702,
+        702
+      ],
+      "description": "[adversarial] New _keep_state function copies state.json with shutil.copy2, but the function does not handle race condition: if the temp_dir's .code-forge directory is deleted by another thread between checking existence and copying, or if state.json is corrupted/incomplete during copy. Should use shutil.copy2 with error handling or atomic copy.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-1d9bdf4abc8c3ee7",
+      "fingerprint": "1d9bdf4abc8c3ee7",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "src/code_forge/eval/runner.py",
+      "line_range": [
+        813,
+        813
+      ],
+      "description": "[adversarial] In the finally block, _keep_state call is wrapped in try/except OSError, but the exception message prints to stderr and silently continues. If the state file is partially written (e.g., JSON truncated), the copy may succeed but produce corrupt state that the calibration script later reads. Should validate the JSON after copy or use atomic write.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-070879241699bc77",
+      "fingerprint": "070879241699bc77",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "scripts/run_falsify_calibration.py",
+      "line_range": [
+        99,
+        99
+      ],
+      "description": "[adversarial] subprocess.run(['git', 'apply', '-']) is called with text=True and capture_output=True. If the diff_text contains binary content or extremely large patches, this could cause memory issues or hang. The subprocess has no timeout specified, potentially causing the script to hang indefinitely on a misbehaving git-apply.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-3a65e1588d72f2c3",
+      "fingerprint": "3a65e1588d72f2c3",
+      "source": "L1",
+      "disposition": "CONFIRMED",
+      "file": "scripts/run_falsify_calibration.py",
+      "line_range": [
+        107,
+        107
+      ],
+      "description": "[adversarial] subprocess.run(['git', 'checkout', '-q', '--', '.']) in the finally block uses check=False, but if the checkout fails (e.g., due to unresolvable merge conflicts), the working tree remains in a dirty state. Subsequent runs on the same tree_root entry may encounter stale applied changes.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-261c9d03c04499b0",
+      "fingerprint": "261c9d03c04499b0",
+      "source": "L1",
+      "disposition": "UNCERTAIN",
+      "file": "src/code_forge/falsify_real.py",
+      "line_range": [
+        82,
+        82
+      ],
+      "description": "[adversarial] In _readers_for_file, the function uses getattr(r, 'source', '') to check source attribute, but if the fact rows have inconsistent attributes (e.g., missing 'file'), the function may silently skip rows that should be included. The code assumes all rows with source='removed-symbol-readers' have a .file attribute.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-31ef8db5b63b983f",
+      "fingerprint": "31ef8db5b63b983f",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/falsify_real.py",
+      "line_range": [
+        101,
+        101
+      ],
+      "description": "[adversarial] In _diff_for_file, the truncation cap (8KB) is applied after annotate_diff_lines, but the function returns early with empty string if no section found. However, if the diff_text is extremely large (>8KB) but the specific file's diff is small, the entire diff is truncated even though only the file's portion matters. This could unnecessarily remove context for the falsifier.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    },
+    {
+      "id": "l1-adversarial-085ad1c59a0f97e6",
+      "fingerprint": "085ad1c59a0f97e6",
+      "source": "L1",
+      "disposition": "DISMISSED",
+      "file": "src/code_forge/llm_invoke.py",
+      "line_range": [
+        1796,
+        1796
+      ],
+      "description": "[adversarial] Catching http.client.HTTPException (including IncompleteRead) and re-raising as LLMInvokeError with retryable=True may cause infinite retries for certain server errors. IncompleteRead could indicate a network issue, but if the server consistently returns incomplete responses, retrying the same request may not help. Should consider non-retryable for certain HTTPException subtypes.",
+      "error": null,
+      "anchor": null,
+      "evidence_files": null,
+      "is_timeout": false,
+      "backend": "review-default"
+    }
+  ],
+  "dispositions": {
+    "e2e-layer1": "DISMISSED",
+    "MUTATION_SKIPPED": "DISMISSED",
+    "l1-qodo-0f131a726f172a89": "DISMISSED",
+    "l1-qodo-09b7fe2534604b5e": "UNCERTAIN",
+    "l1-expert-fa39d27eaae2da5f": "DISMISSED",
+    "l1-expert-73ff71f8d093d346": "CONFIRMED",
+    "l1-expert-6bbccf4cb077a10f": "UNCERTAIN",
+    "l1-adversarial-a09884aa776b95bb": "CONFIRMED",
+    "l1-adversarial-14b313d8c6907828": "CONFIRMED",
+    "l1-adversarial-2c96fd9ea7b40c5e": "DISMISSED",
+    "l1-adversarial-4e47b57f6a7781c0": "CONFIRMED",
+    "l1-qodo-bce3a67728c79636": "DISMISSED",
+    "l1-qodo-64f3bfa7a7605a77": "DISMISSED",
+    "l1-expert-456c184877fa45d5": "CONFIRMED",
+    "l1-expert-9492742600497a1f": "DISMISSED",
+    "l1-adversarial-d47f3838011b1c3d": "CONFIRMED",
+    "l1-adversarial-1d9bdf4abc8c3ee7": "CONFIRMED",
+    "l1-adversarial-070879241699bc77": "CONFIRMED",
+    "l1-adversarial-3a65e1588d72f2c3": "CONFIRMED",
+    "l1-adversarial-261c9d03c04499b0": "UNCERTAIN",
+    "l1-adversarial-31ef8db5b63b983f": "DISMISSED",
+    "l1-adversarial-085ad1c59a0f97e6": "DISMISSED"
+  },
+  "fix_attempts": {},
+  "verdict": "PENDING",
+  "converged": false,
+  "baseline_spec_repr": "git:main",
+  "round_history": [
+    {
+      "round": 0,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "09b7fe2534604b5e",
+        "38425d12c4dacd04",
+        "invoke-fail-adversarial",
+        "22607920474b54f6",
+        "9095949ca8b043cf",
+        "23d61f30551955b3",
+        "1f16d94c7009f97c",
+        "6100d940a3c0e56b"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "09b7fe2534604b5e": "UNCERTAIN",
+        "38425d12c4dacd04": "UNCERTAIN",
+        "invoke-fail-adversarial": "CONFIRMED",
+        "22607920474b54f6": "UNCERTAIN",
+        "9095949ca8b043cf": "DISMISSED",
+        "23d61f30551955b3": "UNCERTAIN",
+        "1f16d94c7009f97c": "UNCERTAIN",
+        "6100d940a3c0e56b": "UNCERTAIN"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    },
+    {
+      "round": 1,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "fa39d27eaae2da5f",
+        "9404e279df45a6e0",
+        "389ab7995d02b83f",
+        "0b978770bbcb8d04",
+        "c256ab9def210a8b",
+        "2c96fd9ea7b40c5e",
+        "de35845c86a50534",
+        "1f16d94c7009f97c",
+        "4f8e6e40792fda24",
+        "45ec7f2c6bda0f77"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "fa39d27eaae2da5f": "DISMISSED",
+        "9404e279df45a6e0": "CONFIRMED",
+        "389ab7995d02b83f": "CONFIRMED",
+        "0b978770bbcb8d04": "CONFIRMED",
+        "c256ab9def210a8b": "UNCERTAIN",
+        "2c96fd9ea7b40c5e": "DISMISSED",
+        "de35845c86a50534": "CONFIRMED",
+        "1f16d94c7009f97c": "UNCERTAIN",
+        "4f8e6e40792fda24": "UNCERTAIN",
+        "45ec7f2c6bda0f77": "UNCERTAIN"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    },
+    {
+      "round": 2,
+      "l0_fingerprints": [],
+      "l1_fingerprints": [
+        "0f131a726f172a89",
+        "09b7fe2534604b5e",
+        "fa39d27eaae2da5f",
+        "73ff71f8d093d346",
+        "6bbccf4cb077a10f",
+        "a09884aa776b95bb",
+        "14b313d8c6907828",
+        "2c96fd9ea7b40c5e",
+        "4e47b57f6a7781c0",
+        "bce3a67728c79636",
+        "64f3bfa7a7605a77",
+        "456c184877fa45d5",
+        "9492742600497a1f",
+        "d47f3838011b1c3d",
+        "1d9bdf4abc8c3ee7",
+        "070879241699bc77",
+        "3a65e1588d72f2c3",
+        "261c9d03c04499b0",
+        "31ef8db5b63b983f",
+        "085ad1c59a0f97e6"
+      ],
+      "l2_fingerprints": [
+        "mutation-unavailable"
+      ],
+      "e2e_fingerprints": [
+        "e2e-l1:82b7d7f6297ff236"
+      ],
+      "rulepack_fingerprints": [],
+      "dispositions": {
+        "e2e-l1:82b7d7f6297ff236": "DISMISSED",
+        "mutation-unavailable": "DISMISSED",
+        "0f131a726f172a89": "DISMISSED",
+        "09b7fe2534604b5e": "UNCERTAIN",
+        "fa39d27eaae2da5f": "DISMISSED",
+        "73ff71f8d093d346": "CONFIRMED",
+        "6bbccf4cb077a10f": "UNCERTAIN",
+        "a09884aa776b95bb": "CONFIRMED",
+        "14b313d8c6907828": "CONFIRMED",
+        "2c96fd9ea7b40c5e": "DISMISSED",
+        "4e47b57f6a7781c0": "CONFIRMED",
+        "bce3a67728c79636": "DISMISSED",
+        "64f3bfa7a7605a77": "DISMISSED",
+        "456c184877fa45d5": "CONFIRMED",
+        "9492742600497a1f": "DISMISSED",
+        "d47f3838011b1c3d": "CONFIRMED",
+        "1d9bdf4abc8c3ee7": "CONFIRMED",
+        "070879241699bc77": "CONFIRMED",
+        "3a65e1588d72f2c3": "CONFIRMED",
+        "261c9d03c04499b0": "UNCERTAIN",
+        "31ef8db5b63b983f": "DISMISSED",
+        "085ad1c59a0f97e6": "DISMISSED"
+      },
+      "fixed_fingerprints": [],
+      "fixpoint": "RESET",
+      "clean_rounds_after": 0
+    }
+  ],
+  "infra_errors": [
+    "falsify backend unavailable on 23d61f30551955b3: unexpected response structure from review-default backend",
+    "round 0: falsify could not reach the backend for 1 finding(s): ['23d61f30551955b3']",
+    "round 0: pass(es) did not complete: {'adversarial': 'error'}",
+    "mutmut not found on PATH",
+    "mutmut not found on PATH",
+    "mutmut not found on PATH"
+  ],
+  "hold_reason": null,
+  "promoted_fingerprints": [],
+  "consecutive_survivor_rounds": 0,
+  "consecutive_clean_rounds": 0,
+  "cost": {
+    "total_input_tokens": 134585,
+    "total_output_tokens": 162885,
+    "total_cached_tokens": 300864,
+    "total_duration_s": 2664.9904620102607,
+    "passes": 9,
+    "per_pass": [
+      {
+        "pass": 1,
+        "cycle": 0,
+        "input": 44741,
+        "output": 13164,
+        "cached": 320,
+        "duration_s": 344.522
+      },
+      {
+        "pass": 2,
+        "cycle": 0,
+        "input": 44741,
+        "output": 13164,
+        "cached": 320,
+        "duration_s": 344.522
+      },
+      {
+        "pass": 3,
+        "cycle": 0,
+        "input": 44741,
+        "output": 13164,
+        "cached": 320,
+        "duration_s": 344.522
+      },
+      {
+        "pass": 1,
+        "cycle": 1,
+        "input": 60,
+        "output": 19552,
+        "cached": 49984,
+        "duration_s": 242.599
+      },
+      {
+        "pass": 2,
+        "cycle": 1,
+        "input": 60,
+        "output": 19552,
+        "cached": 49984,
+        "duration_s": 242.599
+      },
+      {
+        "pass": 3,
+        "cycle": 1,
+        "input": 60,
+        "output": 19552,
+        "cached": 49984,
+        "duration_s": 242.599
+      },
+      {
+        "pass": 1,
+        "cycle": 2,
+        "input": 60,
+        "output": 21578,
+        "cached": 49984,
+        "duration_s": 301.209
+      },
+      {
+        "pass": 2,
+        "cycle": 2,
+        "input": 60,
+        "output": 21578,
+        "cached": 49984,
+        "duration_s": 301.209
+      },
+      {
+        "pass": 3,
+        "cycle": 2,
+        "input": 60,
+        "output": 21578,
+        "cached": 49984,
+        "duration_s": 301.209
+      }
+    ]
+  },
+  "env_manifest": {
+    "tier": "observed",
+    "runtime": "python 3.14.6",
+    "dependencies": {},
+    "raw_summary": "observed: python 3.14.6",
+    "runtime_name": "python",
+    "runtime_version": "3.14.6",
+    "runtime_bin": "python3"
+  },
+  "exec_evidence": null
+}

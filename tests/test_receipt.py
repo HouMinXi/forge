@@ -309,6 +309,7 @@ class TestBuildExcerpts:
                 reviewer_excerpts=[{
                     "file": "src/foo.py", "start_line": 1, "end_line": 1,
                     "content": None,
+                    "pass_name": "qodo",
                 }],
             )
             try:
@@ -406,6 +407,7 @@ class TestExcerptPreflight:
                     "start_line": 1,
                     "end_line": 99,
                     "content": "line1\nadded\nline2\n",
+                    "pass_name": "qodo",
                 }],
             )
         assert "pre-flight" in caplog.text
@@ -426,6 +428,7 @@ class TestExcerptPreflight:
                     "start_line": 1,
                     "end_line": 3,
                     "content": "line1\nadded\nline2\n",
+                    "pass_name": "qodo",
                 }],
             )
         assert "pre-flight" not in caplog.text
@@ -447,6 +450,7 @@ class TestExcerptPreflight:
                     "start_line": 1,
                     "end_line": 2,
                     "content": "whatever\n",
+                    "pass_name": "qodo",
                 }],
             )
         assert "not in the diff" in caplog.text
@@ -477,6 +481,7 @@ class TestExcerptPreflight:
                     "start_line": 1,
                     "end_line": 50,
                     "content": "binary\n",
+                    "pass_name": "qodo",
                 }],
             )
         assert "pre-flight" not in caplog.text
@@ -496,6 +501,7 @@ class TestExcerptPreflight:
                 "start_line": 1,
                 "end_line": 99,
                 "content": "x\n",
+                "pass_name": "qodo",
             }],
         )
         files = list((tmp_path / ".code-forge" / "receipts").glob("*.json"))

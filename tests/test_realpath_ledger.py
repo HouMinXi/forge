@@ -21,6 +21,7 @@ from code_forge.disposition import Disposition
 from code_forge.falsify import StubFalsifier
 from code_forge.ledger import TerminalState, iter_rows
 from code_forge.machine import StateMachine
+from code_forge.registry import ToolConfig
 from code_forge.state import Mode, StateFinding, Verdict
 
 
@@ -96,8 +97,17 @@ def test_real_review_run_writes_real_sha_ledger_row(tmp_path):
         source_hash="realpath-src",
         baseline_spec_repr="git:" + base,
         cwd=tmp_path,
-        registry={},
+        registry={
+            "mock_l0": ToolConfig(
+                name="mock_l0",
+                command="true",
+                args=[],
+                output_format="ruff",
+                file_patterns=[str(tmp_path / "x")],
+            )
+        },
         l0_runner=mock_l0,
+        coverage_l1_active=False,
     )
 
     verdict = machine.run()

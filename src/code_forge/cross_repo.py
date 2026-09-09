@@ -21,6 +21,28 @@ from .git import git_diff, resolve_git_ref
 from .verify import _load_receipts
 
 
+class RepositoryFalsifier:
+    """Route qualified L1 findings without widening any falsifier diff."""
+
+    def __init__(self, primary, repositories):
+        self.primary = primary
+        self.repositories = repositories
+        self._diff_text = getattr(primary, "_diff_text", None)
+
+    def falsify(self, finding):
+        from dataclasses import replace
+        from .llm_invoke import FalsifyProtocolError
+
+        identity, separator, path = finding.file.partition("/")
+        target = self.repositories.get(identity)
+        if target is None:
+            if finding.source != "L1":
+                return self.primary.falsify(finding)
+            raise FalsifyProtocolError("INFRA: unknown finding repository/source identity")
+        local = replace(finding, file=path)
+        return target.falsify(local)
+
+
 def get_sibling_diff(repo_path: Path, ref_spec: str) -> str:
     """Acquire unified diff for a sibling repo.
 
@@ -242,11 +264,23 @@ def run_cross_repo(
         })
 
     # -- Step 3: assemble joint context --
-    repos_data = [
-        {"label": e["label"], "ref": e["ref"], "diff": e["diff"]}
+    from .receipt_scope import repository_scope
+
+    labels = [e["label"] for e in repo_entries]
+    paths = [e["repo_path"].resolve() for e in repo_entries]
+    if len(set(labels)) != len(labels) or len(set(paths)) != len(paths):
+        raise ValueError("INFRA: ambiguous reviewed repository identity")
+    reviewed_repositories = {e["label"]: e["diff"] for e in repo_entries}
+    _, repository_manifest = repository_scope(reviewed_repositories)
+    joint_diff = build_cross_repo_context([
+        {"label": e["label"], "ref": e["ref"],
+         "diff": repository_scope({e["label"]: e["diff"]})[0]}
         for e in repo_entries
-    ]
-    joint_diff = build_cross_repo_context(repos_data)
+    ]) + (
+        "Cross-repo evidence: use exact qualified file paths in the diff "
+        "in BOTH findings and code_excerpts. Each path pins repository and "
+        "reviewed source version. Never strip the label@hash/ prefix.\n"
+    )
 
     # -- Step 3b: load contract spec for primary repo --
     _contract_spec = ""
@@ -264,6 +298,11 @@ def run_cross_repo(
     errors: dict[str, Exception] = {}
     per_repo_findings: dict[str, list[dict]] = {}
 
+    # Reuse one falsifier per repository across the joint and local paths.
+    repo_falsifiers = {
+        e["label"]: build_falsifier(engine_choice, diff_text=e["diff"], backend=backend)
+        for e in repo_entries
+    }
     with contextlib.ExitStack() as stack:
         thread_args = []
         for entry in repo_entries:
@@ -306,6 +345,7 @@ def run_cross_repo(
                         engine_choice, resolved_for_l1, backend=backend,
                         breaker=breaker,
                         contract_spec=_contract_spec,
+                    reviewed_repositories=reviewed_repositories,
                         focus_spec=focus_spec,
                     )
                     from .cross_repo_impact import CrossRepoImpactRunner
@@ -330,7 +370,25 @@ def run_cross_repo(
                     l1_provider = lambda: ([], [], Usage(), 0.0)  # noqa: E731
                     advisory_runners = []
 
-                falsifier = build_falsifier(engine_choice, backend=backend)
+                # Only the primary runs L1; siblings have no coverage obligation.
+                coverage_l1_active = bool(
+                    is_primary
+                    and any(e["diff"] for e in repo_entries)
+                    and engine_choice != "stub"
+                )
+
+                # Each falsifier judges its own repository, not the joint L1 diff.
+                falsifier = repo_falsifiers[label]
+
+                if is_primary:
+                    falsifier = RepositoryFalsifier(
+                        falsifier,
+                        {
+                            "%s@%s" % (e["label"], repository_manifest[e["label"]]):
+                            repo_falsifiers[e["label"]]
+                            for e in repo_entries
+                        },
+                    )
 
                 from .machine import StateMachine
 
@@ -349,6 +407,8 @@ def run_cross_repo(
                     max_total_rounds=max_rounds,
                     max_fix_attempts=max_fix_attempts,
                     clean_round_threshold=clean_round_threshold,
+                    coverage_l1_active=coverage_l1_active,
+                    reviewed_repositories=(reviewed_repositories if is_primary else None),
                 )
                 verdict = sm.run()
                 results[label] = verdict
@@ -422,7 +482,17 @@ def run_cross_repo(
         s.get("label") or os.path.basename(s["repo"].rstrip("/"))
         for s in siblings
     ]
-    format_cross_repo_output(per_repo_findings, ordered_labels, output_fn)
+    scoped_labels = {
+        '%s@%s' % (label, version): label
+        for label, version in repository_manifest.items()
+    }
+    grouped_findings = {label: [] for label in ordered_labels}
+    for origin, findings in per_repo_findings.items():
+        for finding in findings:
+            identity = finding['file'].partition('/')[0]
+            label = scoped_labels.get(identity, origin)
+            grouped_findings[label].append(finding)
+    format_cross_repo_output(grouped_findings, ordered_labels, output_fn)
 
     # -- Step 10: return joint verdict --
     return primary_verdict
