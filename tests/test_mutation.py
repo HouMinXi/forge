@@ -754,3 +754,64 @@ class TestMutationRealCLI:
         assert not setup_cfg.exists(), (
             "setup.cfg not cleaned up after run_mutation"
         )
+
+
+class TestSetupCfgKey:
+    """mutmut renamed the config key at 3.x. Writing the 2.x name means
+    mutmut sees no source paths, mutates nothing, and reports a clean
+    run -- a green gate that never tested anything."""
+
+    def test_config_uses_the_key_this_mutmut_reads(self, tmp_path):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_add.py").write_text(
+            "from add import add\n"
+            "def test_add():\n"
+            "    assert add(1, 2) == 3\n"
+        )
+
+        seen = {}
+
+        real_run = subprocess.run
+
+        def _capture(cmd, **kwargs):
+            # The baseline guard runs first and must succeed; only the
+            # mutmut call is interesting, and by then setup.cfg exists.
+            if any("mutmut" in str(c) for c in cmd):
+                cfg = tmp_path / "setup.cfg"
+                seen["text"] = cfg.read_text() if cfg.exists() else ""
+                raise RuntimeError("stop after config write")
+            return real_run(cmd, **kwargs)
+
+        with patch("subprocess.run", side_effect=_capture):
+            try:
+                run_mutation(
+                    diff_files=["src/add.py"],
+                    baseline_cmd=["python3", "-m", "pytest", "tests/"],
+                    cwd=tmp_path,
+                )
+            except RuntimeError:
+                pass
+
+        assert "source_paths" in seen.get("text", ""), (
+            "setup.cfg must use the 3.x key; got:\n" + str(seen.get("text")))
+        assert "paths_to_mutate" not in seen.get("text", ""), (
+            "the 2.x key is silently ignored by mutmut 3.x")
+
+    def test_pin_excludes_versions_without_the_key(self):
+        """source_paths landed in mutmut 3.4. On 3.3 the key is unknown,
+        so mutmut guesses the source tree and mutates well past the diff
+        scope -- the pin is what keeps the written key meaningful."""
+        import importlib.metadata as md
+
+        from packaging.requirements import Requirement
+
+        spec = next(s for s in md.requires("code-review-forge") or []
+                    if Requirement(s).name == "mutmut")
+        specifier = Requirement(spec).specifier
+        assert "3.3" not in specifier
+        assert "3.3.1" not in specifier
+        assert "3.4" in specifier

@@ -413,6 +413,17 @@ HOLD 退出，75 条干净对照一条不剩。
 - Claude Code 或兼容的 AI 编程助手，用来调用 skill
 - `mcp` Python 包（可选，`code-forge-mcp` 要用）：`pip install code-review-forge[mcp]`
 
+改 code-forge 本身要装 dev extras——测试运行器、linter、变异测试运行器都在里面：
+
+```bash
+pip install -e '.[dev,mcp]'
+code-forge doctor
+```
+
+`doctor` 会为每个声明的依赖打印一行 `python-deps`，装漏或版本不对当场就能看见。
+没有这一步，症状要等到很晚才冒出来而且指错方向：`>=3.4` 的要求下装了 mutmut 2.x，
+每次变异测试都以一个模块路径错误中止，看起来像评审自己有 bug。
+
 ## 其他安装方式
 
 ### git clone

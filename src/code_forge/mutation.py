@@ -7,10 +7,10 @@ Swappable design: keep subprocess calls in one place so future language
 runners (cargo-mutants, go-mutesting) can replace implementation without
 changing the l2_runner interface.
 
-mutmut 3.x integration notes:
-- No --paths-to-mutate CLI flag; use setup.cfg [mutmut] paths_to_mutate.
-- Run cwd MUST be the project root (where src/ and tests/ live).
-- paths_to_mutate must be relative to the project root.
+mutmut integration notes (>=3.4, where source_paths replaced the old key):
+- No --paths-to-mutate CLI flag; use setup.cfg [mutmut] source_paths.
+- Run cwd MUST be project root (where src/ and tests/ live).
+- source_paths must be relative to project root.
 - PYTHONPATH must point into src/ so imports resolve without src. prefix.
 - results format: "    module.fn__mutmut_N: status" (one per line).
 - Any non-zero exit code from mutmut run is a hard error.
@@ -273,7 +273,7 @@ def run_mutation(
 
     Implementation note:
         mutmut 3.x requires cwd to be the project root. A temporary
-        setup.cfg is written there with paths_to_mutate pointing to the
+        setup.cfg is written with source_paths pointing at the
         diff-scoped files. The mutants/ directory and temporary setup.cfg
         are cleaned up after each run.
 
@@ -389,11 +389,14 @@ def run_mutation(
             return (findings, infra_errors)
 
         # Write temporary setup.cfg to project root.
-        # paths_to_mutate are relative to the project root.
+        # mutmut renamed the key in 3.4: source_paths replaced paths_to_mutate.
+        # 3.3 does not recognise the new name and falls back to guessing the
+        # source tree, which silently widens the run past the diff scope, so
+        # pyproject pins >=3.4. Paths stay relative to the project root.
         config_content = (
             "%s\n"
             "[mutmut]\n"
-            "paths_to_mutate=%s\n"
+            "source_paths=%s\n"
             % (_CODE_FORGE_CFG_MARKER, ",".join(py_files))
         )
 
