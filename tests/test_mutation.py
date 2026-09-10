@@ -800,3 +800,18 @@ class TestSetupCfgKey:
             "setup.cfg must use the 3.x key; got:\n" + str(seen.get("text")))
         assert "paths_to_mutate" not in seen.get("text", ""), (
             "the 2.x key is silently ignored by mutmut 3.x")
+
+    def test_pin_excludes_versions_without_the_key(self):
+        """source_paths landed in mutmut 3.4. On 3.3 the key is unknown,
+        so mutmut guesses the source tree and mutates well past the diff
+        scope -- the pin is what keeps the written key meaningful."""
+        import importlib.metadata as md
+
+        from packaging.requirements import Requirement
+
+        spec = next(s for s in md.requires("code-review-forge") or []
+                    if Requirement(s).name == "mutmut")
+        specifier = Requirement(spec).specifier
+        assert "3.3" not in specifier
+        assert "3.3.1" not in specifier
+        assert "3.4" in specifier

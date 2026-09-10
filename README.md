@@ -461,7 +461,7 @@ code-forge doctor
 `doctor` prints a `python-deps` line for each declared dependency, so a
 missing or wrong-version package shows up at install time. Without it the
 symptom surfaces much later and points the wrong way: mutmut 2.x under a
-`>=3.3` requirement aborts every mutation run with a module-path error
+`>=3.4` requirement aborts every mutation run with a module-path error
 that reads like a bug in the review.
 
 ## Installation alternatives
