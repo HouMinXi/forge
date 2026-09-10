@@ -590,8 +590,9 @@ def _diff_validation_context(
             m = re.search(r"\+(\d+)(?:,(\d+))?", raw)
             if m:
                 line_no = int(m.group(1))
+                count = int(m.group(2)) if m.group(2) else 1
                 hunk_map[current_file].append(
-                    {"start": line_no, "end": line_no}
+                    {"start": line_no, "end": line_no + count - 1}
                 )
         elif current_file and raw.startswith("+") and not raw.startswith("+++"):
             if raw.startswith("++"):  # new-file marker

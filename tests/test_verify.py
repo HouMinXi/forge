@@ -2466,3 +2466,48 @@ class TestTask1ExemptFiles:
         r = run_verify(tmp_path, sha, diff_files, diff_text=self._BINARY_DIFF)
         assert not r.passed
         assert "declares 3 lines but carries 1" in r.reason
+
+class TestMultiLineHunkRange:
+    """A hunk header carries a line count. Recording only its first line
+    shrinks every multi-line hunk to one line, so an excerpt quoting the
+    rest of the hunk is rejected as outside the diff."""
+
+    def test_hunk_span_covers_every_added_line(self):
+        from code_forge.verify import _diff_validation_context
+
+        diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,2 +1,4 @@\n"
+            " keep\n"
+            "+one\n"
+            "+two\n"
+            " tail\n"
+        )
+        _post, hunk_map, _exempt = _diff_validation_context(diff)
+
+        assert hunk_map["foo.py"] == [{"start": 1, "end": 4}], (
+            "hunk spans 4 post-image lines; got " + str(hunk_map["foo.py"]))
+
+    def test_excerpt_past_the_first_line_is_accepted(self):
+        from code_forge.verify import (
+            _diff_validation_context,
+            validate_excerpt_evidence,
+        )
+
+        diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,2 +1,4 @@\n"
+            " keep\n"
+            "+one\n"
+            "+two\n"
+            " tail\n"
+        )
+        post, hunk_map, exempt = _diff_validation_context(diff)
+        exc = {"file": "foo.py", "start_line": 2, "end_line": 3,
+               "content": "one\ntwo"}
+
+        assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
