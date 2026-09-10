@@ -754,3 +754,80 @@ class TestMutationRealCLI:
         assert not setup_cfg.exists(), (
             "setup.cfg not cleaned up after run_mutation"
         )
+
+
+class TestSetupCfgKey:
+    """mutmut renamed the config key at 3.x. Writing the 2.x name means
+    mutmut sees no source paths, mutates nothing, and reports a clean
+    run -- a green gate that never tested anything."""
+
+    def test_config_uses_the_key_this_mutmut_reads(self, tmp_path):
+        """setup.cfg must name the key mutmut 3.4+ reads.
+
+        run_mutation writes the file after the baseline guard and
+        shutil.which check. Patch those at the mutation module, not
+        via subprocess.run at this test's globals: otherwise a missing
+        CLI or a failing sample test never reaches the write, and the
+        assertion sees an empty string.
+        """
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_add.py").write_text(
+            "from add import add\n"
+            "def test_add():\n"
+            "    assert add(1, 2) == 3\n"
+        )
+
+        seen = {}
+
+        def _capture(cmd, **kwargs):
+            if isinstance(cmd, (list, tuple)) and "mutmut" in cmd:
+                cfg = tmp_path / "setup.cfg"
+                seen["text"] = cfg.read_text() if cfg.exists() else ""
+                raise RuntimeError("stop after config write")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr=""
+            )
+
+        with patch(
+            "code_forge.mutation.shutil.which",
+            return_value="/usr/bin/mutmut",
+        ), patch(
+            "code_forge.mutation.subprocess.run",
+            side_effect=_capture,
+        ):
+            try:
+                run_mutation(
+                    diff_files=["src/add.py"],
+                    baseline_cmd=["python3", "-m", "pytest", "tests/"],
+                    cwd=tmp_path,
+                )
+            except RuntimeError:
+                pass
+
+        text = seen.get("text", "")
+        assert "source_paths" in text, (
+            "setup.cfg must use the 3.x key; got:\n" + repr(text)
+        )
+        assert "paths_to_mutate" not in text, (
+            "the 2.x key is silently ignored by mutmut 3.x"
+        )
+        assert "src/add.py" in text
+
+    def test_pin_excludes_versions_without_the_key(self):
+        """source_paths landed in mutmut 3.4. On 3.3 the key is unknown,
+        so mutmut guesses the source tree and mutates well past the diff
+        scope -- the pin is what keeps the written key meaningful."""
+        import importlib.metadata as md
+
+        from packaging.requirements import Requirement
+
+        spec = next(s for s in md.requires("code-review-forge") or []
+                    if Requirement(s).name == "mutmut")
+        specifier = Requirement(spec).specifier
+        assert "3.3" not in specifier
+        assert "3.3.1" not in specifier
+        assert "3.4" in specifier

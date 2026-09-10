@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .diff import _extract_post_image_lines, parse_diff_hunks
 from .errors import CorruptedReceiptError, UnreadableGateError
+from .reviewer_json import excerpt_line_count_matches, excerpt_lines
 
 logger = logging.getLogger(__name__)
 
@@ -496,10 +497,12 @@ def validate_excerpt_evidence(
     if not text or not text.strip():
         return "excerpt %s:%d has empty content" % (exc_file, exc_start)
     claimed = exc_end - exc_start + 1
-    actual_lines = text.splitlines()
-    if len(actual_lines) != claimed:
-        return "excerpt %s:%d-%d declares %d lines but carries %d" % (
-            exc_file, exc_start, exc_end, claimed, len(actual_lines))
+    actual_lines = excerpt_lines(text)
+    short_by_one = claimed == len(actual_lines) + 1
+    count_error = "excerpt %s:%d-%d declares %d lines but carries %d" % (
+        exc_file, exc_start, exc_end, claimed, len(actual_lines))
+    if not excerpt_line_count_matches(text, claimed):
+        return count_error
     if hunk_map is None:
         return None
     exempt = exempt_files or []
@@ -515,8 +518,18 @@ def validate_excerpt_evidence(
             "in context_quotes" % (exc_file, exc_start, exc_end)
         )
     if post_image is None or exc_file in exempt:
-        return None
+        # No post-image to anchor against, so the trailing-blank tolerance
+        # cannot be confirmed. An exempt file gets no content check at all,
+        # which makes count parity its only one -- do not widen it on faith.
+        return count_error if short_by_one else None
     file_lines = post_image.get(exc_file, {})
+    if short_by_one:
+        # The count check let this through as a dropped trailing blank line.
+        # The post-image can say whether that is true: if the last declared
+        # line carries content, the excerpt is a thin tail, not a blank line.
+        tail = file_lines.get(exc_end)
+        if tail is None or tail.strip():
+            return count_error
     excerpt_line_map = {
         exc_start + i: line for i, line in enumerate(actual_lines)
     }
@@ -580,8 +593,9 @@ def _diff_validation_context(
             m = re.search(r"\+(\d+)(?:,(\d+))?", raw)
             if m:
                 line_no = int(m.group(1))
+                count = int(m.group(2)) if m.group(2) else 1
                 hunk_map[current_file].append(
-                    {"start": line_no, "end": line_no}
+                    {"start": line_no, "end": line_no + count - 1}
                 )
         elif current_file and raw.startswith("+") and not raw.startswith("+++"):
             if raw.startswith("++"):  # new-file marker

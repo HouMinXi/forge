@@ -392,6 +392,8 @@ def test_smoke_all_green(tmp_path, capsys):
                return_value=(True, "code-forge-mcp")), \
          patch("code_forge.doctor._check_registries",
                return_value=[("Claude Code", "PRESENT")]), \
+         patch("code_forge.doctor._audit_python_deps",
+               return_value=[(True, "pytest: 8.0.0")]), \
          patch("code_forge.trust.trust_status") as mt:
         mt.return_value = MagicMock(trusted=True)
         rc = run_doctor(cwd=ws, env=env)
