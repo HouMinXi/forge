@@ -418,14 +418,23 @@ def _audit_python_deps(
     """Check installed versions against the extras forge declares.
 
     A stale or downgraded dependency (mutmut 2.x where 3.x is required)
-    breaks review with an error that points at the review, not at the
+    breaks a review with an error that points at the review, not at the
     environment. The requirement list comes from the installed
     distribution's own metadata, so it cannot drift from pyproject.
     """
     import importlib.metadata as md
 
+    # Forge shells out to these rather than importing them, so a copy on
+    # PATH does the job even when it is not installed in this environment.
+    # Everything else has to be importable here or it is simply missing.
+    shelled_out = {"semgrep", "ruff", "mutmut"}
+
     try:
-        from packaging.requirements import Requirement
+        from packaging.markers import (
+            InvalidMarker,
+            UndefinedEnvironmentName,
+        )
+        from packaging.requirements import InvalidRequirement, Requirement
     except ImportError:
         return [(None, "packaging not installed")]
 
@@ -436,31 +445,36 @@ def _audit_python_deps(
 
     results: list[tuple[bool | None, str]] = []
     for spec in declared:
-        req = Requirement(spec)
-        marker = req.marker
-        if marker is None:
-            continue
-        if not any(marker.evaluate({"extra": e}) for e in extras):
-            continue
         try:
-            found = md.version(req.name)
-        except md.PackageNotFoundError:
-            # A tool forge only shells out to (semgrep, ruff) may live on
-            # PATH outside this environment, which is enough for it.
-            if shutil.which(req.name) is not None:
+            req = Requirement(spec)
+            marker = req.marker
+            if marker is None:
+                continue
+            if not any(marker.evaluate({"extra": e}) for e in extras):
+                continue
+            try:
+                found = md.version(req.name)
+            except md.PackageNotFoundError:
+                if req.name in shelled_out and shutil.which(req.name) is not None:
+                    results.append(
+                        (None, f"{req.name}: on PATH, not in this env"))
+                else:
+                    want = req.specifier or "any"
+                    results.append(
+                        (False, f"{req.name}: not installed (want {want})"))
+                continue
+            if req.specifier and found not in req.specifier:
                 results.append(
-                    (None, f"{req.name}: on PATH, not in this env"))
+                    (False,
+                     f"{req.name}: {found} installed, want {req.specifier}"))
             else:
-                want = req.specifier or "any"
-                results.append(
-                    (False, f"{req.name}: not installed (want {want})"))
-            continue
-        if req.specifier and found not in req.specifier:
-            results.append(
-                (False,
-                 f"{req.name}: {found} installed, want {req.specifier}"))
-        else:
-            results.append((True, f"{req.name}: {found}"))
+                results.append((True, f"{req.name}: {found}"))
+        except (InvalidRequirement, InvalidMarker,
+                UndefinedEnvironmentName) as exc:
+            # Metadata comes from whatever is installed, so a malformed
+            # requirement string is possible. A diagnostic that crashes
+            # tells the user less than one naming the spec it cannot read.
+            results.append((False, f"{spec}: audit error: {exc}"))
     return results or [(None, "no extra requirements")]
 
 

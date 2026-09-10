@@ -282,3 +282,26 @@ class TestAuditPythonDeps:
         with self._md(["pyyaml>=6.0"], {}):
             results = _audit_python_deps(extras=("dev",))
         assert results == [(None, "no extra requirements")]
+
+    def test_imported_package_on_path_still_fails(self):
+        """A PATH hit only substitutes for a tool forge shells out to.
+
+        mcp is imported, so a same-named executable from an unrelated venv
+        proves nothing -- treating it as satisfied hides the exact silent
+        breakage this audit exists to catch.
+        """
+        with self._md(['mcp<2,>=1.27; extra == "mcp"'], {}), \
+             patch("code_forge.doctor.shutil.which",
+                   return_value="/some/other/venv/bin/mcp"):
+            results = _audit_python_deps(extras=("mcp",))
+        assert results == [(False, "mcp: not installed (want <2,>=1.27)")]
+
+    def test_broken_metadata_is_reported_not_raised(self):
+        """A diagnostic that crashes tells the user less than one that
+        names the spec it could not read."""
+        with self._md(['this is not a requirement!!'], {}):
+            results = _audit_python_deps(extras=("mcp",))
+        assert len(results) == 1
+        ok, msg = results[0]
+        assert ok is False
+        assert "audit error" in msg
