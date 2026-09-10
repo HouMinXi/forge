@@ -457,7 +457,8 @@ def _audit_python_deps(
             except md.PackageNotFoundError:
                 if req.name in shelled_out and shutil.which(req.name) is not None:
                     results.append(
-                        (None, f"{req.name}: on PATH, not in this env"))
+                        (None,
+                         f"{req.name}: on PATH, version unchecked"))
                 else:
                     want = req.specifier or "any"
                     results.append(

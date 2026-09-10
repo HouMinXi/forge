@@ -270,7 +270,7 @@ class TestAuditPythonDeps:
                 patch("code_forge.doctor.shutil.which",
                       return_value="/usr/bin/semgrep"):
             results = _audit_python_deps(extras=("dev",))
-        assert results == [(None, "semgrep: on PATH, not in this env")]
+        assert results == [(None, "semgrep: on PATH, version unchecked")]
 
     def test_extras_outside_the_requested_set_are_skipped(self):
         with self._md(['google-auth>=2.35.0; extra == "vertex"'], {}):
