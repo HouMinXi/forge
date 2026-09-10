@@ -2511,3 +2511,42 @@ class TestMultiLineHunkRange:
                "content": "one\ntwo"}
 
         assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
+
+
+class TestExemptFileKeepsCountParity:
+    """An exempt file has no post-image, so the content check
+    never runs and count parity is the only check it gets.
+    The trailing-blank tolerance must not widen that last one.
+    """
+
+    _RENAME = (
+        "diff --git a/old.py b/new.py\n"
+        "similarity index 100%\n"
+        "rename from old.py\n"
+        "rename to new.py\n"
+    )
+
+    def _ctx(self):
+        from code_forge.diff import _extract_post_image_lines, parse_diff_hunks
+        hunk_map, exempt = parse_diff_hunks(self._RENAME)
+        return hunk_map, _extract_post_image_lines(self._RENAME), exempt
+
+    def test_short_excerpt_on_exempt_file_is_rejected(self):
+        from code_forge.verify import validate_excerpt_evidence
+        hunk_map, post, exempt = self._ctx()
+        assert "new.py" in exempt, "fixture must produce an exempt file"
+        exc = {"file": "new.py", "start_line": 1, "end_line": 3,
+               "content": "a\nb"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, (
+            "an exempt file cannot confirm a dropped blank line, so the "
+            "count must still hold")
+        assert "declares 3 lines but carries 2" in err
+
+    def test_exact_excerpt_on_exempt_file_still_passes(self):
+        from code_forge.verify import validate_excerpt_evidence
+        hunk_map, post, exempt = self._ctx()
+        exc = {"file": "new.py", "start_line": 1, "end_line": 3,
+               "content": "a\nb\nc"}
+        assert validate_excerpt_evidence(
+            exc, hunk_map, post, exempt) is None

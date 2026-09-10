@@ -108,10 +108,10 @@ def excerpt_line_count_matches(text: str, claimed: int) -> bool:
     altogether. str.splitlines() picks one reading, so every such excerpt was
     rejected as a schema violation and took the whole review pass with it.
 
-    One missing trailing line is therefore accepted. That tolerance is safe
-    because it only widens a counting heuristic: validate_excerpt_evidence
-    still anchors each excerpt against the frozen diff post-image, so an
-    excerpt that genuinely quotes the wrong lines is caught there.
+    One missing trailing line is therefore accepted here. The tolerance is
+    safe because it only widens a counting heuristic: validate_excerpt_evidence
+    re-checks the count whenever it cannot confirm the blank line against a
+    frozen post-image, and anchors the content when it can.
     """
     actual = len(excerpt_lines(text))
     return claimed == actual or claimed == actual + 1
