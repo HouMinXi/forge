@@ -9,7 +9,9 @@ from pathlib import Path
 from subprocess import TimeoutExpired
 from unittest.mock import MagicMock, patch
 
-from code_forge.doctor import _audit_tools, run_doctor
+from importlib.metadata import PackageNotFoundError as _RealPackageNotFound
+
+from code_forge.doctor import _audit_python_deps, _audit_tools, run_doctor
 
 
 # -- Fixture helpers -------------------------------------------------------
@@ -222,3 +224,61 @@ class TestDoctorIntegration:
         out = capsys.readouterr().out
         assert "bad-tool: not_installed" in out
         assert "FAIL" in out
+
+
+class TestAuditPythonDeps:
+    """The dependency audit exists because a silently downgraded
+    package (mutmut 2.x where 3.x is required) makes review fail with
+    an error that points at the review, not at the environment."""
+
+    @staticmethod
+    def _md(requires, versions):
+        """Patch the metadata calls the audit actually makes."""
+        def _version(name):
+            if name not in versions:
+                raise _RealPackageNotFound(name)
+            return versions[name]
+
+        return patch.multiple(
+            "importlib.metadata",
+            requires=MagicMock(return_value=requires),
+            version=MagicMock(side_effect=_version),
+        )
+
+    def test_version_below_floor_is_reported(self):
+        with self._md(['mutmut<4.0,>=3.3; extra == "dev"'],
+                      {"mutmut": "2.5.1"}):
+            results = _audit_python_deps(extras=("dev",))
+        assert results == [(False, "mutmut: 2.5.1 installed, want <4.0,>=3.3")]
+
+    def test_version_within_range_passes(self):
+        with self._md(['mutmut<4.0,>=3.3; extra == "dev"'],
+                      {"mutmut": "3.7.0"}):
+            results = _audit_python_deps(extras=("dev",))
+        assert results == [(True, "mutmut: 3.7.0")]
+
+    def test_missing_package_not_on_path_fails(self):
+        with self._md(['pytest-asyncio>=1.0; extra == "dev"'], {}), \
+                patch("code_forge.doctor.shutil.which", return_value=None):
+            results = _audit_python_deps(extras=("dev",))
+        assert results == [
+            (False, "pytest-asyncio: not installed (want >=1.0)")]
+
+    def test_missing_package_on_path_skips(self):
+        """semgrep is shelled out to, so a PATH install is enough."""
+        with self._md(['semgrep<1.170,>=1.0; extra == "dev"'], {}), \
+                patch("code_forge.doctor.shutil.which",
+                      return_value="/usr/bin/semgrep"):
+            results = _audit_python_deps(extras=("dev",))
+        assert results == [(None, "semgrep: on PATH, not in this env")]
+
+    def test_extras_outside_the_requested_set_are_skipped(self):
+        with self._md(['google-auth>=2.35.0; extra == "vertex"'], {}):
+            results = _audit_python_deps(extras=("dev",))
+        assert results == [(None, "no extra requirements")]
+
+    def test_base_dependencies_are_skipped(self):
+        """Base deps come with the install; only extras can go stale."""
+        with self._md(["pyyaml>=6.0"], {}):
+            results = _audit_python_deps(extras=("dev",))
+        assert results == [(None, "no extra requirements")]

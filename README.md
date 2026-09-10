@@ -450,6 +450,20 @@ passes count.
 - Claude Code or a compatible AI coding assistant for skill invocation
 - `mcp` Python package (optional, for `code-forge-mcp`): `pip install code-review-forge[mcp]`
 
+Working on code-forge itself needs the dev extras -- the test runner,
+linter, and mutation runner all live there:
+
+```bash
+pip install -e '.[dev,mcp]'
+code-forge doctor
+```
+
+`doctor` prints a `python-deps` line for each declared dependency, so a
+missing or wrong-version package shows up at install time. Without it the
+symptom surfaces much later and points the wrong way: mutmut 2.x under a
+`>=3.3` requirement aborts every mutation run with a module-path error
+that reads like a bug in the review.
+
 ## Installation alternatives
 
 ### git clone

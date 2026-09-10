@@ -412,6 +412,58 @@ def _check_hook_drift(
 # -- Tool audit -----------------------------------------------------------
 
 
+def _audit_python_deps(
+    extras: tuple[str, ...] = ("dev", "mcp"),
+) -> list[tuple[bool | None, str]]:
+    """Check installed versions against the extras forge declares.
+
+    A stale or downgraded dependency (mutmut 2.x where 3.x is required)
+    breaks review with an error that points at the review, not at the
+    environment. The requirement list comes from the installed
+    distribution's own metadata, so it cannot drift from pyproject.
+    """
+    import importlib.metadata as md
+
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        return [(None, "packaging not installed")]
+
+    try:
+        declared = md.requires("code-review-forge") or []
+    except md.PackageNotFoundError:
+        return [(None, "code-review-forge not installed")]
+
+    results: list[tuple[bool | None, str]] = []
+    for spec in declared:
+        req = Requirement(spec)
+        marker = req.marker
+        if marker is None:
+            continue
+        if not any(marker.evaluate({"extra": e}) for e in extras):
+            continue
+        try:
+            found = md.version(req.name)
+        except md.PackageNotFoundError:
+            # A tool forge only shells out to (semgrep, ruff) may live on
+            # PATH outside this environment, which is enough for it.
+            if shutil.which(req.name) is not None:
+                results.append(
+                    (None, f"{req.name}: on PATH, not in this env"))
+            else:
+                want = req.specifier or "any"
+                results.append(
+                    (False, f"{req.name}: not installed (want {want})"))
+            continue
+        if req.specifier and found not in req.specifier:
+            results.append(
+                (False,
+                 f"{req.name}: {found} installed, want {req.specifier}"))
+        else:
+            results.append((True, f"{req.name}: {found}"))
+    return results or [(None, "no extra requirements")]
+
+
 def _audit_tools(
     workspace: Path,
 ) -> list[tuple[Optional[bool], str]]:
@@ -528,6 +580,13 @@ def run_doctor(
             _line("hooks", msg, ok)
             if ok is False:
                 has_fail = True
+
+    # Dependency audit is host state, not workspace state: a stale
+    # install breaks review the same way in every workspace.
+    for ok, msg in _audit_python_deps():
+        _line("python-deps", msg, ok)
+        if ok is False:
+            has_fail = True
 
     # Always run (never short-circuited)
     ok_h, msg_h = _check_handshake()
