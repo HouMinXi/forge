@@ -90,6 +90,33 @@ def _strip_fence(raw: str) -> str:
     return text[first_nl + 1:-3].strip()
 
 
+def excerpt_lines(text: str) -> list[str]:
+    """Split excerpt content into the lines it quotes.
+
+    A single trailing newline is treated as terminating the last line rather
+    than introducing an empty one, which is the common case.
+    """
+    return text.removesuffix("\n").split("\n")
+
+
+def excerpt_line_count_matches(text: str, claimed: int) -> bool:
+    """Report whether an excerpt carries as many lines as it declares.
+
+    A quote ending on a blank source line cannot be represented faithfully:
+    joining ["a", "b", ""] yields "a\\nb\\n", the same string as two
+    newline-terminated lines, and backends routinely drop the empty entry
+    altogether. str.splitlines() picks one reading, so every such excerpt was
+    rejected as a schema violation and took the whole review pass with it.
+
+    One missing trailing line is therefore accepted. That tolerance is safe
+    because it only widens a counting heuristic: validate_excerpt_evidence
+    still anchors each excerpt against the frozen diff post-image, so an
+    excerpt that genuinely quotes the wrong lines is caught there.
+    """
+    actual = len(excerpt_lines(text))
+    return claimed == actual or claimed == actual + 1
+
+
 def validate_reviewer_json(raw: str | dict) -> dict:
     """Validate reviewer output against the receipt schema.
 
@@ -164,11 +191,10 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         if not text.strip():
             raise ValueError("code_excerpt[%d] content must not be empty" % i)
         claimed = e - s + 1
-        actual = text.splitlines()
-        if len(actual) != claimed:
+        if not excerpt_line_count_matches(text, claimed):
             raise ValueError(
                 "code_excerpt[%d] %s:%d-%d declares %d lines but carries %d"
-                % (i, exc_file, s, e, claimed, len(actual))
+                % (i, exc_file, s, e, claimed, len(excerpt_lines(text)))
             )
 
     if len(data["findings"]) == 0 and len(data["code_excerpts"]) == 0:

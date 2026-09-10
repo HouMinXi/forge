@@ -143,9 +143,15 @@ class TestProducerEvidenceShapeRed:
     """
 
     def test_underlength_rejected(self):
-        data = _rj_data([_rj_exc(end_line=3)])
+        # One line short is the trailing-blank-line ambiguity, not a
+        # miscount: see excerpt_line_count_matches. Two short is a miscount.
+        data = _rj_data([_rj_exc(end_line=4)])
         with pytest.raises(ValueError):
             validate_reviewer_json(data)
+
+    def test_one_line_short_accepted_as_trailing_blank(self):
+        data = _rj_data([_rj_exc(end_line=3)])
+        assert validate_reviewer_json(data) == data
 
     def test_overflow_rejected(self):
         data = _rj_data([_rj_exc(end_line=1)])
@@ -241,3 +247,45 @@ class TestProducerEvidenceShapePins:
         producer keeps accepting that shape."""
         data = _rj_data([_rj_exc(content=["x = 1", "y = 2"])])
         assert validate_reviewer_json(data) == data
+
+
+class TestExcerptTrailingBlankLine:
+    """An excerpt whose last quoted line is blank must still validate.
+
+    str.splitlines() collapses a trailing separator, so a quote ending on a
+    blank source line reported one line fewer than it declared and the whole
+    pass was rejected as a schema violation.
+    """
+
+    def _payload(self, content, start, end):
+        return {
+            "findings": [],
+            "code_excerpts": [
+                {
+                    "file": "a.py",
+                    "start_line": start,
+                    "end_line": end,
+                    "content": content,
+                }
+            ],
+        }
+
+    def test_excerpt_ending_on_blank_line_accepted(self):
+        # Lines 1-3 where line 3 is blank, as a list of quoted lines.
+        payload = self._payload(["x = 1", "y = 2", ""], 1, 3)
+        assert validate_reviewer_json(json.dumps(payload)) == payload
+
+    def test_excerpt_ending_on_blank_line_accepted_as_string(self):
+        payload = self._payload("x = 1\ny = 2\n", 1, 3)
+        assert validate_reviewer_json(json.dumps(payload)) == payload
+
+    def test_terminating_newline_is_not_an_extra_line(self):
+        # "x = 1\ny = 2\n" quoting only lines 1-2: the final newline
+        # terminates line 2 rather than introducing a third line.
+        payload = self._payload("x = 1\ny = 2", 1, 2)
+        assert validate_reviewer_json(json.dumps(payload)) == payload
+
+    def test_genuine_line_count_mismatch_still_rejected(self):
+        payload = self._payload(["x = 1", "y = 2"], 1, 5)
+        with pytest.raises(ValueError, match="declares 5 lines but carries 2"):
+            validate_reviewer_json(json.dumps(payload))
