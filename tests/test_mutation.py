@@ -762,6 +762,14 @@ class TestSetupCfgKey:
     run -- a green gate that never tested anything."""
 
     def test_config_uses_the_key_this_mutmut_reads(self, tmp_path):
+        """setup.cfg must name the key mutmut 3.4+ reads.
+
+        run_mutation writes the file after the baseline guard and
+        shutil.which check. Patch those at the mutation module, not
+        via subprocess.run at this test's globals: otherwise a missing
+        CLI or a failing sample test never reaches the write, and the
+        assertion sees an empty string.
+        """
         src_dir = tmp_path / "src"
         src_dir.mkdir()
         (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
@@ -775,18 +783,22 @@ class TestSetupCfgKey:
 
         seen = {}
 
-        real_run = subprocess.run
-
         def _capture(cmd, **kwargs):
-            # The baseline guard runs first and must succeed; only the
-            # mutmut call is interesting, and by then setup.cfg exists.
-            if any("mutmut" in str(c) for c in cmd):
+            if isinstance(cmd, (list, tuple)) and "mutmut" in cmd:
                 cfg = tmp_path / "setup.cfg"
                 seen["text"] = cfg.read_text() if cfg.exists() else ""
                 raise RuntimeError("stop after config write")
-            return real_run(cmd, **kwargs)
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr=""
+            )
 
-        with patch("subprocess.run", side_effect=_capture):
+        with patch(
+            "code_forge.mutation.shutil.which",
+            return_value="/usr/bin/mutmut",
+        ), patch(
+            "code_forge.mutation.subprocess.run",
+            side_effect=_capture,
+        ):
             try:
                 run_mutation(
                     diff_files=["src/add.py"],
@@ -796,10 +808,14 @@ class TestSetupCfgKey:
             except RuntimeError:
                 pass
 
-        assert "source_paths" in seen.get("text", ""), (
-            "setup.cfg must use the 3.x key; got:\n" + str(seen.get("text")))
-        assert "paths_to_mutate" not in seen.get("text", ""), (
-            "the 2.x key is silently ignored by mutmut 3.x")
+        text = seen.get("text", "")
+        assert "source_paths" in text, (
+            "setup.cfg must use the 3.x key; got:\n" + repr(text)
+        )
+        assert "paths_to_mutate" not in text, (
+            "the 2.x key is silently ignored by mutmut 3.x"
+        )
+        assert "src/add.py" in text
 
     def test_pin_excludes_versions_without_the_key(self):
         """source_paths landed in mutmut 3.4. On 3.3 the key is unknown,
