@@ -102,19 +102,28 @@ def excerpt_lines(text: str) -> list[str]:
 def excerpt_line_count_matches(text: str, claimed: int) -> bool:
     """Report whether an excerpt carries as many lines as it declares.
 
-    A quote ending on a blank source line cannot be represented faithfully:
-    joining ["a", "b", ""] yields "a\\nb\\n", the same string as two
-    newline-terminated lines, and backends routinely drop the empty entry
-    altogether. str.splitlines() picks one reading, so every such excerpt was
-    rejected as a schema violation and took the whole review pass with it.
+    Both directions of a one-line mismatch are backend coordinate jitter,
+    not evidence fabrication:
 
-    One missing trailing line is therefore accepted here. The tolerance is
-    safe because it only widens a counting heuristic: validate_excerpt_evidence
-    re-checks the count whenever it cannot confirm the blank line against a
-    frozen post-image, and anchors the content when it can.
+    - A quote ending on a blank source line cannot be represented
+      faithfully: joining ["a", "b", ""] yields "a\\nb\\n", the same
+      string as two newline-terminated lines, and backends routinely
+      drop the empty entry altogether (declared N+1, carries N).
+    - An off-by-one end_line makes the model paste one line more than
+      its range declares (declared N, carries N+1) -- the mirror image,
+      observed routinely on real backends.
+
+    excerpt_lines() (trailing newline stripped, then split on \\n)
+    picks one reading, so every such excerpt was rejected as a schema
+    violation and took the whole review pass with it. One line of slack
+    in either direction is therefore accepted here.
+    The tolerance is safe because it only widens a counting heuristic:
+    validate_excerpt_evidence re-checks the count whenever it cannot
+    confirm the content against a frozen post-image, and anchors the
+    content when it can.
     """
     actual = len(excerpt_lines(text))
-    return claimed == actual or claimed == actual + 1
+    return abs(claimed - actual) <= 1
 
 
 def validate_reviewer_json(raw: str | dict) -> dict:

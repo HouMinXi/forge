@@ -1306,8 +1306,14 @@ class TestOutOfHunkExcerpts:
                 name = "receipt-c%dp%d.json" % (c, p)
                 (rd / name).write_text(json.dumps(receipt))
         r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
-        assert not r.passed, f"extra content should fail, got: {r.reason}"
-        assert "declares 1 lines but carries 2" in r.reason
+        assert not r.passed, f"extra content must fail, got: {r.reason}"
+        # +/-1 count slack is producer-side only; with a post-image the
+        # extra line is caught as a content / range failure.
+        assert (
+            "declares 1 lines but carries 2" in r.reason
+            or "content mismatch" in r.reason
+            or "outside the diff post-image" in r.reason
+        )
 
     def test_misnumbered_excerpt_reports_the_offset(self, tmp_path):
         """A reviewer that ignored the annotated line numbers produces
@@ -2392,7 +2398,11 @@ class TestTask1OverflowAndLiteralPins:
         sha, diff_files = _t1_write(tmp_path, [_T1_E1, fat])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
         assert not r.passed
-        assert "declares 3 lines but carries 4" in r.reason
+        assert (
+            "declares 3 lines but carries 4" in r.reason
+            or "outside the diff post-image" in r.reason
+            or "content mismatch" in r.reason
+        )
 
     def test_punctuation_difference_is_rejected(self, tmp_path):
         punct = {"file": "src/f.py", "start_line": 1, "end_line": 3,
@@ -2542,6 +2552,19 @@ class TestExemptFileKeepsCountParity:
             "an exempt file cannot confirm a dropped blank line, so the "
             "count must still hold")
         assert "declares 3 lines but carries 2" in err
+
+    def test_long_excerpt_on_exempt_file_is_rejected(self):
+        """Overflow on an exempt file has no post-image to check
+        the extra line against; count must be exact (the branch
+        excerpt_line_count_matches would otherwise let through).
+        """
+        from code_forge.verify import validate_excerpt_evidence
+        hunk_map, post, exempt = self._ctx()
+        exc = {"file": "new.py", "start_line": 1, "end_line": 1,
+               "content": "a\nb"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None
+        assert "declares 1 lines but carries 2" in err
 
     def test_exact_excerpt_on_exempt_file_still_passes(self):
         from code_forge.verify import validate_excerpt_evidence

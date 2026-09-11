@@ -518,10 +518,10 @@ def validate_excerpt_evidence(
             "in context_quotes" % (exc_file, exc_start, exc_end)
         )
     if post_image is None or exc_file in exempt:
-        # No post-image to anchor against, so the trailing-blank tolerance
-        # cannot be confirmed. An exempt file gets no content check at all,
-        # which makes count parity its only one -- do not widen it on faith.
-        return count_error if short_by_one else None
+        # No post-image to confirm the +/-1 slack from
+        # excerpt_line_count_matches. Count must be exact: a dropped
+        # trailing blank and an extra pasted line are equally unverified.
+        return count_error if claimed != len(actual_lines) else None
     file_lines = post_image.get(exc_file, {})
     if short_by_one:
         # The count check let this through as a dropped trailing blank line.

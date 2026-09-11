@@ -41,6 +41,136 @@ class Survivor:
     file: str         # source file (empty; mutmut 3.x results omit file paths)
 
 
+_TEST_DIR_PREFIXES = ("tests/", "test/")
+_TEST_DIR_PREFIXES_WIN = ("tests\\", "test\\")
+
+def _source_roots(py_files: list[str]) -> list[str]:
+    """Derive mirror roots from diff-scoped python files.
+
+    mutmut copies only source_paths into the mutants/ mirror, and the
+    tests then run from inside that mirror. Scoping source_paths to the
+    diff FILES alone mirrors single files without their package, so
+    imports die under mutants/. The mirror must carry the whole top-level
+    source tree; diff scoping belongs to only_mutate instead.
+    """
+    roots: set[str] = set()
+    for f in py_files:
+        if f.startswith(_TEST_DIR_PREFIXES) or f.startswith(_TEST_DIR_PREFIXES_WIN):
+            continue
+        # Mutmut config is POSIX; Windows diffs still arrive with "\\".
+        posix = f.replace("\\", "/")
+        head, sep, _ = posix.partition("/")
+        roots.add(head if sep else posix)
+    return sorted(roots)
+
+
+def _baseline_test_selection(baseline_cmd: list[str]) -> list[str]:
+    """Extract the pytest argument tail from a baseline command.
+
+    The command may invoke pytest directly ([.../bin/pytest, tests/, -q])
+    or through an interpreter ([python3, -m, pytest, tests/]). Only the
+    tokens after the pytest executable are pytest arguments; the
+    interpreter prefix (-m pytest included) must not leak into
+    pytest_add_cli_args_test_selection, where '-m' would be parsed as a
+    marker expression. A command with no pytest token returns empty:
+    the previous fallback leaked the command tail (e.g. -m unittest)
+    into mutmut's pytest selection.
+    """
+    for i, tok in enumerate(baseline_cmd):
+        if _is_pytest_token(tok):
+            return list(baseline_cmd[i + 1:])
+    return []
+
+
+def _is_pytest_token(tok: str) -> bool:
+    """True for pytest, .../pytest, pytest.exe, ...\\pytest.exe."""
+    name = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.removesuffix(".exe") == "pytest"
+
+
+def _build_mutmut_config(
+    py_files: list[str],
+    baseline_cmd: list[str],
+    also_copy: list[str] | None = None,
+) -> str:
+    """Render the temporary [mutmut] setup.cfg content.
+
+    source_paths mirrors whole source roots (importability), only_mutate
+    keeps mutation diff-scoped, and the test selection reuses the gate's
+    baseline arguments so stats collection runs exactly the tests the
+    gate trusts.
+
+    also_copy: extra relative paths copied into the mutants/ mirror
+    (mutmut also_copy). Empty or whitespace entries are dropped.
+    """
+    roots = _source_roots(py_files)
+    lines = [
+        _CODE_FORGE_CFG_MARKER,
+        "[mutmut]",
+        "source_paths=" + ",".join(roots),
+        "only_mutate=" + ",".join(py_files),
+    ]
+    selection = " ".join(_baseline_test_selection(baseline_cmd))
+    if selection:
+        lines.append(f"pytest_add_cli_args_test_selection={selection}")
+    also_copy = [p for p in (also_copy or []) if p.strip()]
+    if also_copy:
+        # First path on the key line. An empty also_copy= plus
+        # indented continuations parses, but leaves a leading
+        # newline that mutmut then keeps as an empty Path.
+        lines.append("also_copy=" + also_copy[0])
+        lines.extend("    " + p for p in also_copy[1:])
+
+    return "\n".join(lines) + "\n"
+
+
+def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
+    """Resolve the mutmut invocation from the baseline test command.
+
+    mutmut 3.x runs pytest in its OWN interpreter (pytest.main in-process),
+    so mutmut must live in the same environment as the project test deps.
+    A bare PATH mutmut from another interpreter fails collection with
+    exit 4 -> exit 1 and, worse, can shadow the mutants mirror. When the
+    baseline runner is a path into a venv, use its sibling python; only a
+    bare command falls back to PATH resolution.
+
+    Returns the command prefix (without 'run'/'results'), or None when
+    mutmut is unavailable in the resolved environment.
+    """
+    runner = baseline_cmd[0] if baseline_cmd else ""
+    if "/" in runner or "\\" in runner:
+        # python3.exe -m pytest: the runner IS the interpreter.
+        # pytest.exe: sibling python.exe (keep the suffix).
+        # Split on both separators so a Windows path still
+        # resolves when this code runs under POSIX tests.
+        posix = runner.replace("\\", "/")
+        name = posix.rsplit("/", 1)[-1]
+        # Trailing separator: the path is already a directory.
+        dirpart = runner[:-len(name)] if name else runner
+        stem, ext = os.path.splitext(name)
+        if stem.lower().startswith("python"):
+            python = runner
+        else:
+            python = dirpart + "python" + ext
+        try:
+            probe = subprocess.run(
+                [python, "-c", "import mutmut"],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise
+        except OSError:
+            return None
+        if probe.returncode != 0:
+            return None
+        return [python, "-m", "mutmut"]
+    if shutil.which("mutmut") is None:
+        return None
+    return ["mutmut"]
+
+
 def parse_mutmut_results(stdout: str) -> tuple[list[Survivor], list[str]]:
     """Parse mutmut 3.x results output to extract surviving mutants.
 
@@ -258,6 +388,7 @@ def run_mutation(
     timeout: int = 600,
     cwd: Path | None = None,
     baseline_timeout: int = 120,
+    also_copy: list[str] | None = None,
 ) -> tuple[list[StateFinding], list[str]]:
     """Run mutation testing on diff-scoped files.
 
@@ -270,6 +401,7 @@ def run_mutation(
         timeout: mutmut run timeout in seconds (default 600)
         cwd: project root for mutmut (default: Path.cwd()). Must be the
             directory containing src/ and tests/.
+        also_copy: extra relative paths copied into the mutants/ mirror.
 
     Implementation note:
         mutmut 3.x requires cwd to be the project root. A temporary
@@ -304,13 +436,28 @@ def run_mutation(
                 disposition=Disposition.DISMISSED,
                 file="",
                 line_range=[],
-                description="no Python files in diff (mutation is Python-only MVP)",
+                description="no Python files in the diff (mutation is Python-only MVP)",
             )
         )
-        infra_errors.append("no Python files in diff")
+        infra_errors.append("no Python files in the diff")
         return (findings, infra_errors)
 
-    # Flaky guard: run baseline 3x from repo root.
+    roots = _source_roots(py_files)
+    if not roots:
+        findings.append(
+            StateFinding(
+                id="MUTATION_SKIPPED",
+                fingerprint="mutation-tests-only",
+                source="MUTANT",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description="diff is tests-only; nothing to mutate",
+            )
+        )
+        return (findings, [])
+
+    # Flaky guard: run the baseline 3x at the repo root.
     #
     # Start with the inherited environment (including VIRTUAL_ENV if
     # set). If the first attempt fails because the test runner itself
@@ -334,8 +481,34 @@ def run_mutation(
     if status == "skip":
         return (guard_findings, guard_infra)
 
-    # Check mutmut availability
-    if shutil.which("mutmut") is None:
+    # Resolve the mutmut invocation from the baseline environment. mutmut
+    # must share the interpreter with the project test deps (it drives
+    # pytest.main in-process); a foreign PATH mutmut only produces
+    # collection errors, so its absence is a clean skip, not an error.
+    try:
+        invocation = _resolve_mutmut_invocation(baseline_cmd)
+    except subprocess.TimeoutExpired:
+        findings.append(
+            StateFinding(
+                id="MUTATION_SKIPPED",
+                fingerprint="mutation-probe-timeout",
+                source="MUTANT",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description=(
+                    "mutmut import probe timed out in baseline "
+                    "test env; not the same as mutmut missing"
+                ),
+            )
+        )
+        return (findings, [])
+    if invocation is None:
+        runner = baseline_cmd[0] if baseline_cmd else ""
+        if os.sep in runner:
+            desc = f"mutmut not installed in the baseline test env ({runner})"
+        else:
+            desc = "mutmut not installed (soft dependency)"
         findings.append(
             StateFinding(
                 id="MUTATION_SKIPPED",
@@ -344,7 +517,7 @@ def run_mutation(
                 disposition=Disposition.DISMISSED,
                 file="",
                 line_range=[],
-                description="mutmut not installed (soft dependency)",
+                description=desc,
             )
         )
         return (findings, [])
@@ -388,17 +561,12 @@ def run_mutation(
             )
             return (findings, infra_errors)
 
-        # Write temporary setup.cfg to project root.
+        # Write temporary setup.cfg to the project root.
         # mutmut renamed the key in 3.4: source_paths replaced paths_to_mutate.
         # 3.3 does not recognise the new name and falls back to guessing the
         # source tree, which silently widens the run past the diff scope, so
         # pyproject pins >=3.4. Paths stay relative to the project root.
-        config_content = (
-            "%s\n"
-            "[mutmut]\n"
-            "source_paths=%s\n"
-            % (_CODE_FORGE_CFG_MARKER, ",".join(py_files))
-        )
+        config_content = _build_mutmut_config(py_files, baseline_cmd, also_copy)
 
         # Write to a temp file first, then rename for atomicity
         fd, tmp_cfg = tempfile.mkstemp(
@@ -418,9 +586,14 @@ def run_mutation(
                 pass
             raise
 
+        # mutmut 3.x rewrites sys.path itself (inserts mutants/src, then
+        # chdir into mutants/ before pytest.main). Pointing PYTHONPATH at
+        # mutants/src here races the directory that does not exist yet and
+        # breaks collection. Inherit the baseline env; mutmut drops the
+        # original src entry after it has built the mirror.
         try:
             result = subprocess.run(
-                ["mutmut", "run"],
+                invocation + ["run"],
                 capture_output=True,
                 text=True, encoding="utf-8", errors="replace",
                 timeout=timeout,
@@ -468,7 +641,7 @@ def run_mutation(
         # Parse results from repo_root
         try:
             results_proc = subprocess.run(
-                ["mutmut", "results"],
+                invocation + ["results"],
                 capture_output=True,
                 text=True, encoding="utf-8", errors="replace",
                 timeout=10,
