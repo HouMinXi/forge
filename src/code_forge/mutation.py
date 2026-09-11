@@ -99,6 +99,9 @@ def _build_mutmut_config(
     keeps mutation diff-scoped, and the test selection reuses the gate's
     baseline arguments so stats collection runs exactly the tests the
     gate trusts.
+
+    also_copy: extra relative paths copied into the mutants/ mirror
+    (mutmut also_copy). Empty or whitespace entries are dropped.
     """
     roots = _source_roots(py_files)
     lines = [
@@ -398,6 +401,7 @@ def run_mutation(
         timeout: mutmut run timeout in seconds (default 600)
         cwd: project root for mutmut (default: Path.cwd()). Must be the
             directory containing src/ and tests/.
+        also_copy: extra relative paths copied into the mutants/ mirror.
 
     Implementation note:
         mutmut 3.x requires cwd to be the project root. A temporary
