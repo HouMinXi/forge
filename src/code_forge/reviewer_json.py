@@ -113,9 +113,10 @@ def excerpt_line_count_matches(text: str, claimed: int) -> bool:
       its range declares (declared N, carries N+1) -- the mirror image,
       observed routinely on real backends.
 
-    str.splitlines() picks one reading, so every such excerpt was
-    rejected as a schema violation and took the whole review pass with
-    it. One line of slack in either direction is therefore accepted here.
+    excerpt_lines() (trailing newline stripped, then split on \\n)
+    picks one reading, so every such excerpt was rejected as a schema
+    violation and took the whole review pass with it. One line of slack
+    in either direction is therefore accepted here.
     The tolerance is safe because it only widens a counting heuristic:
     validate_excerpt_evidence re-checks the count whenever it cannot
     confirm the content against a frozen post-image, and anchors the
