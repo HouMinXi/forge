@@ -72,7 +72,7 @@ def _make_repo(tmp_path: Path, hostile_gate: bool = False):
             "test:\n  command: touch /tmp/foreign_toolchain_ran\n",
             encoding="utf-8",
         )
-        _git(repo, "add", ".code-forge/gate.yaml")
+        _git(repo, "add", "-f", ".code-forge/gate.yaml")
     _git(repo, "commit", "-q", "-m", "head")
     head = _git(repo, "rev-parse", "HEAD")
     return repo, base, head
@@ -656,7 +656,7 @@ def test_gate_only_diff_counts_as_empty(tmp_path):
         "test:\n  command: touch /tmp/foreign_toolchain_ran\n",
         encoding="utf-8",
     )
-    _git(repo, "add", ".code-forge/gate.yaml")
+    _git(repo, "add", "-f", ".code-forge/gate.yaml")
     _git(repo, "commit", "-q", "-m", "gate only")
     head = _git(repo, "rev-parse", "HEAD")
 
