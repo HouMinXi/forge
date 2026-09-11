@@ -42,6 +42,7 @@ class Survivor:
 
 
 _TEST_DIR_PREFIXES = ("tests/", "test/")
+_TEST_DIR_PREFIXES_WIN = ("tests\\", "test\\")
 
 def _source_roots(py_files: list[str]) -> list[str]:
     """Derive mirror roots from diff-scoped python files.
@@ -54,10 +55,12 @@ def _source_roots(py_files: list[str]) -> list[str]:
     """
     roots: set[str] = set()
     for f in py_files:
-        if f.startswith(_TEST_DIR_PREFIXES):
+        if f.startswith(_TEST_DIR_PREFIXES) or f.startswith(_TEST_DIR_PREFIXES_WIN):
             continue
-        head, sep, _ = f.partition("/")
-        roots.add(head if sep else f)
+        # Mutmut config is POSIX; Windows diffs still arrive with "\\".
+        posix = f.replace("\\", "/")
+        head, sep, _ = posix.partition("/")
+        roots.add(head if sep else posix)
     return sorted(roots)
 
 
@@ -74,9 +77,15 @@ def _baseline_test_selection(baseline_cmd: list[str]) -> list[str]:
     into mutmut's pytest selection.
     """
     for i, tok in enumerate(baseline_cmd):
-        if tok == "pytest" or tok.endswith("/pytest"):
+        if _is_pytest_token(tok):
             return list(baseline_cmd[i + 1:])
     return []
+
+
+def _is_pytest_token(tok: str) -> bool:
+    """True for pytest, .../pytest, pytest.exe, ...\\pytest.exe."""
+    name = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.removesuffix(".exe") == "pytest"
 
 
 def _build_mutmut_config(
@@ -101,6 +110,7 @@ def _build_mutmut_config(
     selection = " ".join(_baseline_test_selection(baseline_cmd))
     if selection:
         lines.append(f"pytest_add_cli_args_test_selection={selection}")
+    also_copy = [p for p in (also_copy or []) if p]
     if also_copy:
         # First path on the key line. An empty also_copy= plus
         # indented continuations parses, but leaves a leading
@@ -125,10 +135,19 @@ def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
     mutmut is unavailable in the resolved environment.
     """
     runner = baseline_cmd[0] if baseline_cmd else ""
-    if os.sep in runner or (os.altsep and os.altsep in runner):
-        # Keep the runner suffix: pytest.exe -> python.exe.
-        _ext = os.path.splitext(os.path.basename(runner))[1]
-        python = os.path.join(os.path.dirname(runner), "python" + _ext)
+    if "/" in runner or "\\" in runner:
+        # python3.exe -m pytest: the runner IS the interpreter.
+        # pytest.exe: sibling python.exe (keep the suffix).
+        # Split on both separators so a Windows path still
+        # resolves when this code runs under POSIX tests.
+        posix = runner.replace("\\", "/")
+        name = posix.rsplit("/", 1)[-1]
+        dirpart = runner[: -len(name)] if name else ""
+        stem, ext = os.path.splitext(name)
+        if stem.lower().startswith("python"):
+            python = runner
+        else:
+            python = dirpart + "python" + ext
         try:
             probe = subprocess.run(
                 [python, "-c", "import mutmut"],

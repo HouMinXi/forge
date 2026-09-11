@@ -30,6 +30,9 @@ class TestSourceRoots:
     def test_flat_layout_file_maps_to_itself(self):
         assert _source_roots(["module.py"]) == ["module.py"]
 
+    def test_windows_backslash_maps_to_top_dir(self):
+        assert _source_roots([r"src\\pkg\\mod.py"]) == ["src"]
+
     def test_test_files_excluded(self):
         assert _source_roots(["tests/test_mod.py", "src/pkg/mod.py"]) == ["src"]
 
@@ -77,6 +80,18 @@ class TestBuildMutmutConfig:
         assert not raw.startswith("\n")
         assert [x for x in raw.split("\n") if x] == ["docs/", "deploy/"]
 
+    def test_config_skips_empty_also_copy_entries(self):
+        from configparser import ConfigParser
+
+        cfg = _build_mutmut_config(
+            ["src/pkg/mod.py"], ["pytest", "tests/"], also_copy=["", "docs/", ""]
+        )
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        raw = parser.get("mutmut", "also_copy")
+        assert not raw.startswith("\n")
+        assert [x for x in raw.split("\n") if x] == ["docs/"]
+
     def test_config_strips_interpreter_prefix_from_selection(self):
         # [python3, -m, pytest, tests/]: only "tests/" is a pytest
         # argument; "-m pytest" leaking into selection would be
@@ -112,6 +127,16 @@ class TestBaselineTestSelection:
 
     def test_empty_command_returns_empty(self):
         assert _baseline_test_selection([]) == []
+
+    def test_windows_pytest_exe_keeps_args(self):
+        assert _baseline_test_selection(
+            [r"C:\\proj\\.venv\\Scripts\\pytest.exe", "tests/", "-q"]
+        ) == ["tests/", "-q"]
+
+    def test_windows_forward_slash_pytest_exe_keeps_args(self):
+        assert _baseline_test_selection(
+            ["C:/proj/.venv/Scripts/pytest.exe", "tests/"]
+        ) == ["tests/"]
 
 
 class TestResolveMutmutInvocation:
@@ -153,6 +178,18 @@ class TestResolveMutmutInvocation:
             ["/proj/.venv/Scripts/pytest.exe", "tests/"]
         )
         assert cmd == ["/proj/.venv/Scripts/python.exe", "-m", "mutmut"]
+
+    @patch("code_forge.mutation.subprocess.run")
+    def test_windows_python3_exe_keeps_python3_exe(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        cmd = _resolve_mutmut_invocation(
+            [r"C:\\proj\\.venv\\Scripts\\python3.exe", "-m", "pytest", "tests/"]
+        )
+        assert cmd == [
+            r"C:\\proj\\.venv\\Scripts\\python3.exe", "-m", "mutmut"
+        ]
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_bare_pytest_keeps_path_resolution(self, mock_which):
