@@ -154,7 +154,10 @@ class TestProducerEvidenceShapeRed:
         assert validate_reviewer_json(data) == data
 
     def test_overflow_rejected(self):
-        data = _rj_data([_rj_exc(end_line=1)])
+        # One line over is end_line jitter (accepted, see
+        # test_one_line_over_accepted_as_coordinate_jitter); two over is a
+        # miscount.
+        data = _rj_data([_rj_exc(end_line=1, content="x = 1\ny = 2\nz = 3")])
         with pytest.raises(ValueError):
             validate_reviewer_json(data)
 
@@ -288,4 +291,17 @@ class TestExcerptTrailingBlankLine:
     def test_genuine_line_count_mismatch_still_rejected(self):
         payload = self._payload(["x = 1", "y = 2"], 1, 5)
         with pytest.raises(ValueError, match="declares 5 lines but carries 2"):
+            validate_reviewer_json(json.dumps(payload))
+
+    def test_one_line_over_accepted_as_coordinate_jitter(self):
+        # The model declared 6-9 (4 lines) but pasted 5: an off-by-one on
+        # end_line, the mirror image of the trailing-blank case.  Real
+        # backends do this routinely and each occurrence took the whole
+        # review pass down as a schema violation.
+        payload = self._payload(["a", "b"], 1, 1)
+        assert validate_reviewer_json(json.dumps(payload)) == payload
+
+    def test_two_lines_over_still_rejected(self):
+        payload = self._payload(["a", "b", "c"], 1, 1)
+        with pytest.raises(ValueError, match="declares 1 lines but carries 3"):
             validate_reviewer_json(json.dumps(payload))
