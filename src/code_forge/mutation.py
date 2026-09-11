@@ -93,15 +93,15 @@ def _build_mutmut_config(
     lines = [
         _CODE_FORGE_CFG_MARKER,
         "[mutmut]",
-        "source_paths=%s" % ",".join(roots),
-        "only_mutate=%s" % ",".join(py_files),
+        "source_paths=" + ",".join(roots),
+        "only_mutate=" + ",".join(py_files),
     ]
     selection = " ".join(_baseline_test_selection(baseline_cmd))
     if selection:
-        lines.append("pytest_add_cli_args_test_selection=%s" % selection)
+        lines.append(f"pytest_add_cli_args_test_selection={selection}")
     if also_copy:
         lines.append("also_copy=")
-        lines.extend("    %s" % p for p in also_copy)
+        lines.extend("    " + p for p in also_copy)
     return "\n".join(lines) + "\n"
 
 
@@ -455,7 +455,7 @@ def run_mutation(
     if invocation is None:
         runner = baseline_cmd[0] if baseline_cmd else ""
         if os.sep in runner:
-            desc = "mutmut not installed in baseline test env (%s)" % runner
+            desc = f"mutmut not installed in the baseline test env ({runner})"
         else:
             desc = "mutmut not installed (soft dependency)"
         findings.append(

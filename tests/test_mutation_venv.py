@@ -127,7 +127,7 @@ class TestRunMutationVenvBaseline:
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
-        findings, infra = run_mutation(
+        findings, _infra = run_mutation(
             ["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"]
         )
         assert len(findings) == 1

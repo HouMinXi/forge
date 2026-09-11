@@ -2553,6 +2553,19 @@ class TestExemptFileKeepsCountParity:
             "count must still hold")
         assert "declares 3 lines but carries 2" in err
 
+    def test_long_excerpt_on_exempt_file_is_rejected(self):
+        """Overflow on an exempt file has no post-image to check
+        the extra line against; count must be exact (the branch
+        excerpt_line_count_matches would otherwise let through).
+        """
+        from code_forge.verify import validate_excerpt_evidence
+        hunk_map, post, exempt = self._ctx()
+        exc = {"file": "new.py", "start_line": 1, "end_line": 1,
+               "content": "a\nb"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None
+        assert "declares 1 lines but carries 2" in err
+
     def test_exact_excerpt_on_exempt_file_still_passes(self):
         from code_forge.verify import validate_excerpt_evidence
         hunk_map, post, exempt = self._ctx()
