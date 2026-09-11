@@ -413,7 +413,7 @@ def _check_hook_drift(
 
 
 def _audit_python_deps(
-    extras: tuple[str, ...] = ("dev", "mcp"),
+    extras: tuple[str, ...] = ("dev", "mcp", "semgrep"),
 ) -> list[tuple[bool | None, str]]:
     """Check installed versions against the extras forge declares.
 

@@ -3,16 +3,18 @@
 """Tests for the doctor tool-audit check."""
 from __future__ import annotations
 
+import inspect
 import stat
 import textwrap
+from importlib.metadata import PackageNotFoundError as _RealPackageNotFound
 from pathlib import Path
 from subprocess import TimeoutExpired
 from unittest.mock import MagicMock, patch
 
-from importlib.metadata import PackageNotFoundError as _RealPackageNotFound
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from code_forge.doctor import _audit_python_deps, _audit_tools, run_doctor
-
 
 # -- Fixture helpers -------------------------------------------------------
 
@@ -266,11 +268,43 @@ class TestAuditPythonDeps:
 
     def test_missing_package_on_path_skips(self):
         """semgrep is shelled out to, so a PATH install is enough."""
-        with self._md(['semgrep<1.170,>=1.0; extra == "dev"'], {}), \
+        with self._md(['semgrep>=1.176,<1.177; extra == "semgrep"'], {}), \
                 patch("code_forge.doctor.shutil.which",
                       return_value="/usr/bin/semgrep"):
-            results = _audit_python_deps(extras=("dev",))
+            results = _audit_python_deps(extras=("semgrep",))
         assert results == [(None, "semgrep: on PATH, version unchecked")]
+
+    def test_semgrep_extra_is_audited_by_default(self):
+        """Default extras must include semgrep so PATH/venv drift is visible."""
+        extras = inspect.signature(_audit_python_deps).parameters["extras"].default
+        assert "semgrep" in extras
+        assert "dev" in extras
+        assert "mcp" in extras
+
+    def test_semgrep_pin_covers_path_install(self):
+        """Declared pin must admit the PATH tool (1.176.x)."""
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        text = pyproject.read_text(encoding="utf-8")
+        extras = text.split("[project.optional-dependencies]", 1)[1]
+        dev_block = extras.split("dev = [", 1)[1].split("]", 1)[0]
+        assert "semgrep" not in dev_block
+        assert "semgrep = [" in extras
+        req = None
+        in_semgrep = False
+        for line in extras.splitlines():
+            if line.strip().startswith("semgrep = ["):
+                in_semgrep = True
+                continue
+            if in_semgrep and line.strip().startswith("]"):
+                break
+            raw = line.strip().strip(",").strip('"')
+            if in_semgrep and raw.startswith("semgrep"):
+                req = Requirement(raw)
+                break
+        assert req is not None, extras
+        assert Version("1.176.0") in req.specifier
+        assert Version("1.175.0") not in req.specifier
+        assert Version("1.177.0") not in req.specifier
 
     def test_extras_outside_the_requested_set_are_skipped(self):
         with self._md(['google-auth>=2.35.0; extra == "vertex"'], {}):

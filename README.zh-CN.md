@@ -413,10 +413,10 @@ HOLD 退出，75 条干净对照一条不剩。
 - Claude Code 或兼容的 AI 编程助手，用来调用 skill
 - `mcp` Python 包（可选，`code-forge-mcp` 要用）：`pip install code-review-forge[mcp]`
 
-改 code-forge 本身要装 dev extras——测试运行器、linter、变异测试运行器都在里面：
+改 code-forge 本身要装 dev extras——测试运行器、linter、变异测试运行器都在里面。semgrep 单独一个 extra：声明、PATH、forge venv 必须钉同一条版本线：
 
 ```bash
-pip install -e '.[dev,mcp]'
+pip install -e '.[dev,mcp,semgrep]'
 code-forge doctor
 ```
 

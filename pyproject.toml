@@ -36,9 +36,6 @@ dev = [
     "pytest-asyncio>=1.0",
     "ruff>=0.5",
     "mutmut>=3.4,<4.0",
-    # semgrep>=1.100 uses io_uring which fails on systems with low RLIMIT_MEMLOCK.
-    # Pin to <1.100 until the upstream io_uring memory issue is resolved.
-    "semgrep>=1.0,<1.170",
     "jsonschema>=4.18",
 ]
 vertex = [
@@ -47,6 +44,11 @@ vertex = [
 ]
 mcp = [
     "mcp>=1.27,<2",
+]
+semgrep = [
+    # PATH tool and forge venv pin the 1.176.x series so
+    # declaration, PATH, and the forge venv cannot drift independently.
+    "semgrep>=1.176,<1.177",
 ]
 # Only the corpus GENERATOR needs this -- building tests/eval/swebench from
 # SWE-bench_Verified. The generated corpus is committed, so running an
