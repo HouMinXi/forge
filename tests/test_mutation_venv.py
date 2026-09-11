@@ -64,12 +64,18 @@ class TestBuildMutmutConfig:
         assert "only_mutate=module.py" in cfg
 
     def test_config_includes_also_copy_when_given(self):
+        from configparser import ConfigParser
+
         cfg = _build_mutmut_config(
             ["src/pkg/mod.py"], ["pytest", "tests/"], also_copy=["docs/", "deploy/"]
         )
-        assert "also_copy=" in cfg
-        assert " docs/" in cfg
-        assert " deploy/" in cfg
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        raw = parser.get("mutmut", "also_copy")
+        # Empty "also_copy=" plus indented continuations parses, but
+        # leaves a leading newline. First path belongs on the key line.
+        assert not raw.startswith("\n")
+        assert [x for x in raw.split("\n") if x] == ["docs/", "deploy/"]
 
     def test_config_strips_interpreter_prefix_from_selection(self):
         # [python3, -m, pytest, tests/]: only "tests/" is a pytest
@@ -137,6 +143,16 @@ class TestResolveMutmutInvocation:
         except subprocess.TimeoutExpired:
             return
         raise AssertionError("probe timeout must not look like mutmut missing")
+
+    @patch("code_forge.mutation.subprocess.run")
+    def test_windows_pytest_exe_uses_python_exe(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        cmd = _resolve_mutmut_invocation(
+            ["/proj/.venv/Scripts/pytest.exe", "tests/"]
+        )
+        assert cmd == ["/proj/.venv/Scripts/python.exe", "-m", "mutmut"]
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_bare_pytest_keeps_path_resolution(self, mock_which):

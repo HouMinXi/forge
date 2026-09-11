@@ -102,8 +102,12 @@ def _build_mutmut_config(
     if selection:
         lines.append(f"pytest_add_cli_args_test_selection={selection}")
     if also_copy:
-        lines.append("also_copy=")
-        lines.extend("    " + p for p in also_copy)
+        # First path on the key line. An empty also_copy= plus
+        # indented continuations parses, but leaves a leading
+        # newline that mutmut then keeps as an empty Path.
+        lines.append("also_copy=" + also_copy[0])
+        lines.extend("    " + p for p in also_copy[1:])
+
     return "\n".join(lines) + "\n"
 
 
@@ -122,7 +126,9 @@ def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
     """
     runner = baseline_cmd[0] if baseline_cmd else ""
     if os.sep in runner or (os.altsep and os.altsep in runner):
-        python = os.path.join(os.path.dirname(runner), "python")
+        # Keep the runner suffix: pytest.exe -> python.exe.
+        _ext = os.path.splitext(os.path.basename(runner))[1]
+        python = os.path.join(os.path.dirname(runner), "python" + _ext)
         try:
             probe = subprocess.run(
                 [python, "-c", "import mutmut"],
