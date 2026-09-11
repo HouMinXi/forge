@@ -113,7 +113,7 @@ def _build_mutmut_config(
     selection = " ".join(_baseline_test_selection(baseline_cmd))
     if selection:
         lines.append(f"pytest_add_cli_args_test_selection={selection}")
-    also_copy = [p for p in (also_copy or []) if p]
+    also_copy = [p for p in (also_copy or []) if p.strip()]
     if also_copy:
         # First path on the key line. An empty also_copy= plus
         # indented continuations parses, but leaves a leading

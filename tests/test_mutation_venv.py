@@ -66,6 +66,19 @@ class TestBuildMutmutConfig:
         assert "source_paths=module.py" in cfg
         assert "only_mutate=module.py" in cfg
 
+    def test_config_drops_blank_also_copy_entries(self):
+        from configparser import ConfigParser
+
+        cfg = _build_mutmut_config(
+            ["src/pkg/mod.py"],
+            ["pytest", "tests/"],
+            also_copy=["docs/", "  ", "", "deploy/"],
+        )
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        raw = parser.get("mutmut", "also_copy")
+        assert raw.split("\n") == ["docs/", "deploy/"]
+
     def test_config_includes_also_copy_when_given(self):
         from configparser import ConfigParser
 
