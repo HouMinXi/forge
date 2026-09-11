@@ -180,6 +180,14 @@ class TestResolveMutmutInvocation:
         assert cmd == ["/proj/.venv/Scripts/python.exe", "-m", "mutmut"]
 
     @patch("code_forge.mutation.subprocess.run")
+    def test_trailing_separator_keeps_dirpart(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        cmd = _resolve_mutmut_invocation(["/proj/.venv/bin/", "tests/"])
+        assert cmd == ["/proj/.venv/bin/python", "-m", "mutmut"]
+
+    @patch("code_forge.mutation.subprocess.run")
     def test_windows_python3_exe_keeps_python3_exe(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="", stderr=""
@@ -267,8 +275,9 @@ class TestRunMutationVenvBaseline:
         ]
         assert len(mutmut_calls) == 1
         pythonpath = mutmut_calls[0][1]["env"]["PYTHONPATH"]
-        assert pythonpath.endswith("/src")
-        assert "mutants/" not in pythonpath
+        posix = pythonpath.replace("\\", "/")
+        assert posix.endswith("/src")
+        assert "mutants/" not in posix
 
     def test_tests_only_diff_skips(self):
         findings, infra = run_mutation(

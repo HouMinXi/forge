@@ -142,7 +142,8 @@ def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
         # resolves when this code runs under POSIX tests.
         posix = runner.replace("\\", "/")
         name = posix.rsplit("/", 1)[-1]
-        dirpart = runner[: -len(name)] if name else ""
+        # Trailing separator: the path is already a directory.
+        dirpart = runner[:-len(name)] if name else runner
         stem, ext = os.path.splitext(name)
         if stem.lower().startswith("python"):
             python = runner
