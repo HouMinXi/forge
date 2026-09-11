@@ -451,10 +451,11 @@ passes count.
 - `mcp` Python package (optional, for `code-forge-mcp`): `pip install code-review-forge[mcp]`
 
 Working on code-forge itself needs the dev extras -- the test runner,
-linter, and mutation runner all live there:
+linter, and mutation runner all live there. Semgrep is a separate extra
+because PATH, the forge venv, and the declared pin must stay on one series:
 
 ```bash
-pip install -e '.[dev,mcp]'
+pip install -e '.[dev,mcp,semgrep]'
 code-forge doctor
 ```
 
