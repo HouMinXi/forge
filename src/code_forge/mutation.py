@@ -69,12 +69,14 @@ def _baseline_test_selection(baseline_cmd: list[str]) -> list[str]:
     tokens after the pytest executable are pytest arguments; the
     interpreter prefix (-m pytest included) must not leak into
     pytest_add_cli_args_test_selection, where '-m' would be parsed as a
-    marker expression.
+    marker expression. A command with no pytest token returns empty:
+    the previous fallback leaked the command tail (e.g. -m unittest)
+    into mutmut's pytest selection.
     """
     for i, tok in enumerate(baseline_cmd):
         if tok == "pytest" or tok.endswith("/pytest"):
             return list(baseline_cmd[i + 1:])
-    return list(baseline_cmd[1:])
+    return []
 
 
 def _build_mutmut_config(
@@ -128,7 +130,9 @@ def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
                 timeout=30,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            raise
+        except OSError:
             return None
         if probe.returncode != 0:
             return None
@@ -451,7 +455,24 @@ def run_mutation(
     # must share the interpreter with the project test deps (it drives
     # pytest.main in-process); a foreign PATH mutmut only produces
     # collection errors, so its absence is a clean skip, not an error.
-    invocation = _resolve_mutmut_invocation(baseline_cmd)
+    try:
+        invocation = _resolve_mutmut_invocation(baseline_cmd)
+    except subprocess.TimeoutExpired:
+        findings.append(
+            StateFinding(
+                id="MUTATION_SKIPPED",
+                fingerprint="mutation-probe-timeout",
+                source="MUTANT",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description=(
+                    "mutmut import probe timed out in baseline "
+                    "test env; not the same as mutmut missing"
+                ),
+            )
+        )
+        return (findings, [])
     if invocation is None:
         runner = baseline_cmd[0] if baseline_cmd else ""
         if os.sep in runner:

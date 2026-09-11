@@ -294,10 +294,8 @@ class TestExcerptTrailingBlankLine:
             validate_reviewer_json(json.dumps(payload))
 
     def test_one_line_over_accepted_as_coordinate_jitter(self):
-        # The model declared 6-9 (4 lines) but pasted 5: an off-by-one on
-        # end_line, the mirror image of the trailing-blank case.  Real
-        # backends do this routinely and each occurrence took the whole
-        # review pass down as a schema violation.
+        # Range claims 1 line (start=end=1) while content carries 2: the
+        # off-by-one end_line case, mirror image of a dropped trailing blank.
         payload = self._payload(["a", "b"], 1, 1)
         assert validate_reviewer_json(json.dumps(payload)) == payload
 

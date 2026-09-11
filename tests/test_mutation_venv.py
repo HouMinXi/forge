@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from code_forge.disposition import Disposition
 from code_forge.mutation import (
+    _baseline_test_selection,
     _build_mutmut_config,
     _resolve_mutmut_invocation,
     _source_roots,
@@ -82,6 +83,31 @@ class TestBuildMutmutConfig:
         assert "-m" not in selection
 
 
+class TestBaselineTestSelection:
+    """Interpreter flags must not leak into pytest_add_cli_args_test_selection."""
+
+    def test_direct_pytest_keeps_args(self):
+        assert _baseline_test_selection(["pytest", "tests/", "-q"]) == ["tests/", "-q"]
+
+    def test_venv_pytest_keeps_args(self):
+        assert _baseline_test_selection(
+            ["/proj/.venv/bin/pytest", "tests/"]
+        ) == ["tests/"]
+
+    def test_python_dash_m_pytest_strips_prefix(self):
+        assert _baseline_test_selection(
+            ["python3", "-m", "pytest", "tests/"]
+        ) == ["tests/"]
+
+    def test_non_pytest_runner_returns_empty(self):
+        # Fallback used to return baseline_cmd[1:], leaking "-m unittest"
+        # into mutmut's pytest_add_cli_args_test_selection.
+        assert _baseline_test_selection(["python", "-m", "unittest"]) == []
+
+    def test_empty_command_returns_empty(self):
+        assert _baseline_test_selection([]) == []
+
+
 class TestResolveMutmutInvocation:
     """The interpreter that owns baseline_cmd must own the mutmut subprocess."""
 
@@ -103,6 +129,15 @@ class TestResolveMutmutInvocation:
         cmd = _resolve_mutmut_invocation(["/proj/.venv/bin/pytest", "tests/"])
         assert cmd is None
 
+    @patch("code_forge.mutation.subprocess.run")
+    def test_venv_probe_timeout_raises(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["python", "-c"], timeout=30)
+        try:
+            _resolve_mutmut_invocation(["/proj/.venv/bin/pytest", "tests/"])
+        except subprocess.TimeoutExpired:
+            return
+        raise AssertionError("probe timeout must not look like mutmut missing")
+
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_bare_pytest_keeps_path_resolution(self, mock_which):
         cmd = _resolve_mutmut_invocation(["pytest", "tests/"])
@@ -115,6 +150,24 @@ class TestResolveMutmutInvocation:
 
 class TestRunMutationVenvBaseline:
     """End-to-end: venv baseline drives the interpreter, config, and env."""
+
+    @patch("code_forge.mutation.subprocess.run")
+    def test_venv_probe_timeout_skips_as_timeout_not_missing(self, mock_run):
+        def side_effect(*args, **kwargs):
+            cmd = args[0]
+            if isinstance(cmd, list) and cmd[1:2] == ["-c"]:
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=30)
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = side_effect
+        findings, _infra = run_mutation(
+            ["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"]
+        )
+        assert len(findings) == 1
+        assert findings[0].id == "MUTATION_SKIPPED"
+        assert findings[0].fingerprint == "mutation-probe-timeout"
+        assert "timed out" in findings[0].description
+        assert findings[0].fingerprint != "mutation-unavailable"
 
     @patch("code_forge.mutation.subprocess.run")
     def test_venv_without_mutmut_skips_dismissed_not_confirmed(self, mock_run):
