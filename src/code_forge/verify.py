@@ -449,6 +449,34 @@ def _constant_offset(
     return None
 
 
+def _blank_boundary_slip(
+    exc_start: int,
+    exc_end: int,
+    offset: int,
+    file_lines: dict[int, str],
+) -> bool:
+    """Report whether a one-line offset is explained by a blank boundary.
+
+    A markdown reviewer quoting a passage routinely anchors on the blank line
+    that separates two paragraphs, producing coordinates one line off from
+    the text it actually quoted. The blank line carries no evidence either
+    way, so convicting that excerpt of misnumbering raises a CONFIRMED INFRA
+    finding over nothing and zeroes the clean-round counter.
+
+    Only a single-line slip across a blank boundary qualifies. A reviewer who
+    ignored the annotated column entirely lands further away than one line, and
+    stays reported as misnumbering. A boundary line absent from the post-image
+    proves nothing either way, so absence alone cannot excuse the slip: one end
+    must be present and blank.
+    """
+    if abs(offset) != 1:
+        return False
+    return any(
+        line is not None and not line.strip()
+        for line in (file_lines.get(exc_start), file_lines.get(exc_end))
+    )
+
+
 def validate_excerpt_evidence(
     exc: dict,
     hunk_map: dict[str, list[dict]] | None = None,
@@ -539,19 +567,29 @@ def validate_excerpt_evidence(
             if excerpt_line_map[ln].rstrip() != file_lines[ln].rstrip():
                 offset = _constant_offset(
                     excerpt_line_map, file_lines, -64, 65)
-                if offset is not None:
+                if offset is not None and not _blank_boundary_slip(
+                    exc_start, exc_end, offset, file_lines
+                ):
                     return (
                         "excerpt misnumbered by %+d at %s:%d-%d "
                         "(claims %s:%d, actually %s:%d)" % (
                             offset, exc_file, exc_start, exc_end,
                             exc_file, ln, exc_file, ln + offset)
                     )
+                if offset is not None:
+                    # Blank-boundary slip: the quote is anchored one line off
+                    # across a paragraph separator that carries no evidence.
+                    # The content itself checked out at the shift, so there is
+                    # nothing left to report.
+                    return None
                 return "excerpt content mismatch at %s:%d-%d (line %d)" % (
                     exc_file, exc_start, exc_end, ln)
     outside = set(excerpt_line_map) - set(file_lines)
     if outside:
         offset = _constant_offset(excerpt_line_map, file_lines, -64, 65)
-        if offset is not None:
+        if offset is not None and not _blank_boundary_slip(
+            exc_start, exc_end, offset, file_lines
+        ):
             ln = min(outside)
             return (
                 "excerpt misnumbered by %+d at %s:%d-%d "
@@ -559,6 +597,8 @@ def validate_excerpt_evidence(
                     offset, exc_file, exc_start, exc_end,
                     exc_file, ln, exc_file, ln + offset)
             )
+        if offset is not None:
+            return None
         return (
             "excerpt %s:%d-%d claims line %d outside the diff "
             "post-image; it cannot be verified" % (

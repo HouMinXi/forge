@@ -2523,6 +2523,180 @@ class TestMultiLineHunkRange:
         assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
 
 
+class TestBlankLineCarriesNoPositionalEvidence:
+    """Blank lines must not participate in offset alignment.
+
+    A blank line matches a blank line at every delta, so letting blanks vote
+    lets the search invent an offset that the real content never supports.
+    The locked round-2 sample is a markdown file whose claimed start_line is
+    a paragraph separator: the body aligns at -1 and the whole excerpt is
+    called misnumbered, which raises a CONFIRMED INFRA finding and zeroes
+    the clean-round counter.
+    """
+
+    # Mirrors docs/fmf-conventions.md:78-82 as locked in round 2: line 79
+    # carries the path warning, line 80 is the separator blank, line 81 is
+    # the next heading.
+    _DIFF = (
+        "diff --git a/docs/conv.md b/docs/conv.md\n"
+        "--- a/docs/conv.md\n"
+        "+++ b/docs/conv.md\n"
+        "@@ -76,4 +76,7 @@\n"
+        " keep-a\n"
+        " keep-b\n"
+        " keep-c\n"
+        "+do not write path slash alone without url\n"
+        "+\n"
+        "+## four, entry points and exit codes\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_blank_claimed_start_is_not_misnumbered(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        assert post["docs/conv.md"][80].strip() == "", "fixture: line 80 blank"
+        assert "do not write path" in post["docs/conv.md"][79]
+
+        # Claims 80-82; the body is the file's own 79-81 text.
+        exc = {
+            "file": "docs/conv.md",
+            "start_line": 80,
+            "end_line": 82,
+            "content": (
+                "do not write path slash alone without url\n"
+                "\n"
+                "## four, entry points and exit codes"
+            ),
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is None, (
+            f"a blank claimed start line carries no positional "
+            f"evidence: {err}"
+        )
+
+    def test_real_shift_of_non_blank_content_still_convicts(self):
+        """The -1 tolerance must not swallow a genuine numbering slip."""
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Claims 76-78 but quotes the 79-81 block: a real +3 misnumbering
+        # with no blank line to excuse it.
+        exc = {
+            "file": "docs/conv.md",
+            "start_line": 76,
+            "end_line": 78,
+            "content": (
+                "do not write path slash alone without url\n"
+                "\n"
+                "## four, entry points and exit codes"
+            ),
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, "a genuine shift must still be reported"
+        assert "misnumbered" in err, err
+
+    def test_blank_end_boundary_also_excuses_the_slip(self):
+        """The tolerance must hold when it is the END line that is blank.
+
+        The sister test covers a blank start; this one pins the other arm of
+        the predicate so a regression that only checks start_line still fails.
+        """
+        from code_forge.verify import _diff_validation_context, validate_excerpt_evidence
+
+        diff = (
+            "diff --git a/docs/tail.md b/docs/tail.md\n"
+            "--- a/docs/tail.md\n"
+            "+++ b/docs/tail.md\n"
+            "@@ -10,3 +10,7 @@\n"
+            " keep-a\n"
+            " keep-b\n"
+            " keep-c\n"
+            "+## heading\n"
+            "+body line\n"
+            "+\n"
+            "+## next heading\n"
+        )
+        post, hunk_map, exempt = _diff_validation_context(diff)
+        assert post["docs/tail.md"][15].strip() == "", "fixture: line 15 is blank"
+        assert post["docs/tail.md"][13].strip() == "## heading"
+
+        # Claims 12-15 but quotes the file's own 11-14 block: a -1 slip whose
+        # START boundary (line 12, "keep-c") is ordinary content and whose END
+        # boundary (line 15) is the blank separator.
+        exc = {
+            "file": "docs/tail.md",
+            "start_line": 12,
+            "end_line": 15,
+            "content": "keep-b\nkeep-c\n## heading\nbody line",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is None, (
+            f"a blank claimed end line carries no positional evidence: {err}"
+        )
+
+    def test_absent_boundary_line_is_not_a_blank_boundary(self):
+        """A line missing from the post-image carries no evidence at all.
+
+        ``file_lines.get(ln) or ""`` reads an absent line as an empty one, so a
+        a genuine off-by-one whose boundary falls outside the diff would be
+        excused as a paragraph separator. Absence proves nothing; only a line
+        that is present and blank can explain the slip.
+        """
+        from code_forge.verify import _diff_validation_context, validate_excerpt_evidence
+
+        # Every post-image line carries content, so no real blank boundary
+        # exists anywhere in this file.
+        diff = (
+            "diff --git a/src/dense.py b/src/dense.py\n"
+            "--- a/src/dense.py\n"
+            "+++ b/src/dense.py\n"
+            "@@ -10,3 +10,6 @@\n"
+            " alpha\n"
+            " beta\n"
+            " gamma\n"
+            "+delta\n"
+            "+epsilon\n"
+            "+zeta\n"
+        )
+        post, hunk_map, exempt = _diff_validation_context(diff)
+        assert 9 not in post["src/dense.py"], "fixture: line 9 must be absent"
+        assert post["src/dense.py"][10].strip() == "alpha"
+
+        # Quotes the file's 10-12 but claims 9-11: a real +1 slip whose
+        # low boundary happens to sit outside the post-image.
+        exc = {
+            "file": "src/dense.py",
+            "start_line": 9,
+            "end_line": 11,
+            "content": "alpha\nbeta\ngamma",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, (
+            "an off-by-one whose boundary is absent must still be reported"
+        )
+
+    def test_fabricated_content_still_rejected(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        exc = {
+            "file": "docs/conv.md",
+            "start_line": 79,
+            "end_line": 81,
+            "content": "never written here\nnor here\nnor this line either",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, "fabricated content must not pass"
+        assert "misnumbered" not in err, (
+            f"fabrication is a content mismatch, not a numbering slip: {err}"
+        )
+
+
 class TestExemptFileKeepsCountParity:
     """An exempt file has no post-image, so the content check
     never runs and count parity is the only check it gets.

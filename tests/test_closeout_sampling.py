@@ -35,8 +35,11 @@ def test_sampling_audit_parity(tmp_path, monkeypatch):
     for provider, result in ((direct, direct_result), (sampling, sampling_result)):
         findings, excerpts, _, _ = result
         assert len([f for f in findings if f.source == "UNTRUSTED"]) == 3
-        assert len([f for f in findings if f.source == "INFRA"]) == 3
-        assert {f.source for f in findings} == {"UNTRUSTED", "INFRA"}
+        # Rejected excerpt evidence is a reviewer coordinate habit, not a
+        # dead backend, so it no longer raises an INFRA finding. The
+        # candidate survives as UNTRUSTED audit data instead.
+        assert [f for f in findings if f.source == "INFRA"] == []
+        assert {f.source for f in findings} == {"UNTRUSTED"}
         assert excerpts == []
         assert len(provider.attempted_excerpts) == 3
         for attempt in provider.attempted_excerpts:
@@ -57,8 +60,12 @@ def test_sampling_audit_parity(tmp_path, monkeypatch):
     for path in written:
         receipt = json.loads(path.read_text())
         assert receipt["code_excerpts"] == []
-        assert receipt["pass_status"] == "schema_fail"
-        assert all(f.get("source") != "UNTRUSTED" for f in receipt["findings"])
+        # The pass itself completed: the response parsed and carried findings.
+        # Only its excerpt coordinates were rejected. write_receipts drops
+        # UNTRUSTED candidates before attesting, so the receipt carries no
+        # findings at all -- the audit trail for them lives in attempted/.
+        assert receipt["pass_status"] == "completed"
+        assert receipt["findings"] == []
     attempts = list((receipts / "attempted").glob("*.json"))
     assert len(attempts) == 3
     for path in attempts:

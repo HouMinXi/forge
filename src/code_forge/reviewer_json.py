@@ -51,6 +51,21 @@ REVIEW_JSON_CONTRACT = (
 )
 
 
+class ExcerptEvidenceError(ValueError):
+    """Raised when a well-formed response carries excerpt evidence that
+    fails to check out.
+
+    Distinct from the plain ValueError raised for a malformed response.
+    Nothing was parsed in the malformed case, so nothing can be audited and
+    the run has learned only that the backend is unusable. Here the reply
+    parsed, named real files and carried findings; only the evidence
+    coordinates were wrong. The two must not converge on the same
+    CONFIRMED infrastructure finding, because that makes a reviewer with a
+    coordinate habit indistinguishable from a dead backend and blocks the
+    clean-round counter forever.
+    """
+
+
 def _strip_fence(raw: str) -> str:
     """Strip a complete markdown fence envelope if one wraps the reply.
 
@@ -201,7 +216,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
             raise ValueError("code_excerpt[%d] content must not be empty" % i)
         claimed = e - s + 1
         if not excerpt_line_count_matches(text, claimed):
-            raise ValueError(
+            raise ExcerptEvidenceError(
                 "code_excerpt[%d] %s:%d-%d declares %d lines but carries %d"
                 % (i, exc_file, s, e, claimed, len(excerpt_lines(text)))
             )
@@ -325,6 +340,12 @@ def _json_to_state_findings(
 
     findings = []
     for f_raw in data.get("findings", []):
+        # Callers on the untrusted-downgrade path reach here with JSON that
+        # validate_reviewer_json already rejected, so the per-element dict
+        # check never ran. Skip what is not a finding object rather than
+        # aborting the review on it.
+        if not isinstance(f_raw, dict):
+            continue
         file_path = f_raw.get("file") or "unknown"
         try:
             line = int(f_raw.get("line") or 0)

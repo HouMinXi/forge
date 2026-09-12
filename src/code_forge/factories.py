@@ -289,6 +289,7 @@ def build_l1_provider(
     from .llm_invoke import LLMInvokeError, llm_invoke
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
+        ExcerptEvidenceError,
         _collect_excerpts,
         _dedup_by_fingerprint,
         _json_to_state_findings,
@@ -496,15 +497,22 @@ def build_l1_provider(
             except ValueError as exc:
                 from .disposition import Disposition
                 from .state import StateFinding
-                all_candidates.append(StateFinding(
-                    id="l1-%s-schema-fail" % pass_name,
-                    fingerprint="schema-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<schema-validation>",
-                    line_range=[0, 0],
-                    description="schema validation failed: %s" % exc,
-                ))
+                # A response whose evidence failed to check out is not a
+                # dead backend. Raising CONFIRMED/INFRA zeroes the
+                # consecutive-clean-round counter every round the backend
+                # repeats the same coordinate habit, so the run never
+                # reaches the clean-round threshold however good the code is.
+                # Findings survive below as UNTRUSTED audit data.
+                if not isinstance(exc, ExcerptEvidenceError):
+                    all_candidates.append(StateFinding(
+                        id=f"l1-{pass_name}-schema-fail",
+                        fingerprint=f"schema-fail-{pass_name}",
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<schema-validation>",
+                        line_range=[0, 0],
+                        description=f"schema validation failed: {exc}",
+                    ))
                 # Preserve the exact attempted payload as audit data with
                 # loop-owned pass attribution -- never as accepted
                 # evidence, never repaired. The writer stores it in a
@@ -724,6 +732,7 @@ def build_sampling_l1_provider(
     from .llm_invoke import LLMInvokeError, Usage, invoke_sampling
     from .reviewer_json import (
         REVIEW_JSON_CONTRACT,
+        ExcerptEvidenceError,
         _collect_excerpts,
         _dedup_by_fingerprint,
         _json_to_state_findings,
@@ -851,15 +860,19 @@ def build_sampling_l1_provider(
             try:
                 validated = validate_reviewer_json(response)
             except ValueError as exc:
-                all_candidates.append(StateFinding(
-                    id="l1-%s-schema-fail" % pass_name,
-                    fingerprint="schema-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<schema-validation>",
-                    line_range=[0, 0],
-                    description="schema validation failed: %s" % exc,
-                ))
+                # Same split as the A-leg provider: rejected evidence is not
+                # an unusable backend and must not zero the clean-round
+                # counter. Findings survive below as UNTRUSTED.
+                if not isinstance(exc, ExcerptEvidenceError):
+                    all_candidates.append(StateFinding(
+                        id=f"l1-{pass_name}-schema-fail",
+                        fingerprint=f"schema-fail-{pass_name}",
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<schema-validation>",
+                        line_range=[0, 0],
+                        description=f"schema validation failed: {exc}",
+                    ))
                 # Preserve the exact attempted payload (see the A-leg
                 # provider); the writer stores it as an audit artifact.
                 raw_data = _raw_response_data(response)
@@ -868,7 +881,9 @@ def build_sampling_l1_provider(
                     attempted["pass_name"] = pass_name
                     all_attempted.append(attempted)
                 if isinstance(raw_data, dict) and isinstance(raw_data.get("findings"), list):
-                    for sf in _json_to_state_findings(raw_data, pass_name):
+                    for sf in _json_to_state_findings(
+                        raw_data, pass_name, backend="mcp-sampling",
+                    ):
                         sf.source = "UNTRUSTED"
                         sf.id = "l1-%s-untrusted-%s" % (pass_name, sf.fingerprint)
                         all_candidates.append(sf)

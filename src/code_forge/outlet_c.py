@@ -22,6 +22,7 @@ from .falsify import Falsifier
 from .llm_invoke import Usage
 from .machine import StateMachine
 from .reviewer_json import (
+    ExcerptEvidenceError,
     validate_reviewer_json,
     _collect_excerpts,
     _dedup_by_fingerprint,
@@ -128,15 +129,16 @@ def _run_chunk(
             )
             all_excerpts.extend(_collect_excerpts(validated, pass_name=pass_name))
         except ValueError as e:
-            findings.append(StateFinding(
-                id="l1-%s-schema-fail" % pass_name,
-                fingerprint="schema-fail-%s" % pass_name,
-                source="INFRA",
-                disposition=Disposition.CONFIRMED,
-                file="<schema-validation>",
-                line_range=[0, 0],
-                description="schema validation failed: %s" % e,
-            ))
+            if not isinstance(e, ExcerptEvidenceError):
+                findings.append(StateFinding(
+                    id=f"l1-{pass_name}-schema-fail",
+                    fingerprint=f"schema-fail-{pass_name}",
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<schema-validation>",
+                    line_range=[0, 0],
+                    description=f"schema validation failed: {e}",
+                ))
             from .factories import _raw_response_data
 
             raw_data = _raw_response_data(raw)
@@ -145,6 +147,18 @@ def _run_chunk(
                     attempted_item = dict(raw_data)
                     attempted_item["pass_name"] = pass_name
                     attempted.append(attempted_item)
+                # Same split as the other two legs: a candidate whose
+                # evidence was rejected still survives as audit data
+                # rather than vanishing with the excerpt.
+                if isinstance(raw_data, dict) and isinstance(
+                    raw_data.get("findings"), list
+                ):
+                    for sf in _json_to_state_findings(
+                        raw_data, pass_name, backend="subagent",
+                    ):
+                        sf.source = "UNTRUSTED"
+                        sf.id = f"l1-{pass_name}-untrusted-{sf.fingerprint}"
+                        findings.append(sf)
     return (findings, all_excerpts, Usage(), 0.0)
 
 ReviewerSpawnFn = Callable[[str, str], str]

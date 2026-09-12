@@ -525,6 +525,52 @@ class TestOutletCInfraSourceTagging:
             assert "schema-fail" in f.fingerprint
 
 
+    def test_outlet_c_excerpt_line_count_is_not_confirmed_infra(self, tmp_path):
+        """Line-count drift must not masquerade as a dead backend."""
+        # A non-empty findings list so the downgrade has something to carry:
+        # an empty one satisfies the INFRA assertion vacuously.
+        payload = json.dumps({
+            "findings": [
+                {
+                    "file": "test.py",
+                    "line": 2,
+                    "severity": "P2",
+                    "description": "candidate worth auditing",
+                }
+            ],
+            "code_excerpts": [
+                {
+                    "file": "test.py",
+                    "start_line": 1,
+                    "end_line": 70,
+                    "content": "\n".join(["x"] * 85),
+                }
+            ],
+        })
+        _result = run_outlet_c(
+            resolved_review=_resolved_with_diff(),
+            source_hash=_source_hash(),
+            cwd=tmp_path,
+            spawn_fn=lambda pn, dt: payload,
+            falsifier=StubFalsifier(),
+            max_total_rounds=1,
+        )
+        state = load_state(tmp_path / ".code-forge" / "state.json")
+        confirmed_infra = [
+            f for f in state.findings
+            if f.source == "INFRA" and f.disposition.value == "CONFIRMED"
+            and "schema-fail" in f.fingerprint
+        ]
+        assert not confirmed_infra, (
+            "rejected evidence must not masquerade as an infrastructure "
+            "failure: %s" % [f.description for f in confirmed_infra]
+        )
+        untrusted = [f for f in state.findings if f.source == "UNTRUSTED"]
+        assert untrusted, (
+            "the candidate must survive as audit data, not disappear"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Phase 24.1-02: real legs wiring tests
 # ---------------------------------------------------------------------------

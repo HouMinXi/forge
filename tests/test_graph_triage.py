@@ -202,15 +202,21 @@ class TestSemHasIndex:
         (db_dir / "functions.lance").mkdir()
         assert _sem_has_index(tmp_path) is True
 
-    @patch("code_forge.graph_triage.subprocess.run", side_effect=OSError("sem absent"))
-    def test_returns_false_when_db_absent(self, _mock_run, tmp_path):
-        """Repo without .semcode.db and without a sem binary -> not indexed.
+    def test_returns_false_when_db_absent(self, tmp_path):
+        """A repo without .semcode.db is not indexed.
 
-        sem >= 0.21 on PATH flips the contract to always-indexed by
-        design (modern sem tolerates misses), so the False branch is
-        only reachable when the version probe itself fails.
+        Only meaningful on sem versions that still keep an on-disk index.
+        sem dropped .semcode.db in v0.21.0 and _sem_has_index reports True
+        unconditionally there, so the absent-db path cannot be exercised.
         """
-        assert _sem_has_index(tmp_path) is False
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        # Force the pre-0.21 branch: the probe must fall through to the
+        # on-disk check rather than short-circuit on the version string.
+        with patch("code_forge.graph_triage.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout="sem 0.10.3")
+            assert _sem_has_index(tmp_path) is False
 
     def test_returns_true_for_empty_db_dir(self, tmp_path):
         """An EMPTY .semcode.db directory still counts as indexed.

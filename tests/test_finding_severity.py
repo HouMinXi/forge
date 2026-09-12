@@ -153,6 +153,23 @@ class TestParserRejectsBogusSeverity:
         findings = _json_to_state_findings(data, "qodo")
         assert findings[0].severity == "P0"
 
+    def test_a_non_dict_finding_is_skipped_not_fatal(self):
+        """The untrusted-downgrade path feeds unvalidated JSON in here.
+
+        Both L1 legs call this after validate_reviewer_json has already
+        rejected the response, so the per-element dict check never ran.
+        A string where a finding object belongs used to reach .get() and
+        abort the whole review with an AttributeError.
+        """
+        data = {"findings": [
+            "not a dict",
+            None,
+            {"file": "a.py", "line": 1, "severity": "P1", "description": "x"},
+        ], "code_excerpts": []}
+        findings = _json_to_state_findings(data, "qodo")
+        assert len(findings) == 1, "the well-formed finding must survive"
+        assert findings[0].severity == "P1"
+
 
 class TestPersistence:
     def test_severity_survives_a_state_json_round_trip(self):

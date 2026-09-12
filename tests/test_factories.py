@@ -3,6 +3,7 @@
 """STATE-10 factory + AutoFixer + revert_fn tests."""
 
 import inspect
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -352,6 +353,106 @@ class TestInfraSourceTagging:
 
         infra = [f for f in findings if f.source == "INFRA"]
         assert len(infra) >= 1
+        for f in infra:
+            assert f.disposition == Disposition.CONFIRMED
+            assert "schema-fail" in f.fingerprint
+
+
+    def test_excerpt_evidence_failure_is_not_confirmed_infra(self):
+        """A rejected excerpt must not be reported as a dead backend.
+
+        The response parsed, carried findings, and named a real file; only
+        the evidence coordinates failed to check out. Tagging that
+        CONFIRMED/INFRA zeroes the consecutive-clean-round counter every
+        round the backend makes the same coordinate slip, so a run can never
+        reach three clean rounds no matter what the code under review says.
+        A dead backend and a reviewer that miscounted lines are different
+        failures and must not produce the same finding.
+        """
+        from unittest.mock import patch as _patch
+
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
+
+        resolved = _make_resolved("git")
+        # Declares 70 lines, carries 85: the line-count drift observed on
+        # real markdown reviews, not a malformed response. The findings list
+        # is non-empty so the downgrade has something to carry -- an empty
+        # one would satisfy the INFRA assertion vacuously.
+        payload = {
+            "findings": [
+                {
+                    "file": "a.py",
+                    "line": 2,
+                    "severity": "P2",
+                    "description": "candidate worth auditing",
+                }
+            ],
+            "code_excerpts": [
+                {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 70,
+                    "content": "\n".join(["x"] * 85),
+                }
+            ],
+        }
+
+        with _patch(
+            "code_forge.llm_invoke.llm_invoke"
+        ) as mock_invoke:
+            mock_invoke.return_value = LLMResult(
+                content=json.dumps(payload),
+                usage=LLMUsage(input_tokens=0, output_tokens=0),
+                duration_s=0.0,
+            )
+            provider = build_l1_provider("real", resolved)
+            findings, _, _, _ = provider()
+
+        confirmed_infra = [
+            f for f in findings
+            if f.source == "INFRA" and f.disposition == Disposition.CONFIRMED
+        ]
+        assert not confirmed_infra, (
+            "rejected evidence must not masquerade as an infrastructure "
+            "failure: %s" % [f.description for f in confirmed_infra]
+        )
+        # Without this the assertion above holds vacuously: an implementation
+        # that drops every finding would pass just as well as one that
+        # downgrades them.
+        untrusted = [f for f in findings if f.source == "UNTRUSTED"]
+        assert untrusted, (
+            "the candidate must survive as audit data, not disappear"
+        )
+
+    def test_unparseable_response_still_confirms_infra(self):
+        """The downgrade must not reach a response that is not JSON at all.
+
+        Nothing was parsed, so nothing can be audited; that stays a
+        CONFIRMED infrastructure failure.
+        """
+        from unittest.mock import patch as _patch
+
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
+
+        resolved = _make_resolved("git")
+
+        with _patch(
+            "code_forge.llm_invoke.llm_invoke"
+        ) as mock_invoke:
+            mock_invoke.return_value = LLMResult(
+                content="not json at all",
+                usage=LLMUsage(input_tokens=0, output_tokens=0),
+                duration_s=0.0,
+            )
+            provider = build_l1_provider("real", resolved)
+            findings, _, _, _ = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) == 3, "each of the 3 passes must produce one INFRA"
         for f in infra:
             assert f.disposition == Disposition.CONFIRMED
             assert "schema-fail" in f.fingerprint
@@ -744,6 +845,60 @@ class TestBuildSamplingL1Provider:
             assert len(findings) == 0
             assert usage == Usage(0, 0)
             assert len(excerpts) == 6
+
+    def test_sampling_untrusted_findings_keep_backend_attribution(self):
+        """UNTRUSTED findings from the sampling path must name their backend.
+
+        The trusted leg of the same function tags findings with
+        "mcp-sampling"; an audit consumer that groups by backend would
+        silently bucket the untrusted ones under None.
+        """
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMResult, Usage
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+
+        # Well-formed findings, but the excerpt declares a line count it
+        # does not carry -- rejected evidence, so the findings are kept
+        # as UNTRUSTED audit data rather than dropped.
+        bad_evidence = LLMResult(
+            content={
+                "findings": [{
+                    "file": "src/a.py",
+                    "start_line": 2,
+                    "end_line": 2,
+                    "severity": "medium",
+                    "description": "something worth auditing",
+                }],
+                "code_excerpts": [
+                    {"file": "src/a.py", "start_line": 1, "end_line": 9,
+                     "content": "line1\nadded"},
+                ],
+            },
+            usage=Usage(0, 0),
+            duration_s=0.1,
+            is_truncated=False,
+        )
+
+        future = concurrent.futures.Future()
+        future.set_result([bad_evidence, bad_evidence, bad_evidence])
+
+        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
+             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
+            provider = build_sampling_l1_provider(session := MagicMock(), MagicMock(), resolved)
+            assert session is not None
+            findings, _excerpts, _usage, _duration = provider()
+
+        untrusted = [f for f in findings if f.source == "UNTRUSTED"]
+        assert untrusted, "rejected evidence must survive as UNTRUSTED audit data"
+        orphaned = [f for f in untrusted if f.backend != "mcp-sampling"]
+        assert not orphaned, (
+            "UNTRUSTED findings lost backend attribution: %r"
+            % [(f.id, f.backend) for f in orphaned]
+        )
 
     def test_build_sampling_l1_provider_empty_diff(self):
         from code_forge.factories import build_sampling_l1_provider
