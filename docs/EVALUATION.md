@@ -37,8 +37,9 @@ available.
 
 ## Setup
 
-- Backend: `mimo-v2.5-pro` for every arm. Switching models mid-experiment
-  would confound every comparison.
+- Backend: `mimo-v2.5-pro` on the depth and ablation arms. Switching
+  models mid-sweep would confound those comparisons. A later depth-1 arm
+  used `agnes-cn`; that comparison is its own section.
 - One run per entry. Replicates at three depths would have cost over 100
   hours of review time; the consequence is stated under caveats.
 - Entry-level scoring: a defect entry counts as caught when the verdict is
@@ -130,6 +131,40 @@ without a cap are close on every entry-level count (62 vs 60 defects caught,
 30 vs 33 controls passed), which is the agreement one would expect from two
 runs of the same configuration at one sample each.
 
+## Backend swap
+
+The depth sweep and the falsification ablation both used `mimo-v2.5-pro`.
+A later arm kept depth 1, `engine=real`, one run per entry, and the same
+150-entry corpus, and changed only the review backend to `agnes-cn`
+(Agnes 3.0 Flash).
+
+Entry-level:
+
+| Backend | Defects caught | Controls passed | Recall | Precision | F1 | Wall per entry |
+|---|---|---|---|---|---|---|
+| `mimo-v2.5-pro` (depth 1, from the sweep above) | 52/75 | 34/75 | 0.693 | 0.559 | 0.619 | 429 s (SE 19) |
+| `agnes-cn` (depth 1) | 57/75 | 18/75 | 0.760 | 0.500 | 0.603 | 45 s (SE 2) |
+
+Finding-level, `agnes-cn` only (all 150 scored). The depth-1 mimo ledger
+is verdict-only, so there is no finding-level comparison at this depth.
+
+| Backend | Hits | Misses | False positives | Precision | Recall | F1 |
+|---|---|---|---|---|---|---|
+| `agnes-cn` | 59 | 93 | 196 | 23.1 | 38.8 | 0.290 |
+
+What this says, one run per entry:
+
+- Recall went up: 57 of 75 defects against 52. Precision went down: 18 of
+  75 clean controls passed against 34, so 57 clean diffs were flagged HOLD
+  against 41 on mimo.
+- Entry-level F1 is close (0.603 against 0.619). Finding-level precision
+  on `agnes-cn` is 23.1%, below the depth-2/3 mimo figures (37.7% / 40.1%).
+  That is a different depth and a different ledger format; it is not a
+  head-to-head at finding level.
+- Wall-clock is not a model ranking. The caveat below still holds: latency
+  moved more than configuration. The 45 s figure is what the ledger
+  recorded.
+
 ## Caveats
 
 These apply to every number on this page.
@@ -161,9 +196,12 @@ These apply to every number on this page.
   against SWE-bench Verified defects with the upstream fix as answer key
   plus matched clean controls. Different ground truth, different numbers;
   they do not belong in one table.
-- One model. Everything ran on `mimo-v2.5-pro`. Whether the pipeline or the
-  model sets the ceiling is not separable from this data; a model-swap arm
-  on the same corpus is the experiment that would answer it.
+- Two backends at depth 1, one backend everywhere else. Depth sweep and
+  ablation ran on `mimo-v2.5-pro`. One later depth-1 arm ran on `agnes-cn`.
+  Whether the pipeline or the model sets the ceiling is still not
+  separable for depths 2 and 3, or for the gate. The depth-1 swap shows
+  the backend moving recall and precision in opposite directions; it does
+  not answer the depth or gate questions.
 - Corpus shape. Python library code with an upstream fix, reviewed without
   surrounding context. Results do not transfer unexamined to other
   languages or to defect classes SWE-bench does not contain.

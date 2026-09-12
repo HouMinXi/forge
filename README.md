@@ -413,7 +413,9 @@ and 75 clean controls from 11 repositories), one run per entry, backend
 precision 40.1%, recall 49.3%, F1 0.442. Going from one clean round to
 three raised recall (52 to 60 of 75 defects caught) and left precision
 where it was. Turning the falsification gate off makes every one of the
-150 entries exit HOLD, including all 75 clean controls.
+150 entries exit HOLD, including all 75 clean controls. A later depth-1 arm on the same
+corpus used `agnes-cn` instead; that table is in
+[docs/EVALUATION.md](docs/EVALUATION.md).
 
 These numbers are point estimates with no error bar, and they are not
 comparable to published figures from other tools because the ground truth
