@@ -546,6 +546,10 @@ def validate_excerpt_evidence(
         return count_error if claimed != len(actual_lines) else None
     file_lines = post_image.get(exc_file, {})
     body_start = exc_start
+    # A boundary blank can excuse the body shift below or a one-line offset
+    # further down, but not both: spending it twice skips the content check
+    # altogether and lets an excerpt drop a real line unnoticed.
+    blank_spent = False
     if short_by_one:
         # The count check let this through as a dropped blank line. The
         # post-image says which end lost it. A quote running across a
@@ -559,9 +563,10 @@ def validate_excerpt_evidence(
         if not tail_blank and not head_blank:
             return count_error
         if head_blank and not tail_blank:
-            # The separator sits at the start, so the body that was
-            # quoted begins one line in from the declared range.
+            # The separator sits at the start, so the body that was actually
+            # quoted begins one line into the declared range.
             body_start = exc_start + 1
+            blank_spent = True
     excerpt_line_map = {
         body_start + i: line for i, line in enumerate(actual_lines)
     }
@@ -571,8 +576,11 @@ def validate_excerpt_evidence(
             if excerpt_line_map[ln].rstrip() != file_lines[ln].rstrip():
                 offset = _constant_offset(
                     excerpt_line_map, file_lines, -64, 65)
-                if offset is not None and not _blank_boundary_slip(
-                    exc_start, exc_end, offset, file_lines
+                if offset is not None and (
+                    blank_spent
+                    or not _blank_boundary_slip(
+                        exc_start, exc_end, offset, file_lines
+                    )
                 ):
                     return (
                         f"excerpt misnumbered by {offset:+d} at {exc_file}:{exc_start}-{exc_end} (claims {exc_file}:{ln}, actually {exc_file}:{ln + offset})"
@@ -587,8 +595,9 @@ def validate_excerpt_evidence(
     outside = set(excerpt_line_map) - set(file_lines)
     if outside and not overlap:
         offset = _constant_offset(excerpt_line_map, file_lines, -64, 65)
-        if offset is not None and not _blank_boundary_slip(
-            exc_start, exc_end, offset, file_lines
+        if offset is not None and (
+            blank_spent
+            or not _blank_boundary_slip(exc_start, exc_end, offset, file_lines)
         ):
             ln = min(outside)
             return (

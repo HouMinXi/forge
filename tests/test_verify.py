@@ -3046,3 +3046,62 @@ class TestDroppedBlankIsToleratedAtEitherEnd:
         assert "declares" not in err, (
             f"the fault is the content, not the count: {err}"
         )
+
+
+class TestTheBlankIsSpentOnlyOnce:
+    """A boundary blank excuses one thing, not two.
+
+    Dropping a leading blank shifts the body down a line. Doing that
+    leaves a -1 offset against the file, which the blank-boundary rule
+    would then excuse a second time -- and between them the content
+    check is skipped entirely, so an excerpt that quietly omits a real
+    line of code passes.
+    """
+
+    _DIFF = (
+        "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+        "@@ -1,5 +1,5 @@\n"
+        "+\n+\n+\n+alpha\n+alpha\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_dropping_a_content_line_is_still_caught(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Declares 1-5; carries 4 lines with the last 'alpha' missing.
+        # The leading blanks must not launder that away.
+        exc = {
+            "file": "m.py",
+            "start_line": 1,
+            "end_line": 5,
+            "content": "\n\n\nalpha",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, (
+            "excerpt dropped a content line and was accepted; the leading "
+            "blank was spent both on the body shift and on the offset excuse"
+        )
+
+    def test_a_genuine_dropped_separator_still_passes(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        diff = (
+            "diff --git a/d.py b/d.py\n--- a/d.py\n+++ b/d.py\n"
+            "@@ -1,5 +1,5 @@\n"
+            "+\n+alpha\n+beta\n+gamma\n+delta\n"
+        )
+        from code_forge.verify import _diff_validation_context
+
+        post, hunk_map, exempt = _diff_validation_context(diff)
+        exc = {
+            "file": "d.py",
+            "start_line": 1,
+            "end_line": 5,
+            "content": "alpha\nbeta\ngamma\ndelta",
+        }
+        assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
