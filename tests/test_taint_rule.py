@@ -178,11 +178,13 @@ def test_forge_taint_focus_metavariable():
 )
 def test_semgrep_validate():
     """semgrep --validate passes on forge-taint.yaml."""
+    # semgrep spends most of this on its own start-up, which stretches
+    # well past 30s when the box is running a full suite in parallel.
     result = subprocess.run(
         ["semgrep", "--validate", "--config", str(_RULES_PATH)],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
     assert result.returncode == 0, (
         "semgrep --validate failed: %s" % result.stderr
