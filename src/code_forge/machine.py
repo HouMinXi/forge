@@ -555,15 +555,18 @@ class StateMachine:
                 baseline_cmd = config["test"]["command"]
                 test_config = config.get("test", {})
                 baseline_timeout = test_config.get("timeout_seconds", 120)
+                also_copy = test_config.get("also_copy")
             except FileNotFoundError as exc:
                 baseline_cmd = None
                 baseline_timeout = 120
+                also_copy = None
                 self._state.infra_errors.append(
                     f"CI: mutation skipped -- gate.yaml not found: {exc}"
                 )
             except Exception as exc:  # noqa: BLE001
                 baseline_cmd = None
                 baseline_timeout = 120
+                also_copy = None
                 # Both sibling skips below say why they skipped. Without
                 # this one the gate simply never launches: no finding, no
                 # error, and a PASS indistinguishable from a run where
@@ -579,7 +582,7 @@ class StateMachine:
                 try:
                     pid = launch_detached_mutation(
                         diff_files, baseline_cmd, self.cwd,
-                        result_path, baseline_timeout,
+                        result_path, baseline_timeout, also_copy,
                     )
                 except Exception as exc:  # noqa: BLE001
                     pid = None

@@ -48,12 +48,17 @@ class TestBuildMutmutConfig:
     """The generated setup.cfg mirrors the tree but mutates only the diff."""
 
     def test_config_scopes_mutation_to_diff_files(self):
+        from configparser import ConfigParser
+
         cfg = _build_mutmut_config(
             ["src/pkg/mod.py"], ["pytest", "tests/test_mod.py", "-q"]
         )
         assert "source_paths=src" in cfg
         assert "only_mutate=src/pkg/mod.py" in cfg
-        assert "pytest_add_cli_args_test_selection=tests/test_mod.py -q" in cfg
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
+        assert [x for x in raw.split("\n") if x] == ["tests/test_mod.py", "-q"]
 
     def test_config_multiple_diff_files(self):
         cfg = _build_mutmut_config(
@@ -301,3 +306,79 @@ class TestRunMutationVenvBaseline:
         assert findings[0].disposition == Disposition.DISMISSED
         assert "tests-only" in findings[0].description
         assert infra == []
+
+
+class TestTestSelectionSurvivesConfigRoundTrip:
+    """mutmut splits the selection on newlines, not spaces.
+
+    A space-joined value arrives as ONE argv token ("-q --ignore=x"),
+    which pytest rejects with exit 4 and mutmut turns into
+    BadTestExecutionCommandsException -- the whole gate dies before
+    measuring a single mutant.
+    """
+
+    def test_multi_arg_selection_round_trips_as_separate_tokens(self):
+        from configparser import ConfigParser
+
+        from code_forge.mutation import _build_mutmut_config
+
+        cfg = _build_mutmut_config(
+            ["src/pkg/mod.py"],
+            ["pytest", "-q", "--ignore=tests/test_slow.py"],
+        )
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
+        # Read back exactly as mutmut's configuration.py does.
+        assert [x for x in raw.split("\n") if x] == [
+            "-q",
+            "--ignore=tests/test_slow.py",
+        ]
+
+    def test_single_arg_selection_stays_on_the_key_line(self):
+        from configparser import ConfigParser
+
+        from code_forge.mutation import _build_mutmut_config
+
+        cfg = _build_mutmut_config(["src/pkg/mod.py"], ["pytest", "tests/"])
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
+        assert not raw.startswith("\n")
+        assert [x for x in raw.split("\n") if x] == ["tests/"]
+
+
+class TestAlsoCopyConfigValidation:
+    """A mistyped also_copy must fail loudly, not silently do nothing."""
+
+    def _cfg(self, tmp_path, also_copy_literal):
+        p = tmp_path / "gate.yaml"
+        p.write_text(
+            "test:\n"
+            "  command: [pytest, -q]\n"
+            f"  also_copy: {also_copy_literal}\n",
+            encoding="utf-8",
+        )
+        return p
+
+    def test_non_list_also_copy_is_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(ValueError, match="also_copy"):
+            load_gate_config(self._cfg(tmp_path, "scripts/"))
+
+    def test_non_string_entry_is_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(ValueError, match="also_copy"):
+            load_gate_config(self._cfg(tmp_path, "[scripts/, 7]"))
+
+    def test_list_of_strings_is_accepted(self, tmp_path):
+        from code_forge.gate_check import load_gate_config
+
+        config = load_gate_config(self._cfg(tmp_path, "[scripts/, hooks/]"))
+        assert config["test"]["also_copy"] == ["scripts/", "hooks/"]

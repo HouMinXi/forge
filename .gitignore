@@ -50,11 +50,17 @@ dogfood/
 # unanchored eval/ also matches tests/eval/, which is the tracked corpus.
 /eval/
 
-# code-forge runtime receipts (local artifacts, not tracked)
+# code-forge runtime and receipts (local artifacts, not tracked)
 .code-forge/
 .code-forge/cache/
 .worktrees/
 REVIEW.md
+
+# Mutation run leftovers. A completed run removes both, but a run that
+# dies partway leaves them behind, and a stale mutants/ tree breaks the
+# next pytest collection with a duplicate-conftest import error.
+/mutants/
+/setup.cfg
 
 # Eval corpus is a build artefact: regenerated from SWE-bench Verified by
 # code_forge.eval.build_corpus at a pinned seed, ~40MB of diffs and base

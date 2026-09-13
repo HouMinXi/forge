@@ -158,7 +158,11 @@ outlet: subprocess
 #   timeout_seconds: 120          # optional: integer > 0 (default: 120)
 #   env: {}                       # optional: extra env vars dict (omit = inherit shell env)
 #   cwd: .                        # optional: working directory string (omit = repo root)
-#   source_patterns: ["*.py"]     # optional: list of globs; gate skips if no staged file matches
+#   source_patterns: ["*.py"]  # optional: list of globs; gate skips if no staged file matches
+#   also_copy: ["scripts/"]    # optional: extra paths copied into the mutation mirror.
+#                              # mutmut mirrors only the source tree, so a test that
+#                              # loads a file by path (scripts/, hooks/) needs it listed
+#                              # here or the mutation gate dies with FileNotFoundError.
 
 # non_ascii: non-ASCII detection mode for commit messages and diffs.
 #   ai-smell (default) -- blocks confusable typographic characters only

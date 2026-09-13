@@ -102,6 +102,13 @@ def load_gate_config(
         if not isinstance(test["source_patterns"], list):
             raise ValueError("'test.source_patterns' must be a list if present")
 
+    if "also_copy" in test:
+        if not isinstance(test["also_copy"], list):
+            raise ValueError("'test.also_copy' must be a list if present")
+        for entry in test["also_copy"]:
+            if not isinstance(entry, str) or isinstance(entry, bool):
+                raise ValueError("'test.also_copy' entries must be strings")
+
     # Validate optional non_ascii field (top-level)
     if "non_ascii" in data:
         if data["non_ascii"] not in ("ai-smell", "strict"):
