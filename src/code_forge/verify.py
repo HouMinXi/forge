@@ -567,7 +567,7 @@ def validate_excerpt_evidence(
                     return None
                 return f"excerpt content mismatch at {exc_file}:{exc_start}-{exc_end} (line {ln})"
     outside = set(excerpt_line_map) - set(file_lines)
-    if outside:
+    if outside and not overlap:
         offset = _constant_offset(excerpt_line_map, file_lines, -64, 65)
         if offset is not None and not _blank_boundary_slip(
             exc_start, exc_end, offset, file_lines
@@ -932,9 +932,9 @@ def run_verify(
         for exc in all_excerpts:
             actual_lines = exc.get("content", "").splitlines()
             excerpt_line_map = {}
-            for i, ln in enumerate(range(exc["start_line"], exc["end_line"] + 1)):
-                if i < len(actual_lines):
-                    excerpt_line_map[ln] = actual_lines[i]
+            start = exc["start_line"]
+            for i, line in enumerate(actual_lines):
+                excerpt_line_map[start + i] = line
 
             file_lines = post_image.get(exc["file"], {})
             overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
@@ -990,13 +990,33 @@ def run_verify(
                 cp += 1
                 continue
             outside = set(excerpt_line_map.keys()) - set(file_lines.keys())
-            if outside:
+            if outside and not overlap_lines:
                 return VerifyResult(
                     False,
-                    f"excerpt {exc['file']}:{exc['start_line']}-{exc['end_line']} claims line {min(outside)} outside the diff post-image; it cannot be verified",
+                    f"excerpt {exc['file']}:{exc['start_line']}-{exc['end_line']} claims line "
+                    f"{min(outside)} outside the diff post-image; it cannot be verified",
                     5, cp,
                 )
-        cp += 1
+            if outside and overlap_lines:
+                src_path = cwd / exc["file"]
+                disk = None
+                if src_path.is_file():
+                    disk = src_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                for ln in sorted(outside):
+                    claimed = excerpt_line_map[ln].rstrip()
+                    if disk is None or ln < 1 or ln > len(disk):
+                        return VerifyResult(
+                            False,
+                            f"excerpt {exc['file']}:{exc['start_line']}-{exc['end_line']} claims line "
+                            f"{ln} outside the diff post-image; it cannot be verified",
+                            5, cp,
+                        )
+                    if claimed != disk[ln - 1].rstrip():
+                        return VerifyResult(
+                            False,
+                            f"excerpt content mismatch {exc['file']}:{exc['start_line']}-{exc['end_line']} (line {ln})",
+                            5, cp,
+                        )
 
         # 6. excerpt-derived coverage >= 60%
         # The floor deliberately counts test lines: tests do not test

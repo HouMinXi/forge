@@ -2819,3 +2819,110 @@ class TestOneLineMisnumberClassifier:
         assert not is_one_line_misnumber(
             "excerpt content mismatch at foo.py:1-2"
         )
+
+
+class TestHunkHaloContext:
+    """Receipts that quote a hunk plus a few unchanged neighbours.
+
+    LOCAL R2 on 7d84315 failed nine RECEIPT_INVALID because qodo
+    quoted llm_invoke.py:10-33 while the hunk was @@ -10,6 +10,7 @@
+    (new-file span 10-16). Overlapping lines matched; line 17 sat
+    after the hunk. That is context halo, not fabricated evidence.
+    """
+
+    _DIFF = (
+        "--- a/src/f.py\n"
+        "+++ b/src/f.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " def f():\n"
+        "+    x = 1\n"
+        "     return 2\n"
+    )
+    _POST = "def f():\n    x = 1\n    return 2\n"
+
+    def _run(self, tmp_path, start, end, content):
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text(self._POST)
+        sha = _sha(self._DIFF)
+        files = parse_diff_files(self._DIFF)
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"] = [{
+                    "file": "src/f.py",
+                    "start_line": start,
+                    "end_line": end,
+                    "content": content,
+                }]
+                (rd / f"receipt-c{c}p{p}.json").write_text(
+                    json.dumps(receipt)
+                )
+        return run_verify(
+            tmp_path, sha, files, diff_text=self._DIFF
+        )
+
+    def test_hunk_plus_one_unchanged_neighbour_passes(self, tmp_path):
+        """@@ -1,2 +1,3 @@ is lines 1-3. Excerpt 1-4 quotes line 4
+        which is not in post_image. Overlap 1-3 matches; halo is 4.
+        """
+        # Make a hunk that leaves an unchanged neighbour after it
+        # by using a larger file: lines 1-3 changed/context, line 4
+        # is the next function and not in the hunk.
+        diff = (
+            "--- a/src/f.py\n"
+            "+++ b/src/f.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            " def f():\n"
+            "+    x = 1\n"
+            "     return 2\n"
+            " \n"
+        )
+        post = "def f():\n    x = 1\n    return 2\n\ndef g():\n    return 3\n"
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text(post)
+        sha = _sha(diff)
+        files = parse_diff_files(diff)
+        content = "def f():\n    x = 1\n    return 2\n\ndef g():"
+        for c in range(1, 4):
+            for p in range(1, 4):
+                receipt = _receipt(c, p, sha)
+                receipt["code_excerpts"] = [{
+                    "file": "src/f.py",
+                    "start_line": 1,
+                    "end_line": 5,
+                    "content": content,
+                }]
+                (rd / f"receipt-c{c}p{p}.json").write_text(
+                    json.dumps(receipt)
+                )
+        r = run_verify(tmp_path, sha, files, diff_text=diff)
+        assert r.passed, r.reason
+        assert "outside the diff post-image" not in (r.reason or "")
+
+    def test_no_hunk_overlap_still_fails(self, tmp_path):
+        """Excerpt that does not touch any hunk stays FAIL.
+
+        The run also reports unwitnessed hunks because this excerpt
+        does not cover @@ -1,2 +1,3 @@. Either fault is enough.
+        """
+        r = self._run(
+            tmp_path, 10, 12, "def g():\n    return 3\n    pass"
+        )
+        assert not r.passed
+        assert (
+            "outside" in r.reason
+            or "outside every hunk" in r.reason
+            or "unwitnessed" in r.reason
+        )
+
+    def test_overlap_mismatch_still_fails(self, tmp_path):
+        """Wrong text on a hunk line is still fabricated evidence."""
+        r = self._run(
+            tmp_path, 1, 3, "def f():\n    x = 999\n    return 2"
+        )
+        assert not r.passed
+        assert "mismatch" in r.reason
