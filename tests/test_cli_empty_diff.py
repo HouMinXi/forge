@@ -44,6 +44,10 @@ def scratch_repo(tmp_path):
         "    model: x\n"
         "    api_key_env: DUMMY_KEY\n"
     )
+    # Plant before any code_forge.cli spawn. A mutated import walks cwd
+    # for setup.cfg; trust dies with FileNotFoundError if this is late.
+    from tests.conftest import plant_mutmut_cfg
+    plant_mutmut_cfg(tmp_path)
     # Trust it (HOME must match the review env so trusted.json is found)
     src_dir = str(Path(__file__).resolve().parents[1] / "src")
     subprocess.run(
@@ -57,9 +61,6 @@ def scratch_repo(tmp_path):
         ["git", "commit", "--allow-empty", "-m", "empty"],
         cwd=tmp_path, capture_output=True, check=True,
     )
-    from tests.conftest import plant_mutmut_cfg
-
-    plant_mutmut_cfg(tmp_path)
     return tmp_path
 
 
