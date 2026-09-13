@@ -58,7 +58,9 @@ REVIEW.md
 
 # Mutation run leftovers. A completed run removes both, but a run that
 # dies partway leaves them behind, and a stale mutants/ tree breaks the
-# next pytest collection with a duplicate-conftest import error.
+# next pytest collection with a duplicate-conftest import error. The
+# setup.cfg entry is safe only because this project keeps its config in
+# pyproject.toml and never tracks a root setup.cfg of its own.
 /mutants/
 /setup.cfg
 

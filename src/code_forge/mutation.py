@@ -752,7 +752,7 @@ result_path = Path({repr(str(result_path))})
 cwd_ref = Path({repr(str(cwd))})
 diff_files = {repr(diff_files)}
 baseline_cmd = {repr(baseline_cmd)}
-also_copy = {repr(also_copy)}
+also_copy = {also_copy!r}
 
 try:
     with open(result_path, "r", encoding="utf-8") as f:
