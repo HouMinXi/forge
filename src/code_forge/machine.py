@@ -21,38 +21,42 @@ import json
 import sys
 import threading
 import time
-from enum import Enum
 import traceback
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .advisory import AdvisoryFinding, AxisRunner
 
 import logging
+from datetime import UTC
 
+from . import progress
 from .autofix import AutoFixer, FixOutcome
 from .baseline import ResolvedReview
 from .claim import derive_claim_type
 from .diagnose import diagnose_non_convergence
+from .disposition import (
+    MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
+    Disposition,
+)
+from .falsify import Falsifier
+from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
+from .hold import check_escalated_frozen
 from .ledger import (
     LedgerRow,
     TerminalState,
-    append_row as ledger_append,
     resolve_ledger_root,
 )
-from .disposition import (
-    Disposition,
-    MAX_FIX_ATTEMPTS_PER_FINGERPRINT,
+from .ledger import (
+    append_row as ledger_append,
 )
-from .falsify import Falsifier
-from .mutation import launch_detached_mutation
-from .flow_contract import DEFAULT_CLEAN_ROUND_THRESHOLD
-from .hold import check_escalated_frozen
 from .llm_invoke import FalsifyProtocolError, LLMInvokeError, Usage
+from .mutation import launch_detached_mutation
 from .parsers.base import Finding, ToolError
-from . import progress
 from .state import (
     Mode,
     State,
@@ -142,15 +146,15 @@ def _default_l0_runner(
             )]
         for item in items:
             if isinstance(item, ToolError):
-                err_msg = "L0 ToolError tool=%s msg=%s" % (tool, item.message)
+                err_msg = f"L0 ToolError tool={tool} msg={item.message}"
                 # Attach tool stderr when parser did not capture it
                 tool_stderr = item.stderr or stderr
                 if tool_stderr:
-                    err_msg += " stderr=%s" % tool_stderr.strip()
+                    err_msg += f" stderr={tool_stderr.strip()}"
                 infra_errors.append(err_msg)
                 continue
             f: Finding = item
-            fp_raw = "%s:%s:%s:%s" % (tool, f.file, f.line, f.rule_id)
+            fp_raw = f"{tool}:{f.file}:{f.line}:{f.rule_id}"
             fp = hashlib.sha256(
                 fp_raw.encode("utf-8")
             ).hexdigest()[:16]
@@ -278,15 +282,15 @@ class StateMachine:
     )
     coverage_l1_active: bool = True
     coverage_exempt_patterns: list = field(default_factory=list)
-    post_round_hook: Optional[Callable[[int], None]] = None
+    post_round_hook: Callable[[int], None] | None = None
     max_total_rounds: int = 20
     max_fix_attempts: int = MAX_FIX_ATTEMPTS_PER_FINGERPRINT
     clean_round_threshold: int = field(default=DEFAULT_CLEAN_ROUND_THRESHOLD)
-    advisory_runners: "list[AxisRunner]" = field(default_factory=list)
+    advisory_runners: list[AxisRunner] = field(default_factory=list)
     # Phase 53a: execution falsification (EXEC-FALSIFY v1)
     exec_falsify: bool = False
     exec_falsify_timeout: int = 120
-    exec_falsify_command: Optional[list[str]] = None
+    exec_falsify_command: list[str] | None = None
     # Auxiliary context this review was given, recorded per ledger row so
     # a later precision figure can separate runs that had graph triage or
     # a contract from runs that had neither. Pipeline-internal only: what
@@ -310,8 +314,8 @@ class StateMachine:
         self._round_cached_tokens: int = 0
         self._round_duration: float = 0.0
         self._pass_counter: int = 0
-        self._advisories: "list[AdvisoryFinding]" = []
-        self._preexisting_buf: "list[AdvisoryFinding]" = []
+        self._advisories: list[AdvisoryFinding] = []
+        self._preexisting_buf: list[AdvisoryFinding] = []
         self._rounds_with_failed_pass: int = 0
         self._rounds_with_falsify_infra: int = 0
         # Cycle numbers of the receipts THIS run wrote (round 0 -> cycle
@@ -329,7 +333,7 @@ class StateMachine:
     def run(self) -> Verdict:
         """Dispatch to LOCAL or CI execution per mode."""
         progress.reset()
-        progress.emit("run start: mode=%s" % self.mode.value)
+        progress.emit(f"run start: mode={self.mode.value}")
         self._maybe_load_prior_state()
         self._state.mode = self.mode
         self._state.source_hash = self.source_hash
@@ -342,7 +346,7 @@ class StateMachine:
         elif self.mode == Mode.CI:
             verdict = self._run_ci()
         else:
-            raise ValueError("unknown mode: %s" % self.mode)
+            raise ValueError(f"unknown mode: {self.mode}")
 
         # Advisory axes run once after convergence, regardless of verdict
         #. Covers PASS, HOLD/PENDING, ESCALATED.
@@ -521,12 +525,12 @@ class StateMachine:
                             "message", "unknown error"
                         )
                         self._state.infra_errors.append(
-                            "CI: mutation error: %s" % error_msg
+                            f"CI: mutation error: {error_msg}"
                         )
                         self._unlink_mutation_result(result_path)
             except (json.JSONDecodeError, KeyError, OSError) as e:
                 self._state.infra_errors.append(
-                    "CI: failed to read mutation-result.json: %s" % e
+                    f"CI: failed to read mutation-result.json: {e}"
                 )
 
         # Launch new async mutation via run_mutation (single invocation point)
@@ -554,8 +558,7 @@ class StateMachine:
                 baseline_cmd = None
                 baseline_timeout = 120
                 self._state.infra_errors.append(
-                    "CI: mutation skipped -- gate.yaml not found: %s"
-                    % exc
+                    f"CI: mutation skipped -- gate.yaml not found: {exc}"
                 )
             except Exception as exc:  # noqa: BLE001
                 baseline_cmd = None
@@ -568,7 +571,7 @@ class StateMachine:
                 # common case rather than a rare misconfiguration.
                 self._state.infra_errors.append(
                     "CI: mutation skipped -- gate.yaml lacking "
-                    "test.command or other config error: %s" % exc
+                    f"test.command or other config error: {exc}"
                 )
 
             if baseline_cmd is not None:
@@ -580,7 +583,7 @@ class StateMachine:
                 except Exception as exc:  # noqa: BLE001
                     pid = None
                     self._state.infra_errors.append(
-                        "CI: mutation launch error: %s" % exc
+                        f"CI: mutation launch error: {exc}"
                     )
                 if pid is None:
                     self._state.infra_errors.append(
@@ -734,8 +737,7 @@ class StateMachine:
                 preview = ",".join(frozen_fps[:3])
                 more = "..." if len(frozen_fps) > 3 else ""
                 self._state.infra_errors.append(
-                    "ESCALATED frozen (DISPO-05) fingerprints=[%s%s]"
-                    % (preview, more)
+                    f"ESCALATED frozen (DISPO-05) fingerprints=[{preview}{more}]"
                 )
                 self._persist_state()
                 return Verdict.ESCALATED
@@ -839,7 +841,7 @@ class StateMachine:
         self._state.verdict = Verdict.ESCALATED
         self._state.converged = False
         self._state.infra_errors.append(
-            "ESCALATED category=%s" % category
+            f"ESCALATED category={category}"
         )
         self._persist_state()
         return Verdict.ESCALATED
@@ -856,7 +858,7 @@ class StateMachine:
             self._state.infra_errors.extend(l0_infra)
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
-                "L0 runner failed: %s" % exc
+                f"L0 runner failed: {exc}"
             )
             l0_findings = []
 
@@ -882,7 +884,7 @@ class StateMachine:
                 else:
                     self._preexisting_buf.append(
                         AdvisoryFinding(
-                            id="pre-existing-%s" % f.fingerprint,
+                            id=f"pre-existing-{f.fingerprint}",
                             axis="pre-existing-l0",
                             file=f.file,
                             line_range=f.line_range,
@@ -908,7 +910,7 @@ class StateMachine:
                 l0_findings.extend(danger_findings)
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(
-                    "Danger-score failed: %s" % exc
+                    f"Danger-score failed: {exc}"
                 )
         return l0_findings
 
@@ -972,12 +974,11 @@ class StateMachine:
                 # separately: a dead backend and a model that stopped
                 # following the schema are different problems to fix.
                 f.disposition = Disposition.UNCERTAIN
-                f.error = "falsify() protocol violation: %s" % exc
+                f.error = f"falsify() protocol violation: {exc}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
                     self._state.infra_errors.append(
-                        "falsify protocol violation on %s: %s"
-                        % (f.fingerprint, exc)
+                        f"falsify protocol violation on {f.fingerprint}: {exc}"
                     )
                 progress.emit(
                     "falsify %d/%d: protocol violation (%.1fs)"
@@ -991,12 +992,11 @@ class StateMachine:
                 # below can stop a run whose backend stays down instead
                 # of resetting the clean-round counter forever.
                 f.disposition = Disposition.UNCERTAIN
-                f.error = "falsify() backend unavailable: %s" % exc
+                f.error = f"falsify() backend unavailable: {exc}"
                 with _lock:
                     falsify_infra_failures.append(f.fingerprint)
                     self._state.infra_errors.append(
-                        "falsify backend unavailable on %s: %s"
-                        % (f.fingerprint, exc)
+                        f"falsify backend unavailable on {f.fingerprint}: {exc}"
                     )
                 progress.emit(
                     "falsify %d/%d: backend unavailable (%.1fs)"
@@ -1004,10 +1004,10 @@ class StateMachine:
                 )
             except RuntimeError as exc:
                 f.disposition = Disposition.UNCERTAIN
-                f.error = "falsify() raised: %s" % exc
+                f.error = f"falsify() raised: {exc}"
                 with _lock:
                     self._state.infra_errors.append(
-                        "falsify exception on %s: %s" % (f.fingerprint, exc)
+                        f"falsify exception on {f.fingerprint}: {exc}"
                     )
                 progress.emit(
                     "falsify %d/%d: failed (%.1fs)"
@@ -1100,7 +1100,7 @@ class StateMachine:
         recovers is a transient the retry logic already handles, and stopping
         on that would be worse than the problem.
         """
-        from .state import derive_pass_outcomes, PassOutcome
+        from .state import PassOutcome, derive_pass_outcomes
 
         outcomes = derive_pass_outcomes(l1_findings)
         failed = {
@@ -1145,8 +1145,7 @@ class StateMachine:
             baseline_cmd = config["test"]["command"]
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
-                "L2: gate.yaml missing or test.command not configured: %s"
-                % exc
+                f"L2: gate.yaml missing or test.command not configured: {exc}"
             )
             return []
 
@@ -1159,7 +1158,7 @@ class StateMachine:
             return l2_findings
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
-                "L2 runner failed: %s" % exc
+                f"L2 runner failed: {exc}"
             )
             return []
 
@@ -1186,7 +1185,7 @@ class StateMachine:
             self._state.infra_errors.extend(e2e_infra)
             return e2e_findings
         except Exception as exc:  # noqa: BLE001
-            self._state.infra_errors.append("e2e runner failed: %s" % exc)
+            self._state.infra_errors.append(f"e2e runner failed: {exc}")
             return []
 
     def _run_coverage_phase(self) -> list[StateFinding]:
@@ -1212,7 +1211,7 @@ class StateMachine:
             return build_coverage_findings(uncovered)
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
-                "coverage runner failed: %s" % exc
+                f"coverage runner failed: {exc}"
             )
             return []
 
@@ -1275,7 +1274,7 @@ class StateMachine:
 
             receipts = _load_receipts(self.cwd / ".code-forge" / "receipts")
         except Exception as exc:  # noqa: BLE001
-            errors.append("receipts unreadable on disk: %s" % exc)
+            errors.append(f"receipts unreadable on disk: {exc}")
             return errors
         max_disk = max((r["cycle"] for r in receipts), default=0)
         if max_disk != max(window):
@@ -1308,7 +1307,7 @@ class StateMachine:
             reviewed_repositories=self.reviewed_repositories,
         )
         if not vr.passed:
-            errors.append("receipt acceptance: %s" % vr.reason)
+            errors.append(f"receipt acceptance: {vr.reason}")
         return errors
 
 
@@ -1370,8 +1369,8 @@ class StateMachine:
         """
         import hashlib
 
-        fp = "receipt-%s" % hashlib.sha256(
-            error.encode("utf-8")).hexdigest()[:12]
+        fp = "receipt-{}".format(hashlib.sha256(
+            error.encode("utf-8")).hexdigest()[:12])
         if any(f.fingerprint == fp for f in self._state.findings):
             return
         self._state.findings.append(StateFinding(
@@ -1384,7 +1383,7 @@ class StateMachine:
             description=error,
         ))
         self._state.infra_errors.append(
-            "receipt: %s" % error
+            f"receipt: {error}"
         )
 
     def _execute_round(self, round_index: int) -> None:
@@ -1478,7 +1477,7 @@ class StateMachine:
             # A receipt-write failure must persist non-PASS state instead
             # of crashing and leaving a stale PASS (or no) state.json.
             self._last_receipt_write_errors = [
-                "receipt write failed: %s" % exc
+                f"receipt write failed: {exc}"
             ]
         self._persist_state()
         if self.post_round_hook is not None:
@@ -1521,7 +1520,7 @@ class StateMachine:
             except Exception as exc:  # noqa: BLE001
                 outcome = FixOutcome.EXCEPTION
                 self._state.infra_errors.append(
-                    "autofixer exception on %s: %s" % (fp, exc)
+                    f"autofixer exception on {fp}: {exc}"
                 )
 
             if outcome == FixOutcome.SUCCESS:
@@ -1537,10 +1536,10 @@ class StateMachine:
                     self._state.infra_errors[-1:]
                 ):
                     self._state.infra_errors.append(
-                        "autofixer EXCEPTION on %s" % fp
+                        f"autofixer EXCEPTION on {fp}"
                     )
 
-    def _fixpoint_reached(self) -> "_FixpointResult":
+    def _fixpoint_reached(self) -> _FixpointResult:
         """Severity-tiered fixpoint for LOCAL mode.
 
         Clauses (a) and (b) are safety nets that fire BEFORE severity tiering:
@@ -1730,7 +1729,7 @@ class StateMachine:
                 disposition=Disposition.DISMISSED,
                 file="",
                 line_range=[],
-                description="FIXVAL skipped: %s" % candidate.reason,
+                description=f"FIXVAL skipped: {candidate.reason}",
             )
             self._state.findings.append(skip_finding)
             # Skip is not a block -- proceed to PASS
@@ -1751,7 +1750,7 @@ class StateMachine:
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
                 "FIXVAL: gate.yaml missing or test.command not "
-                "configured: %s" % exc
+                f"configured: {exc}"
             )
             # Cannot run FIXVAL without test command -- proceed to PASS
             self._state.verdict = Verdict.PASS
@@ -1869,8 +1868,8 @@ class StateMachine:
             (r.fingerprint, r.terminal_state)
             for r in iter_rows(ledger_root)
         }
-        from datetime import datetime, timezone
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        from datetime import datetime
+        ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = 0
         for f in self._state.findings:
             if f.disposition == Disposition.FIXED:
@@ -1936,8 +1935,10 @@ class StateMachine:
         import hashlib
         import os
         import sys
+        from datetime import datetime
+
         import yaml
-        from datetime import datetime, timezone
+
         from .ledger import iter_rows
 
         # Layer 1: Environment variable kill-switch
@@ -1975,7 +1976,7 @@ class StateMachine:
                 (r.fingerprint, r.base_sha, r.head_sha)
                 for r in iter_rows(ledger_root)
             }
-            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
             findings_to_write = [
@@ -1987,7 +1988,7 @@ class StateMachine:
             if not findings_to_write:
                 # Zero-finding PASS: emit a single clean row with diff-scoped fingerprint (D-07)
                 if self._state.verdict == Verdict.PASS:
-                    clean_fp = hashlib.sha256(f"clean:{base}:{head}".encode("utf-8")).hexdigest()[:16]
+                    clean_fp = hashlib.sha256(f"clean:{base}:{head}".encode()).hexdigest()[:16]
                     if (clean_fp, base, head) not in existing:
                         row = self._build_ledger_row(
                             fingerprint=clean_fp,
@@ -2047,8 +2048,10 @@ class StateMachine:
         Fail-open: ledger read failure or missing gate.yaml silently degrades.
         """
         import sys
-        import yaml
         from pathlib import PurePath
+
+        import yaml
+
         from .ledger import (
             known_terminal_fingerprints,
             resolve_ledger_root,
@@ -2099,7 +2102,7 @@ class StateMachine:
             if f.fingerprint in known_fps:
                 f.disposition = Disposition.DISMISSED
                 self._state.infra_errors.append(
-                    "ledger: suppressed %s (known terminal fingerprint)" % f.fingerprint
+                    f"ledger: suppressed {f.fingerprint} (known terminal fingerprint)"
                 )
                 continue
 
@@ -2112,8 +2115,7 @@ class StateMachine:
             if matched_pin is not None:
                 f.disposition = Disposition.DISMISSED
                 self._state.infra_errors.append(
-                    "pinned_paths: suppressed %s (%s matched %s)"
-                    % (f.fingerprint, matched_pin, f.file)
+                    f"pinned_paths: suppressed {f.fingerprint} ({matched_pin} matched {f.file})"
                 )
                 continue
 
@@ -2121,8 +2123,7 @@ class StateMachine:
             if style_pass_names and f.source in style_pass_names:
                 f.disposition = Disposition.STYLE
                 self._state.infra_errors.append(
-                    "style_downgrade: downgraded %s (pass_name %s)"
-                    % (f.fingerprint, f.source)
+                    f"style_downgrade: downgraded {f.fingerprint} (pass_name {f.source})"
                 )
                 continue
             if style_keywords:
@@ -2131,8 +2132,7 @@ class StateMachine:
                     if kw.lower() in desc_lower:
                         f.disposition = Disposition.STYLE
                         self._state.infra_errors.append(
-                            "style_downgrade: downgraded %s (keyword %s)"
-                            % (f.fingerprint, kw)
+                            f"style_downgrade: downgraded {f.fingerprint} (keyword {kw})"
                         )
                         break
 
@@ -2150,8 +2150,7 @@ class StateMachine:
                     if PurePath(f.file).match(pattern):
                         f.disposition = Disposition.DISMISSED
                         self._state.infra_errors.append(
-                            "pinned_paths: suppressed coverage gap %s (%s matched %s)"
-                            % (f.fingerprint, pattern, f.file)
+                            f"pinned_paths: suppressed coverage gap {f.fingerprint} ({pattern} matched {f.file})"
                         )
                         break
 
@@ -2248,8 +2247,7 @@ class StateMachine:
             )
         self._persist_state()
         progress.emit(
-            "exec-falsify: status=%s duration=%.1fs"
-            % (evidence.status.value, evidence.duration_s)
+            f"exec-falsify: status={evidence.status.value} duration={evidence.duration_s:.1f}s"
         )
         # State.exec_evidence threads through SARIF/receipt basis for any
         # L1-CONFIRMED strengthening; the EXEC finding above carries the
@@ -2294,8 +2292,7 @@ class StateMachine:
             line = adv.line_range[0] if adv.line_range else 0
             desc = adv.description
             fingerprint = (
-                "rulepack:%s:%s:%s:%s:%s"
-                % (
+                "rulepack:{}:{}:{}:{}:{}".format(
                     pack_name,
                     rule_id,
                     file,
@@ -2346,7 +2343,7 @@ class StateMachine:
                 self._advisories.extend(findings)
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(
-                    "advisory runner failed: %r\n%s" % (exc, traceback.format_exc())
+                    f"advisory runner failed: {exc!r}\n{traceback.format_exc()}"
                 )
             # Collect infra_errors from runners that track them.
             if hasattr(runner, "infra_errors"):
@@ -2409,7 +2406,7 @@ class StateMachine:
                 prefix = "RUNTIME axis SKIPPED: "
                 reason = desc[len(prefix):] if desc.startswith(prefix) else desc
                 print(
-                    "smoke: UNVERIFIED (axis skipped: %s)" % reason,
+                    f"smoke: UNVERIFIED (axis skipped: {reason})",
                     file=sys.stderr,
                 )
                 return
@@ -2444,7 +2441,7 @@ class StateMachine:
             line_str = "%d-%d" % (f.line_range[0], f.line_range[1]) \
                 if len(f.line_range) == 2 else str(f.line_range)
             print(
-                "[%s] %s:%s - %s" % (f.axis, f.file, line_str, f.description),
+                f"[{f.axis}] {f.file}:{line_str} - {f.description}",
                 file=sys.stderr,
             )
 
@@ -2632,7 +2629,7 @@ class StateMachine:
             result_path.unlink()
         except OSError as e:
             self._state.infra_errors.append(
-                "CI: failed to remove mutation-result.json: %s" % e
+                f"CI: failed to remove mutation-result.json: {e}"
             )
 
     def _source_files(self) -> list[Path]:

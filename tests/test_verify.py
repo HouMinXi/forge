@@ -1,12 +1,15 @@
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
-import re
+
 from code_forge.verify import (
-    run_verify, parse_diff_files, _validate_receipt_schema,
     _coverage_failure_detail,
+    _validate_receipt_schema,
+    parse_diff_files,
+    run_verify,
 )
 
 
@@ -393,8 +396,9 @@ class TestReceiptVerifyE2E:
     def test_receipt_writer_output_passes_verify(self, tmp_path):
         import datetime
         from unittest.mock import patch
-        from code_forge.receipt import write_receipts
+
         from code_forge.disposition import Disposition
+        from code_forge.receipt import write_receipts
         from code_forge.state import StateFinding
 
         (tmp_path / "src").mkdir(parents=True)
@@ -404,7 +408,7 @@ class TestReceiptVerifyE2E:
         diff_files = {"src/foo.py": list(range(1, 81))}
 
         base = datetime.datetime(2026, 5, 28, 10, 0, 0,
-                                 tzinfo=datetime.timezone.utc)
+                                 tzinfo=datetime.UTC)
         cycle_locs = [(10, 30, 50), (20, 40, 60), (30, 50, 70)]
         passes = ["qodo", "expert", "adversarial"]
         for round_idx in range(3):
@@ -436,7 +440,7 @@ class TestReceiptVerifyE2E:
                 )
 
         r = run_verify(tmp_path, diff_sha, diff_files)
-        assert r.passed, "E2E failed: %s" % r.reason
+        assert r.passed, f"E2E failed: {r.reason}"
 
     @staticmethod
     def _run_with_failed_pass(tmp_path, failed_round):
@@ -449,8 +453,9 @@ class TestReceiptVerifyE2E:
         """
         import datetime
         from unittest.mock import patch
-        from code_forge.receipt import write_receipts
+
         from code_forge.disposition import Disposition
+        from code_forge.receipt import write_receipts
         from code_forge.state import StateFinding
 
         (tmp_path / "src").mkdir(parents=True)
@@ -460,7 +465,7 @@ class TestReceiptVerifyE2E:
         diff_files = {"src/foo.py": list(range(1, 81))}
 
         base = datetime.datetime(2026, 5, 28, 10, 0, 0,
-                                 tzinfo=datetime.timezone.utc)
+                                 tzinfo=datetime.UTC)
         passes = ["qodo", "expert", "adversarial"]
         # Spread far enough apart that the last three cycles stay under the
         # Jaccard similarity ceiling while each still clears the coverage
@@ -518,7 +523,7 @@ class TestReceiptVerifyE2E:
         diff_sha, diff_files = self._run_with_failed_pass(tmp_path, 0)
 
         r = run_verify(tmp_path, diff_sha, diff_files)
-        assert r.passed, "backend failure blocked attestation: %s" % r.reason
+        assert r.passed, f"backend failure blocked attestation: {r.reason}"
 
         # The failure is dropped as an anchor, not silenced: round one still
         # reports it, or the receipts would claim a pass that never ran.
@@ -1441,8 +1446,7 @@ class TestOutOfHunkExcerpts:
         r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
         assert not r.passed
         assert "misnumbered" not in r.reason, (
-            "a partial shift match must not convict as misnumbering: %s"
-            % r.reason
+            f"a partial shift match must not convict as misnumbering: {r.reason}"
         )
 
     def test_fabricated_excerpt_reports_mismatch_not_offset(self, tmp_path):
@@ -1516,8 +1520,7 @@ class TestOutOfHunkExcerpts:
         r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
         assert not r.passed
         assert "misnumbered" not in r.reason, (
-            "a single coincidental line must not convict as misnumbering: %s"
-            % r.reason
+            f"a single coincidental line must not convict as misnumbering: {r.reason}"
         )
         assert "content mismatch" in r.reason
 
@@ -1834,6 +1837,7 @@ class TestReadRequiredCycles:
     def test_an_unreadable_file_raises(self, tmp_path):
         """Permission, not syntax -- the same verdict for the same reason."""
         import os
+
         from code_forge.errors import UnreadableGateError
         from code_forge.verify import read_required_cycles
         self._write(tmp_path, "verify:\n  required_cycles: 5\n")
@@ -1856,6 +1860,7 @@ class TestReadRequiredCycles:
         escaped as a raw OSError that run_verify could not catch.
         """
         import os
+
         from code_forge.errors import UnreadableGateError
         from code_forge.verify import read_required_cycles
         d = tmp_path / ".code-forge"
@@ -1892,7 +1897,7 @@ class TestReadRequiredCycles:
         """
         from code_forge.errors import UnreadableGateError
         from code_forge.verify import read_required_cycles
-        self._write(tmp_path, "verify:\n  required_cycles: %s\n" % value)
+        self._write(tmp_path, f"verify:\n  required_cycles: {value}\n")
         with pytest.raises(UnreadableGateError):
             read_required_cycles(tmp_path)
 
@@ -1907,7 +1912,7 @@ class TestReadRequiredCycles:
         """
         from code_forge.errors import UnreadableGateError
         from code_forge.verify import read_required_cycles
-        self._write(tmp_path, "verify:\n  required_cycles: %s\n" % value)
+        self._write(tmp_path, f"verify:\n  required_cycles: {value}\n")
         with pytest.raises(UnreadableGateError):
             read_required_cycles(tmp_path)
 
@@ -1945,7 +1950,7 @@ class TestReadRequiredCycles:
         """
         from code_forge.errors import UnreadableGateError
         from code_forge.verify import read_required_cycles
-        self._write(tmp_path, "verify: %s\n" % value)
+        self._write(tmp_path, f"verify: {value}\n")
         with pytest.raises(UnreadableGateError):
             read_required_cycles(tmp_path)
 
@@ -1960,6 +1965,7 @@ class TestReadRequiredCycles:
         problem that is really a missing dependency.
         """
         import builtins
+
         from code_forge.verify import read_required_cycles
         self._write(tmp_path, "verify:\n  required_cycles: 1\n")
         real_import = builtins.__import__
@@ -2029,6 +2035,7 @@ class TestReadRequiredCycles:
         to catch.
         """
         import shutil
+
         from code_forge.errors import UnreadableGateError
         from code_forge.verify import read_required_cycles
         (tmp_path / "dead").mkdir()
@@ -2114,7 +2121,7 @@ class TestRequiredCyclesIsValidatedAtTheEntryPoint:
         isinstance check would let it through as 1."""
         sha = self._empty_repo(tmp_path)
         r = run_verify(tmp_path, sha, {"src/f.py": [1]}, required_cycles=value)
-        assert not r.passed, "%r attested an empty receipt dir" % (value,)
+        assert not r.passed, f"{value!r} attested an empty receipt dir"
         assert "required_cycles" in r.reason, r.reason
 
     def test_none_still_means_read_the_gate(self, tmp_path):
@@ -2233,6 +2240,7 @@ class TestPreflightAgreesWithVerify:
     def _preflight_warns(self, excerpt):
         import io
         import logging
+
         from code_forge.receipt import _warn_on_fabricated_excerpts
 
         buf = io.StringIO()
@@ -2388,7 +2396,7 @@ class TestTask1UnderlengthIsRejected:
         sha, diff_files = _t1_write(tmp_path, [_T1_E1, thin])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
         assert not r.passed, (
-            "underlength excerpt verified: %s" % r.reason)
+            f"underlength excerpt verified: {r.reason}")
 
     def test_declared_range_spanning_the_gap_is_rejected(self, tmp_path):
         """Declares 1-12, crossing gap lines 4-9 that no post-image line
@@ -2400,7 +2408,7 @@ class TestTask1UnderlengthIsRejected:
         sha, diff_files = _t1_write(tmp_path, [spanning, _T1_E2])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
         assert not r.passed, (
-            "gap-spanning excerpt verified: %s" % r.reason)
+            f"gap-spanning excerpt verified: {r.reason}")
 
 
 class TestTask1OverflowAndLiteralPins:

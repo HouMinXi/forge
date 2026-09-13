@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Optional
 
 _REQUIRED_FIELDS = {"findings", "code_excerpts"}
 _FINDING_REQUIRED = {"file", "line", "severity", "description"}
@@ -154,14 +153,14 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         try:
             data = json.loads(_strip_fence(raw))
         except (json.JSONDecodeError, TypeError) as e:
-            raise ValueError("not valid JSON: %s" % e) from e
+            raise ValueError(f"not valid JSON: {e}") from e
 
     if not isinstance(data, dict):
         raise ValueError("not a JSON object")
 
     for field in _REQUIRED_FIELDS:
         if field not in data:
-            raise ValueError("missing required field: %s" % field)
+            raise ValueError(f"missing required field: {field}")
 
     if not isinstance(data["findings"], list):
         raise ValueError("findings must be a list")
@@ -237,8 +236,7 @@ def _collect_excerpts(data: dict, *, pass_name: str) -> list[dict]:
     """Extract code_excerpts from validated reviewer JSON with trusted pass attribution."""
     if pass_name not in _VALID_PASS_NAMES:
         raise ValueError(
-            "invalid pass_name %r, expected one of %s"
-            % (pass_name, sorted(_VALID_PASS_NAMES))
+            f"invalid pass_name {pass_name!r}, expected one of {sorted(_VALID_PASS_NAMES)}"
         )
     out = []
     for exc in data.get("code_excerpts", []):
@@ -324,7 +322,7 @@ def _dedup_by_fingerprint(
 
 
 def _json_to_state_findings(
-    data: dict, pass_name: str, backend: Optional[str] = None,
+    data: dict, pass_name: str, backend: str | None = None,
 ) -> list:
     """Convert validated reviewer JSON findings to StateFinding list.
 
@@ -354,13 +352,13 @@ def _json_to_state_findings(
         desc = f_raw.get("description") or ""
         fp = _location_fingerprint(file_path, line, pass_name)
         findings.append(StateFinding(
-            id="l1-%s-%s" % (pass_name, fp),
+            id=f"l1-{pass_name}-{fp}",
             fingerprint=fp,
             source="L1",
             disposition=Disposition.UNCERTAIN,
             file=file_path,
             line_range=[line, line],
-            description="[%s] %s" % (pass_name, desc),
+            description=f"[{pass_name}] {desc}",
             backend=backend,
             # Validated against _VALID_SEVERITIES above; carried through
             # rather than dropped, so the convergence gate can tell a P0

@@ -121,9 +121,10 @@ class TestBuildL1Provider:
         assert callable(p)
 
     def test_stub_never_calls_llm(self):
+        from unittest.mock import patch
+
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import Usage
-        from unittest.mock import patch
         p = build_l1_provider("stub", None)
         with patch("code_forge.llm_invoke.llm_invoke") as mock:
             findings, excerpts, usage, duration = p()
@@ -314,6 +315,7 @@ class TestInfraSourceTagging:
     def test_factories_invoke_fail_tagged_infra(self):
         """invoke-fail finding has source=INFRA and disposition=CONFIRMED."""
         from unittest.mock import patch as _patch
+
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
 
@@ -335,8 +337,10 @@ class TestInfraSourceTagging:
     def test_factories_schema_fail_tagged_infra(self):
         """schema-fail finding has source=INFRA and disposition=CONFIRMED."""
         from unittest.mock import patch as _patch
+
         from code_forge.factories import build_l1_provider
-        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
 
         resolved = _make_resolved("git")
 
@@ -491,7 +495,9 @@ _ONE_FILE_DIFF = (
 def _stub_llm_response(findings_json, excerpts_json):
     """Build a mock llm_invoke return value from JSON dicts."""
     import json
-    from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+
+    from code_forge.llm_invoke import LLMResult
+    from code_forge.llm_invoke import Usage as LLMUsage
     content = json.dumps({
         "findings": findings_json,
         "code_excerpts": excerpts_json,
@@ -812,10 +818,11 @@ class TestInvokeFailureHandling:
 
 class TestBuildSamplingL1Provider:
     def test_build_sampling_l1_provider_success(self):
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import LLMResult, Usage
-        from unittest.mock import patch, MagicMock
-        import concurrent.futures
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         session = MagicMock()
@@ -913,9 +920,10 @@ class TestBuildSamplingL1Provider:
         assert duration == 0.0
 
     def test_build_sampling_l1_provider_timeout_cancels_future(self):
-        from code_forge.factories import build_sampling_l1_provider
-        from unittest.mock import patch, MagicMock
         import concurrent.futures
+        from unittest.mock import MagicMock, patch
+
+        from code_forge.factories import build_sampling_l1_provider
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         session = MagicMock()
@@ -934,10 +942,11 @@ class TestBuildSamplingL1Provider:
         assert future.cancel.call_count == 1
 
     def test_build_sampling_l1_provider_truncation_raises(self):
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
-        from unittest.mock import patch, MagicMock
-        import concurrent.futures
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         session = MagicMock()
@@ -966,10 +975,11 @@ class TestBuildSamplingL1Provider:
         layer never saw the failure and could not fall back to a
         subprocess backend.
         """
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
-        from unittest.mock import patch, MagicMock
-        import concurrent.futures
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         session = MagicMock()
@@ -991,6 +1001,7 @@ class TestBuildSamplingL1Provider:
         import asyncio
         import concurrent.futures
         from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_sampling_l1_provider
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
@@ -1030,9 +1041,10 @@ class TestParallelL1:
 
     def test_cli_backend_stays_serial(self):
         """CLI backend must not enter ThreadPoolExecutor path."""
+        from unittest.mock import patch
+
         from code_forge.backend import BackendConfig
         from code_forge.factories import build_l1_provider
-        from unittest.mock import patch
 
         cli_backend = BackendConfig(
             name="test-cli", type="cli", model="test",
@@ -1066,8 +1078,9 @@ class TestParallelL1:
         location produces a distinct fingerprint (keyed by pass_name).
         Dedup only collapses findings from the same pass at the same
         location, not across passes."""
-        from code_forge.factories import build_l1_provider
         from unittest.mock import patch
+
+        from code_forge.factories import build_l1_provider
 
         shared = {"file": "src/a.py", "line": 1, "severity": "P2",
                   "description": "shared issue"}
@@ -1093,8 +1106,9 @@ class TestParallelL1:
 
     def test_no_lost_work(self):
         """Direction 2: all 3 passes' distinct findings present."""
-        from code_forge.factories import build_l1_provider
         from unittest.mock import patch
+
+        from code_forge.factories import build_l1_provider
 
         def mock_invoke(prompt, **kw):
             if "structural code reviewer" in prompt:
@@ -1125,9 +1139,10 @@ class TestParallelL1:
 
     def test_failure_isolation_api(self):
         """Direction 3: one pass fails, other two still produce findings."""
+        from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
-        from unittest.mock import patch, MagicMock
 
         def mock_invoke(prompt, **kw):
             if "senior engineer" in prompt:
@@ -1159,8 +1174,9 @@ class TestParallelL1:
 
     def test_unexpected_exception_isolation_api(self):
         """Non-LLM exception in one pass does not lose other passes."""
+        from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_l1_provider
-        from unittest.mock import patch, MagicMock
 
         def mock_invoke(prompt, **kw):
             if "senior engineer" in prompt:
@@ -1193,11 +1209,11 @@ class TestParallelL1:
 
     def test_per_coroutine_timeout_sampling(self):
         """Per-coroutine timeout produces INFRA finding, others survive."""
-        import asyncio
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import LLMResult, Usage
-        from unittest.mock import patch, MagicMock
-        import concurrent.futures
 
         def _good(desc):
             return LLMResult(
@@ -1211,7 +1227,7 @@ class TestParallelL1:
         future = concurrent.futures.Future()
         future.set_result([
             _good("qodo-f"),
-            asyncio.TimeoutError("per-coroutine timeout"),
+            TimeoutError("per-coroutine timeout"),
             _good("adv-f")])
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
@@ -1231,10 +1247,11 @@ class TestParallelL1:
 
     def test_failure_isolation_sampling(self):
         """Direction 3 (sampling): one exception, others still produce."""
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import LLMResult, Usage
-        from unittest.mock import patch, MagicMock
-        import concurrent.futures
 
         def _good(desc):
             return LLMResult(
@@ -1270,7 +1287,8 @@ class TestDurationWallClock:
     def test_parallel_duration_is_wall_clock(self):
         """ThreadPoolExecutor path: duration is wall-clock, not sum."""
         from code_forge.factories import build_l1_provider
-        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         backend = SimpleNamespace(type="api", name="test")
@@ -1299,15 +1317,16 @@ class TestDurationWallClock:
 
         # Wall-clock override: 0.05s, NOT 0.3s (sum of 3x0.1s).
         assert duration == pytest.approx(0.05, abs=0.001), (
-            "parallel duration should be wall-clock; got %.3f"
-            % duration
+            f"parallel duration should be wall-clock; got {duration:.3f}"
         )
 
     def test_serial_duration_is_sum(self):
         """CLI backend (serial): duration is sum of individual passes."""
         import time as _time
+
         from code_forge.factories import build_l1_provider
-        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         backend = SimpleNamespace(type="cli", name="cli")
@@ -1331,15 +1350,17 @@ class TestDurationWallClock:
 
         # 3 passes * 0.1s = ~0.3s sum
         assert duration > 0.28, (
-            "serial duration should be sum; got %.3f" % duration
+            f"serial duration should be sum; got {duration:.3f}"
         )
 
     def test_sampling_parallel_duration_is_wall_clock(self):
         """Sampling asyncio.gather path: wall-clock, not sum."""
-        from code_forge.factories import build_sampling_l1_provider
-        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
-        from unittest.mock import MagicMock
         import concurrent.futures
+        from unittest.mock import MagicMock
+
+        from code_forge.factories import build_sampling_l1_provider
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
 
@@ -1369,15 +1390,18 @@ class TestDurationWallClock:
 
         # Wall-clock override: 0.05s, NOT 0.3s (sum of 3x0.1s).
         assert duration == pytest.approx(0.05, abs=0.001), (
-            "sampling duration should be wall-clock; got %.3f"
-            % duration
+            f"sampling duration should be wall-clock; got {duration:.3f}"
         )
 
     def test_failed_pass_duration_counted(self):
         """LLMInvokeError duration_s is accumulated (serial path)."""
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import (
-            LLMInvokeError, LLMResult, Usage as LLMUsage,
+            LLMInvokeError,
+            LLMResult,
+        )
+        from code_forge.llm_invoke import (
+            Usage as LLMUsage,
         )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
@@ -1410,8 +1434,7 @@ class TestDurationWallClock:
         # (2 passes). Total = 0.15 + 0.1 + 0.1 = 0.35s.
         # Without the accumulation line, total = 0.2s (only successes).
         assert duration >= 0.30, (
-            "failed pass duration should be counted; got %.3f"
-            % duration
+            f"failed pass duration should be counted; got {duration:.3f}"
         )
 
 
@@ -1506,10 +1529,10 @@ class TestSharedPromptPrefix:
         # inside the prefix -- only the role that follows it is per-pass.)
         for prompt, role in zip(prompts, ROLE_NAMES):
             assert role not in common, (
-                "role %r appears in the shared prefix" % role
+                f"role {role!r} appears in the shared prefix"
             )
             assert role in prompt[len(common):], (
-                "role %r is not in this pass's divergent tail" % role
+                f"role {role!r} is not in this pass's divergent tail"
             )
         tails = [p[len(common):] for p in prompts]
         assert all(t.strip() for t in tails), "a pass has an empty tail"
@@ -1539,8 +1562,10 @@ class TestSamplingSharedPromptPrefix:
     def _captured_prompts(resolved):
         import asyncio
         import threading
+
         from code_forge.factories import build_sampling_l1_provider
-        from code_forge.llm_invoke import LLMResult, Usage as LLMUsage
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
 
         seen = []
 

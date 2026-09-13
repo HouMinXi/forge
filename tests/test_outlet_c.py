@@ -15,8 +15,7 @@ from code_forge.falsify import StubFalsifier
 from code_forge.llm_invoke import LLMResult, Usage
 from code_forge.outlet_c import run_outlet_c
 from code_forge.state import Verdict, load_state
-from code_forge.verify import run_verify, parse_diff_files
-
+from code_forge.verify import parse_diff_files, run_verify
 
 _DIFF_TEXT = (
     "diff --git a/test.py b/test.py\n"
@@ -183,7 +182,7 @@ class TestExcerptFlowIntegration:
         (tmp_path / "test.py").write_text(_POST_IMAGE_CONTENT)
 
         base = datetime.datetime(
-            2026, 5, 28, 10, 0, 0, tzinfo=datetime.timezone.utc,
+            2026, 5, 28, 10, 0, 0, tzinfo=datetime.UTC,
         )
         counter = {"n": 0}
 
@@ -403,7 +402,7 @@ class TestCriteriaPayload:
             prompt = call[0][0]
             for marker in _FORBIDDEN:
                 assert marker not in prompt, (
-                    "Session context marker '%s' found in reviewer prompt" % marker
+                    f"Session context marker '{marker}' found in reviewer prompt"
                 )
 
 
@@ -693,7 +692,7 @@ def _attempted_spawn_factory(marker_prefix):
             "findings": "not-a-list",
             "code_excerpts": [],
             "pass_name": "payload-lie",
-            "marker": "%s-%s" % (marker_prefix, pass_name),
+            "marker": f"{marker_prefix}-{pass_name}",
             "chunk_tag": chunk_tag,
         })
     return _spawn
@@ -729,7 +728,7 @@ class TestAttemptedForwardingUnderThreshold:
         assert set(by_pass) == {"qodo", "expert", "adversarial"}
         for pname, payloads in by_pass.items():
             assert len(payloads) == 1
-            assert payloads[0]["marker"] == "under-%s" % pname
+            assert payloads[0]["marker"] == f"under-{pname}"
             assert payloads[0]["pass_name"] == pname
 
 
@@ -758,7 +757,7 @@ class TestAttemptedForwardingSplitFallback:
         by_pass = _read_attempted(tmp_path)
         assert set(by_pass) == {"qodo", "expert", "adversarial"}
         for pname, payloads in by_pass.items():
-            assert payloads[0]["marker"] == "fallback-%s" % pname
+            assert payloads[0]["marker"] == f"fallback-{pname}"
             assert payloads[0]["pass_name"] == pname
 
 
@@ -795,7 +794,7 @@ class TestAttemptedForwardingPerFileChunks:
                 "file1.py", "file2.py", "file3.py",
             }
             for p in payloads:
-                assert p["marker"] == "chunks-%s" % pname
+                assert p["marker"] == f"chunks-{pname}"
                 assert p["pass_name"] == pname
 
 
@@ -833,7 +832,7 @@ class TestAttemptedNoRetentionAcrossInvocations:
         assert set(by_pass) == {"qodo", "expert", "adversarial"}
         for pname, payloads in by_pass.items():
             assert len(payloads) == 1
-            assert payloads[0]["marker"] == "run2-%s" % pname
+            assert payloads[0]["marker"] == f"run2-{pname}"
         texts = [
             fp.read_text()
             for fp in (

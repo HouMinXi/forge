@@ -12,9 +12,9 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
-from .disposition import Disposition, DISPOSITION_PROTOCOL_VERSION
+from .disposition import DISPOSITION_PROTOCOL_VERSION, Disposition
 from .errors import CorruptedStateError, SchemaVersionMismatchError
 
 SCHEMA_VERSION: int = 1
@@ -82,13 +82,13 @@ class StateFinding:
     file: str
     line_range: list[int]
     description: str
-    error: Optional[str] = None
-    anchor: Optional[dict] = None
-    evidence_files: Optional[list[str]] = None
+    error: str | None = None
+    anchor: dict | None = None
+    evidence_files: list[str] | None = None
     is_timeout: bool = False
     # Backend that produced this finding. None for findings forge raises
     # itself (L0, MUTANT, INFRA); the ledger writer turns None into "".
-    backend: Optional[str] = None
+    backend: str | None = None
     # Severity the reviewer assigned, "P0".."P3". None for findings forge
     # raises itself, which have no reviewer opinion to carry.
     #
@@ -99,7 +99,7 @@ class StateFinding:
     # remote-execution finding and a P3 naming nit were indistinguishable
     # to the convergence gate, and the P3-only density path was
     # unreachable.
-    severity: Optional[str] = None
+    severity: str | None = None
 
 
 def derive_pass_outcomes(
@@ -127,17 +127,17 @@ def derive_pass_outcomes(
             continue
         for pass_name in _PASS_NAMES:
             candidate: PassOutcome | None = None
-            if f.id == "l1-%s-spawn-fail" % pass_name:
+            if f.id == f"l1-{pass_name}-spawn-fail":
                 candidate = PassOutcome.TIMEOUT
-            elif f.id == "l1-%s-invoke-fail" % pass_name:
+            elif f.id == f"l1-{pass_name}-invoke-fail":
                 candidate = (
                     PassOutcome.TIMEOUT
                     if getattr(f, "is_timeout", False)
                     else PassOutcome.ERROR
                 )
-            elif f.id == "l1-%s-schema-fail" % pass_name:
+            elif f.id == f"l1-{pass_name}-schema-fail":
                 candidate = PassOutcome.SCHEMA_FAIL
-            elif f.id == "l1-%s-incomplete-coverage" % pass_name:
+            elif f.id == f"l1-{pass_name}-incomplete-coverage":
                 candidate = PassOutcome.INCOMPLETE
             if candidate is not None:
                 existing = outcomes.get(pass_name)
@@ -173,7 +173,7 @@ class State:
     disposition_protocol_version: int = DISPOSITION_PROTOCOL_VERSION
     round: int = 0
     mode: Mode = Mode.LOCAL
-    source_hash: Optional[str] = None
+    source_hash: str | None = None
     findings: list[StateFinding] = field(default_factory=list)
     # Derived lookup cache (NOT source of truth; SOT = StateFinding.disposition).
     # save_state rebuilds from findings; load_state verifies cache matches.
@@ -182,11 +182,11 @@ class State:
     verdict: Verdict = Verdict.PENDING
     converged: bool = False
     # 02-02 additions:
-    baseline_spec_repr: Optional[str] = None
+    baseline_spec_repr: str | None = None
     round_history: list[dict] = field(default_factory=list)
     infra_errors: list[str] = field(default_factory=list)
     # 02-04 additions:
-    hold_reason: Optional[str] = None
+    hold_reason: str | None = None
     promoted_fingerprints: set[str] = field(default_factory=set)
     # Mutation survivor round counter (LOCAL mode):
     consecutive_survivor_rounds: int = 0  # LOCAL mode only
@@ -200,9 +200,9 @@ class State:
     cost_passes: int = 0
     cost_per_pass: list[dict] = field(default_factory=list)
     # Phase 52 addition: env_manifest snapshot
-    env_manifest: Optional[dict[str, Any]] = None
+    env_manifest: dict[str, Any] | None = None
     # Phase 53a addition: exec_evidence snapshot
-    exec_evidence: Optional[dict[str, Any]] = None
+    exec_evidence: dict[str, Any] | None = None
 
 
 def _finding_from_dict(d: dict) -> StateFinding:
@@ -227,7 +227,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
     )
 
 
-def load_state(path: Path) -> Optional[State]:
+def load_state(path: Path) -> State | None:
     """Load state.json. Returns None if file does not exist.
 
     Raises:
@@ -241,14 +241,14 @@ def load_state(path: Path) -> Optional[State]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise CorruptedStateError(
-            "cannot parse %s: %s" % (path, e)
+            f"cannot parse {path}: {e}"
         ) from e
 
     sv = data.get("schema_version")
     if sv != SCHEMA_VERSION:
         raise SchemaVersionMismatchError(
-            "state.json schema_version=%s, forge expects %s; "
-            "remove .code-forge/state.json to start fresh" % (sv, SCHEMA_VERSION)
+            f"state.json schema_version={sv}, forge expects {SCHEMA_VERSION}; "
+            "remove .code-forge/state.json to start fresh"
         )
 
     try:
@@ -261,13 +261,13 @@ def load_state(path: Path) -> Optional[State]:
         }
     except (KeyError, ValueError) as e:
         raise CorruptedStateError(
-            "invalid finding or disposition in %s: %s" % (path, e)
+            f"invalid finding or disposition in {path}: {e}"
         ) from e
 
     expected = {f.id: f.disposition for f in findings}
     if dispositions != expected:
         raise CorruptedStateError(
-            "dispositions cache out of sync with findings (path=%s)" % path
+            f"dispositions cache out of sync with findings (path={path})"
         )
 
     try:
@@ -287,7 +287,7 @@ def load_state(path: Path) -> Optional[State]:
         )
     except (KeyError, ValueError) as e:
         raise CorruptedStateError(
-            "missing or invalid field in %s: %s" % (path, e)
+            f"missing or invalid field in {path}: {e}"
         ) from e
 
     # 02-02 additions: backward-compat defaults for pre-02-02 state.json

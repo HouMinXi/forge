@@ -89,12 +89,11 @@ def read_required_cycles(cwd: Path) -> int:
         # unreadable gate instead of masquerading as "no policy".
         if path.is_symlink():
             raise UnreadableGateError(
-                "%s is a dangling symlink; cannot read the policy" % path
+                f"{path} is a dangling symlink; cannot read the policy"
             ) from None
         if path.parent.is_symlink() and not path.parent.exists():
             raise UnreadableGateError(
-                "%s is inside a dangling symlink; cannot read the policy"
-                % path
+                f"{path} is inside a dangling symlink; cannot read the policy"
             ) from None
         return DEFAULT_REQUIRED_CYCLES
     except Exception as exc:
@@ -103,7 +102,7 @@ def read_required_cycles(cwd: Path) -> int:
         # try so a missing PyYAML surfaces as an environment error, not
         # as this gate blaming the file.
         raise UnreadableGateError(
-            "%s exists but could not be parsed: %s" % (path, exc)
+            f"{path} exists but could not be parsed: {exc}"
         ) from exc
     if data is None or not isinstance(data, dict):
         # An empty file, or a parse that yielded no mapping: no policy
@@ -114,33 +113,27 @@ def read_required_cycles(cwd: Path) -> int:
     section = data["verify"]
     if section is None:
         raise UnreadableGateError(
-            "%s verify section is present but null; "
-            "a written-down policy must be a mapping or absent"
-            % path
+            f"{path} verify section is present but null; a written-down policy must be a mapping or absent"
         )
     if not isinstance(section, dict):
         raise UnreadableGateError(
-            "%s verify section is %r; must be a mapping" % (path, section)
+            f"{path} verify section is {section!r}; must be a mapping"
         )
     unknown = set(section) - {"required_cycles"}
     if unknown:
         raise UnreadableGateError(
-            "%s verify section has unknown key(s): %s; a misspelled knob "
-            "would read as absent and silently open the gate"
-            % (path, ", ".join(sorted(str(k) for k in unknown)))
+            f"{path} verify section has unknown key(s): {', '.join(sorted((str(k) for k in unknown)))}; a misspelled knob would read as absent and silently open the gate"
         )
     if "required_cycles" not in section:
         return DEFAULT_REQUIRED_CYCLES
     n = section["required_cycles"]
     if n is None:
         raise UnreadableGateError(
-            "%s verify.required_cycles must be an integer; got null/blank"
-            % path
+            f"{path} verify.required_cycles must be an integer; got null/blank"
         )
     if not isinstance(n, int) or isinstance(n, bool) or n < 1:
         raise UnreadableGateError(
-            "%s verify.required_cycles is %r; must be a positive int"
-            % (path, n)
+            f"{path} verify.required_cycles is {n!r}; must be a positive int"
         )
     return n
 
@@ -227,23 +220,23 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
     for field in _STR_FIELDS:
         if not _is_type(obj.get(field), str):
             raise CorruptedReceiptError(
-                "%s: %s must be %s" % (name, field, _TYPE_LABEL[str]))
+                f"{name}: {field} must be {_TYPE_LABEL[str]}")
     for field in _INT_FIELDS:
         if not _is_type(obj.get(field), int):
             raise CorruptedReceiptError(
-                "%s: %s must be %s" % (name, field, _TYPE_LABEL[int]))
+                f"{name}: {field} must be {_TYPE_LABEL[int]}")
     for field in _LIST_OF_DICT_FIELDS:
         v = obj.get(field)
         if not isinstance(v, list) or not all(isinstance(item, dict) for item in v):
             raise CorruptedReceiptError(
-                "%s: %s must be a list of objects" % (name, field))
+                f"{name}: {field} must be a list of objects")
     for field in _OPTIONAL_LIST_OF_DICT_FIELDS:
         if field not in obj:
             continue
         v = obj[field]
         if not isinstance(v, list) or not all(isinstance(item, dict) for item in v):
             raise CorruptedReceiptError(
-                "%s: %s must be a list of objects" % (name, field))
+                f"{name}: {field} must be a list of objects")
     # Safe only because the two loops above have proved every field named in
     # _NESTED_SCHEMAS is either absent or a list of dicts -- otherwise calling
     # .get() on a non-dict item here would raise the exact crash this function
@@ -255,8 +248,7 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
             for subfield, subtype in subschema.items():
                 if not _is_type(item.get(subfield), subtype):
                     raise CorruptedReceiptError(
-                        "%s: %s.%s must be %s" % (
-                            name, list_field, subfield, _TYPE_LABEL[subtype]))
+                        f"{name}: {list_field}.{subfield} must be {_TYPE_LABEL[subtype]}")
     # Excerpt line ranges must be ordered and positive. An inverted
     # range silently credits zero lines, which looks identical to an
     # honest excerpt that sits outside the diff -- two different
@@ -270,11 +262,10 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
             continue
         if s > e:
             raise CorruptedReceiptError(
-                "%s: code_excerpts start_line %d > end_line %d" % (name, s, e))
+                f"{name}: code_excerpts start_line {s} > end_line {e}")
         if s <= 0 or e <= 0:
             raise CorruptedReceiptError(
-                "%s: code_excerpts start_line and end_line must be positive, got %r and %r"
-                % (name, s, e))
+                f"{name}: code_excerpts start_line and end_line must be positive, got {s!r} and {e!r}")
 
 
 def _load_receipts(rd: Path) -> list[dict]:
@@ -301,13 +292,13 @@ def _load_receipts(rd: Path) -> list[dict]:
             # one through. RecursionError (deeply nested input) is a
             # RuntimeError and still needs naming. MemoryError is left uncaught
             # on purpose: that is a resource condition, not a bad file.
-            raise CorruptedReceiptError("%s: %s" % (f.name, exc)) from exc
+            raise CorruptedReceiptError(f"{f.name}: {exc}") from exc
         if not isinstance(obj, dict):
             # Every check downstream calls .get() on these. A bare array or
             # number parses cleanly and then crashes the caller with an
             # AttributeError, so the annotation above is enforced here.
             raise CorruptedReceiptError(
-                "%s: expected a JSON object, got %s" % (f.name, type(obj).__name__)
+                f"{f.name}: expected a JSON object, got {type(obj).__name__}"
             )
         _validate_receipt_schema(obj, f.name)
         receipts.append(obj)
@@ -393,7 +384,7 @@ def _coverage_failure_detail(
         return "none"
 
     def _fmt(f: str, n: int) -> str:
-        return "%s (%d %s)" % (f, n, "line" if n == 1 else "lines")
+        return f"{f} ({n} {'line' if n == 1 else 'lines'})"
 
     return ", ".join(_fmt(f, n) for f, n in top)
 
@@ -504,47 +495,41 @@ def validate_excerpt_evidence(
         or not isinstance(exc_end, int)
         or isinstance(exc_end, bool)
     ):
-        return "excerpt %s coordinates must be integers" % exc_file
+        return f"excerpt {exc_file} coordinates must be integers"
     if exc_start <= 0 or exc_end <= 0 or exc_start > exc_end:
         return (
-            "excerpt %s:%r-%r has nonpositive or unordered range"
-            % (exc_file, exc_start, exc_end)
+            f"excerpt {exc_file}:{exc_start!r}-{exc_end!r} has nonpositive or unordered range"
         )
     content = exc.get("content", "")
     if isinstance(content, list):
         # Preserve the writer's all-string list join; a mixed list is
         # not evidence and must not be stringified into it.
         if not all(isinstance(ln, str) for ln in content):
-            return "excerpt %s:%d-%d content list must contain only strings" % (
-                exc_file, exc_start, exc_end)
+            return f"excerpt {exc_file}:{exc_start}-{exc_end} content list must contain only strings"
         text = "\n".join(content)
     elif isinstance(content, str):
         text = content
     else:
-        return "excerpt %s:%d-%d content must be a string" % (
-            exc_file, exc_start, exc_end)
+        return f"excerpt {exc_file}:{exc_start}-{exc_end} content must be a string"
     if not text or not text.strip():
-        return "excerpt %s:%d has empty content" % (exc_file, exc_start)
+        return f"excerpt {exc_file}:{exc_start} has empty content"
     claimed = exc_end - exc_start + 1
     actual_lines = excerpt_lines(text)
     short_by_one = claimed == len(actual_lines) + 1
-    count_error = "excerpt %s:%d-%d declares %d lines but carries %d" % (
-        exc_file, exc_start, exc_end, claimed, len(actual_lines))
+    count_error = f"excerpt {exc_file}:{exc_start}-{exc_end} declares {claimed} lines but carries {len(actual_lines)}"
     if not excerpt_line_count_matches(text, claimed):
         return count_error
     if hunk_map is None:
         return None
     exempt = exempt_files or []
     if exc_file not in hunk_map and exc_file not in exempt:
-        return "excerpt %s:%d not in diff" % (exc_file, exc_start)
+        return f"excerpt {exc_file}:{exc_start} not in diff"
     if exc_file in hunk_map and not any(
         max(exc_start, h["start"]) <= min(exc_end, h["end"])
         for h in hunk_map[exc_file]
     ):
         return (
-            "excerpt %s:%d-%d is outside every hunk; if the reviewer "
-            "read it for context rather than checking it, it belongs "
-            "in context_quotes" % (exc_file, exc_start, exc_end)
+            f"excerpt {exc_file}:{exc_start}-{exc_end} is outside every hunk; if the reviewer read it for context rather than checking it, it belongs in context_quotes"
         )
     if post_image is None or exc_file in exempt:
         # No post-image to confirm the +/-1 slack from
@@ -572,10 +557,7 @@ def validate_excerpt_evidence(
                     exc_start, exc_end, offset, file_lines
                 ):
                     return (
-                        "excerpt misnumbered by %+d at %s:%d-%d "
-                        "(claims %s:%d, actually %s:%d)" % (
-                            offset, exc_file, exc_start, exc_end,
-                            exc_file, ln, exc_file, ln + offset)
+                        f"excerpt misnumbered by {offset:+d} at {exc_file}:{exc_start}-{exc_end} (claims {exc_file}:{ln}, actually {exc_file}:{ln + offset})"
                     )
                 if offset is not None:
                     # Blank-boundary slip: the quote is anchored one line off
@@ -583,8 +565,7 @@ def validate_excerpt_evidence(
                     # The content itself checked out at the shift, so there is
                     # nothing left to report.
                     return None
-                return "excerpt content mismatch at %s:%d-%d (line %d)" % (
-                    exc_file, exc_start, exc_end, ln)
+                return f"excerpt content mismatch at {exc_file}:{exc_start}-{exc_end} (line {ln})"
     outside = set(excerpt_line_map) - set(file_lines)
     if outside:
         offset = _constant_offset(excerpt_line_map, file_lines, -64, 65)
@@ -593,17 +574,12 @@ def validate_excerpt_evidence(
         ):
             ln = min(outside)
             return (
-                "excerpt misnumbered by %+d at %s:%d-%d "
-                "(claims %s:%d, actually %s:%d)" % (
-                    offset, exc_file, exc_start, exc_end,
-                    exc_file, ln, exc_file, ln + offset)
+                f"excerpt misnumbered by {offset:+d} at {exc_file}:{exc_start}-{exc_end} (claims {exc_file}:{ln}, actually {exc_file}:{ln + offset})"
             )
         if offset is not None:
             return None
         return (
-            "excerpt %s:%d-%d claims line %d outside the diff "
-            "post-image; it cannot be verified" % (
-                exc_file, exc_start, exc_end, min(outside))
+            f"excerpt {exc_file}:{exc_start}-{exc_end} claims line {min(outside)} outside the diff post-image; it cannot be verified"
         )
     return None
 
@@ -729,8 +705,7 @@ def run_verify(
             or required_cycles < 1):
         return VerifyResult(
             False,
-            "required_cycles must be an integer >= 1, got %r"
-            % (required_cycles,),
+            f"required_cycles must be an integer >= 1, got {required_cycles!r}",
             1, cp)
     # cycles pins the attested window to specific cycle numbers instead of
     # "the last N on disk". The StateMachine uses it to attest exactly the
@@ -750,8 +725,7 @@ def run_verify(
         ):
             return VerifyResult(
                 False,
-                "cycles must be a list of distinct positive ints, got %r"
-                % (cycles,),
+                f"cycles must be a list of distinct positive ints, got {cycles!r}",
                 1, cp)
     # The argument raises the bar the repo set; it never lowers it. The
     # floor belongs here and not in the CLI branch that used to hold it,
@@ -770,7 +744,7 @@ def run_verify(
         try:
             floor = read_required_cycles(cwd)
         except UnreadableGateError as exc:
-            return VerifyResult(False, "unreadable gate: %s" % exc, 1, cp)
+            return VerifyResult(False, f"unreadable gate: {exc}", 1, cp)
         required_cycles = (
             floor if required_cycles is None else max(required_cycles, floor)
         )
@@ -778,19 +752,19 @@ def run_verify(
         try:
             required_cycles = read_required_cycles(cwd)
         except UnreadableGateError as exc:
-            return VerifyResult(False, "unreadable gate: %s" % exc, 1, cp)
+            return VerifyResult(False, f"unreadable gate: {exc}", 1, cp)
     required = required_cycles * PASSES_PER_CYCLE
     try:
         receipts = _load_receipts(cwd / ".code-forge" / "receipts")
     except CorruptedReceiptError as exc:
-        return VerifyResult(False, "corrupt receipt: %s" % exc, 1, cp)
+        return VerifyResult(False, f"corrupt receipt: {exc}", 1, cp)
 
     # 1. completeness: last N consecutive cycles
     # findings_count. Reviews that take more rounds write later cycle
     # numbers; the last N consecutive clean cycles are what matters,
     # regardless of what those numbers are.
     if len(receipts) < required:
-        msg = "missing receipts: %d/%d" % (len(receipts), required)
+        msg = f"missing receipts: {len(receipts)}/{required}"
         if len(receipts) == 0:
             msg += (
                 " -- no review receipts found. Run 'code-forge review' "
@@ -809,23 +783,19 @@ def run_verify(
         if len(last_n) < required_cycles:
             return VerifyResult(
                 False,
-                "attested window has %d cycle(s); repository verifier "
-                "floor demands %d: %s" % (
-                    len(last_n), required_cycles, last_n),
+                f"attested window has {len(last_n)} cycle(s); repository verifier floor demands {required_cycles}: {last_n}",
                 1, cp)
     else:
         if len(all_cycle_vals) < required_cycles:
             return VerifyResult(
-                False, "fewer than %d cycles: %d" % (
-                    required_cycles, len(all_cycle_vals)),
+                False, f"fewer than {required_cycles} cycles: {len(all_cycle_vals)}",
                 1, cp)
         last_n = all_cycle_vals[-required_cycles:]
     for i in range(len(last_n) - 1):
         if last_n[i + 1] - last_n[i] != 1:
             return VerifyResult(
                 False,
-                "last %d cycles not consecutive: %s" % (required_cycles,
-                                                        last_n),
+                f"last {required_cycles} cycles not consecutive: {last_n}",
                 1, cp)
     attested = [r for r in receipts if r["cycle"] in last_n]
     if any(r.get("reviewed_repositories") != repository_manifest for r in attested):
@@ -835,11 +805,11 @@ def run_verify(
     for r in attested:
         key = (r["cycle"], r["pass"])
         if key in seen_keys:
-            return VerifyResult(False, "duplicate receipt c%dp%d" % key, 1, cp)
+            return VerifyResult(False, f"duplicate receipt c{key[0]}p{key[1]}", 1, cp)
         seen_keys.add(key)
         if r["findings_count"] != len(r["findings"]):
             return VerifyResult(
-                False, "findings_count mismatch c%dp%d" % key, 1, cp)
+                False, f"findings_count mismatch c{key[0]}p{key[1]}", 1, cp)
         if repository_manifest is not None and any(
             not isinstance(f.get("file"), str) or f["file"] not in diff_files
             for f in r["findings"]
@@ -855,20 +825,19 @@ def run_verify(
         missing = {1, 2, 3} - passes
         if missing:
             return VerifyResult(
-                False, "missing cycle %d/pass %d" % (c, min(missing)), 1, cp)
+                False, f"missing cycle {c}/pass {min(missing)}", 1, cp)
         extra = passes - {1, 2, 3}
         if extra:
             return VerifyResult(
                 False,
-                "cycle %d has pass %d, outside the three review passes" % (
-                    c, min(extra)),
+                f"cycle {c} has pass {min(extra)}, outside the three review passes",
                 1, cp)
     cp += 1
 
     # 2. hash
     for r in attested:
         if r.get("diff_sha256") != diff_sha256:
-            return VerifyResult(False, "diff hash mismatch c%dp%d" % (r["cycle"], r["pass"]), 2, cp)
+            return VerifyResult(False, f"diff hash mismatch c{r['cycle']}p{r['pass']}", 2, cp)
     cp += 1
 
     # 3. anchors: file must be in diff
@@ -876,7 +845,7 @@ def run_verify(
         for a in r["anchors"]:
             afile = a.get("file", "")
             if afile not in diff_files:
-                return VerifyResult(False, "anchor file %s not in diff" % afile, 3, cp)
+                return VerifyResult(False, f"anchor file {afile} not in diff", 3, cp)
     cp += 1
 
     # 4. timestamps: non-decreasing in (cycle, pass) order. Passes in a round
@@ -929,7 +898,7 @@ def run_verify(
                 if not witnessed:
                     return VerifyResult(
                         False,
-                        "unwitnessed hunk %s:%d-%d" % (file, hunk["start"], hunk["end"]),
+                        f"unwitnessed hunk {file}:{hunk['start']}-{hunk['end']}",
                         5, cp,
                     )
 
@@ -1001,19 +970,12 @@ def run_verify(
                                 break
                             return VerifyResult(
                                 False,
-                                "excerpt misnumbered by %+d at %s:%d-%d "
-                                "(claims %s:%d, actually %s:%d)" % (
-                                    offset, exc["file"],
-                                    exc["start_line"], exc["end_line"],
-                                    exc["file"], ln,
-                                    exc["file"], ln + offset),
+                                f"excerpt misnumbered by {offset:+d} at {exc['file']}:{exc['start_line']}-{exc['end_line']} (claims {exc['file']}:{ln}, actually {exc['file']}:{ln + offset})",
                                 5, cp,
                             )
                         return VerifyResult(
                             False,
-                            "excerpt content mismatch at %s:%d-%d (line %d)" % (
-                                exc["file"], exc["start_line"],
-                                exc["end_line"], ln),
+                            f"excerpt content mismatch at {exc['file']}:{exc['start_line']}-{exc['end_line']} (line {ln})",
                             5, cp,
                         )
 
@@ -1031,10 +993,7 @@ def run_verify(
             if outside:
                 return VerifyResult(
                     False,
-                    "excerpt %s:%d-%d claims line %d outside the diff "
-                    "post-image; it cannot be verified" % (
-                        exc["file"], exc["start_line"], exc["end_line"],
-                        min(outside)),
+                    f"excerpt {exc['file']}:{exc['start_line']}-{exc['end_line']} claims line {min(outside)} outside the diff post-image; it cannot be verified",
                     5, cp,
                 )
         cp += 1
@@ -1055,10 +1014,7 @@ def run_verify(
                     # consumer may match; the suffix is human guidance.
                     return VerifyResult(
                         False,
-                        "coverage %.0f%% < 60%% cycle %d; "
-                        "largest uncovered: %s" % (
-                            100 * len(cov) / len(all_diff), c,
-                            _coverage_failure_detail(cov, all_diff)),
+                        f"coverage {100 * len(cov) / len(all_diff):.0f}% < 60% cycle {c}; largest uncovered: {_coverage_failure_detail(cov, all_diff)}",
                         6, cp)
         cp += 1
 
@@ -1083,12 +1039,12 @@ def run_verify(
             if not cov_a and not cov_b:
                 return VerifyResult(
                     False,
-                    "no excerpt coverage in cycles %d and %d (findings present but excerpts empty)" % (a, b),
+                    f"no excerpt coverage in cycles {a} and {b} (findings present but excerpts empty)",
                     7, cp,
                 )
             j = _jaccard(cov_a, cov_b)
             if j > 0.8:
-                return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
+                return VerifyResult(False, f"Jaccard overlap {j:.2f} > 0.8 c{a}-c{b}", 7, cp)
         cp += 1
 
     else:
@@ -1106,8 +1062,7 @@ def run_verify(
                 if not fp.exists():
                     return VerifyResult(
                         False,
-                        "excerpt file missing: %s (c%dp%d)" % (
-                            exc["file"], r["cycle"], r["pass"]),
+                        f"excerpt file missing: {exc['file']} (c{r['cycle']}p{r['pass']})",
                         5, cp)
                 try:
                     lines = fp.read_text(encoding="utf-8").splitlines()
@@ -1118,16 +1073,13 @@ def run_verify(
                     if actual != claimed:
                         return VerifyResult(
                             False,
-                            "excerpt mismatch %s:%d-%d c%dp%d" % (
-                                exc["file"], exc["start_line"], exc["end_line"],
-                                r["cycle"], r["pass"]),
+                            f"excerpt mismatch {exc['file']}:{exc['start_line']}-{exc['end_line']} c{r['cycle']}p{r['pass']}",
                             5, cp)
                 except (IndexError, OSError) as e:
                     logging.warning("check 5 legacy: %s", e)
                     return VerifyResult(
                         False,
-                        "excerpt line range error %s:%d-%d" % (
-                            exc["file"], exc["start_line"], exc["end_line"]),
+                        f"excerpt line range error {exc['file']}:{exc['start_line']}-{exc['end_line']}",
                         5, cp)
         cp += 1
 
@@ -1140,10 +1092,7 @@ def run_verify(
                     # Same format contract as the excerpt-derived check 6.
                     return VerifyResult(
                         False,
-                        "coverage %.0f%% < 60%% cycle %d; "
-                        "largest uncovered: %s" % (
-                            100 * len(cov) / len(all_diff), c,
-                            _coverage_failure_detail(cov, all_diff)),
+                        f"coverage {100 * len(cov) / len(all_diff):.0f}% < 60% cycle {c}; largest uncovered: {_coverage_failure_detail(cov, all_diff)}",
                         6, cp)
         cp += 1
 
@@ -1160,7 +1109,7 @@ def run_verify(
                 continue
             j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))
             if j > 0.8:
-                return VerifyResult(False, "Jaccard overlap %.2f > 0.8 c%d-c%d" % (j, a, b), 7, cp)
+                return VerifyResult(False, f"Jaccard overlap {j:.2f} > 0.8 c{a}-c{b}", 7, cp)
         cp += 1
 
     # 8. every pass in the attested window has to have actually run.
@@ -1188,9 +1137,7 @@ def run_verify(
         if status is not None and status != "completed":
             return VerifyResult(
                 False,
-                "pass did not complete: c%dp%d status=%s -- that pass "
-                "contributed no review, so the cycle cannot attest"
-                % (r["cycle"], r["pass"], status),
+                f"pass did not complete: c{r['cycle']}p{r['pass']} status={status} -- that pass contributed no review, so the cycle cannot attest",
                 8, cp,
             )
     cp += 1
