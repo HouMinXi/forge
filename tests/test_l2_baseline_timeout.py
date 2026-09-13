@@ -109,7 +109,9 @@ def test_ci_deadline_reaches_detached_child(tmp_path, monkeypatch, configured, e
     assert len(captured) == 1
     seen = []
 
-    def run_child(diff_files, baseline_cmd, *, cwd, baseline_timeout=120):
+    def run_child(
+        diff_files, baseline_cmd, *, cwd, baseline_timeout=120, also_copy=None
+    ):
         seen.append(baseline_timeout)
         return [], []
 
