@@ -2941,9 +2941,12 @@ class TestOffsetSearchPrefersTheNearestExplanation:
 
         post, _, _ = self._ctx()
         lines = post["mod.py"]
+        # A window wide enough to reach either copy of the repeated block,
+        # derived from the fixture so it survives edits to it.
+        span = max(lines)
         # Quotes the second copy (20-21) but claims 19-20: a +1 slip.
         claimed = {19: lines[20], 20: lines[21]}
-        assert _constant_offset(claimed, lines, -64, 65) == 1
+        assert _constant_offset(claimed, lines, -span, span) == 1
 
     def test_repeated_block_slip_keeps_the_one_line_channel(self):
         from code_forge.verify import (

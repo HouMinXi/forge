@@ -423,6 +423,9 @@ def _constant_offset(
         return s.rstrip()
 
     for delta in sorted(
+        # Ties go to the negative side: a quote that sits one line above
+        # and one line below equally well is far more often a reviewer
+        # who counted the anchor line in than one who counted it out.
         (d for d in range(lo, hi + 1) if d != 0), key=lambda d: (abs(d), d)
     ):
         matches = 0
