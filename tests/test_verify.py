@@ -1344,16 +1344,25 @@ class TestOutOfHunkExcerpts:
                 receipt = _receipt(c, p, sha)
                 # Content is verbatim for lines 2-4 but claims 3-5: a
                 # constant +1 misnumbering, exactly the reviewer failure.
-                receipt["code_excerpts"][0] = {
-                    "file": "src/f.py", "start_line": 3, "end_line": 5,
-                    "content": "    x = 1\n    return 2\n    return 3",
-                }
+                receipt["code_excerpts"] = [
+                    {
+                        "file": "src/f.py", "start_line": 1, "end_line": 4,
+                        "content": (
+                            "def f():\n    x = 1\n"
+                            "    return 2\n    return 3"
+                        ),
+                    },
+                    {
+                        "file": "src/f.py", "start_line": 3, "end_line": 5,
+                        "content": "    x = 1\n    return 2\n    return 3",
+                    },
+                ]
                 name = "receipt-c%dp%d.json" % (c, p)
                 (rd / name).write_text(json.dumps(receipt))
         r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
-        assert not r.passed, f"misnumbered excerpt should fail, got: {r.reason}"
-        assert "misnumbered by" in r.reason
-        assert "-1" in r.reason
+        assert r.passed, (
+            f"one-line slip must not fail attestation, got: {r.reason}"
+        )
 
     def test_misnumbered_excerpt_reports_positive_offset(self, tmp_path):
         """The offset search is symmetric, so the +N direction needs its
@@ -1380,16 +1389,22 @@ class TestOutOfHunkExcerpts:
                 receipt = _receipt(c, p, sha)
                 # Claims lines 1-2 but carries lines 2-3 verbatim: a
                 # constant +1 misnumbering, the mirror of the -1 case.
-                receipt["code_excerpts"][0] = {
-                    "file": "src/f.py", "start_line": 1, "end_line": 2,
-                    "content": "    x = 1\n    return 2",
-                }
+                receipt["code_excerpts"] = [
+                    {
+                        "file": "src/f.py", "start_line": 1, "end_line": 3,
+                        "content": "def f():\n    x = 1\n    return 2",
+                    },
+                    {
+                        "file": "src/f.py", "start_line": 1, "end_line": 2,
+                        "content": "    x = 1\n    return 2",
+                    },
+                ]
                 name = "receipt-c%dp%d.json" % (c, p)
                 (rd / name).write_text(json.dumps(receipt))
         r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
-        assert not r.passed
-        assert "misnumbered by" in r.reason
-        assert "+1" in r.reason
+        assert r.passed, (
+            f"one-line slip must not fail attestation, got: {r.reason}"
+        )
 
     def test_partial_shift_match_is_not_called_misnumbered(self, tmp_path):
         """A shift must be vouched for by every claimed line. Two lines
@@ -2600,6 +2615,31 @@ class TestBlankLineCarriesNoPositionalEvidence:
         assert err is not None, "a genuine shift must still be reported"
         assert "misnumbered" in err, err
 
+    def test_non_blank_plus_one_still_convicts(self):
+        """A whole-block +1 on non-blank bounds is still misnumbered."""
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # File 77-79 is keep-b / keep-c / the path warning (all non-blank).
+        # Claiming 76-78 with that body is a constant +1 slip.
+        keep_b = post["docs/conv.md"][77]
+        keep_c = post["docs/conv.md"][78]
+        path_warning = post["docs/conv.md"][79]
+        assert keep_b.strip() == "keep-b"
+        assert keep_c.strip() == "keep-c"
+        assert path_warning.strip()
+        exc = {
+            "file": "docs/conv.md",
+            "start_line": 76,
+            "end_line": 78,
+            "content": f"{keep_b}\n{keep_c}\n{path_warning}",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, "non-blank +1 must still be reported"
+        assert "misnumbered" in err, err
+        assert "+1" in err, err
+        assert "+1" in err, err
+
     def test_blank_end_boundary_also_excuses_the_slip(self):
         """The tolerance must hold when it is the END line that is blank.
 
@@ -2747,3 +2787,27 @@ class TestExemptFileKeepsCountParity:
                "content": "a\nb\nc"}
         assert validate_excerpt_evidence(
             exc, hunk_map, post, exempt) is None
+
+class TestOneLineMisnumberClassifier:
+    def test_plus_one_and_minus_one_match(self):
+        from code_forge.verify import is_one_line_misnumber
+
+        assert is_one_line_misnumber(
+            "excerpt misnumbered by +1 at foo.py:2-11 "
+        )
+        assert is_one_line_misnumber(
+            "excerpt misnumbered by -1 at foo.py:2-11 "
+        )
+
+    def test_larger_offsets_and_other_faults_do_not_match(self):
+        from code_forge.verify import is_one_line_misnumber
+
+        assert not is_one_line_misnumber(
+            "excerpt misnumbered by +11 at foo.py:1-2 "
+        )
+        assert not is_one_line_misnumber(
+            "excerpt misnumbered by -10 at foo.py:1-2 "
+        )
+        assert not is_one_line_misnumber(
+            "excerpt content mismatch at foo.py:1-2"
+        )

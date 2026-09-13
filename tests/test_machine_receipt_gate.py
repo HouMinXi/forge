@@ -137,6 +137,27 @@ def _payload(name: str) -> dict:
         v["code_excerpts"][0]["start_line"] = 1
         v["code_excerpts"][0]["end_line"] = 6
         return v
+    if name == "plus_one_slip":
+        # One attested excerpt plus a sibling whose body matches the
+        # file one line down. Coordinate slip, not a fabricated quote.
+        v = copy.deepcopy(base)
+        v["code_excerpts"] = [
+            {
+                "file": "control.ts",
+                "start_line": 1,
+                "end_line": 10,
+                "content": CONTENT_10,
+                "pass_name": "adversarial",
+            },
+            {
+                "file": "control.ts",
+                "start_line": 2,
+                "end_line": 11,
+                "content": CONTENT_10,
+                "pass_name": "adversarial",
+            },
+        ]
+        return v
     raise KeyError(name)
 
 
@@ -264,6 +285,32 @@ def test_candidate_survives_invalid_excerpt_as_untrusted(mode, tmp_path):
     assert len(hits) >= 1, res["findings"]
     assert hits[0]["source"] == "UNTRUSTED"
     assert hits[0]["disposition"] == "UNCERTAIN"
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_one_line_coordinate_slip_does_not_fail_the_gate(mode, tmp_path):
+    """A +/-1 numbering slip is evidence quality, not a dead backend.
+
+    The detector still names the offset. The round must not persist
+    RECEIPT_INVALID / INFRA CONFIRMED over it, and a fully covered
+    hunk must still be allowed to PASS.
+    """
+    res = _run(mode, "plus_one_slip", tmp_path, diff=DIFF_10)
+    assert res["returned"] == Verdict.PASS.value, res
+    assert res["memory_verdict"] == Verdict.PASS.value
+    assert res["disk_verdict"] == Verdict.PASS.value
+    if mode == Mode.LOCAL:
+        assert res["clean_rounds"] == 3
+    slips = [
+        f for f in res["findings"]
+        if "misnumbered" in f["description"]
+    ]
+    assert slips, res["findings"]
+    assert all(f["source"] == "UNTRUSTED" for f in slips), slips
+    assert not any(
+        f["source"] == "INFRA" and "misnumbered" in f["description"]
+        for f in res["findings"]
+    ), res["findings"]
 
 
 def test_wrong_literal_receipts_not_completed(tmp_path):

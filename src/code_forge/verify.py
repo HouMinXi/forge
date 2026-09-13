@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -663,6 +664,16 @@ def _diff_validation_context(
     return post_image, hunk_map, exempt_files
 
 
+def is_one_line_misnumber(err: str) -> bool:
+    """True when err names a constant +/-1 coordinate slip.
+
+    The detector still reports the offset. Callers that treat
+    evidence-quality faults separately from a dead backend use
+    this to pick the UNTRUSTED channel instead of INFRA/FAIL.
+    """
+    return bool(re.search(r"excerpt misnumbered by [+-]1 ", err))
+
+
 def validate_excerpts_against_diff(
     diff_text: str, excerpts: list[dict]
 ) -> list[str]:
@@ -681,7 +692,7 @@ def validate_excerpts_against_diff(
         err = validate_excerpt_evidence(
             exc, hunk_map, post_image, exempt_files
         )
-        if err is not None:
+        if err is not None and not is_one_line_misnumber(err):
             errors.append(err)
     return errors
 
@@ -939,7 +950,7 @@ def run_verify(
         # it and this running.
         for exc in all_excerpts:
             err = validate_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
-            if err is not None:
+            if err is not None and not is_one_line_misnumber(err):
                 return VerifyResult(False, err, 5, cp)
 
         # STEP C: content verification against diff post-image
@@ -966,6 +977,7 @@ def run_verify(
             if exc["file"] in exempt_files:
                 continue
 
+            one_line_slip = False
             if overlap_lines:
                 def normalize(s):
                     return s.rstrip()
@@ -981,6 +993,12 @@ def run_verify(
                             excerpt_line_map, file_lines, -64, 65,
                         )
                         if offset is not None:
+                            if abs(offset) == 1:
+                                # Content matches one line over: evidence
+                                # quality, not a dead backend. Skip the
+                                # outside-line check for this excerpt.
+                                one_line_slip = True
+                                break
                             return VerifyResult(
                                 False,
                                 "excerpt misnumbered by %+d at %s:%d-%d "
@@ -1006,6 +1024,9 @@ def run_verify(
             # never compared against anything. This runs after the
             # misnumber check so a shifted excerpt reports its offset
             # rather than a bare outside-the-diff line.
+            if one_line_slip:
+                cp += 1
+                continue
             outside = set(excerpt_line_map.keys()) - set(file_lines.keys())
             if outside:
                 return VerifyResult(

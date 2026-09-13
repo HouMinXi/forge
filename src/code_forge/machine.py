@@ -1311,6 +1311,54 @@ class StateMachine:
             errors.append("receipt acceptance: %s" % vr.reason)
         return errors
 
+
+    def _downgrade_one_line_slips(
+        self,
+        findings: list[StateFinding],
+        excerpts: list[dict],
+    ) -> tuple[list[StateFinding], list[dict]]:
+        """Record +/-1 coordinate slips as UNTRUSTED audit data.
+
+        The quote still matches the file, just one line over. That is
+        evidence quality, not a dead backend: keep the excerpt so the
+        hunk stays witnessed, and keep the diagnosis as UNTRUSTED.
+        """
+        diff_text = self._receipt_diff()
+        if not diff_text or not excerpts:
+            return findings, excerpts
+        from .verify import (
+            _diff_validation_context,
+            is_one_line_misnumber,
+            validate_excerpt_evidence,
+        )
+
+        post_image, hunk_map, exempt_files = _diff_validation_context(diff_text)
+        kept: list[dict] = []
+        extra: list[StateFinding] = []
+        for exc in excerpts:
+            err = validate_excerpt_evidence(
+                exc, hunk_map, post_image, exempt_files,
+            )
+            if err is not None and is_one_line_misnumber(err):
+                digest = hashlib.sha256(err.encode("utf-8")).hexdigest()[:12]
+                fp = f"receipt-{digest}"
+                extra.append(StateFinding(
+                    id="RECEIPT_UNTRUSTED",
+                    fingerprint=fp,
+                    source="UNTRUSTED",
+                    disposition=Disposition.UNCERTAIN,
+                    file=str(exc.get("file") or "<receipt-evidence>"),
+                    line_range=[
+                        int(exc["start_line"]) if isinstance(exc.get("start_line"), int) else 0,
+                        int(exc["end_line"]) if isinstance(exc.get("end_line"), int) else 0,
+                    ],
+                    description=err,
+                ))
+            kept.append(exc)
+        if extra:
+            findings = list(findings) + extra
+        return findings, kept
+
     def _record_receipt_gate_failure(self, error: str) -> None:
         """Persist a deterministic CONFIRMED finding for invalid evidence.
 
@@ -1355,6 +1403,10 @@ class StateMachine:
         # genuine StateFindings so they block and reset cycle counters.
         rulepack_findings = self._run_rulepack_blocking_phase()
         l1_findings, l1_excerpts = self._run_l1_phase()
+        self._excerpts_last_round = l1_excerpts
+        l1_findings, l1_excerpts = self._downgrade_one_line_slips(
+            l1_findings, l1_excerpts,
+        )
         self._excerpts_last_round = l1_excerpts
         self._last_receipt_write_errors = []
         # Attempted (schema-failed) payloads the producer retained for
@@ -1562,6 +1614,9 @@ class StateMachine:
 
         # (d) zero UNCERTAIN remain (unchanged from binary version)
         for f in self._state.findings:
+            if f.source == "UNTRUSTED":
+                # Audit data from rejected evidence, not a live finding.
+                continue
             if f.disposition == Disposition.UNCERTAIN:
                 return _FixpointResult.RESET
 
@@ -1624,6 +1679,7 @@ class StateMachine:
             return False
         has_uncertain = any(
             f.disposition == Disposition.UNCERTAIN
+            and f.source != "UNTRUSTED"
             for f in self._state.findings
         )
         has_unfixed_confirmed = any(
