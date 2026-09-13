@@ -136,7 +136,9 @@ class TestRemainingEstimate:
         out = []
         for elapsed in (3600.0, 7200.0):
             clock = {"t": 0.0}
-            monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+            # Bind this iteration's dict: the loop rebinds clock, so a
+            # late-reading closure would answer with the next round's clock.
+            monkeypatch.setattr(time, "monotonic", lambda c=clock: c["t"])
             cb, lines = _progress_from_cli(1, "real", 0.0)
             clock["t"] = elapsed
             cb(10, 20, "e", 1.0)

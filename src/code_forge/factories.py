@@ -294,7 +294,6 @@ def build_l1_provider(
         ExcerptEvidenceError,
         _collect_excerpts,
         _dedup_by_fingerprint,
-        _json_to_state_findings,
         validate_reviewer_json,
     )
 
