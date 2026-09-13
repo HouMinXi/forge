@@ -84,9 +84,28 @@ def test_resolve_ledger_root_non_git(tmp_path):
 
 
 def test_resolve_ledger_root_git_and_worktree():
-    """From main repo or linked worktree, resolve_ledger_root returns main root (D-05, D-20b)."""
+    """From a main repo or linked worktree, resolve_ledger_root returns the main root (D-05, D-20b)."""
+    import subprocess
+
+    import pytest
+
     from code_forge.ledger import resolve_ledger_root
+
     worktree_cwd = Path(__file__).resolve().parent.parent
+    # The mutation gate copies the tree into mutants/, which is not a git
+    # checkout, and conftest's GIT_CEILING_DIRECTORIES stops discovery from
+    # walking out to the real repo. resolve_ledger_root correctly falls back
+    # to cwd there, so the git assertions below have nothing to check.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=str(worktree_cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("tree under test is not a git checkout")
+
     root = resolve_ledger_root(worktree_cwd)
     assert root.exists()
     assert (root / ".git").exists()
