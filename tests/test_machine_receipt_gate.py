@@ -200,7 +200,7 @@ def _run(mode: Mode, payload_name: str, tmp_path: Path,
         revert_fn=lambda f: None, resolved_review=resolved,
         source_hash=sha, baseline_spec_repr="receipt gate test",
         cwd=cwd, registry={}, l0_runner=lambda *a: ([], []),
-        l1_provider=provider, l2_runner=lambda *a: ([], []),
+        l1_provider=provider, l2_runner=lambda *a, **kw: ([], []),
         max_total_rounds=3, clean_round_threshold=3,
     )
     with patch("code_forge.llm_invoke.llm_invoke",
@@ -409,7 +409,7 @@ def test_stale_window_cannot_vouch_for_bad_current_run(tmp_path):
         revert_fn=lambda f: None, resolved_review=resolved,
         source_hash=sha, baseline_spec_repr="stale-window test",
         cwd=cwd, registry={}, l0_runner=lambda *a: ([], []),
-        l1_provider=provider, l2_runner=lambda *a: ([], []),
+        l1_provider=provider, l2_runner=lambda *a, **kw: ([], []),
         max_total_rounds=3, clean_round_threshold=3,
     )
     with patch("code_forge.llm_invoke.llm_invoke",
@@ -477,7 +477,7 @@ def test_valid_current_run_passes_with_stale_high_cycles(tmp_path):
         revert_fn=lambda f: None, resolved_review=resolved,
         source_hash=sha, baseline_spec_repr="stale-valid test",
         cwd=cwd, registry={}, l0_runner=lambda *a: ([], []),
-        l1_provider=provider, l2_runner=lambda *a: ([], []),
+        l1_provider=provider, l2_runner=lambda *a, **kw: ([], []),
         max_total_rounds=3, clean_round_threshold=3,
     )
     with patch("code_forge.llm_invoke.llm_invoke",

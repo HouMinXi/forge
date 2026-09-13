@@ -256,7 +256,8 @@ class StateMachine:
       registry: dict[str, ToolConfig] passed to l0_runner
       l0_runner: callable (registry, files) -> (findings, infra_errors)
       l1_provider: callable returning L1 candidates (default: no L1)
-      l2_runner: callable (diff_files, baseline_cmd) -> (findings, infra_errors)
+      l2_runner: callable (diff_files, baseline_cmd, *, baseline_timeout)
+        -> (findings, infra_errors)
       e2e_runner: callable (diff_text, repo_root) -> (findings, infra_errors)
       post_round_hook: optional callable for test observability (R1 H6)
       max_total_rounds: STATE-04 LOCAL bound (default 20)
@@ -275,7 +276,7 @@ class StateMachine:
     l0_runner: Callable = field(default=_default_l0_runner)
     l1_provider: L1Provider = field(default=lambda: ([], [], Usage(), 0.0))
     l2_runner: Callable = field(
-        default=lambda diff_files, baseline_cmd: ([], [])
+        default=lambda diff_files, baseline_cmd, *, baseline_timeout=120: ([], [])
     )
     e2e_runner: Callable = field(
         default=lambda diff_text, repo_root: ([], [])
@@ -1153,7 +1154,10 @@ class StateMachine:
 
         progress.emit("mutation: running baseline")
         try:
-            l2_findings, l2_infra = self.l2_runner(diff_files, baseline_cmd)
+            l2_findings, l2_infra = self.l2_runner(
+                diff_files, baseline_cmd,
+                baseline_timeout=config["test"].get("timeout_seconds", 120),
+            )
             self._state.infra_errors.extend(l2_infra)
             return l2_findings
         except Exception as exc:  # noqa: BLE001
