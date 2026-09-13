@@ -222,3 +222,31 @@ class TestDeriveBasis:
             match=r"unknown finding source 'UNKNOWN_SOURCE'; add to basis derivation table",
         ):
             derive_basis(finding)
+
+
+class TestEverySourceStateAllowsHasABasis:
+    """StateFinding.source is a closed Literal; basis must cover all of it.
+
+    A source the type system permits but the table omits crashes the SARIF
+    writer at the very end of a review -- after every finding is settled,
+    so the whole run is lost. The two lists have to stay in step.
+    """
+
+    def test_untrusted_derives_a_basis(self):
+        finding = _make_finding(
+            source="UNTRUSTED", disposition=Disposition.CONFIRMED
+        )
+        basis = derive_basis(finding)
+        # Carried audit data, not an attested claim: same standing as INFRA.
+        assert basis.authority == "infra-unavailable"
+        assert basis.falsification_survived is False
+
+    def test_no_declared_source_is_missing_from_the_table(self):
+        import typing
+
+        sources = typing.get_args(
+            typing.get_type_hints(StateFinding)["source"]
+        )
+        assert sources, "StateFinding.source should be a Literal of names"
+        for source in sources:
+            derive_basis(_make_finding(source=source))

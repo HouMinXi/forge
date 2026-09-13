@@ -93,7 +93,9 @@ def derive_basis(
     ):
         effective_exec = "fail_before"
 
-    if finding.source == "INFRA":
+    # UNTRUSTED carries audit data off a response whose evidence failed
+    # validation, so it attests to nothing -- the same standing as INFRA.
+    if finding.source in ("INFRA", "UNTRUSTED"):
         return EpistemicBasis(
             authority="infra-unavailable",
             falsification_survived=False,
