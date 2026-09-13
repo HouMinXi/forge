@@ -545,15 +545,25 @@ def validate_excerpt_evidence(
         # trailing blank and an extra pasted line are equally unverified.
         return count_error if claimed != len(actual_lines) else None
     file_lines = post_image.get(exc_file, {})
+    body_start = exc_start
     if short_by_one:
-        # The count check let this through as a dropped trailing blank line.
-        # The post-image can say whether that is true: if the last declared
-        # line carries content, the excerpt is a thin tail, not a blank line.
+        # The count check let this through as a dropped blank line. The
+        # post-image says which end lost it. A quote running across a
+        # paragraph separator leaves it out at whichever end it falls,
+        # so both bounds have to be asked; a content line at both means
+        # the excerpt is genuinely thin rather than missing a separator.
         tail = file_lines.get(exc_end)
-        if tail is None or tail.strip():
+        head = file_lines.get(exc_start)
+        tail_blank = tail is not None and not tail.strip()
+        head_blank = head is not None and not head.strip()
+        if not tail_blank and not head_blank:
             return count_error
+        if head_blank and not tail_blank:
+            # The separator sits at the start, so the body that was
+            # quoted begins one line in from the declared range.
+            body_start = exc_start + 1
     excerpt_line_map = {
-        exc_start + i: line for i, line in enumerate(actual_lines)
+        body_start + i: line for i, line in enumerate(actual_lines)
     }
     overlap = set(excerpt_line_map) & set(file_lines)
     if overlap:

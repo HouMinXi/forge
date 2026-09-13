@@ -2965,3 +2965,84 @@ class TestOffsetSearchPrefersTheNearestExplanation:
         err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
         assert err is not None, "a slipped excerpt is still reported"
         assert is_one_line_misnumber(err), err
+
+
+class TestDroppedBlankIsToleratedAtEitherEnd:
+    """A dropped paragraph separator reads the same from either end.
+
+    A reviewer quoting across a blank line routinely leaves it out and
+    still declares the range that contains it. The tail case is already
+    tolerated: the post-image confirms the missing line is blank and the
+    quote is intact. The head case is the mirror image, but the count
+    branch only looks at the last declared line, so a blank first line
+    is reported as a short quote. The quote is whole; only its declared
+    start is one line early.
+    """
+
+    _DIFF = (
+        "diff --git a/doc.md b/doc.md\n"
+        "--- /dev/null\n"
+        "+++ b/doc.md\n"
+        "@@ -0,0 +1,6 @@\n"
+        "+alpha\n"
+        "+beta\n"
+        "+\n"
+        "+gamma\n"
+        "+delta\n"
+        "+epsilon\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_fixture_has_a_blank_separator(self):
+        post, _, _ = self._ctx()
+        assert post["doc.md"][3] == ""
+        assert post["doc.md"][2] == "beta"
+        assert post["doc.md"][4] == "gamma"
+
+    def test_dropped_blank_at_the_tail_is_tolerated(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        exc = {"file": "doc.md", "start_line": 1, "end_line": 3,
+               "content": "alpha\nbeta"}
+        assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
+
+    def test_dropped_blank_at_the_head_is_tolerated_too(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Declares 3-6, quotes the file's own 4-6: the blank at 3 is the
+        # separator the reviewer anchored on and did not quote.
+        exc = {"file": "doc.md", "start_line": 3, "end_line": 6,
+               "content": "gamma\ndelta\nepsilon"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is None, err
+
+    def test_short_quote_without_a_blank_still_fails(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # 4-6 are all non-blank, so a two-line quote is genuinely short.
+        exc = {"file": "doc.md", "start_line": 4, "end_line": 6,
+               "content": "delta\nepsilon"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None
+        assert "declares 3 lines but carries 2" in err
+
+    def test_blank_head_does_not_excuse_a_fabricated_quote(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Blank at the declared start, but the body is not in the file at
+        # any shift. Tolerating the count must not tolerate the content.
+        exc = {"file": "doc.md", "start_line": 3, "end_line": 6,
+               "content": "invented\nlines\nentirely"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, "a fabricated body must still be caught"
+        assert "declares" not in err, (
+            f"the fault is the content, not the count: {err}"
+        )
