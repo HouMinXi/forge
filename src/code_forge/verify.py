@@ -410,6 +410,11 @@ def _constant_offset(
     at no delta. Offsets are searched in the inclusive range lo..hi.
     A single-line excerpt is too weak a signal: one line can coincide
     with any shifted position, so it must not convict as misnumbering.
+
+    Repeated boilerplate gives more than one honest answer: the same guard
+    clause two places apart matches at both deltas. The smallest one is the
+    slip the reviewer actually made, so candidates are walked outward from
+    zero rather than upward from the low bound.
     """
     if len(excerpt_line_map) < 2:
         return None
@@ -417,9 +422,9 @@ def _constant_offset(
     def norm(s):
         return s.rstrip()
 
-    for delta in range(lo, hi + 1):
-        if delta == 0:
-            continue
+    for delta in sorted(
+        (d for d in range(lo, hi + 1) if d != 0), key=lambda d: (abs(d), d)
+    ):
         matches = 0
         compared = 0
         for claimed, content in excerpt_line_map.items():
