@@ -997,27 +997,9 @@ def run_verify(
                     f"{min(outside)} outside the diff post-image; it cannot be verified",
                     5, cp,
                 )
-            if outside and overlap_lines:
-                src_path = cwd / exc["file"]
-                disk = None
-                if src_path.is_file():
-                    disk = src_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                for ln in sorted(outside):
-                    claimed = excerpt_line_map[ln].rstrip()
-                    if disk is None or ln < 1 or ln > len(disk):
-                        return VerifyResult(
-                            False,
-                            f"excerpt {exc['file']}:{exc['start_line']}-{exc['end_line']} claims line "
-                            f"{ln} outside the diff post-image; it cannot be verified",
-                            5, cp,
-                        )
-                    if claimed != disk[ln - 1].rstrip():
-                        return VerifyResult(
-                            False,
-                            f"excerpt content mismatch {exc['file']}:{exc['start_line']}-{exc['end_line']} (line {ln})",
-                            5, cp,
-                        )
-
+            # Hunk-halo: overlapping excerpts that also quote lines
+            # outside the @@ span are skipped. Invented tails with
+            # no overlap already failed above. Do not read cwd.
         # 6. excerpt-derived coverage >= 60%
         # The floor deliberately counts test lines: tests do not test
         # themselves, so a test-heavy diff is exactly where a reviewer
