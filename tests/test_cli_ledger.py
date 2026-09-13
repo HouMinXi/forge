@@ -186,6 +186,17 @@ def _git_init(path):
     sp.run(["git", "add", "x"], cwd=str(path), check=True, capture_output=True)
     sp.run(["git", "commit", "--quiet", "-m", "init"], cwd=str(path),
            check=True, capture_output=True)
+    from tests.conftest import plant_mutmut_cfg
+
+    plant_mutmut_cfg(path)
+
+
+def test_git_init_plants_mutmut_cfg(tmp_path):
+    """A CLI cwd must carry a marked setup.cfg so a mutated import does not guess source_paths."""
+    _git_init(tmp_path)
+    text = (tmp_path / "setup.cfg").read_text(encoding="utf-8")
+    assert "managed-by-code-forge-mutation" in text
+    assert "source_paths" in text
 
 
 def test_mark_writes_new_row(tmp_path):

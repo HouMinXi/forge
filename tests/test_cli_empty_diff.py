@@ -57,6 +57,9 @@ def scratch_repo(tmp_path):
         ["git", "commit", "--allow-empty", "-m", "empty"],
         cwd=tmp_path, capture_output=True, check=True,
     )
+    from tests.conftest import plant_mutmut_cfg
+
+    plant_mutmut_cfg(tmp_path)
     return tmp_path
 
 
@@ -85,6 +88,11 @@ def _run_review(cwd, extra_args=None, extra_env=None):
 
 
 class TestEmptyDiffGate:
+    def test_scratch_repo_plants_mutmut_cfg(self, scratch_repo):
+        text = (scratch_repo / "setup.cfg").read_text(encoding="utf-8")
+        assert "managed-by-code-forge-mutation" in text
+        assert "source_paths" in text
+
     def test_empty_diff_prints_no_changes(self, scratch_repo):
         """Empty diff -> 'no changes to review' + exit 0."""
         result = _run_review(scratch_repo)

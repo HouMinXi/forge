@@ -8,6 +8,7 @@ baseline test command, and mutations must be scoped to the diff while
 the whole source tree is mirrored for importability.
 """
 
+import os
 import subprocess
 from unittest.mock import patch
 
@@ -382,3 +383,53 @@ class TestAlsoCopyConfigValidation:
 
         config = load_gate_config(self._cfg(tmp_path, "[scripts/, hooks/]"))
         assert config["test"]["also_copy"] == ["scripts/", "hooks/"]
+
+
+class TestMutatedImportSurvivesAnEmptyCwd:
+    """A trampoline import must not guess source_paths from an empty cwd.
+
+    mutmut injects ``from mutmut.mutation.trampoline import ...`` into
+    every mutated file. Importing that module calls Config.get(), which
+    walks cwd for setup.cfg / src / lib. A CLI subprocess started from
+    a scratch git repo has none of those, so the import raises
+    FileNotFoundError before the command runs.
+
+    The helper that plants a marked setup.cfg in the scratch cwd is
+    what stops this. Without it the CLI subprocess dies on import.
+    """
+
+    def test_empty_cwd_crashes_without_a_planted_cfg(self, tmp_path):
+        from mutmut.configuration import _guess_source_paths
+
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            try:
+                _guess_source_paths()
+            except FileNotFoundError as exc:
+                assert "source_paths" in str(exc)
+            else:
+                raise AssertionError(
+                    "empty cwd must make mutmut guess source_paths and fail"
+                )
+        finally:
+            os.chdir(old)
+
+    def test_planted_cfg_lets_guess_succeed(self, tmp_path):
+        from mutmut.configuration import _load_config, Config
+
+        marker = "# managed-by-code-forge-mutation"
+        (tmp_path / "setup.cfg").write_text(
+            f"{marker}\n[mutmut]\nsource_paths=src\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            Config._config = None
+            cfg = _load_config()
+            assert [str(p) for p in cfg.source_paths] == ["src"]
+        finally:
+            os.chdir(old)
+            Config._config = None

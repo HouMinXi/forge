@@ -10,6 +10,23 @@ import pytest
 
 _git_snapshot_key = pytest.StashKey[dict]()
 
+# mutmut injects a trampoline import into every mutated file. Importing that
+# module calls Config.get(), which walks cwd for setup.cfg / src / lib. A CLI
+# subprocess started from a scratch git repo has none of those and dies on
+# FileNotFoundError before the command runs. Plant a marked cfg + empty src/
+# so the guess succeeds and the subprocess can start.
+_MUTMUT_SCRATCH_CFG = (
+    "# managed-by-code-forge-mutation\n[mutmut]\nsource_paths=src\n"
+)
+
+
+def plant_mutmut_cfg(root: Path) -> None:
+    """Stop a mutated import from guessing source_paths off an empty cwd."""
+    (root / "src").mkdir(exist_ok=True)
+    cfg = root / "setup.cfg"
+    if not cfg.exists():
+        cfg.write_text(_MUTMUT_SCRATCH_CFG, encoding="utf-8")
+
 
 @pytest.fixture(autouse=True)
 def _skip_worktree_check(monkeypatch):
