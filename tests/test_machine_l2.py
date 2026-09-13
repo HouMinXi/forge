@@ -79,7 +79,7 @@ class TestL2RunnerConfirmedMutant:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2(diff_files, baseline_cmd):
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             finding = _make_finding(
                 fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
             )
@@ -118,7 +118,7 @@ class TestMutantFindingsSkipAutofix:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2(diff_files, baseline_cmd):
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             finding = _make_finding(
                 fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
             )
@@ -152,7 +152,7 @@ class TestConsecutiveSurvivorRounds:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2(diff_files, baseline_cmd):
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             round_counter["n"] += 1
             if round_counter["n"] <= 2:
                 finding = _make_finding(
@@ -185,7 +185,7 @@ class TestConsecutiveSurvivorRounds:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2(diff_files, baseline_cmd):
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             round_counter["n"] += 1
             if round_counter["n"] == 1:
                 finding = _make_finding(
@@ -221,7 +221,7 @@ class TestThreeConsecutiveSurvivorRounds:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2(diff_files, baseline_cmd):
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             finding = _make_finding(
                 fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
             )
@@ -255,7 +255,7 @@ class TestL2RunnerException:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2(diff_files, baseline_cmd):
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             raise RuntimeError("mutation crash")
 
         machine = StateMachine(
@@ -636,7 +636,7 @@ class TestBugInjectTeeth:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2_toothless(diff_files, baseline_cmd):
+        def mock_l2_toothless(diff_files, baseline_cmd, *, baseline_timeout):
             finding = _make_finding(
                 fp="mutant-toothless", source="MUTANT", disp=Disposition.CONFIRMED
             )
@@ -666,7 +666,7 @@ class TestBugInjectTeeth:
         def mock_l0(registry, files):
             return ([], [])
 
-        def mock_l2_clean(diff_files, baseline_cmd):
+        def mock_l2_clean(diff_files, baseline_cmd, *, baseline_timeout):
             return ([], [])
 
         machine = StateMachine(
