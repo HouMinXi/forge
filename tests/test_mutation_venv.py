@@ -272,10 +272,13 @@ class TestRunMutationVenvBaseline:
             assert not (isinstance(cmd, list) and "-m" in cmd and "mutmut" in cmd)
 
     @patch("code_forge.mutation.subprocess.run")
-    def test_mutmut_run_inherits_baseline_pythonpath(self, mock_run):
+    def test_mutmut_run_inherits_baseline_pythonpath(self, mock_run, tmp_path):
         # mutmut 3.x rewrites sys.path after it has built mutants/;
-        # forging PYTHONPATH=mutants/src here races a directory that
-        # does not exist yet and breaks collection.
+        # forging PYTHONPATH=mutants/src races a directory that
+        # does not yet exist and breaks collection. Pin cwd: this
+        # test itself runs from mutants/ during a mutation stats
+        # pass, and Path.cwd()/src then contains "mutants/" even
+        # though the constructed path is still <repo>/src.
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and "results" in cmd:
@@ -285,7 +288,11 @@ class TestRunMutationVenvBaseline:
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
-        run_mutation(["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"])
+        run_mutation(
+            ["src/pkg/mod.py"],
+            ["/proj/.venv/bin/pytest", "tests/", "-q"],
+            cwd=tmp_path,
+        )
 
         mutmut_calls = [
             c
@@ -295,7 +302,7 @@ class TestRunMutationVenvBaseline:
         assert len(mutmut_calls) == 1
         pythonpath = mutmut_calls[0][1]["env"]["PYTHONPATH"]
         posix = pythonpath.replace("\\", "/")
-        assert posix.endswith("/src")
+        assert posix == str(tmp_path / "src").replace("\\", "/")
         assert "mutants/" not in posix
 
     def test_tests_only_diff_skips(self):
