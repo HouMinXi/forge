@@ -44,6 +44,10 @@ def scratch_repo(tmp_path):
         "    model: x\n"
         "    api_key_env: DUMMY_KEY\n"
     )
+    # Plant before any code_forge.cli spawn. A mutated import walks cwd
+    # for setup.cfg; trust dies with FileNotFoundError if this is late.
+    from tests.conftest import plant_mutmut_cfg
+    plant_mutmut_cfg(tmp_path)
     # Trust it (HOME must match the review env so trusted.json is found)
     src_dir = str(Path(__file__).resolve().parents[1] / "src")
     subprocess.run(
@@ -85,6 +89,11 @@ def _run_review(cwd, extra_args=None, extra_env=None):
 
 
 class TestEmptyDiffGate:
+    def test_scratch_repo_plants_mutmut_cfg(self, scratch_repo):
+        text = (scratch_repo / "setup.cfg").read_text(encoding="utf-8")
+        assert "managed-by-code-forge-mutation" in text
+        assert "source_paths" in text
+
     def test_empty_diff_prints_no_changes(self, scratch_repo):
         """Empty diff -> 'no changes to review' + exit 0."""
         result = _run_review(scratch_repo)

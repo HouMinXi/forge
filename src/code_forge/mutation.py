@@ -110,9 +110,14 @@ def _build_mutmut_config(
         "source_paths=" + ",".join(roots),
         "only_mutate=" + ",".join(py_files),
     ]
-    selection = " ".join(_baseline_test_selection(baseline_cmd))
+    # mutmut splits this value on newlines, so a space-joined string arrives
+    # as one argv token ("-q --ignore=x") that pytest rejects with exit 4.
+    # One argument per line, first on the key line (a bare key plus indented
+    # continuations leaves a leading newline mutmut keeps as an empty token).
+    selection = _baseline_test_selection(baseline_cmd)
     if selection:
-        lines.append(f"pytest_add_cli_args_test_selection={selection}")
+        lines.append("pytest_add_cli_args_test_selection=" + selection[0])
+        lines.extend("    " + a for a in selection[1:])
     also_copy = [p for p in (also_copy or []) if p.strip()]
     if also_copy:
         # First path on the key line. An empty also_copy= plus
@@ -699,6 +704,7 @@ def launch_detached_mutation(
     cwd: "Path",
     result_path: "Path",
     baseline_timeout: int = 120,
+    also_copy: list[str] | None = None,
 ) -> int | None:
     """Launch the mutation run in a detached process group, returning its PID."""
     import subprocess
@@ -746,6 +752,7 @@ result_path = Path({repr(str(result_path))})
 cwd_ref = Path({repr(str(cwd))})
 diff_files = {repr(diff_files)}
 baseline_cmd = {repr(baseline_cmd)}
+also_copy = {also_copy!r}
 
 try:
     with open(result_path, "r", encoding="utf-8") as f:
@@ -766,6 +773,7 @@ try:
         baseline_cmd=baseline_cmd,
         cwd=cwd_ref,
         baseline_timeout=int({baseline_timeout}),
+        also_copy=also_copy,
     )
     survivor_list = [
         f.id

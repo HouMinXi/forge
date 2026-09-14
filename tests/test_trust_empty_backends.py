@@ -34,10 +34,18 @@ def repo_with_gate(tmp_path):
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path,
                    capture_output=True, check=True)
     (tmp_path / ".code-forge").mkdir()
+    from tests.conftest import plant_mutmut_cfg
+
+    plant_mutmut_cfg(tmp_path)
     return tmp_path
 
 
 class TestTrustEmptyBackends:
+    def test_repo_with_gate_plants_mutmut_cfg(self, repo_with_gate):
+        text = (repo_with_gate / "setup.cfg").read_text(encoding="utf-8")
+        assert "managed-by-code-forge-mutation" in text
+        assert "source_paths" in text
+
     def test_empty_backends_rejected(self, repo_with_gate):
         """gate.yaml with empty backends: no 'Trusted:' line, exit 2."""
         gate = repo_with_gate / ".code-forge" / "gate.yaml"

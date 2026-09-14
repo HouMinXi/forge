@@ -143,11 +143,17 @@ class TestDeriveBasis:
 
     def test_absent_manifest_degrades_version_sensitive_l1(self):
         finding = _make_finding(source="L1", disposition=Disposition.CONFIRMED)
-        basis = derive_basis(finding, convergence_rounds=3, manifest_tier=ManifestTier.ABSENT)
+        basis = derive_basis(
+            finding,
+            convergence_rounds=3,
+            manifest_tier=ManifestTier.ABSENT,
+            exec_evidence="fail_before",
+        )
         assert basis.authority == AUTHORITY_LLM_DOCS_LATEST
         assert basis.falsification_survived is True
         assert basis.convergence_rounds == 3
         assert basis.not_verified_against_declared_env is True
+        assert basis.exec_evidence == "fail_before"
 
     def test_absent_manifest_degrades_version_sensitive_mutant(self):
         finding = _make_finding(source="MUTANT", disposition=Disposition.CONFIRMED)
@@ -201,9 +207,17 @@ class TestDeriveBasis:
 
     def test_observed_manifest_does_not_degrade(self):
         finding_l1 = _make_finding(source="L1", disposition=Disposition.CONFIRMED)
-        basis_l1 = derive_basis(finding_l1, manifest_tier=ManifestTier.OBSERVED)
+        basis_l1 = derive_basis(
+            finding_l1,
+            convergence_rounds=5,
+            manifest_tier=ManifestTier.OBSERVED,
+            exec_evidence="fail_before",
+        )
         assert basis_l1.authority == AUTHORITY_LLM_DOCS_LATEST
         assert basis_l1.not_verified_against_declared_env is False
+        assert basis_l1.falsification_survived is True
+        assert basis_l1.convergence_rounds == 5
+        assert basis_l1.exec_evidence == "fail_before"
 
         finding_mut = _make_finding(source="MUTANT", disposition=Disposition.CONFIRMED)
         basis_mut = derive_basis(finding_mut, manifest_tier=ManifestTier.OBSERVED)
@@ -222,3 +236,31 @@ class TestDeriveBasis:
             match=r"unknown finding source 'UNKNOWN_SOURCE'; add to basis derivation table",
         ):
             derive_basis(finding)
+
+
+class TestEverySourceStateAllowsHasABasis:
+    """StateFinding.source is a closed Literal; basis must cover all of it.
+
+    A source the type system permits but the table omits crashes the SARIF
+    writer at the very end of a review -- after every finding is settled,
+    so the whole run is lost. The two lists have to stay in step.
+    """
+
+    def test_untrusted_derives_a_basis(self):
+        finding = _make_finding(
+            source="UNTRUSTED", disposition=Disposition.CONFIRMED
+        )
+        basis = derive_basis(finding)
+        # Carried audit data, not an attested claim: same standing as INFRA.
+        assert basis.authority == "infra-unavailable"
+        assert basis.falsification_survived is False
+
+    def test_no_declared_source_is_missing_from_the_table(self):
+        import typing
+
+        sources = typing.get_args(
+            typing.get_type_hints(StateFinding)["source"]
+        )
+        assert sources, "StateFinding.source should be a Literal of names"
+        for source in sources:
+            derive_basis(_make_finding(source=source))

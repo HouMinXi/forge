@@ -31,6 +31,9 @@ def _subprocess_env():
 
 
 def _call(tmp_path, *args):
+    from tests.conftest import plant_mutmut_cfg
+
+    plant_mutmut_cfg(tmp_path)
     return subprocess.call(
         [sys.executable, "-m", "code_forge", *args],
         cwd=str(tmp_path),
@@ -39,6 +42,9 @@ def _call(tmp_path, *args):
 
 
 def _run(tmp_path, *args):
+    from tests.conftest import plant_mutmut_cfg
+
+    plant_mutmut_cfg(tmp_path)
     return subprocess.run(
         [sys.executable, "-m", "code_forge", *args],
         cwd=str(tmp_path),
@@ -124,8 +130,16 @@ def test_parser_rejects_unknown_terminal_state():
     assert args.terminal_state == "BOGUS"
 
 
+def test_run_plants_mutmut_cfg_on_a_bare_cwd(tmp_path):
+    """A spawn helper must plant before the CLI starts, even without _git_init."""
+    _run(tmp_path, "ledger")
+    text = (tmp_path / "setup.cfg").read_text(encoding="utf-8")
+    assert "managed-by-code-forge-mutation" in text
+    assert "source_paths" in text
+
+
 def test_ledger_no_subcommand_returns_cli_error(tmp_path):
-    """Bare `code-forge ledger` (no mark/list) exits non-zero with stderr hint."""
+    """Bare `code-forge ledger` (no mark/list) exits non-zero with a stderr hint."""
     result = _run(tmp_path, "ledger")
     assert result.returncode != 0
     assert "subcommand required" in result.stderr
@@ -186,6 +200,17 @@ def _git_init(path):
     sp.run(["git", "add", "x"], cwd=str(path), check=True, capture_output=True)
     sp.run(["git", "commit", "--quiet", "-m", "init"], cwd=str(path),
            check=True, capture_output=True)
+    from tests.conftest import plant_mutmut_cfg
+
+    plant_mutmut_cfg(path)
+
+
+def test_git_init_plants_mutmut_cfg(tmp_path):
+    """A CLI cwd must carry a marked setup.cfg so a mutated import does not guess source_paths."""
+    _git_init(tmp_path)
+    text = (tmp_path / "setup.cfg").read_text(encoding="utf-8")
+    assert "managed-by-code-forge-mutation" in text
+    assert "source_paths" in text
 
 
 def test_mark_writes_new_row(tmp_path):

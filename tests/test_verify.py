@@ -12,13 +12,10 @@ from code_forge.verify import (
     run_verify,
 )
 
-
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
-
 _SKILLS = ["qodo-review", "code-review-expert", "adversarial-qe"]
-
 
 def _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):
     return {
@@ -38,7 +35,6 @@ def _receipt(cycle, pass_n, diff_sha, covered_start=1, covered_end=50):
         ],
     }
 
-
 def _write_all(rd, diff_sha, vary=True):
     for c in range(1, 4):
         off = (c - 1) * 10 if vary else 0
@@ -47,7 +43,6 @@ def _write_all(rd, diff_sha, vary=True):
             (rd / name).write_text(json.dumps(
                 _receipt(c, p, diff_sha, 1 + off, 45 + off)
             ))
-
 
 def _nine_with_one_field_set(tmp_path, field, value):
     """Write 9 valid receipts, then set one top-level field on c2p1 to
@@ -64,7 +59,6 @@ def _nine_with_one_field_set(tmp_path, field, value):
     bad[field] = value
     (rd / "receipt-c2p1.json").write_text(json.dumps(bad))
     return sha
-
 
 class TestVerifyChecks:
     def test_pass_complete(self, tmp_path):
@@ -115,7 +109,6 @@ class TestVerifyChecks:
                 ))
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 201))})
         assert not r.passed
-
 
 class TestCorruptReceipt:
     """A receipt that cannot be parsed must fail verify, not crash it.
@@ -224,7 +217,6 @@ class TestCorruptReceipt:
         _write_all(rd, sha)
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
         assert r.passed
-
 
 class TestReceiptSchema:
     """A receipt with a field of the wrong type must fail verify by name,
@@ -368,7 +360,6 @@ class TestReceiptSchema:
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
         assert r.passed
 
-
 class TestTimestampMonotonic:
     """ITEM 5: timestamps must be non-decreasing in (cycle, pass) order."""
 
@@ -388,7 +379,6 @@ class TestTimestampMonotonic:
         assert not r.passed
         assert r.checks_run == 4
         assert "timestamps not monotonic" in r.reason
-
 
 class TestReceiptVerifyE2E:
     """End-to-end: receipt writer output must pass verify checks."""
@@ -621,7 +611,6 @@ class TestReceiptVerifyE2E:
         r = run_verify(tmp_path, diff_sha, diff_files)
         assert r.passed, r.reason
 
-
 # ---------------------------------------------------------------------------
 # Hardened-verify fixtures
 # ---------------------------------------------------------------------------
@@ -661,7 +650,6 @@ _EXCERPTS_OK = [
      "content": "p = 1\nq = 2\nr = 3"},
 ]
 
-
 def _hreceipt(cycle, pass_n, diff_sha, excerpts=None, findings=None,
               covered_line_ranges=None):
     """Build one receipt for hardened-verify tests."""
@@ -680,7 +668,6 @@ def _hreceipt(cycle, pass_n, diff_sha, excerpts=None, findings=None,
                                 if covered_line_ranges is not None else []),
     }
 
-
 def _write_hardened(rd, diff_sha, excerpts=None, findings=None):
     """Write 9 receipts (3 cycles x 3 passes) for hardened-verify tests."""
     for c in range(1, 4):
@@ -689,7 +676,6 @@ def _write_hardened(rd, diff_sha, excerpts=None, findings=None):
                 json.dumps(_hreceipt(c, p, diff_sha,
                                      excerpts=excerpts, findings=findings))
             )
-
 
 class TestHardenedVerify:
     """Tests that run_verify with diff_text=DIFF enters the hardened branch.
@@ -914,7 +900,6 @@ class TestHardenedVerify:
         r = run_verify(tmp_path, sha, diff_files)
         assert r.passed, r.reason
 
-
 class TestCrossRepoGuard:
     """cross_repo.py must route through _load_receipts, not bare json.loads.
     A receipt with a raw unescaped newline inside a JSON string must report
@@ -937,7 +922,6 @@ class TestCrossRepoGuard:
         from code_forge.errors import CorruptedReceiptError
         with pytest.raises(CorruptedReceiptError, match="receipt-c2p1.json"):
             _load_receipts(rd)
-
 
 class TestInvertedExcerptRange:
     """_validate_receipt_schema must reject start_line > end_line."""
@@ -964,7 +948,6 @@ class TestInvertedExcerptRange:
         receipt = _receipt(1, 1, "abc")
         _validate_receipt_schema(receipt, "test.json")
 
-
 def _write_cycles(rd, diff_sha, cycles):
     """Write receipts for arbitrary cycle numbers (list of ints), 3 passes each.
     Total receipts = len(cycles) * 3. For <3 cycles this is <9, which
@@ -977,7 +960,6 @@ def _write_cycles(rd, diff_sha, cycles):
             (rd / name).write_text(json.dumps(
                 _receipt(c, p, diff_sha, 1, 50)
             ))
-
 
 class TestLastThreeConsecutiveCycles:
     """ITEM A: verify the LAST 3 consecutive cycles, whatever their numbers."""
@@ -1119,7 +1101,6 @@ class TestLastThreeConsecutiveCycles:
         _write_cycles(rd, sha, [9, 10, 11])
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
         assert r.passed, f"cycles 9-11 should pass, got: {r.reason}"
-
 
 class TestOutOfHunkExcerpts:
     """ITEM B: out-of-hunk excerpts allowed when STEP A coverage satisfied."""
@@ -1621,7 +1602,6 @@ class TestOutOfHunkExcerpts:
         assert not r.passed, "excerpt for file not in diff should fail"
         assert "not in diff" in r.reason
 
-
 class TestNonConsecutiveEarlierCycles:
     """ITEM A edge case: non-consecutive earlier cycles with consecutive last 3."""
 
@@ -1647,7 +1627,6 @@ class TestNonConsecutiveEarlierCycles:
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
         assert not r.passed, f"expected FAIL for non-consecutive last 3, got: {r.reason}"
         assert "not consecutive" in r.reason
-
 
 class TestCoveredStringShape:
     """_covered must tolerate both dict and string shapes of
@@ -1687,7 +1666,6 @@ class TestCoveredStringShape:
         receipt = {"covered_line_ranges": []}
         result = _covered(receipt)
         assert result == set()
-
 
 class TestRequiredCyclesKnob:
     """How many consecutive clean cycles the gate demands is configurable.
@@ -1802,7 +1780,6 @@ class TestRequiredCyclesKnob:
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 50))})
         assert not r.passed
         assert "unreadable gate" in r.reason, r.reason
-
 
 class TestReadRequiredCycles:
     """An unstated knob falls back. An unreadable one raises.
@@ -2044,7 +2021,6 @@ class TestReadRequiredCycles:
         with pytest.raises(UnreadableGateError):
             read_required_cycles(tmp_path)
 
-
 class TestThreePerspectivesSurviveTheKnob:
     """Lowering required_cycles must not lower how many skills run.
 
@@ -2096,7 +2072,6 @@ class TestThreePerspectivesSurviveTheKnob:
         assert not r.passed
         assert "4/6" in r.reason, r.reason
 
-
 class TestRequiredCyclesIsValidatedAtTheEntryPoint:
     """run_verify is public; the CLI is one caller, not the only door.
 
@@ -2128,7 +2103,6 @@ class TestRequiredCyclesIsValidatedAtTheEntryPoint:
         r = run_verify(tmp_path, sha, {"src/f.py": [1]}, required_cycles=None)
         assert not r.passed
         assert "missing receipts" in r.reason, r.reason
-
 
 class TestCoverageFailureDetail:
     """Direct tests for _coverage_failure_detail, the helper behind the
@@ -2180,7 +2154,6 @@ class TestCoverageFailureDetail:
             "a.py (3 lines), b.py (3 lines), c.py (3 lines), "
             "d.py (3 lines), e.py (3 lines)")
 
-
 class TestLegacyCheck6Coverage:
     """Legacy check 6 (self-reported covered_line_ranges) carries the
     same actionable message as the hardened path, so the failure points
@@ -2212,7 +2185,6 @@ class TestLegacyCheck6Coverage:
         assert "< 60%" in r.reason
         assert "largest uncovered: src/f.py (7 lines)" in r.reason
         assert re.match(r"coverage \d+% < 60% cycle \d+", r.reason)
-
 
 class TestPreflightAgreesWithVerify:
     """The pre-flight warning must fire on exactly what verify refuses.
@@ -2296,7 +2268,6 @@ class TestPreflightAgreesWithVerify:
         assert self._preflight_warns(excerpt) is True
         assert self._verify_passes(tmp_path, excerpt) is False
 
-
 # ---------------------------------------------------------------------------
 # Task 1 RED: symmetric evidence validation (receipt-chain repair).
 #
@@ -2338,7 +2309,6 @@ _T1_E1 = {"file": "src/f.py", "start_line": 1, "end_line": 3,
 _T1_E2 = {"file": "src/f.py", "start_line": 10, "end_line": 12,
           "content": "a = 1\nb = 2\nc = 3"}
 
-
 def _t1_write(tmp_path, excerpts):
     """Write 9 clean receipts (3 cycles x 3 passes) carrying excerpts."""
     from copy import deepcopy
@@ -2352,7 +2322,6 @@ def _t1_write(tmp_path, excerpts):
                 json.dumps(_hreceipt(c, p, sha,
                                      excerpts=deepcopy(excerpts))))
     return sha, diff_files
-
 
 class TestTask1TwoHunkFixture:
     """The honest control and the diff facts it rests on must pass."""
@@ -2376,7 +2345,6 @@ class TestTask1TwoHunkFixture:
         assert [post["src/f.py"][ln].rstrip() for ln in (10, 11, 12)] == [
             "a = 1", "b = 2", "c = 3"]
         assert 5 not in post["src/f.py"]
-
 
 class TestTask1UnderlengthIsRejected:
     """Content must carry exactly end_line - start_line + 1 source lines.
@@ -2408,7 +2376,6 @@ class TestTask1UnderlengthIsRejected:
         assert not r.passed, (
             f"gap-spanning excerpt verified: {r.reason}")
 
-
 class TestTask1OverflowAndLiteralPins:
     """Overflow and literal mismatch already fail; rstrip-only tolerance
     already passes. Pinned so the shared-helper refactor cannot move them."""
@@ -2439,7 +2406,6 @@ class TestTask1OverflowAndLiteralPins:
         r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
         assert r.passed, r.reason
 
-
 class TestTask1DiffTextIsAuthoritative:
     """Hardened verification reads the caller's frozen diff_text, never
     the mutable working tree."""
@@ -2450,7 +2416,6 @@ class TestTask1DiffTextIsAuthoritative:
         sha, diff_files = _t1_write(tmp_path, [_T1_E1, _T1_E2])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
         assert r.passed, r.reason
-
 
 class TestTask1ExemptFiles:
     """Exempt files bypass hunk anchoring, but typed malformed inputs still fail."""
@@ -2539,7 +2504,6 @@ class TestMultiLineHunkRange:
                "content": "one\ntwo"}
 
         assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
-
 
 class TestBlankLineCarriesNoPositionalEvidence:
     """Blank lines must not participate in offset alignment.
@@ -2739,7 +2703,6 @@ class TestBlankLineCarriesNoPositionalEvidence:
             f"fabrication is a content mismatch, not a numbering slip: {err}"
         )
 
-
 class TestExemptFileKeepsCountParity:
     """An exempt file has no post-image, so the content check
     never runs and count parity is the only check it gets.
@@ -2814,7 +2777,6 @@ class TestOneLineMisnumberClassifier:
         assert not is_one_line_misnumber(
             "excerpt content mismatch at foo.py:1-2"
         )
-
 
 class TestHunkHaloContext:
     """Receipts that quote a hunk plus a few unchanged neighbours.
@@ -2921,3 +2883,225 @@ class TestHunkHaloContext:
         )
         assert not r.passed
         assert "mismatch" in r.reason
+
+class TestOffsetSearchPrefersTheNearestExplanation:
+    """A repeated block must not pull the offset search to a distant copy.
+
+    The search walks candidate deltas and takes the first one that explains
+    every claimed line. Boilerplate that appears twice in a file gives two
+    honest answers, and an ascending walk from the low bound returns the
+    far one. That turns a one-line slip into a large offset, which loses the
+    one-line channel and raises a CONFIRMED INFRA finding over a quote that
+    actually matches the line next door.
+    """
+
+    # Lines 3-4 and 20-21 carry the same two-line guard clause.
+    _DIFF = (
+        "diff --git a/mod.py b/mod.py\n"
+        "--- /dev/null\n"
+        "+++ b/mod.py\n"
+        "@@ -0,0 +1,21 @@\n"
+        "+def load(path):\n"
+        "+    data = read(path)\n"
+        "+    if data is None:\n"
+        "+        return None\n"
+        "+    return parse(data)\n"
+        "+\n"
+        "+def save(path, obj):\n"
+        "+    blob = encode(obj)\n"
+        "+    write(path, blob)\n"
+        "+    return True\n"
+        "+\n"
+        "+def refresh(path):\n"
+        "+    drop_cache(path)\n"
+        "+    return load(path)\n"
+        "+\n"
+        "+def reload(path):\n"
+        "+    bust(path)\n"
+        "+    data = read(path)\n"
+        "+    tail = 0\n"
+        "+    if data is None:\n"
+        "+        return None\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_fixture_really_repeats_the_block(self):
+        post, _, _ = self._ctx()
+        lines = post["mod.py"]
+        assert lines[3] == lines[20]
+        assert lines[4] == lines[21]
+        assert lines[19].strip() == "tail = 0"
+
+    def test_nearest_delta_wins_over_a_distant_repeat(self):
+        from code_forge.verify import _constant_offset
+
+        post, _, _ = self._ctx()
+        lines = post["mod.py"]
+        # A window wide enough to reach either copy of the repeated block,
+        # derived from the fixture so it survives edits to it.
+        span = max(lines)
+        # Quotes the second copy (20-21) but claims 19-20: a +1 slip.
+        claimed = {19: lines[20], 20: lines[21]}
+        assert _constant_offset(claimed, lines, -span, span) == 1
+
+    def test_repeated_block_slip_keeps_the_one_line_channel(self):
+        from code_forge.verify import (
+            is_one_line_misnumber,
+            validate_excerpt_evidence,
+        )
+
+        post, hunk_map, exempt = self._ctx()
+        lines = post["mod.py"]
+        exc = {
+            "file": "mod.py",
+            "start_line": 19,
+            "end_line": 20,
+            "content": lines[20] + "\n" + lines[21],
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, "a slipped excerpt is still reported"
+        assert is_one_line_misnumber(err), err
+
+
+class TestDroppedBlankIsToleratedAtEitherEnd:
+    """A dropped paragraph separator reads the same from either end.
+
+    A reviewer quoting across a blank line routinely leaves it out and
+    still declares the range that contains it. The tail case is already
+    tolerated: the post-image confirms the missing line is blank and the
+    quote is intact. The head case is the mirror image, but the count
+    branch only looks at the last declared line, so a blank first line
+    is reported as a short quote. The quote is whole; only its declared
+    start is one line early.
+    """
+
+    _DIFF = (
+        "diff --git a/doc.md b/doc.md\n"
+        "--- /dev/null\n"
+        "+++ b/doc.md\n"
+        "@@ -0,0 +1,6 @@\n"
+        "+alpha\n"
+        "+beta\n"
+        "+\n"
+        "+gamma\n"
+        "+delta\n"
+        "+epsilon\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_fixture_has_a_blank_separator(self):
+        post, _, _ = self._ctx()
+        assert post["doc.md"][3] == ""
+        assert post["doc.md"][2] == "beta"
+        assert post["doc.md"][4] == "gamma"
+
+    def test_dropped_blank_at_the_tail_is_tolerated(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        exc = {"file": "doc.md", "start_line": 1, "end_line": 3,
+               "content": "alpha\nbeta"}
+        assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
+
+    def test_dropped_blank_at_the_head_is_tolerated_too(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Declares 3-6, quotes the file's own 4-6: the blank at 3 is the
+        # separator the reviewer anchored on and did not quote.
+        exc = {"file": "doc.md", "start_line": 3, "end_line": 6,
+               "content": "gamma\ndelta\nepsilon"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is None, err
+
+    def test_short_quote_without_a_blank_still_fails(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # 4-6 are all non-blank, so a two-line quote is genuinely short.
+        exc = {"file": "doc.md", "start_line": 4, "end_line": 6,
+               "content": "delta\nepsilon"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None
+        assert "declares 3 lines but carries 2" in err
+
+    def test_blank_head_does_not_excuse_a_fabricated_quote(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Blank at the declared start, but the body is not in the file at
+        # any shift. Tolerating the count must not tolerate the content.
+        exc = {"file": "doc.md", "start_line": 3, "end_line": 6,
+               "content": "invented\nlines\nentirely"}
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, "a fabricated body must still be caught"
+        assert "declares" not in err, (
+            f"the fault is the content, not the count: {err}"
+        )
+
+
+class TestTheBlankIsSpentOnlyOnce:
+    """A boundary blank excuses one thing, not two.
+
+    Dropping a leading blank shifts the body down a line. Doing that
+    leaves a -1 offset against the file, which the blank-boundary rule
+    would then excuse a second time -- and between them the content
+    check is skipped entirely, so an excerpt that quietly omits a real
+    line of code passes.
+    """
+
+    _DIFF = (
+        "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+        "@@ -1,5 +1,5 @@\n"
+        "+\n+\n+\n+alpha\n+alpha\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_dropping_a_content_line_is_still_caught(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Declares 1-5; carries 4 lines with the last 'alpha' missing.
+        # The leading blanks must not launder that away.
+        exc = {
+            "file": "m.py",
+            "start_line": 1,
+            "end_line": 5,
+            "content": "\n\n\nalpha",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None, (
+            "excerpt dropped a content line and was accepted; the leading "
+            "blank was spent both on the body shift and on the offset excuse"
+        )
+
+    def test_a_genuine_dropped_separator_still_passes(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        diff = (
+            "diff --git a/d.py b/d.py\n--- a/d.py\n+++ b/d.py\n"
+            "@@ -1,5 +1,5 @@\n"
+            "+\n+alpha\n+beta\n+gamma\n+delta\n"
+        )
+        from code_forge.verify import _diff_validation_context
+
+        post, hunk_map, exempt = _diff_validation_context(diff)
+        exc = {
+            "file": "d.py",
+            "start_line": 1,
+            "end_line": 5,
+            "content": "alpha\nbeta\ngamma\ndelta",
+        }
+        assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None

@@ -365,3 +365,67 @@ class TestAsyncMutationLaunch:
             % sm._state.infra_errors
         )
 
+
+
+class TestAlsoCopyReachesTheMirror:
+    """Tests that load a file by path need that file inside mutants/.
+
+    mutmut mirrors only source_paths. A test doing
+    Path(__file__).parents[1] / "scripts" / "x.py" then dies with
+    FileNotFoundError under the mirror, and mutmut exits non-zero
+    before measuring anything. also_copy is the mutmut-side answer;
+    it has to survive the whole launch path to be of any use.
+    """
+
+    def test_launch_forwards_also_copy_to_the_child(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def fake_popen(argv, **kw):
+            captured["script"] = argv[2]
+            return type("P", (), {"pid": 4242})()
+
+        monkeypatch.setattr(mutation_module.subprocess, "Popen", fake_popen)
+
+        mutation_module.launch_detached_mutation(
+            diff_files=["src/pkg/mod.py"],
+            baseline_cmd=["pytest", "-q"],
+            cwd=tmp_path,
+            result_path=tmp_path / ".code-forge" / "mutation-result.json",
+            also_copy=["scripts/"],
+        )
+
+        assert "scripts/" in captured["script"], (
+            "also_copy never reached the spawned child, so the mirror will "
+            "lack the directory and path-loading tests will fail"
+        )
+
+    def test_gate_yaml_also_copy_reaches_the_launch(self, tmp_path, monkeypatch):
+        captured = {}
+
+        monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)
+        monkeypatch.setattr(
+            StateMachine, "_execute_round", lambda self, round_index: None
+        )
+        monkeypatch.setattr(
+            "code_forge.gate_check.load_gate_config",
+            lambda p: {
+                "test": {"command": ["pytest", "-q"], "also_copy": ["scripts/"]}
+            },
+        )
+
+        def fake_launch(diff_files, baseline_cmd, cwd, result_path,
+                        baseline_timeout=120, also_copy=None):
+            captured["also_copy"] = also_copy
+            return 5150
+
+        monkeypatch.setattr(
+            "code_forge.machine.launch_detached_mutation", fake_launch
+        )
+
+        sm = _make_ci_sm(tmp_path)
+        sm._run_ci()
+
+        assert captured.get("also_copy") == ["scripts/"], (
+            "test.also_copy in gate.yaml never reached launch_detached_mutation; "
+            "the mirror will lack the directory and path-loading tests will die"
+        )

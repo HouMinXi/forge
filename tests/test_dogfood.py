@@ -54,6 +54,17 @@ def _init_scratch_repo(root: Path) -> None:
     _git(["config", "user.name", "Test"], root)
     _git(["config", "user.email", "test@test.com"], root)
     _git(["config", "--local", "--unset", "core.hooksPath"], root)
+    from tests.conftest import plant_mutmut_cfg
+
+    plant_mutmut_cfg(root)
+
+
+def test_init_scratch_repo_plants_mutmut_cfg(tmp_path):
+    """A CLI cwd must carry a marked setup.cfg so a mutated import does not guess source_paths."""
+    _init_scratch_repo(tmp_path)
+    text = (tmp_path / "setup.cfg").read_text(encoding="utf-8")
+    assert "managed-by-code-forge-mutation" in text
+    assert "source_paths" in text
 
 
 def _write_file(path: Path, content: str) -> None:
