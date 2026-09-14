@@ -449,6 +449,18 @@ def _constant_offset(
     return None
 
 
+def _only_leading_ws_differs(quoted: str, actual: str) -> bool:
+    """True when the lines match after strip() but not after rstrip().
+
+    That is the indent-stripped quote: tokens are intact, only the
+    leading spaces (or tabs) were dropped or added. A punctuation or
+    identifier change fails strip() and stays a content mismatch.
+    """
+    if quoted.rstrip() == actual.rstrip():
+        return False
+    return quoted.strip() == actual.strip()
+
+
 def _blank_boundary_slip(
     exc_start: int,
     exc_end: int,
@@ -572,26 +584,46 @@ def validate_excerpt_evidence(
     }
     overlap = set(excerpt_line_map) & set(file_lines)
     if overlap:
+        offset = None
+        indent_ln = None
+        mismatch_ln = None
         for ln in sorted(overlap):
             if excerpt_line_map[ln].rstrip() != file_lines[ln].rstrip():
-                offset = _constant_offset(
-                    excerpt_line_map, file_lines, -64, 65)
-                if offset is not None and (
-                    blank_spent
-                    or not _blank_boundary_slip(
-                        exc_start, exc_end, offset, file_lines
-                    )
+                if offset is None:
+                    offset = _constant_offset(
+                        excerpt_line_map, file_lines, -64, 65)
+                if _only_leading_ws_differs(
+                    excerpt_line_map[ln], file_lines[ln]
                 ):
-                    return (
-                        f"excerpt misnumbered by {offset:+d} at {exc_file}:{exc_start}-{exc_end} (claims {exc_file}:{ln}, actually {exc_file}:{ln + offset})"
-                    )
-                if offset is not None:
-                    # Blank-boundary slip: the quote is anchored one line off
-                    # across a paragraph separator that carries no evidence.
-                    # The content itself checked out at the shift, so there is
-                    # nothing left to report.
-                    return None
-                return f"excerpt content mismatch at {exc_file}:{exc_start}-{exc_end} (line {ln})"
+                    if indent_ln is None:
+                        indent_ln = ln
+                else:
+                    mismatch_ln = ln
+                    break
+        if mismatch_ln is not None or indent_ln is not None:
+            ln = mismatch_ln if mismatch_ln is not None else indent_ln
+            if offset is not None and (
+                blank_spent
+                or not _blank_boundary_slip(
+                    exc_start, exc_end, offset, file_lines
+                )
+            ):
+                return (
+                    f"excerpt misnumbered by {offset:+d} at {exc_file}:{exc_start}-{exc_end} (claims {exc_file}:{ln}, actually {exc_file}:{ln + offset})"
+                )
+            if offset is not None:
+                # Blank-boundary slip: the quote is anchored one line off
+                # across a paragraph separator that carries no evidence.
+                # The content itself checked out at the shift, so there is
+                # nothing left to report.
+                return None
+            if mismatch_ln is not None:
+                return (
+                    f"excerpt content mismatch at {exc_file}:{exc_start}-{exc_end} (line {mismatch_ln})"
+                )
+            return (
+                f"excerpt indent-stripped at {exc_file}:{exc_start}-{exc_end}"
+            )
     outside = set(excerpt_line_map) - set(file_lines)
     if outside and not overlap:
         offset = _constant_offset(excerpt_line_map, file_lines, -64, 65)
@@ -668,13 +700,23 @@ def _diff_validation_context(
 
 
 def is_one_line_misnumber(err: str) -> bool:
-    """True when err names a constant +/-1 coordinate slip.
-
-    The detector still reports the offset. Callers that treat
-    evidence-quality faults separately from a dead backend use
-    this to pick the UNTRUSTED channel instead of INFRA/FAIL.
-    """
+    """True when err names a constant +/-1 coordinate slip."""
     return bool(re.search(r"excerpt misnumbered by [+-]1 ", err))
+
+
+def is_indent_stripped(err: str) -> bool:
+    """True when err names an indent-stripped quote.
+
+    Tokens match after strip(); only leading whitespace differs.
+    Callers treat this as evidence quality, same channel as a
+    one-line misnumber: UNTRUSTED, not RECEIPT_INVALID.
+    """
+    return "excerpt indent-stripped at " in err
+
+
+def is_evidence_quality_fault(err: str) -> bool:
+    """True when err is a one-line slip or an indent-stripped quote."""
+    return is_one_line_misnumber(err) or is_indent_stripped(err)
 
 
 def validate_excerpts_against_diff(
@@ -695,7 +737,7 @@ def validate_excerpts_against_diff(
         err = validate_excerpt_evidence(
             exc, hunk_map, post_image, exempt_files
         )
-        if err is not None and not is_one_line_misnumber(err):
+        if err is not None and not is_evidence_quality_fault(err):
             errors.append(err)
     return errors
 
@@ -946,7 +988,7 @@ def run_verify(
         # it and this running.
         for exc in all_excerpts:
             err = validate_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
-            if err is not None and not is_one_line_misnumber(err):
+            if err is not None and not is_evidence_quality_fault(err):
                 return VerifyResult(False, err, 5, cp)
 
         # STEP C: content verification against diff post-image
@@ -974,11 +1016,17 @@ def run_verify(
                 continue
 
             one_line_slip = False
+            indent_only = False
             if overlap_lines:
                 def normalize(s):
                     return s.rstrip()
                 for ln in sorted(overlap_lines):
                     if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
+                        if _only_leading_ws_differs(
+                            excerpt_line_map[ln], file_lines[ln]
+                        ):
+                            indent_only = True
+                            continue
                         # Distinguish a misnumbered excerpt from a fabricated
                         # one. A reviewer that ignored the annotated line
                         # numbers produces content that matches the file at a
@@ -1005,6 +1053,9 @@ def run_verify(
                             f"excerpt content mismatch at {exc['file']}:{exc['start_line']}-{exc['end_line']} (line {ln})",
                             5, cp,
                         )
+
+            if indent_only:
+                one_line_slip = True
 
             # Every claimed line must land in the post-image. A line
             # outside it is content nobody can check -- the tail of a

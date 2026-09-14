@@ -1334,7 +1334,7 @@ class StateMachine:
             return findings, excerpts
         from .verify import (
             _diff_validation_context,
-            is_one_line_misnumber,
+            is_evidence_quality_fault,
             validate_excerpt_evidence,
         )
 
@@ -1345,7 +1345,7 @@ class StateMachine:
             err = validate_excerpt_evidence(
                 exc, hunk_map, post_image, exempt_files,
             )
-            if err is not None and is_one_line_misnumber(err):
+            if err is not None and is_evidence_quality_fault(err):
                 digest = hashlib.sha256(err.encode("utf-8")).hexdigest()[:12]
                 fp = f"receipt-{digest}"
                 extra.append(StateFinding(

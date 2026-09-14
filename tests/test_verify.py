@@ -3105,3 +3105,117 @@ class TestTheBlankIsSpentOnlyOnce:
             "content": "alpha\nbeta\ngamma\ndelta",
         }
         assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
+
+
+
+class TestIndentStrippedExcerpt:
+    """A quote that drops only leading spaces is evidence quality, not a
+    dead backend.
+
+    Issue #5: reviewers often left-align a block. rstrip still fails,
+    strip matches every line, coordinates are right. That used to
+    raise RECEIPT_INVALID and zero the clean-round counter.
+    """
+
+    # Modify an existing file. A --- /dev/null add is treated as exempt
+    # by parse_diff_hunks, and STEP C would skip the excerpt.
+    _DIFF = (
+        "diff --git a/s.sh b/s.sh\n"
+        "--- a/s.sh\n"
+        "+++ b/s.sh\n"
+        "@@ -1 +1,7 @@\n"
+        "-placeholder\n"
+        "+    has_mram1=0\n"
+        "+    if [ -e /dev/spi_mram1 ]; then has_mram1=1; fi\n"
+        "+    case21_act=foo\n"
+        '+    if [ "$case21_act" = SKIP ]; then\n'
+        "+        yellow skip\n"
+        '+    elif [ "$case21_act" = FAIL ]; then\n'
+        "+        red fail\n"
+    )
+
+    _STRIPPED = (
+        "has_mram1=0\n"
+        "if [ -e /dev/spi_mram1 ]; then has_mram1=1; fi\n"
+        "case21_act=foo\n"
+        'if [ "$case21_act" = SKIP ]; then\n'
+        "    yellow skip\n"
+        'elif [ "$case21_act" = FAIL ]; then\n'
+        "    red fail"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def _exc(self, content):
+        return {
+            "file": "s.sh",
+            "start_line": 1,
+            "end_line": 7,
+            "content": content,
+        }
+
+    def test_indent_stripped_is_not_a_content_mismatch(self):
+        from code_forge.verify import (
+            is_indent_stripped,
+            is_one_line_misnumber,
+            validate_excerpt_evidence,
+        )
+
+        post, hunk_map, exempt = self._ctx()
+        err = validate_excerpt_evidence(
+            self._exc(self._STRIPPED), hunk_map, post, exempt
+        )
+        assert err is not None, "detector must still see the indent slip"
+        assert "content mismatch" not in err, err
+        assert is_indent_stripped(err), err
+        assert not is_one_line_misnumber(err), err
+
+    def test_a_token_change_is_still_a_mismatch(self):
+        from code_forge.verify import (
+            is_indent_stripped,
+            validate_excerpt_evidence,
+        )
+
+        post, hunk_map, exempt = self._ctx()
+        err = validate_excerpt_evidence(
+            self._exc(self._STRIPPED.replace("red fail", "red FAILX")),
+            hunk_map,
+            post,
+            exempt,
+        )
+        assert err is not None
+        assert "content mismatch" in err
+        assert not is_indent_stripped(err)
+
+    def test_run_verify_does_not_fail_the_receipt(self, tmp_path):
+        """STEP C used to re-compare with rstrip and kill the run."""
+        from code_forge.verify import parse_diff_files, run_verify
+
+        stripped = self._exc(self._STRIPPED)
+        rd = tmp_path / ".code-forge" / "receipts"
+        rd.mkdir(parents=True)
+        sha = _sha(self._DIFF)
+        _write_hardened(rd, sha, excerpts=[stripped])
+        r = run_verify(
+            tmp_path, sha, parse_diff_files(self._DIFF), diff_text=self._DIFF
+        )
+        assert r.passed, r.reason
+
+
+class TestIndentStrippedClassifier:
+    def test_indent_tag_matches(self):
+        from code_forge.verify import is_indent_stripped
+
+        assert is_indent_stripped(
+            "excerpt indent-stripped at s.sh:1-7"
+        )
+
+    def test_content_mismatch_does_not_match(self):
+        from code_forge.verify import is_indent_stripped
+
+        assert not is_indent_stripped(
+            "excerpt content mismatch at s.sh:1-7 (line 1)"
+        )
