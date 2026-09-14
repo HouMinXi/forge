@@ -261,6 +261,7 @@ def build_l1_provider(
     split_context: str = "",
     context_sources_text: str = "",
     reviewed_repositories: dict[str, str] | None = None,
+    retry_timeout: bool = False,
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -390,6 +391,7 @@ def build_l1_provider(
                 max_attempts=max_attempts,
                 initial_delay_s=initial_delay_s,
                 continuation_breaker=continuation_breaker,
+                retry_timeout=retry_timeout,
             )
             if (r.usage.input_tokens > 0
                     or r.usage.output_tokens > 0
@@ -711,6 +713,8 @@ def build_sampling_l1_provider(
     focus_spec: str = "",
     manifest_spec: str = "",
     context_sources_text: str = "",
+    max_attempts: int = 5,
+    initial_delay_s: float = 2.0,
 ) -> "Callable":
     """Build L1 provider that dispatches via MCP sampling.
 
@@ -803,6 +807,8 @@ def build_sampling_l1_provider(
                     invoke_sampling(
                         session, prompts[i], max_tokens=16384,
                         temperature=0.0, system_prompt=_system_prompt,
+                        max_attempts=max_attempts,
+                        initial_delay_s=initial_delay_s,
                     ),
                     timeout=300,
                 )

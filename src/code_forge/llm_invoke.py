@@ -17,7 +17,6 @@ import random
 import shlex
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import http.client
@@ -1030,6 +1029,42 @@ def _install_signal_handlers() -> None:
 _install_signal_handlers()
 
 
+def _retry_cause(exc: BaseException) -> str:
+    return " ".join(str(exc).split())[:400]
+
+
+def _emit_retrying(
+    name: str, attempt: int, max_attempts: int, delay: float, cause: str,
+) -> None:
+    progress.emit(
+        "retrying %s (%d/%d, waiting %.1fs) after %s"
+        % (name, attempt + 2, max_attempts, delay, cause)
+    )
+
+
+def _emit_retry_failed(name: str, max_attempts: int, cause: str) -> None:
+    progress.emit(
+        "retry failed %s after %d attempts: %s"
+        % (name, max_attempts, cause)
+    )
+
+
+def _retry_delay_s(
+    attempt: int,
+    initial_delay_s: float,
+    retry_after: float | None,
+) -> float:
+    base = min(
+        initial_delay_s * (2 ** attempt),
+        MAX_BACKOFF_S,
+    )
+    jitter = 0.0 if initial_delay_s == 0 else random.uniform(0, 0.5)
+    delay = base + jitter
+    if retry_after is not None:
+        delay = max(delay, retry_after)
+    return delay
+
+
 def llm_invoke(
     prompt: str,
     backend: Optional[BackendConfig] = None,
@@ -1038,6 +1073,7 @@ def llm_invoke(
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
     continuation_breaker: "TruncationBreaker | None" = None,
+    retry_timeout: bool = False,
 ) -> LLMResult:
     """Invoke LLM via backend (cli subprocess or api HTTP).
 
@@ -1059,6 +1095,9 @@ def llm_invoke(
         continuation_breaker: Run-level TruncationBreaker shared across
             calls; None gives each api call a fresh breaker (stateless).
             Ignored for cli backends.
+        retry_timeout: When True, a socket TimeoutError is retried like
+            a 429/503. Default False: a hung call is not a flake, and
+            retrying it at the full timeout_s would stall a review.
 
     Returns:
         LLMResult with content, usage (tokens), and duration_s
@@ -1111,6 +1150,7 @@ def llm_invoke(
             prompt, backend, timeout_s, expected_keys=expected_keys,
             max_attempts=max_attempts, initial_delay_s=initial_delay_s,
             continuation_breaker=continuation_breaker,
+            retry_timeout=retry_timeout,
         )
     else:
         raise LLMInvokeError(
@@ -1476,6 +1516,7 @@ def _invoke_api(
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
     continuation_breaker: "TruncationBreaker | None" = None,
+    retry_timeout: bool = False,
 ) -> LLMResult:
     """Invoke LLM via HTTP API (openai or anthropic format). Returns LLMResult."""
     # Look up API key (not needed for vertex which uses OAuth2)
@@ -1645,7 +1686,7 @@ def _invoke_api(
                     stderr=str(exc),
                     duration_s=time.monotonic() - start,
                     is_timeout=True,
-                    retryable=False,  # socket timeout is not transient
+                    retryable=retry_timeout,
                 ) from exc
         except LLMInvokeError as exc:
             if isinstance(exc, _TruncatedResponse):
@@ -1660,14 +1701,12 @@ def _invoke_api(
                         duration_s=time.monotonic() - start,
                         is_truncated=True,
                     )
+            cause = _retry_cause(exc)
             if not exc.retryable or attempt == max_attempts - 1:
+                if attempt > 0 or (exc.retryable and max_attempts == 1):
+                    _emit_retry_failed(backend.name, max_attempts, cause)
                 raise
-            delay = min(
-                initial_delay_s * (2 ** attempt),
-                MAX_BACKOFF_S,
-            ) + random.uniform(0, 0.5)
-            if exc.retry_after is not None:
-                delay = max(delay, exc.retry_after)
+            delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
             # Carry the cause. Without it this line names a backend and a
             # delay and nothing else, so a run that retries forever gives the
             # operator no way to tell a rate limit from a proxy queue drop
@@ -1681,11 +1720,7 @@ def _invoke_api(
             # delay is printed BEFORE the sleep, so the gap between two lines
             # is the sleep plus the NEXT attempt's duration. The line does not
             # say how long an attempt took.
-            cause = " ".join(str(exc).split())[:400]
-            sys.stderr.write(
-                "code-forge: retrying %s (%d/%d, waiting %.1fs) after %s\n"
-                % (backend.name, attempt + 2, max_attempts, delay, cause)
-            )
+            _emit_retrying(backend.name, attempt, max_attempts, delay, cause)
             time.sleep(delay)
             continue
         break  # success
@@ -2221,11 +2256,15 @@ async def invoke_sampling(
     max_tokens: int = 16384,
     temperature: float = 0.0,
     model_hint: str | None = None,
+    max_attempts: int = 5,
+    initial_delay_s: float = 2.0,
 ) -> LLMResult:
     from mcp.types import (
         SamplingMessage, TextContent as MCPTextContent,
         ModelPreferences, ModelHint,
     )
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1, got %d" % max_attempts)
     t0 = time.time()
     kwargs = {
         "max_tokens": max_tokens,
@@ -2242,67 +2281,89 @@ async def invoke_sampling(
         role="user",
         content=MCPTextContent(type="text", text=prompt),
     )]
-    result = await session.create_message(messages, **kwargs)
-    elapsed = time.time() - t0
+    last_exc: LLMInvokeError | None = None
+    for attempt in range(max_attempts):
+        try:
+            result = await session.create_message(messages, **kwargs)
+            elapsed = time.time() - t0
 
-    # content is Union[TextContent, ImageContent, AudioContent]
-    if isinstance(result.content, MCPTextContent):
-        raw_text = result.content.text
-    else:
-        raw_text = str(result.content)
+            # content is Union[TextContent, ImageContent, AudioContent]
+            if isinstance(result.content, MCPTextContent):
+                raw_text = result.content.text
+            else:
+                raw_text = str(result.content)
 
-    # Empty response: some MCP clients (e.g. Copilot free tier) advertise
-    # sampling capability but return empty text.
-    result_model = getattr(result, 'model', '') or ''
-    if not raw_text.strip():
-        raise LLMInvokeError(
-            "sampling response is empty (model=%s, stopReason=%s). "
-            "The MCP client may not fully implement createMessage. "
-            "Set outlet: subprocess in gate.yaml and configure an API backend."
-            % (result_model or '?', getattr(result, 'stopReason', '?')),
-            duration_s=elapsed,
-            kind="empty",
-        )
+            # Empty response: some MCP clients (e.g. Copilot free tier)
+            # advertise sampling capability but return empty text. That
+            # is a flake on free models, so it is retryable.
+            result_model = getattr(result, 'model', '') or ''
+            if not raw_text.strip():
+                raise LLMInvokeError(
+                    "sampling response is empty (model=%s, stopReason=%s). "
+                    "The MCP client may not fully implement createMessage. "
+                    "Set outlet: subprocess in gate.yaml and configure an API backend."
+                    % (result_model or '?', getattr(result, 'stopReason', '?')),
+                    duration_s=elapsed,
+                    kind="empty",
+                    retryable=True,
+                )
 
-    # copilotcli/auto and similar stub models return syntactically valid
-    # but useless responses. Detect early before wasting JSON parse effort.
-    if result_model.startswith('copilotcli/'):
-        raise LLMInvokeError(
-            "sampling model '%s' is a Copilot CLI stub that cannot "
-            "generate review content. Upgrade to Copilot Pro or set "
-            "outlet: subprocess with an API backend." % result_model,
-            duration_s=elapsed,
-            kind="stub_model",
-        )
+            # copilotcli/auto and similar stub models return syntactically
+            # valid but useless responses. Detect early before wasting
+            # JSON parse effort. Not retryable: the stub never improves.
+            if result_model.startswith('copilotcli/'):
+                raise LLMInvokeError(
+                    "sampling model '%s' is a Copilot CLI stub that cannot "
+                    "generate review content. Upgrade to Copilot Pro or set "
+                    "outlet: subprocess with an API backend." % result_model,
+                    duration_s=elapsed,
+                    kind="stub_model",
+                    retryable=False,
+                )
 
-    # Only maxTokens is true truncation. stopSequence/toolUse are normal completions.
-    # Check truncation BEFORE JSON parse: truncated output is almost always
-    # invalid JSON, and kind="truncated" (not "no_json") tells
-    # _dispatch_sampling the real failure class.
-    if result.stopReason == "maxTokens":
-        raise LLMInvokeError(
-            "sampling response truncated (stopReason == maxTokens)",
-            duration_s=elapsed,
-            kind="truncated",
-            retryable=False,
-        )
+            # Only maxTokens is true truncation. stopSequence/toolUse
+            # are normal completions. Check truncation BEFORE JSON
+            # parse: truncated output is almost always invalid JSON,
+            # and kind="truncated" (not "no_json") tells
+            # _dispatch_sampling the real failure class.
+            if result.stopReason == "maxTokens":
+                raise LLMInvokeError(
+                    "sampling response truncated (stopReason == maxTokens)",
+                    duration_s=elapsed,
+                    kind="truncated",
+                    retryable=False,
+                )
 
-    # Parse JSON same as _invoke_api path
-    text = _strip_fences(raw_text)
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        parsed = _extract_json_from_text(raw_text)
-        if parsed is None:
-            raise LLMInvokeError(
-                "sampling response contains no valid JSON "
-                "(first 120 chars: %r)" % raw_text[:120],
+            # Parse JSON same as _invoke_api path
+            text = _strip_fences(raw_text)
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, TypeError):
+                parsed = _extract_json_from_text(raw_text)
+                if parsed is None:
+                    raise LLMInvokeError(
+                        "sampling response contains no valid JSON "
+                        "(first 120 chars: %r)" % raw_text[:120],
+                        duration_s=elapsed,
+                        kind="no_json",
+                        retryable=True,
+                    )
+
+            return LLMResult(
+                content=parsed,
+                usage=Usage(0, 0),
                 duration_s=elapsed,
-                kind="no_json",
             )
-
-    return LLMResult(
-        content=parsed,
-        usage=Usage(0, 0),
-        duration_s=elapsed,
-    )
+        except LLMInvokeError as exc:
+            last_exc = exc
+            cause = _retry_cause(exc)
+            if not exc.retryable or attempt == max_attempts - 1:
+                if attempt > 0 or (exc.retryable and max_attempts == 1):
+                    _emit_retry_failed("sampling", max_attempts, cause)
+                raise
+            delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
+            _emit_retrying("sampling", attempt, max_attempts, delay, cause)
+            import asyncio
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc

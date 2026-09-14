@@ -241,6 +241,11 @@
           "maximum": 30,
           "default": 2,
           "description": "Initial delay in seconds before first retry. Doubles each attempt."
+        },
+        "retry_timeout": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, a socket TimeoutError is retried like 429/503. Default false: a hung call is not a flake."
         }
       }
     },

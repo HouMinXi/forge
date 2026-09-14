@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from code_forge.user_config import merge_backends
+from code_forge.user_config import merge_backends, merge_retry
 
 
 class TestMergeBackends:
@@ -36,6 +36,29 @@ class TestMergeBackends:
 
     def test_both_empty(self):
         assert merge_backends({}, {}) == {}
+
+
+class TestMergeRetry:
+    """User retry fills missing keys; project wins overlapping keys."""
+
+    def test_project_wins_overlapping_keys(self):
+        project = {"max_attempts": 3}
+        user = {"max_attempts": 8, "initial_delay_s": 1.5}
+        merged = merge_retry(project, user)
+        assert merged["max_attempts"] == 3
+        assert merged["initial_delay_s"] == 1.5
+
+    def test_empty_project_takes_user(self):
+        user = {"max_attempts": 8, "retry_timeout": True}
+        merged = merge_retry({}, user)
+        assert merged == user
+
+    def test_empty_user_keeps_project(self):
+        project = {"max_attempts": 2}
+        assert merge_retry(project, {}) == project
+
+    def test_neither_is_empty(self):
+        assert merge_retry({}, {}) == {}
 
 
 class TestMergeUserInto:

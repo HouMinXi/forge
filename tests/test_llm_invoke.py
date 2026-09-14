@@ -4101,8 +4101,67 @@ class TestRetryLoop:
             llm_invoke("prompt", backend=backend,
                         max_attempts=3, initial_delay_s=0.01)
         output = stderr_capture.getvalue()
-        assert "code-forge: retrying" in output
+        assert "retrying" in output
         assert "2/3" in output
+
+    def test_retry_line_flushes_stderr(self):
+        """MCP job_status tails a file; retry lines must flush."""
+        backend = _make_api_backend()
+        ok_resp = _mock_ok_response()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                err = urllib.error.HTTPError(
+                    "https://example.com", 429, "Rate limited", {}, None,
+                )
+                err.read = Mock(return_value=b"rate limit")
+                raise err
+            return ok_resp
+
+        import io
+        stderr_capture = io.StringIO()
+        flushed = []
+        orig_flush = stderr_capture.flush
+
+        def tracking_flush():
+            flushed.append(stderr_capture.getvalue())
+            orig_flush()
+
+        stderr_capture.flush = tracking_flush
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep"), \
+             patch("sys.stderr", stderr_capture):
+            llm_invoke("prompt", backend=backend,
+                        max_attempts=3, initial_delay_s=0.01)
+        assert any("retrying" in chunk for chunk in flushed), flushed
+
+    def test_exhaustion_emits_retry_failed(self):
+        """Last failed attempt logs retry failed with the cause."""
+        backend = _make_api_backend()
+
+        def side_effect(*args, **kwargs):
+            err = urllib.error.HTTPError(
+                "https://example.com", 503, "Unavailable", {}, None,
+            )
+            err.read = Mock(return_value=b"upstream flake")
+            raise err
+
+        import io
+        stderr_capture = io.StringIO()
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep"), \
+             patch("sys.stderr", stderr_capture):
+            with pytest.raises(LLMInvokeError):
+                llm_invoke("prompt", backend=backend,
+                            max_attempts=3, initial_delay_s=0.01)
+        output = stderr_capture.getvalue()
+        assert "retry failed" in output, output
+        assert "3 attempts" in output, output
+        assert "503" in output or "Unavailable" in output or "flake" in output
 
     def test_timeout_not_retried_raises_immediately(self):
         """TimeoutError is non-retryable -- single attempt, no sleep."""
@@ -4121,6 +4180,29 @@ class TestRetryLoop:
                            max_attempts=3, initial_delay_s=0.01)
         assert call_count[0] == 1
         mock_sleep.assert_not_called()
+
+    def test_timeout_retried_when_enabled(self):
+        """retry_timeout=True treats a socket timeout as transient."""
+        backend = _make_api_backend()
+        ok_resp = _mock_ok_response()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise TimeoutError("read timed out")
+            return ok_resp
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("urllib.request.urlopen", side_effect=side_effect), \
+             patch("time.sleep"):
+            result = llm_invoke(
+                "prompt", backend=backend,
+                max_attempts=3, initial_delay_s=0.01,
+                retry_timeout=True,
+            )
+        assert isinstance(result, LLMResult)
+        assert call_count[0] == 2
 
     def test_max_attempts_1_no_retry(self):
         """max_attempts=1 means no retry on 429."""
@@ -4801,7 +4883,9 @@ class TestInvokeSampling:
         )
         
         with pytest.raises(LLMInvokeError, match="sampling response contains no valid JSON"):
-            await invoke_sampling(session, prompt="test prompt")
+            await invoke_sampling(
+                session, prompt="test prompt", max_attempts=1,
+            )
 
     async def test_invoke_sampling_model_hint(self):
         from code_forge.llm_invoke import invoke_sampling
@@ -4839,7 +4923,9 @@ class TestInvokeSampling:
         )
 
         with pytest.raises(LLMInvokeError, match="empty"):
-            await invoke_sampling(session, prompt="test prompt")
+            await invoke_sampling(
+                session, prompt="test prompt", max_attempts=1,
+            )
 
     async def test_invoke_sampling_copilotcli_model_raises(self):
         """TEST-3: copilotcli/* model raises LLMInvokeError."""
@@ -4858,6 +4944,86 @@ class TestInvokeSampling:
 
         with pytest.raises(LLMInvokeError, match="copilotcli"):
             await invoke_sampling(session, prompt="test prompt")
+
+    async def test_invoke_sampling_retries_empty_then_succeeds(self):
+        """Empty sampling reply is retryable; later JSON succeeds."""
+        from code_forge.llm_invoke import invoke_sampling
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        empty = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text=""),
+            model="free-model",
+            stopReason="endTurn",
+        )
+        ok = CreateMessageResult(
+            role="assistant",
+            content=TextContent(
+                type="text",
+                text='{"findings": [], "code_excerpts": []}',
+            ),
+            model="free-model",
+            stopReason="endTurn",
+        )
+        session.create_message.side_effect = [empty, ok]
+        res = await invoke_sampling(
+            session, prompt="test prompt",
+            max_attempts=3, initial_delay_s=0.0,
+        )
+        assert res.content == {"findings": [], "code_excerpts": []}
+        assert session.create_message.await_count == 2
+
+    async def test_invoke_sampling_exhaustion_logs_retry_failed(self):
+        """Sampling retries then logs retry failed with the cause."""
+        from code_forge.llm_invoke import invoke_sampling, LLMInvokeError
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+        import io
+
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text=""),
+            model="free-model",
+            stopReason="endTurn",
+        )
+        stderr_capture = io.StringIO()
+        with patch("sys.stderr", stderr_capture), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(LLMInvokeError, match="empty"):
+                await invoke_sampling(
+                    session, prompt="test prompt",
+                    max_attempts=3, initial_delay_s=0.0,
+                )
+        assert session.create_message.await_count == 3
+        output = stderr_capture.getvalue()
+        assert "retry failed" in output, output
+        assert "3 attempts" in output, output
+
+    async def test_invoke_sampling_truncation_still_not_retried(self):
+        """maxTokens is a cap, not a flake; one attempt."""
+        from code_forge.llm_invoke import invoke_sampling, LLMInvokeError
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text='{"findings": []}'),
+            model="test-model",
+            stopReason="maxTokens",
+        )
+        with pytest.raises(LLMInvokeError, match="truncated"):
+            await invoke_sampling(
+                session, prompt="test prompt",
+                max_attempts=5, initial_delay_s=0.0,
+            )
+        assert session.create_message.await_count == 1
 
 
 class TestConnectionErrorHandling:

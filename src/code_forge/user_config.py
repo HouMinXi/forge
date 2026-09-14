@@ -92,6 +92,48 @@ def load_user_backends() -> dict[str, dict]:
     return backends
 
 
+def merge_retry(
+    project: dict,
+    user: dict,
+) -> dict:
+    """Merge retry maps: project wins overlapping keys, user fills gaps.
+
+    Empty or non-mapping sides are treated as {}. Invalid shapes are
+    ignored here; validate_retry_config runs on the merged result.
+    """
+    merged: dict = {}
+    if isinstance(user, dict):
+        merged.update(user)
+    if isinstance(project, dict):
+        merged.update(project)
+    return merged
+
+
+def load_user_retry() -> dict:
+    """Load the optional retry block from user-level config.
+
+    Returns {} when the file is missing, unreadable, or has no retry
+    key. Never raises: a bad user config must not take a review down.
+    """
+    import yaml as _y
+
+    path = user_config_path()
+    if path is None:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = _y.safe_load(f)
+    except Exception as exc:
+        log.warning("Cannot read user config %s: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    retry = data.get("retry")
+    if not isinstance(retry, dict):
+        return {}
+    return retry
+
+
 def merge_backends(
     project: dict[str, dict],
     user: dict[str, dict],

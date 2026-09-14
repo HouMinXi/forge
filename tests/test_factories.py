@@ -815,6 +815,27 @@ class TestInvokeFailureHandling:
             assert call.kwargs.get("max_attempts") == 5
             assert call.kwargs.get("initial_delay_s") == 2.0
 
+    def test_retry_timeout_forwarded_to_llm_invoke(self):
+        from code_forge.factories import build_l1_provider
+
+        resolved = _make_resolved("git")
+        good_resp = _stub_llm_response(
+            findings_json=[],
+            excerpts_json=[
+                {"file": "a.py", "start_line": 1,
+                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+            ],
+        )
+
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=good_resp) as mock:
+            provider = build_l1_provider(
+                "real", resolved, retry_timeout=True,
+            )
+            provider()
+
+        for call in mock.call_args_list:
+            assert call.kwargs.get("retry_timeout") is True
+
 
 class TestBuildSamplingL1Provider:
     def test_build_sampling_l1_provider_success(self):

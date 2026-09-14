@@ -1427,3 +1427,13 @@ retry:
     def test_initial_delay_int_accepted(self):
         """Integer value for initial_delay_s is valid (int is a number)."""
         validate_retry_config({"initial_delay_s": 5})
+
+    def test_retry_timeout_true_accepted(self):
+        validate_retry_config({"retry_timeout": True})
+
+    def test_retry_timeout_false_accepted(self):
+        validate_retry_config({"retry_timeout": False})
+
+    def test_retry_timeout_non_bool_rejected(self):
+        with pytest.raises(ValueError, match="retry_timeout"):
+            validate_retry_config({"retry_timeout": 1})

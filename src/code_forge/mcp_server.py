@@ -1007,12 +1007,31 @@ async def _dispatch_sampling(
     # capture event loop BEFORE dispatching to worker thread
     loop = asyncio.get_running_loop()
 
+    from code_forge.gate_check import validate_retry_config
+    from code_forge.user_config import load_user_retry, merge_retry
+    retry_cfg: dict = {}
+    if gate_yaml_path.is_file():
+        try:
+            import yaml as _y
+            data = _y.safe_load(gate_yaml_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("retry"), dict):
+                retry_cfg = data["retry"]
+        except Exception:
+            retry_cfg = {}
+    retry_cfg = merge_retry(retry_cfg, load_user_retry())
+    try:
+        validate_retry_config(retry_cfg)
+    except ValueError:
+        retry_cfg = {}
+
     l1_provider = build_sampling_l1_provider(
         session=session,
         loop=loop,
         resolved=resolved,
         contract_spec=contract_spec,
         focus_spec=focus_spec,
+        max_attempts=retry_cfg.get("max_attempts", 5),
+        initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
     )
 
     # ponytail: sampling path uses stubs -- stub falsifier (not "auto",
