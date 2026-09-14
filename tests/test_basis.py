@@ -143,11 +143,17 @@ class TestDeriveBasis:
 
     def test_absent_manifest_degrades_version_sensitive_l1(self):
         finding = _make_finding(source="L1", disposition=Disposition.CONFIRMED)
-        basis = derive_basis(finding, convergence_rounds=3, manifest_tier=ManifestTier.ABSENT)
+        basis = derive_basis(
+            finding,
+            convergence_rounds=3,
+            manifest_tier=ManifestTier.ABSENT,
+            exec_evidence="fail_before",
+        )
         assert basis.authority == AUTHORITY_LLM_DOCS_LATEST
         assert basis.falsification_survived is True
         assert basis.convergence_rounds == 3
         assert basis.not_verified_against_declared_env is True
+        assert basis.exec_evidence == "fail_before"
 
     def test_absent_manifest_degrades_version_sensitive_mutant(self):
         finding = _make_finding(source="MUTANT", disposition=Disposition.CONFIRMED)
@@ -201,9 +207,17 @@ class TestDeriveBasis:
 
     def test_observed_manifest_does_not_degrade(self):
         finding_l1 = _make_finding(source="L1", disposition=Disposition.CONFIRMED)
-        basis_l1 = derive_basis(finding_l1, manifest_tier=ManifestTier.OBSERVED)
+        basis_l1 = derive_basis(
+            finding_l1,
+            convergence_rounds=5,
+            manifest_tier=ManifestTier.OBSERVED,
+            exec_evidence="fail_before",
+        )
         assert basis_l1.authority == AUTHORITY_LLM_DOCS_LATEST
         assert basis_l1.not_verified_against_declared_env is False
+        assert basis_l1.falsification_survived is True
+        assert basis_l1.convergence_rounds == 5
+        assert basis_l1.exec_evidence == "fail_before"
 
         finding_mut = _make_finding(source="MUTANT", disposition=Disposition.CONFIRMED)
         basis_mut = derive_basis(finding_mut, manifest_tier=ManifestTier.OBSERVED)
