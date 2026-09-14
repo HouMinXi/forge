@@ -3219,3 +3219,39 @@ class TestIndentStrippedClassifier:
         assert not is_indent_stripped(
             "excerpt content mismatch at s.sh:1-7 (line 1)"
         )
+
+
+class TestOnlyLeadingWsDiffers:
+    """The predicate behind the indent-stripped verdict.
+
+    It has to answer three different questions, and the call sites only
+    ever reach it through the second one, so the other two need asking
+    here: a line that already matches is not an indent strip, a line
+    whose tokens changed is not one either.
+    """
+
+    def test_identical_line_is_not_an_indent_strip(self):
+        from code_forge.verify import _only_leading_ws_differs
+
+        line = "    echo hi"
+        assert not _only_leading_ws_differs(line, line)
+
+    def test_trailing_ws_only_is_not_an_indent_strip(self):
+        from code_forge.verify import _only_leading_ws_differs
+
+        assert not _only_leading_ws_differs("    echo hi   ", "    echo hi")
+
+    def test_leading_ws_dropped_is_an_indent_strip(self):
+        from code_forge.verify import _only_leading_ws_differs
+
+        assert _only_leading_ws_differs("echo hi", "    echo hi")
+
+    def test_leading_tabs_count_as_indent(self):
+        from code_forge.verify import _only_leading_ws_differs
+
+        assert _only_leading_ws_differs("echo hi", "\t\techo hi")
+
+    def test_changed_token_is_not_an_indent_strip(self):
+        from code_forge.verify import _only_leading_ws_differs
+
+        assert not _only_leading_ws_differs("echo bye", "    echo hi")
