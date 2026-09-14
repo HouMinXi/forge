@@ -92,6 +92,28 @@ CONTENT_10B = (
     "const value10 = 10;\n"
 )
 
+# Indented post-image. A quote that drops the four leading spaces is
+# evidence quality, not a dead backend (issue #5).
+DIFF_INDENT = (
+    "diff --git a/control.ts b/control.ts\n"
+    "--- a/control.ts\n+++ b/control.ts\n"
+    "@@ -1 +1,3 @@\n"
+    "-placeholder\n"
+    "+    const context = 1;\n"
+    "+    const value = 2;\n"
+    "+    const end = 3;\n"
+)
+CONTENT_INDENT = (
+    "    const context = 1;\n"
+    "    const value = 2;\n"
+    "    const end = 3;\n"
+)
+CONTENT_INDENT_STRIPPED = (
+    "const context = 1;\n"
+    "const value = 2;\n"
+    "const end = 3;\n"
+)
+
 NO_PASS = object()
 
 
@@ -158,6 +180,19 @@ def _payload(name: str) -> dict:
             },
         ]
         return v
+    if name == "indent_stripped":
+        v = copy.deepcopy(base)
+        v["code_excerpts"][0]["content"] = CONTENT_INDENT_STRIPPED
+        v["code_excerpts"][0]["start_line"] = 1
+        v["code_excerpts"][0]["end_line"] = 3
+        return v
+    if name == "indent_plus_token":
+        v = copy.deepcopy(base)
+        v["code_excerpts"][0]["content"] = CONTENT_INDENT_STRIPPED.replace(
+            "end = 3", "end = 30")
+        v["code_excerpts"][0]["start_line"] = 1
+        v["code_excerpts"][0]["end_line"] = 3
+        return v
     raise KeyError(name)
 
 
@@ -170,6 +205,7 @@ def _run(mode: Mode, payload_name: str, tmp_path: Path,
         DIFF: CONTENT,
         DIFF_10: CONTENT_10,
         DIFF_10B: CONTENT_10B,
+        DIFF_INDENT: CONTENT_INDENT,
     }[diff]
     (cwd / "control.ts").write_text(content)
     state_dir = cwd / ".code-forge"
@@ -309,6 +345,38 @@ def test_one_line_coordinate_slip_does_not_fail_the_gate(mode, tmp_path):
     assert all(f["source"] == "UNTRUSTED" for f in slips), slips
     assert not any(
         f["source"] == "INFRA" and "misnumbered" in f["description"]
+        for f in res["findings"]
+    ), res["findings"]
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_indent_stripped_quote_does_not_fail_the_gate(mode, tmp_path):
+    """A left-aligned quote of indented code is UNTRUSTED, not INFRA."""
+    res = _run(mode, "indent_stripped", tmp_path, diff=DIFF_INDENT)
+    assert res["returned"] == Verdict.PASS.value, res
+    assert res["memory_verdict"] == Verdict.PASS.value
+    assert res["disk_verdict"] == Verdict.PASS.value
+    if mode == Mode.LOCAL:
+        assert res["clean_rounds"] == 3
+    slips = [
+        f for f in res["findings"]
+        if "indent-stripped" in f["description"]
+    ]
+    assert slips, res["findings"]
+    assert all(f["source"] == "UNTRUSTED" for f in slips), slips
+    assert not any(
+        f["source"] == "INFRA" and "indent-stripped" in f["description"]
+        for f in res["findings"]
+    ), res["findings"]
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+def test_indent_stripped_plus_token_change_still_fails(mode, tmp_path):
+    """A token change next to stripped indent is still a dead quote."""
+    res = _run(mode, "indent_plus_token", tmp_path, diff=DIFF_INDENT)
+    assert res["returned"] != Verdict.PASS.value, res
+    assert not any(
+        "indent-stripped" in f["description"]
         for f in res["findings"]
     ), res["findings"]
 
