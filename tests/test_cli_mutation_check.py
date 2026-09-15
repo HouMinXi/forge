@@ -150,6 +150,25 @@ class TestMutationCheckDispatch:
             result = main()
         assert result == EXIT_FAIL
 
+    def test_dispatch_tool_error_is_not_pass(self, tmp_path, monkeypatch, capsys):
+        from code_forge.disposition import Disposition
+        from code_forge.state import StateFinding
+
+        diff_file = tmp_path / "test.diff"
+        diff_file.write_text("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n")
+        error = StateFinding(
+            id="MUTATION_ERROR", fingerprint="mutation-invocation-error",
+            source="MUTANT", disposition=Disposition.CONFIRMED,
+            file="", line_range=[], description="mutmut run failed (exit 1): stdout: cause",
+        )
+        with patch("code_forge.mutation.run_mutation", return_value=([error], [])):
+            monkeypatch.setattr(sys, "argv", ["code-forge", "mutation-check", "--diff", str(diff_file)])
+            result = main()
+        assert result == EXIT_CLI_ERROR
+        output = capsys.readouterr()
+        assert "cause" in output.err
+        assert "PASS" not in output.err + output.out
+
     def test_dispatch_cli_error_missing_diff(self, tmp_path, monkeypatch):
         """mutation-check returns EXIT_CLI_ERROR when --diff file not found."""
         monkeypatch.setattr(
