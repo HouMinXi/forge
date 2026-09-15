@@ -556,10 +556,22 @@ class StateMachine:
                 test_config = config.get("test", {})
                 baseline_timeout = test_config.get("timeout_seconds", 120)
                 also_copy = test_config.get("also_copy")
+                # Resource guards for the mutmut tree. mutmut defaults
+                # --max-children to os.cpu_count(); on a 16-core host that
+                # fanned out to 16 full-suite pytest processes and the OOM
+                # killer took the review service (6.3G peak, 2026-09-15).
+                # None for either key keeps run_mutation's own defaults.
+                mutation_max_children = test_config.get("mutation_max_children")
+                mem_mb = test_config.get("mutation_memory_limit_mb")
+                mutation_memory_limit = (
+                    int(mem_mb) * 1024**2 if mem_mb is not None else None
+                )
             except FileNotFoundError as exc:
                 baseline_cmd = None
                 baseline_timeout = 120
                 also_copy = None
+                mutation_max_children = None
+                mutation_memory_limit = None
                 self._state.infra_errors.append(
                     f"CI: mutation skipped -- gate.yaml not found: {exc}"
                 )
@@ -567,6 +579,8 @@ class StateMachine:
                 baseline_cmd = None
                 baseline_timeout = 120
                 also_copy = None
+                mutation_max_children = None
+                mutation_memory_limit = None
                 # Both sibling skips below say why they skipped. Without
                 # this one the gate simply never launches: no finding, no
                 # error, and a PASS indistinguishable from a run where
@@ -583,6 +597,8 @@ class StateMachine:
                     pid = launch_detached_mutation(
                         diff_files, baseline_cmd, self.cwd,
                         result_path, baseline_timeout, also_copy,
+                        max_children=mutation_max_children,
+                        memory_limit_bytes=mutation_memory_limit,
                     )
                 except Exception as exc:  # noqa: BLE001
                     pid = None
