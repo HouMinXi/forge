@@ -57,11 +57,12 @@ class ExcerptEvidenceError(ValueError):
     Distinct from the plain ValueError raised for a malformed response.
     Nothing was parsed in the malformed case, so nothing can be audited and
     the run has learned only that the backend is unusable. Here the reply
-    parsed, named real files and carried findings; only the evidence
-    coordinates were wrong. The two must not converge on the same
-    CONFIRMED infrastructure finding, because that makes a reviewer with a
-    coordinate habit indistinguishable from a dead backend and blocks the
-    clean-round counter forever.
+    parsed. Either it named files and the coordinates were wrong, or it
+    claimed a clean pass with empty findings and empty excerpts -- a
+    zero-cost envelope, not a dead backend. The two must not converge on
+    the same CONFIRMED infrastructure finding, because that makes a
+    reviewer with a coordinate habit indistinguishable from a dead backend
+    and blocks the clean-round counter forever.
     """
 
 
@@ -113,6 +114,46 @@ def excerpt_lines(text: str) -> list[str]:
     return text.removesuffix("\n").split("\n")
 
 
+def _hoist_nested_excerpts(data: dict) -> None:
+    """Lift per-finding code_excerpts onto the envelope root.
+
+    Some backends (Agnes expert among them) return a parseable object
+    whose excerpts sit inside each finding rather than at the required
+    root key. That is the same class of envelope mismatch as a markdown
+    fence: the evidence is present, the wrapping is wrong. Repairing
+    the wrapping is not fabricating excerpts.
+
+    Only runs when the root key is absent. A present key, including an
+    empty list, is a claimed envelope and is left alone so coverage is
+    not double-counted and a silent empty root is not papered over.
+    Mutates ``data``; copies every finding dict so the caller's objects
+    stay intact. Non-dict entries are kept as-is and do not stop the
+    walk; schema checks after hoist still reject them.
+    """
+    if "code_excerpts" in data:
+        return
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return
+    hoisted: list = []
+    rewritten: list = []
+    for item in findings:
+        if not isinstance(item, dict):
+            rewritten.append(item)
+            continue
+        nested = item.get("code_excerpts")
+        if isinstance(nested, list) and nested:
+            hoisted.extend(nested)
+            fresh = dict(item)
+            del fresh["code_excerpts"]
+            rewritten.append(fresh)
+        else:
+            rewritten.append(dict(item))
+    if hoisted:
+        data["findings"] = rewritten
+        data["code_excerpts"] = hoisted
+
+
 def excerpt_line_count_matches(text: str, claimed: int) -> bool:
     """Report whether an excerpt carries as many lines as it declares.
 
@@ -157,6 +198,8 @@ def validate_reviewer_json(raw: str | dict) -> dict:
 
     if not isinstance(data, dict):
         raise ValueError("not a JSON object")
+
+    _hoist_nested_excerpts(data)
 
     for field in _REQUIRED_FIELDS:
         if field not in data:
@@ -221,7 +264,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
             )
 
     if len(data["findings"]) == 0 and len(data["code_excerpts"]) == 0:
-        raise ValueError(
+        raise ExcerptEvidenceError(
             "findings=0 but code_excerpts empty -- reviewer must provide "
             "per-hunk excerpts even for clean passes"
         )

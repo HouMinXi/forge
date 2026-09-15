@@ -430,6 +430,41 @@ class TestInfraSourceTagging:
             "the candidate must survive as audit data, not disappear"
         )
 
+    def test_empty_clean_pass_envelope_is_not_confirmed_infra(self):
+        """findings=[] + code_excerpts=[] parsed; it is a zero-cost envelope.
+
+        Tagging that CONFIRMED/INFRA makes a clean-looking empty reply look
+        like a dead backend and trips TimeoutBreaker after three rounds.
+        """
+        from unittest.mock import patch as _patch
+
+        from code_forge.factories import build_l1_provider
+        from code_forge.llm_invoke import LLMResult
+        from code_forge.llm_invoke import Usage as LLMUsage
+
+        resolved = _make_resolved("git")
+        payload = {"findings": [], "code_excerpts": []}
+
+        with _patch(
+            "code_forge.llm_invoke.llm_invoke"
+        ) as mock_invoke:
+            mock_invoke.return_value = LLMResult(
+                content=json.dumps(payload),
+                usage=LLMUsage(input_tokens=0, output_tokens=0),
+                duration_s=0.0,
+            )
+            provider = build_l1_provider("real", resolved)
+            findings, _, _, _ = provider()
+
+        confirmed_infra = [
+            f for f in findings
+            if f.source == "INFRA" and f.disposition == Disposition.CONFIRMED
+        ]
+        assert not confirmed_infra, (
+            "empty clean-pass envelope must not masquerade as infrastructure "
+            "failure: %s" % [f.description for f in confirmed_infra]
+        )
+
     def test_unparseable_response_still_confirms_infra(self):
         """The downgrade must not reach a response that is not JSON at all.
 

@@ -8,6 +8,7 @@ import threading
 import time
 import io
 import urllib.error
+from typing import ClassVar
 from unittest.mock import patch, MagicMock, Mock
 
 import pytest
@@ -3334,6 +3335,52 @@ class TestExtractJsonFromText:
         result = self._extract(text)
         assert result == {"findings": [], "k": 'value with "quote"'}
 
+    def test_literal_newline_in_excerpt_content_is_accepted(self):
+        """Models quoting source often emit a raw LF inside a JSON string.
+
+        RFC 8259 forbids unescaped U+0000-U+001F. json.loads default
+        (strict=True) raises Invalid control character. The review
+        envelope parser must accept that shape: the quoted source is
+        still evidence, the wrapping is wrong -- same class as a
+        markdown fence, not a dead backend.
+        Specimen: r4 qodo, column 9875, agnes-intl, 5 identical retries.
+        """
+        raw = (
+            '{"findings": [], "code_excerpts": [{'
+            '"file": "src/code_forge/reviewer_json.py",'
+            '"start_line": 57, "end_line": 58,'
+            '"content": "    Distinct from the plain ValueError.\n'
+            '    Nothing was parsed in the malformed case."'
+            "}]}"
+        )
+        with pytest.raises(json.JSONDecodeError, match="Invalid control character"):
+            json.loads(raw)
+        got = self._extract(raw)
+        assert got is not None
+        assert got["findings"] == []
+        excerpt = got["code_excerpts"][0]
+        assert excerpt["file"] == "src/code_forge/reviewer_json.py"
+        assert "\n" in excerpt["content"]
+        assert "Nothing was parsed" in excerpt["content"]
+
+    def test_literal_tab_in_excerpt_content_is_accepted(self):
+        raw = '{"findings": [], "code_excerpts": [{"file": "a.sh", "start_line": 1, "end_line": 1, "content": "\\tlocal x"}]}'
+        # The above uses a JSON-escaped tab. Build a truly raw tab:
+        raw = (
+            '{"findings": [], "code_excerpts": [{'
+            '"file": "a.sh", "start_line": 1, "end_line": 1,'
+            '"content": "' + "\t" + 'local x"}]}'
+        )
+        with pytest.raises(json.JSONDecodeError, match="Invalid control character"):
+            json.loads(raw)
+        got = self._extract(raw)
+        assert got is not None
+        assert got["code_excerpts"][0]["content"] == "\tlocal x"
+
+    def test_unbalanced_json_still_returns_none(self):
+        """strict=False must not invent an envelope from truncated JSON."""
+        assert self._extract('{"findings": [{"unterminated') is None
+
     # -- falsify regression reproducer (RED on 652cbd6, GREEN after this fix) --
 
     def test_falsify_verdict_without_expected_keys_returns_none(self):
@@ -5989,3 +6036,181 @@ class TestFailureKindClassification:
                            max_attempts=1)
         assert ei.value.kind == "conn"
         assert ei.value.is_timeout is True
+
+
+class TestExcerptRepair:
+    """A complete JSON with findings but no excerpts is not a dead backend.
+
+    Expert r5 (agnes-cn) returned six findings and omitted code_excerpts
+    entirely. validate_reviewer_json then raised missing-required-field,
+    tagged CONFIRMED/INFRA, and tripped TimeoutBreaker. Reclassifying
+    that as ExcerptEvidenceError would only hide the breaker. The
+    producer must ask once more for excerpts, carrying the original
+    findings and the review prompt, and must not invent them.
+    """
+
+    _FINDING: ClassVar[dict] = {
+        "file": "src/code_forge/reviewer_json.py",
+        "line": 206,
+        "severity": "P2",
+        "description": "hoist skipped when nested lists empty",
+    }
+    _EXCERPT: ClassVar[dict] = {
+        "file": "src/code_forge/reviewer_json.py",
+        "start_line": 202,
+        "end_line": 206,
+        "content": (
+            "    _hoist_nested_excerpts(data)\n"
+            "    for field in _REQUIRED_FIELDS:\n"
+            "        if field not in data:\n"
+            "            raise ValueError(f\"missing required field: {field}\")"
+        ),
+    }
+
+    def _usage(self):
+        return {"prompt_tokens": 10, "completion_tokens": 20}
+
+    def _invoke(self, side_effect, **kw):
+        backend = _make_api_backend(name="ds", fmt="openai")
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            result = llm_invoke(
+                "review this diff\n+ hoist nested excerpts",
+                backend=backend,
+                **kw,
+            )
+        return result, mock_invoke
+
+    def test_findings_without_excerpts_asks_again(self):
+        first = json.dumps({"findings": [self._FINDING]})
+        second = json.dumps({
+            "findings": [self._FINDING],
+            "code_excerpts": [self._EXCERPT],
+        })
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage), (second, usage)])
+        assert mock_invoke.call_count == 2
+        assert result.content["findings"] == [self._FINDING]
+        assert result.content["code_excerpts"] == [self._EXCERPT]
+        repair_prompt = mock_invoke.call_args_list[1][0][0]
+        assert "code_excerpts" in repair_prompt
+        assert "Do not invent" in repair_prompt
+        assert self._FINDING["description"] in repair_prompt
+        assert "review this diff" in repair_prompt
+        assert "<findings>" in repair_prompt
+        assert "<original>" in repair_prompt
+
+    def test_repair_keeps_original_findings(self):
+        """The follow-up may rewrite findings; those edits are dropped."""
+        first = json.dumps({"findings": [self._FINDING]})
+        rewritten = dict(self._FINDING)
+        rewritten["description"] = "invented finding"
+        second = json.dumps({
+            "findings": [rewritten],
+            "code_excerpts": [self._EXCERPT],
+        })
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage), (second, usage)])
+        assert mock_invoke.call_count == 2
+        assert result.content["findings"] == [self._FINDING]
+        assert result.content["code_excerpts"] == [self._EXCERPT]
+
+    def test_nested_excerpts_skip_repair(self):
+        first = json.dumps({
+            "findings": [{
+                **self._FINDING,
+                "code_excerpts": [self._EXCERPT],
+            }],
+        })
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage)])
+        assert mock_invoke.call_count == 1
+        assert "code_excerpts" not in result.content
+        assert result.content["findings"][0]["code_excerpts"] == [self._EXCERPT]
+
+    def test_root_excerpts_skip_repair(self):
+        first = json.dumps({
+            "findings": [self._FINDING],
+            "code_excerpts": [self._EXCERPT],
+        })
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage)])
+        assert mock_invoke.call_count == 1
+        assert result.content["code_excerpts"] == [self._EXCERPT]
+
+    def test_empty_findings_skip_repair(self):
+        first = json.dumps({"findings": []})
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage)])
+        assert mock_invoke.call_count == 1
+        assert result.content == {"findings": []}
+
+    def test_empty_root_list_with_findings_skips_repair(self):
+        """A present empty list is a claimed envelope, not a missing key."""
+        first = json.dumps({
+            "findings": [self._FINDING],
+            "code_excerpts": [],
+        })
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage)])
+        assert mock_invoke.call_count == 1
+        assert result.content["code_excerpts"] == []
+
+    def test_expected_keys_skip_repair(self):
+        first = json.dumps({"verdict": "CONFIRMED", "reasoning": "x"})
+        usage = self._usage()
+        result, mock_invoke = self._invoke(
+            [(first, usage)],
+            expected_keys=frozenset({"verdict", "reasoning"}),
+        )
+        assert mock_invoke.call_count == 1
+        assert result.content == {"verdict": "CONFIRMED", "reasoning": "x"}
+
+    def test_repair_without_excerpts_returns_original(self):
+        first = json.dumps({"findings": [self._FINDING]})
+        second = json.dumps({"findings": [self._FINDING]})
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage), (second, usage)])
+        assert mock_invoke.call_count == 2
+        assert result.content == {"findings": [self._FINDING]}
+        assert "code_excerpts" not in result.content
+
+    def test_repair_error_returns_original(self):
+        first = json.dumps({"findings": [self._FINDING]})
+        usage = self._usage()
+        result, mock_invoke = self._invoke([
+            (first, usage),
+            LLMInvokeError("boom", retryable=True),
+        ])
+        assert mock_invoke.call_count == 2
+        assert result.content == {"findings": [self._FINDING]}
+
+    def test_repair_does_not_consume_max_attempts(self):
+        first = json.dumps({"findings": [self._FINDING]})
+        second = json.dumps({
+            "findings": [self._FINDING],
+            "code_excerpts": [self._EXCERPT],
+        })
+        usage = self._usage()
+        result, mock_invoke = self._invoke(
+            [(first, usage), (second, usage)],
+            max_attempts=1,
+        )
+        assert mock_invoke.call_count == 2
+        assert result.content["code_excerpts"] == [self._EXCERPT]
+
+    def test_repair_nested_excerpts_are_lifted_to_root(self):
+        first = json.dumps({"findings": [self._FINDING]})
+        second = json.dumps({
+            "findings": [{
+                **self._FINDING,
+                "code_excerpts": [self._EXCERPT],
+            }],
+        })
+        usage = self._usage()
+        result, mock_invoke = self._invoke([(first, usage), (second, usage)])
+        assert mock_invoke.call_count == 2
+        assert result.content["findings"] == [self._FINDING]
+        assert result.content["code_excerpts"] == [self._EXCERPT]
