@@ -29,6 +29,9 @@ docs/adr/
 .claude/
 CLAUDE.md
 *.jsonl
+# Ledgers the evaluation page cites. The glob above would drop them.
+!docs/eval/
+!docs/eval/*.jsonl
 
 # Secrets and credentials
 .env
