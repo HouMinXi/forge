@@ -18,6 +18,7 @@ from code_forge.llm_invoke import (
     LLMInvokeError,
     LLMResult,
     Usage,
+    _invoke_openai,
     _read_with_deadline,
 )
 from code_forge.backend import BackendConfig, DEFAULT_BACKEND
@@ -3655,6 +3656,68 @@ class TestCheckBodyError:
         result = _check_body_error(resp, self._make_backend("zhipu"))
         assert result is None
 
+    def test_error_dict_without_code_classified_retryable(self):
+        """Error dict carrying only a message must classify as a
+        retryable provider failure, not fall through to a non-retryable
+        "unexpected response structure" downstream."""
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": {"message": "rate limited"}}
+        with pytest.raises(LLMInvokeError) as exc:
+            _check_body_error(resp, self._make_backend("relay"))
+        assert exc.value.retryable is True
+        assert exc.value.exit_code == 0
+        assert "rate limited" in str(exc.value)
+        assert "unexpected response structure" not in str(exc.value)
+
+    def test_error_bare_string_classified_retryable(self):
+        """Bare-string error payload gets the same classification."""
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": "rate limited"}
+        with pytest.raises(LLMInvokeError) as exc:
+            _check_body_error(resp, self._make_backend("relay"))
+        assert exc.value.retryable is True
+        assert exc.value.exit_code == 0
+        assert "rate limited" in str(exc.value)
+        assert "unexpected response structure" not in str(exc.value)
+
+    def test_error_empty_dict_falls_through(self):
+        """Empty error dict is falsy: no raise from the new branch."""
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": {}, "choices": [{"message": {"content": "ok"}}]}
+        assert _check_body_error(resp, self._make_backend("relay")) is None
+
+    def test_error_empty_string_falls_through(self):
+        """Empty error string is falsy: symmetric fall-through."""
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": "", "choices": [{"message": {"content": "ok"}}]}
+        assert _check_body_error(resp, self._make_backend("relay")) is None
+
+    def test_error_dict_without_message_uses_dict_repr(self):
+        """A dict payload with no message key falls back to its repr,
+        so the underlying detail field still reaches the operator."""
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": {"detail": "quota exceeded"}}
+        with pytest.raises(LLMInvokeError) as exc:
+            _check_body_error(resp, self._make_backend("relay"))
+        assert exc.value.retryable is True
+        assert "detail" in str(exc.value)
+        assert "quota exceeded" in str(exc.value)
+
+    def test_error_without_code_retryable_for_known_provider(self):
+        """Known provider with an unlisted (empty) code follows the
+        established default: unknown codes are retryable."""
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": {"message": "rate limited"}}
+        with pytest.raises(LLMInvokeError) as exc:
+            _check_body_error(resp, self._make_backend("zhipu"))
+        assert exc.value.retryable is True
+
+    def test_error_null_returns_none(self):
+        """\"error\": null on a success body stays a non-error."""
+        from code_forge.llm_invoke import _check_body_error
+        resp = {"error": None, "choices": [{"message": {"content": "ok"}}]}
+        assert _check_body_error(resp, self._make_backend("relay")) is None
+
 
 # -- Task 2: HTTP classification, body wiring, retry loop, stderr progress ----
 
@@ -6214,3 +6277,150 @@ class TestExcerptRepair:
         assert mock_invoke.call_count == 2
         assert result.content["findings"] == [self._FINDING]
         assert result.content["code_excerpts"] == [self._EXCERPT]
+
+
+class TestMidStreamErrorSSE:
+    """Mid-stream provider errors must never surface as successful content.
+
+    Reproducer for the relay mid-stream failure mode: the provider cuts
+    the stream after the first content chunks and signals the failure in
+    band -- an error payload riding in a chunk that also carries a
+    choices array with finish_reason "error".  Baseline behaviour skipped
+    that chunk (error recognition required the choices key to be absent),
+    then discarded the recorded error whenever partial content existed,
+    so the caller received the truncated prefix as a successful response
+    and the findings parser consumed half a JSON document.  With no
+    prior content the same shape returned an empty successful response
+    that the retry loop misclassified as transient empty content.
+    """
+
+    @staticmethod
+    def _backend():
+        return BackendConfig(
+            name="relay", type="api", model="m", format="openai",
+            base_url="http://x", api_key_env="K", stream=True,
+        )
+
+    @staticmethod
+    def _stream_resp(*chunks):
+        resp = Mock()
+        resp.__iter__ = Mock(return_value=_sse_lines(*chunks))
+        resp.__enter__ = Mock(return_value=resp)
+        resp.__exit__ = Mock(return_value=False)
+        return resp
+
+    def test_error_chunk_after_partial_content_raises(self):
+        """Error payload mid-stream: partial content discarded, retryable."""
+        resp = self._stream_resp(
+            {"choices": [{"delta": {"content": '{"findings": [{"file": "a.py"'}}]},
+            {"error": {"code": 429, "message": "rate limited",
+                       "type": "tokens.rate_limit"},
+             "choices": [{"delta": {}, "finish_reason": "error"}]},
+        )
+        with patch("urllib.request.urlopen", return_value=resp), \
+                pytest.raises(LLMInvokeError) as ei:
+            _invoke_openai("p", self._backend(), api_key="k", timeout_s=10)
+        assert ei.value.retryable is True
+        assert ei.value.exit_code == 0
+        # The surfaced error names the provider failure, and the partial
+        # JSON prefix ("a.py") does not leak into the exception payload.
+        assert "mid-response" in str(ei.value)
+        assert "rate limited" in str(ei.value)
+        assert "a.py" not in str(ei.value)
+
+    def test_error_chunk_without_prior_content_raises(self):
+        """Error chunk carrying choices must not become an empty success."""
+        resp = self._stream_resp(
+            {"error": {"code": 429, "message": "rate limited"},
+             "choices": [{"delta": {}, "finish_reason": "error"}]},
+        )
+        with patch("urllib.request.urlopen", return_value=resp), \
+                pytest.raises(LLMInvokeError) as ei:
+            _invoke_openai("p", self._backend(), api_key="k", timeout_s=10)
+        assert ei.value.retryable is True
+        assert ei.value.exit_code == 0
+        assert "429" in str(ei.value)
+        assert "rate limited" in str(ei.value)
+
+    def test_error_only_chunk_without_content_keeps_contract(self):
+        """Established contract: error-only chunk (no choices) is returned
+        to _check_body_error, which raises a classified retryable error."""
+        resp = self._stream_resp(
+            {"error": {"code": 429, "message": "rate limited"}},
+        )
+        with patch("urllib.request.urlopen", return_value=resp), \
+                pytest.raises(LLMInvokeError) as ei:
+            _invoke_openai("p", self._backend(), api_key="k", timeout_s=10)
+        assert ei.value.retryable is True
+        assert ei.value.exit_code == 0
+        assert "429" in str(ei.value)
+        assert "rate limited" in str(ei.value)
+
+    def test_error_null_in_chunk_is_ignored(self):
+        """Providers emitting "error": null on normal chunks keep working."""
+        resp = self._stream_resp(
+            {"choices": [{"delta": {"content": "ok"}}], "error": None},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}],
+             "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+        )
+        with patch("urllib.request.urlopen", return_value=resp):
+            content, usage = _invoke_openai(
+                "p", self._backend(), api_key="k", timeout_s=10)
+        assert content == "ok"
+        assert usage["prompt_tokens"] == 10
+        assert usage["completion_tokens"] == 5
+
+    def test_bare_string_error_after_partial_content_raises(self):
+        """Providers sending "error" as a bare string get a classified
+        LLMInvokeError, not an AttributeError from dict-only handling."""
+        resp = self._stream_resp(
+            {"choices": [{"delta": {"content": '{"findings": ['}}]},
+            {"error": "rate limit"},
+        )
+        with patch("urllib.request.urlopen", return_value=resp), \
+                pytest.raises(LLMInvokeError) as ei:
+            _invoke_openai("p", self._backend(), api_key="k", timeout_s=10)
+        assert ei.value.retryable is True
+        assert "rate limit" in str(ei.value)
+
+    def test_bare_string_error_only_stream_is_classified(self):
+        """Bare-string error in an error-only stream must surface as a
+        classified retryable error, not fall through _check_body_error
+        into a non-retryable "unexpected response structure"."""
+        resp = self._stream_resp(
+            {"error": "rate limit"},
+        )
+        with patch("urllib.request.urlopen", return_value=resp), \
+                pytest.raises(LLMInvokeError) as ei:
+            _invoke_openai("p", self._backend(), api_key="k", timeout_s=10)
+        assert ei.value.retryable is True
+        assert "rate limit" in str(ei.value)
+        assert "unexpected response structure" not in str(ei.value)
+
+    def test_error_only_chunk_dict_without_code_is_classified(self):
+        """Error-only stream whose error dict lacks a code: the body
+        handed to _check_body_error must classify, not fall through."""
+        resp = self._stream_resp(
+            {"error": {"message": "rate limited"}},
+        )
+        with patch("urllib.request.urlopen", return_value=resp), \
+                pytest.raises(LLMInvokeError) as ei:
+            _invoke_openai("p", self._backend(), api_key="k", timeout_s=10)
+        assert ei.value.retryable is True
+        assert ei.value.exit_code == 0
+        assert "rate limited" in str(ei.value)
+        assert "unexpected response structure" not in str(ei.value)
+
+    def test_finish_reason_error_without_payload_raises(self):
+        """Stream ending on finish_reason=error alone is transient failure,
+        never a successful partial response."""
+        resp = self._stream_resp(
+            {"choices": [{"delta": {"content": '{"findings": ['}}]},
+            {"choices": [{"delta": {}, "finish_reason": "error"}]},
+        )
+        with patch("urllib.request.urlopen", return_value=resp), \
+                pytest.raises(LLMInvokeError, match="finish_reason=error") as ei:
+            _invoke_openai("p", self._backend(), api_key="k", timeout_s=10)
+        assert ei.value.retryable is True
+        assert ei.value.exit_code == 0
+        assert "partial response discarded" in str(ei.value)

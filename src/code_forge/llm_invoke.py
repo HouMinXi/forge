@@ -545,8 +545,14 @@ def _read_sse(response, deadline=None, backend_name="") -> dict:
         except json.JSONDecodeError:
             continue
 
-        # Error-only chunk (no choices key)
-        if "error" in chunk and "choices" not in chunk:
+        # Error chunk. Providers signal in-band failure two ways: an
+        # error-only chunk (no choices key), or -- like OpenRouter
+        # cutting a stream on rate limit -- an error payload riding in
+        # a chunk that also carries a choices array whose finish_reason
+        # is "error". Truthiness check: some providers stamp
+        # "error": null on every normal chunk.
+        err = chunk.get("error")
+        if err:
             last_error = chunk
             continue
 
@@ -565,9 +571,42 @@ def _read_sse(response, deadline=None, backend_name="") -> dict:
             if choice.get("finish_reason"):
                 finish_reason = choice["finish_reason"]
 
-    # If only errors were received, return for _check_body_error
-    if last_error and not content_parts:
-        return last_error
+    if last_error is not None:
+        if not content_parts:
+            # Error-only stream: keep the established contract of
+            # handing _check_body_error a body shaped {"error": ...} --
+            # the raw chunk may also carry a choices array (OpenRouter
+            # mid-stream shape), which is not part of that contract.
+            # Normalize bare-string payloads to the dict shape here too,
+            # so both exits of this function speak one contract. The
+            # sentinel code lets _check_body_error classify the failure
+            # (its trigger is error.code present) instead of the body
+            # falling through to a non-retryable "unexpected response
+            # structure".
+            err_val = last_error["error"]
+            if not isinstance(err_val, dict):
+                err_val = {"code": "stream_error", "message": str(err_val)}
+            return {"error": err_val}
+        # Failure signalled after partial content: the prefix is not a
+        # response, it is half a JSON document, and returning it as a
+        # success feeds the findings parser truncated input. Discard it
+        # and raise so the retry loop sees the real cause. An error
+        # payload is authoritative over any content delta riding in the
+        # same chunk.
+        err_obj = last_error.get("error")
+        # Providers occasionally send the error as a bare string; only
+        # the dict shape carries code/message.
+        if not isinstance(err_obj, dict):
+            err_obj = {"message": str(err_obj)}
+        code_val = err_obj.get("code")
+        code_str = str(code_val) if code_val is not None else "stream_error"
+        raise LLMInvokeError(
+            f"code-forge: {backend_name} backend stream failed "
+            f"mid-response: {err_obj.get('message', '')} "
+            f"(code {code_str}). {_suggestion(backend_name, code_str)}",
+            exit_code=0,
+            retryable=_is_body_code_retryable(backend_name, code_str),
+        )
 
     return {
         "model": model,
@@ -800,6 +839,26 @@ def _check_body_error(resp_data: dict, backend: "BackendConfig") -> None:
             % (backend.name, msg, code_str, _suggestion(backend.name, code_str)),
             exit_code=0,
             retryable=retryable,
+        )
+
+    # Error payload without a code: a dict carrying only a message, or
+    # a bare string. Classify like any unknown provider error code --
+    # letting the body fall through surfaces a non-retryable
+    # "unexpected response structure" that hides the real failure.
+    if isinstance(error_obj, dict) and error_obj:
+        msg = str(error_obj.get("message", error_obj))
+        raise LLMInvokeError(
+            f"code-forge: {backend.name} backend: {msg}. "
+            f"{_suggestion(backend.name, '')}",
+            exit_code=0,
+            retryable=_is_body_code_retryable(backend.name, ""),
+        )
+    if isinstance(error_obj, str) and error_obj:
+        raise LLMInvokeError(
+            f"code-forge: {backend.name} backend: {error_obj}. "
+            f"{_suggestion(backend.name, '')}",
+            exit_code=0,
+            retryable=_is_body_code_retryable(backend.name, ""),
         )
 
     # MiniMax openai format: base_resp.status_code (int)
@@ -1999,6 +2058,17 @@ def _invoke_openai(
     # the sampling path (stopReason == "maxTokens") -- all three now
     # raise kind="truncated" so _dispatch_sampling routes them uniformly.
     finish = choice.get("finish_reason", "")
+    if finish == "error":
+        # Stream ended on finish_reason=error without any error payload:
+        # the assembled content is a partial response the provider
+        # abandoned. Treat as transient so the retry loop re-issues the
+        # request instead of parsing half a document.
+        raise LLMInvokeError(
+            f"{backend.name} backend stream ended with "
+            f"finish_reason=error; partial response discarded",
+            exit_code=0,
+            retryable=True,
+        )
     if finish == "length":
         in_tok = usage_data.get("prompt_tokens", "?")
         out_tok = usage_data.get("completion_tokens", "?")
