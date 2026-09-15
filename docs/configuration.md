@@ -448,6 +448,72 @@ registration via Settings -> Languages -> JSON Schema Mappings.
 
 ---
 
+## Retry
+
+API backends and MCP sampling retry transient failures. Omit the block
+to keep the built-in defaults (5 attempts, 2 s initial delay, socket
+timeouts not retried).
+
+The same `retry:` mapping is valid in both files:
+
+- `~/.config/code-forge/config.yaml` (host default)
+- `.code-forge/gate.yaml` (project override)
+
+On a key collision the project value wins; the user file fills keys the
+project does not set. A malformed `retry` block is ignored and the
+review still runs with defaults -- a bad config must not take a review
+down.
+
+```yaml
+retry:
+  max_attempts: 5
+  initial_delay_s: 2.0
+  retry_timeout: false
+```
+
+### Fields
+
+| Field | Type | Range | Default | Meaning |
+|---|---|---|---|---|
+| `max_attempts` | int | 1..10 | 5 | Attempts per call, including the first. |
+| `initial_delay_s` | number | 0.1..30 | 2 | Delay before the first retry. Each later wait doubles, capped at 60 s, plus 0-0.5 s jitter. A `Retry-After` header, if present, is the floor. |
+| `retry_timeout` | bool | -- | `false` | When `true`, a socket `TimeoutError` is retried like 429/503. Leave `false` unless the backend flakes by hanging: a hung call at `timeout_s` (often 1800-2400) times five stalls a review. |
+
+Unknown keys are kept (forward-compatible) but ignored.
+
+### What is retried
+
+HTTP API (`type: api`): status 429, 500, 502, 503, 504; a 200 body that
+is not JSON; an SSE stream where a JSON body was expected; empty or
+non-JSON model content. Vendor body codes that the gateway maps as
+retryable (rate-limit / overload) also retry.
+
+MCP sampling (`code-forge-mcp` `createMessage`): empty text, and a
+reply with no parseable JSON.
+
+Not retried: HTTP 4xx other than 429; missing credentials; truncated
+output (`stopReason=maxTokens`); Copilot CLI stub models
+(`copilotcli/...`); `type: cli` backends (they are not HTTP). Socket
+timeouts stay unretriable unless `retry_timeout: true`.
+
+### Logs
+
+Each retry writes one flushed line to stderr so MCP `forge_job_status`
+and CI logs see it while the wait is still in progress:
+
+```
+[forge] t+12.3s retrying review-default (2/5, waiting 2.1s) after <cause>
+[forge] t+45.0s retry failed review-default after 5 attempts: <cause>
+```
+
+The name is the backend name, or `sampling` on the MCP sampling path.
+`<cause>` is the exception text, collapsed to one line and capped at
+400 characters. The delay is printed *before* the sleep: the gap
+between two lines is the sleep plus the next attempt, not the duration
+of the failed call.
+
+---
+
 ## Authentication
 
 ### CLI Backends (type: cli)
@@ -606,3 +672,4 @@ default `n=5` and `threshold_ratio=0.6`, without requiring a gate.yaml
 - [Cursor setup](setup-cursor.md) -- setting env vars in Cursor terminal
 - [PyCharm setup](setup-pycharm.md) -- setting env vars in PyCharm
 - [README Backend configuration](../README.md#backend-configuration) -- quick reference
+- [Retry](#retry) -- HTTP and MCP sampling retry block
