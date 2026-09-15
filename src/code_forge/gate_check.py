@@ -109,6 +109,20 @@ def load_gate_config(
         ):
             raise ValueError("'test.also_copy' must be a list of strings")
 
+    if "mutation_max_children" in test:
+        children = test["mutation_max_children"]
+        if not isinstance(children, int) or isinstance(children, bool) or children < 1:
+            raise ValueError(
+                "'test.mutation_max_children' must be a positive integer"
+            )
+
+    if "mutation_memory_limit_mb" in test:
+        mem_mb = test["mutation_memory_limit_mb"]
+        if not isinstance(mem_mb, int) or isinstance(mem_mb, bool) or mem_mb < 1:
+            raise ValueError(
+                "'test.mutation_memory_limit_mb' must be a positive integer (MiB)"
+            )
+
     # Validate optional non_ascii field (top-level)
     if "non_ascii" in data:
         if data["non_ascii"] not in ("ai-smell", "strict"):

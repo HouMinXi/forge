@@ -59,7 +59,9 @@ class TestBuildMutmutConfig:
         parser = ConfigParser()
         parser.read_string(cfg)
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
-        assert [x for x in raw.split("\n") if x] == ["tests/test_mod.py", "-q"]
+        assert [x for x in raw.split("\n") if x] == [
+            "tests/test_mod.py", "-q", "-m", "not integration",
+        ]
 
     def test_config_multiple_diff_files(self):
         cfg = _build_mutmut_config(
@@ -126,7 +128,17 @@ class TestBuildMutmutConfig:
         )
         selection = cfg.split("test_selection=")[1]
         assert selection.startswith("tests/")
-        assert "-m" not in selection
+        # The interpreter prefix "-m pytest" must not leak into the
+        # selection; the only "-m" allowed is the trailing marker
+        # exclusion the resource guard appends.
+        from configparser import ConfigParser
+
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
+        assert [x for x in raw.split("\n") if x] == [
+            "tests/", "-m", "not integration",
+        ]
 
 
 class TestBaselineTestSelection:
@@ -343,10 +355,14 @@ class TestTestSelectionSurvivesConfigRoundTrip:
         parser = ConfigParser()
         parser.read_string(cfg)
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
-        # Read back exactly as mutmut's configuration.py does.
+        # Read back exactly as mutmut's configuration.py does. The
+        # resource guard's marker exclusion rides along as two more
+        # tokens.
         assert [x for x in raw.split("\n") if x] == [
             "-q",
             "--ignore=tests/test_slow.py",
+            "-m",
+            "not integration",
         ]
 
     def test_single_arg_selection_stays_on_the_key_line(self):
@@ -359,7 +375,9 @@ class TestTestSelectionSurvivesConfigRoundTrip:
         parser.read_string(cfg)
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
         assert not raw.startswith("\n")
-        assert [x for x in raw.split("\n") if x] == ["tests/"]
+        assert [x for x in raw.split("\n") if x] == [
+            "tests/", "-m", "not integration",
+        ]
 
 
 class TestAlsoCopyConfigValidation:
@@ -396,6 +414,51 @@ class TestAlsoCopyConfigValidation:
 
         config = load_gate_config(self._cfg(tmp_path, "[scripts/, hooks/]"))
         assert config["test"]["also_copy"] == ["scripts/", "hooks/"]
+
+
+class TestMutationResourceGuardConfigValidation:
+    """The mutmut resource-guard knobs must fail loudly on bad gate.yaml."""
+
+    def _cfg(self, tmp_path, extra):
+        p = tmp_path / "gate.yaml"
+        p.write_text(
+            "test:\n"
+            "  command: [pytest, -q]\n"
+            f"  {extra}\n",
+            encoding="utf-8",
+        )
+        return p
+
+    def test_zero_max_children_is_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(ValueError, match="mutation_max_children"):
+            load_gate_config(self._cfg(tmp_path, "mutation_max_children: 0"))
+
+    def test_string_memory_limit_is_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(ValueError, match="mutation_memory_limit_mb"):
+            load_gate_config(
+                self._cfg(tmp_path, 'mutation_memory_limit_mb: "8GiB"')
+            )
+
+    def test_valid_guards_are_accepted(self, tmp_path):
+        from code_forge.gate_check import load_gate_config
+
+        config = load_gate_config(
+            self._cfg(
+                tmp_path,
+                "mutation_max_children: 2\n  mutation_memory_limit_mb: 4096",
+            )
+        )
+        assert config["test"]["mutation_max_children"] == 2
+        assert config["test"]["mutation_memory_limit_mb"] == 4096
+
 
 
 class TestMutatedImportSurvivesAnEmptyCwd:
