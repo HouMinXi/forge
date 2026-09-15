@@ -317,8 +317,6 @@ class StateMachine:
         self._pass_counter: int = 0
         self._advisories: list[AdvisoryFinding] = []
         self._preexisting_buf: list[AdvisoryFinding] = []
-        self._rounds_with_failed_pass: int = 0
-        self._rounds_with_falsify_infra: int = 0
         # Cycle numbers of the receipts THIS run wrote (round 0 -> cycle
         # 1, etc.), collected so terminal acceptance can attest exactly
         # the current run's window and never a stale one from disk.
@@ -1065,15 +1063,22 @@ class StateMachine:
         that would be worse than the problem.
         """
         if not infra_failures:
-            self._rounds_with_falsify_infra = 0
+            self._state.rounds_with_falsify_infra = 0
             return
-        self._rounds_with_falsify_infra += 1
+        self._state.rounds_with_falsify_infra += 1
         self._state.infra_errors.append(
             "round %d: falsify could not reach the backend for %d "
             "finding(s): %s"
             % (self._state.round, len(infra_failures), infra_failures)
         )
-        if self._rounds_with_falsify_infra >= 3:
+        if self._state.rounds_with_falsify_infra >= 3:
+            # Persist bounded non-PASS before raising, for the same reason
+            # the L1 guard does: a circuit breaker must not leave a stale
+            # verdict on disk, and the round just counted has to survive
+            # or the next invocation reloads a state one short.
+            self._state.verdict = Verdict.FAIL
+            self._state.converged = False
+            self._persist_state()
             raise TimeoutBreaker(
                 "%d consecutive rounds where the falsifier could not "
                 "reach its backend (latest: %d finding(s) unadjudicated). "
@@ -1081,7 +1086,7 @@ class StateMachine:
                 "clean-round counter, so this review cannot converge no "
                 "matter how many rounds remain. Fix the backend or switch "
                 "to another one rather than waiting."
-                % (self._rounds_with_falsify_infra, len(infra_failures))
+                % (self._state.rounds_with_falsify_infra, len(infra_failures))
             )
 
     def _check_l1_can_still_converge(
@@ -1113,14 +1118,14 @@ class StateMachine:
             if outcome != PassOutcome.COMPLETED
         }
         if not failed:
-            self._rounds_with_failed_pass = 0
+            self._state.rounds_with_failed_pass = 0
             return
-        self._rounds_with_failed_pass += 1
+        self._state.rounds_with_failed_pass += 1
         self._state.infra_errors.append(
             "round %d: pass(es) did not complete: %s"
             % (self._state.round, failed)
         )
-        if self._rounds_with_failed_pass >= 3:
+        if self._state.rounds_with_failed_pass >= 3:
             # Persist bounded non-PASS before raising: a circuit breaker
             # must not leave a stale PASS (or PENDING) state.json behind
             # when it stops the run.
@@ -1133,7 +1138,7 @@ class StateMachine:
                 "which resets the clean-round counter, so this review cannot "
                 "converge no matter how many rounds remain. Fix the backend "
                 "or switch to another one rather than waiting."
-                % (self._rounds_with_failed_pass, failed)
+                % (self._state.rounds_with_failed_pass, failed)
             )
 
     def _run_l2_phase(self) -> list[StateFinding]:
