@@ -4296,6 +4296,12 @@ def _run_mutation_check(args, cwd: Path) -> int:
     for err in infra_errors:
         print("code-forge: mutation-check: %s" % err, file=sys.stderr)
 
+    tool_errors = [f for f in findings if f.id == "MUTATION_ERROR"]
+    if tool_errors:
+        for error in tool_errors:
+            print(f"code-forge: mutation-check: {error.description}", file=sys.stderr)
+        return EXIT_CLI_ERROR
+
     # Translate findings to exit code.
     # CONFIRMED findings with source=MUTANT and id starting "mutant-" are
     # survivors. DISMISSED findings (skips) are not failures.

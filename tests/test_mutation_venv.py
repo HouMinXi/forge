@@ -65,7 +65,13 @@ class TestBuildMutmutConfig:
         cfg = _build_mutmut_config(
             ["src/a.py", "src/b.py"], ["pytest", "tests/", "-q"]
         )
-        assert "only_mutate=src/a.py,src/b.py" in cfg
+        from configparser import ConfigParser
+
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        assert parser.get("mutmut", "only_mutate").splitlines() == [
+            "src/a.py", "src/b.py",
+        ]
 
     def test_config_flat_layout(self):
         cfg = _build_mutmut_config(["module.py"], ["pytest"])

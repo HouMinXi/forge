@@ -107,8 +107,8 @@ def _build_mutmut_config(
     lines = [
         _CODE_FORGE_CFG_MARKER,
         "[mutmut]",
-        "source_paths=" + ",".join(roots),
-        "only_mutate=" + ",".join(py_files),
+        "source_paths=" + "\n    ".join(roots),
+        "only_mutate=" + "\n    ".join(py_files),
     ]
     # mutmut splits this value on newlines, so a space-joined string arrives
     # as one argv token ("-q --ignore=x") that pytest rejects with exit 4.
@@ -387,6 +387,24 @@ def _run_baseline_guard(
     return ("passed", [], [])
 
 
+def _mutation_command_error(phase: str, result: subprocess.CompletedProcess) -> StateFinding:
+    """Keep both diagnostic tails: pytest commonly reports failures on stdout."""
+    streams = []
+    for name, text in (("stdout", result.stdout), ("stderr", result.stderr)):
+        if text and text.strip():
+            streams.append(f"{name}: {text.strip()[-1000:]}")
+    detail = "\n".join(streams) or "no output captured"
+    return StateFinding(
+        id="MUTATION_ERROR",
+        fingerprint=f"mutation-{phase}-error",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="",
+        line_range=[],
+        description=f"mutmut {phase} failed (exit {result.returncode}): {detail}",
+    )
+
+
 def run_mutation(
     diff_files: list[str],
     baseline_cmd: list[str],
@@ -609,25 +627,8 @@ def run_mutation(
 
             # Any non-zero exit is an error (attempt 2 bug: only caught ==2)
             if result.returncode != 0:
-                findings.append(
-                    StateFinding(
-                        id="MUTATION_ERROR",
-                        fingerprint="mutation-invocation-error",
-                        source="MUTANT",
-                        disposition=Disposition.CONFIRMED,
-                        file="",
-                        line_range=[],
-                        description=(
-                            "mutmut run failed (exit %d): %s"
-                            % (result.returncode, result.stderr[:200])
-                        ),
-                    )
-                )
-                infra_errors.append(
-                    "mutmut error (exit %d): %s"
-                    % (result.returncode, result.stderr[:100])
-                )
-                return (findings, infra_errors)
+                error = _mutation_command_error("run", result)
+                return ([error], [error.description])
 
         except subprocess.TimeoutExpired:
             findings.append(
@@ -654,6 +655,9 @@ def run_mutation(
                 cwd=repo_root,
                 env=run_env,
             )
+            if results_proc.returncode != 0:
+                error = _mutation_command_error("results", results_proc)
+                return ([error], [error.description])
             survivors, parse_warnings = parse_mutmut_results(results_proc.stdout)
             infra_errors.extend(parse_warnings)
         except subprocess.TimeoutExpired:
@@ -782,13 +786,16 @@ try:
         and f.disposition == Disposition.CONFIRMED
         and f.id != "MUTATION_ERROR"
     ]
-    data["status"] = "done"
+    errors = [f.description for f in mm_findings if f.id == "MUTATION_ERROR"]
+    data["status"] = "error" if errors else "done"
+    if errors:
+        data["message"] = "\\n".join(errors)
     data["survivors"] = survivor_list
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 except Exception as e:
     data["status"] = "error"
-    data["error"] = str(e)
+    data["message"] = str(e)
     try:
         with open(result_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
