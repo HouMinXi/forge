@@ -1142,24 +1142,42 @@ class StateMachine:
         Calls l2_runner with diff-scoped files and baseline test command.
         Returns MUTANT findings (survivors or MUTATION_SKIPPED).
         """
-        try:
-            from .gate_check import load_gate_config
-
-            config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
-            baseline_cmd = config["test"]["command"]
-        except Exception as exc:  # noqa: BLE001
-            self._state.infra_errors.append(
-                f"L2: gate.yaml missing or test.command not configured: {exc}"
-            )
-            return []
-
         diff_files = [str(f) for f in self._source_files()]
 
-        progress.emit("mutation: running baseline")
+        # Mutation is a Python-only MVP, and the runner already reports
+        # that as a DISMISSED finding. Reach it without a gate.yaml: the
+        # config is only needed for the baseline command, which a
+        # non-Python diff never runs. Otherwise a TypeScript repo gets a
+        # config error instead of the real reason.
+        needs_baseline = any(f.endswith(".py") for f in diff_files)
+        baseline_cmd: list[str] = []
+
+        if needs_baseline:
+            try:
+                from .gate_check import load_gate_config
+
+                config = load_gate_config(
+                    self.cwd / ".code-forge" / "gate.yaml"
+                )
+                baseline_cmd = config["test"]["command"]
+                baseline_timeout = config["test"].get("timeout_seconds", 120)
+            except Exception as exc:  # noqa: BLE001
+                self._state.infra_errors.append(
+                    "L2: gate.yaml missing or test.command not "
+                    f"configured: {exc}"
+                )
+                return []
+        else:
+            baseline_timeout = 120
+
+        if needs_baseline:
+            progress.emit("mutation: running baseline")
+        else:
+            progress.emit("mutation: checking applicability")
         try:
             l2_findings, l2_infra = self.l2_runner(
                 diff_files, baseline_cmd,
-                baseline_timeout=config["test"].get("timeout_seconds", 120),
+                baseline_timeout=baseline_timeout,
             )
             self._state.infra_errors.extend(l2_infra)
             return l2_findings
