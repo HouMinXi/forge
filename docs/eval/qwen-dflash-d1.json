@@ -1,0 +1,4763 @@
+{
+  "total": 150,
+  "caught": 41,
+  "missed": 34,
+  "correct_pass": 44,
+  "false_positive": 31,
+  "skipped": 0,
+  "advisory_caught": 0,
+  "advisory_missed": 0,
+  "findings_expected": 152,
+  "findings_hit": 33.0,
+  "findings_misses": 119.0,
+  "findings_fp": 91.0,
+  "precision": 0.2661290322580645,
+  "recall": 0.21710526315789475,
+  "f1": 0.2391304347826087,
+  "signal_to_noise": 0.3626373626373626,
+  "findings_skipped_entries": 0,
+  "aggregation": "mean-of-n",
+  "results": [
+    {
+      "entry": {
+        "name": "astropy__astropy-13033-bug",
+        "diff_file": "diffs/astropy__astropy-13033-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/timeseries/core.py",
+            "description": "TimeSeries: misleading exception when required column check fails.",
+            "line_range": [
+              55,
+              60
+            ]
+          },
+          {
+            "file": "astropy/timeseries/core.py",
+            "description": "TimeSeries: misleading exception when required column check fails.",
+            "line_range": [
+              76,
+              84
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-13033-clean",
+        "diff_file": "diffs/astropy__astropy-13033-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14096-bug",
+        "diff_file": "diffs/astropy__astropy-14096-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/coordinates/sky_coordinate.py",
+            "description": "Subclassed SkyCoord gives misleading attribute access message",
+            "line_range": [
+              894,
+              903
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14096-clean",
+        "diff_file": "diffs/astropy__astropy-14096-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14182-bug",
+        "diff_file": "diffs/astropy__astropy-14182-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/io/ascii/rst.py",
+            "description": "Please support header rows in RestructuredText output",
+            "line_range": [
+              27,
+              33
+            ]
+          },
+          {
+            "file": "astropy/io/ascii/rst.py",
+            "description": "Please support header rows in RestructuredText output",
+            "line_range": [
+              39,
+              50
+            ]
+          },
+          {
+            "file": "astropy/io/ascii/rst.py",
+            "description": "Please support header rows in RestructuredText output",
+            "line_range": [
+              57,
+              66
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14182-clean",
+        "diff_file": "diffs/astropy__astropy-14182-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14309-bug",
+        "diff_file": "diffs/astropy__astropy-14309-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/io/fits/connect.py",
+            "description": "IndexError: tuple index out of range in identify_format (io.registry)",
+            "line_range": [
+              65,
+              74
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14309-clean",
+        "diff_file": "diffs/astropy__astropy-14309-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14598-bug",
+        "diff_file": "diffs/astropy__astropy-14598-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/io/fits/card.py",
+            "description": "Inconsistency in double single-quote ('') management in FITS Card",
+            "line_range": [
+              66,
+              72
+            ]
+          },
+          {
+            "file": "astropy/io/fits/card.py",
+            "description": "Inconsistency in double single-quote ('') management in FITS Card",
+            "line_range": [
+              859,
+              865
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14598-clean",
+        "diff_file": "diffs/astropy__astropy-14598-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14995-bug",
+        "diff_file": "diffs/astropy__astropy-14995-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/nddata/mixins/ndarithmetic.py",
+            "description": "In v5.3, NDDataRef mask propagation fails when one of the operand does not have a mask",
+            "line_range": [
+              520,
+              529
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-14995-clean",
+        "diff_file": "diffs/astropy__astropy-14995-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 3.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-7336-bug",
+        "diff_file": "diffs/astropy__astropy-7336-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/units/decorators.py",
+            "description": "units.quantity_input decorator fails for constructors with type hinted return value -> None",
+            "line_range": [
+              220,
+              226
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-7336-clean",
+        "diff_file": "diffs/astropy__astropy-7336-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-7606-bug",
+        "diff_file": "diffs/astropy__astropy-7606-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "astropy/units/core.py",
+            "description": "Unit equality comparison with None raises TypeError for UnrecognizedUnit",
+            "line_range": [
+              728,
+              734
+            ]
+          },
+          {
+            "file": "astropy/units/core.py",
+            "description": "Unit equality comparison with None raises TypeError for UnrecognizedUnit",
+            "line_range": [
+              1710,
+              1717
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 2.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "astropy__astropy-7606-clean",
+        "diff_file": "diffs/astropy__astropy-7606-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-12143-bug",
+        "diff_file": "diffs/django__django-12143-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/contrib/admin/options.py",
+            "description": "Possible data loss in admin changeform view when using regex special characters in formset prefix",
+            "line_range": [
+              1631,
+              1637
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-12143-clean",
+        "diff_file": "diffs/django__django-12143-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-12663-bug",
+        "diff_file": "diffs/django__django-12663-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/db/models/sql/query.py",
+            "description": "Using SimpleLazyObject with a nested subquery annotation fails.",
+            "line_range": [
+              233,
+              239
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-12663-clean",
+        "diff_file": "diffs/django__django-12663-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-13089-bug",
+        "diff_file": "diffs/django__django-13089-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/core/cache/backends/db.py",
+            "description": "cache.backends.db._cull sometimes fails with 'NoneType' object is not subscriptable",
+            "line_range": [
+              267,
+              275
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-13089-clean",
+        "diff_file": "diffs/django__django-13089-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-14373-bug",
+        "diff_file": "diffs/django__django-14373-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/utils/dateformat.py",
+            "description": "DateFormat.Y() is not zero-padded.",
+            "line_range": [
+              313,
+              320
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-14373-clean",
+        "diff_file": "diffs/django__django-14373-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-15098-bug",
+        "diff_file": "diffs/django__django-15098-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/utils/translation/trans_real.py",
+            "description": "Internationalisation didn't support language locale containing both script and region.",
+            "line_range": [
+              43,
+              49
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-15098-clean",
+        "diff_file": "diffs/django__django-15098-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-15103-bug",
+        "diff_file": "diffs/django__django-15103-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/template/defaultfilters.py",
+            "description": "Make the element_id argument of json_script optional",
+            "line_range": [
+              83,
+              92
+            ]
+          },
+          {
+            "file": "django/utils/html.py",
+            "description": "Make the element_id argument of json_script optional",
+            "line_range": [
+              61,
+              67
+            ]
+          },
+          {
+            "file": "django/utils/html.py",
+            "description": "Make the element_id argument of json_script optional",
+            "line_range": [
+              69,
+              78
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 3.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-15103-clean",
+        "diff_file": "diffs/django__django-15103-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-15375-bug",
+        "diff_file": "diffs/django__django-15375-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/db/models/aggregates.py",
+            "description": "aggregate() with 'default' after annotate() crashes.",
+            "line_range": [
+              65,
+              71
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-15375-clean",
+        "diff_file": "diffs/django__django-15375-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-16595-bug",
+        "diff_file": "diffs/django__django-16595-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "django/db/migrations/operations/fields.py",
+            "description": "Migration optimizer does not reduce multiple AlterField",
+            "line_range": [
+              247,
+              255
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "django__django-16595-clean",
+        "diff_file": "diffs/django__django-16595-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-20488-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-20488-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/image.py",
+            "description": "test_huge_range_log is failing...",
+            "line_range": [
+              532,
+              540
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-20488-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-20488-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-20676-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-20676-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/widgets.py",
+            "description": "interactive SpanSelector incorrectly forces axes limits to include 0",
+            "line_range": [
+              2156,
+              2162
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-20676-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-20676-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-21568-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-21568-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/dates.py",
+            "description": "[Bug]: Datetime axis with usetex is unclear",
+            "line_range": [
+              595,
+              602
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-21568-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-21568-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-22719-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-22719-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/category.py",
+            "description": "[Bug]: Confusing deprecation warning when empty data passed to axis with category units",
+            "line_range": [
+              58,
+              64
+            ]
+          },
+          {
+            "file": "lib/matplotlib/category.py",
+            "description": "[Bug]: Confusing deprecation warning when empty data passed to axis with category units",
+            "line_range": [
+              230,
+              236
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-22719-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-22719-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-22865-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-22865-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/colorbar.py",
+            "description": "[Bug]: Colorbar with drawedges=True and extend='both' does not draw edges at extremities",
+            "line_range": [
+              651,
+              658
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-22865-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-22865-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-25122-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-25122-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/mlab.py",
+            "description": "[Bug]: Windows correction is not correct in `mlab._spectral_helper`",
+            "line_range": [
+              395,
+              406
+            ]
+          },
+          {
+            "file": "lib/matplotlib/mlab.py",
+            "description": "[Bug]: Windows correction is not correct in `mlab._spectral_helper`",
+            "line_range": [
+              424,
+              433
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-25122-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-25122-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-25479-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-25479-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/cm.py",
+            "description": "Confusing (broken?) colormap name handling",
+            "line_range": [
+              146,
+              151
+            ]
+          },
+          {
+            "file": "lib/matplotlib/colors.py",
+            "description": "Confusing (broken?) colormap name handling",
+            "line_range": [
+              774,
+              780
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-25479-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-25479-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-26466-bug",
+        "diff_file": "diffs/matplotlib__matplotlib-26466-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "lib/matplotlib/text.py",
+            "description": "Updating an array passed as the xy parameter to annotate updates the anottation",
+            "line_range": [
+              1389,
+              1395
+            ]
+          },
+          {
+            "file": "lib/matplotlib/text.py",
+            "description": "Updating an array passed as the xy parameter to annotate updates the anottation",
+            "line_range": [
+              1407,
+              1419
+            ]
+          },
+          {
+            "file": "lib/matplotlib/text.py",
+            "description": "Updating an array passed as the xy parameter to annotate updates the anottation",
+            "line_range": [
+              1443,
+              1453
+            ]
+          },
+          {
+            "file": "lib/matplotlib/text.py",
+            "description": "Updating an array passed as the xy parameter to annotate updates the anottation",
+            "line_range": [
+              1456,
+              1462
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 4.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "matplotlib__matplotlib-26466-clean",
+        "diff_file": "diffs/matplotlib__matplotlib-26466-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "mwaskom__seaborn-3069-bug",
+        "diff_file": "diffs/mwaskom__seaborn-3069-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "seaborn/_core/plot.py",
+            "description": "Nominal scale should be drawn the same way as categorical scales",
+            "line_range": [
+              25,
+              31
+            ]
+          },
+          {
+            "file": "seaborn/_core/plot.py",
+            "description": "Nominal scale should be drawn the same way as categorical scales",
+            "line_range": [
+              1238,
+              1244
+            ]
+          },
+          {
+            "file": "seaborn/_core/plot.py",
+            "description": "Nominal scale should be drawn the same way as categorical scales",
+            "line_range": [
+              1631,
+              1636
+            ]
+          },
+          {
+            "file": "seaborn/_core/plot.py",
+            "description": "Nominal scale should be drawn the same way as categorical scales",
+            "line_range": [
+              1644,
+              1649
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 4.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "mwaskom__seaborn-3069-clean",
+        "diff_file": "diffs/mwaskom__seaborn-3069-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-1142-bug",
+        "diff_file": "diffs/psf__requests-1142-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "requests/models.py",
+            "description": "requests.get is ALWAYS sending content length",
+            "line_range": [
+              386,
+              398
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-1142-clean",
+        "diff_file": "diffs/psf__requests-1142-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-1724-bug",
+        "diff_file": "diffs/psf__requests-1724-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "requests/sessions.py",
+            "description": "Unicode method names cause UnicodeDecodeError for some requests in Python 2.7.2",
+            "line_range": [
+              12,
+              18
+            ]
+          },
+          {
+            "file": "requests/sessions.py",
+            "description": "Unicode method names cause UnicodeDecodeError for some requests in Python 2.7.2",
+            "line_range": [
+              309,
+              314
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-1724-clean",
+        "diff_file": "diffs/psf__requests-1724-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-1766-bug",
+        "diff_file": "diffs/psf__requests-1766-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "requests/auth.py",
+            "description": "quote qop options in Digest Auth",
+            "line_range": [
+              105,
+              111
+            ]
+          },
+          {
+            "file": "requests/auth.py",
+            "description": "quote qop options in Digest Auth",
+            "line_range": [
+              144,
+              150
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-1766-clean",
+        "diff_file": "diffs/psf__requests-1766-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-2317-bug",
+        "diff_file": "diffs/psf__requests-2317-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "requests/sessions.py",
+            "description": "method = builtin_str(method) problem",
+            "line_range": [
+              13,
+              19
+            ]
+          },
+          {
+            "file": "requests/sessions.py",
+            "description": "method = builtin_str(method) problem",
+            "line_range": [
+              425,
+              431
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-2317-clean",
+        "diff_file": "diffs/psf__requests-2317-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 3.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-2931-bug",
+        "diff_file": "diffs/psf__requests-2931-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "requests/models.py",
+            "description": "Request with binary payload fails due to calling to_native_string",
+            "line_range": [
+              81,
+              87
+            ]
+          },
+          {
+            "file": "requests/models.py",
+            "description": "Request with binary payload fails due to calling to_native_string",
+            "line_range": [
+              385,
+              390
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-2931-clean",
+        "diff_file": "diffs/psf__requests-2931-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-5414-bug",
+        "diff_file": "diffs/psf__requests-5414-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "requests/models.py",
+            "description": "Getting http://.example.com raises UnicodeError",
+            "line_range": [
+              403,
+              409
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "psf__requests-5414-clean",
+        "diff_file": "diffs/psf__requests-5414-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-2905-bug",
+        "diff_file": "diffs/pydata__xarray-2905-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/variable.py",
+            "description": "Variable.__setitem__ coercing types on objects with a values property",
+            "line_range": [
+              218,
+              224
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-2905-clean",
+        "diff_file": "diffs/pydata__xarray-2905-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-3305-bug",
+        "diff_file": "diffs/pydata__xarray-3305-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/dataset.py",
+            "description": "DataArray.quantile does not honor `keep_attrs`",
+            "line_range": [
+              4768,
+              4774
+            ]
+          },
+          {
+            "file": "xarray/core/variable.py",
+            "description": "DataArray.quantile does not honor `keep_attrs`",
+            "line_range": [
+              1592,
+              1598
+            ]
+          },
+          {
+            "file": "xarray/core/variable.py",
+            "description": "DataArray.quantile does not honor `keep_attrs`",
+            "line_range": [
+              1615,
+              1620
+            ]
+          },
+          {
+            "file": "xarray/core/variable.py",
+            "description": "DataArray.quantile does not honor `keep_attrs`",
+            "line_range": [
+              1623,
+              1629
+            ]
+          },
+          {
+            "file": "xarray/core/variable.py",
+            "description": "DataArray.quantile does not honor `keep_attrs`",
+            "line_range": [
+              1651,
+              1664
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 5.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-3305-clean",
+        "diff_file": "diffs/pydata__xarray-3305-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-3993-bug",
+        "diff_file": "diffs/pydata__xarray-3993-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/dataarray.py",
+            "description": "DataArray.integrate has a 'dim' arg, but Dataset.integrate has a 'coord' arg",
+            "line_range": [
+              3481,
+              3501
+            ]
+          },
+          {
+            "file": "xarray/core/dataarray.py",
+            "description": "DataArray.integrate has a 'dim' arg, but Dataset.integrate has a 'coord' arg",
+            "line_range": [
+              3503,
+              3508
+            ]
+          },
+          {
+            "file": "xarray/core/dataarray.py",
+            "description": "DataArray.integrate has a 'dim' arg, but Dataset.integrate has a 'coord' arg",
+            "line_range": [
+              3528,
+              3534
+            ]
+          },
+          {
+            "file": "xarray/core/dataset.py",
+            "description": "DataArray.integrate has a 'dim' arg, but Dataset.integrate has a 'coord' arg",
+            "line_range": [
+              5963,
+              5970
+            ]
+          },
+          {
+            "file": "xarray/core/dataset.py",
+            "description": "DataArray.integrate has a 'dim' arg, but Dataset.integrate has a 'coord' arg",
+            "line_range": [
+              5972,
+              5982
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 5.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-3993-clean",
+        "diff_file": "diffs/pydata__xarray-3993-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-4356-bug",
+        "diff_file": "diffs/pydata__xarray-4356-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/nanops.py",
+            "description": "sum: min_count is not available for reduction with more than one dimensions",
+            "line_range": [
+              26,
+              38
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-4356-clean",
+        "diff_file": "diffs/pydata__xarray-4356-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-4687-bug",
+        "diff_file": "diffs/pydata__xarray-4687-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/computation.py",
+            "description": "xr.where not preserving attributes",
+            "line_range": [
+              1727,
+              1733
+            ]
+          },
+          {
+            "file": "xarray/core/computation.py",
+            "description": "xr.where not preserving attributes",
+            "line_range": [
+              1743,
+              1748
+            ]
+          },
+          {
+            "file": "xarray/core/computation.py",
+            "description": "xr.where not preserving attributes",
+            "line_range": [
+              1808,
+              1813
+            ]
+          },
+          {
+            "file": "xarray/core/computation.py",
+            "description": "xr.where not preserving attributes",
+            "line_range": [
+              1817,
+              1822
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 4.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-4687-clean",
+        "diff_file": "diffs/pydata__xarray-4687-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-6744-bug",
+        "diff_file": "diffs/pydata__xarray-6744-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/rolling.py",
+            "description": "\"center\" kwarg ignored when manually iterating over DataArrayRolling",
+            "line_range": [
+              267,
+              282
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-6744-clean",
+        "diff_file": "diffs/pydata__xarray-6744-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-7229-bug",
+        "diff_file": "diffs/pydata__xarray-7229-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/computation.py",
+            "description": "`xr.where(..., keep_attrs=True)` overwrites coordinate attributes",
+            "line_range": [
+              1855,
+              1869
+            ]
+          },
+          {
+            "file": "xarray/core/computation.py",
+            "description": "`xr.where(..., keep_attrs=True)` overwrites coordinate attributes",
+            "line_range": [
+              1874,
+              1879
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 3.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-7229-clean",
+        "diff_file": "diffs/pydata__xarray-7229-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-7233-bug",
+        "diff_file": "diffs/pydata__xarray-7233-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "xarray/core/rolling.py",
+            "description": "ds.Coarsen.construct demotes non-dimensional coordinates to variables",
+            "line_range": [
+              973,
+              979
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pydata__xarray-7233-clean",
+        "diff_file": "diffs/pydata__xarray-7233-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-4661-bug",
+        "diff_file": "diffs/pylint-dev__pylint-4661-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "pylint/config/__init__.py",
+            "description": "Make pylint XDG Base Directory Specification compliant",
+            "line_range": [
+              36,
+              41
+            ]
+          },
+          {
+            "file": "pylint/config/__init__.py",
+            "description": "Make pylint XDG Base Directory Specification compliant",
+            "line_range": [
+              63,
+              69
+            ]
+          },
+          {
+            "file": "setup.cfg",
+            "description": "Make pylint XDG Base Directory Specification compliant",
+            "line_range": [
+              42,
+              47
+            ]
+          },
+          {
+            "file": "setup.cfg",
+            "description": "Make pylint XDG Base Directory Specification compliant",
+            "line_range": [
+              74,
+              80
+            ]
+          },
+          {
+            "file": "setup.cfg",
+            "description": "Make pylint XDG Base Directory Specification compliant",
+            "line_range": [
+              82,
+              87
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 5.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-4661-clean",
+        "diff_file": "diffs/pylint-dev__pylint-4661-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-6528-bug",
+        "diff_file": "diffs/pylint-dev__pylint-6528-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "pylint/lint/expand_modules.py",
+            "description": "Pylint does not respect ignores in `--recursive=y` mode",
+            "line_range": [
+              46,
+              51
+            ]
+          },
+          {
+            "file": "pylint/lint/expand_modules.py",
+            "description": "Pylint does not respect ignores in `--recursive=y` mode",
+            "line_range": [
+              61,
+              70
+            ]
+          },
+          {
+            "file": "pylint/lint/pylinter.py",
+            "description": "Pylint does not respect ignores in `--recursive=y` mode",
+            "line_range": [
+              31,
+              37
+            ]
+          },
+          {
+            "file": "pylint/lint/pylinter.py",
+            "description": "Pylint does not respect ignores in `--recursive=y` mode",
+            "line_range": [
+              564,
+              571
+            ]
+          },
+          {
+            "file": "pylint/lint/pylinter.py",
+            "description": "Pylint does not respect ignores in `--recursive=y` mode",
+            "line_range": [
+              579,
+              584
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 4.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-6528-clean",
+        "diff_file": "diffs/pylint-dev__pylint-6528-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-7277-bug",
+        "diff_file": "diffs/pylint-dev__pylint-7277-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "pylint/__init__.py",
+            "description": "`pylint` removes first item from `sys.path` when running from `runpy`.",
+            "line_range": [
+              96,
+              104
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-7277-clean",
+        "diff_file": "diffs/pylint-dev__pylint-7277-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-8898-bug",
+        "diff_file": "diffs/pylint-dev__pylint-8898-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "pylint/config/argument.py",
+            "description": "bad-names-rgxs mangles regular expressions with commas",
+            "line_range": [
+              114,
+              120
+            ]
+          },
+          {
+            "file": "pylint/utils/__init__.py",
+            "description": "bad-names-rgxs mangles regular expressions with commas",
+            "line_range": [
+              14,
+              19
+            ]
+          },
+          {
+            "file": "pylint/utils/__init__.py",
+            "description": "bad-names-rgxs mangles regular expressions with commas",
+            "line_range": [
+              32,
+              37
+            ]
+          },
+          {
+            "file": "pylint/utils/utils.py",
+            "description": "bad-names-rgxs mangles regular expressions with commas",
+            "line_range": [
+              22,
+              28
+            ]
+          },
+          {
+            "file": "pylint/utils/utils.py",
+            "description": "bad-names-rgxs mangles regular expressions with commas",
+            "line_range": [
+              253,
+              258
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 5.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pylint-dev__pylint-8898-clean",
+        "diff_file": "diffs/pylint-dev__pylint-8898-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-10051-bug",
+        "diff_file": "diffs/pytest-dev__pytest-10051-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/logging.py",
+            "description": "caplog.get_records and caplog.clear conflict",
+            "line_range": [
+              40,
+              46
+            ]
+          },
+          {
+            "file": "src/_pytest/logging.py",
+            "description": "caplog.get_records and caplog.clear conflict",
+            "line_range": [
+              345,
+              350
+            ]
+          },
+          {
+            "file": "src/_pytest/logging.py",
+            "description": "caplog.get_records and caplog.clear conflict",
+            "line_range": [
+              440,
+              446
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 2.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-10051-clean",
+        "diff_file": "diffs/pytest-dev__pytest-10051-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-10356-bug",
+        "diff_file": "diffs/pytest-dev__pytest-10356-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/mark/structures.py",
+            "description": "Consider MRO when obtaining marks for classes",
+            "line_range": [
+              355,
+              366
+            ]
+          },
+          {
+            "file": "src/_pytest/mark/structures.py",
+            "description": "Consider MRO when obtaining marks for classes",
+            "line_range": [
+              388,
+              394
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-10356-clean",
+        "diff_file": "diffs/pytest-dev__pytest-10356-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-5631-bug",
+        "diff_file": "diffs/pytest-dev__pytest-5631-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/compat.py",
+            "description": "ValueError when collecting tests that patch an array",
+            "line_range": [
+              64,
+              76
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-5631-clean",
+        "diff_file": "diffs/pytest-dev__pytest-5631-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-5809-bug",
+        "diff_file": "diffs/pytest-dev__pytest-5809-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/pastebin.py",
+            "description": "Lexer \"python3\" in --pastebin feature causes HTTP errors",
+            "line_range": [
+              77,
+              87
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-5809-clean",
+        "diff_file": "diffs/pytest-dev__pytest-5809-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-6197-bug",
+        "diff_file": "diffs/pytest-dev__pytest-6197-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/python.py",
+            "description": "Regression in 5.2.3: pytest tries to collect random __init__.py files",
+            "line_range": [
+              251,
+              271
+            ]
+          },
+          {
+            "file": "src/_pytest/python.py",
+            "description": "Regression in 5.2.3: pytest tries to collect random __init__.py files",
+            "line_range": [
+              432,
+              445
+            ]
+          },
+          {
+            "file": "src/_pytest/python.py",
+            "description": "Regression in 5.2.3: pytest tries to collect random __init__.py files",
+            "line_range": [
+              639,
+              645
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 3.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-6197-clean",
+        "diff_file": "diffs/pytest-dev__pytest-6197-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-7205-bug",
+        "diff_file": "diffs/pytest-dev__pytest-7205-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/setuponly.py",
+            "description": "BytesWarning when using --setup-show with bytes parameter",
+            "line_range": [
+              1,
+              4
+            ]
+          },
+          {
+            "file": "src/_pytest/setuponly.py",
+            "description": "BytesWarning when using --setup-show with bytes parameter",
+            "line_range": [
+              66,
+              72
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-7205-clean",
+        "diff_file": "diffs/pytest-dev__pytest-7205-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-7236-bug",
+        "diff_file": "diffs/pytest-dev__pytest-7236-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/unittest.py",
+            "description": "unittest.TestCase.tearDown executed on skipped tests when running --pdb",
+            "line_range": [
+              41,
+              47
+            ]
+          },
+          {
+            "file": "src/_pytest/unittest.py",
+            "description": "unittest.TestCase.tearDown executed on skipped tests when running --pdb",
+            "line_range": [
+              89,
+              95
+            ]
+          },
+          {
+            "file": "src/_pytest/unittest.py",
+            "description": "unittest.TestCase.tearDown executed on skipped tests when running --pdb",
+            "line_range": [
+              220,
+              226
+            ]
+          },
+          {
+            "file": "src/_pytest/unittest.py",
+            "description": "unittest.TestCase.tearDown executed on skipped tests when running --pdb",
+            "line_range": [
+              301,
+              303
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 4.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-7236-clean",
+        "diff_file": "diffs/pytest-dev__pytest-7236-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-7324-bug",
+        "diff_file": "diffs/pytest-dev__pytest-7324-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "src/_pytest/mark/expression.py",
+            "description": "Pytest crashes the interpreter on debug build for 3.8+",
+            "line_range": [
+              127,
+              132
+            ]
+          },
+          {
+            "file": "src/_pytest/mark/expression.py",
+            "description": "Pytest crashes the interpreter on debug build for 3.8+",
+            "line_range": [
+              161,
+              167
+            ]
+          },
+          {
+            "file": "src/_pytest/mark/expression.py",
+            "description": "Pytest crashes the interpreter on debug build for 3.8+",
+            "line_range": [
+              172,
+              178
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 2.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "pytest-dev__pytest-7324-clean",
+        "diff_file": "diffs/pytest-dev__pytest-7324-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-10297-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-10297-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/linear_model/ridge.py",
+            "description": "linear_model.RidgeClassifierCV's Parameter store_cv_values issue",
+            "line_range": [
+              1212,
+              1229
+            ]
+          },
+          {
+            "file": "sklearn/linear_model/ridge.py",
+            "description": "linear_model.RidgeClassifierCV's Parameter store_cv_values issue",
+            "line_range": [
+              1301,
+              1314
+            ]
+          },
+          {
+            "file": "sklearn/linear_model/ridge.py",
+            "description": "linear_model.RidgeClassifierCV's Parameter store_cv_values issue",
+            "line_range": [
+              1333,
+              1342
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 2.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-10297-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-10297-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-10844-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-10844-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/metrics/cluster/supervised.py",
+            "description": "fowlkes_mallows_score returns RuntimeWarning when variables get too big",
+            "line_range": [
+              852,
+              862
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-10844-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-10844-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-11578-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-11578-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/linear_model/logistic.py",
+            "description": "For probabilistic scorers, LogisticRegressionCV(multi_class='multinomial') uses OvR to calculate scores",
+            "line_range": [
+              922,
+              928
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-11578-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-11578-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-12973-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-12973-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/linear_model/least_angle.py",
+            "description": "LassoLarsIC: unintuitive copy_X behaviour",
+            "line_range": [
+              1479,
+              1485
+            ]
+          },
+          {
+            "file": "sklearn/linear_model/least_angle.py",
+            "description": "LassoLarsIC: unintuitive copy_X behaviour",
+            "line_range": [
+              1490,
+              1496
+            ]
+          },
+          {
+            "file": "sklearn/linear_model/least_angle.py",
+            "description": "LassoLarsIC: unintuitive copy_X behaviour",
+            "line_range": [
+              1498,
+              1507
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 2.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-12973-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-12973-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-14087-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-14087-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/linear_model/logistic.py",
+            "description": "IndexError thrown with LogisticRegressionCV and refit=False",
+            "line_range": [
+              2170,
+              2176
+            ]
+          },
+          {
+            "file": "sklearn/linear_model/logistic.py",
+            "description": "IndexError thrown with LogisticRegressionCV and refit=False",
+            "line_range": [
+              2180,
+              2187
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-14087-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-14087-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-14629-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-14629-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/multioutput.py",
+            "description": "AttributeError with cross_val_predict(method='predict_proba') when using MultiOuputClassifier",
+            "line_range": [
+              325,
+              330
+            ]
+          },
+          {
+            "file": "sklearn/multioutput.py",
+            "description": "AttributeError with cross_val_predict(method='predict_proba') when using MultiOuputClassifier",
+            "line_range": [
+              420,
+              426
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-14629-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-14629-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-25747-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-25747-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/utils/_set_output.py",
+            "description": "FeatureUnion not working when aggregating data and pandas transform output selected",
+            "line_range": [
+              34,
+              40
+            ]
+          },
+          {
+            "file": "sklearn/utils/_set_output.py",
+            "description": "FeatureUnion not working when aggregating data and pandas transform output selected",
+            "line_range": [
+              55,
+              62
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-25747-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-25747-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-26194-bug",
+        "diff_file": "diffs/scikit-learn__scikit-learn-26194-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sklearn/metrics/_ranking.py",
+            "description": "Thresholds can exceed 1 in `roc_curve` while providing probability estimate",
+            "line_range": [
+              1016,
+              1025
+            ]
+          },
+          {
+            "file": "sklearn/metrics/_ranking.py",
+            "description": "Thresholds can exceed 1 in `roc_curve` while providing probability estimate",
+            "line_range": [
+              1036,
+              1041
+            ]
+          },
+          {
+            "file": "sklearn/metrics/_ranking.py",
+            "description": "Thresholds can exceed 1 in `roc_curve` while providing probability estimate",
+            "line_range": [
+              1056,
+              1062
+            ]
+          },
+          {
+            "file": "sklearn/metrics/_ranking.py",
+            "description": "Thresholds can exceed 1 in `roc_curve` while providing probability estimate",
+            "line_range": [
+              1083,
+              1089
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 4.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "scikit-learn__scikit-learn-26194-clean",
+        "diff_file": "diffs/scikit-learn__scikit-learn-26194-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-7440-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-7440-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/domains/std.py",
+            "description": "glossary duplicate term with a different case",
+            "line_range": [
+              305,
+              311
+            ]
+          },
+          {
+            "file": "sphinx/domains/std.py",
+            "description": "glossary duplicate term with a different case",
+            "line_range": [
+              565,
+              571
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 2.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-7440-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-7440-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-7889-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-7889-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/ext/autodoc/mock.py",
+            "description": "Autodoc extension's mock file throws TypeError for generic-typed classes.",
+            "line_range": [
+              52,
+              59
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-7889-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-7889-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-8265-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-8265-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/pycode/ast.py",
+            "description": "docstring default arg is broken",
+            "line_range": [
+              166,
+              179
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-8265-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-8265-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-8548-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-8548-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/ext/autodoc/__init__.py",
+            "description": "autodoc inherited-members won't work for inherited attributes (data members).",
+            "line_range": [
+              1584,
+              1590
+            ]
+          },
+          {
+            "file": "sphinx/ext/autodoc/importer.py",
+            "description": "autodoc inherited-members won't work for inherited attributes (data members).",
+            "line_range": [
+              14,
+              20
+            ]
+          },
+          {
+            "file": "sphinx/ext/autodoc/importer.py",
+            "description": "autodoc inherited-members won't work for inherited attributes (data members).",
+            "line_range": [
+              251,
+              258
+            ]
+          },
+          {
+            "file": "sphinx/ext/autodoc/importer.py",
+            "description": "autodoc inherited-members won't work for inherited attributes (data members).",
+            "line_range": [
+              297,
+              319
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 3.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-8548-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-8548-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 4.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-8638-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-8638-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/domains/python.py",
+            "description": "Instance variables link to other variables of the same name in the project",
+            "line_range": [
+              354,
+              360
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-8638-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-8638-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-9320-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-9320-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/cmd/quickstart.py",
+            "description": "`sphinx-quickstart` with existing conf.py doesn't exit easily",
+            "line_range": [
+              95,
+              100
+            ]
+          },
+          {
+            "file": "sphinx/cmd/quickstart.py",
+            "description": "`sphinx-quickstart` with existing conf.py doesn't exit easily",
+            "line_range": [
+              223,
+              229
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-9320-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-9320-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-9367-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-9367-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/pycode/ast.py",
+            "description": "1-element tuple rendered incorrectly",
+            "line_range": [
+              213,
+              222
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 3.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-9367-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-9367-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-9698-bug",
+        "diff_file": "diffs/sphinx-doc__sphinx-9698-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sphinx/domains/python.py",
+            "description": "An index entry with parens was registered for `py:method` directive with `:property:` option",
+            "line_range": [
+              796,
+              802
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sphinx-doc__sphinx-9698-clean",
+        "diff_file": "diffs/sphinx-doc__sphinx-9698-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-12096-bug",
+        "diff_file": "diffs/sympy__sympy-12096-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/core/function.py",
+            "description": "evalf does not call _imp_ recursively",
+            "line_range": [
+              507,
+              513
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-12096-clean",
+        "diff_file": "diffs/sympy__sympy-12096-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-13551-bug",
+        "diff_file": "diffs/sympy__sympy-13551-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/concrete/products.py",
+            "description": "Product(n + 1 / 2**k, [k, 0, n-1]) is incorrect",
+            "line_range": [
+              282,
+              289
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 2.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-13551-clean",
+        "diff_file": "diffs/sympy__sympy-13551-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-13647-bug",
+        "diff_file": "diffs/sympy__sympy-13647-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/matrices/common.py",
+            "description": "Matrix.col_insert() no longer seems to work correctly.",
+            "line_range": [
+              86,
+              92
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-13647-clean",
+        "diff_file": "diffs/sympy__sympy-13647-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 3.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-13974-bug",
+        "diff_file": "diffs/sympy__sympy-13974-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/physics/quantum/tensorproduct.py",
+            "description": "Evaluating powers of `TensorProduct`",
+            "line_range": [
+              18,
+              23
+            ]
+          },
+          {
+            "file": "sympy/physics/quantum/tensorproduct.py",
+            "description": "Evaluating powers of `TensorProduct`",
+            "line_range": [
+              310,
+              327
+            ]
+          },
+          {
+            "file": "sympy/physics/quantum/tensorproduct.py",
+            "description": "Evaluating powers of `TensorProduct`",
+            "line_range": [
+              335,
+              349
+            ]
+          },
+          {
+            "file": "sympy/physics/quantum/tensorproduct.py",
+            "description": "Evaluating powers of `TensorProduct`",
+            "line_range": [
+              382,
+              388
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 3.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-13974-clean",
+        "diff_file": "diffs/sympy__sympy-13974-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-15345-bug",
+        "diff_file": "diffs/sympy__sympy-15345-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/printing/mathematica.py",
+            "description": "mathematica_code gives wrong output with Max",
+            "line_range": [
+              31,
+              37
+            ]
+          },
+          {
+            "file": "sympy/printing/mathematica.py",
+            "description": "mathematica_code gives wrong output with Max",
+            "line_range": [
+              101,
+              106
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-15345-clean",
+        "diff_file": "diffs/sympy__sympy-15345-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-15875-bug",
+        "diff_file": "diffs/sympy__sympy-15875-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/core/add.py",
+            "description": "is_zero is incorrect on complex integer",
+            "line_range": [
+              554,
+              560
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-15875-clean",
+        "diff_file": "diffs/sympy__sympy-15875-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-20154-bug",
+        "diff_file": "diffs/sympy__sympy-20154-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/utilities/iterables.py",
+            "description": "partitions() reusing the output dictionaries",
+            "line_range": [
+              1738,
+              1758
+            ]
+          },
+          {
+            "file": "sympy/utilities/iterables.py",
+            "description": "partitions() reusing the output dictionaries",
+            "line_range": [
+              1802,
+              1810
+            ]
+          },
+          {
+            "file": "sympy/utilities/iterables.py",
+            "description": "partitions() reusing the output dictionaries",
+            "line_range": [
+              1842,
+              1850
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 3.0,
+      "finding_fps": 1.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-20154-clean",
+        "diff_file": "diffs/sympy__sympy-20154-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-20916-bug",
+        "diff_file": "diffs/sympy__sympy-20916-bug.diff",
+        "expected_verdict": "HOLD",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": [
+          {
+            "file": "sympy/printing/conventions.py",
+            "description": "pprint unicode does not format subscripts on Greek letters",
+            "line_range": [
+              7,
+              13
+            ]
+          },
+          {
+            "file": "sympy/printing/conventions.py",
+            "description": "pprint unicode does not format subscripts on Greek letters",
+            "line_range": [
+              60,
+              66
+            ]
+          }
+        ]
+      },
+      "actual_verdict": "HOLD",
+      "runs": 1,
+      "caught_count": 1,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 1.0,
+      "finding_misses": 1.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    },
+    {
+      "entry": {
+        "name": "sympy__sympy-20916-clean",
+        "diff_file": "diffs/sympy__sympy-20916-clean.diff",
+        "expected_verdict": "PASS",
+        "axis_tags": [
+          "RUNTIME"
+        ],
+        "expected_advisory": [],
+        "expected_findings": []
+      },
+      "actual_verdict": "PASS",
+      "runs": 1,
+      "caught_count": 0,
+      "skipped_reason": "",
+      "advisory_caught_count": 0,
+      "finding_hits": 0.0,
+      "finding_misses": 0.0,
+      "finding_fps": 0.0,
+      "finding_hits_se": 0.0,
+      "finding_fps_se": 0.0,
+      "finding_runs": 1
+    }
+  ]
+}

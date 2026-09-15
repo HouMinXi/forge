@@ -38,8 +38,9 @@ available.
 ## Setup
 
 - Backend: `mimo-v2.5-pro` on the depth and ablation arms. Switching
-  models mid-sweep would confound those comparisons. A later depth-1 arm
-  used `agnes-cn`; that comparison is its own section.
+  models mid-sweep would confound those comparisons. Later depth-1 arms
+  used `agnes-cn` and `qwen-27b-dflash`; those comparisons are their
+  own sections.
 - One run per entry. Replicates at three depths would have cost over 100
   hours of review time; the consequence is stated under caveats.
 - Entry-level scoring: a defect entry counts as caught when the verdict is
@@ -165,6 +166,71 @@ What this says, one run per entry:
   moved more than configuration. The 45 s figure is what the ledger
   recorded.
 
+## Local 27B with DFlash2 (depth 1)
+
+A later arm kept depth 1, `engine=real`, one run per entry, and the same
+150-entry corpus. The review backend was `qwen-27b-dflash`: Qwen3.8-27B
+UD-IQ4_XS with a DFlash2 Q4_K_M draft, served by llama.cpp on a single
+RTX 3080 20 GB. The knowledge-base reranker and query service on that
+host were stopped so the card was exclusive. Forge reached the server
+through an SSH tunnel to `127.0.0.1:8081`. Thinking was off
+(`enable_thinking: false`). The serving binary was llama.cpp `64e9bce`
+(DFlash2). The older production binary `eb25b72` cannot load this draft
+(`wrong number of tensors; expected 81, got 58`).
+
+Ledger: `docs/eval/qwen-dflash-d1.jsonl`
+SHA-256: `0b72b0531a77da63c0e9bb4fc7daa50c5e55e35165ea36baa3047332b688925c`
+
+Entry-level:
+
+| Backend | Defects caught | Controls passed | Recall | Precision | F1 | Wall per entry |
+|---|---|---|---|---|---|---|
+| `mimo-v2.5-pro` (depth 1, from the sweep above) | 52/75 | 34/75 | 0.693 | 0.559 | 0.619 | 429 s (SE 19) |
+| `agnes-cn` (depth 1) | 57/75 | 18/75 | 0.760 | 0.500 | 0.603 | 45 s (SE 2) |
+| `qwen-27b-dflash` (depth 1) | 41/75 | 44/75 | 0.547 | 0.569 | 0.558 | 85 s (SE 6) |
+
+Finding-level, all 150 scored (`agnes-cn` and `qwen-27b-dflash`). The
+depth-1 mimo ledger is still verdict-only.
+
+| Backend | Hits | Misses | False positives | Precision | Recall | F1 |
+|---|---|---|---|---|---|---|
+| `agnes-cn` | 59 | 93 | 196 | 23.1 | 38.8 | 0.290 |
+| `qwen-27b-dflash` | 33 | 119 | 91 | 26.6 | 21.7 | 0.239 |
+
+What this says, one run per entry:
+
+- Recall dropped: 41 of 75 defects against 57 on `agnes-cn` and 52 on
+  mimo. Precision rose on the clean side: 44 of 75 controls passed
+  against 18 on `agnes-cn` and 34 on mimo.
+- Entry-level F1 0.558 is below both cloud arms. Finding-level F1 0.239
+  is below `agnes-cn` 0.290: fewer false positives (91 against 196) and
+  fewer hits (33 against 59).
+- Wall-clock 85 s per entry, total 3.5 h, SKIPPED 0. The 3080 was
+  otherwise idle, so this wall column is less mixed with shared-endpoint
+  latency than the cloud arms. It is still not a model ranking.
+- This arm does not replace `agnes-cn` as the default review backend.
+  Missed defects cost more than extra false positives on this corpus.
+
+Weights and flags used on that host:
+
+- Target: `Qwen3.8-27B-UD-IQ4_XS.gguf`
+- Draft: `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (SHA-256
+  `1a25c56858e1ebe93f2718ac1d49d1151f9323325c1bbfd6209370f4db131ebd`),
+  `--spec-type draft-dflash`, `--spec-draft-n-max 8` (clamped to 7)
+- Bind: `127.0.0.1:8081`. VRAM with the pair loaded: about 19394 of
+  20480 MiB.
+
+Reproduce this arm (tunnel to 8081 and the `qwen-27b-dflash` user
+backend already in place):
+
+```bash
+FORGE_CLEAN_ROUND_THRESHOLD=1 FORGE_LOCAL_KEY=local code-forge eval \
+    --corpus tests/eval/swebench/corpus.yaml --backend qwen-27b-dflash \
+    --jobs 1 --runs 1 --arm-depth 1 \
+    --resume-log docs/eval/qwen-dflash-d1.jsonl
+python3 scripts/analyse_arms.py docs/eval/qwen-dflash-d1.jsonl
+```
+
 ## Caveats
 
 These apply to every number on this page.
@@ -196,12 +262,12 @@ These apply to every number on this page.
   against SWE-bench Verified defects with the upstream fix as answer key
   plus matched clean controls. Different ground truth, different numbers;
   they do not belong in one table.
-- Two backends at depth 1, one backend everywhere else. Depth sweep and
-  ablation ran on `mimo-v2.5-pro`. One later depth-1 arm ran on `agnes-cn`.
-  Whether the pipeline or the model sets the ceiling is still not
-  separable for depths 2 and 3, or for the gate. The depth-1 swap shows
-  the backend moving recall and precision in opposite directions; it does
-  not answer the depth or gate questions.
+- Three backends at depth 1, one backend everywhere else. Depth sweep and
+  ablation ran on `mimo-v2.5-pro`. Later depth-1 arms ran on `agnes-cn`
+  and `qwen-27b-dflash`. Whether the pipeline or the model sets the
+  ceiling is still not separable for depths 2 and 3, or for the gate.
+  The depth-1 swaps show the backend moving recall and precision; they
+  do not answer the depth or gate questions.
 - Corpus shape. Python library code with an upstream fix, reviewed without
   surrounding context. Results do not transfer unexamined to other
   languages or to defect classes SWE-bench does not contain.
