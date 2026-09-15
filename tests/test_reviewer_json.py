@@ -474,8 +474,11 @@ class TestNestedFindingExcerpts:
             {"findings": [self._finding(), plain]},
         )
         assert out["findings"][1] == plain
+        assert out["findings"][1] is not plain
         assert isinstance(out["findings"][1], dict)
         assert out["code_excerpts"] == [self._exc()]
+        out["findings"][1]["description"] = "mutated"
+        assert plain["description"] == "plain"
 
 
 class TestEmptyCleanPassEnvelope:

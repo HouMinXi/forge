@@ -126,9 +126,9 @@ def _hoist_nested_excerpts(data: dict) -> None:
     Only runs when the root key is absent. A present key, including an
     empty list, is a claimed envelope and is left alone so coverage is
     not double-counted and a silent empty root is not papered over.
-    Mutates ``data``; copies finding dicts that lose the nested key so
-    the caller's objects stay intact. Non-dict entries are kept as-is
-    and do not stop the walk; schema checks after hoist still reject them.
+    Mutates ``data``; copies every finding dict so the caller's objects
+    stay intact. Non-dict entries are kept as-is and do not stop the
+    walk; schema checks after hoist still reject them.
     """
     if "code_excerpts" in data:
         return
@@ -148,7 +148,7 @@ def _hoist_nested_excerpts(data: dict) -> None:
             del fresh["code_excerpts"]
             rewritten.append(fresh)
         else:
-            rewritten.append(item)
+            rewritten.append(dict(item))
     if hoisted:
         data["findings"] = rewritten
         data["code_excerpts"] = hoisted
