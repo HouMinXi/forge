@@ -57,11 +57,12 @@ class ExcerptEvidenceError(ValueError):
     Distinct from the plain ValueError raised for a malformed response.
     Nothing was parsed in the malformed case, so nothing can be audited and
     the run has learned only that the backend is unusable. Here the reply
-    parsed, named real files and carried findings; only the evidence
-    coordinates were wrong. The two must not converge on the same
-    CONFIRMED infrastructure finding, because that makes a reviewer with a
-    coordinate habit indistinguishable from a dead backend and blocks the
-    clean-round counter forever.
+    parsed. Either it named files and the coordinates were wrong, or it
+    claimed a clean pass with empty findings and empty excerpts -- a
+    zero-cost envelope, not a dead backend. The two must not converge on
+    the same CONFIRMED infrastructure finding, because that makes a
+    reviewer with a coordinate habit indistinguishable from a dead backend
+    and blocks the clean-round counter forever.
     """
 
 
@@ -126,7 +127,8 @@ def _hoist_nested_excerpts(data: dict) -> None:
     empty list, is a claimed envelope and is left alone so coverage is
     not double-counted and a silent empty root is not papered over.
     Mutates ``data``; copies finding dicts that lose the nested key so
-    the caller's objects stay intact.
+    the caller's objects stay intact. Non-dict entries are kept as-is
+    and do not stop the walk; schema checks after hoist still reject them.
     """
     if "code_excerpts" in data:
         return
@@ -135,21 +137,19 @@ def _hoist_nested_excerpts(data: dict) -> None:
         return
     hoisted: list = []
     rewritten: list = []
-    any_nested = False
     for item in findings:
         if not isinstance(item, dict):
             rewritten.append(item)
             continue
         nested = item.get("code_excerpts")
         if isinstance(nested, list) and nested:
-            any_nested = True
             hoisted.extend(nested)
             fresh = dict(item)
             del fresh["code_excerpts"]
             rewritten.append(fresh)
         else:
             rewritten.append(item)
-    if any_nested:
+    if hoisted:
         data["findings"] = rewritten
         data["code_excerpts"] = hoisted
 
@@ -264,7 +264,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
             )
 
     if len(data["findings"]) == 0 and len(data["code_excerpts"]) == 0:
-        raise ValueError(
+        raise ExcerptEvidenceError(
             "findings=0 but code_excerpts empty -- reviewer must provide "
             "per-hunk excerpts even for clean passes"
         )

@@ -3,7 +3,12 @@ import json
 
 import pytest
 
-from code_forge.reviewer_json import REVIEW_JSON_CONTRACT, validate_reviewer_json
+from code_forge.reviewer_json import (
+    REVIEW_JSON_CONTRACT,
+    ExcerptEvidenceError,
+    _hoist_nested_excerpts,
+    validate_reviewer_json,
+)
 
 VALID = {
     "findings": [
@@ -417,3 +422,76 @@ class TestNestedFindingExcerpts:
         }
         with pytest.raises(ValueError, match="missing required field"):
             validate_reviewer_json(json.dumps(data))
+
+    def test_non_dict_finding_is_kept_and_does_not_stop_hoist(self):
+        """A garbage list entry must not become None, and must not drop later nested excerpts."""
+        data = {"findings": ["skip-me", self._finding()]}
+        _hoist_nested_excerpts(data)
+        assert data["findings"][0] == "skip-me"
+        assert data["code_excerpts"] == [self._exc()]
+        assert data["findings"][1]["file"] == self._finding()["file"]
+        with pytest.raises(ValueError, match="finding\\[0\\] is not a dict"):
+            validate_reviewer_json(data)
+
+    def test_empty_nested_list_does_not_count_as_hoist(self):
+        """An empty per-finding list is not evidence. Do not invent a root key."""
+        finding = {
+            "file": "a.py",
+            "line": 1,
+            "severity": "P3",
+            "description": "no excerpts",
+            "code_excerpts": [],
+        }
+        with pytest.raises(ValueError, match="missing required field"):
+            validate_reviewer_json({"findings": [finding]})
+
+    def test_non_list_nested_does_not_hoist(self):
+        """A truthy non-list must not be treated as excerpts.
+
+        `isinstance(x, list) or x` would hoist a string by extending
+        characters onto the root list. Only a non-empty list counts.
+        """
+        data = {
+            "findings": [{
+                "file": "a.py",
+                "line": 1,
+                "severity": "P3",
+                "description": "x",
+                "code_excerpts": "not-a-list",
+            }],
+        }
+        _hoist_nested_excerpts(data)
+        assert "code_excerpts" not in data
+
+    def test_sibling_without_nested_is_kept(self):
+        plain = {
+            "file": "b.py",
+            "line": 1,
+            "severity": "P3",
+            "description": "plain",
+        }
+        out = validate_reviewer_json(
+            {"findings": [self._finding(), plain]},
+        )
+        assert out["findings"][1] == plain
+        assert isinstance(out["findings"][1], dict)
+        assert out["code_excerpts"] == [self._exc()]
+
+
+class TestEmptyCleanPassEnvelope:
+    """A claimed-clean envelope with no excerpts is evidence failure, not a dead backend."""
+
+    def test_empty_lists_raise_excerpt_evidence_error(self):
+        with pytest.raises(ExcerptEvidenceError, match="per-hunk excerpts"):
+            validate_reviewer_json({"findings": [], "code_excerpts": []})
+
+    def test_empty_lists_are_not_a_plain_schema_error(self):
+        try:
+            validate_reviewer_json({"findings": [], "code_excerpts": []})
+        except ExcerptEvidenceError:
+            return
+        except ValueError as exc:
+            raise AssertionError(
+                f"empty clean-pass envelope must not be a plain ValueError: {exc!r}"
+            ) from exc
+        raise AssertionError("empty clean-pass envelope must raise")
