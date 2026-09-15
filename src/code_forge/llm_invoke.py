@@ -10,6 +10,8 @@ Public types: Usage, LLMResult, LLMInvokeError
 """
 from __future__ import annotations
 
+import asyncio
+import http.client
 import json
 import logging
 import os
@@ -19,16 +21,15 @@ import shutil
 import subprocess
 import threading
 import time
-import http.client
-import urllib.request
 import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from . import progress
 from .backend import BackendConfig, check_headers, check_params
 from .errors import CliError
-from . import progress
 
 
 @dataclass(frozen=True)
@@ -2363,7 +2364,6 @@ async def invoke_sampling(
                 raise
             delay = _retry_delay_s(attempt, initial_delay_s, exc.retry_after)
             _emit_retrying("sampling", attempt, max_attempts, delay, cause)
-            import asyncio
             await asyncio.sleep(delay)
     assert last_exc is not None
     raise last_exc
