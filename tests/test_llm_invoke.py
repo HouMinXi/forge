@@ -3334,6 +3334,52 @@ class TestExtractJsonFromText:
         result = self._extract(text)
         assert result == {"findings": [], "k": 'value with "quote"'}
 
+    def test_literal_newline_in_excerpt_content_is_accepted(self):
+        """Models quoting source often emit a raw LF inside a JSON string.
+
+        RFC 8259 forbids unescaped U+0000-U+001F. json.loads default
+        (strict=True) raises Invalid control character. The review
+        envelope parser must accept that shape: the quoted source is
+        still evidence, the wrapping is wrong -- same class as a
+        markdown fence, not a dead backend.
+        Specimen: r4 qodo, column 9875, agnes-intl, 5 identical retries.
+        """
+        raw = (
+            '{"findings": [], "code_excerpts": [{'
+            '"file": "src/code_forge/reviewer_json.py",'
+            '"start_line": 57, "end_line": 58,'
+            '"content": "    Distinct from the plain ValueError.\n'
+            '    Nothing was parsed in the malformed case."'
+            "}]}"
+        )
+        with pytest.raises(json.JSONDecodeError, match="Invalid control character"):
+            json.loads(raw)
+        got = self._extract(raw)
+        assert got is not None
+        assert got["findings"] == []
+        excerpt = got["code_excerpts"][0]
+        assert excerpt["file"] == "src/code_forge/reviewer_json.py"
+        assert "\n" in excerpt["content"]
+        assert "Nothing was parsed" in excerpt["content"]
+
+    def test_literal_tab_in_excerpt_content_is_accepted(self):
+        raw = '{"findings": [], "code_excerpts": [{"file": "a.sh", "start_line": 1, "end_line": 1, "content": "\\tlocal x"}]}'
+        # The above uses a JSON-escaped tab. Build a truly raw tab:
+        raw = (
+            '{"findings": [], "code_excerpts": [{'
+            '"file": "a.sh", "start_line": 1, "end_line": 1,'
+            '"content": "' + "\t" + 'local x"}]}'
+        )
+        with pytest.raises(json.JSONDecodeError, match="Invalid control character"):
+            json.loads(raw)
+        got = self._extract(raw)
+        assert got is not None
+        assert got["code_excerpts"][0]["content"] == "\tlocal x"
+
+    def test_unbalanced_json_still_returns_none(self):
+        """strict=False must not invent an envelope from truncated JSON."""
+        assert self._extract('{"findings": [{"unterminated') is None
+
     # -- falsify regression reproducer (RED on 652cbd6, GREEN after this fix) --
 
     def test_falsify_verdict_without_expected_keys_returns_none(self):

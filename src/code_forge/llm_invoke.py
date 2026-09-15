@@ -832,6 +832,21 @@ def _resolve_model() -> str:
     return os.environ.get("FORGE_LLM_MODEL", "")
 
 
+def _loads_model_json(text: str):
+    """Parse model-emitted JSON, allowing unescaped control characters.
+
+    RFC 8259 forbids U+0000-U+001F inside strings. Models quoting source
+    (qodo especially) emit a raw LF or TAB in excerpt content. strict=True
+    then raises Invalid control character and the whole pass is an INFRA
+    error. The HTTP/SSE envelope that wraps the model text stays strict.
+    """
+    return json.loads(text, strict=False)
+
+
+def _model_json_decoder() -> json.JSONDecoder:
+    return json.JSONDecoder(strict=False)
+
+
 def _strip_fences(text: str) -> str:
     """Strip markdown fences from LLM response.
 
@@ -898,7 +913,7 @@ def _extract_json_from_text(
     Returns None if no valid envelope can be extracted.
     """
     keys = expected_keys if expected_keys is not None else _REVIEW_ENVELOPE_KEYS
-    decoder = json.JSONDecoder()
+    decoder = _model_json_decoder()
     for i, ch in enumerate(text):
         if ch != "{":
             continue
@@ -1257,7 +1272,7 @@ def _invoke_cli(
     stdout = _strip_fences(stdout_data)
 
     try:
-        parsed = json.loads(stdout)
+        parsed = _loads_model_json(stdout)
     except json.JSONDecodeError as exc:
         diag = "JSONDecodeError: %s\nstdout[:500]: %r" % (exc, stdout[:500])
         raise LLMInvokeError(
@@ -1290,7 +1305,7 @@ def _invoke_cli(
         if isinstance(raw_result, str):
             stripped = _strip_fences(raw_result)
             try:
-                content = json.loads(stripped)
+                content = _loads_model_json(stripped)
             except json.JSONDecodeError:
                 content = raw_result
         else:
@@ -1391,7 +1406,7 @@ def _continue_truncated(
         # budget.
         cleaned_partial = _strip_fences(truncated.content)
         try:
-            parsed_partial = json.loads(cleaned_partial)
+            parsed_partial = _loads_model_json(cleaned_partial)
         except json.JSONDecodeError:
             parsed_partial = _extract_json_from_text(
                 cleaned_partial, expected_keys=expected_keys,
@@ -1469,7 +1484,7 @@ def _continue_truncated(
             combined = truncated.content + cont
             cleaned = _strip_fences(combined)
             try:
-                parsed = json.loads(cleaned)
+                parsed = _loads_model_json(cleaned)
             except json.JSONDecodeError:
                 parsed = _extract_json_from_text(
                     cleaned, expected_keys=expected_keys,
@@ -1663,7 +1678,7 @@ def _invoke_api(
                 # shape could void every cycle of the run.
                 content = _strip_fences(content)
                 try:
-                    parsed_content = json.loads(content)
+                    parsed_content = _loads_model_json(content)
                 except json.JSONDecodeError as exc:
                     parsed_content = _extract_json_from_text(
                         content, expected_keys=expected_keys
@@ -2338,7 +2353,7 @@ async def invoke_sampling(
             # Parse JSON same as _invoke_api path
             text = _strip_fences(raw_text)
             try:
-                parsed = json.loads(text)
+                parsed = _loads_model_json(text)
             except (json.JSONDecodeError, TypeError):
                 parsed = _extract_json_from_text(raw_text)
                 if parsed is None:
