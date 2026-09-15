@@ -657,7 +657,35 @@ def _diff_validation_context(
     hunk_map: dict[str, list[dict]] = {}
     current_file: str | None = None
     line_no = 0
+    # Lines that introduce or describe a file rather than its content.
+    # The context branch below is a catch-all, so anything not named here
+    # would be stored as a content line of whichever file came before it.
+    header_prefixes = (
+        "diff --git ",
+        "index ",
+        "new file mode ",
+        "deleted file mode ",
+        "old mode ",
+        "new mode ",
+        "similarity index ",
+        "dissimilarity index ",
+        "rename from ",
+        "rename to ",
+        "copy from ",
+        "copy to ",
+        "Binary files ",
+        "GIT binary patch",
+        "\\ No newline at end of file",
+    )
     for raw in diff_text.splitlines():
+        if raw.startswith("diff --git "):
+            # A new file starts here. Until its +++ header names it, any
+            # line belongs to no file, so stop attributing to the last one.
+            current_file = None
+            line_no = 0
+            continue
+        if raw.startswith(header_prefixes):
+            continue
         if raw.startswith("+++ b/"):
             current_file = raw[6:]
             line_no = 0
