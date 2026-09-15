@@ -113,6 +113,47 @@ def excerpt_lines(text: str) -> list[str]:
     return text.removesuffix("\n").split("\n")
 
 
+def _hoist_nested_excerpts(data: dict) -> None:
+    """Lift per-finding code_excerpts onto the envelope root.
+
+    Some backends (Agnes expert among them) return a parseable object
+    whose excerpts sit inside each finding rather than at the required
+    root key. That is the same class of envelope mismatch as a markdown
+    fence: the evidence is present, the wrapping is wrong. Repairing
+    the wrapping is not fabricating excerpts.
+
+    Only runs when the root key is absent. A present key, including an
+    empty list, is a claimed envelope and is left alone so coverage is
+    not double-counted and a silent empty root is not papered over.
+    Mutates ``data``; copies finding dicts that lose the nested key so
+    the caller's objects stay intact.
+    """
+    if "code_excerpts" in data:
+        return
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return
+    hoisted: list = []
+    rewritten: list = []
+    any_nested = False
+    for item in findings:
+        if not isinstance(item, dict):
+            rewritten.append(item)
+            continue
+        nested = item.get("code_excerpts")
+        if isinstance(nested, list) and nested:
+            any_nested = True
+            hoisted.extend(nested)
+            fresh = dict(item)
+            del fresh["code_excerpts"]
+            rewritten.append(fresh)
+        else:
+            rewritten.append(item)
+    if any_nested:
+        data["findings"] = rewritten
+        data["code_excerpts"] = hoisted
+
+
 def excerpt_line_count_matches(text: str, claimed: int) -> bool:
     """Report whether an excerpt carries as many lines as it declares.
 
@@ -157,6 +198,8 @@ def validate_reviewer_json(raw: str | dict) -> dict:
 
     if not isinstance(data, dict):
         raise ValueError("not a JSON object")
+
+    _hoist_nested_excerpts(data)
 
     for field in _REQUIRED_FIELDS:
         if field not in data:

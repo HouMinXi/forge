@@ -303,3 +303,117 @@ class TestExcerptTrailingBlankLine:
         payload = self._payload(["a", "b", "c"], 1, 1)
         with pytest.raises(ValueError, match="declares 1 lines but carries 3"):
             validate_reviewer_json(json.dumps(payload))
+
+
+class TestNestedFindingExcerpts:
+    """Hoist per-finding code_excerpts onto the envelope root.
+
+    Agnes expert (and similar) returns a parseable envelope whose excerpts
+    sit inside each finding rather than at the required root key. That
+    used to be schema_fail + TimeoutBreaker even though the excerpts were
+    well-formed. Fence-stripping already preprocesses; this is the same
+    class of envelope repair, not evidence fabrication.
+    """
+
+    def _exc(self) -> dict:
+        return {
+            "file": "tests/test_kconfig_lock_path.py",
+            "start_line": 84,
+            "end_line": 84,
+            "content": '    assert body.startswith(f"{HELPER_NAME}() {")',
+        }
+
+    def _finding(self) -> dict:
+        return {
+            "file": "tests/test_kconfig_lock_path.py",
+            "line": 84,
+            "severity": "P1",
+            "description": "verbatim needle ignores leading tab",
+            "code_excerpts": [self._exc()],
+        }
+
+    def test_nested_excerpts_hoisted_to_root(self):
+        finding = self._finding()
+        out = validate_reviewer_json(json.dumps({"findings": [finding]}))
+        assert "code_excerpts" in out
+        assert out["code_excerpts"] == [self._exc()]
+        assert "code_excerpts" not in out["findings"][0]
+        assert out["findings"][0]["file"] == finding["file"]
+        assert out["findings"][0]["line"] == 84
+        assert out["findings"][0]["severity"] == "P1"
+
+    def test_nested_excerpts_from_several_findings_are_concatenated(self):
+        other = {
+            "file": "framework/package/base.sh",
+            "start_line": 88,
+            "end_line": 88,
+            "content": "_kconfig_lock_path() {",
+        }
+        second = {
+            "file": "framework/package/base.sh",
+            "line": 88,
+            "severity": "P2",
+            "description": "other",
+            "code_excerpts": [other],
+        }
+        out = validate_reviewer_json(
+            {"findings": [self._finding(), second]},
+        )
+        assert out["code_excerpts"] == [self._exc(), other]
+        assert "code_excerpts" not in out["findings"][0]
+        assert "code_excerpts" not in out["findings"][1]
+
+    def test_root_excerpts_are_not_merged_with_nested(self):
+        """A well-formed envelope keeps its root list; nested copies stay put.
+
+        Merging would double-count coverage. The root key is the contract;
+        nested copies on a valid envelope are leftover model chatter.
+        """
+        root_exc = {
+            "file": "a.py",
+            "start_line": 1,
+            "end_line": 2,
+            "content": "x = 1\ny = 2",
+        }
+        finding = self._finding()
+        data = {
+            "findings": [finding],
+            "code_excerpts": [root_exc],
+        }
+        out = validate_reviewer_json(data)
+        assert out["code_excerpts"] == [root_exc]
+        assert out["findings"][0]["code_excerpts"] == finding["code_excerpts"]
+
+    def test_empty_root_list_does_not_hoist(self):
+        """Present-but-empty root is a claimed envelope, not a missing key.
+
+        Hoisting on [] would hide a model that named the key and then
+        supplied nothing at that layer. Fail closed, same as today.
+        """
+        finding = self._finding()
+        data = {"findings": [finding], "code_excerpts": []}
+        out = validate_reviewer_json(data)
+        assert out["code_excerpts"] == []
+        assert out["findings"][0]["code_excerpts"] == finding["code_excerpts"]
+
+    def test_nested_malformed_excerpt_still_rejected(self):
+        bad = self._finding()
+        bad["code_excerpts"] = [
+            {"file": "a.py", "start_line": 1, "end_line": 5, "content": "x = 1"},
+        ]
+        with pytest.raises(ValueError, match="declares 5 lines but carries 1"):
+            validate_reviewer_json({"findings": [bad]})
+
+    def test_findings_without_nested_or_root_still_rejected(self):
+        data = {
+            "findings": [
+                {
+                    "file": "a.py",
+                    "line": 1,
+                    "severity": "P3",
+                    "description": "no excerpts anywhere",
+                }
+            ]
+        }
+        with pytest.raises(ValueError, match="missing required field"):
+            validate_reviewer_json(json.dumps(data))
