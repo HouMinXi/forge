@@ -61,31 +61,45 @@ def unquote_git_path(inner: str) -> str:
         out.append(0x5C)
         out.extend(nxt.encode("utf-8"))
         i += 2
-    return out.decode("utf-8")
+    return out.decode("utf-8", "surrogateescape")
 
 
-def normalize_diff_path(raw: str) -> str:
-    """Map a git +++ / unidiff path token to the working-tree relative path."""
+def normalize_diff_path(raw: str, *, strip_git_prefix: bool = False) -> str:
+    """Map a git +++ / unidiff path token to the working-tree relative path.
+
+    Unidiff already drops a/ and b/. Only strip those prefixes when the
+    token still carries a git header prefix.
+    """
     path = raw.split("\t")[0].rstrip("\r\n")
     if path.startswith('"'):
         if path.endswith('"') and len(path) >= 2:
             path = unquote_git_path(path[1:-1])
         else:
             path = unquote_git_path(path[1:])
-    if path.startswith(("a/", "b/")):
+        # Quoted git tokens still carry a/ or b/ after C-unquote.
+        strip_git_prefix = True
+    if strip_git_prefix and path.startswith(("a/", "b/")):
         path = path[2:]
     return path
 
 
+def path_from_file_header(line: str, *, plus: bool) -> str | None:
+    """Working-tree path from a +++ or --- header, or None if this is not one."""
+    raw = line.split("\t")[0].rstrip("\r\n")
+    mark = "+++ " if plus else "--- "
+    if not raw.startswith(mark):
+        return None
+    rest = raw[4:]
+    if rest in ("/dev/null", '"/dev/null"'):
+        return None
+    if rest.startswith(("a/", "b/", '"a/', '"b/')):
+        return normalize_diff_path(rest, strip_git_prefix=True)
+    return None
+
+
 def path_from_plus_header(line: str) -> str | None:
     """Working-tree path from a +++ header, or None if this is not one."""
-    raw = line.split("\t")[0].rstrip("\r\n")
-    if raw.startswith("+++ "):
-        rest = raw[4:]
-        if rest == "/dev/null" or rest == '"/dev/null"':
-            return None
-        return normalize_diff_path(rest)
-    return None
+    return path_from_file_header(line, plus=True)
 
 
 def count_diff_lines(diff_text: str | None) -> int:
@@ -272,11 +286,9 @@ def _section_entry(lines: list[str]) -> tuple[str | None, str]:
         plus = path_from_plus_header(line)
         if plus is not None:
             return plus, "".join(lines)
-        raw = line.split("\t")[0].rstrip("\r\n")
-        if raw.startswith("--- "):
-            rest = raw[4:]
-            if rest not in ("/dev/null", '"/dev/null"'):
-                old_path = normalize_diff_path(rest)
+        minus = path_from_file_header(line, plus=False)
+        if minus is not None:
+            old_path = minus
     return old_path, "".join(lines)
 
 

@@ -166,6 +166,77 @@ def test_quoted_non_ascii_path_attests_through_run_verify(tmp_path):
     assert res.passed, res.reason
 
 
+def test_directory_named_a_keeps_prefix_through_hunks():
+    from unidiff import PatchSet
+
+    from code_forge.diff import extract_changed_lines, normalize_diff_path
+
+    diff = (
+        "diff --git a/a/x.py b/a/x.py\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/a/x.py\n"
+        "+++ b/a/x.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " def f():\n"
+        "+    return 1\n"
+        "     pass\n"
+    )
+    unidiff_key = next(iter(PatchSet(diff))).path
+    assert unidiff_key == "a/x.py"
+    assert normalize_diff_path(unidiff_key) == "a/x.py"
+    assert list(parse_diff_files(diff)) == ["a/x.py"]
+    assert list(parse_diff_hunks(diff)[0]) == ["a/x.py"]
+    assert list(extract_changed_lines(diff)) == ["a/x.py"]
+
+
+def test_added_plus_plus_line_is_not_a_new_file():
+    from code_forge.diff import path_from_plus_header
+
+    assert path_from_plus_header("+++ i;") is None
+    assert path_from_plus_header("+++ b/inc.cpp") == "inc.cpp"
+    diff = (
+        "diff --git a/inc.cpp b/inc.cpp\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/inc.cpp\n"
+        "+++ b/inc.cpp\n"
+        "@@ -1,3 +1,4 @@\n"
+        " int main() {\n"
+        "-return 0;\n"
+        "+++ i;\n"
+        "+return 0;\n"
+        " }\n"
+        "@@ -20,3 +21,4 @@\n"
+        " void other() {\n"
+        "     return;\n"
+        "+}\n"
+        " }\n"
+    )
+    files = parse_diff_files(diff)
+    assert list(files) == ["inc.cpp"]
+    post, hunks, _ = _diff_validation_context(diff)
+    assert list(post) == ["inc.cpp"]
+    assert list(hunks) == ["inc.cpp"]
+
+
+def test_latin1_c_quoted_octal_does_not_raise():
+    from code_forge.diff import path_from_plus_header, unquote_git_path
+
+    decoded = unquote_git_path(r"caf\351.py")
+    assert decoded.encode("utf-8", "surrogateescape")[3] == 0xE9
+    assert path_from_plus_header('+++ "b/caf\\351.py"') == decoded
+    diff = (
+        'diff --git "a/caf\\351.py" "b/caf\\351.py"\n'
+        "index 1111111..2222222 100644\n"
+        '--- "a/caf\\351.py"\n'
+        '+++ "b/caf\\351.py"\n'
+        "@@ -1 +1,2 @@\n"
+        " old\n"
+        "+new\n"
+    )
+    assert list(parse_diff_files(diff)) == [decoded]
+    assert list(parse_diff_hunks(diff)[0]) == [decoded]
+
+
 def test_unavailable_blob_does_not_invent_context(candidate):
     root, diff, excerpt = candidate
     import re
