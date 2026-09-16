@@ -822,6 +822,16 @@ class TestHardenedVerify:
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert r.passed, r.reason
 
+    def test_fixed_findings_with_identical_excerpts_pass(self, tmp_path):
+        """FIXED is closed; identical excerpts must not trip Jaccard."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": "FIXED"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert r.passed, r.reason
+
     def test_uncertain_findings_with_identical_excerpts_fail(self, tmp_path):
         """UNCERTAIN still counts as an open finding for the overlap gate."""
         rd = self._rd(tmp_path)
