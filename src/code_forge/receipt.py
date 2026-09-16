@@ -234,7 +234,7 @@ def write_receipts(
             if pass_outcomes.get(pname) != PassOutcome.COMPLETED:
                 continue
             errs = validate_excerpts_against_diff(
-                diff_text, assembled_by_pass[pname]
+                diff_text, assembled_by_pass[pname], cwd=cwd
             )
             if errs:
                 pass_outcomes[pname] = PassOutcome.SCHEMA_FAIL

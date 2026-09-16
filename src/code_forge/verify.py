@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
-from .diff import _extract_post_image_lines, parse_diff_hunks
+from .diff import parse_diff_hunks
 from .errors import CorruptedReceiptError, UnreadableGateError
 from .reviewer_json import excerpt_line_count_matches, excerpt_lines
 
@@ -153,7 +153,10 @@ def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
     current_file = None
     for line in diff_text.splitlines():
         if line.startswith("+++ b/"):
-            current_file = line[6:]
+            current_file = line[6:].split("\t")[0].rstrip("\r")
+        elif line.startswith('+++ "b/'):
+            inner = line[len('+++ "b/'):].split("\t")[0].rstrip("\r").removesuffix('"')
+            current_file = f'"{inner}"'
         elif line.startswith("@@") and current_file:
             m = re.search(r"\+(\d+)(?:,(\d+))?", line)
             if m:
@@ -645,13 +648,15 @@ def validate_excerpt_evidence(
 
 def _diff_validation_context(
     diff_text: str,
+    *, cwd: Path | None = None,
 ) -> tuple[dict[str, dict[int, str]], dict[str, list[dict]], list[str]]:
     """Parse frozen diff text into (post_image, hunk_map, exempt_files).
 
     Same parsing run_verify's hardened excerpt checks use; exposing it
-    lets the StateMachine validate a round's in-memory excerpts against
-    the same deterministic predicate instead of re-reading receipts from
-    disk (disk selection is not bound to the current run).
+    lets the StateMachine validate in-memory excerpts with the same
+    predicate as terminal attestation. When cwd is supplied, immutable
+    blobs named in diff headers can supplement bounded context; live
+    working files never supply evidence.
     """
     post_image: dict[str, dict[int, str]] = {}
     hunk_map: dict[str, list[dict]] = {}
@@ -688,13 +693,17 @@ def _diff_validation_context(
         if raw.startswith(header_prefixes):
             continue
         if raw.startswith("+++ b/"):
-            current_file = raw[6:]
+            current_file = raw[6:].split("\t")[0].rstrip("\r")
+            line_no = 0
+            post_image.setdefault(current_file, {})
+            hunk_map.setdefault(current_file, [])
+        elif raw.startswith('+++ "b/'):
+            inner = raw[len('+++ "b/'):].split("\t")[0].rstrip("\r").removesuffix('"')
+            current_file = f'"{inner}"'
             line_no = 0
             post_image.setdefault(current_file, {})
             hunk_map.setdefault(current_file, [])
         elif raw.startswith("@@") and current_file:
-            import re
-
             m = re.search(r"\+(\d+)(?:,(\d+))?", raw)
             if m:
                 line_no = int(m.group(1))
@@ -725,6 +734,31 @@ def _diff_validation_context(
     exempt_files = [
         f for f, lines in post_image.items() if not lines
     ]
+    if cwd is not None:
+        from .git import read_diff_blob
+
+        for section in re.split(r"(?m)^diff --git ", diff_text)[1:]:
+            header, _, _body = section.partition("\n@@")
+            path = re.search(r'(?m)^\+\+\+ (?:b/(.+?)|"b/(.+?)")(?:\t|\r?$)', header)
+            index = re.search(r"(?m)^index [0-9a-f]+\.\.([0-9a-f]+)(?:[ \t\r]|$)", header)
+            if path is None or index is None:
+                continue
+            file = path.group(1) if path.group(1) is not None else f'"{path.group(2)}"'
+            frozen = post_image.get(file)
+            if not frozen:
+                continue
+            text = read_diff_blob(index.group(1), cwd)
+            if text is None:
+                continue
+            lines = dict(enumerate(text.splitlines(), 1))
+            # A patch may have been edited independently of its index header.
+            # Only a blob agreeing with every frozen hunk can supply context.
+            if all(lines.get(n) == value for n, value in frozen.items()):
+                # Match the offset search radius without retaining whole files.
+                for hunk in hunk_map[file]:
+                    for n in range(max(1, hunk["start"] - 65),
+                                   min(len(lines), hunk["end"] + 65) + 1):
+                        post_image[file][n] = lines[n]
     return post_image, hunk_map, exempt_files
 
 
@@ -749,7 +783,7 @@ def is_evidence_quality_fault(err: str) -> bool:
 
 
 def validate_excerpts_against_diff(
-    diff_text: str, excerpts: list[dict]
+    diff_text: str, excerpts: list[dict], *, cwd: Path | None = None
 ) -> list[str]:
     """Validate excerpts against frozen diff text; return error strings.
 
@@ -760,7 +794,7 @@ def validate_excerpts_against_diff(
     """
     if not diff_text or not excerpts:
         return []
-    post_image, hunk_map, exempt_files = _diff_validation_context(diff_text)
+    post_image, hunk_map, exempt_files = _diff_validation_context(diff_text, cwd=cwd)
     errors: list[str] = []
     for exc in excerpts:
         err = validate_excerpt_evidence(
@@ -959,7 +993,7 @@ def run_verify(
         #    unwitnessed or fabricated excerpt. Complements (does not replace) the
         #    R1/R2/R3 dynamic verification layer.
         hunk_map, exempt_files = parse_diff_hunks(diff_text)
-        post_image = _extract_post_image_lines(diff_text)
+        post_image, _, _ = _diff_validation_context(diff_text, cwd=cwd)
 
         if diff_text.strip() and not hunk_map and not exempt_files:
             return VerifyResult(False, "diff parse failed -- cannot verify excerpts", 5, cp)

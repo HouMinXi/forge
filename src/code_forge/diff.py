@@ -220,6 +220,10 @@ def parse_diff_hunks(
     if not diff_text or not diff_text.strip():
         return ({}, [])
 
+    # Normalize CRLF to LF so unidiff does not retain trailing \r in filenames
+    if "\r" in diff_text:
+        diff_text = diff_text.replace("\r\n", "\n").replace("\r", "\n")
+
     try:
         patchset = unidiff.PatchSet(diff_text)
     except unidiff.errors.UnidiffParseError:
