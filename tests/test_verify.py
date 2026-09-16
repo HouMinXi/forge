@@ -2505,6 +2505,106 @@ class TestMultiLineHunkRange:
 
         assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
 
+class TestNextFileHeaderIsNotContext:
+    """A multi-file diff must not leak one file's header into the previous
+    file's post-image.
+
+    The context-line branch is a catch-all: any line that is not +, -, or
+    @@ is recorded as context and advances the line counter. The lines
+    that introduce the NEXT file -- `diff --git`, `index`, `new file
+    mode` -- match none of those prefixes, so they were stored as
+    content of the file before them, with their first character shaved
+    off by the +/- strip. Every excerpt quoting that tail then failed as
+    a content mismatch against `iff --git ...`, which no reviewer wrote
+    and no source file contains.
+    """
+
+    def test_header_of_the_second_file_is_not_stored_as_the_first(self):
+        from code_forge.verify import _diff_validation_context
+
+        diff = (
+            "diff --git a/one.py b/one.py\n"
+            "--- a/one.py\n"
+            "+++ b/one.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " alpha\n"
+            "+beta\n"
+            " gamma\n"
+            "diff --git a/two.py b/two.py\n"
+            "index 0a12729242..0b30cadb15 100644\n"
+            "--- a/two.py\n"
+            "+++ b/two.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " delta\n"
+            "+epsilon\n"
+        )
+        post, _hunk_map, _exempt = _diff_validation_context(diff)
+
+        leaked = {
+            ln: text for ln, text in post["one.py"].items()
+            if "iff --git" in text or "ndex " in text
+        }
+        assert not leaked, (
+            "second file's header leaked into one.py post-image: "
+            + str(leaked)
+        )
+        assert post["one.py"] == {1: "alpha", 2: "beta", 3: "gamma"}
+        assert post["two.py"] == {1: "delta", 2: "epsilon"}
+
+    def test_a_content_line_starting_with_three_dashes_is_not_eaten(self):
+        """A "--- " line inside a hunk body is content, not a header.
+
+        Kernel and doc diffs carry literal separator lines. The old-file
+        header is consumed before any hunk opens, so filtering the prefix
+        is safe -- but only if the filter runs where no hunk is open.
+        """
+        from code_forge.verify import _diff_validation_context
+
+        diff = (
+            "diff --git a/one.py b/one.py\n"
+            "index 111..222 100644\n"
+            "--- a/one.py\n"
+            "+++ b/one.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " keep\n"
+            "+added\n"
+            "--- a/two.py\n"
+        )
+        post, _hunks, _exempt = _diff_validation_context(diff)
+        leaked = {n: s for n, s in post["one.py"].items() if s.startswith("-- ")}
+        assert not leaked, "old-file header stored as content: %r" % leaked
+
+    def test_excerpt_at_the_tail_of_a_middle_file_still_validates(self):
+        from code_forge.verify import (
+            _diff_validation_context,
+            validate_excerpt_evidence,
+        )
+
+        diff = (
+            "diff --git a/one.py b/one.py\n"
+            "--- a/one.py\n"
+            "+++ b/one.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " alpha\n"
+            "+beta\n"
+            " gamma\n"
+            "diff --git a/two.py b/two.py\n"
+            "index 0a12729242..0b30cadb15 100644\n"
+            "--- a/two.py\n"
+            "+++ b/two.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " delta\n"
+            "+epsilon\n"
+        )
+        post, hunk_map, exempt = _diff_validation_context(diff)
+        exc = {
+            "file": "one.py", "start_line": 1, "end_line": 3,
+            "content": "alpha\nbeta\ngamma",
+        }
+
+        assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
+
+
 class TestBlankLineCarriesNoPositionalEvidence:
     """Blank lines must not participate in offset alignment.
 
