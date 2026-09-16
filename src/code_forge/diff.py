@@ -386,13 +386,16 @@ def parse_diff_hunks(
 
         filepath = patched_file_path(pf)
         if getattr(pf, "is_binary_file", False):
-            exempt_files.append(filepath)
+            if filepath not in hunk_map:
+                exempt_files.append(filepath)
             continue
         if pf.is_rename and len(hunks) == 0:
-            exempt_files.append(filepath)
+            if filepath not in hunk_map:
+                exempt_files.append(filepath)
             continue
         if not pf.is_rename and not getattr(pf, "is_binary_file", False) and len(hunks) == 0:
-            exempt_files.append(filepath)
+            if filepath not in hunk_map:
+                exempt_files.append(filepath)
             continue
 
         file_hunks = []
@@ -417,6 +420,7 @@ def parse_diff_hunks(
 
         if file_hunks:
             hunk_map[filepath] = file_hunks
+            exempt_files[:] = [f for f in exempt_files if f != filepath]
 
     return (hunk_map, exempt_files)
 
