@@ -100,6 +100,21 @@ class TestBuildMutmutConfig:
         assert "tests/test_llm_invoke.py" not in mutated
         assert r"tests\\test_win.py" not in mutated
 
+    def test_config_refuses_empty_only_mutate(self):
+        """A bare only_mutate= is not 'mutate nothing'.
+
+        mutmut may treat an empty value as 'mutate everything under
+        source_paths'. The helper must refuse that shape so the
+        tests-only skip in run_mutation stays the only no-op path.
+        """
+        import pytest
+
+        with pytest.raises(ValueError, match="no production files"):
+            _build_mutmut_config(
+                ["tests/test_mod.py", r"tests\\test_win.py"],
+                ["pytest", "tests/", "-q"],
+            )
+
     def test_config_flat_layout(self):
         cfg = _build_mutmut_config(["module.py"], ["pytest"])
         assert "source_paths=module.py" in cfg

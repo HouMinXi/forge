@@ -187,6 +187,11 @@ def _build_mutmut_config(
     """
     roots = _source_roots(py_files)
     mutate = [f for f in py_files if not _is_test_path(f)]
+    if not mutate:
+        raise ValueError(
+            "no production files to mutate; tests-only diffs must skip "
+            "before writing setup.cfg"
+        )
     lines = [
         _CODE_FORGE_CFG_MARKER,
         "[mutmut]",
