@@ -508,12 +508,29 @@ def _read_with_deadline(response, deadline, backend_name):
     return result[0]
 
 
+def _sse_data_payload(line: str) -> str | None:
+    """Return the data-event payload, or None if the line is not one.
+
+    Accepts both the spec form ``data: {...}`` and the compact
+    ``data:{...}`` some gateways emit. An empty data line (keepalive)
+    returns an empty string.
+    """
+    if not line.startswith("data:"):
+        return None
+    return line[5:].removeprefix(" ")
+
+
 def _read_sse(response, deadline=None, backend_name="") -> dict:
     """Read OpenAI SSE stream, assemble into a single response dict.
 
     Drops reasoning_content (thinking output) -- forge review needs the
     final verdict, not the chain of thought.  Error-only chunks (no
     choices key) are returned as-is for _check_body_error.
+
+    A data line whose JSON does not parse is a dropped stream, not a
+    successful prefix. Swallowing JSONDecodeError used to assemble the
+    prefix, leave finish_reason empty, and hand the findings parser
+    half a document reported as kind=no_json.
     """
     content_parts: list[str] = []
     model = ""
@@ -535,15 +552,25 @@ def _read_sse(response, deadline=None, backend_name="") -> dict:
                 retryable=False,
             )
         line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line or not line.startswith("data: "):
+        if not line:
             continue
-        payload = line[6:]
+        payload = _sse_data_payload(line)
+        if payload is None:
+            continue
         if payload == "[DONE]":
             break
+        if not payload:
+            continue
         try:
             chunk = json.loads(payload)
         except json.JSONDecodeError:
-            continue
+            raise LLMInvokeError(
+                "%s backend stream ended on an incomplete SSE event"
+                % backend_name,
+                exit_code=0,
+                retryable=True,
+                kind="conn",
+            ) from None
 
         # Error chunk. Providers signal in-band failure two ways: an
         # error-only chunk (no choices key), or -- like OpenRouter
@@ -900,6 +927,25 @@ def _loads_model_json(text: str):
     error. The HTTP/SSE envelope that wraps the model text stays strict.
     """
     return json.loads(text, strict=False)
+
+
+def _no_json_diagnostic(
+    exc: json.JSONDecodeError, content: str, finish_reason: str,
+) -> str:
+    """Name finish_reason, length, and the bytes around the parse error.
+
+    A 500-character prefix hid a delimiter error at char 1148 and made a
+    model syntax error look like a truncated stream.
+    """
+    pos = exc.pos if isinstance(exc.pos, int) and exc.pos >= 0 else 0
+    lo = max(0, pos - 80)
+    hi = min(len(content), pos + 80)
+    return (
+        "JSONDecodeError: %s\n"
+        "finish_reason=%r content_len=%d pos=%d\n"
+        "around_pos: %r"
+        % (exc, finish_reason, len(content), pos, content[lo:hi])
+    )
 
 
 def _model_json_decoder() -> json.JSONDecoder:
@@ -1864,9 +1910,12 @@ def _invoke_api(
                         content, expected_keys=expected_keys
                     )
                     if parsed_content is None:
-                        diag = "JSONDecodeError: %s\ncontent[:500]: %r" % (
-                            exc, content[:500],
-                        )
+                        finish_reason = ""
+                        if isinstance(usage_data, dict):
+                            finish_reason = str(
+                                usage_data.get("_forge_finish_reason", "") or ""
+                            )
+                        diag = _no_json_diagnostic(exc, content, finish_reason)
                         raise LLMInvokeError(
                             "API response content is not valid JSON -- %s"
                             % diag,
@@ -2125,6 +2174,8 @@ def _invoke_openai(
             retryable=False,
         )
 
+    if finish:
+        usage_data["_forge_finish_reason"] = finish
     return (content, usage_data)
 
 
