@@ -4008,18 +4008,22 @@ class TestApiNoJsonDiagnostic:
                 "_forge_finish_reason": "stop",
             }
 
-        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
-             patch("code_forge.llm_invoke._invoke_openai",
-                   side_effect=_mock_openai_no_json):
-            with pytest.raises(LLMInvokeError) as exc_info:
-                _invoke_api(
-                    "prompt", backend, timeout_s=10, max_attempts=1,
-                )
+        with (
+            patch.dict(os.environ, {"TEST_KEY": "sk-test"}),
+            patch(
+                "code_forge.llm_invoke._invoke_openai",
+                side_effect=_mock_openai_no_json,
+            ),
+            pytest.raises(LLMInvokeError) as exc_info,
+        ):
+            _invoke_api(
+                "prompt", backend, timeout_s=10, max_attempts=1,
+            )
 
         msg = str(exc_info.value)
         assert "finish_reason='stop'" in msg
-        assert "content_len=%d" % len(broken) in msg
-        assert "UNQUOTED" in msg, "parse window missed the error site: %s" % msg
+        assert f"content_len={len(broken)}" in msg
+        assert "UNQUOTED" in msg, f"parse window missed the error site: {msg}"
         assert exc_info.value.kind == "no_json"
 
 

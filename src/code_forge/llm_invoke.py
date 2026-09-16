@@ -565,8 +565,7 @@ def _read_sse(response, deadline=None, backend_name="") -> dict:
             chunk = json.loads(payload)
         except json.JSONDecodeError:
             raise LLMInvokeError(
-                "%s backend stream ended on an incomplete SSE event"
-                % backend_name,
+                f"{backend_name} backend stream ended on an incomplete SSE event",
                 exit_code=0,
                 retryable=True,
                 kind="conn",
@@ -941,10 +940,9 @@ def _no_json_diagnostic(
     lo = max(0, pos - 80)
     hi = min(len(content), pos + 80)
     return (
-        "JSONDecodeError: %s\n"
-        "finish_reason=%r content_len=%d pos=%d\n"
-        "around_pos: %r"
-        % (exc, finish_reason, len(content), pos, content[lo:hi])
+        f"JSONDecodeError: {exc}\n"
+        f"finish_reason={finish_reason!r} content_len={len(content)} pos={pos}\n"
+        f"around_pos: {content[lo:hi]!r}"
     )
 
 
