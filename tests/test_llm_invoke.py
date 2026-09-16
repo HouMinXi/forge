@@ -4095,6 +4095,43 @@ class TestBadJsonRetry:
         assert calls[0] == 3, "every attempt parses its own reply"
         assert exc_info.value.kind == "no_json"
 
+    def test_complete_invalid_json_does_not_retry(self):
+        """A stopped, complete reply that is not JSON must not burn retries.
+
+        Live agnes-cn adversarial: finish_reason=stop, content_len=15209,
+        same delimiter error on all five attempts. Incomplete stream still
+        retries via the existing unfinished-JSON case.
+        """
+        from code_forge.llm_invoke import _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        calls = [0]
+        broken = (
+            '{"findings":[],"code_excerpts":[{"file":"src/code_forge/diff.py",'
+            '"content":"def path_from_plus_header(line: str) -> str | None: ..."}]}'
+        )
+        broken = broken[:-2]
+
+        def _mock_openai_complete_invalid(*args, **kwargs):
+            calls[0] += 1
+            return broken, {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "_forge_finish_reason": "stop",
+            }
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_mock_openai_complete_invalid), \
+             patch("time.sleep") as slept:
+            with pytest.raises(LLMInvokeError) as exc_info:
+                _invoke_api("prompt", backend, timeout_s=10, max_attempts=5)
+
+        assert calls[0] == 1, "complete invalid JSON retried %d times" % calls[0]
+        assert not slept.called
+        assert exc_info.value.kind == "no_json"
+        assert exc_info.value.retryable is False
+
     def test_prose_wrapped_json_is_rescued_without_a_retry(self):
         from code_forge.llm_invoke import _invoke_api
 
@@ -5080,6 +5117,27 @@ class TestInvokeSampling:
             await invoke_sampling(
                 session, prompt="test prompt", max_attempts=1,
             )
+
+    async def test_invoke_sampling_complete_invalid_json_does_not_retry(self):
+        from code_forge.llm_invoke import invoke_sampling, LLMInvokeError
+        from mcp.types import CreateMessageResult, TextContent
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = MagicMock()
+        session.create_message = AsyncMock()
+        session.create_message.return_value = CreateMessageResult(
+            role="assistant",
+            content=TextContent(type="text", text='{"findings":[{"unterminated'),
+            model="test-model",
+            stopReason="endTurn",
+        )
+        with pytest.raises(LLMInvokeError) as exc_info:
+            await invoke_sampling(
+                session, prompt="test prompt", max_attempts=5,
+            )
+        assert session.create_message.await_count == 1
+        assert exc_info.value.kind == "no_json"
+        assert exc_info.value.retryable is False
 
     async def test_invoke_sampling_model_hint(self):
         from code_forge.llm_invoke import invoke_sampling

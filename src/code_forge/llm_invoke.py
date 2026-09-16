@@ -928,6 +928,24 @@ def _loads_model_json(text: str):
     return json.loads(text, strict=False)
 
 
+# A model that finished the reply still produced unparseable JSON.
+# Replaying the same prompt burns max_attempts against the same error.
+# Empty / unknown finish_reason still retries: that is the unfinished
+# stream case the existing bad-JSON tests cover. Underscores are
+# stripped so OpenAI "end_turn" and MCP "endTurn" share one token.
+_COMPLETE_NO_JSON_FINISH = frozenset({
+    "stop",
+    "endturn",
+    "stopsequence",
+    "tooluse",
+})
+
+
+def _no_json_retryable(finish_reason: str) -> bool:
+    token = str(finish_reason or "").strip().lower().replace("_", "")
+    return token not in _COMPLETE_NO_JSON_FINISH
+
+
 def _no_json_diagnostic(
     exc: json.JSONDecodeError, content: str, finish_reason: str,
 ) -> str:
@@ -1890,16 +1908,13 @@ def _invoke_api(
                         kind="empty",
                     )
                 # Strip fences and parse JSON inside the retry loop; fall
-                # back to embedded-JSON extraction.  A response that
-                # arrives HTTP-200 but carries unparseable JSON is
-                # nondeterministic model output, not a broken request:
-                # the same prompt can draw a parseable reply on the next
-                # attempt.  Retrying is bounded by max_attempts like
-                # every other retry, and the fallback still rescues JSON
-                # wrapped in prose or fences without spending an attempt.
-                # A backslash-dense diff makes models emit invalid JSON
-                # escapes often enough that the old parse-outside-the-loop
-                # shape could void every cycle of the run.
+                # back to embedded-JSON extraction. Incomplete or unmarked
+                # replies still retry: a truncated stream can look like
+                # bad JSON, and a backslash-dense diff can draw a
+                # parseable sample on the next attempt. A finished reply
+                # (finish_reason=stop / end_turn) that is still not JSON
+                # is the model's complete output; replaying it five times
+                # produced the same delimiter error on live agnes-cn.
                 content = _strip_fences(content)
                 try:
                     parsed_content = _loads_model_json(content)
@@ -1921,6 +1936,7 @@ def _invoke_api(
                             stderr=diag,
                             duration_s=time.monotonic() - start,
                             kind="no_json",
+                            retryable=_no_json_retryable(finish_reason),
                         ) from exc
             except TimeoutError as exc:
                 raise LLMInvokeError(
@@ -2602,7 +2618,9 @@ async def invoke_sampling(
                         "(first 120 chars: %r)" % raw_text[:120],
                         duration_s=elapsed,
                         kind="no_json",
-                        retryable=True,
+                        retryable=_no_json_retryable(
+                            getattr(result, "stopReason", "") or ""
+                        ),
                     )
 
             return LLMResult(

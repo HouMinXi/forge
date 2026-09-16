@@ -864,6 +864,15 @@ class TestHardenedVerify:
         assert not r.passed
         assert "Jaccard" in r.reason
 
+    def test_missing_disposition_is_treated_as_open(self, tmp_path):
+        """A finding with no disposition key is still an open defect."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "Jaccard" in r.reason
 
     def test_missing_field_fail(self, tmp_path):
         """Excerpt with start_line missing is now caught by schema

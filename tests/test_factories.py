@@ -1193,6 +1193,44 @@ class TestParallelL1:
         assert any("from-adversarial" in d for d in descs)
         assert usage.input_tokens == 30
 
+    def test_api_pass_starts_are_staggered(self):
+        """Same-backend L1 passes must not start together.
+
+        Live agnes-cn fired qodo/expert/adversarial at the same timestamp
+        and the truncated JSON retry loop stacked on that burst.
+        """
+        from unittest.mock import patch
+
+        from code_forge.factories import build_l1_provider
+
+        slept = []
+
+        def mock_sleep(seconds):
+            slept.append(seconds)
+
+        def mock_invoke(prompt, **kw):
+            if "structural code reviewer" in prompt:
+                line = 1
+            elif "senior engineer" in prompt:
+                line = 2
+            else:
+                line = 3
+            return _stub_llm_response(
+                [{"file": "src/a.py", "line": line, "severity": "P2",
+                  "description": "staggered"}], self._EXCERPTS)
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   side_effect=mock_invoke), \
+             patch("code_forge.factories.time.sleep", side_effect=mock_sleep):
+            provider = build_l1_provider(
+                "auto", resolved, backend=self._api_backend(),
+                pass_stagger_s=10.0)
+            findings, _, _, _ = provider()
+
+        assert len(findings) == 3
+        assert slept == [0.0, 10.0, 20.0] or slept == [10.0, 20.0]
+
     def test_failure_isolation_api(self):
         """Direction 3: one pass fails, other two still produce findings."""
         from unittest.mock import MagicMock, patch

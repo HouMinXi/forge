@@ -317,6 +317,7 @@ def test_hunk_body_plus_plus_b_is_not_a_new_file(tmp_path):
     assert list(post) == ["doc.md"]
     assert list(hunks) == ["doc.md"]
     assert list(parse_diff_hunks(diff)[0]) == ["doc.md"]
+    assert post["doc.md"][2] == "++ b/evil.py"
 
 
 def test_unquoted_path_with_b_slash_directory(tmp_path):
@@ -529,6 +530,35 @@ def test_machine_round_and_quality_use_frozen_context(candidate):
     assert kept == [excerpt]
     assert len(findings) == 1
     assert findings[0].id == "RECEIPT_UNTRUSTED"
+
+
+def test_hunk_deleted_line_starting_with_dashes_is_not_a_file_header():
+    """A deleted '-- target' must not be skipped as a '--- ' file header."""
+    from code_forge.verify import _diff_validation_context
+
+    diff = (
+        "diff --git a/Makefile b/Makefile\n"
+        "--- a/Makefile\n"
+        "+++ b/Makefile\n"
+        "@@ -1,3 +1,2 @@\n"
+        " keep\n"
+        "--- target\n"
+        " stay\n"
+    )
+    post, hunks, _ = _diff_validation_context(diff)
+    assert list(post) == ["Makefile"]
+    assert post["Makefile"][1] == "keep"
+    assert post["Makefile"][2] == "stay"
+    assert hunks["Makefile"][0]["start"] == 1
+    assert hunks["Makefile"][0]["end"] == 2
+
+
+def test_blob_reader_rejects_non_string_oid(candidate):
+    from code_forge.git import read_diff_blob
+
+    root, _diff, _excerpt = candidate
+    assert read_diff_blob(None, root) is None
+    assert read_diff_blob(123, root) is None
 
 
 @pytest.mark.parametrize("oid", ["HEAD:CHANGELOG.md", "--help", "0" * 40, "zzz"])

@@ -226,8 +226,10 @@ def git_diff(
     return result.stdout
 
 
-def read_diff_blob(oid: str, cwd: Path) -> str | None:
+def read_diff_blob(oid: object, cwd: Path) -> str | None:
     """Read a bounded immutable text blob; never resolve a file from disk."""
+    if not isinstance(oid, str):
+        return None
     if re.fullmatch(r"[0-9a-f]{7,64}", oid) is None or not oid.strip("0"):
         return None
     cmd = ["git", "--no-replace-objects", "cat-file"]

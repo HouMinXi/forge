@@ -451,6 +451,7 @@ def validate_retry_config(section: object) -> None:
         max_attempts:    int (1..10)          -- OPTIONAL. Max API call attempts.
         initial_delay_s: number (0.1..30)     -- OPTIONAL. Initial retry delay.
         retry_timeout:   bool                 -- OPTIONAL. Retry socket timeouts.
+        l1_pass_stagger_s: number (0..120)    -- OPTIONAL. Delay between L1 pass starts.
         Unknown keys are allowed (forward-compatible).
 
     Args:
@@ -494,6 +495,18 @@ def validate_retry_config(section: object) -> None:
             raise ValueError(
                 "gate.yaml 'retry.retry_timeout' must be a bool, "
                 "got: %r" % val
+            )
+    if "l1_pass_stagger_s" in section:
+        val = section["l1_pass_stagger_s"]
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
+            raise ValueError(
+                "gate.yaml 'retry.l1_pass_stagger_s' must be a number, "
+                "got: %r" % val
+            )
+        if val < 0 or val > 120:
+            raise ValueError(
+                "gate.yaml 'retry.l1_pass_stagger_s' must be in range "
+                "0..120, got: %s" % val
             )
 
 
