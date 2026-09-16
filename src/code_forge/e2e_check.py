@@ -23,7 +23,7 @@ from typing import Optional
 import unidiff
 import yaml
 
-from .diff import get_changed_files, normalize_diff_path
+from .diff import get_changed_files, patched_file_path
 from .disposition import Disposition
 from .errors import ComponentsConfigError
 from .state import StateFinding
@@ -89,7 +89,7 @@ def detect_signature_changes(diff_text: str) -> set[str]:
     for patched_file in patchset:
         if patched_file.is_removed_file:
             continue
-        filepath = normalize_diff_path(patched_file.path)
+        filepath = patched_file_path(patched_file)
         for hunk in patched_file:
             # Arm 1: scan added lines for signature patterns.
             for line in hunk:

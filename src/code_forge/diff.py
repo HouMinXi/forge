@@ -76,7 +76,7 @@ def normalize_diff_path(raw: str, *, strip_git_prefix: bool = False) -> str:
             path = unquote_git_path(path[1:-1])
         else:
             path = unquote_git_path(path[1:])
-        # Quoted git tokens still carry a/ or b/ after C-unquote.
+        # Unidiff keeps quotes and does not drop a/ b/ on C-quoted names.
         strip_git_prefix = True
     if strip_git_prefix and path.startswith(("a/", "b/")):
         path = path[2:]
@@ -100,6 +100,58 @@ def path_from_file_header(line: str, *, plus: bool) -> str | None:
 def path_from_plus_header(line: str) -> str | None:
     """Working-tree path from a +++ header, or None if this is not one."""
     return path_from_file_header(line, plus=True)
+
+
+def path_from_git_header(line: str) -> str | None:
+    """Working-tree path from a diff --git line, preferring the b/ side."""
+    raw = line.split("\t")[0].rstrip("\r\n")
+    if not raw.startswith("diff --git "):
+        return None
+    rest = raw[len("diff --git "):]
+    # Quoted pair: "a/<path>" "b/<path>"
+    if rest.startswith('"'):
+        parts = rest.split('" "')
+        if len(parts) >= 2:
+            b_side = parts[-1].rstrip('"')
+            return normalize_diff_path('"' + b_side + '"', strip_git_prefix=True)
+        return None
+    # Unquoted: git uses a/path b/path. Paths with spaces keep the spaces
+    # and are not quoted; take the b/ side after the first " b/" marker.
+    marker = " b/"
+    idx = rest.find(marker)
+    if idx != -1:
+        return normalize_diff_path(rest[idx + 1:], strip_git_prefix=True)
+    marker = " a/"
+    idx = rest.find(marker)
+    if idx != -1:
+        return normalize_diff_path(rest[idx + 1:], strip_git_prefix=True)
+    return None
+
+
+def patched_file_path(pf) -> str:
+    """Working-tree path for a unidiff PatchedFile.
+
+    Unidiff splits C-quoted names with spaces on the timestamp tab, so
+    .path / source_file / target_file are not trustworthy. Prefer the
+    intact diff --git line in patch_info when present.
+    """
+    info = getattr(pf, "patch_info", None)
+    if info:
+        first = next(iter(info), "")
+        git_path = path_from_git_header(first)
+        if git_path:
+            return git_path
+    target = getattr(pf, "target_file", "") or ""
+    source = getattr(pf, "source_file", "") or ""
+    raw = target if target and "/dev/null" not in target else source
+    if raw.startswith(("b/", "a/", '"b/', '"a/')):
+        plus = path_from_plus_header("+++ " + raw)
+        if plus is not None:
+            return plus
+        minus = path_from_file_header("--- " + raw, plus=False)
+        if minus is not None:
+            return minus
+    return normalize_diff_path(pf.path)
 
 
 def count_diff_lines(diff_text: str | None) -> int:
@@ -215,7 +267,7 @@ def extract_changed_lines(
             continue
 
         # Use target path (handles renames correctly)
-        filepath = normalize_diff_path(patched_file.path)
+        filepath = patched_file_path(patched_file)
 
         changed_lines = set()
         for hunk in patched_file:
@@ -283,6 +335,8 @@ def _section_entry(lines: list[str]) -> tuple[str | None, str]:
     """(post-change path, verbatim section text) for one diff section."""
     old_path: str | None = None
     for line in lines:
+        if line.startswith("@@"):
+            break
         plus = path_from_plus_header(line)
         if plus is not None:
             return plus, "".join(lines)
@@ -323,7 +377,7 @@ def parse_diff_hunks(
 
         hunks = list(pf)
 
-        filepath = normalize_diff_path(pf.path)
+        filepath = patched_file_path(pf)
         if getattr(pf, "is_binary_file", False):
             exempt_files.append(filepath)
             continue
@@ -433,7 +487,7 @@ def _extract_post_image_lines(
                     file_lines[line.target_line_no] = line.value
 
         if file_lines:
-            post_image[normalize_diff_path(pf.path)] = file_lines
+            post_image[patched_file_path(pf)] = file_lines
 
     return post_image
 

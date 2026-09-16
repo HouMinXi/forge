@@ -151,11 +151,19 @@ def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
     import re
     diff_files: dict[str, list[int]] = {}
     current_file = None
+    in_hunk = False
     for line in diff_text.splitlines():
-        plus = path_from_plus_header(line)
-        if plus is not None:
-            current_file = plus
-        elif line.startswith("@@") and current_file:
+        if line.startswith("diff --git "):
+            current_file = None
+            in_hunk = False
+            continue
+        if not in_hunk:
+            plus = path_from_plus_header(line)
+            if plus is not None:
+                current_file = plus
+                continue
+        if line.startswith("@@") and current_file:
+            in_hunk = True
             m = re.search(r"\+(\d+)(?:,(\d+))?", line)
             if m:
                 start = int(m.group(1))
@@ -660,6 +668,7 @@ def _diff_validation_context(
     hunk_map: dict[str, list[dict]] = {}
     current_file: str | None = None
     line_no = 0
+    in_hunk = False
     # Lines that introduce or describe a file rather than its content.
     # The context branch below is a catch-all, so anything not named here
     # would be stored as a content line of whichever file came before it.
@@ -687,16 +696,20 @@ def _diff_validation_context(
             # line belongs to no file, so stop attributing to the last one.
             current_file = None
             line_no = 0
+            in_hunk = False
             continue
         if raw.startswith(header_prefixes):
             continue
-        plus = path_from_plus_header(raw)
-        if plus is not None:
-            current_file = plus
-            line_no = 0
-            post_image.setdefault(current_file, {})
-            hunk_map.setdefault(current_file, [])
-        elif raw.startswith("@@") and current_file:
+        if not in_hunk:
+            plus = path_from_plus_header(raw)
+            if plus is not None:
+                current_file = plus
+                line_no = 0
+                post_image.setdefault(current_file, {})
+                hunk_map.setdefault(current_file, [])
+                continue
+        if raw.startswith("@@") and current_file:
+            in_hunk = True
             m = re.search(r"\+(\d+)(?:,(\d+))?", raw)
             if m:
                 line_no = int(m.group(1))
@@ -705,13 +718,9 @@ def _diff_validation_context(
                     {"start": line_no, "end": line_no + count - 1}
                 )
         elif current_file and raw.startswith("+") and not raw.startswith("+++"):
-            if raw.startswith("++"):  # new-file marker
-                continue
             post_image[current_file][line_no] = raw[1:]
             line_no += 1
         elif current_file and raw.startswith("-") and not raw.startswith("---"):
-            if raw.startswith("--"):  # deleted-file marker
-                continue
             # Deleted lines shift nothing; keep line_no pinned for the
             # post-image of surviving lines.
             continue

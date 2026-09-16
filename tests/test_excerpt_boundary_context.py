@@ -237,6 +237,111 @@ def test_latin1_c_quoted_octal_does_not_raise():
     assert list(parse_diff_hunks(diff)[0]) == [decoded]
 
 
+def test_quoted_path_under_dir_a_keeps_prefix(tmp_path):
+    from code_forge.diff import extract_changed_lines
+
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    rel = "a/café x.py"
+    path = tmp_path / "a"
+    path.mkdir()
+    file = path / "café x.py"
+    lines = [f"line {i}" for i in range(1, 20)]
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", rel)
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    lines[9] = "line 10 changed"
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", rel)
+    diff = git(tmp_path, "diff", "--cached", "--full-index")
+    assert '+++ "b/' in diff
+    keys = {
+        "files": list(parse_diff_files(diff)),
+        "hunks": list(parse_diff_hunks(diff)[0]),
+        "changed": list(extract_changed_lines(diff)),
+        "dvc": list(_diff_validation_context(diff)[0]),
+    }
+    assert keys["files"] == [rel]
+    assert keys["hunks"] == [rel]
+    assert keys["changed"] == [rel]
+    assert keys["dvc"] == [rel]
+    excerpt = {
+        "file": rel, "start_line": 8, "end_line": 12,
+        "content": "\n".join(lines[7:12]), "rationale": "context",
+    }
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
+    receipts = tmp_path / ".code-forge" / "receipts"
+    receipts.mkdir(parents=True)
+    sha = compute_source_hash(git_diff=diff)
+    for cycle in range(1, 4):
+        for pass_n, skill in enumerate(
+            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
+        ):
+            receipt = {
+                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "diff_sha256": sha,
+                "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
+                "pass_status": "completed", "findings_count": 0,
+                "findings": [], "anchors": [{"file": rel, "line": 10}],
+                "code_excerpts": [excerpt], "covered_line_ranges": [],
+            }
+            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(
+                json.dumps(receipt)
+            )
+    (tmp_path / ".code-forge" / "gate.yaml").write_text(
+        "verify:\n  required_cycles: 3\n"
+    )
+    res = run_verify(tmp_path, sha, parse_diff_files(diff), diff_text=diff)
+    assert res.passed, res.reason
+
+
+def test_hunk_body_plus_plus_b_is_not_a_new_file(tmp_path):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    file = tmp_path / "doc.md"
+    lines = [f"line{i}" for i in range(1, 30)]
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", "doc.md")
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    lines[1] = "++ b/evil.py"
+    lines[20] = "second hunk change"
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", "doc.md")
+    diff = git(tmp_path, "diff", "--cached", "--full-index", "-U2")
+    assert list(parse_diff_files(diff)) == ["doc.md"]
+    post, hunks, _ = _diff_validation_context(diff)
+    assert list(post) == ["doc.md"]
+    assert list(hunks) == ["doc.md"]
+    assert list(parse_diff_hunks(diff)[0]) == ["doc.md"]
+
+
+def test_added_line_starting_with_plus_stays_in_post_image(tmp_path):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    file = tmp_path / "u.py"
+    lines = [f"line {i}" for i in range(1, 20)]
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", "u.py")
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    lines[5] = "+unary"
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", "u.py")
+    diff = git(tmp_path, "diff", "--cached", "--full-index")
+    excerpt = {
+        "file": "u.py", "start_line": 5, "end_line": 8,
+        "content": "\n".join(lines[4:8]), "rationale": "context",
+    }
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
+    post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
+    assert post["u.py"][6] == "+unary"
+
+
 def test_unavailable_blob_does_not_invent_context(candidate):
     root, diff, excerpt = candidate
     import re
