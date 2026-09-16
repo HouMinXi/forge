@@ -276,6 +276,62 @@ class TestL2RunnerException:
         assert any("L2 runner failed" in e for e in machine._state.infra_errors)
 
 
+class TestL2SkipsBeforeRequiringGateConfig:
+    """A non-Python repo must not be told to fix its gate.yaml.
+
+    Mutation testing is a Python-only MVP (mutation.py filters the diff to
+    .py files and returns a DISMISSED MUTATION_SKIPPED otherwise). But the
+    L2 phase used to load gate.yaml BEFORE looking at the diff, so a
+    TypeScript repo never reached that branch: it got
+    "gate.yaml missing or test.command not configured" instead, which
+    sends the reader off to add a test section that would change nothing.
+    Check the diff first, and say what is actually true.
+    """
+
+    def test_non_python_diff_skips_without_gate_yaml(self, tmp_path):
+        (tmp_path / ".code-forge").mkdir()  # no gate.yaml at all
+
+        def mock_l0(registry, files):
+            return ([], [])
+
+        seen = {}
+
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
+            seen["called"] = True
+            seen["baseline_cmd"] = baseline_cmd
+            return ([], [])
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=ResolvedReview(
+                source_files=[Path("src/app.ts")],
+                baseline_content=None,
+                git_diff=None,
+                mode_hint="git",
+            ),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            l2_runner=mock_l2,
+        )
+        verdict = machine.run()
+
+        assert verdict == Verdict.PASS
+        errors = " ".join(machine._state.infra_errors)
+        assert "gate.yaml" not in errors, (
+            "a TypeScript repo was told to fix gate.yaml: %s" % errors
+        )
+        # The runner decides the skip, and needs no baseline command to
+        # do it -- that is what lets it run without a gate.yaml at all.
+        assert seen.get("called"), "L2 runner never ran"
+        assert seen["baseline_cmd"] == []
+
+
 class TestCIModeReadsMutationResult:
     """Test 8 & 9: CI mode reads mutation-result.json."""
 
