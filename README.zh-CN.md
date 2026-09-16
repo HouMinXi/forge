@@ -231,7 +231,9 @@ backends:
     command: claude
 ```
 
-完整参考：[docs/configuration.md](docs/configuration.md)
+完整参考：[docs/configuration.md](docs/configuration.md)。
+HTTP 429/5xx 和 MCP 采样空回复的重试：
+[Retry](docs/configuration.md#retry)。
 
 编辑器配置指南：
 - Claude Code：[docs/setup-claude-code.md](docs/setup-claude-code.md)

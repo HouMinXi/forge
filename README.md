@@ -244,7 +244,9 @@ backends:
     command: claude
 ```
 
-Full reference: [docs/configuration.md](docs/configuration.md)
+Full reference: [docs/configuration.md](docs/configuration.md).
+Retry on 429/5xx and empty MCP sampling replies:
+[Retry](docs/configuration.md#retry).
 
 Editor setup guides:
 - Claude Code: [docs/setup-claude-code.md](docs/setup-claude-code.md)
