@@ -75,6 +75,67 @@ class TestBuildMutmutConfig:
             "src/a.py", "src/b.py",
         ]
 
+    def test_config_excludes_test_files_from_only_mutate(self):
+        """Mutating the test suite poisons stats collection.
+
+        Observed on the SSE review: only_mutate listed
+        tests/test_llm_invoke.py, mutmut rewrote header names in the
+        assertion, and pytest -x aborted before any production mutant
+        ran. Mirror roots already skip tests/; only_mutate must too.
+        """
+        from configparser import ConfigParser
+
+        cfg = _build_mutmut_config(
+            [
+                "src/code_forge/llm_invoke.py",
+                "tests/test_llm_invoke.py",
+                r"tests\\test_win.py",
+            ],
+            ["pytest", "tests/test_llm_invoke.py", "-q"],
+        )
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        mutated = parser.get("mutmut", "only_mutate").splitlines()
+        assert mutated == ["src/code_forge/llm_invoke.py"]
+        assert "tests/test_llm_invoke.py" not in mutated
+        assert r"tests\\test_win.py" not in mutated
+
+    def test_config_excludes_absolute_test_paths_from_only_mutate(self):
+        """Review source_files can be absolute Paths stringified.
+
+        startswith('tests/') misses /repo/tests/foo.py, so mutmut
+        still rewrites the test suite.
+        """
+        from configparser import ConfigParser
+
+        cfg = _build_mutmut_config(
+            [
+                "/repo/src/code_forge/llm_invoke.py",
+                "/repo/tests/test_llm_invoke.py",
+            ],
+            ["pytest", "tests/test_llm_invoke.py", "-q"],
+        )
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        mutated = parser.get("mutmut", "only_mutate").splitlines()
+        assert mutated == ["/repo/src/code_forge/llm_invoke.py"]
+        assert not any("tests/" in p for p in mutated)
+
+    def test_config_refuses_empty_only_mutate(self):
+        """A bare only_mutate= is not 'mutate nothing'.
+
+        mutmut may treat an empty value as 'mutate everything under
+        source_paths'. The helper must refuse that shape so the
+        tests-only skip in run_mutation stays the only no-op path.
+        """
+        import pytest
+
+        with pytest.raises(ValueError, match="no production files"):
+            _build_mutmut_config(
+                ["tests/test_mod.py", r"tests\\test_win.py"],
+                ["pytest", "tests/", "-q"],
+            )
+
     def test_config_flat_layout(self):
         cfg = _build_mutmut_config(["module.py"], ["pytest"])
         assert "source_paths=module.py" in cfg

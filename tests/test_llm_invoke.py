@@ -3983,6 +3983,49 @@ class TestApiNoJsonDiagnostic:
         # stderr attribute must also carry the diagnostic.
         assert "weather is nice" in exc_info.value.stderr
 
+    def test_api_no_json_includes_finish_reason_and_parse_window(self):
+        """A no_json failure must name finish_reason, length, and the
+        bytes around the parse error. content[:500] alone hid the r5
+        defect at char 1148 and made a model syntax error look like a
+        truncated stream.
+        """
+        from code_forge.llm_invoke import _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        # Valid prefix longer than the old content[:500] window, then a
+        # delimiter error. r5 failed at char 1148; a 500-char prefix
+        # never showed the break.
+        broken = (
+            '{"findings": [{"file": "a.py", "description": "'
+            + ("x" * 600)
+            + '"}], UNQUOTED: true}'
+        )
+
+        def _mock_openai_no_json(*args, **kwargs):
+            return broken, {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "_forge_finish_reason": "stop",
+            }
+
+        with (
+            patch.dict(os.environ, {"TEST_KEY": "sk-test"}),
+            patch(
+                "code_forge.llm_invoke._invoke_openai",
+                side_effect=_mock_openai_no_json,
+            ),
+            pytest.raises(LLMInvokeError) as exc_info,
+        ):
+            _invoke_api(
+                "prompt", backend, timeout_s=10, max_attempts=1,
+            )
+
+        msg = str(exc_info.value)
+        assert "finish_reason='stop'" in msg
+        assert f"content_len={len(broken)}" in msg
+        assert "UNQUOTED" in msg, f"parse window missed the error site: {msg}"
+        assert exc_info.value.kind == "no_json"
+
 
 class TestBadJsonRetry:
     """An HTTP-200 reply whose body is not valid JSON is retried.
@@ -4796,6 +4839,47 @@ class TestReadSSE:
         assert result["choices"][0]["message"]["content"] == "hi"
         assert result["usage"]["prompt_tokens"] == 15
         assert result["usage"]["completion_tokens"] == 105
+
+    def test_data_colon_without_space_is_assembled(self):
+        """Some gateways emit data:{json} with no space after the colon."""
+        lines = [
+            b'data:{"choices":[{"delta":{"content":"Hello"}}]}\n',
+            b'data:{"choices":[{"delta":{},"finish_reason":"stop"}]}\n',
+            b'data:[DONE]\n',
+        ]
+        result = _read_sse(iter(lines))
+        assert result["choices"][0]["message"]["content"] == "Hello"
+        assert result["choices"][0]["finish_reason"] == "stop"
+
+    def test_incomplete_sse_event_raises(self):
+        """A cut-off last data line is a dropped stream, not a successful prefix.
+
+        Observed shape: the HTTP iterator yields a final line with no
+        newline whose JSON is unfinished. Swallowing JSONDecodeError
+        assembled the prefix, left finish_reason empty, and the findings
+        parser then reported kind=no_json as if the model wrote bad JSON.
+        """
+        lines = [
+            b'data: {"choices":[{"delta":{"content":"{\\"findings\\": ["}}]}\n',
+            b'data: {"choices":[{"delta":{"content":"half',
+        ]
+        with pytest.raises(LLMInvokeError) as ei:
+            _read_sse(iter(lines), backend_name="relay")
+        assert ei.value.retryable is True
+        assert "incomplete SSE" in str(ei.value)
+        assert "findings" not in str(ei.value)
+
+    def test_malformed_json_data_line_raises(self):
+        """A data: line that starts as JSON but does not parse is not skipped."""
+        lines = [
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+            b'data: {not-json\n',
+            b'data: [DONE]\n',
+        ]
+        with pytest.raises(LLMInvokeError) as ei:
+            _read_sse(iter(lines), backend_name="relay")
+        assert ei.value.retryable is True
+        assert "incomplete SSE" in str(ei.value)
 
     def test_streamed_usage_reaches_the_result(self):
         """End to end: counts from the stream land on LLMResult.usage.

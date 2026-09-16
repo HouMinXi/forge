@@ -41,8 +41,16 @@ class Survivor:
     file: str         # source file (empty; mutmut 3.x results omit file paths)
 
 
-_TEST_DIR_PREFIXES = ("tests/", "test/")
-_TEST_DIR_PREFIXES_WIN = ("tests\\", "test\\")
+def _is_test_path(path: str) -> bool:
+    """True for a path under tests/ or test/, relative or absolute.
+
+    Review source_files can be absolute Paths stringified; a prefix
+    check on 'tests/' misses /repo/tests/foo.py.
+    """
+    posix = path.replace("\\", "/")
+    parts = [p for p in posix.split("/") if p]
+    return "tests" in parts or "test" in parts
+
 
 # Resource guards for the mutmut subprocess tree. mutmut >=3.4 defaults
 # --max-children to os.cpu_count(); every child is a forked interpreter
@@ -133,7 +141,7 @@ def _source_roots(py_files: list[str]) -> list[str]:
     """
     roots: set[str] = set()
     for f in py_files:
-        if f.startswith(_TEST_DIR_PREFIXES) or f.startswith(_TEST_DIR_PREFIXES_WIN):
+        if _is_test_path(f):
             continue
         # Mutmut config is POSIX; Windows diffs still arrive with "\\".
         posix = f.replace("\\", "/")
@@ -174,19 +182,26 @@ def _build_mutmut_config(
     """Render the temporary [mutmut] setup.cfg content.
 
     source_paths mirrors whole source roots (importability), only_mutate
-    keeps mutation diff-scoped, and the test selection reuses the gate's
-    baseline arguments so stats collection runs exactly the tests the
-    gate trusts.
+    keeps mutation diff-scoped (production files only; mutating the
+    test suite poisons stats collection), and the test selection reuses
+    the gate's baseline arguments so stats collection runs exactly the
+    tests the gate trusts.
 
     also_copy: extra relative paths copied into the mutants/ mirror
     (mutmut also_copy). Empty or whitespace entries are dropped.
     """
     roots = _source_roots(py_files)
+    mutate = [f for f in py_files if not _is_test_path(f)]
+    if not mutate:
+        raise ValueError(
+            "no production files to mutate; tests-only diffs must skip "
+            "before writing setup.cfg"
+        )
     lines = [
         _CODE_FORGE_CFG_MARKER,
         "[mutmut]",
         "source_paths=" + "\n    ".join(roots),
-        "only_mutate=" + "\n    ".join(py_files),
+        "only_mutate=" + "\n    ".join(mutate),
     ]
     # mutmut splits this value on newlines, so a space-joined string arrives
     # as one argv token ("-q --ignore=x") that pytest rejects with exit 4.
