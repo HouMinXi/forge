@@ -662,6 +662,7 @@ def _diff_validation_context(
     # would be stored as a content line of whichever file came before it.
     header_prefixes = (
         "diff --git ",
+        "--- ",
         "index ",
         "new file mode ",
         "deleted file mode ",

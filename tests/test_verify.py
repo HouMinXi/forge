@@ -2551,6 +2551,29 @@ class TestNextFileHeaderIsNotContext:
         assert post["one.py"] == {1: "alpha", 2: "beta", 3: "gamma"}
         assert post["two.py"] == {1: "delta", 2: "epsilon"}
 
+    def test_a_content_line_starting_with_three_dashes_is_not_eaten(self):
+        """A "--- " line inside a hunk body is content, not a header.
+
+        Kernel and doc diffs carry literal separator lines. The old-file
+        header is consumed before any hunk opens, so filtering the prefix
+        is safe -- but only if the filter runs where no hunk is open.
+        """
+        from code_forge.verify import _diff_validation_context
+
+        diff = (
+            "diff --git a/one.py b/one.py\n"
+            "index 111..222 100644\n"
+            "--- a/one.py\n"
+            "+++ b/one.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " keep\n"
+            "+added\n"
+            "--- a/two.py\n"
+        )
+        post, _hunks, _exempt = _diff_validation_context(diff)
+        leaked = {n: s for n, s in post["one.py"].items() if s.startswith("-- ")}
+        assert not leaked, "old-file header stored as content: %r" % leaked
+
     def test_excerpt_at_the_tail_of_a_middle_file_still_validates(self):
         from code_forge.verify import (
             _diff_validation_context,
