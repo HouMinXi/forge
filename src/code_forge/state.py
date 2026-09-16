@@ -191,6 +191,16 @@ class State:
     # Mutation survivor round counter (LOCAL mode):
     consecutive_survivor_rounds: int = 0  # LOCAL mode only
     consecutive_clean_rounds: int = 0  # LOCAL mode only
+    # Rounds ending with a pass that did not complete. Persisted for the
+    # same reason the two above are: a run that stops before its third
+    # round (FAIL on round 1 is the common shape) would otherwise restart
+    # this at zero on the next invocation, and the >=3 breaker in
+    # _check_l1_can_still_converge could never fire against a backend that
+    # fails identically every time.
+    rounds_with_failed_pass: int = 0  # LOCAL mode only
+    # Rounds where the falsifier could not reach its backend. Persisted
+    # for the same reason as the field above.
+    rounds_with_falsify_infra: int = 0  # LOCAL mode only
     # 08-02 additions: cost tracking fields (CLI-08)
     cost_total_input: int = 0
     cost_total_output: int = 0
@@ -310,6 +320,12 @@ def load_state(path: Path) -> State | None:
     state.consecutive_clean_rounds = data.get(
         "consecutive_clean_rounds", 0
     )
+    state.rounds_with_failed_pass = data.get(
+        "rounds_with_failed_pass", 0
+    )
+    state.rounds_with_falsify_infra = data.get(
+        "rounds_with_falsify_infra", 0
+    )
 
     # 08-02 additions: backward-compat defaults for pre-08-02 state.json.
     cost_data = data.get("cost", {})
@@ -375,6 +391,8 @@ def save_state(state: State, path: Path) -> None:
         "promoted_fingerprints": sorted(state.promoted_fingerprints),
         "consecutive_survivor_rounds": state.consecutive_survivor_rounds,
         "consecutive_clean_rounds": state.consecutive_clean_rounds,
+        "rounds_with_failed_pass": state.rounds_with_failed_pass,
+        "rounds_with_falsify_infra": state.rounds_with_falsify_infra,
         "cost": {
             "total_input_tokens": state.cost_total_input,
             "total_output_tokens": state.cost_total_output,

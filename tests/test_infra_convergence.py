@@ -19,7 +19,7 @@ from code_forge.disposition import Disposition
 from code_forge.falsify import Falsifier
 from code_forge.llm_invoke import LLMInvokeError, Usage
 from code_forge.machine import Mode, StateMachine, TimeoutBreaker
-from code_forge.state import StateFinding
+from code_forge.state import StateFinding, Verdict, load_state, save_state
 
 
 class _DeadBackendFalsifier(Falsifier):
@@ -136,7 +136,7 @@ class TestFalsifyInfraDoesNotSilentlyReset:
         sm._run_l1_phase()
         sm._run_l1_phase()  # must not raise
 
-        assert sm._rounds_with_falsify_infra == 2
+        assert sm._state.rounds_with_falsify_infra == 2
 
     def test_recovery_resets_the_consecutive_counter(self, tmp_path):
         """Consecutive, not cumulative -- one good round clears it."""
@@ -155,10 +155,10 @@ class TestFalsifyInfraDoesNotSilentlyReset:
 
         sm._run_l1_phase()
         sm._run_l1_phase()
-        assert sm._rounds_with_falsify_infra == 2
+        assert sm._state.rounds_with_falsify_infra == 2
 
         sm._run_l1_phase()  # backend recovers
-        assert sm._rounds_with_falsify_infra == 0, (
+        assert sm._state.rounds_with_falsify_infra == 0, (
             "a recovered backend must clear the counter, otherwise a "
             "single flaky patch eventually kills a healthy run"
         )
@@ -167,6 +167,62 @@ class TestFalsifyInfraDoesNotSilentlyReset:
         sm.falsifier = _DeadBackendFalsifier()
         sm._run_l1_phase()
         sm._run_l1_phase()  # must not raise
+
+    def test_counter_survives_across_separate_invocations(self, tmp_path):
+        """The guard counts rounds, not rounds-per-process.
+
+        A run that ends before its third round leaves the operator to
+        re-run, and a fresh StateMachine used to restart this counter at
+        zero -- so a backend that is down for hours never tripped the
+        guard, and every invocation paid the full per-round falsify cost
+        again. Persisting it through state.json makes consecutive rounds
+        mean consecutive rounds, whichever process ran them.
+        """
+        state_path = tmp_path / ".code-forge" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Three separate invocations over one worktree. Each loads the
+        # state the previous one left, exactly as the CLI does.
+        for _ in range(2):
+            sm = _machine(tmp_path)
+            if state_path.exists():
+                loaded = load_state(state_path)
+                assert loaded is not None
+                sm._state = loaded
+            sm._run_l1_phase()
+            save_state(sm._state, state_path)
+
+        sm = _machine(tmp_path)
+        loaded = load_state(state_path)
+        assert loaded is not None
+        sm._state = loaded
+        assert loaded.rounds_with_falsify_infra == 2
+        with pytest.raises(TimeoutBreaker, match="cannot converge"):
+            sm._run_l1_phase()
+
+    def test_breaker_does_not_leave_a_pending_state_behind(self, tmp_path):
+        """Stopping the run must not leave state.json claiming PENDING.
+
+        The L1 sibling writes a bounded FAIL before it raises, for the
+        stated reason that a circuit breaker must not leave a stale
+        verdict on disk. This one raised without persisting, which also
+        discarded the round it had just counted -- so the next invocation
+        reloaded a state one short and the breaker slipped a round every
+        time it fired.
+        """
+        state_path = tmp_path / ".code-forge" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+
+        sm = _machine(tmp_path)
+        sm._state.rounds_with_falsify_infra = 2
+        with pytest.raises(TimeoutBreaker):
+            sm._run_l1_phase()
+
+        on_disk = load_state(state_path)
+        assert on_disk is not None, "breaker left no state.json at all"
+        assert on_disk.rounds_with_falsify_infra == 3
+        assert on_disk.verdict == Verdict.FAIL
+        assert on_disk.converged is False
 
 
 class TestRealFalsifierPropagatesBackendFailure:

@@ -517,6 +517,37 @@ class TestUnconvergeableRunStopsEarly:
         machine.run()
         assert len(calls) == len(script)
 
+    def test_counter_survives_across_separate_invocations(self, tmp_path):
+        """The breaker must count rounds, not rounds-per-process.
+
+        Measured on a real review (OmniRoute deploy branch, agnes-intl,
+        2026-09-15): the backend returned responses missing code_excerpts,
+        so qodo and expert were schema_fail every round. Each run ended at
+        round 1 with FAIL, the operator deleted state.json and re-ran, and
+        the same thing happened again -- three times over, with no breaker.
+
+        _rounds_with_failed_pass lived only on the instance, so every fresh
+        process started it at zero and the >=3 threshold was unreachable
+        whenever a run ends before its third round. The guard that exists
+        precisely for this situation could never fire.
+        """
+        import pytest
+        from code_forge.machine import TimeoutBreaker
+
+        def mock_l1():
+            return ([self._invoke_fail()], [], Usage(), 0.0)
+
+        # Three separate machines over one cwd, exactly as three CLI runs
+        # against the same worktree would be. max_rounds=1 makes each run
+        # end after a single failing round.
+        for _ in range(2):
+            machine = self._machine(tmp_path, mock_l1, max_rounds=1)
+            machine.run()
+
+        machine = self._machine(tmp_path, mock_l1, max_rounds=1)
+        with pytest.raises(TimeoutBreaker, match="cannot converge"):
+            machine.run()
+
 
 # ---------------------------------------------------------------------------
 # Severity-tiered _fixpoint_reached guards
