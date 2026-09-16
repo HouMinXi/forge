@@ -405,6 +405,27 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(u) if u else 1.0
 
 
+_CLOSED_DISPOSITIONS = frozenset({"DISMISSED", "FIXED"})
+
+
+def _open_findings(items: list) -> list:
+    """Findings that still count as an open product defect.
+
+    Missing disposition is treated as open: older receipts and the
+    rubber-stamp fixture omit the field.
+    """
+    open_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            open_items.append(item)
+            continue
+        disp = item.get("disposition")
+        if disp in _CLOSED_DISPOSITIONS:
+            continue
+        open_items.append(item)
+    return open_items
+
+
 def _constant_offset(
     excerpt_line_map: dict[int, str],
     file_lines: dict[int, str],
@@ -1170,9 +1191,11 @@ def run_verify(
         # 7. Jaccard overlap > 0.8 = rubber stamp.
         # NOTE: identical excerpts across cycles will cause Jaccard > 0.8.
         # This is CORRECT -- it detects rubber-stamping.
-        # Known limitation: when all cycles have empty findings (findings=[]),
-        # the skip condition below causes Jaccard to never trigger, so
-        # identical-excerpt clean reviews always pass (intentional design).
+        # Known limitation: when neither cycle has an open finding
+        # (empty list, or every finding DISMISSED/FIXED), the skip
+        # below causes Jaccard to never trigger, so identical-excerpt
+        # reviews still pass. Open findings are CONFIRMED, UNCERTAIN,
+        # or a missing disposition.
         cycle_findings = {}
         for r in receipts:
             cyc = r.get("cycle", 0)
@@ -1181,7 +1204,9 @@ def run_verify(
             cycle_findings[cyc].extend(r.get("findings", []))
 
         for a, b in combinations(last_n, 2):
-            if not cycle_findings.get(a) and not cycle_findings.get(b):
+            if not _open_findings(cycle_findings.get(a, [])) and not _open_findings(
+                cycle_findings.get(b, [])
+            ):
                 continue
             cov_a = _cycle_excerpt_covered(receipts, a)
             cov_b = _cycle_excerpt_covered(receipts, b)
@@ -1254,7 +1279,9 @@ def run_verify(
             cycle_findings[cyc].extend(r.get("findings", []))
 
         for a, b in combinations(last_n, 2):
-            if not cycle_findings.get(a) and not cycle_findings.get(b):
+            if not _open_findings(cycle_findings.get(a, [])) and not _open_findings(
+                cycle_findings.get(b, [])
+            ):
                 continue
             j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))
             if j > 0.8:
