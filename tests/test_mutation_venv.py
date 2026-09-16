@@ -100,6 +100,27 @@ class TestBuildMutmutConfig:
         assert "tests/test_llm_invoke.py" not in mutated
         assert r"tests\\test_win.py" not in mutated
 
+    def test_config_excludes_absolute_test_paths_from_only_mutate(self):
+        """Review source_files can be absolute Paths stringified.
+
+        startswith('tests/') misses /repo/tests/foo.py, so mutmut
+        still rewrites the test suite.
+        """
+        from configparser import ConfigParser
+
+        cfg = _build_mutmut_config(
+            [
+                "/repo/src/code_forge/llm_invoke.py",
+                "/repo/tests/test_llm_invoke.py",
+            ],
+            ["pytest", "tests/test_llm_invoke.py", "-q"],
+        )
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        mutated = parser.get("mutmut", "only_mutate").splitlines()
+        assert mutated == ["/repo/src/code_forge/llm_invoke.py"]
+        assert not any("tests/" in p for p in mutated)
+
     def test_config_refuses_empty_only_mutate(self):
         """A bare only_mutate= is not 'mutate nothing'.
 

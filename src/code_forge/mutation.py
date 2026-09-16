@@ -42,9 +42,14 @@ class Survivor:
 
 
 def _is_test_path(path: str) -> bool:
-    """True for a path under tests/ or test/, POSIX or Windows separators."""
+    """True for a path under tests/ or test/, relative or absolute.
+
+    Review source_files can be absolute Paths stringified; a prefix
+    check on 'tests/' misses /repo/tests/foo.py.
+    """
     posix = path.replace("\\", "/")
-    return posix.startswith(("tests/", "test/"))
+    parts = [p for p in posix.split("/") if p]
+    return "tests" in parts or "test" in parts
 
 
 # Resource guards for the mutmut subprocess tree. mutmut >=3.4 defaults
