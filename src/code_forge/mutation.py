@@ -44,6 +44,84 @@ class Survivor:
 _TEST_DIR_PREFIXES = ("tests/", "test/")
 _TEST_DIR_PREFIXES_WIN = ("tests\\", "test\\")
 
+# Resource guards for the mutmut subprocess tree. mutmut >=3.4 defaults
+# --max-children to os.cpu_count(); every child is a forked interpreter
+# running the gate's pytest selection, so on a 16-core host the default
+# fans out to cpu_count() full-suite processes and the OOM killer takes
+# the whole review service (measured: 6.3G memory peak, forge reviewing
+# its own cli.py+mutation.py diff, 2026-09-15). The cap bounds fan-out;
+# the address-space limit is a backstop so an accidental blow-up kills
+# one child with MemoryError instead of the service.
+_DEFAULT_MAX_CHILDREN_CAP = 4
+_DEFAULT_MEMORY_LIMIT_BYTES = 8 * 1024**3
+_ENV_MAX_CHILDREN = "FORGE_MUTATION_MAX_CHILDREN"
+_ENV_MEMORY_LIMIT_MB = "FORGE_MUTATION_MEMORY_LIMIT_MB"
+
+
+def _effective_max_children(max_children: int | None) -> int:
+    """Resolve the mutmut --max-children value.
+
+    An explicit argument wins. The default is min(cpu_count, cap) because
+    mutmut's own default is raw cpu_count -- the fan-out that OOM'd the
+    review service. FORGE_MUTATION_MAX_CHILDREN overrides the default for
+    ops emergencies without a code change.
+    """
+    if max_children is not None:
+        return max(1, max_children)
+    env = os.environ.get(_ENV_MAX_CHILDREN)
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+    return min(os.cpu_count() or 4, _DEFAULT_MAX_CHILDREN_CAP)
+
+
+def _memory_limit_bytes(memory_limit_bytes: int | None) -> int:
+    """Resolve the RLIMIT_AS ceiling for the mutmut process tree."""
+    if memory_limit_bytes is not None:
+        return memory_limit_bytes
+    env = os.environ.get(_ENV_MEMORY_LIMIT_MB)
+    if env:
+        try:
+            return int(env) * 1024**2
+        except ValueError:
+            pass
+    return _DEFAULT_MEMORY_LIMIT_BYTES
+
+
+def _limit_address_space(memory_limit_bytes: int) -> None:
+    """preexec_fn: cap address space so runaway children fail bounded.
+
+    mutmut forks one child per mutant and the limit is inherited, so a
+    single runaway mutant kills itself with MemoryError instead of the
+    OOM killer taking the whole review service. POSIX only.
+    """
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
+
+
+_INTEGRATION_EXCLUSION = "not integration"
+
+
+def _exclude_integration_tests(selection: list[str]) -> list[str]:
+    """Add -m 'not integration' to the pytest selection mutmut re-runs.
+
+    The per-mutant loop re-runs the gate's pytest selection once per
+    mutant. Tests that themselves spawn real mutation runs (marked
+    'integration') would nest a full mutmut tree inside every mutant
+    child. The R1 gate baseline still runs them unchanged; this narrows
+    only the mutation stage's repeated runs.
+    """
+    result = list(selection)
+    for i, tok in enumerate(result):
+        if tok == "-m" and i + 1 < len(result):
+            result[i + 1] = f"({result[i + 1]}) and ({_INTEGRATION_EXCLUSION})"
+            return result
+    return result + ["-m", _INTEGRATION_EXCLUSION]
+
+
 def _source_roots(py_files: list[str]) -> list[str]:
     """Derive mirror roots from diff-scoped python files.
 
@@ -114,7 +192,9 @@ def _build_mutmut_config(
     # as one argv token ("-q --ignore=x") that pytest rejects with exit 4.
     # One argument per line, first on the key line (a bare key plus indented
     # continuations leaves a leading newline mutmut keeps as an empty token).
-    selection = _baseline_test_selection(baseline_cmd)
+    # The selection is narrowed to unit scope: integration tests spawn real
+    # mutation runs and would nest a mutmut tree inside every mutant child.
+    selection = _exclude_integration_tests(_baseline_test_selection(baseline_cmd))
     if selection:
         lines.append("pytest_add_cli_args_test_selection=" + selection[0])
         lines.extend("    " + a for a in selection[1:])
@@ -412,6 +492,8 @@ def run_mutation(
     cwd: Path | None = None,
     baseline_timeout: int = 120,
     also_copy: list[str] | None = None,
+    max_children: int | None = None,
+    memory_limit_bytes: int | None = None,
 ) -> tuple[list[StateFinding], list[str]]:
     """Run mutation testing on diff-scoped files.
 
@@ -425,6 +507,14 @@ def run_mutation(
         cwd: project root for mutmut (default: Path.cwd()). Must be the
             directory containing src/ and tests/.
         also_copy: extra relative paths copied into the mutants/ mirror.
+        max_children: mutmut --max-children cap. None applies the default
+            min(cpu_count, 4); mutmut's own default of raw cpu_count fans
+            out one full-suite pytest process per core and OOM'd the review
+            service on a 16-core host.
+        memory_limit_bytes: RLIMIT_AS ceiling inherited by the whole
+            mutmut tree (parent + forked mutant children). A runaway
+            child dies with MemoryError instead of the OOM killer taking
+            the review service. Default 8 GiB.
 
     Implementation note:
         mutmut 3.x requires cwd to be the project root. A temporary
@@ -614,15 +704,23 @@ def run_mutation(
         # mutants/src here races the directory that does not exist yet and
         # breaks collection. Inherit the baseline env; mutmut drops the
         # original src entry after it has built the mirror.
+        children = _effective_max_children(max_children)
+        address_space = _memory_limit_bytes(memory_limit_bytes)
+        preexec = (
+            (lambda: _limit_address_space(address_space))
+            if os.name == "posix"
+            else None
+        )
         try:
             result = subprocess.run(
-                invocation + ["run"],
+                invocation + ["run", "--max-children", str(children)],
                 capture_output=True,
                 text=True, encoding="utf-8", errors="replace",
                 timeout=timeout,
                 check=False,
                 env=run_env,
                 cwd=repo_root,
+                preexec_fn=preexec,
             )
 
             # Any non-zero exit is an error (attempt 2 bug: only caught ==2)
@@ -709,8 +807,15 @@ def launch_detached_mutation(
     result_path: "Path",
     baseline_timeout: int = 120,
     also_copy: list[str] | None = None,
+    max_children: int | None = None,
+    memory_limit_bytes: int | None = None,
 ) -> int | None:
-    """Launch the mutation run in a detached process group, returning its PID."""
+    """Launch the mutation run in a detached process group, returning its PID.
+
+    max_children and memory_limit_bytes are forwarded to run_mutation; see
+    its docstring for the resource-guard semantics (mutmut defaults to
+    cpu_count() children, which OOM'd the review service on a 16-core host).
+    """
     import subprocess
     import sys
     import json
@@ -778,6 +883,8 @@ try:
         cwd=cwd_ref,
         baseline_timeout=int({baseline_timeout}),
         also_copy=also_copy,
+        max_children={max_children!r},
+        memory_limit_bytes={memory_limit_bytes!r},
     )
     survivor_list = [
         f.id

@@ -21,7 +21,9 @@ from code_forge.state import StateFinding
 ])
 def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr):
     def command(args, **kwargs):
-        failed = args[-1] == phase
+        # The mutmut subcommand is a token of the argv, not the last
+        # element: run_mutation appends "--max-children <n>" after "run".
+        failed = phase in args
         return subprocess.CompletedProcess(
             args, 7 if failed else 0,
             stdout=stdout if failed else "", stderr=stderr if failed else "",
