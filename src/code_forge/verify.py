@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
-from .diff import parse_diff_hunks
+from .diff import parse_diff_hunks, path_from_plus_header
 from .errors import CorruptedReceiptError, UnreadableGateError
 from .reviewer_json import excerpt_line_count_matches, excerpt_lines
 
@@ -152,11 +152,9 @@ def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
     diff_files: dict[str, list[int]] = {}
     current_file = None
     for line in diff_text.splitlines():
-        if line.startswith("+++ b/"):
-            current_file = line[6:].split("\t")[0].rstrip("\r")
-        elif line.startswith('+++ "b/'):
-            inner = line[len('+++ "b/'):].split("\t")[0].rstrip("\r").removesuffix('"')
-            current_file = f'"{inner}"'
+        plus = path_from_plus_header(line)
+        if plus is not None:
+            current_file = plus
         elif line.startswith("@@") and current_file:
             m = re.search(r"\+(\d+)(?:,(\d+))?", line)
             if m:
@@ -692,14 +690,9 @@ def _diff_validation_context(
             continue
         if raw.startswith(header_prefixes):
             continue
-        if raw.startswith("+++ b/"):
-            current_file = raw[6:].split("\t")[0].rstrip("\r")
-            line_no = 0
-            post_image.setdefault(current_file, {})
-            hunk_map.setdefault(current_file, [])
-        elif raw.startswith('+++ "b/'):
-            inner = raw[len('+++ "b/'):].split("\t")[0].rstrip("\r").removesuffix('"')
-            current_file = f'"{inner}"'
+        plus = path_from_plus_header(raw)
+        if plus is not None:
+            current_file = plus
             line_no = 0
             post_image.setdefault(current_file, {})
             hunk_map.setdefault(current_file, [])
@@ -739,11 +732,15 @@ def _diff_validation_context(
 
         for section in re.split(r"(?m)^diff --git ", diff_text)[1:]:
             header, _, _body = section.partition("\n@@")
-            path = re.search(r'(?m)^\+\+\+ (?:b/(.+?)|"b/(.+?)")(?:\t|\r?$)', header)
+            plus = None
+            for raw in header.splitlines():
+                plus = path_from_plus_header(raw)
+                if plus is not None:
+                    break
             index = re.search(r"(?m)^index [0-9a-f]+\.\.([0-9a-f]+)(?:[ \t\r]|$)", header)
-            if path is None or index is None:
+            if plus is None or index is None:
                 continue
-            file = path.group(1) if path.group(1) is not None else f'"{path.group(2)}"'
+            file = plus
             frozen = post_image.get(file)
             if not frozen:
                 continue

@@ -115,6 +115,57 @@ def test_whitespace_path_boundary_context(tmp_path):
     assert res.passed, res.reason
 
 
+def test_quoted_non_ascii_path_attests_through_run_verify(tmp_path):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    name = "café.py"
+    file = tmp_path / name
+    lines = [f"line {i}" for i in range(1, 20)]
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", name)
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    lines[9] = "line 10 changed"
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", name)
+    diff = git(tmp_path, "diff", "--cached", "--full-index")
+    assert '+++ "b/' in diff
+    excerpt = {
+        "file": name, "start_line": 8, "end_line": 12,
+        "content": "\n".join(lines[7:12]), "rationale": "context",
+    }
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
+    diff_files = parse_diff_files(diff)
+    hunks, _ = parse_diff_hunks(diff)
+    post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
+    assert list(diff_files) == [name]
+    assert list(hunks) == [name]
+    assert list(post) == [name]
+    receipts = tmp_path / ".code-forge" / "receipts"
+    receipts.mkdir(parents=True)
+    sha = compute_source_hash(git_diff=diff)
+    for cycle in range(1, 4):
+        for pass_n, skill in enumerate(
+            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
+        ):
+            receipt = {
+                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "diff_sha256": sha,
+                "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
+                "pass_status": "completed", "findings_count": 0,
+                "findings": [], "anchors": [{"file": name, "line": 10}],
+                "code_excerpts": [excerpt], "covered_line_ranges": [],
+            }
+            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(
+                json.dumps(receipt)
+            )
+    gate = tmp_path / ".code-forge" / "gate.yaml"
+    gate.write_text("verify:\n  required_cycles: 3\n")
+    res = run_verify(tmp_path, sha, diff_files, diff_text=diff)
+    assert res.passed, res.reason
+
+
 def test_unavailable_blob_does_not_invent_context(candidate):
     root, diff, excerpt = candidate
     import re

@@ -19,6 +19,74 @@ import unidiff
 
 logger = logging.getLogger(__name__)
 
+_GIT_SIMPLE_ESCAPES = {
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "v": "\v",
+    "\\": "\\",
+    '"': '"',
+}
+
+
+def unquote_git_path(inner: str) -> str:
+    """Decode the interior of a git C-quoted path."""
+    out = bytearray()
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if ch != "\\":
+            out.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        if i + 1 >= len(inner):
+            out.append(0x5C)
+            break
+        nxt = inner[i + 1]
+        if nxt in "01234567":
+            j = i + 1
+            while j < len(inner) and j < i + 4 and inner[j] in "01234567":
+                j += 1
+            out.append(int(inner[i + 1 : j], 8) & 0xFF)
+            i = j
+            continue
+        mapped = _GIT_SIMPLE_ESCAPES.get(nxt)
+        if mapped is not None:
+            out.extend(mapped.encode("latin-1"))
+            i += 2
+            continue
+        out.append(0x5C)
+        out.extend(nxt.encode("utf-8"))
+        i += 2
+    return out.decode("utf-8")
+
+
+def normalize_diff_path(raw: str) -> str:
+    """Map a git +++ / unidiff path token to the working-tree relative path."""
+    path = raw.split("\t")[0].rstrip("\r\n")
+    if path.startswith('"'):
+        if path.endswith('"') and len(path) >= 2:
+            path = unquote_git_path(path[1:-1])
+        else:
+            path = unquote_git_path(path[1:])
+    if path.startswith(("a/", "b/")):
+        path = path[2:]
+    return path
+
+
+def path_from_plus_header(line: str) -> str | None:
+    """Working-tree path from a +++ header, or None if this is not one."""
+    raw = line.split("\t")[0].rstrip("\r\n")
+    if raw.startswith("+++ "):
+        rest = raw[4:]
+        if rest == "/dev/null" or rest == '"/dev/null"':
+            return None
+        return normalize_diff_path(rest)
+    return None
+
 
 def count_diff_lines(diff_text: str | None) -> int:
     """Count insertions + deletions across all hunks in a unified diff.
@@ -133,7 +201,7 @@ def extract_changed_lines(
             continue
 
         # Use target path (handles renames correctly)
-        filepath = patched_file.path
+        filepath = normalize_diff_path(patched_file.path)
 
         changed_lines = set()
         for hunk in patched_file:
@@ -201,10 +269,14 @@ def _section_entry(lines: list[str]) -> tuple[str | None, str]:
     """(post-change path, verbatim section text) for one diff section."""
     old_path: str | None = None
     for line in lines:
-        if line.startswith("+++ b/"):
-            return line[len("+++ b/"):].rstrip("\n"), "".join(lines)
-        if line.startswith("--- a/"):
-            old_path = line[len("--- a/"):].rstrip("\n")
+        plus = path_from_plus_header(line)
+        if plus is not None:
+            return plus, "".join(lines)
+        raw = line.split("\t")[0].rstrip("\r\n")
+        if raw.startswith("--- "):
+            rest = raw[4:]
+            if rest not in ("/dev/null", '"/dev/null"'):
+                old_path = normalize_diff_path(rest)
     return old_path, "".join(lines)
 
 
@@ -239,14 +311,15 @@ def parse_diff_hunks(
 
         hunks = list(pf)
 
+        filepath = normalize_diff_path(pf.path)
         if getattr(pf, "is_binary_file", False):
-            exempt_files.append(pf.path)
+            exempt_files.append(filepath)
             continue
         if pf.is_rename and len(hunks) == 0:
-            exempt_files.append(pf.path)
+            exempt_files.append(filepath)
             continue
         if not pf.is_rename and not getattr(pf, "is_binary_file", False) and len(hunks) == 0:
-            exempt_files.append(pf.path)
+            exempt_files.append(filepath)
             continue
 
         file_hunks = []
@@ -270,7 +343,7 @@ def parse_diff_hunks(
             )
 
         if file_hunks:
-            hunk_map[pf.path] = file_hunks
+            hunk_map[filepath] = file_hunks
 
     return (hunk_map, exempt_files)
 
@@ -348,7 +421,7 @@ def _extract_post_image_lines(
                     file_lines[line.target_line_no] = line.value
 
         if file_lines:
-            post_image[pf.path] = file_lines
+            post_image[normalize_diff_path(pf.path)] = file_lines
 
     return post_image
 
