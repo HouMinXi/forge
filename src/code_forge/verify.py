@@ -22,6 +22,7 @@ from itertools import combinations
 from pathlib import Path
 
 from .diff import parse_diff_hunks, path_from_plus_header
+from .disposition import Disposition
 from .errors import CorruptedReceiptError, UnreadableGateError
 from .reviewer_json import excerpt_line_count_matches, excerpt_lines
 
@@ -405,14 +406,19 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(u) if u else 1.0
 
 
-_CLOSED_DISPOSITIONS = frozenset({"DISMISSED", "FIXED"})
+_CLOSED_DISPOSITIONS = frozenset({
+    Disposition.DISMISSED.value,
+    Disposition.FIXED.value,
+    Disposition.STYLE.value,
+})
 
 
 def _open_findings(items: list) -> list:
     """Findings that still count as an open product defect.
 
-    Missing disposition is treated as open: older receipts and the
-    rubber-stamp fixture omit the field.
+    Missing or non-string disposition is treated as open: older
+    receipts omit the field, and a list/dict value must not crash
+    the gate.
     """
     open_items = []
     for item in items:
@@ -420,7 +426,7 @@ def _open_findings(items: list) -> list:
             open_items.append(item)
             continue
         disp = item.get("disposition")
-        if disp in _CLOSED_DISPOSITIONS:
+        if isinstance(disp, str) and disp in _CLOSED_DISPOSITIONS:
             continue
         open_items.append(item)
     return open_items
@@ -1195,7 +1201,7 @@ def run_verify(
         # (empty list, or every finding DISMISSED/FIXED), the skip
         # below causes Jaccard to never trigger, so identical-excerpt
         # reviews still pass. Open findings are CONFIRMED, UNCERTAIN,
-        # or a missing disposition.
+        # or a missing/non-string disposition. STYLE is closed.
         cycle_findings = {}
         for r in receipts:
             cyc = r.get("cycle", 0)

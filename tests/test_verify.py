@@ -833,6 +833,28 @@ class TestHardenedVerify:
         assert not r.passed
         assert "Jaccard" in r.reason
 
+    def test_style_findings_with_identical_excerpts_pass(self, tmp_path):
+        """STYLE is non-blocking; identical excerpts must not trip Jaccard."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": "STYLE"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert r.passed, r.reason
+
+    def test_unhashable_disposition_does_not_crash_verify(self, tmp_path):
+        """A list disposition is open, but verify must return a result."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": ["DISMISSED"]}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "Jaccard" in r.reason
+
+
     def test_missing_field_fail(self, tmp_path):
         """Excerpt with start_line missing is now caught by schema
         validation at load time, before any of the 7 checks run -- not by
