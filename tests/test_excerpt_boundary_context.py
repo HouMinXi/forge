@@ -319,6 +319,61 @@ def test_hunk_body_plus_plus_b_is_not_a_new_file(tmp_path):
     assert list(parse_diff_hunks(diff)[0]) == ["doc.md"]
 
 
+def test_unquoted_path_with_b_slash_directory(tmp_path):
+    from code_forge.diff import extract_changed_lines, path_from_git_header
+
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.com")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    rel = "foo b/bar.py"
+    path = tmp_path / "foo b"
+    path.mkdir()
+    file = path / "bar.py"
+    lines = [f"line {i}" for i in range(1, 20)]
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", rel)
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    lines[9] = "changed"
+    file.write_text("\n".join(lines) + "\n")
+    git(tmp_path, "add", rel)
+    diff = git(tmp_path, "diff", "--cached", "--full-index")
+    gitline = next(ln for ln in diff.splitlines() if ln.startswith("diff --git"))
+    assert path_from_git_header(gitline) == rel
+    assert list(parse_diff_files(diff)) == [rel]
+    assert list(parse_diff_hunks(diff)[0]) == [rel]
+    assert list(extract_changed_lines(diff)) == [rel]
+    assert list(_diff_validation_context(diff)[0]) == [rel]
+    excerpt = {
+        "file": rel, "start_line": 8, "end_line": 12,
+        "content": "\n".join(lines[7:12]), "rationale": "context",
+    }
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
+    receipts = tmp_path / ".code-forge" / "receipts"
+    receipts.mkdir(parents=True)
+    sha = compute_source_hash(git_diff=diff)
+    for cycle in range(1, 4):
+        for pass_n, skill in enumerate(
+            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
+        ):
+            receipt = {
+                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "diff_sha256": sha,
+                "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
+                "pass_status": "completed", "findings_count": 0,
+                "findings": [], "anchors": [{"file": rel, "line": 10}],
+                "code_excerpts": [excerpt], "covered_line_ranges": [],
+            }
+            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(
+                json.dumps(receipt)
+            )
+    (tmp_path / ".code-forge" / "gate.yaml").write_text(
+        "verify:\n  required_cycles: 3\n"
+    )
+    res = run_verify(tmp_path, sha, parse_diff_files(diff), diff_text=diff)
+    assert res.passed, res.reason
+
+
 def test_added_line_starting_with_plus_stays_in_post_image(tmp_path):
     git(tmp_path, "init", "-q")
     git(tmp_path, "config", "user.name", "Test")

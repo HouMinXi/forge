@@ -115,16 +115,23 @@ def path_from_git_header(line: str) -> str | None:
             b_side = parts[-1].rstrip('"')
             return normalize_diff_path('"' + b_side + '"', strip_git_prefix=True)
         return None
-    # Unquoted: git uses a/path b/path. Paths with spaces keep the spaces
-    # and are not quoted; take the b/ side after the first " b/" marker.
-    marker = " b/"
-    idx = rest.find(marker)
-    if idx != -1:
-        return normalize_diff_path(rest[idx + 1:], strip_git_prefix=True)
-    marker = " a/"
-    idx = rest.find(marker)
-    if idx != -1:
-        return normalize_diff_path(rest[idx + 1:], strip_git_prefix=True)
+    # Unquoted: git emits a/<path> b/<path>. The path may itself contain
+    # " b/" (directory "foo b"), so the first " b/" is not the separator.
+    # Split where the two copies of <path> match.
+    if rest.startswith("a/"):
+        body = rest[2:]
+        start = 0
+        while True:
+            found = body.find(" b/", start)
+            if found == -1:
+                break
+            left = body[:found]
+            right = body[found + 3:]
+            if left == right:
+                return left
+            start = found + 1
+    if rest.startswith("b/"):
+        return normalize_diff_path(rest, strip_git_prefix=True)
     return None
 
 
