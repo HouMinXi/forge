@@ -75,6 +75,31 @@ class TestBuildMutmutConfig:
             "src/a.py", "src/b.py",
         ]
 
+    def test_config_excludes_test_files_from_only_mutate(self):
+        """Mutating the test suite poisons stats collection.
+
+        Observed on the SSE review: only_mutate listed
+        tests/test_llm_invoke.py, mutmut rewrote header names in the
+        assertion, and pytest -x aborted before any production mutant
+        ran. Mirror roots already skip tests/; only_mutate must too.
+        """
+        from configparser import ConfigParser
+
+        cfg = _build_mutmut_config(
+            [
+                "src/code_forge/llm_invoke.py",
+                "tests/test_llm_invoke.py",
+                r"tests\\test_win.py",
+            ],
+            ["pytest", "tests/test_llm_invoke.py", "-q"],
+        )
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        mutated = parser.get("mutmut", "only_mutate").splitlines()
+        assert mutated == ["src/code_forge/llm_invoke.py"]
+        assert "tests/test_llm_invoke.py" not in mutated
+        assert r"tests\\test_win.py" not in mutated
+
     def test_config_flat_layout(self):
         cfg = _build_mutmut_config(["module.py"], ["pytest"])
         assert "source_paths=module.py" in cfg
