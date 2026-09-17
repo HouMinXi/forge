@@ -114,7 +114,7 @@ class TestLocalLoadsState:
         state.fix_attempts = {"fp-unc": 3}
         state.promoted_fingerprints = {"fp-unc"}
         state.round = 2
-        state.source_hash = "oldhash"
+        state.source_hash = "same-hash"
         state.baseline_spec_repr = "old"
         state_path = tmp_path / ".code-forge" / "state.json"
         save_state(state, state_path)
@@ -129,7 +129,7 @@ class TestLocalLoadsState:
             autofixer=StubAutoFixer(),
             revert_fn=lambda f: None,
             resolved_review=_make_resolved(),
-            source_hash="newhash",
+            source_hash="same-hash",
             baseline_spec_repr="new",
             cwd=tmp_path,
             registry={},
