@@ -366,8 +366,10 @@ class StateMachine:
         """Load .code-forge/state.json if LOCAL mode; skip if CI (STATE-09).
 
         CI mode starts fresh every run to avoid inheriting human-
-        DISMISSED findings into shared CI runs. LOCAL mode loads if
-        file present (CorruptedStateError propagates per 02-01 contract).
+        DISMISSED findings into shared CI runs. LOCAL mode loads a
+        file only when its source_hash matches this review. A missing
+        or different hash is left on disk and the run starts empty
+        (CorruptedStateError still propagates per 02-01).
         """
         state_path = self.cwd / ".code-forge" / "state.json"
         if self.mode == Mode.CI:
@@ -383,6 +385,21 @@ class StateMachine:
         if state_path.exists():
             loaded = load_state(state_path)
             if loaded is not None:
+                if not loaded.source_hash or loaded.source_hash != self.source_hash:
+                    # state.json is per workspace, not per diff. Two
+                    # reviews of different ranges in the same worktree
+                    # land on this one file, so carrying findings,
+                    # dispositions and the clean-round counter across
+                    # would assemble one diff's verdict out of another
+                    # diff's evidence. A missing hash on either side
+                    # cannot prove the file belongs here.
+                    logging.getLogger("code_forge").warning(
+                        "discarding prior state.json: it was written for "
+                        "diff %s, this review is %s",
+                        loaded.source_hash[:12] if loaded.source_hash else "none",
+                        self.source_hash[:12] if self.source_hash else "none",
+                    )
+                    return
                 self._state = loaded
 
     def _run_ci(self) -> Verdict:
