@@ -262,6 +262,7 @@ def build_l1_provider(
     context_sources_text: str = "",
     reviewed_repositories: dict[str, str] | None = None,
     retry_timeout: bool = False,
+    pass_stagger_s: float = 0.0,
 ) -> "Callable":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
@@ -381,6 +382,12 @@ def build_l1_provider(
         is_cli = backend is None or backend.type == "cli"
 
         def _run_pass(idx):
+            # CLI stays serial; extra sleep after a finished pass is dead
+            # time. API passes share one backend, so stagger their starts.
+            if not is_cli:
+                delay = idx * float(pass_stagger_s or 0.0)
+                if delay > 0:
+                    time.sleep(delay)
             pn = pass_configs[idx][0]
             progress.emit(
                 "pass %s: calling %s"

@@ -3845,6 +3845,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             max_attempts=retry_cfg.get("max_attempts", 5),
             initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
             retry_timeout=bool(retry_cfg.get("retry_timeout", False)),
+            pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
         )
     else:
         from .graph_triage import _run_sem
@@ -3876,6 +3877,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 max_attempts=retry_cfg.get("max_attempts", 5),
                 initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
                 retry_timeout=bool(retry_cfg.get("retry_timeout", False)),
+                pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
             )
         else:
             import dataclasses as _dc
@@ -3916,6 +3918,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 max_attempts=retry_cfg.get("max_attempts", 5),
                 initial_delay_s=retry_cfg.get("initial_delay_s", 2.0),
                 retry_timeout=bool(retry_cfg.get("retry_timeout", False)),
+                pass_stagger_s=float(retry_cfg.get("l1_pass_stagger_s", 0.0) or 0.0),
             )
 
     # Coverage gate inputs: L1 examines every changed file only when it

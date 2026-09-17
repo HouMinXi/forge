@@ -1437,3 +1437,24 @@ retry:
     def test_retry_timeout_non_bool_rejected(self):
         with pytest.raises(ValueError, match="retry_timeout"):
             validate_retry_config({"retry_timeout": 1})
+
+    def test_l1_pass_stagger_default_omitted(self):
+        validate_retry_config({})
+
+    def test_l1_pass_stagger_zero_accepted(self):
+        validate_retry_config({"l1_pass_stagger_s": 0})
+
+    def test_l1_pass_stagger_ten_accepted(self):
+        validate_retry_config({"l1_pass_stagger_s": 10})
+
+    def test_l1_pass_stagger_negative_rejected(self):
+        with pytest.raises(ValueError, match="l1_pass_stagger_s"):
+            validate_retry_config({"l1_pass_stagger_s": -1})
+
+    def test_l1_pass_stagger_too_large_rejected(self):
+        with pytest.raises(ValueError, match="l1_pass_stagger_s"):
+            validate_retry_config({"l1_pass_stagger_s": 121})
+
+    def test_l1_pass_stagger_bool_rejected(self):
+        with pytest.raises(ValueError, match="l1_pass_stagger_s"):
+            validate_retry_config({"l1_pass_stagger_s": True})

@@ -802,6 +802,73 @@ class TestHardenedVerify:
         rd = self._rd(tmp_path)
         sha = _sha(_HARDEN_DIFF)
         diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": "CONFIRMED"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "Jaccard" in r.reason
+
+    def test_dismissed_findings_with_identical_excerpts_pass(self, tmp_path):
+        """Check 7 skips pairs whose findings are all closed.
+
+        A dismissed finding is not an open product defect. Identical
+        excerpts across cycles must not fail the overlap ceiling.
+        """
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": "DISMISSED"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert r.passed, r.reason
+
+    def test_fixed_findings_with_identical_excerpts_pass(self, tmp_path):
+        """FIXED is closed; identical excerpts must not trip Jaccard."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": "FIXED"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert r.passed, r.reason
+
+    def test_uncertain_findings_with_identical_excerpts_fail(self, tmp_path):
+        """UNCERTAIN still counts as an open finding for the overlap gate."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": "UNCERTAIN"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "Jaccard" in r.reason
+
+    def test_style_findings_with_identical_excerpts_pass(self, tmp_path):
+        """STYLE is non-blocking; identical excerpts must not trip Jaccard."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": "STYLE"}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert r.passed, r.reason
+
+    def test_unhashable_disposition_does_not_crash_verify(self, tmp_path):
+        """A list disposition is open, but verify must return a result."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
+        _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x",
+                                           "disposition": ["DISMISSED"]}])
+        r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
+        assert not r.passed
+        assert "Jaccard" in r.reason
+
+    def test_missing_disposition_is_treated_as_open(self, tmp_path):
+        """A finding with no disposition key is still an open defect."""
+        rd = self._rd(tmp_path)
+        sha = _sha(_HARDEN_DIFF)
+        diff_files = parse_diff_files(_HARDEN_DIFF)
         _write_hardened(rd, sha, findings=[{"severity": "L2", "note": "x"}])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert not r.passed

@@ -226,6 +226,31 @@ def git_diff(
     return result.stdout
 
 
+def read_diff_blob(oid: object, cwd: Path) -> str | None:
+    """Read a bounded immutable text blob; never resolve a file from disk."""
+    if not isinstance(oid, str):
+        return None
+    if re.fullmatch(r"[0-9a-f]{7,64}", oid) is None or not oid.strip("0"):
+        return None
+    cmd = ["git", "--no-replace-objects", "cat-file"]
+    try:
+        size = subprocess.run(
+            [*cmd, "-s", oid], cwd=cwd, capture_output=True,
+            text=True, encoding="utf-8", check=False, timeout=5,
+        )
+        if size.returncode or not 0 <= int(size.stdout) <= 2_000_000:
+            return None
+        blob = subprocess.run(
+            [*cmd, "blob", oid], cwd=cwd, capture_output=True,
+            check=False, timeout=5,
+        )
+        if blob.returncode or b"\x00" in blob.stdout:
+            return None
+        return blob.stdout.decode("utf-8")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
 def cached_diff(
     baseline_ref: str,
     paths: list[Path],

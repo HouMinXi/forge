@@ -19,6 +19,147 @@ import unidiff
 
 logger = logging.getLogger(__name__)
 
+_GIT_SIMPLE_ESCAPES = {
+    "n": "\n",
+    "t": "\t",
+    "r": "\r",
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "v": "\v",
+    "\\": "\\",
+    '"': '"',
+}
+
+
+def unquote_git_path(inner: str) -> str:
+    """Decode the interior of a git C-quoted path."""
+    out = bytearray()
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if ch != "\\":
+            out.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        if i + 1 >= len(inner):
+            out.append(0x5C)
+            break
+        nxt = inner[i + 1]
+        if nxt in "01234567":
+            j = i + 1
+            while j < len(inner) and j < i + 4 and inner[j] in "01234567":
+                j += 1
+            out.append(int(inner[i + 1 : j], 8) & 0xFF)
+            i = j
+            continue
+        mapped = _GIT_SIMPLE_ESCAPES.get(nxt)
+        if mapped is not None:
+            out.extend(mapped.encode("latin-1"))
+            i += 2
+            continue
+        out.append(0x5C)
+        out.extend(nxt.encode("utf-8"))
+        i += 2
+    return out.decode("utf-8", "surrogateescape")
+
+
+def normalize_diff_path(raw: str, *, strip_git_prefix: bool = False) -> str:
+    """Map a git +++ / unidiff path token to the working-tree relative path.
+
+    Unidiff already drops a/ and b/. Only strip those prefixes when the
+    token still carries a git header prefix.
+    """
+    path = raw.split("\t")[0].rstrip("\r\n")
+    if path.startswith('"'):
+        if path.endswith('"') and len(path) >= 2:
+            path = unquote_git_path(path[1:-1])
+        else:
+            path = unquote_git_path(path[1:])
+        # Unidiff keeps quotes and does not drop a/ b/ on C-quoted names.
+        strip_git_prefix = True
+    if strip_git_prefix and path.startswith(("a/", "b/")):
+        path = path[2:]
+    return path
+
+
+def path_from_file_header(line: str, *, plus: bool) -> str | None:
+    """Working-tree path from a +++ or --- header, or None if this is not one."""
+    raw = line.split("\t")[0].rstrip("\r\n")
+    mark = "+++ " if plus else "--- "
+    if not raw.startswith(mark):
+        return None
+    rest = raw[4:]
+    if rest in ("/dev/null", '"/dev/null"'):
+        return None
+    if rest.startswith(("a/", "b/", '"a/', '"b/')):
+        return normalize_diff_path(rest, strip_git_prefix=True)
+    return None
+
+
+def path_from_plus_header(line: str) -> str | None:
+    """Working-tree path from a +++ header, or None if this is not one."""
+    return path_from_file_header(line, plus=True)
+
+
+def path_from_git_header(line: str) -> str | None:
+    """Working-tree path from a diff --git line, preferring the b/ side."""
+    raw = line.split("\t")[0].rstrip("\r\n")
+    if not raw.startswith("diff --git "):
+        return None
+    rest = raw[len("diff --git "):]
+    # Quoted pair: "a/<path>" "b/<path>"
+    if rest.startswith('"'):
+        parts = rest.split('" "')
+        if len(parts) >= 2:
+            b_side = parts[-1].rstrip('"')
+            return normalize_diff_path('"' + b_side + '"', strip_git_prefix=True)
+        return None
+    # Unquoted: git emits a/<path> b/<path>. The path may itself contain
+    # " b/" (directory "foo b"), so the first " b/" is not the separator.
+    # Split where the two copies of <path> match.
+    if rest.startswith("a/"):
+        body = rest[2:]
+        start = 0
+        while True:
+            found = body.find(" b/", start)
+            if found == -1:
+                break
+            left = body[:found]
+            right = body[found + 3:]
+            if left == right:
+                return left
+            start = found + 1
+    if rest.startswith("b/"):
+        return normalize_diff_path(rest, strip_git_prefix=True)
+    return None
+
+
+def patched_file_path(pf) -> str:
+    """Working-tree path for a unidiff PatchedFile.
+
+    Unidiff splits C-quoted names with spaces on the timestamp tab, so
+    .path / source_file / target_file are not trustworthy. Prefer the
+    intact diff --git line in patch_info when present.
+    """
+    info = getattr(pf, "patch_info", None)
+    if info:
+        first = next(iter(info), "")
+        git_path = path_from_git_header(first)
+        if git_path:
+            return git_path
+    target = getattr(pf, "target_file", "") or ""
+    source = getattr(pf, "source_file", "") or ""
+    raw = target if target and "/dev/null" not in target else source
+    if raw.startswith(("b/", "a/", '"b/', '"a/')):
+        plus = path_from_plus_header("+++ " + raw)
+        if plus is not None:
+            return plus
+        minus = path_from_file_header("--- " + raw, plus=False)
+        if minus is not None:
+            return minus
+    return normalize_diff_path(pf.path)
+
 
 def count_diff_lines(diff_text: str | None) -> int:
     """Count insertions + deletions across all hunks in a unified diff.
@@ -133,7 +274,7 @@ def extract_changed_lines(
             continue
 
         # Use target path (handles renames correctly)
-        filepath = patched_file.path
+        filepath = patched_file_path(patched_file)
 
         changed_lines = set()
         for hunk in patched_file:
@@ -201,10 +342,14 @@ def _section_entry(lines: list[str]) -> tuple[str | None, str]:
     """(post-change path, verbatim section text) for one diff section."""
     old_path: str | None = None
     for line in lines:
-        if line.startswith("+++ b/"):
-            return line[len("+++ b/"):].rstrip("\n"), "".join(lines)
-        if line.startswith("--- a/"):
-            old_path = line[len("--- a/"):].rstrip("\n")
+        if line.startswith("@@"):
+            break
+        plus = path_from_plus_header(line)
+        if plus is not None:
+            return plus, "".join(lines)
+        minus = path_from_file_header(line, plus=False)
+        if minus is not None:
+            old_path = minus
     return old_path, "".join(lines)
 
 
@@ -219,6 +364,10 @@ def parse_diff_hunks(
     """
     if not diff_text or not diff_text.strip():
         return ({}, [])
+
+    # Normalize CRLF to LF so unidiff does not retain trailing \r in filenames
+    if "\r" in diff_text:
+        diff_text = diff_text.replace("\r\n", "\n").replace("\r", "\n")
 
     try:
         patchset = unidiff.PatchSet(diff_text)
@@ -235,14 +384,18 @@ def parse_diff_hunks(
 
         hunks = list(pf)
 
+        filepath = patched_file_path(pf)
         if getattr(pf, "is_binary_file", False):
-            exempt_files.append(pf.path)
+            if filepath not in hunk_map:
+                exempt_files.append(filepath)
             continue
         if pf.is_rename and len(hunks) == 0:
-            exempt_files.append(pf.path)
+            if filepath not in hunk_map:
+                exempt_files.append(filepath)
             continue
         if not pf.is_rename and not getattr(pf, "is_binary_file", False) and len(hunks) == 0:
-            exempt_files.append(pf.path)
+            if filepath not in hunk_map:
+                exempt_files.append(filepath)
             continue
 
         file_hunks = []
@@ -266,7 +419,8 @@ def parse_diff_hunks(
             )
 
         if file_hunks:
-            hunk_map[pf.path] = file_hunks
+            hunk_map[filepath] = file_hunks
+            exempt_files[:] = [f for f in exempt_files if f != filepath]
 
     return (hunk_map, exempt_files)
 
@@ -344,7 +498,7 @@ def _extract_post_image_lines(
                     file_lines[line.target_line_no] = line.value
 
         if file_lines:
-            post_image[pf.path] = file_lines
+            post_image[patched_file_path(pf)] = file_lines
 
     return post_image
 

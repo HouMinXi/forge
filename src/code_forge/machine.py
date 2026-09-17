@@ -1284,7 +1284,7 @@ class StateMachine:
         if diff_text and excerpts:
             from .verify import validate_excerpts_against_diff
 
-            errors.extend(validate_excerpts_against_diff(diff_text, excerpts))
+            errors.extend(validate_excerpts_against_diff(diff_text, excerpts, cwd=self.cwd))
         return errors
 
     def _receipt_gate_terminal_errors(self) -> list[str]:
@@ -1377,7 +1377,7 @@ class StateMachine:
             validate_excerpt_evidence,
         )
 
-        post_image, hunk_map, exempt_files = _diff_validation_context(diff_text)
+        post_image, hunk_map, exempt_files = _diff_validation_context(diff_text, cwd=self.cwd)
         kept: list[dict] = []
         extra: list[StateFinding] = []
         for exc in excerpts:

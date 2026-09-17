@@ -21,7 +21,8 @@ from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
-from .diff import _extract_post_image_lines, parse_diff_hunks
+from .diff import parse_diff_hunks, path_from_plus_header
+from .disposition import Disposition
 from .errors import CorruptedReceiptError, UnreadableGateError
 from .reviewer_json import excerpt_line_count_matches, excerpt_lines
 
@@ -151,10 +152,19 @@ def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
     import re
     diff_files: dict[str, list[int]] = {}
     current_file = None
+    in_hunk = False
     for line in diff_text.splitlines():
-        if line.startswith("+++ b/"):
-            current_file = line[6:]
-        elif line.startswith("@@") and current_file:
+        if line.startswith("diff --git "):
+            current_file = None
+            in_hunk = False
+            continue
+        if not in_hunk:
+            plus = path_from_plus_header(line)
+            if plus is not None:
+                current_file = plus
+                continue
+        if line.startswith("@@") and current_file:
+            in_hunk = True
             m = re.search(r"\+(\d+)(?:,(\d+))?", line)
             if m:
                 start = int(m.group(1))
@@ -394,6 +404,32 @@ def _jaccard(a: set, b: set) -> float:
         return 1.0
     u = a | b
     return len(a & b) / len(u) if u else 1.0
+
+
+_CLOSED_DISPOSITIONS = frozenset({
+    Disposition.DISMISSED.value,
+    Disposition.FIXED.value,
+    Disposition.STYLE.value,
+})
+
+
+def _open_findings(items: list) -> list:
+    """Findings that still count as an open product defect.
+
+    Missing or non-string disposition is treated as open: older
+    receipts omit the field, and a list/dict value must not crash
+    the gate.
+    """
+    open_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            open_items.append(item)
+            continue
+        disp = item.get("disposition")
+        if isinstance(disp, str) and disp in _CLOSED_DISPOSITIONS:
+            continue
+        open_items.append(item)
+    return open_items
 
 
 def _constant_offset(
@@ -645,18 +681,21 @@ def validate_excerpt_evidence(
 
 def _diff_validation_context(
     diff_text: str,
+    *, cwd: Path | None = None,
 ) -> tuple[dict[str, dict[int, str]], dict[str, list[dict]], list[str]]:
     """Parse frozen diff text into (post_image, hunk_map, exempt_files).
 
     Same parsing run_verify's hardened excerpt checks use; exposing it
-    lets the StateMachine validate a round's in-memory excerpts against
-    the same deterministic predicate instead of re-reading receipts from
-    disk (disk selection is not bound to the current run).
+    lets the StateMachine validate in-memory excerpts with the same
+    predicate as terminal attestation. When cwd is supplied, immutable
+    blobs named in diff headers can supplement bounded context; live
+    working files never supply evidence.
     """
     post_image: dict[str, dict[int, str]] = {}
     hunk_map: dict[str, list[dict]] = {}
     current_file: str | None = None
     line_no = 0
+    in_hunk = False
     # Lines that introduce or describe a file rather than its content.
     # The context branch below is a catch-all, so anything not named here
     # would be stored as a content line of whichever file came before it.
@@ -684,17 +723,20 @@ def _diff_validation_context(
             # line belongs to no file, so stop attributing to the last one.
             current_file = None
             line_no = 0
+            in_hunk = False
             continue
         if raw.startswith(header_prefixes):
             continue
-        if raw.startswith("+++ b/"):
-            current_file = raw[6:]
-            line_no = 0
-            post_image.setdefault(current_file, {})
-            hunk_map.setdefault(current_file, [])
-        elif raw.startswith("@@") and current_file:
-            import re
-
+        if not in_hunk:
+            plus = path_from_plus_header(raw)
+            if plus is not None:
+                current_file = plus
+                line_no = 0
+                post_image.setdefault(current_file, {})
+                hunk_map.setdefault(current_file, [])
+                continue
+        if raw.startswith("@@") and current_file:
+            in_hunk = True
             m = re.search(r"\+(\d+)(?:,(\d+))?", raw)
             if m:
                 line_no = int(m.group(1))
@@ -703,13 +745,9 @@ def _diff_validation_context(
                     {"start": line_no, "end": line_no + count - 1}
                 )
         elif current_file and raw.startswith("+") and not raw.startswith("+++"):
-            if raw.startswith("++"):  # new-file marker
-                continue
             post_image[current_file][line_no] = raw[1:]
             line_no += 1
         elif current_file and raw.startswith("-") and not raw.startswith("---"):
-            if raw.startswith("--"):  # deleted-file marker
-                continue
             # Deleted lines shift nothing; keep line_no pinned for the
             # post-image of surviving lines.
             continue
@@ -725,6 +763,35 @@ def _diff_validation_context(
     exempt_files = [
         f for f, lines in post_image.items() if not lines
     ]
+    if cwd is not None:
+        from .git import read_diff_blob
+
+        for section in re.split(r"(?m)^diff --git ", diff_text)[1:]:
+            header, _, _body = section.partition("\n@@")
+            plus = None
+            for raw in header.splitlines():
+                plus = path_from_plus_header(raw)
+                if plus is not None:
+                    break
+            index = re.search(r"(?m)^index [0-9a-f]+\.\.([0-9a-f]+)(?:[ \t\r]|$)", header)
+            if plus is None or index is None:
+                continue
+            file = plus
+            frozen = post_image.get(file)
+            if not frozen:
+                continue
+            text = read_diff_blob(index.group(1), cwd)
+            if text is None:
+                continue
+            lines = dict(enumerate(text.splitlines(), 1))
+            # A patch may have been edited independently of its index header.
+            # Only a blob agreeing with every frozen hunk can supply context.
+            if all(lines.get(n) == value for n, value in frozen.items()):
+                # Match the offset search radius without retaining whole files.
+                for hunk in hunk_map[file]:
+                    for n in range(max(1, hunk["start"] - 65),
+                                   min(len(lines), hunk["end"] + 65) + 1):
+                        post_image[file][n] = lines[n]
     return post_image, hunk_map, exempt_files
 
 
@@ -749,7 +816,7 @@ def is_evidence_quality_fault(err: str) -> bool:
 
 
 def validate_excerpts_against_diff(
-    diff_text: str, excerpts: list[dict]
+    diff_text: str, excerpts: list[dict], *, cwd: Path | None = None
 ) -> list[str]:
     """Validate excerpts against frozen diff text; return error strings.
 
@@ -760,7 +827,7 @@ def validate_excerpts_against_diff(
     """
     if not diff_text or not excerpts:
         return []
-    post_image, hunk_map, exempt_files = _diff_validation_context(diff_text)
+    post_image, hunk_map, exempt_files = _diff_validation_context(diff_text, cwd=cwd)
     errors: list[str] = []
     for exc in excerpts:
         err = validate_excerpt_evidence(
@@ -959,7 +1026,7 @@ def run_verify(
         #    unwitnessed or fabricated excerpt. Complements (does not replace) the
         #    R1/R2/R3 dynamic verification layer.
         hunk_map, exempt_files = parse_diff_hunks(diff_text)
-        post_image = _extract_post_image_lines(diff_text)
+        post_image, _, _ = _diff_validation_context(diff_text, cwd=cwd)
 
         if diff_text.strip() and not hunk_map and not exempt_files:
             return VerifyResult(False, "diff parse failed -- cannot verify excerpts", 5, cp)
@@ -1130,9 +1197,11 @@ def run_verify(
         # 7. Jaccard overlap > 0.8 = rubber stamp.
         # NOTE: identical excerpts across cycles will cause Jaccard > 0.8.
         # This is CORRECT -- it detects rubber-stamping.
-        # Known limitation: when all cycles have empty findings (findings=[]),
-        # the skip condition below causes Jaccard to never trigger, so
-        # identical-excerpt clean reviews always pass (intentional design).
+        # Known limitation: when neither cycle has an open finding
+        # (empty list, or every finding DISMISSED/FIXED), the skip
+        # below causes Jaccard to never trigger, so identical-excerpt
+        # reviews still pass. Open findings are CONFIRMED, UNCERTAIN,
+        # or a missing/non-string disposition. STYLE is closed.
         cycle_findings = {}
         for r in receipts:
             cyc = r.get("cycle", 0)
@@ -1141,7 +1210,9 @@ def run_verify(
             cycle_findings[cyc].extend(r.get("findings", []))
 
         for a, b in combinations(last_n, 2):
-            if not cycle_findings.get(a) and not cycle_findings.get(b):
+            if not _open_findings(cycle_findings.get(a, [])) and not _open_findings(
+                cycle_findings.get(b, [])
+            ):
                 continue
             cov_a = _cycle_excerpt_covered(receipts, a)
             cov_b = _cycle_excerpt_covered(receipts, b)
@@ -1214,7 +1285,9 @@ def run_verify(
             cycle_findings[cyc].extend(r.get("findings", []))
 
         for a, b in combinations(last_n, 2):
-            if not cycle_findings.get(a) and not cycle_findings.get(b):
+            if not _open_findings(cycle_findings.get(a, [])) and not _open_findings(
+                cycle_findings.get(b, [])
+            ):
                 continue
             j = _jaccard(_cycle_covered(receipts, a), _cycle_covered(receipts, b))
             if j > 0.8:
