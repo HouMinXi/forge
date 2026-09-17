@@ -100,8 +100,9 @@ def test_multiple_paths_are_read_by_real_mutmut(tmp_path):
     (tmp_path / "setup.cfg").write_text(_build_mutmut_config(paths, ["pytest"]))
     result = subprocess.run(
         [sys.executable, "-c", (
-            "import json; from mutmut.configuration import Config; "
-            "c=Config.get(); print(json.dumps([list(map(str,c.source_paths)), c.only_mutate]))"
+            "import json; import mutmut.configuration as module; "
+            "c=module.config() if hasattr(module, 'config') else module.Config.get(); "
+            "print(json.dumps([list(map(str,c.source_paths)), c.only_mutate]))"
         )],
         cwd=tmp_path, capture_output=True, text=True, check=True,
     )
@@ -152,7 +153,9 @@ def test_real_mutmut_stdout_failure_is_visible(tmp_path):
         cwd=tmp_path, timeout=60,
     )
     assert findings[0].id == "MUTATION_ERROR"
-    assert "source_paths" in findings[0].description
+    assert any(cause in findings[0].description for cause in (
+        "source_paths", "could not find any test case for any mutant",
+    ))
     assert "stdout" in findings[0].description
     assert errors
     assert not (tmp_path / "setup.cfg").exists()
