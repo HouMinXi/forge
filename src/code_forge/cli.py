@@ -1075,6 +1075,7 @@ def _estimate_l1_prompt_tokens(
     contract_spec: str,
     manifest_spec: str,
     focus_spec: str,
+    context_sources_text: str = "",
 ) -> int:
     """Rough input-token estimate for one assembled L1 prompt.
 
@@ -1087,7 +1088,7 @@ def _estimate_l1_prompt_tokens(
         len(diff_text) + len(post_image) + len(conventions_digest)
         + len(graph_impact_context) + len(contract_spec)
         + len(manifest_spec) + len(focus_spec)
-        + len(REVIEW_JSON_CONTRACT)
+        + len(REVIEW_JSON_CONTRACT) + len(context_sources_text)
     )
     return total // 4
 
@@ -1845,14 +1846,21 @@ def _run_trust(args, cwd: Path) -> int:
             )
         return EXIT_PASS
 
-    # Guard: refuse to trust a gate.yaml with no backends and no review_focus.
+    from .kernel_context import validate_kernel_context
+    try:
+        kernel_cfg = validate_kernel_context(gd.get("kernel_context", {}))
+    except ValueError as exc:
+        print(f"code-forge: error: {exc}", file=sys.stderr)
+        return EXIT_CLI_ERROR
+
+    # Guard: trust must authorize at least one configured purpose.
     backends_raw = gd.get("backends")
     has_backends = backends_raw and not (
         isinstance(backends_raw, dict)
         and all(v is None for v in backends_raw.values())
     )
     has_focus = isinstance(gd.get("review_focus"), str) and gd["review_focus"].strip()
-    if not has_backends and not has_focus:
+    if not has_backends and not has_focus and "kernel_context" not in gd:
         print(
             "No backends or review_focus configured in this gate.yaml. "
             "Configure at least one.",
@@ -1875,6 +1883,13 @@ def _run_trust(args, cwd: Path) -> int:
     # from a subdirectory is auditable.
     print("Trusting %s" % gate_yaml_path, file=sys.stderr)
     record_trust(gate_yaml_path, gd)
+    if "kernel_context" in gd:
+        from .trust import record_kernel_context_trust
+        print(
+            f"Kernel context: enabled={kernel_cfg.enabled} defconfig={kernel_cfg.defconfig} "
+            f"workspace={workspace.resolve()}", file=sys.stderr,
+        )
+        record_kernel_context_trust(gate_yaml_path, workspace, kernel_cfg)
     print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
     if contracts_yaml_path.is_file():
         from .contract_loader import resolve_contract_specs
@@ -3487,6 +3502,25 @@ def _run(args, env, cwd: Path) -> Verdict:
     retry_cfg = merge_retry(gate_data.get("retry", {}), load_user_retry())
     validate_retry_config(retry_cfg)
 
+    from .kernel_context import KernelContextSource, validate_kernel_context
+    from .trust import is_trusted_kernel_context
+    from .workspace import resolve_workspace
+    try:
+        kernel_cfg = validate_kernel_context(gate_data.get("kernel_context", {}))
+    except ValueError as exc:
+        raise CliError(str(exc)) from exc
+    kernel_root = resolve_workspace(cwd, env)
+    kernel_empty_siblings = False
+    if kernel_cfg.enabled:
+        siblings = gate_data.get("siblings")
+        if siblings is not None and not isinstance(siblings, list):
+            raise CliError("siblings: must be a list")
+        if siblings:
+            raise CliError("kernel-context: siblings are not supported while kernel_context is enabled")
+        kernel_empty_siblings = siblings == []
+        if not is_trusted_kernel_context(gate_yaml_path, kernel_root, kernel_cfg):
+            raise CliError("kernel-context: file access is not authorized; run code-forge trust")
+
     # Early contract file read: validate before backend resolution.
     _contract_file_content = ""
     if getattr(args, "contract", None) is not None:
@@ -3534,6 +3568,10 @@ def _run(args, env, cwd: Path) -> Verdict:
         has_explicit_backend=has_explicit_backend,
         reachability_fn=_reachability,
     )
+    if kernel_cfg.enabled and outlet != "subprocess":
+        raise CliError(
+            f"kernel-context: outlet {outlet} is not supported; only the CLI subprocess review path is supported"
+        )
     _inline_v = _dispatch_inline_canary(outlet, args, env, cfgs, gate_data, cwd)
     if _inline_v is not None:
         return _inline_v
@@ -3771,6 +3809,21 @@ def _run(args, env, cwd: Path) -> Verdict:
     _pre_graph_findings: list = []
     _graph_source = GraphTriageSource(cwd)
     _context_rows: list = []
+    _kernel_source = KernelContextSource(kernel_root, kernel_cfg) if kernel_cfg.enabled else None
+    _sources = [_graph_source, RemovedSymbolReaders(cwd)]
+    if _kernel_source is not None:
+        _sources.append(_kernel_source)
+    _kernel_failed = False
+    _non_kernel_text = ""
+
+    def _context_error(name, msg):
+        nonlocal _kernel_failed
+        if name == "kernel_context":
+            _kernel_failed = True
+            warn("kernel-context: reason=unavailable")
+        else:
+            warn(f"context source {name} failed: {msg}")
+
     # gather() isolates each source; the two calls outside it
     # (get_changed_files on the diff, the renderers) are pure functions
     # of already-validated input, but a surprise there must degrade to
@@ -3778,36 +3831,49 @@ def _run(args, env, cwd: Path) -> Verdict:
     # review. Context is advisory; the review is not.
     try:
         _ctx = gather(
-            [_graph_source, RemovedSymbolReaders(cwd)],
+            _sources,
             get_changed_files(resolved.git_diff or ""),
             resolved.git_diff or "",
             head_sha=getattr(resolved, "head_sha", None),
             allow_unsnapshotted=bool(
                 getattr(args, "allow_unsnapshotted_context", False)
             ),
-            on_error=lambda name, msg: warn(
-                "context source %s failed: %s" % (name, msg)
-            ),
+            on_error=_context_error,
         )
         for _skipped in _ctx.skipped:
             warn("context source skipped (stale snapshot): %s" % _skipped)
         _graph_impact_context = render_blast_radius(
             [r for r in _ctx.rows if r.source == "graph_triage"]
         )
-        _context_sources_text = render_context_sources(_ctx)
+        from .context_sources import GatherResult
+        from .kernel_context import unavailable_text
+        _non_kernel_text = render_context_sources(
+            GatherResult(rows=[r for r in _ctx.rows if r.source != "kernel"])
+        )
+        _kernel_text = ""
+        if _kernel_source is not None:
+            _kernel_text = unavailable_text(kernel_root) if _kernel_failed else _kernel_source.rendered_text
+            for message in _kernel_source.warnings:
+                warn(message)
+        _context_sources_text = "\n\n".join(s for s in (_non_kernel_text, _kernel_text) if s)
         _pre_graph_findings = list(_graph_source.findings_cache or [])
         _context_rows = list(_ctx.rows)
     except Exception as exc:  # noqa: BLE001 - advisory path, named
-        warn("context sources unavailable: %s: %s"
-             % (type(exc).__name__, exc))
+        warn("context sources unavailable: " + type(exc).__name__)
         _graph_impact_context = ""
         _context_sources_text = ""
+        if kernel_cfg.enabled:
+            from .kernel_context import unavailable_text
+            warn("kernel-context: reason=unavailable")
+            _context_sources_text = "\n\n".join(
+                s for s in (_non_kernel_text, unavailable_text(kernel_root)) if s
+            )
         _pre_graph_findings = []
         _context_rows = []
 
     falsifier = build_falsifier(
         engine_choice, backend=backend, diff_text=resolved.git_diff,
-        context_rows=_context_rows,
+        context_rows=[r for r in _context_rows if r.source != "kernel"],
     )
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
@@ -3830,6 +3896,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     _l1_est_tokens = _estimate_l1_prompt_tokens(
         resolved.git_diff or "", _post_image_a, _conv_digest_a,
         _graph_impact_context, _contract_spec_a, _manifest_spec_a, "",
+        _context_sources_text if kernel_cfg.enabled else "",
     )
     if _l1_est_tokens <= _group_budget:
         l1_provider = build_l1_provider(
@@ -3934,19 +4001,18 @@ def _run(args, env, cwd: Path) -> Verdict:
     except CoverageConfigError as exc:
         raise CliError(str(exc))
 
-    # Cross-repo dispatch: if gate.yaml has a non-empty siblings section,
-    # dispatch to run_cross_repo before acquiring the lock.  Single-repo
-    # (no siblings) falls through to _run_hold_loop unchanged.
-    # NOTE: this reads gate.yaml independently from the backend-resolution
-    # load at line ~1249 because gate_data is scoped inside the has_inline
-    # else-block and may not exist when the user passed --backend-url/etc.
-    _cv = _dispatch_cross_repo(
-        gate_yaml_path, cwd, baseline_spec, head_spec, mode,
-        engine_choice, backend, max_rounds, max_fix, _clean_threshold,
-        warn, focus_spec=(yaml_focus + ("\n\n" if yaml_focus and _focus_file_content else "") + _focus_file_content),
-    )
-    if _cv is not None:
-        return _cv
+    # Enabled requests keep the early single-repository configuration snapshot.
+    if kernel_cfg.enabled:
+        if kernel_empty_siblings:
+            warn("gate.yaml has empty siblings: [] section; falling through to single-repo review")
+    else:
+        _cv = _dispatch_cross_repo(
+            gate_yaml_path, cwd, baseline_spec, head_spec, mode,
+            engine_choice, backend, max_rounds, max_fix, _clean_threshold,
+            warn, focus_spec=(yaml_focus + ("\n\n" if yaml_focus and _focus_file_content else "") + _focus_file_content),
+        )
+        if _cv is not None:
+            return _cv
 
     # Startup banner: state the review target and effective timeout
     # before the first LLM call (or lock wait) so a wrong cwd or a
