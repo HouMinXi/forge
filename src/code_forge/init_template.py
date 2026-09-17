@@ -65,6 +65,15 @@ outlet: subprocess
 #     model: gpt-4o
 #     max_tokens: 8192
 #
+#   omniroute:                    # combo / OpenAI-compatible gateway
+#     type: api
+#     format: openai
+#     base_url: https://192.168.100.10:20128/v1
+#     api_key_env: OMNIROUTE_API_KEY
+#     model: your-combo-name
+#     headers:
+#       x-omniroute-no-cache: "true"  # required: default cache replays rounds
+#
 #   openrouter:                   # any OpenAI-compatible router/proxy works
 #     type: api
 #     format: openai              # OpenRouter speaks the OpenAI API

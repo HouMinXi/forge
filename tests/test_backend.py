@@ -2154,3 +2154,124 @@ class TestProbeBackendLive:
         r = self._classify(LLMInvokeError(
             "body:\nline two\nline three", kind="bad_body"))
         assert "\n" not in r.detail
+
+
+def test_omniroute_url_without_bypass_is_a_warning():
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="review-default",
+        type="api",
+        model="agnes-cn-3",
+        format="openai",
+        base_url="https://192.168.100.10:20128/v1",
+        api_key_env="OMNIROUTE_API_KEY",
+        headers={"x-omniroute-compression": "off"},
+    )
+    msg = caching_gateway_without_bypass(cfg)
+    assert msg is not None
+    assert "x-omniroute-no-cache" in msg.lower()
+
+
+def test_omniroute_url_with_bypass_is_silent():
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="review-default",
+        type="api",
+        model="agnes-cn-3",
+        format="openai",
+        base_url="https://192.168.100.10:20128/v1",
+        api_key_env="OMNIROUTE_API_KEY",
+        headers={
+            "x-omniroute-compression": "off",
+            "x-omniroute-no-cache": "true",
+        },
+    )
+    assert caching_gateway_without_bypass(cfg) is None
+
+
+def test_non_omniroute_backend_is_silent():
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="openai",
+        type="api",
+        model="gpt-4o",
+        format="openai",
+        base_url="https://api.openai.com/v1",
+        api_key_env="OPENAI_API_KEY",
+    )
+    assert caching_gateway_without_bypass(cfg) is None
+
+
+def test_gitea_on_same_host_is_silent():
+    """X500 also serves Gitea on :3300; that is not the review cache."""
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="gitea",
+        type="api",
+        model="none",
+        format="openai",
+        base_url="http://192.168.100.10:3300",
+        api_key_env="NONE",
+    )
+    assert caching_gateway_without_bypass(cfg) is None
+
+
+
+def test_substring_host_is_not_omniroute():
+    """A name that merely contains the marker is some other service."""
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="lookalike",
+        type="api",
+        model="x",
+        format="openai",
+        base_url="https://not-omniroute.example.com/v1",
+        api_key_env="K",
+    )
+    assert caching_gateway_without_bypass(cfg) is None
+
+
+def test_omniroute_dns_label_is_a_warning():
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="combo",
+        type="api",
+        model="x",
+        format="openai",
+        base_url="https://gateway.omniroute.internal/v1",
+        api_key_env="K",
+    )
+    assert caching_gateway_without_bypass(cfg) is not None
+
+
+
+def test_malformed_port_does_not_raise():
+    """A junk port is not OmniRoute; the warning path must not crash."""
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="junk",
+        type="api",
+        model="x",
+        format="openai",
+        base_url="https://host:abc/v1",
+        api_key_env="K",
+    )
+    assert caching_gateway_without_bypass(cfg) is None
+
+
+
+def test_non_dict_headers_do_not_raise():
+    """A code-built BackendConfig may carry a non-dict headers value."""
+    from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+    cfg = BackendConfig(
+        name="review-default",
+        type="api",
+        model="x",
+        format="openai",
+        base_url="https://192.168.100.10:20128/v1",
+        api_key_env="K",
+        headers=[("x-omniroute-no-cache", "true")],
+    )
+    msg = caching_gateway_without_bypass(cfg)
+    assert msg is not None
+    assert "x-omniroute-no-cache" in msg.lower()

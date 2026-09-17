@@ -283,6 +283,28 @@ backends:
     api_key_env: MY_PROXY_API_KEY
 ```
 
+A gateway that caches temperature-0 responses (OmniRoute's semantic
+cache is on by default) will replay every LOCAL round after the first.
+Forge's OpenAI-format invoker sends `temperature: 0`, which is exactly
+the cache gate. Disable it per request:
+
+```yaml
+backends:
+  omniroute:
+    type: api
+    format: openai
+    base_url: https://192.168.100.10:20128/v1
+    api_key_env: OMNIROUTE_API_KEY
+    model: your-combo-name
+    headers:
+      x-omniroute-no-cache: "true"
+```
+
+Without that header, identical L1 and falsify prompts come back as
+cache hits. The review cannot converge or HOLD; it walks toward
+`max_total_rounds`. Startup warns when the resolved backend URL looks
+like OmniRoute and the header is missing.
+
 The proxy must return responses in the format specified by `format`.
 Authentication is handled via `api_key_env` -- the env var holds whatever
 token or key your proxy expects.

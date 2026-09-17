@@ -3581,6 +3581,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     # has_inline is defined at line ~645, confirmed in scope here.
     from .backend import (
         BackendConfig,
+        caching_gateway_without_bypass,
         resolve_backend,
     )
     from .llm_invoke import LLMInvokeError
@@ -3626,6 +3627,9 @@ def _run(args, env, cwd: Path) -> Verdict:
     # the 3 passes independently discovers the missing key, producing 3
     # identical INFRA findings instead of one clear error at startup.
     _check_backend_credentials(backend, env=env)
+    _cache_warn = caching_gateway_without_bypass(backend)
+    if _cache_warn:
+        warn(_cache_warn)
 
     state_dir = cwd / ".code-forge"
     state_dir.mkdir(parents=True, exist_ok=True)
