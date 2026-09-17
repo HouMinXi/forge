@@ -239,6 +239,34 @@ def find_dangerous_fields(
     return dangers
 
 
+# -- Kernel context authorization (explicit operator approval only) -------
+
+
+def hash_kernel_context(workspace_root: Path, config) -> str:
+    """Bind a normalized kernel configuration to its actual read root."""
+    canonical = json.dumps({
+        "defconfig": config.defconfig,
+        "enabled": config.enabled,
+        "workspace_root": workspace_root.resolve().as_posix(),
+    }, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_trusted_kernel_context(gate_yaml_path: Path, workspace_root: Path, config) -> bool:
+    """No legacy migration: backend authorization cannot grant file access."""
+    entry = _load_trust_store().get(str(gate_yaml_path.resolve()), {})
+    return entry.get("kernel_context_hash") == hash_kernel_context(workspace_root, config)
+
+
+def record_kernel_context_trust(gate_yaml_path: Path, workspace_root: Path, config) -> None:
+    """Only the interactive trust command may call this approval operation."""
+    store = _load_trust_store()
+    key = str(gate_yaml_path.resolve())
+    store[key] = {**store.get(key, {}),
+                  "kernel_context_hash": hash_kernel_context(workspace_root, config)}
+    _save_trust_store(store)
+
+
 # -- Contracts trust (spec-content hashing) ------------------------------
 
 

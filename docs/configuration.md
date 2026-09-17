@@ -448,6 +448,57 @@ registration via Settings -> Languages -> JSON Schema Mappings.
 
 ---
 
+## Kernel observations
+
+`kernel_context` adds bounded observations from changed patch lines and one
+explicitly named configuration file. It is off by default. It does not run
+Kconfig, merge fragments, preprocess device trees, or infer effective build
+configuration.
+
+```yaml
+kernel_context:
+  enabled: true
+  defconfig: arch/arm64/configs/defconfig
+  max_rows: 40
+  max_chars: 4000
+```
+
+Only single-repository CLI subprocess review supports this source. Enabled
+requests reject non-empty `siblings`, inline/subagent outlets, and MCP sampling.
+MCP subprocess delegates to the CLI. Disabled requests keep existing dispatch.
+
+Run `code-forge trust` after enabling the source or changing its path. File-read
+authorization is independent of backend trust and binds the enabled flag,
+normalized relative path, and real workspace root. Another workspace cannot
+reuse it through a shared `gate.yaml` symlink. Budget changes do not require
+renewed authorization. `trust --revoke` removes the whole authorization entry.
+A repository containing only a valid `kernel_context` section can be approved;
+user-level backends do not need to be copied into the repository.
+
+Review uses trust-filtered repository configuration: an untrusted section is
+inactive. `gate-check` validates the raw file instead, so it reports malformed
+sections even before trust is granted. A valid but unapproved enabled section
+produces an authorization warning in `gate-check`; it does not read the file.
+
+Paths must stay below the workspace root and contain no `..` component. Only
+regular files are read. Symlinks and unsupported safe-open platforms produce an
+unknown diagnostic, not a fallback read. Files must be UTF-8 and at most 1 MiB.
+No configuration candidate means no file read. `max_rows` accepts integers
+1..200; `max_chars` accepts integers 512..32000. Booleans are not valid budgets,
+and unknown keys are errors.
+
+Values are declarations, never effective configuration. Duplicate or malformed
+declarations are unknown. Changed guards, device-tree lines, and binding
+fragments retain old/new positions. One cached source instance supplies grouped
+review. Diagnostic rows take priority when budgets run out; warnings report
+omissions. No additional review pass is added.
+
+The source footer identifies its own read bytes by SHA-256. It does **not**
+authenticate the existing diff, post-image, or complete prompt. Those older
+channels can contain neighboring declarations or content from another read
+time. Check both the old channels and this fragment against the selected
+backend's data policy before authorizing a request.
+
 ## Retry
 
 API backends and MCP sampling retry transient failures. Omit the block

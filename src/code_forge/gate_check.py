@@ -1076,6 +1076,14 @@ def run_gate_check(
     try:
         config_path = cwd / ".code-forge" / "gate.yaml"
         config = load_gate_config(config_path)
+        from .kernel_context import validate_kernel_context
+        from .trust import is_trusted_kernel_context
+        from .workspace import resolve_workspace
+        kernel_cfg = validate_kernel_context(config.get("kernel_context", {}))
+        if kernel_cfg.enabled and not is_trusted_kernel_context(
+            config_path, resolve_workspace(cwd, env), kernel_cfg,
+        ):
+            warn("kernel-context: file access is not authorized; run code-forge trust")
         test_config = config["test"]
 
         # Validate command safety

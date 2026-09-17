@@ -418,6 +418,23 @@ mcp._tool_manager.call_tool = _null_coerce_call_tool
 # -- pre-flight helper --
 
 
+def _reject_kernel_sampling(workspace: Path) -> None:
+    """Check the same trusted configuration as the command-line entry."""
+    from code_forge import cli
+    from code_forge.errors import CliError
+    from code_forge.kernel_context import validate_kernel_context
+    try:
+        _, data = cli._load_gate_backends(workspace / ".code-forge" / "gate.yaml")
+        config = validate_kernel_context(data.get("kernel_context", {}))
+    except CliError as exc:
+        message = str(exc) + ("\n" + exc.remediation if exc.remediation else "")
+        raise ToolError(message) from exc
+    except (ValueError, OSError) as exc:
+        raise ToolError(str(exc)) from exc
+    if config.enabled:
+        raise ToolError("kernel-context: MCP sampling path is not supported; run the CLI subprocess path")
+
+
 def _check_backend(workspace: Path) -> None:
     """Verify a trusted review backend is configured.
 
@@ -1190,6 +1207,7 @@ async def forge_review(
                 "Client does not support sampling capability. "
                 + SAMPLING_REMEDIATION
             )
+        _reject_kernel_sampling(workspace)
         return await _dispatch_sampling(
             session=ctx.session,
             committed=committed,
@@ -1260,6 +1278,7 @@ async def forge_gate_check(
                 "Client does not support sampling capability. "
                 + SAMPLING_REMEDIATION
             )
+        _reject_kernel_sampling(workspace)
         # gate-check has no contract concept -- contract_spec stays empty.
         # Asserted by test_gate_check_no_contract.
         return await _dispatch_sampling(

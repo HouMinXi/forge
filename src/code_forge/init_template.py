@@ -19,6 +19,17 @@ GATE_YAML_TEMPLATE = """\
 # subprocess fails closed until a backend is configured under 'backends:'.
 outlet: subprocess
 
+# Optional kernel observations; off unless explicitly enabled and trusted.
+# CLI subprocess, single repository only. No effective Kconfig evaluation.
+# The named file is read once; only selected declarations enter this source.
+# Existing diff/post-image content is not covered by that filtering guarantee.
+# After enabling, inspect the backend data policy and run code-forge trust.
+# kernel_context:
+#   enabled: false
+#   defconfig: arch/arm64/configs/defconfig
+#   max_rows: 40
+#   max_chars: 4000
+
 # Cycle count adapts to diff size (relief, not defense):
 #   <50 lines:  2 clean cycles (6 passes)
 #   50-199:     3 clean cycles (9 passes, default)
