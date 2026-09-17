@@ -631,7 +631,7 @@ def _read_sse(response, deadline=None, backend_name="") -> dict:
             f"mid-response: {err_obj.get('message', '')} "
             f"(code {code_str}). {_suggestion(backend_name, code_str)}",
             exit_code=0,
-            retryable=_is_body_code_retryable(backend_name, code_str),
+            retryable=_is_body_code_retryable(backend_name, code_str, err_obj.get('message', '')),
         )
 
     return {
@@ -785,8 +785,16 @@ def _parse_retry_after(headers: Any) -> float | None:
     return min(value, 120.0)
 
 
-def _is_body_code_retryable(provider_name: str, code_str: str) -> bool:
-    """Look up body error code retryability. Default True for unknown."""
+def _is_body_code_retryable(
+    provider_name: str, code_str: str, message: str = "",
+) -> bool:
+    """Classify terminal context errors even when a relay drops their code."""
+    terminal_codes = {"context_length_exceeded", "max_context_length_exceeded"}
+    text = str(message).strip().lower()
+    if code_str.lower() in terminal_codes or text in terminal_codes:
+        return False
+    if "maximum context length" in text and ("exceed" in text or "requested" in text):
+        return False
     for key, codes in PROVIDER_ERROR_CODES.items():
         if key in provider_name:
             disposition = codes.get(code_str)
@@ -859,7 +867,7 @@ def _check_body_error(resp_data: dict, backend: "BackendConfig") -> None:
     if isinstance(error_obj, dict) and error_obj.get("code") is not None:
         code_str = str(error_obj["code"])
         msg = error_obj.get("message", "")
-        retryable = _is_body_code_retryable(backend.name, code_str)
+        retryable = _is_body_code_retryable(backend.name, code_str, msg)
         raise LLMInvokeError(
             "code-forge: %s backend: %s (code %s). %s"
             % (backend.name, msg, code_str, _suggestion(backend.name, code_str)),
@@ -877,14 +885,14 @@ def _check_body_error(resp_data: dict, backend: "BackendConfig") -> None:
             f"code-forge: {backend.name} backend: {msg}. "
             f"{_suggestion(backend.name, '')}",
             exit_code=0,
-            retryable=_is_body_code_retryable(backend.name, ""),
+            retryable=_is_body_code_retryable(backend.name, "", msg),
         )
     if isinstance(error_obj, str) and error_obj:
         raise LLMInvokeError(
             f"code-forge: {backend.name} backend: {error_obj}. "
             f"{_suggestion(backend.name, '')}",
             exit_code=0,
-            retryable=_is_body_code_retryable(backend.name, ""),
+            retryable=_is_body_code_retryable(backend.name, "", str(error_obj)),
         )
 
     # MiniMax openai format: base_resp.status_code (int)
@@ -894,7 +902,7 @@ def _check_body_error(resp_data: dict, backend: "BackendConfig") -> None:
         if status_code != 0:
             code_str = str(status_code)
             msg = base_resp.get("status_msg", "")
-            retryable = _is_body_code_retryable(backend.name, code_str)
+            retryable = _is_body_code_retryable(backend.name, code_str, msg)
             raise LLMInvokeError(
                 "code-forge: %s backend: %s (code %s). %s"
                 % (backend.name, msg, code_str, _suggestion(backend.name, code_str)),
@@ -2446,6 +2454,8 @@ def _invoke_vertex(
         raise LLMInvokeError(
             "HTTP %d from vertex backend: %s" % (exc.code, body_excerpt),
             exit_code=exc.code,
+            retryable=exc.code in RETRYABLE_HTTP_STATUSES,
+            retry_after=_parse_retry_after(exc.headers),
         ) from exc
     except urllib.error.URLError as exc:
         raise LLMInvokeError(
