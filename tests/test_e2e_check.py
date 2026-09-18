@@ -17,7 +17,6 @@ from code_forge.e2e_check import (
 )
 from code_forge.errors import ComponentsConfigError
 
-
 # ---------------------------------------------------------------------------
 # Shared diff fixtures as module-level constants.
 # All hunk @@ counts are exact so unidiff parses cleanly.
