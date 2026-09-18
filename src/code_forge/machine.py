@@ -1786,6 +1786,17 @@ class StateMachine:
         def _value(item):
             return item.value if isinstance(item, Disposition) else item
 
+        # An exhausted L0 fix budget is promoted on the next round.
+        # Let that pending state transition run before declaring a stall.
+        pending_promotion = any(
+            maps[-1].get(fp) in (Disposition.CONFIRMED, Disposition.CONFIRMED.value)
+            and self._state.fix_attempts.get(fp, 0) >= self.max_fix_attempts
+            and fp not in self._state.promoted_fingerprints
+            for fp in history[-1].get("l0_fingerprints", [])
+        )
+        if pending_promotion:
+            return False
+
         values = [_value(v) for v in maps[-1].values()]
         has_confirmed = Disposition.CONFIRMED.value in values
         has_uncertain = Disposition.UNCERTAIN.value in values
