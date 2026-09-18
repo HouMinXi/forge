@@ -298,12 +298,21 @@ backends:
     model: your-combo-name
     headers:
       x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
 ```
 
-Without that header, identical L1 and falsify prompts come back as
-cache hits. The review cannot converge or HOLD; it walks toward
-`max_total_rounds`. Startup warns when the resolved backend URL looks
-like OmniRoute and the header is missing.
+`max_tokens: 65536` belongs on the same backend. Omni's thinking
+models spend the first part of the budget on hidden reasoning; a
+smaller cap returns an empty or truncated JSON envelope and forge
+parses zero findings.
+
+Without `x-omniroute-no-cache: "true"`, identical L1 and falsify
+prompts come back as cache hits. LOCAL cannot converge or HOLD; it
+walks toward `max_total_rounds`. The other two headers keep the
+gateway from compressing the review prompt or injecting memory
+into it. Startup warns when the resolved backend URL looks like
+OmniRoute and the no-cache header is missing.
 
 The proxy must return responses in the format specified by `format`.
 Authentication is handled via `api_key_env` -- the env var holds whatever

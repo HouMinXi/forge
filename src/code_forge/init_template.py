@@ -72,7 +72,10 @@ outlet: subprocess
 #     api_key_env: OMNIROUTE_API_KEY
 #     model: your-combo-name
 #     headers:
-#       x-omniroute-no-cache: "true"  # required: default cache replays rounds
+#       x-omniroute-no-cache: "true"
+#       x-omniroute-no-memory: "1"
+#       x-omniroute-compression: "off"
+#     max_tokens: 65536
 #
 #   openrouter:                   # any OpenAI-compatible router/proxy works
 #     type: api
