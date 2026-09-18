@@ -708,6 +708,25 @@ class TestResolveForgeLiveness:
                 path = resolve_forge_path()
                 assert sys.executable in path or "-m code_forge" in path
 
+    def test_forge_version_oserror_fallback(self):
+        """OSError from --version falls back instead of aborting install."""
+        from unittest.mock import MagicMock, patch
+
+        mock_which = MagicMock(return_value="/usr/bin/code-forge")
+
+        def side_effect(*args, **kwargs):
+            raise OSError("Exec format error")
+
+        mock_run = MagicMock(side_effect=side_effect)
+
+        with (
+            patch("code_forge.install_hooks.shutil.which", mock_which),
+            patch("code_forge.install_hooks.subprocess.run", mock_run),
+            patch("code_forge.install_hooks.os.access", return_value=True),
+        ):
+            path = resolve_forge_path()
+            assert sys.executable in path or "-m code_forge" in path
+
     def test_forge_version_times_out_fallback(self):
         """Test 13: code-forge --version times out -> falls back to sys.executable."""
         from unittest.mock import MagicMock, patch
