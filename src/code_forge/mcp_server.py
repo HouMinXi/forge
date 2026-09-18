@@ -28,9 +28,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import server as _fastmcp_server
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
+from code_forge.llm_invoke import effective_invoke_timeout_s
 from code_forge.mcp_jobs import (
     ForgeJobRef,
     ForgeResult,
@@ -41,7 +43,6 @@ from code_forge.mcp_jobs import (
     snapshot_tempfile_paths,
     start_job,
 )
-from code_forge.llm_invoke import effective_invoke_timeout_s
 
 log = logging.getLogger(__name__)
 
@@ -374,6 +375,10 @@ async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
     await cleanup_all()
 
+
+# The SDK defines Settings before FastMCP. Resolve its forward references
+# before pydantic-settings inspects environment-backed fields.
+_fastmcp_server.Settings.model_rebuild(_types_namespace=vars(_fastmcp_server))
 
 mcp = FastMCP(
     "code-forge-mcp",
