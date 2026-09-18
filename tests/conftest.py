@@ -110,6 +110,15 @@ def _snapshot_git_state(repo_root):
     return snap
 
 
+def pytest_configure(config):
+    """Clear inherited Git settings; tests can set their own after configure."""
+    isolation = pytest.MonkeyPatch()
+    config.add_cleanup(isolation.undo)
+    for name in tuple(os.environ):
+        if name.startswith("GIT_"):
+            isolation.delenv(name, raising=False)
+
+
 def pytest_sessionstart(session):
     repo_root = Path(__file__).resolve().parent.parent
     session.config.stash[_git_snapshot_key] = _snapshot_git_state(repo_root)
