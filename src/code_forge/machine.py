@@ -869,6 +869,23 @@ class StateMachine:
                 self._persist_state()
                 return Verdict.PENDING
 
+            # CLEAN already counts toward the threshold above. Identical
+            # empty maps are how a clean review looks; stalling those
+            # would abort a 4-cycle threshold on round 2.
+            if (
+                _fp != _FixpointResult.CLEAN
+                and self._stalled_on_identical_round()
+            ):
+                self._state.verdict = Verdict.ESCALATED
+                self._state.converged = False
+                self._state.infra_errors.append(
+                    "review stalled: identical disposition maps for 3 "
+                    "consecutive rounds (response cache in the path, or "
+                    "genuinely deterministic findings)"
+                )
+                self._persist_state()
+                return Verdict.ESCALATED
+
         # MAX_TOTAL_ROUNDS exhausted -> STATE-05 diagnosis + ESCALATED
         category = diagnose_non_convergence(
             self._state.round_history, self._state.infra_errors
@@ -1749,6 +1766,30 @@ class StateMachine:
             for f in self._state.findings
         )
         return has_uncertain and not has_unfixed_confirmed
+
+    def _stalled_on_identical_round(self) -> bool:
+        """True when a HOLD-blocking mix has been frozen for 3 rounds.
+
+        CLEAN and HOLD already leave the loop. CONFIRMED-only still
+        burns autofix budget and may promote. The leftover livelock is
+        CONFIRMED plus UNCERTAIN together, which can do neither, and a
+        response cache makes that freeze look like progress. Three
+        rounds is two confirmations of the freeze.
+        """
+        history = self._state.round_history
+        if len(history) < 3:
+            return False
+        maps = [h.get("dispositions") or {} for h in history[-3:]]
+        if not maps[-1] or maps[0] != maps[1] or maps[1] != maps[2]:
+            return False
+
+        def _value(item):
+            return item.value if isinstance(item, Disposition) else item
+
+        values = [_value(v) for v in maps[-1].values()]
+        has_confirmed = Disposition.CONFIRMED.value in values
+        has_uncertain = Disposition.UNCERTAIN.value in values
+        return has_confirmed and has_uncertain
 
     def _finalize_local_terminal(self) -> None:
         """R3 LOW5: terminal state writer for LOCAL fixpoint exit.

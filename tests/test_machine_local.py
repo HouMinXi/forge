@@ -137,14 +137,19 @@ class TestLocalMaxRoundsExhausted:
     """(c) MAX_TOTAL_ROUNDS exhaust -> ESCALATED + diagnosis recorded."""
 
     def test_escalated_on_stuck(self, tmp_path):
-        """CONFIRMED that re-appears every round, autofix NO_CHANGE.
+        """CONFIRMED that re-appears every round under a new fingerprint.
 
-        max_fix_attempts set higher than max_total_rounds so promotion
-        to UNCERTAIN never happens -- CONFIRMED persists until
-        MAX_TOTAL_ROUNDS exhaustion triggers ESCALATED.
+        A frozen fingerprint set trips the stall breaker; this case
+        keeps changing identity so MAX_TOTAL_ROUNDS is what ends it.
+        max_fix_attempts is higher than max_total_rounds so promotion
+        to UNCERTAIN never happens.
         """
+        round_counter = {"n": 0}
+
         def mock_l0(registry, files):
-            return ([_make_finding()], [])
+            n = round_counter["n"]
+            round_counter["n"] += 1
+            return ([_make_finding(fp="fp-%d" % n)], [])
 
         class NoChangeAutoFixer(StubAutoFixer):
             def fix(self, finding, mode_hint):
@@ -172,6 +177,97 @@ class TestLocalMaxRoundsExhausted:
             "ESCALATED category=" in e
             for e in machine._state.infra_errors
         )
+
+
+class TestReplayStallBreaker:
+    """Identical non-clean rounds must stop, not walk to max_total_rounds.
+
+    A response cache (or a genuinely frozen finding set) produces the
+    same fingerprint-to-disposition map every round. CLEAN and HOLD
+    already exit; this breaker covers the leftover livelock where
+    CONFIRMED and UNCERTAIN together prevent both.
+    """
+
+    def _stuck_machine(self, tmp_path, max_rounds=8):
+        def mock_l0(registry, files):
+            return ([
+                _make_finding(fp="fp-conf", disp=Disposition.CONFIRMED),
+                _make_finding(fp="fp-unc", disp=Disposition.UNCERTAIN),
+            ], [])
+
+        class NoChangeAutoFixer(StubAutoFixer):
+            def fix(self, finding, mode_hint):
+                return FixOutcome.NO_CHANGE
+
+        return StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=NoChangeAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            max_total_rounds=max_rounds,
+            max_fix_attempts=100,
+        )
+
+    def test_identical_non_clean_rounds_escalate_at_round_two(self, tmp_path):
+        machine = self._stuck_machine(tmp_path, max_rounds=8)
+        verdict = machine.run()
+        assert verdict == Verdict.ESCALATED
+        assert machine._state.round == 2
+        assert any("replay" in e.lower() or "stall" in e.lower()
+                   for e in machine._state.infra_errors)
+
+    def test_clean_rounds_are_not_a_stall(self, tmp_path):
+        def mock_l0(registry, files):
+            return ([], [])
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            max_total_rounds=8,
+        )
+        verdict = machine.run()
+        assert verdict == Verdict.PASS
+        assert machine._state.round == 2
+        assert not any("stall" in e.lower() or "replay" in e.lower()
+                       for e in machine._state.infra_errors)
+
+    def test_four_cycle_threshold_is_not_a_stall(self, tmp_path):
+        """A higher clean threshold must still reach PASS, not ESCALATED."""
+        def mock_l0(registry, files):
+            return ([], [])
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_make_resolved(),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            max_total_rounds=8,
+            clean_round_threshold=4,
+        )
+        verdict = machine.run()
+        assert verdict == Verdict.PASS
+        assert machine._state.round == 3
+        assert machine._state.consecutive_clean_rounds == 4
 
 
 class TestLocalConvergedSemantics:

@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Mapping, Optional, Tuple
+from urllib.parse import urlparse
 
 from .errors import CliError
 
@@ -233,6 +234,66 @@ def is_protected_header(name: str) -> bool:
     folded = name.lower()
     return (folded in PROTECTED_HEADER_KEYS
             or folded.startswith(PROTECTED_HEADER_PREFIXES))
+
+
+# OmniRoute's semantic cache keys on temperature=0, which is forge's
+# OpenAI-format default. A hit replays the previous round's review.
+# The gateway honours x-omniroute-no-cache: true as a per-request
+# bypass; without it, LOCAL cannot converge or HOLD.
+_CACHING_GATEWAY_DNS_LABEL = "omniroute"
+_CACHING_GATEWAY_HOST_SUFFIXES = (
+    "omni.minxihou.site",
+)
+_CACHING_GATEWAY_PORTS = {20128}
+_NO_CACHE_HEADER = "x-omniroute-no-cache"
+
+
+def _host_looks_like_caching_gateway(host: str) -> bool:
+    """True for OmniRoute hosts, not for a substring of some other name."""
+    if not host:
+        return False
+    if _CACHING_GATEWAY_DNS_LABEL in host.split("."):
+        return True
+    for suffix in _CACHING_GATEWAY_HOST_SUFFIXES:
+        if host == suffix or host.endswith("." + suffix):
+            return True
+    return False
+
+
+def caching_gateway_without_bypass(backend: BackendConfig) -> str | None:
+    """Warn when an OmniRoute URL has no per-request cache bypass.
+
+    Returns a warning string, or None when the backend is not that
+    gateway or already carries the header. Detection is by DNS label,
+    host suffix, and the well-known port -- not by backend name.
+    """
+    if backend.type != "api" or not backend.base_url:
+        return None
+    parsed = urlparse(backend.base_url)
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if parsed.scheme in ("http", "https") and port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    looks_like = (
+        _host_looks_like_caching_gateway(host)
+        or port in _CACHING_GATEWAY_PORTS
+    )
+    if not looks_like:
+        return None
+    headers = backend.headers
+    if not isinstance(headers, dict):
+        headers = {}
+    for name, value in headers.items():
+        if str(name).lower() == _NO_CACHE_HEADER and str(value).lower() == "true":
+            return None
+    return (
+        "backend %r talks to a caching gateway (%s) without "
+        "%s: true; LOCAL rounds will replay. Add it under headers."
+        % (backend.name, backend.base_url, _NO_CACHE_HEADER)
+    )
 
 
 def check_headers(headers: dict, name: str, fail) -> None:
