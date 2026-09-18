@@ -5,7 +5,6 @@
 import sys
 from unittest.mock import patch
 
-
 from code_forge import EXIT_BUSY, EXIT_PASS
 from code_forge.cli import main
 from code_forge.lock import ForgeLockBusy

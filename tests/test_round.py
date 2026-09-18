@@ -9,7 +9,6 @@ B4 stub error catch, and ToolError -> infra_errors (R1 H2).
 import hashlib
 from pathlib import Path
 
-
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
