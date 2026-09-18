@@ -152,7 +152,7 @@ def resolve_forge_path() -> str:
                 "falling back to sys.executable",
                 forge_exe,
             )
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             logger.warning(
                 "code-forge at %s --version raised %s; "
                 "falling back to sys.executable",
