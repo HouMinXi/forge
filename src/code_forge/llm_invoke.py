@@ -954,6 +954,28 @@ def _no_json_retryable(finish_reason: str) -> bool:
     return token not in _COMPLETE_NO_JSON_FINISH
 
 
+def _json_cut_inside_string(text: str) -> bool:
+    """True when text still sits inside a JSON string at EOF.
+
+    A gateway can label the stream finish_reason=stop while the last
+    string never closed. That is a cut, not a finished invalid object.
+    """
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+    return in_string
+
+
 def _no_json_diagnostic(
     exc: json.JSONDecodeError, content: str, finish_reason: str,
 ) -> str:
@@ -1936,6 +1958,31 @@ def _invoke_api(
                             finish_reason = str(
                                 usage_data.get("_forge_finish_reason", "") or ""
                             )
+                        if (
+                            not _no_json_retryable(finish_reason)
+                            and _json_cut_inside_string(content)
+                        ):
+                            cap = backend.output_ceiling or backend.max_tokens
+                            raise _TruncatedResponse(
+                                "%s backend JSON cut inside a string "
+                                "(finish_reason=%s, content_len=%d). "
+                                "The stream was labelled complete but the "
+                                "object is still open; continue from the cut."
+                                % (
+                                    backend.name,
+                                    finish_reason or "unknown",
+                                    len(content),
+                                ),
+                                content=content,
+                                usage_data=(
+                                    usage_data
+                                    if isinstance(usage_data, dict)
+                                    else {}
+                                ),
+                                resolved_cap=cap,
+                                kind="truncated",
+                                retryable=False,
+                            ) from exc
                         diag = _no_json_diagnostic(exc, content, finish_reason)
                         raise LLMInvokeError(
                             "API response content is not valid JSON -- %s"
