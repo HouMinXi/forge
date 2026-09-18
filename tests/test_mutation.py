@@ -242,6 +242,153 @@ class TestRunMutation:
             assert f.source == "MUTANT"
             assert f.disposition == Disposition.DISMISSED
 
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    def test_existing_setup_cfg_runs_and_restores_bytes(
+        self, mock_run, _which, tmp_path,
+    ):
+        """User setup.cfg must not skip mutation, and must come back byte-identical.
+
+        gxcicd keeps a real [mutmut] section for language_inventory. The
+        old gate returned MUTATION_SKIPPED / mutation-config-conflict and
+        never ran. mutmut 3.x has no --config flag, so the scoped config
+        is installed for the run and the original file is restored after.
+        """
+        user_cfg = (
+            "[mutmut]\n"
+            "source_paths = tools\n"
+            "only_mutate = tools/language_inventory.py\n"
+        )
+        (tmp_path / "setup.cfg").write_text(user_cfg, encoding="utf-8")
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_add.py").write_text(
+            "from add import add\n"
+            "def test_add():\n"
+            "    assert add(1, 2) == 3\n"
+        )
+        seen = {}
+
+        def side_effect(*args, **kwargs):
+            cmd = args[0]
+            if isinstance(cmd, list) and "mutmut" in cmd and "run" in cmd:
+                seen["during"] = (tmp_path / "setup.cfg").read_text(
+                    encoding="utf-8"
+                )
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="", stderr=""
+                )
+            if isinstance(cmd, list) and "mutmut" in cmd and "results" in cmd:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="", stderr=""
+                )
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr=""
+            )
+
+        mock_run.side_effect = side_effect
+        findings, infra = run_mutation(
+            ["src/add.py"], ["pytest"], cwd=tmp_path,
+        )
+        assert not any("config conflict" in e for e in infra), infra
+        assert all(f.fingerprint != "mutation-config-conflict" for f in findings)
+        assert "during" in seen, "mutmut run never started"
+        assert "managed-by-code-forge-mutation" in seen["during"]
+        assert "src/add.py" in seen["during"]
+        assert (tmp_path / "setup.cfg").read_text(encoding="utf-8") == user_cfg
+
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    def test_pyproject_tool_mutmut_is_hidden_then_restored(
+        self, mock_run, _which, tmp_path,
+    ):
+        """mutmut prefers [tool.mutmut] over setup.cfg; hide it for the run."""
+        original = (
+            "[project]\n"
+            "name = \"demo\"\n"
+            "[tool.mutmut]\n"
+            "source_paths = [\"legacy\"]\n"
+            "[tool.pytest.ini_options]\n"
+            "testpaths = [\"tests\"]\n"
+        )
+        (tmp_path / "pyproject.toml").write_text(original, encoding="utf-8")
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_add.py").write_text(
+            "from add import add\n"
+            "def test_add():\n"
+            "    assert add(1, 2) == 3\n"
+        )
+        seen = {}
+
+        def side_effect(*args, **kwargs):
+            cmd = args[0]
+            if isinstance(cmd, list) and "mutmut" in cmd and "run" in cmd:
+                seen["pyproject"] = (tmp_path / "pyproject.toml").read_text(
+                    encoding="utf-8"
+                )
+                seen["setup"] = (tmp_path / "setup.cfg").read_text(
+                    encoding="utf-8"
+                )
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="", stderr=""
+                )
+            if isinstance(cmd, list) and "mutmut" in cmd and "results" in cmd:
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="", stderr=""
+                )
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr=""
+            )
+
+        mock_run.side_effect = side_effect
+        _findings, infra = run_mutation(
+            ["src/add.py"], ["pytest"], cwd=tmp_path,
+        )
+        assert not any("config conflict" in e for e in infra), infra
+        assert "[tool.mutmut]" not in seen.get("pyproject", "")
+        assert "testpaths" in seen.get("pyproject", "")
+        assert "managed-by-code-forge-mutation" in seen.get("setup", "")
+        assert (tmp_path / "pyproject.toml").read_text(encoding="utf-8") == original
+        assert not (tmp_path / "setup.cfg").exists()
+
+    @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
+    @patch("code_forge.mutation.subprocess.run")
+    def test_user_setup_cfg_restored_when_mutmut_run_raises(
+        self, mock_run, _which, tmp_path,
+    ):
+        user_cfg = "[mutmut]\nsource_paths = tools\n"
+        (tmp_path / "setup.cfg").write_text(user_cfg, encoding="utf-8")
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_add.py").write_text(
+            "from add import add\n"
+            "def test_add():\n"
+            "    assert add(1, 2) == 3\n"
+        )
+
+        def side_effect(*args, **kwargs):
+            cmd = args[0]
+            if isinstance(cmd, list) and "mutmut" in cmd and "run" in cmd:
+                raise RuntimeError("boom")
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr=""
+            )
+
+        mock_run.side_effect = side_effect
+        with pytest.raises(RuntimeError, match="boom"):
+            run_mutation(["src/add.py"], ["pytest"], cwd=tmp_path)
+        assert (tmp_path / "setup.cfg").read_text(encoding="utf-8") == user_cfg
+
 
 class TestVenvFallback:
     """Tests for conditional VIRTUAL_ENV fallback in run_mutation.

@@ -14,8 +14,12 @@ mutmut integration notes (>=3.4, where source_paths replaced the old key):
 - PYTHONPATH must point into src/ so imports resolve without src. prefix.
 - results format: "    module.fn__mutmut_N: status" (one per line).
 - Any non-zero exit code from mutmut run is a hard error.
-- A temporary setup.cfg is written to project root and cleaned up after.
-- mutants/ directory created by mutmut is also cleaned up after each run.
+- mutmut 3.x has no --config flag: it reads pyproject.toml [tool.mutmut]
+  first, else setup.cfg [mutmut]. A project that already has either
+  (gxcicd's language_inventory job) used to skip the whole gate.
+- For the run, user files are snapshotted, a scoped setup.cfg is
+  installed, and [tool.mutmut] is hidden. finally restores the original
+  bytes (or deletes a setup.cfg we created). mutants/ is removed too.
 """
 
 from __future__ import annotations
@@ -30,7 +34,8 @@ from pathlib import Path
 from .disposition import Disposition
 from .state import StateFinding
 
-# Marker in setup.cfg so we never accidentally overwrite user config
+# Marker in the scoped setup.cfg. User files without it are snapshotted
+# and restored after the run; a leftover marked file is deleted.
 _CODE_FORGE_CFG_MARKER = "# managed-by-code-forge-mutation"
 
 
@@ -222,6 +227,155 @@ def _build_mutmut_config(
         lines.extend("    " + p for p in also_copy[1:])
 
     return "\n".join(lines) + "\n"
+
+
+def _pyproject_has_tool_mutmut(text: str) -> bool:
+    """True when mutmut 3.x would take [tool.mutmut] over setup.cfg."""
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover
+        return "[tool.mutmut]" in text
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return "[tool.mutmut]" in text
+    tool = data.get("tool")
+    return isinstance(tool, dict) and "mutmut" in tool
+
+
+def _hide_tool_mutmut(text: str) -> str:
+    """Drop [tool.mutmut] tables and a mutmut key under [tool].
+
+    mutmut reads pyproject.toml first. The original bytes are restored
+    after the run; this string only has to hide the table for cwd.
+    """
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    skipping_table = False
+    in_tool_table = False
+    skipping_inline = False
+    braces = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            skipping_table = False
+            skipping_inline = False
+            name = stripped[1:-1].strip()
+            in_tool_table = name == "tool"
+            if name == "tool.mutmut" or name.startswith("tool.mutmut."):
+                skipping_table = True
+                continue
+        if skipping_table:
+            continue
+        if in_tool_table and not skipping_inline and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key == "mutmut":
+                skipping_inline = True
+                braces = stripped.count("{") - stripped.count("}")
+                if braces <= 0:
+                    skipping_inline = False
+                continue
+        if skipping_inline:
+            braces += stripped.count("{") - stripped.count("}")
+            if braces <= 0:
+                skipping_inline = False
+            continue
+        out.append(line)
+    return "".join(out)
+
+
+def _atomic_write_bytes(path: str, data: bytes) -> None:
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(
+        prefix=".code-forge-mutation-cfg-",
+        dir=directory,
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.rename(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _install_mutmut_config(
+    repo_root: str,
+    config_content: str,
+) -> tuple[bytes | None, bool, bytes | None]:
+    """Install scoped mutmut config. Returns stashes for finally.
+
+    setup_stash: original setup.cfg bytes, or None if the file was
+    absent / already ours. setup_existed_as_user says restore those
+    bytes instead of deleting. pyproject_stash: original pyproject
+    bytes when [tool.mutmut] was hidden, else None.
+    """
+    setup_cfg_path = os.path.join(repo_root, "setup.cfg")
+    pyproject_path = os.path.join(repo_root, "pyproject.toml")
+    setup_stash: bytes | None = None
+    setup_existed_as_user = False
+    pyproject_stash: bytes | None = None
+
+    if os.path.exists(setup_cfg_path):
+        with open(setup_cfg_path, "rb") as handle:
+            setup_bytes = handle.read()
+        try:
+            setup_text = setup_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            setup_text = ""
+        if _CODE_FORGE_CFG_MARKER not in setup_text:
+            setup_stash = setup_bytes
+            setup_existed_as_user = True
+
+    if os.path.exists(pyproject_path):
+        with open(pyproject_path, "rb") as handle:
+            py_bytes = handle.read()
+        try:
+            py_text = py_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            py_text = ""
+        if _pyproject_has_tool_mutmut(py_text):
+            pyproject_stash = py_bytes
+            _atomic_write_bytes(
+                pyproject_path, _hide_tool_mutmut(py_text).encode("utf-8")
+            )
+
+    try:
+        _atomic_write_bytes(setup_cfg_path, config_content.encode("utf-8"))
+    except OSError:
+        if pyproject_stash is not None:
+            _atomic_write_bytes(pyproject_path, pyproject_stash)
+        raise
+    return setup_stash, setup_existed_as_user, pyproject_stash
+
+
+def _restore_mutmut_config(
+    repo_root: str,
+    setup_stash: bytes | None,
+    setup_existed_as_user: bool,
+    pyproject_stash: bytes | None,
+) -> None:
+    setup_cfg_path = os.path.join(repo_root, "setup.cfg")
+    pyproject_path = os.path.join(repo_root, "pyproject.toml")
+    if setup_existed_as_user and setup_stash is not None:
+        try:
+            _atomic_write_bytes(setup_cfg_path, setup_stash)
+        except OSError:
+            pass
+    else:
+        try:
+            os.unlink(setup_cfg_path)
+        except OSError:
+            pass
+    if pyproject_stash is not None:
+        try:
+            _atomic_write_bytes(pyproject_path, pyproject_stash)
+        except OSError:
+            pass
 
 
 def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
@@ -532,10 +686,10 @@ def run_mutation(
             the review service. Default 8 GiB.
 
     Implementation note:
-        mutmut 3.x requires cwd to be the project root. A temporary
-        setup.cfg is written with source_paths pointing at the
-        diff-scoped files. The mutants/ directory and temporary setup.cfg
-        are cleaned up after each run.
+        mutmut 3.x requires cwd to be the project root. User setup.cfg
+        and pyproject.toml [tool.mutmut] are snapshotted, a scoped
+        setup.cfg is installed for the run, and the originals are
+        restored afterwards. mutants/ is removed too.
 
     Returns:
         (findings, infra_errors) where findings contains:
@@ -650,69 +804,22 @@ def run_mutation(
         )
         return (findings, [])
 
-    # Refuse to overwrite user's existing setup.cfg or [tool.mutmut] config.
-    setup_cfg_path = os.path.join(repo_root, "setup.cfg")
-    pyproject_path = os.path.join(repo_root, "pyproject.toml")
-    wrote_setup_cfg = False
+    # mutmut 3.x has no --config flag. Snapshot user files, install a
+    # scoped setup.cfg, hide [tool.mutmut], restore in finally.
+    setup_stash: bytes | None = None
+    setup_existed_as_user = False
+    pyproject_stash: bytes | None = None
+    installed = False
     try:
-        has_user_setup_cfg = False
-        if os.path.exists(setup_cfg_path):
-            with open(setup_cfg_path, encoding="utf-8") as _fh:
-                has_user_setup_cfg = _CODE_FORGE_CFG_MARKER not in _fh.read()
-        has_user_pyproject_mutmut = False
-        if os.path.exists(pyproject_path):
-            try:
-                with open(pyproject_path, encoding="utf-8") as fh:
-                    raw = fh.read()
-                has_user_pyproject_mutmut = "[tool.mutmut]" in raw
-            except OSError:
-                pass
-
-        if has_user_setup_cfg or has_user_pyproject_mutmut:
-            infra_errors.append(
-                "mutmut config conflict: project already has [mutmut] or "
-                "[tool.mutmut] config; forge cannot override it safely"
-            )
-            findings.append(
-                StateFinding(
-                    id="MUTATION_SKIPPED",
-                    fingerprint="mutation-config-conflict",
-                    source="MUTANT",
-                    disposition=Disposition.DISMISSED,
-                    file="",
-                    line_range=[],
-                    description=(
-                        "mutmut config conflict: existing setup.cfg or "
-                        "pyproject.toml [tool.mutmut] detected"
-                    ),
-                )
-            )
-            return (findings, infra_errors)
-
-        # Write temporary setup.cfg to the project root.
         # mutmut renamed the key in 3.4: source_paths replaced paths_to_mutate.
         # 3.3 does not recognise the new name and falls back to guessing the
         # source tree, which silently widens the run past the diff scope, so
         # pyproject pins >=3.4. Paths stay relative to the project root.
         config_content = _build_mutmut_config(py_files, baseline_cmd, also_copy)
-
-        # Write to a temp file first, then rename for atomicity
-        fd, tmp_cfg = tempfile.mkstemp(
-            prefix=".code-forge-mutation-cfg-",
-            dir=repo_root,
-            suffix=".cfg",
+        setup_stash, setup_existed_as_user, pyproject_stash = (
+            _install_mutmut_config(repo_root, config_content)
         )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(config_content)
-            os.rename(tmp_cfg, setup_cfg_path)
-            wrote_setup_cfg = True
-        except OSError:
-            try:
-                os.unlink(tmp_cfg)
-            except OSError:
-                pass
-            raise
+        installed = True
 
         # mutmut 3.x rewrites sys.path itself (inserts mutants/src, then
         # chdir into mutants/ before pytest.main). Pointing PYTHONPATH at
@@ -804,12 +911,10 @@ def run_mutation(
             )
 
     finally:
-        # Clean up temporary setup.cfg and mutants/ directory
-        if wrote_setup_cfg:
-            try:
-                os.unlink(setup_cfg_path)
-            except OSError:
-                pass
+        if installed:
+            _restore_mutmut_config(
+                repo_root, setup_stash, setup_existed_as_user, pyproject_stash
+            )
         mutants_dir = os.path.join(repo_root, "mutants")
         shutil.rmtree(mutants_dir, ignore_errors=True)
 
