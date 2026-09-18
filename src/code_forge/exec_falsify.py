@@ -342,7 +342,7 @@ class ExecFalsifier:
                         start_new_session=True,
                         env=child_env,
                     )
-                except (OSError, subprocess.SubprocessError) as exc:
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     return ExecEvidence(
                         status=ExecStatus.UNAVAILABLE,
                         command=cmd,
