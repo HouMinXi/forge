@@ -35,6 +35,11 @@ KNOWN_RUNNERS = {
 # Shell metacharacters that must not appear in command args
 SHELL_METACHARACTERS = set("|;&$><`")
 
+# pytest prints this banner only when a run was actually interrupted.
+# A failed collection also exits 2 but never produces it, and merely
+# naming the exception in a traceback must not count.
+_INTERRUPT_BANNER = re.compile(r"!{3,}\s*KeyboardInterrupt\s*!{3,}")
+
 
 def load_gate_config(
     config_path: str | Path,
@@ -1112,6 +1117,7 @@ def run_gate_check(
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             check=False,
+            cwd=str(cwd),
             timeout=5,
         )
         if result.returncode != 0:
@@ -1145,6 +1151,18 @@ def run_gate_check(
     test_env = {**env, **test_config.get("env", {})}
     timeout = test_config.get("timeout_seconds", 120)
     test_cwd = cwd / test_config.get("cwd", ".")
+
+    # Put the repository's own source root first on the import path. An
+    # editable install of the same package (common in linked worktrees)
+    # otherwise shadows the tree being checked, and the gate silently
+    # reports on code that is not staged.
+    repo_src = cwd / "src"
+    if repo_src.is_dir():
+        existing = test_env.get("PYTHONPATH", "")
+        parts = [str(repo_src)]
+        if existing:
+            parts.append(existing)
+        test_env["PYTHONPATH"] = os.pathsep.join(parts)
 
     try:
         test_result = subprocess.run(
@@ -1180,6 +1198,19 @@ def run_gate_check(
 
     # Special handling for exit 2-3 (warn but allow)
     if test_returncode == 2:
+        # pytest reuses exit code 2 for a failed collection, where no
+        # test ever ran. Waving that through would pass the gate on a
+        # suite that could not even be imported, so the benefit of the
+        # doubt goes the other way: allow only when the run really was
+        # interrupted, and block otherwise.
+        combined = f"{test_stdout or ''}\n{test_result.stderr or ''}"
+        if not _INTERRUPT_BANNER.search(combined):
+            print(
+                "forge: error: tests exited with code 2 without an "
+                "interrupt; blocking commit",
+                file=stderr
+            )
+            return EXIT_FAIL
         warn(
             "forge: warning: tests exited with code 2 "
             "(keyboard interrupt); allowing commit"
