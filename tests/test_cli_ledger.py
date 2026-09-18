@@ -221,7 +221,9 @@ def test_mark_writes_new_row(tmp_path):
                "--file", "src/dup.py", "--line", "7",
                "--axis-claim", "duplicate of fp-cli-0")
     assert rc == 0, _run(tmp_path, "ledger", "list").stderr
-    rows = list((tmp_path / ".code-forge" / "ledger.jsonl").open())
+    ledger_path = tmp_path / ".code-forge" / "ledger.jsonl"
+    rows = ledger_path.read_text(encoding="utf-8").split("\n")
+    rows = [row for row in rows if row]
     assert len(rows) == 1
     data = json.loads(rows[0])
     assert data["fingerprint"] == "fp-cli-1"
@@ -378,7 +380,9 @@ def test_mark_after_existing_row_succeeds(tmp_path):
     rc = _call(tmp_path, "ledger", "mark", "fp-existing", "DUPLICATE",
                "--evidence", "human-ruling")
     assert rc == 0
-    rows = list((tmp_path / ".code-forge" / "ledger.jsonl").open())
+    ledger_path = tmp_path / ".code-forge" / "ledger.jsonl"
+    rows = ledger_path.read_text(encoding="utf-8").split("\n")
+    rows = [row for row in rows if row]
     assert len(rows) == 2
     second = json.loads(rows[1])
     assert second["terminal_state"] == "DUPLICATE"
