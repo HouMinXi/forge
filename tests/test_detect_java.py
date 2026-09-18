@@ -3,7 +3,6 @@
 """Tests for Java language detection (PMD)."""
 from pathlib import Path
 
-
 from code_forge.detect import (
     detect_toolchain,
     generate_tools_yaml,

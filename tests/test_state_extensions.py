@@ -8,7 +8,6 @@ backward compat with pre-02-02 state.json.
 
 import json
 
-
 from code_forge.disposition import Disposition
 from code_forge.state import (
     Mode,

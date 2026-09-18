@@ -7,7 +7,6 @@ Given same disposition ledger, repeated run yields same Verdict.
 
 from pathlib import Path
 
-
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition

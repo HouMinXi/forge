@@ -8,7 +8,6 @@ unfixed CONFIRMED == 0. Returns Verdict.PENDING.
 
 from pathlib import Path
 
-
 from code_forge.autofix import FixOutcome, StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.disposition import Disposition
