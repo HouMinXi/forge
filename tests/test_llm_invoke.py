@@ -4132,6 +4132,54 @@ class TestBadJsonRetry:
         assert exc_info.value.kind == "no_json"
         assert exc_info.value.retryable is False
 
+    def test_stop_unterminated_string_continues_instead_of_failing(self):
+        """A stop-finished reply cut mid-string is truncated, not complete.
+
+        Live agnes-cn-2 expert: finish_reason=stop, Unterminated string
+        at char 12008. Treating that as a finished no_json reply skipped
+        continuation and voided the L1 pass. A delimiter error in a
+        closed object still fails closed (see the test above).
+        """
+        from code_forge.llm_invoke import CONTINUE_PROMPT, _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        prompts = []
+        partial = (
+            '{"findings":[],"code_excerpts":[{"file":"src/a.py",'
+            '"content":"hello'
+        )
+        rest = ' world"}]}'
+        closed = (
+            '{"findings":[],"code_excerpts":[{"file":"src/a.py",'
+            '"content":"hello world"}]}'
+        )
+
+        def _mock_openai(prompt, *args, **kwargs):
+            prompts.append(prompt)
+            if CONTINUE_PROMPT[:40] in prompt:
+                return rest, {
+                    "prompt_tokens": 4,
+                    "completion_tokens": 3,
+                    "_forge_finish_reason": "stop",
+                }
+            return partial, {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "_forge_finish_reason": "stop",
+            }
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_mock_openai), \
+             patch("time.sleep"):
+            result = _invoke_api(
+                "prompt", backend, timeout_s=10, max_attempts=5,
+            )
+
+        assert result.content == json.loads(closed)
+        assert len(prompts) == 2
+        assert CONTINUE_PROMPT[:40] in prompts[1]
+
     def test_prose_wrapped_json_is_rescued_without_a_retry(self):
         from code_forge.llm_invoke import _invoke_api
 
@@ -4153,6 +4201,28 @@ class TestBadJsonRetry:
 
         assert result.content == {"findings": []}
         assert calls[0] == 1, "the fallback rescues without spending an attempt"
+
+
+class TestJsonCutInsideString:
+    def test_open_string_is_a_cut(self):
+        from code_forge.llm_invoke import _json_cut_inside_string
+
+        assert _json_cut_inside_string('{"content":"hello') is True
+
+    def test_closed_object_is_not_a_cut(self):
+        from code_forge.llm_invoke import _json_cut_inside_string
+
+        assert _json_cut_inside_string('{"content":"hello"}') is False
+
+    def test_escaped_quote_stays_inside_the_string(self):
+        from code_forge.llm_invoke import _json_cut_inside_string
+
+        assert _json_cut_inside_string('{"content":"say \\"hi') is True
+
+    def test_empty_is_not_a_cut(self):
+        from code_forge.llm_invoke import _json_cut_inside_string
+
+        assert _json_cut_inside_string("") is False
 
 
 class TestCliNoJsonDiagnostic:
