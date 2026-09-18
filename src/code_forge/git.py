@@ -22,9 +22,14 @@ import subprocess
 import warnings
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 
 # Safe known flags that are allowed despite starting with --
 _SAFE_FLAGS = frozenset({"--staged", "--cached"})
+_UNKNOWN_BLAME = MappingProxyType(
+    {"author": "unknown", "subject": "", "date": ""}
+)
+_BLOB_TEXT_ENCODING = "utf-8"
 
 # Allowlist regex for diff-spec values.
 # Permits: branch names (feature/foo), tags (v1.2.3), commit hashes
@@ -222,7 +227,7 @@ def read_diff_blob(oid: object, cwd: Path) -> str | None:
     """Read a bounded immutable text blob; never resolve a file from disk."""
     if not isinstance(oid, str):
         return None
-    if re.fullmatch(r"[0-9a-f]{7,64}", oid) is None or not oid.strip("0"):
+    if re.fullmatch(r"[0-9a-f]{7,64}", oid) is None or oid == "0" * len(oid):
         return None
     cmd = ["git", "--no-replace-objects", "cat-file"]
     try:
@@ -238,7 +243,7 @@ def read_diff_blob(oid: object, cwd: Path) -> str | None:
         )
         if blob.returncode or b"\x00" in blob.stdout:
             return None
-        return blob.stdout.decode("utf-8")
+        return blob.stdout.decode(_BLOB_TEXT_ENCODING)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
 
@@ -398,27 +403,25 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
 
     current_sha: str = ""
     current_final_line: int = 0
-    # Track whether we saw "author" in the current block (for sha_cache)
-    current_block_author: str = ""
+    current_block_author: str | None = None
     current_block_subject: str = ""
     current_block_date: str = ""
-    current_block_has_author: bool = False
+    skip_block = False
 
     for raw_line in result.stdout.splitlines():
         # 1. Tab prefix check FIRST: content line (blamed source code).
         #    Must be checked before SHA header -- a source line could
         #    contain a 40-hex string that would be falsely identified.
         if raw_line.startswith("\t"):
-            entry = sha_cache.get(
-                current_sha,
-                {"sha": current_sha, "author": "unknown", "subject": "", "date": ""},
-            )
-            blame_map[current_final_line] = {
-                "sha": current_sha,
-                "author": entry.get("author", "unknown"),
-                "subject": entry.get("subject", ""),
-                "date": entry.get("date", ""),
-            }
+            if skip_block is False:
+                cached = sha_cache.get(current_sha)
+                entry = dict(_UNKNOWN_BLAME) if cached is None else cached
+                blame_map[current_final_line] = {
+                    "sha": current_sha,
+                    "author": entry["author"],
+                    "subject": entry["subject"],
+                    "date": entry["date"],
+                }
             continue
 
         # 2. Guard: skip empty lines
@@ -433,18 +436,24 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
             and len(parts[0]) == 40
             and all(c in _HEX_CHARS for c in parts[0].lower())
         ):
+            try:
+                current_final_line = int(parts[2])
+            except ValueError:
+                skip_block = True
+                continue
+            skip_block = False
             current_sha = parts[0]
-            current_final_line = int(parts[2])
-            current_block_author = ""
+            current_block_author = None
             current_block_subject = ""
             current_block_date = ""
-            current_block_has_author = False
+            continue
+
+        if skip_block is True:
             continue
 
         # Per-commit metadata (only update on FIRST occurrence of SHA)
         if raw_line.startswith("author ") and current_sha not in sha_cache:
             current_block_author = raw_line[7:]
-            current_block_has_author = True
         elif (
             raw_line.startswith("summary ")
             and current_sha not in sha_cache
@@ -452,21 +461,21 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
             current_block_subject = raw_line[8:]
         elif raw_line.startswith("committer-time ") and current_sha not in sha_cache:
             try:
-                ts = int(raw_line.split(" ", 1)[1])
+                ts = int(raw_line[len("committer-time "):])
                 current_block_date = datetime.fromtimestamp(
                     ts, tz=UTC
                 ).strftime("%Y-%m-%d")
             except (ValueError, OSError, OverflowError):
                 pass
-        elif raw_line.startswith("filename "):
-            # filename marks end of header block -- finalize sha_cache
-            # entry IF author was seen (first occurrence of this SHA)
-            if current_block_has_author and current_sha not in sha_cache:
-                sha_cache[current_sha] = {
-                    "sha": current_sha,
-                    "author": current_block_author,
-                    "subject": current_block_subject,
-                    "date": current_block_date,
-                }
+        elif (
+            raw_line.startswith("filename ")
+            and current_block_author is not None
+            and current_sha not in sha_cache
+        ):
+            sha_cache[current_sha] = {
+                "author": current_block_author,
+                "subject": current_block_subject,
+                "date": current_block_date,
+            }
 
     return blame_map
