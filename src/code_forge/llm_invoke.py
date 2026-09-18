@@ -1964,15 +1964,12 @@ def _invoke_api(
                         ):
                             cap = backend.output_ceiling or backend.max_tokens
                             raise _TruncatedResponse(
-                                "%s backend JSON cut inside a string "
-                                "(finish_reason=%s, content_len=%d). "
+                                f"{backend.name} backend JSON cut inside a "
+                                f"string (finish_reason="
+                                f"{finish_reason or 'unknown'}, "
+                                f"content_len={len(content)}). "
                                 "The stream was labelled complete but the "
-                                "object is still open; continue from the cut."
-                                % (
-                                    backend.name,
-                                    finish_reason or "unknown",
-                                    len(content),
-                                ),
+                                "object is still open; continue from the cut.",
                                 content=content,
                                 usage_data=(
                                     usage_data
