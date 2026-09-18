@@ -4,7 +4,6 @@ import pytest
 from code_forge.cross_repo import build_cross_repo_context
 from code_forge.verify import validate_excerpts_against_diff
 
-
 PRIMARY = "diff --git a/main.py b/main.py\n--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
 SIBLING = "diff --git a/sibling.py b/sibling.py\n--- a/sibling.py\n+++ b/sibling.py\n@@ -1 +1 @@\n-y = 1\n+y = 2\n"
 EXCERPTS = [

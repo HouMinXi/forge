@@ -79,6 +79,7 @@ def test_cross_repo_constructor_contracts(tmp_path, monkeypatch, engine, primary
 def test_scheduler_helper_closes_real_coroutine():
     import gc
     import inspect
+
     from tests.test_factories import _close_unrun_coro
 
     async def unused():

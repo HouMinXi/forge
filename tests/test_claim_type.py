@@ -15,6 +15,7 @@ Verifies:
 from __future__ import annotations
 
 import inspect
+
 import pytest
 
 from code_forge.claim import derive_claim_type
@@ -24,7 +25,6 @@ from code_forge.ledger import (
     append_row,
     iter_rows,
 )
-
 
 # ---------------------------------------------------------------------------
 # Tests 1-7: each source maps to the correct ClaimType
