@@ -20,7 +20,7 @@ import re
 import shutil
 import subprocess
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Safe known flags that are allowed despite starting with --
@@ -62,14 +62,13 @@ def validate_diff_spec(diff_spec: str) -> str:
     # Reject other leading dashes (flag injection)
     if diff_spec.startswith("-"):
         raise ValueError(
-            "Invalid diff_spec: '%s' looks like a flag" % diff_spec
+            f"Invalid diff_spec: '{diff_spec}' looks like a flag"
         )
 
     # Allowlist check -- reject everything not matching
     if not _DIFF_SPEC_RE.match(diff_spec):
         raise ValueError(
-            "Invalid diff_spec: '%s' contains disallowed characters"
-            % diff_spec
+            f"Invalid diff_spec: '{diff_spec}' contains disallowed characters"
         )
 
     return diff_spec
@@ -170,8 +169,7 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
     )
     if result.returncode != 0:
         raise BaselineResolutionError(
-            "git ref %r does not resolve in %s: %s"
-            % (ref, cwd, result.stderr.strip())
+            f"git ref {ref!r} does not resolve in {cwd}: {result.stderr.strip()}"
         )
     return result.stdout.strip()
 
@@ -215,13 +213,7 @@ def git_diff(
     )
     if result.returncode not in (0, 1):
         raise BaselineResolutionError(
-            "git diff %s..%s failed (exit %d): %s"
-            % (
-                baseline_ref,
-                head_ref,
-                result.returncode,
-                result.stderr.strip(),
-            )
+            f"git diff {baseline_ref}..{head_ref} failed (exit {int(result.returncode)}): {result.stderr.strip()}"
         )
     return result.stdout
 
@@ -271,8 +263,7 @@ def cached_diff(
     )
     if result.returncode not in (0, 1):
         raise BaselineResolutionError(
-            "git diff --cached %s failed (exit %d): %s"
-            % (baseline_ref, result.returncode, result.stderr.strip())
+            f"git diff --cached {baseline_ref} failed (exit {int(result.returncode)}): {result.stderr.strip()}"
         )
     return result.stdout
 
@@ -309,12 +300,7 @@ def working_tree_diff(
     )
     if tracked_result.returncode not in (0, 1):
         raise BaselineResolutionError(
-            "git diff %s (tracked, working_tree_diff) failed (exit %d): %s"
-            % (
-                baseline_ref,
-                tracked_result.returncode,
-                tracked_result.stderr.strip(),
-            )
+            f"git diff {baseline_ref} (tracked, working_tree_diff) failed (exit {int(tracked_result.returncode)}): {tracked_result.stderr.strip()}"
         )
     tracked = tracked_result.stdout
 
@@ -356,21 +342,13 @@ def working_tree_diff(
         )
         if result.returncode not in (0, 1):
             raise BaselineResolutionError(
-                "git diff --no-index failed for untracked file %s "
-                "(exit %d): %s"
-                % (rel_path, result.returncode, result.stderr.strip())
+                f"git diff --no-index failed for untracked file {rel_path} (exit {int(result.returncode)}): {result.stderr.strip()}"
             )
         untracked_diffs.append(result.stdout)
 
     if skipped_binary:
         warnings.warn(
-            "forge: skipped %d binary untracked file(s) from "
-            "working-tree diff: %s%s"
-            % (
-                len(skipped_binary),
-                skipped_binary[:3],
-                "..." if len(skipped_binary) > 3 else "",
-            ),
+            f"forge: skipped {len(skipped_binary)} binary untracked file(s) from working-tree diff: {skipped_binary[:3]}{'...' if len(skipped_binary) > 3 else ''}",
             stacklevel=2,
         )
 
@@ -476,7 +454,7 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
             try:
                 ts = int(raw_line.split(" ", 1)[1])
                 current_block_date = datetime.fromtimestamp(
-                    ts, tz=timezone.utc
+                    ts, tz=UTC
                 ).strftime("%Y-%m-%d")
             except (ValueError, OSError, OverflowError):
                 pass
