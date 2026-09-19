@@ -11,7 +11,6 @@ the run is still going -- rather than that a particular function is called.
 """
 import json
 
-import pytest
 
 
 class _StopAfter(Exception):

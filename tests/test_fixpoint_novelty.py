@@ -27,7 +27,6 @@ from pathlib import Path
 
 from code_forge.disposition import Disposition
 from code_forge.llm_invoke import Usage
-from code_forge.machine import _FixpointResult
 from code_forge.state import StateFinding
 from tests.test_runtime_machine import _make_sm
 
