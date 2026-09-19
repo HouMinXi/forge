@@ -22,9 +22,26 @@ import pytest
 # and analyse_arms.py is not importable as scripts.analyse_arms unless the
 # repo root happens to be on sys.path -- which depends on how pytest was
 # invoked rather than on anything this test controls.
-SCRIPT = (
-    pathlib.Path(__file__).resolve().parents[1] / "scripts" / "analyse_arms.py"
-)
+#
+# Under mutmut the suite runs from a mutants/ copy that holds only the
+# mutated package, so the sibling scripts/ directory is absent there and
+# the walk up from __file__ lands on a path that was never copied. Fall
+# back to the real repo root in that case: this test exercises the script,
+# not the mutants, and collection must not error out before it can say so.
+def _script_path() -> pathlib.Path:
+    here = pathlib.Path(__file__).resolve()
+    candidate = here.parents[1] / "scripts" / "analyse_arms.py"
+    if candidate.exists():
+        return candidate
+    for parent in here.parents:
+        if parent.name == "mutants":
+            outside = parent.parent / "scripts" / "analyse_arms.py"
+            if outside.exists():
+                return outside
+    return candidate
+
+
+SCRIPT = _script_path()
 
 
 def _load():
