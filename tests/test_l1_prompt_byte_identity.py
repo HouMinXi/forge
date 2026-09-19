@@ -20,12 +20,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from code_forge import factories
 from code_forge.baseline import ResolvedReview
 from code_forge.context_sources import (
-    FactRow, GatherResult, render_blast_radius, render_context_sources,
+    FactRow, render_blast_radius,
 )
 from code_forge.llm_invoke import LLMResult, Usage
 

@@ -2921,6 +2921,56 @@ class TestExemptFileKeepsCountParity:
         assert validate_excerpt_evidence(
             exc, hunk_map, post, exempt) is None
 
+
+class TestShortExcerptWithUnknownBounds:
+    """A quote reaching into context lines has no post-image entry for
+    its own bounds.  That silence must not be read as "both bounds carry
+    content", which would reject an otherwise intact excerpt for the
+    trailing blank that receipt serialisation drops.
+    """
+
+    _HUNK_MAP = {"t.py": [{"start": 2160, "end": 2180}]}
+
+    def _short_excerpt(self):
+        # Declares 13 lines (2164-2176), carries 12: the trailing blank
+        # is lost when the receipt writer joins the line list.
+        return {
+            "file": "t.py", "start_line": 2164, "end_line": 2176,
+            "content": "\n".join(f"line{i}" for i in range(12)),
+        }
+
+    def test_unknown_bounds_do_not_reject_on_count(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        err = validate_excerpt_evidence(
+            self._short_excerpt(), self._HUNK_MAP, {"t.py": {2100: "x"}},
+        )
+        # Not "err is None or ...": that passes on any unrelated failure.
+        # The count must not be what condemns this excerpt, and the
+        # remaining checks must still get their say.
+        assert err is not None, (
+            "the bounds are outside the post-image, so the excerpt is "
+            "unverifiable rather than silently accepted"
+        )
+        assert "declares 13 lines but carries 12" not in err, (
+            "bounds absent from the post-image cannot testify that the "
+            "excerpt is genuinely thin"
+        )
+        assert "outside the diff post-image" in err
+
+    def test_known_content_bounds_still_reject(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        err = validate_excerpt_evidence(
+            self._short_excerpt(), self._HUNK_MAP,
+            {"t.py": {2164: "code", 2176: "code"}},
+        )
+        assert err is not None
+        assert "declares 13 lines but carries 12" in err, (
+            "a content line at both bounds means no separator was dropped"
+        )
+
+
 class TestOneLineMisnumberClassifier:
     def test_plus_one_and_minus_one_match(self):
         from code_forge.verify import is_one_line_misnumber

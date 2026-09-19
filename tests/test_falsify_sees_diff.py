@@ -200,7 +200,8 @@ def test_dispatch_subagent_does_not_reference_an_undefined_args():
     """R4 added a context gather to _dispatch_subagent that read
     `args`, a name the function never received. pyflakes catches it;
     so does calling the function with outlet='subagent'."""
-    import subprocess, sys
+    import subprocess
+    import sys
     r = subprocess.run([sys.executable, "-m", "pyflakes",
                         "src/code_forge/cli.py"], capture_output=True, text=True)
     assert "undefined name 'args'" not in r.stdout, r.stdout

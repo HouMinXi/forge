@@ -16,8 +16,6 @@ Fact 4: FORGE_FALSIFICATION_ENGINE selects engine (cli > env > auto).
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -25,7 +23,6 @@ from code_forge.diff import tier_threshold
 from code_forge.disposition import Disposition
 from code_forge.env_resolver import (
     resolve_falsification_engine,
-    resolve_max_total_rounds,
 )
 from code_forge.errors import CliError
 from code_forge.falsify import StubFalsifier

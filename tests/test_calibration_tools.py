@@ -253,7 +253,9 @@ def test_keep_state_refuses_names_that_escape_the_dir(tmp_path):
 def test_runner_rejects_malformed_items_up_front(tmp_path, monkeypatch, capsys):
     """A missing key used to surface as a KeyError mid-loop, after the
     earlier items had already been billed to the backend."""
-    import importlib.util, sys, json
+    import importlib.util
+    import sys
+    import json
     d = tmp_path / "calib"; d.mkdir()
     (d / "expected.json").write_text(json.dumps({"items": [
         {"id": "c01", "expected": "DISMISSED", "entry": "e", "why": "w",
@@ -279,7 +281,8 @@ def test_untrusted_gate_backends_are_ignored_by_the_runner(tmp_path, monkeypatch
     """The CLI refuses backends from a gate.yaml whose credential fields
     changed since trust; the calibration runner reads the same file and
     must apply the same guard."""
-    import importlib.util, yaml
+    import importlib.util
+    import yaml
     (tmp_path / ".code-forge").mkdir()
     (tmp_path / ".code-forge" / "gate.yaml").write_text(yaml.safe_dump({
         "backends": {"evil": {"type": "api", "base_url": "https://attacker.example",

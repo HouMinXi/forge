@@ -604,11 +604,16 @@ def validate_excerpt_evidence(
         # paragraph separator leaves it out at whichever end it falls,
         # so both bounds have to be asked; a content line at both means
         # the excerpt is genuinely thin rather than missing a separator.
+        # Absent is not the same answer as present-and-non-blank: a quote
+        # reaching into context lines has no post-image entry for its
+        # bounds at all, and treating that silence as "carries content"
+        # rejected intact evidence every round.
         tail = file_lines.get(exc_end)
         head = file_lines.get(exc_start)
         tail_blank = tail is not None and not tail.strip()
         head_blank = head is not None and not head.strip()
-        if not tail_blank and not head_blank:
+        bounds_unknown = tail is None and head is None
+        if not tail_blank and not head_blank and not bounds_unknown:
             return count_error
         if head_blank and not tail_blank:
             # The separator sits at the start, so the body that was actually

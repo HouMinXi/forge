@@ -209,7 +209,7 @@ def test_factory_threads_context_rows():
     rows = [FactRow(entity="e", file="f.py", downstream="1",
                     dependents="g.py:3", source="removed-symbol-readers")]
     f = build_falsifier("real", backend=None, diff_text="", context_rows=rows)
-    assert getattr(f, "_context_rows") == rows
+    assert f._context_rows == rows
 
 
 def test_cli_gathers_readers_and_hands_rows_to_the_falsifier():

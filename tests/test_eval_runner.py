@@ -581,7 +581,8 @@ def test_keep_state_escape_does_not_mask_the_original_exception(tmp_path, monkey
     monkeypatch.setattr(r, "_keep_state",
                         lambda *a, **k: (_ for _ in ()).throw(ValueError("escapes")))
     # exercise the same try/except shape the runner uses
-    import io, sys
+    import io
+    import sys
     err = io.StringIO()
     monkeypatch.setattr(sys, "stderr", err)
     try:

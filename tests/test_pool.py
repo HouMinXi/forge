@@ -11,19 +11,17 @@ Verifies:
 """
 from __future__ import annotations
 
-import os
-import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from code_forge.cli import _build_parser
 from code_forge.eval.corpus import CorpusEntry
-from code_forge.eval.pool import PoolEntry, run_pool
+from code_forge.eval.pool import run_pool
 from code_forge.eval.scorer import EvalResult
 
 
