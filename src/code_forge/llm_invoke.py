@@ -11,6 +11,7 @@ Public types: Usage, LLMResult, LLMInvokeError
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import http.client
 import json
 import logging
@@ -1591,6 +1592,15 @@ CONTINUE_PROMPT = (
 # often rate-limiting too, and an immediate retry adds nothing.
 _CONTINUE_DELAY_S = 2.0
 
+# How much extra output room the post-continuation retry asks for.
+# Stitching a cut-off JSON reply back together is unreliable -- the model
+# either restarts the object or leaves the original unclosed -- so once the
+# continuation budget is spent, re-ask for the whole answer with more room
+# rather than dropping the pass. Doubling covers the common case where the
+# reply ran a little past the cap without asking the provider for an
+# unreasonable single response.
+_WIDER_RETRY_FACTOR = 2
+
 
 def _is_forge_envelope(parsed, expected_keys):
     """The recovery path's acceptance test for a parsed dict.
@@ -1778,6 +1788,75 @@ def _continue_truncated(
         # traceable.
         raise _exhaustion_error(budget, last_failure) from exc
     raise _exhaustion_error(budget, last_failure)
+
+
+def _retry_with_more_headroom(
+    prompt: str,
+    backend: BackendConfig,
+    api_key: str,
+    timeout_s: int,
+    expected_keys: frozenset[str] | None,
+):
+    """Re-ask for the whole answer with a wider output cap.
+
+    Called once the continuation budget is spent. A continuation hands the
+    model its own truncated text and asks it to resume, which for JSON
+    means the model either opens a second object or never closes the first
+    one; concatenating the pieces then fails to parse. Asking again with
+    more room keeps the reply in one piece, and the widened cap lives on a
+    throwaway copy so the shared config is untouched.
+
+    Returns (parsed, usage) on success, or None when the wider attempt is
+    truncated again or comes back unusable -- the caller then raises the
+    exhaustion error it already holds.
+    """
+    current = backend.max_completion_tokens or backend.max_tokens
+    if current <= 0:
+        return None
+    wider = current * _WIDER_RETRY_FACTOR
+    if backend.max_completion_tokens:
+        widened = dataclasses.replace(backend, max_completion_tokens=wider)
+    else:
+        widened = dataclasses.replace(backend, max_tokens=wider)
+
+    try:
+        if backend.format == "openai":
+            content, usage_data = _invoke_openai(
+                prompt, widened, api_key, timeout_s,
+            )
+        elif backend.format == "anthropic":
+            content, usage_data = _invoke_anthropic(
+                prompt, widened, api_key, timeout_s,
+            )
+        else:
+            content, usage_data = _invoke_vertex(prompt, widened, timeout_s)
+    except TruncationBreakerError:
+        raise
+    except LLMInvokeError as exc:
+        logging.getLogger("code_forge").warning(
+            "wider retry failed: %s: %s", type(exc).__name__, str(exc),
+        )
+        return None
+
+    if not isinstance(content, str):
+        return None
+    cleaned = _strip_fences(content)
+    try:
+        parsed = _loads_model_json(cleaned)
+    except json.JSONDecodeError:
+        parsed = _extract_json_from_text(cleaned, expected_keys=expected_keys)
+    if not _is_forge_envelope(parsed, expected_keys):
+        return None
+
+    if backend.format == "openai":
+        in_key, out_key = "prompt_tokens", "completion_tokens"
+    else:
+        in_key, out_key = "input_tokens", "output_tokens"
+    return parsed, Usage(
+        input_tokens=(usage_data or {}).get(in_key, 0),
+        output_tokens=(usage_data or {}).get(out_key, 0),
+        cached_input_tokens=_cached_tokens_from(usage_data),
+    )
 
 
 def _invoke_api(
@@ -1985,10 +2064,26 @@ def _invoke_api(
                 ) from exc
         except LLMInvokeError as exc:
             if isinstance(exc, _TruncatedResponse):
-                recovered = _continue_truncated(
-                    prompt, backend, api_key, timeout_s, exc,
-                    expected_keys, breaker=breaker,
-                )
+                # The partial belongs to the original truncation; the
+                # spent-budget error below carries no content.
+                partial = exc.content if isinstance(exc.content, str) else ""
+                # A spent continuation budget raises out of the helper.
+                # Catch it so the wider retry still gets its turn, and
+                # hold it in a name of our own: Python deletes the
+                # `as` target when the handler ends, so assigning to
+                # `exc` there would be undone on the way out and the
+                # exhaustion diagnosis would be lost.
+                spent_error = None
+                try:
+                    recovered = _continue_truncated(
+                        prompt, backend, api_key, timeout_s, exc,
+                        expected_keys, breaker=breaker,
+                    )
+                except TruncationBreakerError:
+                    raise
+                except LLMInvokeError as spent:
+                    recovered = None
+                    spent_error = spent
                 if recovered is not None:
                     parsed, usage = recovered
                     return LLMResult(
@@ -1996,6 +2091,32 @@ def _invoke_api(
                         duration_s=time.monotonic() - start,
                         is_truncated=True,
                     )
+                # Stitching never produced a usable envelope. Ask once
+                # more for the whole answer with more output room before
+                # dropping the pass: the reply was complete in intent,
+                # only cut short.
+                #
+                # Only when the model was in fact emitting JSON. A reply
+                # that came back empty, or as prose with no object at
+                # all, did not run out of room -- it answered the wrong
+                # way, and a larger cap buys another wrong answer.
+                wider = None
+                if partial.strip() and "{" in partial:
+                    wider = _retry_with_more_headroom(
+                        prompt, backend, api_key, timeout_s, expected_keys,
+                    )
+                if wider is not None:
+                    parsed, usage = wider
+                    return LLMResult(
+                        content=parsed, usage=usage,
+                        duration_s=time.monotonic() - start,
+                        is_truncated=True,
+                    )
+                if spent_error is not None:
+                    # Report the spent budget, not the last cut-off
+                    # reply: the exhaustion message names every attempt
+                    # and the reason each failed.
+                    raise spent_error
             cause = _retry_cause(exc)
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):

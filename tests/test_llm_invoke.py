@@ -2108,6 +2108,12 @@ class TestTruncationBreaker:
 # mirrors a clamped response plus a short continuation request.
 _PARTIAL = '{"findings": [{"file": "a.c",'
 _TAIL = '"line": 1, "severity": "LOW"}], "code_excerpts": []}'
+# A whole reply, not a continuation fragment: the wider retry re-asks for
+# the entire answer, so its mocked response has to stand on its own.
+_FULL_ENVELOPE = (
+    '{"findings": [{"file": "a.c", "line": 1, "severity": "LOW"}], '
+    '"code_excerpts": []}'
+)
 
 
 def _truncated_response(partial=_PARTIAL, usage_data=None, **kw):
@@ -2157,12 +2163,14 @@ class TestTruncationRecover:
 
     def test_continuation_exhausted(self):
         """Initial truncation + 2 continuation attempts (budget=2
-        exhausted, both truncated again) = 3 total _invoke_openai calls."""
+        exhausted, both truncated again), then one wider retry that is
+        truncated as well = 4 total _invoke_openai calls."""
         backend = _make_api_backend(name="ds", fmt="openai")
         side_effect = [
             _truncated_response(),
             _truncated_response('{"findings": [{"file": "b.c",'),
             _truncated_response('{"findings": [{"file": "c.c",'),
+            _truncated_response('{"findings": [{"file": "d.c",'),
         ]
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("code_forge.llm_invoke._invoke_openai",
@@ -2176,7 +2184,7 @@ class TestTruncationRecover:
 
         assert exc_info.value.kind == "truncated"
         assert exc_info.value.retryable is False
-        assert mock_invoke.call_count == 3
+        assert mock_invoke.call_count == 4
         # The exhaustion message carries the last failure's diagnosis,
         # not just the counter.
         assert "last failure" in str(exc_info.value)
@@ -2184,6 +2192,76 @@ class TestTruncationRecover:
         # One fixed delay, only before the second continuation attempt.
         assert mock_sleep.call_count == 1
         assert mock_sleep.call_args[0][0] == 2.0
+
+    def test_exhausted_continuation_retries_with_more_headroom(self):
+        """Stitching a cut-off reply back together is unreliable: the model
+        either restarts the object or fails to close the original one. Once
+        the continuation budget is gone, re-ask for the whole answer with a
+        larger output cap instead of giving up on the pass."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        seen_caps = []
+        outcomes = [
+            _truncated_response('{"findings": [{"file": "a.c",'),
+            _truncated_response('{"findings": [{"file": "b.c",'),
+            _truncated_response('{"findings": [{"file": "c.c",'),
+            (_FULL_ENVELOPE, {"prompt_tokens": 7, "completion_tokens": 30}),
+        ]
+
+        def record(prompt, be, key, timeout):
+            seen_caps.append(be.max_completion_tokens or be.max_tokens)
+            result = outcomes[len(seen_caps) - 1]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=record) as mock_invoke, \
+             patch("time.sleep"):
+            result = llm_invoke("p", backend=backend, max_attempts=5)
+
+        # Original + 2 continuations, then one wider retry.
+        assert mock_invoke.call_count == 4
+        assert seen_caps[:3] == [backend.max_tokens] * 3
+        assert seen_caps[3] > backend.max_tokens
+        assert result.is_truncated is True
+
+    def test_wider_retry_keeps_the_backend_untouched(self):
+        """The widened cap belongs to one call, not to the shared config."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        original = backend.max_tokens
+        side_effect = [
+            _truncated_response('{"findings": [{"file": "a.c",'),
+            _truncated_response('{"findings": [{"file": "b.c",'),
+            _truncated_response('{"findings": [{"file": "c.c",'),
+            (_FULL_ENVELOPE, {"prompt_tokens": 7, "completion_tokens": 30}),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect), \
+             patch("time.sleep"):
+            llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert backend.max_tokens == original
+
+    def test_wider_retry_runs_once_then_exhausts(self):
+        """One widened attempt, not an unbounded escalation loop."""
+        backend = _make_api_backend(name="ds", fmt="openai")
+        side_effect = [
+            _truncated_response('{"findings": [{"file": "a.c",'),
+            _truncated_response('{"findings": [{"file": "b.c",'),
+            _truncated_response('{"findings": [{"file": "c.c",'),
+            _truncated_response('{"findings": [{"file": "d.c",'),
+        ]
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=side_effect) as mock_invoke, \
+             patch("time.sleep"):
+            with pytest.raises(LLMInvokeError) as exc_info:
+                llm_invoke("p", backend=backend, max_attempts=5)
+
+        assert mock_invoke.call_count == 4
+        assert exc_info.value.kind == "truncated"
 
     def test_zero_partial_raises_no_continuation(self):
         backend = _make_api_backend(name="ds", fmt="openai")
@@ -2213,14 +2291,15 @@ class TestTruncationRecover:
 
     def test_combined_parse_failure_counts_as_attempt(self):
         """Initial truncation + 2 continuation attempts whose combined
-        output never parses (budget=2 exhausted) = 3 total _invoke_openai
-        calls."""
+        output never parses (budget=2 exhausted), then one wider retry
+        that is truncated as well = 4 total _invoke_openai calls."""
         backend = _make_api_backend(name="ds", fmt="openai")
         usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
         side_effect = [
             _truncated_response(),
             ("plain prose continuation, no json at all", usage_c),
             ("more plain prose, still no json", usage_c),
+            _truncated_response(),
         ]
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("code_forge.llm_invoke._invoke_openai",
@@ -2232,7 +2311,7 @@ class TestTruncationRecover:
             ):
                 llm_invoke("p", backend=backend, max_attempts=5)
 
-        assert mock_invoke.call_count == 3
+        assert mock_invoke.call_count == 4
 
     def test_continuation_does_not_consume_max_attempts(self):
         backend = _make_api_backend(name="ds", fmt="openai")
@@ -2458,13 +2537,14 @@ class TestTruncationRecover:
     def test_wrong_shaped_continuation_is_a_failed_attempt(self):
         """A continuation that completes the JSON into a non-envelope
         dict is a failed attempt, never a result: initial truncation +
-        2 failed continuations = 3 total calls."""
+        2 failed continuations + 1 wider retry = 4 total calls."""
         backend = _make_api_backend(name="ds", fmt="openai")
         usage_c = {"prompt_tokens": 5, "completion_tokens": 20}
         side_effect = [
             _truncated_response(partial='{"wrong": [{"file": "a.c",'),
             ('"line": 1}]}', usage_c),
             ('"line": 1}]}', usage_c),
+            _truncated_response(partial='{"wrong": [{"file": "b.c",'),
         ]
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("code_forge.llm_invoke._invoke_openai",
@@ -2476,7 +2556,7 @@ class TestTruncationRecover:
             ):
                 llm_invoke("p", backend=backend, max_attempts=5)
 
-        assert mock_invoke.call_count == 3
+        assert mock_invoke.call_count == 4
 
     def test_complete_json_partial_returns_without_continuation(self):
         """A truncated response whose partial is already a complete
@@ -2563,7 +2643,7 @@ class TestTruncationRecover:
             ) as exc_info:
                 llm_invoke("p", backend=backend, max_attempts=5)
 
-        assert state["calls"] == 3
+        assert state["calls"] == 4
         assert "HTTP 429" in str(exc_info.value)
         assert any(
             "HTTP 429" in rec.getMessage()
@@ -2646,6 +2726,7 @@ class TestTruncationRecover:
             _truncated_response(partial='{"findings": []}'),
             ("prose", usage_c),
             ("prose", usage_c),
+            _truncated_response(partial='{"findings": []}'),
         ]
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("code_forge.llm_invoke._invoke_openai",
@@ -2657,7 +2738,7 @@ class TestTruncationRecover:
             ):
                 llm_invoke("p", backend=backend, max_attempts=5)
 
-        assert mock_invoke.call_count == 3
+        assert mock_invoke.call_count == 4
 
     def test_one_key_continuation_counts_as_failed_attempt(self):
         """A continuation that completes the JSON into a one-key dict
@@ -2670,6 +2751,7 @@ class TestTruncationRecover:
             _truncated_response(),
             (tail1, usage_c),
             (tail1, usage_c),
+            _truncated_response(),
         ]
         with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
              patch("code_forge.llm_invoke._invoke_openai",
@@ -2681,7 +2763,7 @@ class TestTruncationRecover:
             ):
                 llm_invoke("p", backend=backend, max_attempts=5)
 
-        assert mock_invoke.call_count == 3
+        assert mock_invoke.call_count == 4
 
     def test_outer_defensive_handler_chains_cause(self):
         """An invoke error that escapes the per-attempt handlers is
