@@ -30,6 +30,7 @@ from typing import Any, Optional
 from . import progress
 from .backend import BackendConfig, check_headers, check_params
 from .errors import CliError
+from .json_cut import json_cut_at_eof, json_cut_inside_string
 
 
 @dataclass(frozen=True)
@@ -954,26 +955,9 @@ def _no_json_retryable(finish_reason: str) -> bool:
     return token not in _COMPLETE_NO_JSON_FINISH
 
 
-def _json_cut_inside_string(text: str) -> bool:
-    """True when text still sits inside a JSON string at EOF.
-
-    A gateway can label the stream finish_reason=stop while the last
-    string never closed. That is a cut, not a finished invalid object.
-    """
-    in_string = False
-    escaped = False
-    for char in text:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-    return in_string
+# Names kept for tests that import the helpers from this module.
+_json_cut_inside_string = json_cut_inside_string
+_json_cut_at_eof = json_cut_at_eof
 
 
 def _no_json_diagnostic(
@@ -1960,12 +1944,12 @@ def _invoke_api(
                             )
                         if (
                             not _no_json_retryable(finish_reason)
-                            and _json_cut_inside_string(content)
+                            and _json_cut_at_eof(content)
                         ):
                             cap = backend.output_ceiling or backend.max_tokens
                             raise _TruncatedResponse(
-                                f"{backend.name} backend JSON cut inside a "
-                                f"string (finish_reason="
+                                f"{backend.name} backend JSON cut at EOF "
+                                f"(finish_reason="
                                 f"{finish_reason or 'unknown'}, "
                                 f"content_len={len(content)}). "
                                 "The stream was labelled complete but the "

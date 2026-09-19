@@ -4106,11 +4106,9 @@ class TestBadJsonRetry:
 
         backend = _make_api_backend(name="ds", fmt="openai")
         calls = [0]
-        broken = (
-            '{"findings":[],"code_excerpts":[{"file":"src/code_forge/diff.py",'
-            '"content":"def path_from_plus_header(line: str) -> str | None: ..."}]}'
-        )
-        broken = broken[:-2]
+        # Mid-object syntax error: the reply finished, the document did
+        # not. An EOF cut is a different case (continuation).
+        broken = '{"findings":[{"ok": true},,{"ok": false}]}'
 
         def _mock_openai_complete_invalid(*args, **kwargs):
             calls[0] += 1
@@ -4180,6 +4178,54 @@ class TestBadJsonRetry:
         assert len(prompts) == 2
         assert CONTINUE_PROMPT[:40] in prompts[1]
 
+    def test_stop_unclosed_container_continues_instead_of_failing(self):
+        """A stop-finished reply cut after a closed string still continues.
+
+        Live agnes-cn-3 adversarial on git.py: finish_reason=stop,
+        Expecting ',' delimiter at EOF. The last string was closed; the
+        object/array was not. Treating that as complete no_json skipped
+        continuation.
+        """
+        from code_forge.llm_invoke import CONTINUE_PROMPT, _invoke_api
+
+        backend = _make_api_backend(name="ds", fmt="openai")
+        prompts = []
+        partial = (
+            '{"findings":[],"code_excerpts":[{"file":"src/a.py",'
+            '"content":"hello world"}]'
+        )
+        rest = "}"
+        closed = (
+            '{"findings":[],"code_excerpts":[{"file":"src/a.py",'
+            '"content":"hello world"}]}'
+        )
+
+        def _mock_openai(prompt, *args, **kwargs):
+            prompts.append(prompt)
+            if CONTINUE_PROMPT[:40] in prompt:
+                return rest, {
+                    "prompt_tokens": 4,
+                    "completion_tokens": 1,
+                    "_forge_finish_reason": "stop",
+                }
+            return partial, {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "_forge_finish_reason": "stop",
+            }
+
+        with patch.dict(os.environ, {"TEST_KEY": "sk-test"}), \
+             patch("code_forge.llm_invoke._invoke_openai",
+                   side_effect=_mock_openai), \
+             patch("time.sleep"):
+            result = _invoke_api(
+                "prompt", backend, timeout_s=10, max_attempts=5,
+            )
+
+        assert result.content == json.loads(closed)
+        assert len(prompts) == 2
+        assert CONTINUE_PROMPT[:40] in prompts[1]
+
     def test_prose_wrapped_json_is_rescued_without_a_retry(self):
         from code_forge.llm_invoke import _invoke_api
 
@@ -4223,6 +4269,25 @@ class TestJsonCutInsideString:
         from code_forge.llm_invoke import _json_cut_inside_string
 
         assert _json_cut_inside_string("") is False
+
+    def test_closed_string_unclosed_container_is_a_cut(self):
+        from code_forge.llm_invoke import (
+            _json_cut_at_eof,
+            _json_cut_inside_string,
+        )
+
+        text = (
+            '{"findings":[],"code_excerpts":[{"file":"a.py",'
+            '"content":"assert \\"exit 2\\" in str(caught.value)"}]'
+        )
+        assert _json_cut_inside_string(text) is False
+        assert _json_cut_at_eof(text) is True
+
+    def test_mid_object_syntax_error_is_not_a_cut(self):
+        from code_forge.llm_invoke import _json_cut_at_eof
+
+        text = '{"findings":[{"ok": true},,{"ok": false}]}'
+        assert _json_cut_at_eof(text) is False
 
 
 class TestCliNoJsonDiagnostic:
