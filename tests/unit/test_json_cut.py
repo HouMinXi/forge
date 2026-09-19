@@ -352,3 +352,43 @@ class TestEveryRejectBranch:
 
     def test_number_with_two_dots(self):
         assert is_truncated("1..1") is False
+
+
+class TestObjectKeyPosition:
+    """An object alternates key and value; one flag could not hold both."""
+
+    def test_second_colon_in_one_pair_is_not_a_cut(self):
+        assert is_truncated('{"a":"b":') is False
+
+    def test_second_colon_after_a_number_value(self):
+        assert is_truncated('{"a":1:') is False
+
+    def test_ordinary_pair_sequence_is_still_a_cut(self):
+        assert is_truncated('{"a":"b","c":1') is True
+
+    def test_value_finished_without_closing_is_a_cut(self):
+        assert is_truncated('{"a":"b"') is True
+
+    def test_number_key_is_rejected(self):
+        assert is_truncated("{1") is False
+
+    def test_container_key_is_rejected(self):
+        assert is_truncated("{[") is False
+        assert is_truncated("{{") is False
+
+    def test_literal_key_is_rejected(self):
+        assert is_truncated("{t") is False
+
+    def test_empty_containers_are_complete(self):
+        assert is_truncated("{}") is False
+        assert is_truncated("[]") is False
+
+    def test_nested_empty_object_still_open(self):
+        assert is_truncated('{"a":{}') is True
+
+    def test_colon_outside_an_object_is_rejected(self):
+        assert is_truncated("[1:") is False
+
+    def test_dangling_comma_before_close_is_rejected(self):
+        assert is_truncated("[1,]") is False
+        assert is_truncated('{"a":1,}') is False

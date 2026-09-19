@@ -22,6 +22,13 @@ _ESCAPES = '"\\/bfnrtu'
 _LITERALS = ("true", "false", "null")
 _NUMBER_CHARS = "0123456789+-.eE"
 
+# What may come next. An object alternates KEY and VALUE; one
+# boolean cannot hold both, which is how a second colon slipped by.
+_WANT_VALUE = "value"
+_WANT_KEY = "key"
+_WANT_COLON = "colon"
+_WANT_SEP = "sep"
+
 
 def _is_number_prefix(text):
     """True when more digits could still make text a JSON number."""
@@ -55,7 +62,7 @@ def is_truncated(text):
     stack = []
     literal = ""
     number = ""
-    expect_value = True
+    want = _WANT_VALUE
     chars = iter(s)
 
     for ch in chars:
@@ -63,8 +70,9 @@ def is_truncated(text):
             # Consume the string here so no escape flag has to survive
             # between iterations; a flag creates a state well-formed
             # input never reaches.
-            if not expect_value:
+            if want not in (_WANT_VALUE, _WANT_KEY):
                 return False
+            was_key = want == _WANT_KEY
             closed = False
             for sch in chars:
                 if sch == '\\':
@@ -88,7 +96,7 @@ def is_truncated(text):
                     break
             if not closed:
                 return True
-            expect_value = False
+            want = _WANT_COLON if was_key else _WANT_SEP
             continue
 
         if literal:
@@ -110,33 +118,38 @@ def is_truncated(text):
         if ch in ' \t\n\r':
             continue
         if ch in "{[":
-            if not expect_value:
+            if want != _WANT_VALUE:
                 return False
             stack.append(ch)
-            expect_value = True
+            want = _WANT_KEY if ch == "{" else _WANT_VALUE
         elif ch in "}]":
             if not stack or (ch == "}") != (stack[-1] == "{"):
                 return False
+            # closing is fine right after opening (empty) or
+            # after a finished value, not on a dangling separator
+            empty_ok = _WANT_KEY if ch == "}" else _WANT_VALUE
+            if want not in (_WANT_SEP, empty_ok):
+                return False
             stack.pop()
-            expect_value = False
+            want = _WANT_SEP
         elif ch == ",":
-            if expect_value or not stack:
+            if want != _WANT_SEP or not stack:
                 return False
-            expect_value = True
+            want = _WANT_KEY if stack[-1] == "{" else _WANT_VALUE
         elif ch == ":":
-            if expect_value or not stack or stack[-1] != "{":
+            if want != _WANT_COLON:
                 return False
-            expect_value = True
+            want = _WANT_VALUE
         elif ch in "tfn":
-            if not expect_value:
+            if want != _WANT_VALUE:
                 return False
             literal = ch
-            expect_value = False
+            want = _WANT_SEP
         elif ch in "-0123456789":
-            if not expect_value:
+            if want != _WANT_VALUE:
                 return False
             number = ch
-            expect_value = False
+            want = _WANT_SEP
         else:
             return False
 
