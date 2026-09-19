@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from code_forge.json_cut import (
     _JSON_TEXT_STRICT,
     _decode_error_pos,
+    _loads_review_json,
     json_cut_at_eof,
     json_cut_inside_string,
 )
@@ -222,10 +223,10 @@ def test_json_cut_at_eof_matches_the_loader_leniency():
     raw_newline = '{"a":"line' + chr(10) + 'more"}'
 
     # The loader accepts it, so it is a finished document, not a cut.
-    assert jc._loads_review_json(raw_newline) == {"a": "line\nmore"}
-    assert jc.json_cut_at_eof(raw_newline) is False
+    assert _loads_review_json(raw_newline) == {"a": "line\nmore"}
+    assert json_cut_at_eof(raw_newline) is False
 
     # Cut the same reply before the string closes and it must flip.
-    assert jc.json_cut_at_eof('{"a":"line' + chr(10)) is True
+    assert json_cut_at_eof('{"a":"line' + chr(10)) is True
 
-    assert jc.json_cut_at_eof('{"a":1}') is False
+    assert json_cut_at_eof('{"a":1}') is False
