@@ -1,0 +1,567 @@
+outlet: subprocess
+
+# One cycle, not three. Three is the convergence claim -- a cycle that finds
+# something resets the counter, so the gate gets to watch the fix be
+# re-reviewed -- and dropping to one gives that up. What it buys is a commit
+# that waits about 17 minutes instead of an hour: deepseek-direct measured
+# 993s wall for a single cycle on 2026-08-10, and the three passes inside a
+# cycle still run, so the three reviewer perspectives are all intact.
+#
+# The half being traded away is real. Raise this back to 3 for a change
+# whose first review round finds something, since that is exactly the case
+# the counter was built for.
+#
+# One cycle also switches off check 7 (Jaccard rubber-stamp detection) as
+# a side effect, not a choice made here: it compares excerpts ACROSS
+# cycles, combinations(last_n, 2) is empty when there is only one, and a
+# forged second cycle to satisfy it would be the exact thing it exists to
+# catch. Found by forge reviewing this file's own change, 2026-08-10.
+verify:
+  required_cycles: 1
+
+backends:
+  # Fallback ladder for reviews, best first. Every target below was measured
+  # on 2026-08-04 by asking the route what it is, because a combo's name is
+  # not evidence of what it reaches:
+  #
+  #   sn-deepseek-flash -> deepseek-v4-pro          (matches)
+  #   onmi-opus4.6      -> claude-opus-4-6-thinking   (matches)
+  #   onmi-gemini3.6    -> gemini-3.6-flash-high      (a Flash, not a Pro)
+  #   onmi-gemini3.1    -> gemini-pro-agent           (not a 3.1 Pro at all)
+  #
+  # The route field is what the gateway reports it dispatched to; what the
+  # model says when asked its own name is not. Probed 2026-08-08,
+  # oc-ds-flash-free answered "claude-3-5-sonnet-20241022" while the gateway
+  # reported deepseek-v4-pro-free, and the gateway is the side that knows.
+  #
+  # That route is absent below. The 403 error_code 1010 behind that is the
+  # User-Agent, not a TLS signature as this file once said: the gateway
+  # opens its own connection upstream with Node's TLS, so no property of
+  # forge's handshake survives the hop. urllib adds "Python-urllib/3.14"
+  # when nothing else is set, the gateway forwards the caller's User-Agent
+  # upstream, and Cloudflare in front of opencode.ai reads it as
+  # non-browser. Measured 2026-08-09, one client, three header values, a
+  # 27KB body and everything else held identical:
+  #
+  #     Chrome 131          past Cloudflare, 159.8s
+  #     curl/8.18.0         past Cloudflare, 170.6s
+  #     Python-urllib/3.14  403 / 1010,       23.3s
+  #
+  # The middle row is the one that settles it: replaying curl's header
+  # from urllib reproduces curl's outcome, so nothing about curl beyond
+  # that string was ever involved. Note the wall clock too -- the block
+  # returns in a fraction of the time a real call takes, because it
+  # happens before any model runs.
+  #
+  # A SHORT request cannot see any of this. Both clients return 200 on a
+  # tiny body, so a "say ok" smoke test reports the route healthy when it
+  # is not, and a multi-client comparison built on one is a control that
+  # cannot fail. Short bodies are still worth sending for one thing: they
+  # tell a live pool from a dead one before a long run is spent.
+  #
+  # forge can set the header -- user-agent is not in
+  # PROTECTED_HEADER_KEYS, no format's base headers carry one, the schema
+  # lists `headers` on backendEntry, and urllib honours a configured value
+  # over its own. So the 1010 is a `headers:` entry away. It is the
+  # SECOND problem below that keeps this route out, not this one.
+  #
+  # Full chain and gateway source: OmniRoute memory
+  # incident_oc_ds_flash_free_1010. The cascade a 1010 triggers is fixed
+  # upstream in PR #9929; the User-Agent passthrough deliberately is not.
+  #
+  # Order is by measured fitness for review work, not by model rank. The
+  # two Gemini routes are last, but BOTH of the failures this file used to
+  # cite for that were re-measured on 2026-08-10 and neither survived:
+  #
+  #   "the Flash returns empty content on security-adjacent code" -- not
+  #   reproduced. On a 170KB security diff it returned a 502 ECONNREFUSED
+  #   to a Google address once (infrastructure, not the route) and 13267
+  #   characters with finish_reason=stop once. Empty content never
+  #   appeared. Note the test that replaced it conflates two variables:
+  #   that diff is also 2.4x larger than the other one, so "security" is
+  #   not isolated from "big".
+  #
+  #   "the 3.1 combo returned nothing in 400s" -- wrong cause, and it is
+  #   the OUTPUT CAP, not the prompt. Held the prompt fixed and moved only
+  #   max_tokens: at 65536 the gateway answers 400 capability_mismatch in
+  #   under a second ("No target in combo onmi-gemini3.1 supports
+  #   structured output for this request"), at 4096 it answers 200. True
+  #   for a two-word prompt and a 70KB one alike. So the 65536 below is
+  #   itself what breaks that combo, and this file was sending the next
+  #   reader to look for a timeout that is not there.
+  #
+  # What the routes actually do was settled by known-answer test rather
+  # than by reading their output: the same diff sent twice, once as-is and
+  # once with a new file carrying a hardcoded AWS key and a string-built
+  # SQL query. sn-deepseek-flash is in the run as a positive control,
+  # because every route scoring zero would mean the planted bugs were too
+  # weak to find, not that the routes were blind.
+  #
+  #   route                     found the planted bugs   valid JSON
+  #   sn-deepseek-flash         yes                      every run
+  #   onmi-gemini3.1 (cap 4096) yes, most complete       1 of 2
+  #   onmi-gemini3.6            yes                      2 of 5
+  #   agy/gemini-3.1-pro-high   yes                      3 of 5
+  #
+  # All four review. The differentiator is serialization, and the way it
+  # fails matters: every Gemini failure was an escaping error while the
+  # model was quoting the code it had just flagged -- "Invalid \escape",
+  # "Unterminated string", "Invalid control character". A reviewer that
+  # cannot quote quote-dense code fails hardest on string concatenation
+  # and injection sites, which is the code most worth reviewing.
+  #
+  # That unreliability compounds twice over, which is why it decides the
+  # order here rather than merely counting against it. A round is clean
+  # only if all THREE passes parse, and the counter needs three
+  # consecutive clean rounds, so a per-pass parse rate p has to survive
+  # being raised to the ninth. On today's sample -- thin, n=5 -- that is
+  # 1.0 for sn-deepseek-flash, about 0.01 for the Pro at 3 of 5, and
+  # about 0.0003 for the Flash at 2 of 5. And each failure is not cheap:
+  # llm_invoke raises on a reply it cannot parse, LLMInvokeError defaults
+  # to retryable, so the whole prompt is resubmitted up to max_attempts
+  # times before the pass gives up and leaves the CONFIRMED INFRA finding
+  # that zeroes the counter.
+  #
+  # So the Gemini entries are second opinions, not gates. Run one when an
+  # independent model family is worth more than a verdict that converges.
+  #
+  # Read the findings-count alone and onmi-gemini3.6 looks blind: three of
+  # four early runs returned findings=[] with full excerpt coverage, which
+  # forge accepts as a clean pass. It is not blind. Its unparseable reply
+  # names both planted bugs in plain text, and its clean-diff reply never
+  # mentions the injected file at all. An unparseable review and an empty
+  # one are indistinguishable through the validator, and telling them
+  # apart needs the raw body.
+  #
+  # Scripts and every response body:
+  # .planning/measurements/gemini-routes-2026-08-10/
+  #
+  # Every timeout_s here is at least 2400. A single review pass has been
+  # measured at 411.7s, so the 300 that used to sit on gemini-omniroute
+  # killed the run on the clock before the model's behaviour could matter.
+
+  # This one thinks before it answers too, and the thinking is billed
+  # against the same max_tokens the answer needs -- the trait recorded
+  # below for the free route is not unique to it. Measured 2026-08-09:
+  # with max_tokens at 16 the gateway returns 502 "reasoning consumed
+  # 16/17 tokens -- no content output". At 65536 there is room for both,
+  # which is why that number is here and why it must not be lowered to
+  # "save" anything.
+  # reasoning_effort: low is not a wish: measured on the 70KB review
+  # prompt, it is the only thinking control that holds at both sizes.
+  # Without it this route truncates at ~16384 output on the 64K-input
+  # review prompt (finish_reason=length, measured 2026-08-11 on the
+  # verify-threshold round-7 review), because SenseNova bills reasoning
+  # against the same allowance the answer needs.
+  deepseek:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: sn-deepseek-flash
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: false
+    reasoning_effort: low
+    headers:
+      User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+  # Second free leg of the SenseNova pool. sn-deepseek-flash cannot finish
+  # the review prompt: deepseek-v4-pro clamps content at ~16384 tokens
+  # (finish_reason=length, measured on the 64K-input round-7 review), and
+  # the L1 passes need more than that for a full review JSON. The 6.7
+  # flash-lite shows no such clamp -- 14332 tokens, finish=stop, on a
+  # 64K prompt with a "write as much as you can" instruction. No UA header
+  # needed; the opencode/Cloudflare path is the oc- routes' problem only.
+      x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+  sn-67-flash-lite:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: sn-67-flash-lite
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: false
+
+  # Brought back by request for the same reason it left: Cloudflare in
+  # front of opencode.ai rejects forge's connection unless the caller's
+  # User-Agent reads as a browser. Measured 2026-08-11: same gateway, same
+  # 27KB body, only the UA changed -- urllib's default got ECONNREFUSED to
+  # 172.65.90.20:443 after a 20s reset, the browser UA above went through
+  # to the model. sn-deepseek-flash answers without any UA set, so this
+  # header is the oc- routes' fix, not a global one.
+  #
+  # The two reasons it was measured unusable for converging reviews remain
+  # true and are not about the UA: output is clamped at 16384 no matter
+  # what max_tokens says (reasoning eats it first), and the reply format
+  # is not stable (two identical runs, one clean JSON and one unparseable,
+  # n=2). reasoning_effort: low is the only thinking control that held at
+  # 70KB. A review that needs three consecutive clean rounds still cannot
+  # rely on this route.
+    headers:
+      x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+  oc-ds-flash-free:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: oc-ds-flash-free
+    headers:
+      User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+      x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+    reasoning_effort: low
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: false
+
+  # Beyond the User-Agent above, two more things are wrong with
+  # oc-ds-flash-free, and each outlives a fix to the others:
+  #
+  # 1. It reasons before it answers, the reasoning is billed against the
+  #    output allowance, and that allowance is capped at 16384 no matter
+  #    what max_tokens says. Measured 2026-08-09 on three unrelated
+  #    prompts -- a 27KB review, a 70KB review, and one asking for a plain
+  #    list of 4000 numbers with no thinking -- completion_tokens landed
+  #    on exactly 16384 every time, reasoning filled it, and content came
+  #    back empty. So a bigger max_tokens is not the lever; this file said
+  #    "at least 16384" before that was measured and it was wrong. The
+  #    lever is asking for less thinking, and the three ways to do that do
+  #    not behave alike:
+  #
+  #      enable_thinking: false      ignored. Reasoning came back LONGER
+  #                                  than with no parameter at all.
+  #      thinking: {type: disabled}  honoured on a 27KB prompt (reasoning
+  #                                  0, 17.5s) and ignored on the real
+  #                                  70KB one (reasoning 66335, content
+  #                                  empty). Verifying this on the small
+  #                                  prompt alone would have shipped a
+  #                                  backend that fails on every diff big
+  #                                  enough to need it.
+  #      reasoning_effort: low       holds at both sizes. The only one.
+  #
+  #    Note the paid entry above spends its budget on reasoning the same
+  #    way, so that trait is the model family; the 16384 clamp is not --
+  #    65536 is real there.
+  #
+  # 2. It breaks badly rather than gracefully. One failure was enough to
+  #    put the whole free pool into 503 "all upstream accounts are
+  #    inactive", and it stayed there for minutes; while it is in that
+  #    state every client gets the same 503 in under a second, and once it
+  #    comes back the requests hang instead. The five retries prolong that
+  #    outage rather than riding it out. Upstream PR #9929 stops a 1010
+  #    from being the trigger, which is the common case but not the only
+  #    one.
+  #
+  # 3. Its output FORMAT is not stable. With reasoning_effort: low and the
+  #    real L1 prompt, two runs that differed in nothing returned 19404
+  #    characters of clean review JSON, and 20373 characters that did not
+  #    parse. That is the one measurement here with an n of 2, so it fixes
+  #    no rate -- but the direction is enough, because of what forge does
+  #    with the bad one. A reply that fails validate_reviewer_json becomes
+  #    a CONFIRMED INFRA finding (factories.py:403), which zeroes the
+  #    clean-round counter (machine.py:736). So this route cannot produce
+  #    a false green -- it fails closed, correctly -- and that is exactly
+  #    what makes it unusable: a review needing three consecutive clean
+  #    rounds never gets them.
+  #
+  #    Worth knowing where this lands relative to the guard already built
+  #    for it. _check_l1_can_still_converge stops a run after THREE
+  #    CONSECUTIVE rounds with a failed pass, on the reasoning that one
+  #    failure that recovers is a transient the retry logic handles. An
+  #    intermittent backend never strings three together, so it is too
+  #    broken to converge and too reliable to be stopped -- it grinds to
+  #    max_total_rounds. A backend that failed EVERY time would be caught
+  #    in three rounds and reported. That asymmetry is the argument
+  #    against this route rather than a complaint about the guard.
+  #
+  # So it stays out, and the reason is 1 and 3, not the User-Agent. What
+  # would change that: an output allowance above 16384 on this route, or a
+  # reasoning control that holds at 70KB and returns parseable JSON every
+  # time. If either lands, the entry is
+  #
+  #   headers: {User-Agent: "<a browser UA>"}, reasoning_effort: low,
+  #   max_tokens: 16384 (the real ceiling, not a wish), below the paid one.
+  #
+  # Scripts and raw results for every number above:
+  # .planning/measurements/oc-ds-flash-free-2026-08-09/ -- both L1 logs
+  # are kept, the one that judged the reply without stripping its code
+  # fence and the one that did not. Only the oc- routes need the
+  # header at all; sn-deepseek-flash answered 200 twice the same day with
+  # no User-Agent set, so the opencode path is the one behind Cloudflare.
+
+  # Weekly quota, and the error does not say so. Once it runs out the combo
+  # stops being served and the gateway answers 400 "Unable to determine
+  # provider for model 'onmi-opus4.6'" -- which reads as a misspelled model
+  # name and sends you looking for a typo that is not there. Seen
+  # 2026-08-09. It comes back when the week rolls over; nothing here needs
+  # changing.
+  opus-omniroute:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: onmi-opus4.6
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: false
+
+    headers:
+      x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+  gemini-omniroute:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: onmi-gemini3.6
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: false
+
+  # The combo this file used to reject on a stale timeout claim. It works,
+  # and in the known-answer run it gave the most complete review of any
+  # route: three separate P0s on the planted defects plus a real P1 on the
+  # diff itself, where the control found two.
+  #
+  # max_tokens is the whole reason it looked broken. Measured 2026-08-10
+  # with the prompt held fixed: 4096, 8192, 12288, 16384 and 32768 all
+  # answer 200; 65536 returns 400 capability_mismatch in a tenth of a
+  # second. 16384 rather than the proven 32768 because higher buys nothing
+  # here -- a full review with four findings fit in 4096 -- and because
+  # Gemini's context is shared between input and output, so every token
+  # reserved for a reply is one the 70KB prompt cannot use. That last part
+  # is inference, not measurement: it also fits the Pro's 400 on a 170KB
+  # prompt at 65536, but the experiment that would test it (a big prompt
+  # with a small cap) has not been run.
+  #
+  # Last of the three Gemini entries on the thinnest evidence, not the
+  # worst: n=2, and both runs were slow at 167s and 193s. One of those two
+  # replies did not parse.
+    headers:
+      x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+  gemini31-combo:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: onmi-gemini3.1
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: false
+
+    headers:
+      x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+  gemini-pro:
+    type: api
+    format: openai
+    base_url: "https://192.168.100.10:20128"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agy/gemini-3.1-pro-high
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: false
+
+  # Paid, and the only entry that does not pass through OmniRoute, so it is
+  # also the only one not exposed to the empty-content bug there. Last on
+  # purpose: reach for it when the free routes cannot finish a run.
+    headers:
+      x-omniroute-no-cache: "true"
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+  deepseek-direct:
+    type: api
+    format: openai
+    base_url: "https://api.deepseek.com/v1"
+    api_key_env: DEEPSEEK_API_KEY
+    model: deepseek-v4-pro
+    # 384000 = DeepSeek's official max output (from api-docs.deepseek.com).
+    # The previous 98304 caused qodo pass truncation on the 64K-input
+    # review (finish_reason=length, output=98304, measured 2026-08-11).
+    max_tokens: 384000
+    timeout_s: 2400
+    stream: false
+
+  # Local, on the LAN, so a review through it costs nothing per token. The
+  # tradeoff is latency. stream is on because it is the only entry where a
+  # pass runs long enough for partial output to matter.
+  #
+  # Measured 2026-08-10 on the same known-answer canary the four OmniRoute
+  # routes took, same two prompts rebuilt by the same code, so the numbers
+  # sit on one scale. Scripts and raw bodies:
+  # .planning/measurements/bonsai-canary-2026-08-10/
+  #
+  #   prompt            wall     reasoning  content  findings  JSON
+  #   2.1KB probe       62.5s       10148      1094     2/2    valid
+  #   70286B CLEAN     378.6s       44408     11479       2    valid
+  #   70936B INJECTED 1935.0s      248613         0       -    no reply
+  #
+  # CLEAN clearing valid JSON on a 70KB prompt is what disqualified all
+  # three Gemini entries the same day, so this looked promising until the
+  # INJECTED round. That one spent the whole 65536-token budget inside
+  # reasoning_content and returned finish=length with an empty body: not
+  # malformed JSON but no answer at all, nothing to parse and nothing to
+  # grep. Its reasoning names neither planted defect -- zero hits for the
+  # AWS key and zero for the SQL concatenation across 248613 characters --
+  # so this is not the Gemini failure of seeing a defect and being unable
+  # to say so. It never arrived.
+  #
+  # The raw body shows why. Of 4397 non-blank reasoning lines only 276 are
+  # distinct; `return VerifyResult(` repeats 123 times. Q2_0 fell into a
+  # repetition loop on an unrelated part of the diff, and that loop is also
+  # the 5.1x wall-clock blowup over CLEAN.
+  #
+  # Throughput was already the weaker argument: 378.6s a pass against
+  # sn-deepseek-flash's 117s, about an hour for the nine passes forge needs
+  # to converge, and concurrency does not help -- one GPU, and the slots
+  # would divide the same KV cache. (The older note here estimated 738s a
+  # pass from a single unrelated problem; the real review prompt is faster
+  # than that guess.) But one clean round records the best sample, not the
+  # distribution, and this distribution reaches a 32-minute round that
+  # returns nothing. A review that returns nothing is indistinguishable
+  # from a review that found nothing, which is the one failure a gate must
+  # not have. Not a commit gate, and not a usable second opinion either.
+  #
+  # api_key_env is load-bearing in the wrong direction. llama.cpp wants no
+  # credential at all and answers 200 to a request carrying no
+  # Authorization header, but credential_error fails any api backend whose
+  # api_key_env names an unset variable, so with BONSAI_API_KEY absent
+  # forge rejects this entry before it opens a connection:
+  #   BONSAI_API_KEY not set. Export the API key for backend 'bonsai'.
+  # Any non-empty value satisfies it; the server ignores what is sent.
+  #
+  # It is a physical machine in the house, not a service, so it is off
+  # whenever the room is too warm for it -- it was shut down for that reason
+  # on 2026-08-09 and running again on 2026-08-10. A connection refused
+  # here means the box is off, which is not something this file can express
+  # or fix; check the machine before reading anything into the config. A
+  # request that hangs rather than refusing is likelier to be the single
+  # slot busy with someone else's pass.
+  bonsai:
+    type: api
+    format: openai
+    base_url: "http://192.168.100.11:8081/v1"
+    api_key_env: BONSAI_API_KEY
+    model: Ternary-Bonsai-27B-Q2_0.gguf
+    max_tokens: 65536
+    timeout_s: 3600
+    stream: true
+
+  # added by forge-provider.py 2026-09-04
+  review-default:
+    type: api
+    format: openai
+    base_url: "https://100.109.180.117:20128/v1"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agnes-cn
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: true
+    default: true
+    headers:
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+
+  # added by forge-provider.py 2026-09-13
+      x-omniroute-no-cache: "true"
+  agnes-intl:
+    type: api
+    format: openai
+    base_url: "https://100.109.180.117:20128/v1"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agnes-intl
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: true
+    headers:
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+      x-omniroute-no-cache: "true"
+  agnes-cn:
+    type: api
+    format: openai
+    base_url: "https://100.109.180.117:20128/v1"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agnes-cn
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: true
+    headers:
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+      x-omniroute-no-cache: "true"
+  agnes-cn-2:
+    type: api
+    format: openai
+    base_url: "https://100.109.180.117:20128/v1"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agnes-cn-2
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: true
+    headers:
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+      x-omniroute-no-cache: "true"
+  agnes-cn-3:
+    type: api
+    format: openai
+    base_url: "https://100.109.180.117:20128/v1"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agnes-cn-3
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: true
+    headers:
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+      x-omniroute-no-cache: "true"
+  agnes-intl-2:
+    type: api
+    format: openai
+    base_url: "https://100.109.180.117:20128/v1"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agnes-intl-2
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: true
+    headers:
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+      x-omniroute-no-cache: "true"
+  agnes-intl-3:
+    type: api
+    format: openai
+    base_url: "https://100.109.180.117:20128/v1"
+    api_key_env: OMNIROUTE_API_KEY
+    model: agnes-intl-3
+    max_tokens: 65536
+    timeout_s: 2400
+    stream: true
+    headers:
+      x-omniroute-no-memory: "1"
+      x-omniroute-compression: "off"
+      x-omniroute-no-cache: "true"
+test:
+  command: [python3, -m, pytest, -q, --ignore=tests/test_cli_integration.py]
+  timeout_seconds: 900
+  # mutmut mirrors only source_paths, so a test that opens a file by
+  # path finds nothing under mutants/. Each entry below was added after
+  # a real mutation-gate failure: scripts/ (test_analyse_arms.py),
+  # cli/ (test_phase3.py imports gap_detector), fixtures/
+  # (test_machine_scenarios loads oscillation_A.json).
+  also_copy:
+    - scripts/
+    - cli/
+    - fixtures/

@@ -123,6 +123,7 @@ ignore = [
 markers = [
     "real_api: opt-in tests that call real backends (skipped by default)",
     "integration: marks tests requiring real infrastructure",
+    "source_scan: greps the source tree as data; excluded from the mutation gate",
 ]
 pythonpath = ["src"]
 norecursedirs = ["tests/eval/corpus/base_files"]

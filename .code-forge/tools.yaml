@@ -1,0 +1,12 @@
+tools:
+  ruff:
+    command: ruff check --output-format=sarif
+    file_patterns:
+    - '*.py'
+    output_format: sarif
+  shellcheck:
+    command: shellcheck -f json
+    file_patterns:
+    - '*.sh'
+    - '*.bash'
+    output_format: shellcheck_json

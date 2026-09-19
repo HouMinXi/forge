@@ -13,6 +13,14 @@ from pathlib import Path
 
 import pytest
 
+# Every test here greps the source tree rather than calling into it, so
+# under the mutation gate they read mutmut's mirror: files rewritten into
+# one variant per mutation, where a mutated string literal looks exactly
+# like the violation this module exists to forbid. The finding would name
+# a line number past the end of the real file. The marker keeps them out
+# of the per-mutant loop; the R1 gate baseline still runs them in full.
+pytestmark = pytest.mark.source_scan
+
 SRC_DIR = Path(__file__).resolve().parent.parent / "src" / "code_forge"
 
 # Deliberate exceptions: (filename, line substring, reason).  An entry

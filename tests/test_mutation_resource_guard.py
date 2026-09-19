@@ -10,6 +10,7 @@ launcher's forwarding of both guards.
 """
 import json
 import os
+import pathlib
 import subprocess
 import sys
 from unittest.mock import patch
@@ -19,7 +20,7 @@ from code_forge.mutation import (
     _DEFAULT_MAX_CHILDREN_CAP,
     _build_mutmut_config,
     _effective_max_children,
-    _exclude_integration_tests,
+    _exclude_unmirrorable_tests,
     _memory_limit_bytes,
     launch_detached_mutation,
     run_mutation,
@@ -130,13 +131,27 @@ def test_effective_children_clamps_minimum():
 
 
 def test_selection_appends_integration_exclusion():
-    selection = _exclude_integration_tests(["-q", "--ignore=tests/test_x.py"])
-    assert selection[-2:] == ["-m", "not integration"]
+    selection = _exclude_unmirrorable_tests(["-q", "--ignore=tests/test_x.py"])
+    assert selection[-2:] == ["-m", "not integration and not source_scan"]
 
 
 def test_selection_combines_existing_marker_expr():
-    selection = _exclude_integration_tests(["-q", "-m", "slow"])
-    assert selection[selection.index("-m") + 1] == "(slow) and (not integration)"
+    selection = _exclude_unmirrorable_tests(["-q", "-m", "slow"])
+    assert selection[selection.index("-m") + 1] == (
+        "(slow) and (not integration and not source_scan)"
+    )
+
+
+def test_selection_excludes_source_scanning_tests():
+    """Tests that grep the source tree read mutmut's mirror there.
+
+    The mirror holds one rewritten variant per mutation, so a mutated
+    string literal reads as the violation such a scan forbids, reported
+    at a line number past the end of the real file.
+    """
+    selection = _exclude_unmirrorable_tests(["-q"])
+    marker_expr = selection[selection.index("-m") + 1]
+    assert "not source_scan" in marker_expr
 
 
 def test_build_mutmut_config_excludes_integration(tmp_path):
@@ -145,7 +160,7 @@ def test_build_mutmut_config_excludes_integration(tmp_path):
     lines = config.splitlines()
     idx = lines.index("pytest_add_cli_args_test_selection=-q")
     assert lines[idx + 1] == "    -m"
-    assert lines[idx + 2] == "    not integration"
+    assert lines[idx + 2] == "    not integration and not source_scan"
 
 
 def test_detached_script_forwards_resource_guards(tmp_path):
@@ -174,3 +189,31 @@ def test_detached_script_forwards_resource_guards(tmp_path):
     data = json.loads(result_path.read_text())
     assert data["status"] == "done"
     assert data["survivors"] == ["mutant-x"]
+
+
+class TestRepoGateConfigIsTracked:
+    """This repo's own gate.yaml must ship its mutation-mirror needs.
+
+    The mirror only carries source_paths, so a test that opens a file by
+    path needs its directory in also_copy. Those three entries each came
+    from a real mutation-gate failure; keeping them in a gitignored local
+    file meant a fresh clone hit the same three failures again.
+    """
+
+    def _gate_path(self):
+        return pathlib.Path(__file__).resolve().parent.parent / ".code-forge" / "gate.yaml"
+
+    def test_gate_yaml_is_committed(self):
+        assert self._gate_path().is_file(), (
+            "the gate config is part of the repo, not a local artifact"
+        )
+
+    def test_also_copy_carries_every_path_loading_directory(self):
+        from code_forge.gate_check import load_gate_config
+
+        also_copy = load_gate_config(self._gate_path())["test"]["also_copy"]
+        for needed in ("scripts/", "cli/", "fixtures/"):
+            assert needed in also_copy, (
+                "%s holds files tests open by path; without it the "
+                "mutation gate dies with FileNotFoundError" % needed
+            )
