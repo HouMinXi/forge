@@ -84,8 +84,3 @@ markers = [
 ]
 pythonpath = ["src"]
 norecursedirs = ["tests/eval/corpus/base_files"]
-
-[tool.mutmut]
-source_paths = ["src/code_forge/json_cut.py"]
-also_copy = ["src/code_forge/"]
-pytest_add_cli_args_test_selection = ["tests/unit/test_json_cut.py"]

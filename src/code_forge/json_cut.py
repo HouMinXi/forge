@@ -16,7 +16,6 @@ document or trailing junk, and neither is worth a continuation request.
 
 import json
 
-
 _HEX = "0123456789abcdefABCDEF"
 _ESCAPES = '"\\/bfnrtu'
 _LITERALS = ("true", "false", "null")
