@@ -4096,11 +4096,20 @@ class TestBadJsonRetry:
         assert exc_info.value.kind == "no_json"
 
     def test_complete_invalid_json_does_not_retry(self):
-        """A stopped, complete reply that is not JSON must not burn retries.
+        """A stopped, complete reply that is not JSON must not be replayed.
 
         Live agnes-cn adversarial: finish_reason=stop, content_len=15209,
-        same delimiter error on all five attempts. Incomplete stream still
-        retries via the existing unfinished-JSON case.
+        same delimiter error on all five attempts -- replaying one prompt
+        can only buy the same answer again.
+
+        Assert on what is sent, not on how many calls happen: a
+        continuation carries the partial and asks for the rest, so it is
+        a different request and does not count as a replay. Counting
+        calls conflated the two, and the count moved when continuation
+        learned to recognise a cut container.
+
+        Bug-injection proof: make _exhaustion_error retryable=True and
+        the replay assertion below FAILS with two original prompts.
         """
         from code_forge.llm_invoke import _invoke_api
 
@@ -4110,7 +4119,7 @@ class TestBadJsonRetry:
         # not. An EOF cut is a different case (continuation).
         broken = '{"findings":[{"ok": true},,{"ok": false}]}'
 
-        def _mock_openai_complete_invalid(*args, **kwargs):
+        def _mock_openai_complete_invalid(prompt, *args, **kwargs):
             calls[0] += 1
             return broken, {
                 "prompt_tokens": 10,
@@ -4288,6 +4297,109 @@ class TestJsonCutInsideString:
 
         text = '{"findings":[{"ok": true},,{"ok": false}]}'
         assert _json_cut_at_eof(text) is False
+
+
+from code_forge import json_cut
+
+
+class TestJsonCutStructuralCoverage:
+    """Every prefix of a valid reply is a cut the provider could produce.
+
+    The shipped detector only looked for an unclosed string, so a reply
+    cut at a comma, between elements, after a key, mid-number or
+    mid-escape was declared finished-and-invalid and the pass was lost.
+
+    Bug-injection proof: restore the old body of
+    _json_cut_inside_string (track in_string/escaped only, return
+    in_string) and every prefix case below FAILS.
+    """
+
+    def _cuts(self, doc):
+        from code_forge.llm_invoke import _json_cut_inside_string
+
+        return [i for i in range(1, len(doc)) if not json_cut.is_truncated(doc[:i])]
+
+    def test_findings_array_every_prefix_is_a_cut(self):
+        import json
+
+        doc = json.dumps([
+            {"id": "f1", "severity": "P2", "file": "hw/x.c", "line": 42,
+             "desc": "quote \" and backslash \\ inside"},
+            {"id": "f2", "severity": "P3", "file": "hw/y.c", "line": 7,
+             "desc": "plain"},
+        ])
+        assert self._cuts(doc) == []
+
+    def test_envelope_with_numbers_and_nulls(self):
+        import json
+
+        doc = json.dumps({
+            "findings": [{"id": "a", "score": 0.5, "seen": None, "ok": True}],
+            "code_excerpts": [{"file": "z.c", "start": 1, "end": 2}],
+        })
+        assert self._cuts(doc) == []
+
+    def test_unicode_escapes_are_resumable(self):
+        doc = '[{"cn": "\\u4e2d\\u6587\\u6ce8\\u91ca", "n": 1}]'
+        assert self._cuts(doc) == []
+
+    def test_numbers_cut_mid_literal(self):
+        doc = '[{"a": -1.5e-3, "b": 0.25, "c": 42}]'
+        assert self._cuts(doc) == []
+
+    def test_deep_nesting(self):
+        doc = '{"a": {"b": [{"c": [1, [2, {"d": "e"}]]}]}}'
+        assert self._cuts(doc) == []
+
+    def test_empty_containers(self):
+        doc = '{"findings": [], "code_excerpts": [{}]}'
+        assert self._cuts(doc) == []
+
+
+class TestJsonCutRejectsFinishedOutput:
+    """A finished-but-unusable reply must not burn continuation budget.
+
+    Continuation costs a real request; spending it on prose or on a
+    structurally broken object buys nothing. These must all be False.
+
+    Bug-injection proof: make _json_cut_inside_string return True
+    unconditionally and every case below FAILS.
+    """
+
+    def _cut(self, text):
+        from code_forge.llm_invoke import _json_cut_inside_string
+
+        return json_cut.is_truncated(text)
+
+    def test_complete_array_is_not_a_cut(self):
+        assert self._cut('[{"id": "a"}]') is False
+
+    def test_complete_object_is_not_a_cut(self):
+        assert self._cut('{"findings": []}') is False
+
+    def test_top_level_number_is_not_a_cut(self):
+        assert self._cut("42") is False
+
+    def test_prose_after_complete_json_is_not_a_cut(self):
+        assert self._cut('[{"id": "a"}] This seems robust.') is False
+
+    def test_prose_only_is_not_a_cut(self):
+        assert self._cut("I will report the operator precedence as P2.") is False
+
+    def test_mismatched_bracket_is_not_a_cut(self):
+        assert self._cut('{"a": [1, 2}') is False
+
+    def test_double_comma_is_not_a_cut(self):
+        assert self._cut('[1,,2') is False
+
+    def test_bad_literal_is_not_a_cut(self):
+        assert self._cut('{"a": tru3') is False
+
+    def test_unquoted_key_is_not_a_cut(self):
+        assert self._cut("{a: 1") is False
+
+    def test_bad_unicode_escape_is_not_a_cut(self):
+        assert self._cut('"\\uZZ') is False
 
 
 class TestCliNoJsonDiagnostic:
