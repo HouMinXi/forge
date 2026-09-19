@@ -39,8 +39,9 @@ available.
 
 - Backend: `mimo-v2.5-pro` on the depth and ablation arms. Switching
   models mid-sweep would confound those comparisons. Later depth-1 arms
-  used `agnes-cn` and `qwen-27b-dflash`; those comparisons are their
-  own sections.
+  used `agnes-cn`, `qwen-27b-dflash`, the international Agnes effort
+  ladder (`agnes-intl` / `-2` / `-3`), and `onmi-gemini3.6`; those
+  comparisons are their own sections.
 - One run per entry. Replicates at three depths would have cost over 100
   hours of review time; the consequence is stated under caveats.
 - Entry-level scoring: a defect entry counts as caught when the verdict is
@@ -231,6 +232,117 @@ FORGE_CLEAN_ROUND_THRESHOLD=1 FORGE_LOCAL_KEY=local code-forge eval \
 python3 scripts/analyse_arms.py docs/eval/qwen-dflash-d1.jsonl
 ```
 
+## International Agnes effort and Gemini (depth 1)
+
+Four later arms kept depth 1, `engine=real`, one run per entry, and the
+same 150-entry corpus. They differ only in the review backend. All four
+ran through the public OmniRoute endpoint from the same eval host, one
+job at a time.
+
+The three Agnes arms are combo members on the international provider,
+not `agnes-cn`:
+
+- `agnes-intl`: `agnes/agnes-3.0-flash-none` (short probe: no reasoning
+  tokens)
+- `agnes-intl-2`: `agnes/agnes-3.0-flash-xhigh`
+- `agnes-intl-3`: `agnes/agnes-3.0-flash-max`
+
+The fourth arm is `onmi-gemini3.6`. Combo members are
+`agy/gemini-3.8-flash-high`, routed as `antigravity/gemini-3.8-flash-high`.
+
+These rows are not a ranking against the published `agnes-cn` line
+above. That arm used a different site and account pool, and the ledger
+does not record which effort pin the combo held at the time. Do not read
+the 45 s `agnes-cn` figure as "the same model with thinking off".
+
+Ledgers (SHA-256 of the jsonl file):
+
+| Backend | Ledger | SHA-256 |
+|---|---|---|
+| `agnes-intl` (none) | `docs/eval/agnes-intl-none-d1.jsonl` | `aa21019548db1f2a5c19852ab14b9c3fba91474b38f4f467a95e086963228b8f` |
+| `agnes-intl-2` (xhigh) | `docs/eval/agnes-intl-xhigh-d1.jsonl` | `ddb668b865cdddecd890cb5a529ea551310951c32fd41cb8dbb3a0fd0e541988` |
+| `agnes-intl-3` (max) | `docs/eval/agnes-intl-max-d1.jsonl` | `1740ca68f9f4bed41245997c69e638cc111744a0d173fbfc9913de814626e071` |
+| `onmi-gemini3.6` | `docs/eval/onmi-gemini36-d1.jsonl` | `850961d4d1741c5e91afa10109fa583a2e2e0b753d8e1615e4261eb87d752c3c` |
+
+SKIPPED rows, all `infra: code-forge review timeout after 3600s`:
+
+- xhigh, ledger lines 52 and 104: `psf__requests-1142-clean`,
+  `scikit-learn__scikit-learn-10297-clean`
+- max, lines 13, 32, 111: `astropy__astropy-7336-bug`,
+  `django__django-16595-clean`, `scikit-learn__scikit-learn-14087-bug`
+- gemini, line 51: `matplotlib__matplotlib-20676-bug`
+- none: none
+
+Entry-level, n=150 per arm. A SKIPPED defect counts as a miss and a
+SKIPPED control as passed, same rule as the rest of this page.
+
+| Backend | Defects caught | Controls passed | Recall | Precision | F1 | Wall per entry |
+|---|---|---|---|---|---|---|
+| `agnes-intl` (none) | 63/75 | 31/75 | 0.840 | 0.589 | 0.692 | 156 s (SE 10) |
+| `agnes-intl-2` (xhigh) | 45/75 | 50/75 | 0.600 | 0.643 | 0.621 | 268 s (SE 34) |
+| `agnes-intl-3` (max) | 45/75 | 51/75 | 0.600 | 0.652 | 0.625 | 284 s (SE 40) |
+| `onmi-gemini3.6` | 74/75 | 6/75 | 0.987 | 0.517 | 0.679 | 229 s (SE 24) |
+
+Finding-level from `scripts/analyse_arms.py`. SKIPPED rows have no
+finding counts, so they drop out of the scored n:
+
+| Backend | Hits | Misses | False positives | Precision | Recall | F1 | Scored |
+|---|---|---|---|---|---|---|---|
+| `agnes-intl` (none) | 64 | 88 | 126 | 33.7% | 42.1% | 0.374 | 150/150 |
+| `agnes-intl-2` (xhigh) | 51 | 101 | 85 | 37.5% | 33.6% | 0.354 | 148/150 |
+| `agnes-intl-3` (max) | 52 | 97 | 101 | 34.0% | 34.9% | 0.344 | 147/150 |
+| `onmi-gemini3.6` | 85 | 66 | 319 | 21.0% | 56.3% | 0.306 | 149/150 |
+
+What this says, one run per entry:
+
+- On the international Agnes combos, none caught more defects (63 of 75)
+  than xhigh or max (45 of 75) and passed fewer clean controls (31 of 75
+  against 50 and 51). Entry-level F1 is 0.692 against 0.621 and 0.625.
+  Finding-level F1 is close (0.374, 0.354, 0.344): none reports more hits
+  and more false positives. Thinking did not make line ranges more
+  accurate; it moved the hold/pass gate.
+- xhigh and max agree. Exact McNemar on the 145 entries both scored:
+  defects 7 vs 9 (p=0.80), clean 7 vs 8 (p=1.0). This corpus does not
+  give a reason to prefer max over xhigh.
+- none versus xhigh on those 145: 22 defects only none caught, 4 only
+  xhigh (p=0.0005); 5 clean only none passed, 23 only xhigh (p=0.0009).
+  The same shape against max (20 vs 4 defects, p=0.0015; 5 vs 24 clean,
+  p=0.0005).
+- `onmi-gemini3.6` caught 74 of 75 defects and passed 6 of 75 clean
+  controls. Entry-level F1 0.679 sits next to none because recall is at
+  the ceiling and precision is at the floor. Finding-level false
+  positives are 319 against 85 to 126 on Agnes. It is not a backend that
+  can let a clean diff through.
+- Wall per entry from the analyser includes the 3610 s SKIPPED
+  timeouts, which is why xhigh, max and gemini look slower than their
+  completed rows. Means on rows that produced a verdict: 156 s (none),
+  223 s (xhigh), 216 s (max), 206 s (gemini). Shared-endpoint latency
+  still applies; the wall column is a cost, not a ranking.
+
+On pairwise non-SKIPPED entries, gemini held every defect the matching
+Agnes arm held, and uniquely held 12 (vs none), 30 (vs xhigh) and 28
+(vs max). On clean entries the thinking Agnes arms uniquely passed 46
+and 47 controls that gemini held.
+
+None of these four arms replaces `agnes-cn` as the default review
+backend recorded on this page. The CN pin was not re-run at none, xhigh
+or max.
+
+Reproduce (named backends already in the eval-host user config, public
+OmniRoute):
+
+```bash
+FORGE_CLEAN_ROUND_THRESHOLD=1 code-forge eval \
+    --corpus tests/eval/swebench/corpus.yaml --backend agnes-intl \
+    --jobs 1 --runs 1 --arm-depth 1 \
+    --resume-log docs/eval/agnes-intl-none-d1.jsonl
+python3 scripts/analyse_arms.py \
+    docs/eval/agnes-intl-none-d1.jsonl \
+    docs/eval/agnes-intl-xhigh-d1.jsonl \
+    docs/eval/agnes-intl-max-d1.jsonl \
+    docs/eval/onmi-gemini36-d1.jsonl
+```
+
 ## Caveats
 
 These apply to every number on this page.
@@ -262,12 +374,14 @@ These apply to every number on this page.
   against SWE-bench Verified defects with the upstream fix as answer key
   plus matched clean controls. Different ground truth, different numbers;
   they do not belong in one table.
-- Three backends at depth 1, one backend everywhere else. Depth sweep and
-  ablation ran on `mimo-v2.5-pro`. Later depth-1 arms ran on `agnes-cn`
-  and `qwen-27b-dflash`. Whether the pipeline or the model sets the
+- Several backends at depth 1, one backend everywhere else. Depth sweep
+  and ablation ran on `mimo-v2.5-pro`. Later depth-1 arms ran on
+  `agnes-cn`, `qwen-27b-dflash`, the international Agnes effort ladder,
+  and `onmi-gemini3.6`. Whether the pipeline or the model sets the
   ceiling is still not separable for depths 2 and 3, or for the gate.
   The depth-1 swaps show the backend moving recall and precision; they
-  do not answer the depth or gate questions.
+  do not answer the depth or gate questions. The international Agnes
+  rows are not interchangeable with the published `agnes-cn` row.
 - Corpus shape. Python library code with an upstream fix, reviewed without
   surrounding context. Results do not transfer unexamined to other
   languages or to defect classes SWE-bench does not contain.
