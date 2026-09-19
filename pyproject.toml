@@ -48,7 +48,7 @@ mcp = [
 semgrep = [
     # PATH tool and forge venv pin the 1.176.x series so
     # declaration, PATH, and the forge venv cannot drift independently.
-    "semgrep>=1.176,<1.177",
+    "semgrep>=1.176,<1.178",
 ]
 # Only the corpus GENERATOR needs this -- building tests/eval/swebench from
 # SWE-bench_Verified. The generated corpus is committed, so running an
