@@ -19,7 +19,7 @@
 
 ## 设置
 
-- 后端：深度扫描和证伪消融都用 `mimo-v2.5-pro`。扫的中途换模型会把那些对比搅混。后来深度 1 又跑过 `agnes-cn` 和 `qwen-27b-dflash`，各自成节。
+- 后端：深度扫描和证伪消融都用 `mimo-v2.5-pro`。扫的中途换模型会把那些对比搅混。后来深度 1 又跑过 `agnes-cn`、`qwen-27b-dflash`、国际站 Agnes 档位梯子（`agnes-intl` / `-2` / `-3`）和 `onmi-gemini3.6`，各自成节。
 - 每条跑一次。三个深度各跑三遍要一百多小时的评审时间；后果写在注意事项里。
 - 条目级打分：缺陷条目裁决为 HOLD 算抓到；干净对照裁决为 PASS 算放过。precision 和 recall 就在这两个计数上算。
 - 发现级打分：运行最终状态里每条 CONFIRMED 的发现，按文件、行范围和 token 重叠跟答案匹配。命中、漏报、误报跨条目累加。
@@ -144,6 +144,80 @@ FORGE_CLEAN_ROUND_THRESHOLD=1 FORGE_LOCAL_KEY=local code-forge eval \
 python3 scripts/analyse_arms.py docs/eval/qwen-dflash-d1.jsonl
 ```
 
+## 国际站 Agnes 档位和 Gemini（深度 1）
+
+后来四臂保持深度 1、`engine=real`、每条一次、同一份 150 条语料，只换评审后端。四臂都从同一台评测机走公网 OmniRoute，jobs=1。
+
+Agnes 三臂是国际站组合路由的成员，不是 `agnes-cn`：
+
+- `agnes-intl`：`agnes/agnes-3.0-flash-none`（短探针没有 reasoning token）
+- `agnes-intl-2`：`agnes/agnes-3.0-flash-xhigh`
+- `agnes-intl-3`：`agnes/agnes-3.0-flash-max`
+
+第四臂是 `onmi-gemini3.6`。组合成员是 `agy/gemini-3.8-flash-high`，实际路由 `antigravity/gemini-3.8-flash-high`。
+
+这几行不能拿来跟上面已经发表的 `agnes-cn` 那一行排名。那一臂是国内站、另一套账号，账本也没记下当时组合钉的是哪一档。不要把 45 秒那个数字读成「同一个模型关了思考」。
+
+账本（jsonl 文件的 SHA-256）：
+
+| 后端 | 账本 | SHA-256 |
+|---|---|---|
+| `agnes-intl`（none） | `docs/eval/agnes-intl-none-d1.jsonl` | `aa21019548db1f2a5c19852ab14b9c3fba91474b38f4f467a95e086963228b8f` |
+| `agnes-intl-2`（xhigh） | `docs/eval/agnes-intl-xhigh-d1.jsonl` | `ddb668b865cdddecd890cb5a529ea551310951c32fd41cb8dbb3a0fd0e541988` |
+| `agnes-intl-3`（max） | `docs/eval/agnes-intl-max-d1.jsonl` | `1740ca68f9f4bed41245997c69e638cc111744a0d173fbfc9913de814626e071` |
+| `onmi-gemini3.6` | `docs/eval/onmi-gemini36-d1.jsonl` | `850961d4d1741c5e91afa10109fa583a2e2e0b753d8e1615e4261eb87d752c3c` |
+
+SKIPPED 行，原因都是 `infra: code-forge review timeout after 3600s`：
+
+- xhigh，账本第 52、104 行：`psf__requests-1142-clean`、`scikit-learn__scikit-learn-10297-clean`
+- max，第 13、32、111 行：`astropy__astropy-7336-bug`、`django__django-16595-clean`、`scikit-learn__scikit-learn-14087-bug`
+- gemini，第 51 行：`matplotlib__matplotlib-20676-bug`
+- none：没有
+
+条目级，每臂 n=150。跳过的缺陷算漏报，跳过的对照算放过，和这一页其余数字同一条规则。
+
+| 后端 | 抓到缺陷 | 放过对照 | Recall | Precision | F1 | 每条耗时 |
+|---|---|---|---|---|---|---|
+| `agnes-intl`（none） | 63/75 | 31/75 | 0.840 | 0.589 | 0.692 | 156 s（SE 10） |
+| `agnes-intl-2`（xhigh） | 45/75 | 50/75 | 0.600 | 0.643 | 0.621 | 268 s（SE 34） |
+| `agnes-intl-3`（max） | 45/75 | 51/75 | 0.600 | 0.652 | 0.625 | 284 s（SE 40） |
+| `onmi-gemini3.6` | 74/75 | 6/75 | 0.987 | 0.517 | 0.679 | 229 s（SE 24） |
+
+发现级来自 `scripts/analyse_arms.py`。SKIPPED 行没有发现计数，不进打分 n：
+
+| 后端 | 命中 | 漏报 | 误报 | Precision | Recall | F1 | 打分 |
+|---|---|---|---|---|---|---|---|
+| `agnes-intl`（none） | 64 | 88 | 126 | 33.7% | 42.1% | 0.374 | 150/150 |
+| `agnes-intl-2`（xhigh） | 51 | 101 | 85 | 37.5% | 33.6% | 0.354 | 148/150 |
+| `agnes-intl-3`（max） | 52 | 97 | 101 | 34.0% | 34.9% | 0.344 | 147/150 |
+| `onmi-gemini3.6` | 85 | 66 | 319 | 21.0% | 56.3% | 0.306 | 149/150 |
+
+按每条只跑一次读：
+
+- 国际站 Agnes 上，none 抓到的缺陷更多（75 条里 63 条），xhigh 和 max 都是 45 条；干净对照放过更少（31/75，那两档是 50 和 51）。条目级 F1 是 0.692，对 0.621 和 0.625。发现级 F1 接近（0.374、0.354、0.344）：none 命中多，误报也多。思考没有让圈行更准，动的是拦/放这道闸。
+- xhigh 和 max 打平。两边都打分的 145 条上精确 McNemar：缺陷 7 对 9（p=0.80），干净 7 对 8（p=1.0）。这份语料给不出偏 max 的理由。
+- 那 145 条上 none 对 xhigh：只有 none 抓到的缺陷 22 条，只有 xhigh 抓到的 4 条（p=0.0005）；只有 none 放过的干净对照 5 条，只有 xhigh 放过的 23 条（p=0.0009）。对 max 同一形状（缺陷 20 对 4，p=0.0015；干净 5 对 24，p=0.0005）。
+- `onmi-gemini3.6` 抓到 74/75 条缺陷，放过 6/75 条干净对照。条目级 F1 0.679 挨着 none，是因为召回贴顶、精度贴底。发现级误报 319，Agnes 三档是 85 到 126。它放不过干净的 diff。
+- 分析脚本的每条耗时把 3610 秒的 SKIPPED 超时算进去了，所以 xhigh、max、gemini 看起来比真正出了裁决的那些行慢。只算有裁决的行：none 156 秒，xhigh 223 秒，max 216 秒，gemini 206 秒。共享端点延迟还在；耗时列是成本，不是排名。
+
+两边都非 SKIPPED 的条目上，gemini 拦住了配对 Agnes 臂拦住的每一条缺陷，并且多拦了 12 条（对 none）、30 条（对 xhigh）、28 条（对 max）。干净对照上，开了思考的 Agnes 臂独自放过了 gemini 拦住的 46 条和 47 条。
+
+这四臂都不替换这一页已经记下的默认评审后端 `agnes-cn`。国内站没有按 none / xhigh / max 重跑。
+
+复现（评测机用户配置里已有这些命名后端，走公网 OmniRoute）：
+
+```bash
+FORGE_CLEAN_ROUND_THRESHOLD=1 code-forge eval \
+    --corpus tests/eval/swebench/corpus.yaml --backend agnes-intl \
+    --jobs 1 --runs 1 --arm-depth 1 \
+    --resume-log docs/eval/agnes-intl-none-d1.jsonl
+python3 scripts/analyse_arms.py \
+    docs/eval/agnes-intl-none-d1.jsonl \
+    docs/eval/agnes-intl-xhigh-d1.jsonl \
+    docs/eval/agnes-intl-max-d1.jsonl \
+    docs/eval/onmi-gemini36-d1.jsonl
+```
+
 ## 注意事项
 
 这些适用于这一页的每一个数字。
@@ -153,7 +227,7 @@ python3 scripts/analyse_arms.py docs/eval/qwen-dflash-d1.jsonl
 - SKIPPED 条目计入，不剔除。harness 给某条出不了裁决时，账本记为没抓到：跳过的缺陷算漏报，跳过的对照算放过。深度 2 和门开臂各跳过一条缺陷，深度 3 跳过一条对照，所以深度 3 的精度最多被一条条目美化。分析脚本会打印每条 SKIPPED 行的账本行号。
 - 每条耗时受 API 延迟干扰。各臂对着同一个端点串行跑了很多小时，一天里的时段对数字的影响比配置本身还大。耗时列当作粗略成本看，不是对深度或证伪门的测量。
 - 不能跟公开的代码评审 F1 数字比。Martian 的在线分数以开发者是否据此改了代码来判定一条评论有用，没有已知缺陷集。它的离线集是 50 个 PR、173 条人工写的标准评论、三个模型当裁判。CodeRabbit 和 Qodo 各自用自己的注入缺陷集。这一页是对着 SWE-bench Verified 的缺陷、以上游修复为答案、配对干净对照来打分。基准事实不同，数字就不同；不能放进一张表里。
-- 深度 1 有三个后端，其余臂只有一个。深度扫描和消融在 `mimo-v2.5-pro` 上跑。后来深度 1 又跑过 `agnes-cn` 和 `qwen-27b-dflash`。深度 2、深度 3 和证伪门的天花板是流水线定的还是模型定的，这份数据仍分不出来。深度 1 这几次对换说明后端会推动召回和精度；它们回答不了深度或证伪门的问题。
+- 深度 1 有多套后端，其余臂只有一套。深度扫描和消融在 `mimo-v2.5-pro` 上跑。后来深度 1 又跑过 `agnes-cn`、`qwen-27b-dflash`、国际站 Agnes 档位梯子和 `onmi-gemini3.6`。深度 2、深度 3 和证伪门的天花板是流水线定的还是模型定的，这份数据仍分不出来。深度 1 这几次对换说明后端会推动召回和精度；它们回答不了深度或证伪门的问题。国际站 Agnes 那几行不能跟已经发表的 `agnes-cn` 那一行互换。
 - 语料形态。带上游修复的 Python 库代码，评审时没有周围上下文。结果不能不加检验地推到其他语言，或推到 SWE-bench 里没有的缺陷类别。
 
 ## 复现

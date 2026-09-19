@@ -384,7 +384,7 @@ diff 和 75 条干净对照），每条跑一次，后端 `mimo-v2.5-pro`。默�
 设置下，条目级：recall 0.800，precision 0.588，F1 0.678。同一深度的发现级：
 precision 40.1%，recall 49.3%，F1 0.442。从一轮干净提到三轮，召回上升
 （75 条缺陷从抓到 52 条到 60 条），精度没动。把证伪门关掉，150 条全部以
-HOLD 退出，75 条干净对照一条不剩。同一份语料后来又用 `agnes-cn` 和本机 `qwen-27b-dflash`（Qwen3.8-27B UD-IQ4_XS 加 DFlash2）跑过深度 1，表格在 [docs/EVALUATION.md](docs/EVALUATION.md)。
+HOLD 退出，75 条干净对照一条不剩。同一份语料后来又用 `agnes-cn`、本机 `qwen-27b-dflash`（Qwen3.8-27B UD-IQ4_XS 加 DFlash2）、国际站 Agnes 档位梯子（none / xhigh / max）和 `onmi-gemini3.6` 跑过深度 1，表格在 [docs/EVALUATION.md](docs/EVALUATION.md)。
 
 这些数字是没有误差棒的点估计，而且因为基准事实不同，不能跟其他工具公开
 的数字比。完整的表格、语料构造和注意事项在
