@@ -207,16 +207,25 @@ def test_decode_error_pos_keeps_positive():
     assert _decode_error_pos(SimpleNamespace(pos=12)) == 12
 
 
-def test_json_cut_at_eof_parses_with_the_non_strict_flag(monkeypatch):
-    import code_forge.json_cut as jc
+def test_json_cut_at_eof_matches_the_loader_leniency():
+    """The cut test must use the same leniency as the real parse.
 
-    seen = {}
-    real_loads = json.loads
+    A control character inside a string is accepted by the review
+    loader, so the cut test must accept it too -- otherwise a reply
+    containing a raw newline would be called finished-and-invalid
+    while the real parse succeeds.
 
-    def _spy(text, **kwargs):
-        seen.update(kwargs)
-        return real_loads(text, **kwargs)
+    Asserted against behaviour rather than against a strict= kwarg:
+    the scanner reaches the same verdict without calling the decoder,
+    and pinning the call would pin one implementation of the answer.
+    """
+    raw_newline = '{"a":"line' + chr(10) + 'more"}'
 
-    monkeypatch.setattr(jc.json, "loads", _spy)
+    # The loader accepts it, so it is a finished document, not a cut.
+    assert jc._loads_review_json(raw_newline) == {"a": "line\nmore"}
+    assert jc.json_cut_at_eof(raw_newline) is False
+
+    # Cut the same reply before the string closes and it must flip.
+    assert jc.json_cut_at_eof('{"a":"line' + chr(10)) is True
+
     assert jc.json_cut_at_eof('{"a":1}') is False
-    assert seen == {"strict": False}
