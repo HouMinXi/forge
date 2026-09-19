@@ -7,11 +7,11 @@ from __future__ import annotations
 import sys
 from unittest.mock import patch
 
+import pytest
 
 from code_forge.cli import _build_parser, main
 from code_forge.errors import CliError
 from code_forge.exit_codes import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -124,6 +124,12 @@ class TestDetectSubcommand:
 
 class TestResolveOutletSubcommand:
     """Tests for code-forge resolve-outlet subcommand."""
+
+    # main() reads .code-forge/gate.yaml from the working directory, so
+    # these tests otherwise pass or fail on whatever the checkout holds.
+    @pytest.fixture(autouse=True)
+    def _isolate_from_repo_config(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
 
     def test_resolve_outlet_parser_registered(self):
         """resolve-outlet subcommand is registered in _build_parser."""

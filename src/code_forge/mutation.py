@@ -352,9 +352,9 @@ def _is_runner_missing(
         if m_idx + 1 < len(baseline_cmd):
             runner_module = baseline_cmd[m_idx + 1]
             combined = (result.stdout or "") + (result.stderr or "")
-            if ("No module named '%s'" % runner_module) in combined:
+            if (f"No module named '{runner_module}'") in combined:
                 return True
-            if ("No module named %s" % runner_module) in combined:
+            if (f"No module named {runner_module}") in combined:
                 return True
 
     return False
@@ -434,7 +434,7 @@ def _run_baseline_guard(
             )
             return ("skip", [finding], [infra])
         except subprocess.TimeoutExpired:
-            desc = "baseline tests timed out (flaky guard)%s" % suffix
+            desc = f"baseline tests timed out (flaky guard){suffix}"
             finding = StateFinding(
                 id="MUTATION_SKIPPED",
                 fingerprint="mutation-baseline-timeout",
@@ -791,14 +791,14 @@ def run_mutation(
         for survivor in survivors:
             findings.append(
                 StateFinding(
-                    id="mutant-%s" % survivor.mutant_name,
-                    fingerprint="mutant:%s" % survivor.mutant_name,
+                    id=f"mutant-{survivor.mutant_name}",
+                    fingerprint=f"mutant:{survivor.mutant_name}",
                     source="MUTANT",
                     disposition=Disposition.CONFIRMED,
                     file=survivor.file,
                     line_range=[0, 0],  # mutmut 3.x results omit line numbers
                     description=(
-                        "mutant survived: %s" % survivor.mutant_name
+                        f"mutant survived: {survivor.mutant_name}"
                     ),
                 )
             )
@@ -818,23 +818,31 @@ def run_mutation(
 def launch_detached_mutation(
     diff_files: list[str],
     baseline_cmd: list[str],
-    cwd: "Path",
-    result_path: "Path",
+    cwd: Path,
+    result_path: Path,
     baseline_timeout: int = 120,
     also_copy: list[str] | None = None,
     max_children: int | None = None,
     memory_limit_bytes: int | None = None,
-) -> int | None:
-    """Launch the mutation run in a detached process group, returning its PID.
+) -> bool:
+    """Launch the mutation run detached, reporting whether it started.
+
+    Where os.fork exists the run is reparented to init, and True means
+    the middle process exited cleanly. Elsewhere the run is a direct
+    child and True only means Popen succeeded -- the caller still reads
+    the outcome from result_path either way.
+
+    The run writes its own pid into result_path; callers track it from
+    there rather than from a handle held here.
 
     max_children and memory_limit_bytes are forwarded to run_mutation; see
     its docstring for the resource-guard semantics (mutmut defaults to
     cpu_count() children, which OOM'd the review service on a 16-core host).
     """
-    import subprocess
-    import sys
     import json
     import os
+    import subprocess
+    import sys
     import time
 
     # Write initial data BEFORE launching the child so we never overwrite
@@ -860,22 +868,22 @@ import time
 from pathlib import Path
 
 # Add src to path so code_forge is importable if run from source
-sys.path.insert(0, {repr(forge_src)})
+sys.path.insert(0, {forge_src!r})
 try:
     from code_forge.mutation import run_mutation
     from code_forge.disposition import Disposition
 except ImportError:
     # Installed package layout: the cwd itself may be the package root
     import os as _os
-    _os.chdir(str(Path({repr(str(cwd))})))
-    sys.path.insert(0, str(Path({repr(str(cwd))})))
+    _os.chdir(str(Path({str(cwd)!r})))
+    sys.path.insert(0, str(Path({str(cwd)!r})))
     from code_forge.mutation import run_mutation
     from code_forge.disposition import Disposition
 
-result_path = Path({repr(str(result_path))})
-cwd_ref = Path({repr(str(cwd))})
-diff_files = {repr(diff_files)}
-baseline_cmd = {repr(baseline_cmd)}
+result_path = Path({str(result_path)!r})
+cwd_ref = Path({str(cwd)!r})
+diff_files = {diff_files!r}
+baseline_cmd = {baseline_cmd!r}
 also_copy = {also_copy!r}
 
 try:
@@ -924,9 +932,20 @@ except Exception as e:
     except Exception:
         pass
 """
+    # The run reports its own pid into result_path, and every later
+    # check reads it from there. Keeping it as a direct child only
+    # buys a handle nobody waits on, so the finished run lingers as a
+    # zombie. Fork once more and let init do the reaping; the short
+    # lived middle process is the one waited for here.
+    detaches_itself = hasattr(os, "fork")
+    launch_script = (
+        ("import os\nif os.fork():\n    os._exit(0)\n" + script)
+        if detaches_itself
+        else script
+    )
     try:
         p = subprocess.Popen(
-            [sys.executable, "-c", script],
+            [sys.executable, "-c", launch_script],
             start_new_session=True,
             close_fds=True,
             stdin=subprocess.DEVNULL,
@@ -934,7 +953,19 @@ except Exception as e:
             stderr=subprocess.DEVNULL,
             cwd=cwd,
         )
+        # Without fork the run itself is the child, so waiting on it
+        # would block until the whole mutation pass finishes.
+        if not detaches_itself:
+            return p.pid > 0
+        # The middle process only forks and exits; measured at ~30ms.
+        # A generous ceiling still keeps the caller's budget intact.
+        try:
+            return p.wait(timeout=5) == 0
+        except subprocess.TimeoutExpired:
+            # It never exited, so it is ours to clean up; the run it
+            # forked is already detached and keeps going.
+            p.kill()
+            p.wait()
+            return False
     except Exception:  # noqa: BLE001
-        return None
-
-    return p.pid
+        return False

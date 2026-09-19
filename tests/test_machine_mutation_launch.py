@@ -11,8 +11,10 @@ This is asserted on the Popen call.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from code_forge import mutation as mutation_module
@@ -77,10 +79,9 @@ class TestAsyncMutationLaunch:
             "and this test asserts nothing"
         )
         assert captured.get("start_new_session") is True, (
-            "mutation subprocess was launched with start_new_session=%r. A regular "
+            "mutation subprocess was launched with start_new_session={!r}. A regular "
             "subprocess might be killed when the reviewing shell exits, so the run dies before "
-            "writing its result and the gate silently degrades to SKIPPED."
-            % captured.get("start_new_session")
+            "writing its result and the gate silently degrades to SKIPPED.".format(captured.get("start_new_session"))
         )
 
     def test_unusable_gate_config_is_recorded_not_swallowed(
@@ -140,9 +141,8 @@ class TestAsyncMutationLaunch:
             for e in sm._state.infra_errors
         ), (
             "mutation was skipped for an unusable gate.yaml and left no "
-            "trace: infra_errors=%r. The verdict then reads identically to "
+            f"trace: infra_errors={sm._state.infra_errors!r}. The verdict then reads identically to "
             "one where the mutation gate actually ran."
-            % sm._state.infra_errors
         )
 
     def test_pid_none_in_result_file_defers_not_launches(
@@ -200,7 +200,7 @@ class TestAsyncMutationLaunch:
             "mutation-result.json already had status=running with pid=None"
         )
         assert verdict == Verdict.PENDING, (
-            "expected PENDING to defer to next round, got %r" % verdict
+            f"expected PENDING to defer to next round, got {verdict!r}"
         )
 
     def test_missing_gate_yaml_records_specific_error(
@@ -230,7 +230,7 @@ class TestAsyncMutationLaunch:
             for e in sm._state.infra_errors
         ), (
             "missing gate.yaml should produce a specific 'not found' error, "
-            "got infra_errors=%r" % sm._state.infra_errors
+            f"got infra_errors={sm._state.infra_errors!r}"
         )
 
     def test_launch_creates_parent_directory_for_result_file(
@@ -249,7 +249,10 @@ class TestAsyncMutationLaunch:
 
         monkeypatch.setattr(
             mutation_module.subprocess, "Popen",
-            lambda *a, **kw: type("P", (), {"pid": 77777})(),
+            lambda *a, **kw: type("P", (), {
+                "pid": 77777,
+                "wait": lambda self, timeout=None: 0,
+            })(),
         )
 
         pid = mutation_module.launch_detached_mutation(
@@ -259,9 +262,10 @@ class TestAsyncMutationLaunch:
             result_path=result_path,
         )
 
-        assert pid is not None, (
-            "launch_detached_mutation returned None -- the initial write "
-            "to result_path probably failed because the parent directory "
+        assert pid is True, (
+            "launch_detached_mutation reported a failed start -- the "
+            "initial write to result_path probably failed because the "
+            "parent directory "
             "was not created"
         )
         assert result_path.exists(), (
@@ -361,8 +365,7 @@ class TestAsyncMutationLaunch:
             "failed to start" in e
             for e in sm._state.infra_errors
         ), (
-            "Popen failure should produce an infra error, got %r"
-            % sm._state.infra_errors
+            f"Popen failure should produce an infra error, got {sm._state.infra_errors!r}"
         )
 
 
@@ -431,3 +434,106 @@ class TestAlsoCopyReachesTheMirror:
             "test.also_copy in gate.yaml never reached launch_detached_mutation; "
             "the mirror will lack the directory and path-loading tests will die"
         )
+
+
+def test_launch_leaves_no_child_to_reap(tmp_path):
+    # The caller only keeps the pid; the result travels through a file.
+    # If the launcher stays the direct parent, nobody ever calls wait()
+    # and the finished run lingers as a zombie.
+    result_path = tmp_path / ".code-forge" / "mutation-result.json"
+
+    started = mutation_module.launch_detached_mutation(
+        diff_files=["test.py"],
+        baseline_cmd=[sys.executable, "-c", "pass"],
+        cwd=tmp_path,
+        result_path=result_path,
+    )
+    assert started is True
+
+    # No child may be left behind: the middle process is waited for
+    # inside the launcher, and the run itself belongs to init. Ask about
+    # that one pid only -- waiting on -1 would steal another test's child.
+    # The run writes a placeholder first and its own pid later; wait for
+    # the pid, not merely for the file to exist.
+    run_pid = None
+    for _ in range(100):
+        if result_path.exists():
+            run_pid = json.loads(result_path.read_text()).get("pid")
+            if run_pid is not None:
+                break
+        time.sleep(0.05)
+    assert run_pid is not None, "the run never reported its pid"
+    try:
+        reaped, _ = os.waitpid(run_pid, os.WNOHANG)
+    except ChildProcessError:
+        return
+    raise AssertionError(
+        f"run {run_pid} is still our child (waitpid returned {reaped}), so it "
+        "will sit as a zombie once the caller drops the handle"
+    )
+
+
+def test_the_run_is_reparented_away_from_us(tmp_path):
+    # The run writes its own pid; if it were still our child, that pid
+    # would report us as its parent and we would owe it a wait().
+    result_path = tmp_path / "result.json"
+    started = mutation_module.launch_detached_mutation(
+        diff_files=["test.py"],
+        baseline_cmd=[sys.executable, "-c", "import time; time.sleep(3)"],
+        cwd=tmp_path,
+        result_path=result_path,
+    )
+    assert started is True
+
+    run_pid = None
+    for _ in range(100):
+        try:
+            run_pid = json.loads(result_path.read_text()).get("pid")
+        except (OSError, ValueError):
+            run_pid = None
+        if run_pid:
+            break
+        time.sleep(0.05)
+    assert run_pid, "the run never reported its pid"
+
+    if not Path("/proc").is_dir():  # pragma: no cover - non-Linux
+        return
+
+    ppid = int(
+        Path(f"/proc/{run_pid}/stat").read_text().rsplit(")", 1)[1].split()[1]
+    )
+    assert ppid != os.getpid(), (
+        "the run is still our direct child, so nothing reaps it once "
+        "the caller drops the handle"
+    )
+
+
+def test_a_middle_process_that_hangs_is_cleaned_up(tmp_path, monkeypatch):
+    # A middle process that never exits would otherwise be left behind
+    # as a zombie, which is the very leak this launcher exists to avoid.
+    events = []
+
+    class Hanging:
+        pid = 4242
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                events.append("waited")
+                raise mutation_module.subprocess.TimeoutExpired("x", timeout)
+            events.append("reaped")
+            return -9
+
+        def kill(self):
+            events.append("killed")
+
+    monkeypatch.setattr(
+        mutation_module.subprocess, "Popen", lambda *a, **k: Hanging(),
+    )
+    started = mutation_module.launch_detached_mutation(
+        diff_files=["source.py"],
+        baseline_cmd=["pytest"],
+        cwd=tmp_path,
+        result_path=tmp_path / "r.json",
+    )
+    assert started is False
+    assert events == ["waited", "killed", "reaped"]

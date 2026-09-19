@@ -54,13 +54,13 @@ def test_detached_script_preserves_outcome(tmp_path, outcome):
 
     def spawn(args, **kwargs):
         captured["script"] = args[2]
-        return type("Child", (), {"pid": 1234})()
+        return type("Child", (), {"pid": 1234, "wait": lambda self, timeout=None: 0})()
 
     result_path = tmp_path / "result.json"
     with patch("code_forge.mutation.subprocess.Popen", side_effect=spawn):
         assert launch_detached_mutation(
             ["source.py"], ["pytest"], tmp_path, result_path,
-        ) == 1234
+        ) is True
     # Execute the generated production script, replacing only the external run.
     finding = StateFinding(
         id="MUTATION_ERROR" if outcome == "error" else "mutant-example",

@@ -148,14 +148,27 @@ async def test_wait_for_job_awaits_stored_task():
         assert entry["status"] in ("completed", "failed")
 
 
+def _open_log_sink(path):
+    """Opened outside the coroutine: the child keeps its own duplicate."""
+    return open(path, "w")
+
+
+def _write_temp_file(text="", suffix=".log"):
+    """A closed temp file holding `text`; the caller owns the path."""
+    fh = tempfile.NamedTemporaryFile(  # noqa: SIM115
+        mode="w", suffix=suffix, delete=False, encoding="utf-8",
+    )
+    try:
+        fh.write(text)
+    finally:
+        fh.close()
+    return fh.name
+
+
 @pytest.mark.asyncio
 async def test_wait_for_job_deletes_tempfile():
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", delete=False, encoding="utf-8"
-    )
-    tmp.write("test contract")
-    tmp.close()
-    assert os.path.exists(tmp.name)
+    tmp_name = _write_temp_file("test contract", suffix=".md")
+    assert os.path.exists(tmp_name)
 
     async def _comm():
         return (b"output", b"")
@@ -163,10 +176,10 @@ async def test_wait_for_job_deletes_tempfile():
     task = asyncio.ensure_future(_comm())
     proc = MagicMock()
     proc.returncode = 0
-    start_job(task, proc, tempfile_path=tmp.name)
+    start_job(task, proc, tempfile_path=tmp_name)
     # Wait for _wait_for_job to complete and delete the file
     await asyncio.sleep(0.1)
-    assert not os.path.exists(tmp.name)
+    assert not os.path.exists(tmp_name)
 
 
 @pytest.mark.asyncio
@@ -362,7 +375,6 @@ async def test_terminate_and_reap_terminates():
 
     async def _wait_sets_returncode():
         proc.returncode = -15
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_sets_returncode)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -383,8 +395,7 @@ async def test_terminate_and_reap_kills_on_timeout():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise asyncio.TimeoutError
-        return None
+            raise TimeoutError
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -427,7 +438,6 @@ async def test_terminate_and_reap_uses_killpg_for_session_leader():
 
     async def _wait_sets_returncode():
         proc.returncode = -15
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_sets_returncode)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -447,7 +457,6 @@ async def test_terminate_and_reap_falls_back_to_terminate_when_killpg_fails():
 
     async def _wait_sets_returncode():
         proc.returncode = -15
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_sets_returncode)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -469,9 +478,8 @@ async def test_terminate_and_reap_sigkill_uses_killpg_for_session_leader():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         proc.returncode = -9
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -495,9 +503,8 @@ async def test_terminate_and_reap_sigkill_pgid_none_falls_back_to_kill():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         proc.returncode = -9
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -518,9 +525,8 @@ async def test_terminate_and_reap_sigkill_pgid_not_equal_pid_falls_back_to_kill(
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         proc.returncode = -9
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -541,9 +547,8 @@ async def test_terminate_and_reap_sigkill_killpg_oserror_falls_back_to_kill():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         proc.returncode = -9
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -565,8 +570,7 @@ async def test_terminate_and_reap_sigkill_both_fail_no_raise():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise asyncio.TimeoutError
-        return None  # stays None: D-state child
+            raise TimeoutError
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     proc.kill.side_effect = OSError("process not found")
@@ -600,9 +604,8 @@ async def test_terminate_and_reap_on_windows_names_no_absent_signal(
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         proc.returncode = -9
-        return None
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
@@ -661,55 +664,67 @@ async def test_watchdog_stderr_tail_preserved():
     The PIPE path cannot capture output after task cancellation, so this
     test uses a log file to mirror production behavior.
     """
-    stderr_fh = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".log", delete=False, encoding="utf-8",
-    )
-    stderr_fh.close()
-    stderr_fp = open(stderr_fh.name, "w")
-    proc = await asyncio.create_subprocess_exec(
-        "python3", "-c",
-        "import sys, time; sys.stderr.write('MARKER_SENTINEL\\n'); "
-        "sys.stderr.flush(); time.sleep(60)",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=stderr_fp,
-    )
-    stderr_fp.close()
+    log_path = _write_temp_file()
+    # Closed as soon as the child is up: it holds its own duplicate.
+    with _open_log_sink(log_path) as stderr_fp:
+        proc = await asyncio.create_subprocess_exec(
+            "python3", "-c",
+            "import sys, time; sys.stderr.write('MARKER_SENTINEL\\n'); "
+            "sys.stderr.flush(); time.sleep(60)",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=stderr_fp,
+        )
     inner_task = asyncio.create_task(proc.communicate())
     job_id = start_job(
         inner_task, proc,
-        stderr_log_path=stderr_fh.name,
+        stderr_log_path=log_path,
         max_lifetime_s=0.5,
     )
     await asyncio.sleep(1.0)
     entry = _jobs.get(job_id)
-    assert entry is not None
-    assert "MARKER_SENTINEL" in entry["result"]["stderr"]
+    try:
+        assert entry is not None
+        assert "MARKER_SENTINEL" in entry["result"]["stderr"]
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        inner_task.cancel()
+        if os.path.exists(log_path):
+            os.unlink(log_path)
 
 
 @pytest.mark.asyncio
 async def test_watchdog_stderr_tail_from_log_file():
     """Stderr redirected to log file, marker survives."""
-    stderr_fh = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".log", delete=False, encoding="utf-8",
-    )
-    stderr_fh.close()
-    proc = await asyncio.create_subprocess_exec(
-        "python3", "-c",
-        "import sys; sys.stderr.write('LOGFILE_MARKER\\n'); "
-        "sys.stderr.flush(); import time; time.sleep(60)",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=open(stderr_fh.name, "w"),
-    )
+    log_path = _write_temp_file()
+    # Closed as soon as the child is up: it holds its own duplicate.
+    with _open_log_sink(log_path) as log_sink:
+        proc = await asyncio.create_subprocess_exec(
+            "python3", "-c",
+            "import sys; sys.stderr.write('LOGFILE_MARKER\\n'); "
+            "sys.stderr.flush(); import time; time.sleep(60)",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=log_sink,
+        )
     inner_task = asyncio.create_task(proc.communicate())
     job_id = start_job(
         inner_task, proc,
-        stderr_log_path=stderr_fh.name,
+        stderr_log_path=log_path,
         max_lifetime_s=0.5,
     )
     await asyncio.sleep(1.0)
     entry = _jobs.get(job_id)
-    assert entry is not None
-    assert "LOGFILE_MARKER" in entry["result"]["stderr"]
+    try:
+        assert entry is not None
+        assert "LOGFILE_MARKER" in entry["result"]["stderr"]
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        inner_task.cancel()
+        if os.path.exists(log_path):
+            os.unlink(log_path)
 
 
 @pytest.mark.asyncio
@@ -849,31 +864,22 @@ def test_read_stderr_tail_missing_file():
 
 def test_read_stderr_tail_reads_file():
     from code_forge.mcp_jobs import _read_stderr_tail
-    f = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".log", delete=False, encoding="utf-8",
-    )
-    f.write("hello world tail")
-    f.close()
-    result = _read_stderr_tail({"stderr_log_path": f.name})
+    log_path = _write_temp_file("hello world tail")
+    result = _read_stderr_tail({"stderr_log_path": log_path})
     assert "hello world tail" in result
-    os.unlink(f.name)
+    os.unlink(log_path)
 
 
 def test_read_stderr_tail_truncates():
     """Must read the TAIL, not the HEAD: head yields 'AAAA...';
     tail yields 'BBBB...'."""
     from code_forge.mcp_jobs import _read_stderr_tail
-    f = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".log", delete=False, encoding="utf-8",
-    )
-    f.write("A" * 4900)
-    f.write("B" * 100)
-    f.close()
-    result = _read_stderr_tail({"stderr_log_path": f.name}, max_bytes=100)
+    log_path = _write_temp_file("A" * 4900 + "B" * 100)
+    result = _read_stderr_tail({"stderr_log_path": log_path}, max_bytes=100)
     assert result == "B" * 100, (
         f"Expected tail (BBBB...), got HEAD or partial: {result[:20]}..."
     )
-    os.unlink(f.name)
+    os.unlink(log_path)
 
 
 def test_read_stderr_tail_multibyte_boundary():
@@ -887,12 +893,8 @@ def test_read_stderr_tail_multibyte_boundary():
     filler = "A" * 4900
     chinese = "\u4e2d" * 40  # U+4E2D = '\u4e2d', 3 bytes each
     content = filler + chinese
-    f = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".log", delete=False, encoding="utf-8",
-    )
-    f.write(content)
-    f.close()
-    result = _read_stderr_tail({"stderr_log_path": f.name}, max_bytes=max_bytes)
+    log_path = _write_temp_file(content)
+    result = _read_stderr_tail({"stderr_log_path": log_path}, max_bytes=max_bytes)
     # (a) Must not raise -- decode(errors="replace") handles partial sequences
     assert isinstance(result, str)
     # (b) After the replacement char(s), the rest is clean Chinese.
@@ -911,7 +913,7 @@ def test_read_stderr_tail_multibyte_boundary():
     assert result[0] == "\ufffd", (
         f"First char should be replacement, got {result[0]!r}"
     )
-    os.unlink(f.name)
+    os.unlink(log_path)
 
 
 # SIGKILL reap timeout edge test
@@ -994,9 +996,12 @@ async def test_killpg_kills_entire_process_group():
     # Check that the background sleeper is also dead
     # (killpg kills the whole group, not just the leader)
     import subprocess
-    result = subprocess.run(
+    result = await asyncio.to_thread(
+        subprocess.run,
         ["ps", "-o", "pid=", "--sid", str(pgid)],
         capture_output=True, text=True, timeout=5,
+        # Exit 1 is the expected answer here: nothing left in the session.
+        check=False,
     )
     # If any processes remain in the session, the output is non-empty
     remaining = result.stdout.strip()
