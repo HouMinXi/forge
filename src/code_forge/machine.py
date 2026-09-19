@@ -609,18 +609,18 @@ class StateMachine:
 
             if baseline_cmd is not None:
                 try:
-                    pid = launch_detached_mutation(
+                    started = launch_detached_mutation(
                         diff_files, baseline_cmd, self.cwd,
                         result_path, baseline_timeout, also_copy,
                         max_children=mutation_max_children,
                         memory_limit_bytes=mutation_memory_limit,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    pid = None
+                    started = False
                     self._state.infra_errors.append(
                         f"CI: mutation launch error: {exc}"
                     )
-                if pid is None:
+                if not started:
                     self._state.infra_errors.append(
                         "CI: mutation subprocess failed to start"
                     )
@@ -1310,9 +1310,7 @@ class StateMachine:
         completeness, stale-window) is enforced by
         _receipt_gate_terminal_errors at the terminal.
         """
-        errors: list[str] = []
-        for err in self._last_receipt_write_errors:
-            errors.append(err)
+        errors: list[str] = list(self._last_receipt_write_errors)
         diff_text = self._receipt_diff()
         excerpts = self._excerpts_last_round
         if diff_text and excerpts:
@@ -2057,12 +2055,9 @@ class StateMachine:
         from .ledger import iter_rows
 
         # Layer 1: Environment variable kill-switch
-        try:
-            env_val = os.environ.get("CODE_FORGE_DISABLE_LEDGER", "").strip().lower()
-            if env_val in ("1", "true", "yes", "on"):
-                return 0
-        except Exception:
-            pass
+        env_val = os.environ.get("CODE_FORGE_DISABLE_LEDGER", "").strip().lower()
+        if env_val in ("1", "true", "yes", "on"):
+            return 0
 
         # Layer 2: gate.yaml kill-switch (tolerant raw YAML load, fail-open on parse error)
         try:
@@ -2381,7 +2376,7 @@ class StateMachine:
 
         try:
             gate_config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
-        except Exception:
+        except Exception:  # noqa: BLE001 - no config means no rulepack, by design
             return []
 
         blocking_ids = gate_config.get("rulepacks_blocking", [])
@@ -2505,7 +2500,7 @@ class StateMachine:
         if not has_runtime:
             return
 
-        print("", file=sys.stderr)
+        print(file=sys.stderr)
         print("--- Smoke Status ---", file=sys.stderr)
 
         # Case (a): summary finding
@@ -2519,7 +2514,7 @@ class StateMachine:
             if f.id == "runtime-skipped":
                 desc = f.description
                 prefix = "RUNTIME axis SKIPPED: "
-                reason = desc[len(prefix):] if desc.startswith(prefix) else desc
+                reason = desc.removeprefix(prefix)
                 print(
                     f"smoke: UNVERIFIED (axis skipped: {reason})",
                     file=sys.stderr,
@@ -2548,7 +2543,7 @@ class StateMachine:
 
         if not self._advisories:
             return
-        print("", file=sys.stderr)
+        print(file=sys.stderr)
         print("--- Advisory ---", file=sys.stderr)
         for f in self._advisories:
             if f.id in _RUNTIME_EXCLUSIVE_IDS:
@@ -2564,10 +2559,10 @@ class StateMachine:
         self,
         l0_findings: list[StateFinding],
         l1_findings: list[StateFinding],
-        l2_findings: list[StateFinding] = None,
-        e2e_findings: list[StateFinding] = None,
-        coverage_findings: list[StateFinding] = None,
-        rulepack_findings: list[StateFinding] = None,
+        l2_findings: list[StateFinding] | None = None,
+        e2e_findings: list[StateFinding] | None = None,
+        coverage_findings: list[StateFinding] | None = None,
+        rulepack_findings: list[StateFinding] | None = None,
     ) -> list[StateFinding]:
         """Merge L0 + L1 + L2 + E2E + COVERAGE + RULEPACK by fingerprint.
 
@@ -2679,9 +2674,9 @@ class StateMachine:
         round_index: int,
         l0_findings: list[StateFinding],
         l1_findings: list[StateFinding],
-        l2_findings: list[StateFinding] = None,
-        e2e_findings: list[StateFinding] = None,
-        rulepack_findings: list[StateFinding] = None,
+        l2_findings: list[StateFinding] | None = None,
+        e2e_findings: list[StateFinding] | None = None,
+        rulepack_findings: list[StateFinding] | None = None,
     ) -> None:
         """Append per-round snapshot to round_history for STATE-05."""
         snapshot = {

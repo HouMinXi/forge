@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -103,7 +104,7 @@ class TestBuildL1Provider:
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import Usage
         p = build_l1_provider("stub", None)
-        findings, excerpts, usage, duration = p()
+        findings, _excerpts, usage, duration = p()
         assert findings == []
         assert usage == Usage()
         assert duration == 0.0
@@ -127,7 +128,7 @@ class TestBuildL1Provider:
         from code_forge.llm_invoke import Usage
         p = build_l1_provider("stub", None)
         with patch("code_forge.llm_invoke.llm_invoke") as mock:
-            findings, excerpts, usage, duration = p()
+            findings, _excerpts, usage, duration = p()
         assert findings == []
         assert usage == Usage()
         assert duration == 0.0
@@ -326,7 +327,7 @@ class TestInfraSourceTagging:
         ) as mock_invoke:
             mock_invoke.side_effect = LLMInvokeError("timeout")
             provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, _excerpts, _usage, _duration = provider()
 
         infra = [f for f in findings if f.source == "INFRA"]
         assert len(infra) >= 1
@@ -353,7 +354,7 @@ class TestInfraSourceTagging:
                 duration_s=0.0,
             )
             provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, _excerpts, _usage, _duration = provider()
 
         infra = [f for f in findings if f.source == "INFRA"]
         assert len(infra) >= 1
@@ -573,7 +574,7 @@ class TestCoverageGuard:
 
         with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
             provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, _excerpts, _usage, _duration = provider()
 
         infra = [
             f for f in findings
@@ -601,7 +602,7 @@ class TestCoverageGuard:
 
         with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
             provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, _excerpts, _usage, _duration = provider()
 
         infra = [
             f for f in findings
@@ -627,7 +628,7 @@ class TestCoverageGuard:
 
         with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
             provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, _excerpts, _usage, _duration = provider()
 
         infra = [
             f for f in findings
@@ -672,7 +673,7 @@ class TestCoverageGuard:
 
         with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
             provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, _excerpts, _usage, _duration = provider()
 
         infra = [
             f for f in findings
@@ -708,7 +709,7 @@ class TestCoverageGuard:
 
         with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
             provider = build_l1_provider("real", resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, _excerpts, _usage, _duration = provider()
 
         infra = [
             f for f in findings
@@ -765,13 +766,12 @@ class TestCoverageGuard:
 
         # Guard bypassed: monkeypatch parse_diff_files to return empty
         # (no changed files -> guard has nothing to check -> no INFRA)
-        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
-            with patch(
-                "code_forge.verify.parse_diff_files",
-                return_value={},
-            ):
-                provider2 = build_l1_provider("real", resolved)
-                findings2, _, _, _ = provider2()
+        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp), patch(
+            "code_forge.verify.parse_diff_files",
+            return_value={},
+        ):
+            provider2 = build_l1_provider("real", resolved)
+            findings2, _, _, _ = provider2()
         infra2 = [
             f for f in findings2
             if "incomplete-coverage" in f.id
@@ -903,7 +903,7 @@ class TestBuildSamplingL1Provider:
         with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
              patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
             provider = build_sampling_l1_provider(session, loop, resolved)
-            findings, excerpts, usage, duration = provider()
+            findings, excerpts, usage, _duration = provider()
 
             assert len(findings) == 0
             assert usage == Usage(0, 0)
@@ -1081,7 +1081,7 @@ class TestBuildSamplingL1Provider:
 class TestParallelL1:
     """Parallel execution: determinism, no-lost-work, failure isolation."""
 
-    _EXCERPTS = [
+    _EXCERPTS: ClassVar[list[dict]] = [
         {"file": "src/a.py", "start_line": 1, "end_line": 4,
          "content": "line1\nadded\nline2\nline4"},
         {"file": "src/b.py", "start_line": 5, "end_line": 8,
@@ -1142,9 +1142,7 @@ class TestParallelL1:
                   "description": "shared issue"}
 
         def mock_invoke(prompt, **kw):
-            if "structural code reviewer" in prompt:
-                return _stub_llm_response([shared], self._EXCERPTS)
-            elif "senior engineer" in prompt:
+            if "structural code reviewer" in prompt or "senior engineer" in prompt:
                 return _stub_llm_response([shared], self._EXCERPTS)
             return _stub_llm_response(
                 [{"file": "src/a.py", "line": 3, "severity": "P3",
@@ -1684,6 +1682,7 @@ class TestSamplingSharedPromptPrefix:
         finally:
             loop.call_soon_threadsafe(loop.stop)
             t.join(timeout=5)
+            loop.close()
         return seen
 
     def test_sampling_passes_share_a_leading_prefix(self):
@@ -1800,7 +1799,7 @@ class TestGroupedL1Provider:
             self._spec("engine:a.py", _ONE_FILE_DIFF, "ctx-A"),
             self._spec("covered:b.py", self._B_ONLY_DIFF, "ctx-B"),
         ]
-        (findings, _ex, usage, _dur), prompts = self._run(specs, reply)
+        (findings, _ex, _usage, _dur), prompts = self._run(specs, reply)
         assert len(prompts) == 6, "2 groups x 3 passes"
         a_prompts = [p for p in prompts[:3]]
         b_prompts = [p for p in prompts[3:]]

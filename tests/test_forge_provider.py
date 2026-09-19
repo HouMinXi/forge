@@ -245,8 +245,10 @@ class TestBackup:
 
     def test_separate_runs_get_separate_stamps(self):
         import datetime as dt
-        a = dt.datetime.now().strftime(fp.BACKUP_FMT)
-        b = dt.datetime.now().strftime(fp.BACKUP_FMT)
+        # Mirrors the production call in forge-provider.py, which stamps
+        # backups in local time; %f keeps consecutive runs apart.
+        a = dt.datetime.now().strftime(fp.BACKUP_FMT)  # noqa: DTZ005
+        b = dt.datetime.now().strftime(fp.BACKUP_FMT)  # noqa: DTZ005
         assert a != b
 
 
@@ -294,7 +296,7 @@ class TestProbe:
                 self.end_headers()
                 self.wfile.write(payload)
 
-            def log_message(self, format, *args):  # noqa: A002
+            def log_message(self, format, *args):
                 pass
 
         srv = socketserver.TCPServer(("127.0.0.1", 0), H,
@@ -311,6 +313,7 @@ class TestProbe:
             ok, _ = fp.probe(url, "m", "k", "anthropic")
         finally:
             srv.shutdown()
+            srv.server_close()
         assert ok is True
 
     def test_error_body_under_200_fails(self):
@@ -324,6 +327,7 @@ class TestProbe:
             ok, detail = fp.probe(url, "m", "k", "anthropic")
         finally:
             srv.shutdown()
+            srv.server_close()
         assert ok is False
         assert "quota exceeded" in detail
 
@@ -333,6 +337,7 @@ class TestProbe:
             ok, _ = fp.probe(url, "m", "k", "anthropic")
         finally:
             srv.shutdown()
+            srv.server_close()
         assert ok is False
 
 
@@ -415,9 +420,9 @@ class TestAddAndSet:
 
     def _args(self, name, dry_run=False, **kw):
         import types
-        fields = dict(name=name, base_url=None, model=None, format=None,
-                      key_env=None, key_pass=None, timeout_s=None,
-                      max_tokens=None, dry_run=dry_run)
+        fields = {"name": name, "base_url": None, "model": None, "format": None,
+                      "key_env": None, "key_pass": None, "timeout_s": None,
+                      "max_tokens": None, "dry_run": dry_run}
         fields.update(kw)
         return types.SimpleNamespace(**fields)
 
@@ -623,10 +628,10 @@ class TestSync:
 
     def _args(self, name, **kw):
         import types
-        fields = dict(name=name, base_url="https://new.example/anthropic",
-                      model="new-model", format="anthropic", from_name=None,
-                      key_env="NEW_KEY", key_pass=None, timeout_s=2400,
-                      max_tokens=65536, dry_run=False)
+        fields = {"name": name, "base_url": "https://new.example/anthropic",
+                      "model": "new-model", "format": "anthropic", "from_name": None,
+                      "key_env": "NEW_KEY", "key_pass": None, "timeout_s": 2400,
+                      "max_tokens": 65536, "dry_run": False}
         fields.update(kw)
         return types.SimpleNamespace(**fields)
 

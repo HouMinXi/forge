@@ -153,14 +153,14 @@ def test_detached_script_forwards_resource_guards(tmp_path):
 
     def spawn(args, **kwargs):
         captured["script"] = args[2]
-        return type("Child", (), {"pid": 4321})()
+        return type("Child", (), {"pid": 4321, "wait": lambda self, timeout=None: 0})()
 
     result_path = tmp_path / "result.json"
     with patch("code_forge.mutation.subprocess.Popen", side_effect=spawn):
         assert launch_detached_mutation(
             ["source.py"], ["pytest"], tmp_path, result_path,
             max_children=3, memory_limit_bytes=64 * 1024**2,
-        ) == 4321
+        ) is True
 
     finding = type("F", (), {
         "id": "mutant-x", "source": "MUTANT",
