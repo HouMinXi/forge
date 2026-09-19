@@ -392,3 +392,35 @@ class TestObjectKeyPosition:
     def test_dangling_comma_before_close_is_rejected(self):
         assert is_truncated("[1,]") is False
         assert is_truncated('{"a":1,}') is False
+
+    def test_bare_word_as_object_key_is_not_a_cut(self):
+        # A key must be a string, so no suffix can rescue this; an open
+        # object that still allows one does read as a cut.
+        assert is_truncated("{X") is False
+        assert is_truncated('{"a"') is True
+
+    def test_bare_word_in_a_nested_array_is_not_a_cut(self):
+        assert is_truncated("[[X") is False
+        assert is_truncated("[[1") is True
+
+    def test_closed_object_with_a_lone_key_is_not_a_cut(self):
+        # The brace already closed, so nothing can follow; the same pair
+        # left open is still a cut.
+        assert is_truncated('{""}') is False
+        assert is_truncated('{""') is True
+
+    def test_letter_glued_after_a_number_is_not_a_cut(self):
+        assert is_truncated("1X") is False
+        assert is_truncated("1.5X") is False
+        assert is_truncated("1e2X") is False
+        assert is_truncated("1.5") is False
+
+    def test_digit_glued_after_a_letter_is_not_a_cut(self):
+        assert is_truncated("X1") is False
+        assert is_truncated("t1") is False
+
+    def test_prefix_of_a_literal_is_still_a_cut(self):
+        # "tr" can still grow into "true"; "t1" cannot grow into anything.
+        assert is_truncated("tr") is True
+        assert is_truncated("fal") is True
+        assert is_truncated("nu") is True
