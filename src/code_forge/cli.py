@@ -4355,19 +4355,41 @@ def _run_mutation_check(args, cwd: Path) -> int:
         glob_pat = args.paths
         diff_files = [f for f in diff_files if _fnmatch(f, glob_pat)]
 
-    # Default baseline command: pytest (same as gate_check convention).
-    baseline_cmd = ["pytest", "--tb=no", "-q"]
+    from .gate_check import load_gate_config
 
+    test_config = {}
+    config_path = cwd / ".code-forge" / "gate.yaml"
+    try:
+        test_config = load_gate_config(config_path)["test"]
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        print(f"code-forge: mutation-check: {exc}", file=sys.stderr)
+        return EXIT_CLI_ERROR
+
+    memory_mb = test_config.get("mutation_memory_limit_mb")
     findings, infra_errors = run_mutation(
         diff_files=diff_files,
-        baseline_cmd=baseline_cmd,
+        baseline_cmd=test_config.get("command", ["pytest", "--tb=no", "-q"]),
         timeout=args.timeout,
         cwd=cwd,
+        baseline_timeout=test_config.get("timeout_seconds", 120),
+        also_copy=test_config.get("also_copy"),
+        max_children=test_config.get("mutation_max_children"),
+        memory_limit_bytes=memory_mb * 1024**2 if memory_mb is not None else None,
     )
 
-    # Report infra errors to stderr (informational).
-    for err in infra_errors:
+    skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
+    no_python = any(f.fingerprint == "mutation-no-python" for f in skipped)
+    # The runner also reports this inapplicable-diff notice as infrastructure text.
+    errors = [
+        err for err in infra_errors
+        if not (no_python and err == "no Python files in the diff")
+    ]
+    for err in errors:
         print("code-forge: mutation-check: %s" % err, file=sys.stderr)
+    if errors:
+        return EXIT_CLI_ERROR
 
     tool_errors = [f for f in findings if f.id == "MUTATION_ERROR"]
     if tool_errors:
@@ -4375,9 +4397,14 @@ def _run_mutation_check(args, cwd: Path) -> int:
             print(f"code-forge: mutation-check: {error.description}", file=sys.stderr)
         return EXIT_CLI_ERROR
 
+    for item in skipped:
+        print(f"code-forge: mutation-check: SKIP: {item.description}", file=sys.stderr)
+    if any(f.fingerprint not in {"mutation-tests-only", "mutation-no-python"} for f in skipped):
+        return EXIT_CLI_ERROR
+
     # Translate findings to exit code.
     # CONFIRMED findings with source=MUTANT and id starting "mutant-" are
-    # survivors. DISMISSED findings (skips) are not failures.
+    # survivors. Only skips with no applicable production code are allowed.
     from .disposition import Disposition
     survivors = [
         f for f in findings
@@ -4398,7 +4425,8 @@ def _run_mutation_check(args, cwd: Path) -> int:
             )
         return EXIT_FAIL
 
-    print("code-forge: mutation-check: PASS", file=sys.stderr)
+    if not skipped:
+        print("code-forge: mutation-check: PASS", file=sys.stderr)
     return EXIT_PASS
 
 
