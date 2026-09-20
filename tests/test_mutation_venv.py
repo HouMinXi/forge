@@ -16,6 +16,7 @@ from code_forge.disposition import Disposition
 from code_forge.mutation import (
     _baseline_test_selection,
     _build_mutmut_config,
+    _is_test_path,
     _resolve_mutmut_invocation,
     _source_roots,
     run_mutation,
@@ -570,3 +571,356 @@ class TestMutatedImportSurvivesAnEmptyCwd:
         finally:
             os.chdir(old)
             Config._config = None
+
+
+class TestMutationSkipGlobsConfigValidation:
+    """Config validation for mutation_skip_globs and mutation_include_globs."""
+
+    def _cfg(self, tmp_path, skip_literal=None, include_literal=None):
+        p = tmp_path / "gate.yaml"
+        lines = ["test:", "  command: [pytest, -q]"]
+        if skip_literal is not None:
+            lines.append(f"  mutation_skip_globs: {skip_literal}")
+        if include_literal is not None:
+            lines.append(f"  mutation_include_globs: {include_literal}")
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return p
+
+    def test_non_list_skip_globs_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(
+            ValueError, match=r"'test\.mutation_skip_globs' must be a list of strings"
+        ):
+            load_gate_config(self._cfg(tmp_path, skip_literal="tests/**"))
+
+    def test_non_string_skip_globs_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(
+            ValueError, match=r"'test\.mutation_skip_globs' must be a list of strings"
+        ):
+            load_gate_config(self._cfg(tmp_path, skip_literal="[tests/**, 123]"))
+
+    def test_non_list_include_globs_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(
+            ValueError, match=r"'test\.mutation_include_globs' must be a list of strings"
+        ):
+            load_gate_config(self._cfg(tmp_path, include_literal="framework/**"))
+
+    def test_non_string_include_globs_rejected(self, tmp_path):
+        import pytest
+
+        from code_forge.gate_check import load_gate_config
+
+        with pytest.raises(
+            ValueError, match=r"'test\.mutation_include_globs' must be a list of strings"
+        ):
+            load_gate_config(self._cfg(tmp_path, include_literal="[pkg/**, true]"))
+
+    def test_valid_lists_accepted(self, tmp_path):
+        from code_forge.gate_check import load_gate_config
+
+        config = load_gate_config(
+            self._cfg(
+                tmp_path,
+                skip_literal='["tests/**", "**/test_*.py"]',
+                include_literal='["framework/test/*.py"]',
+            )
+        )
+        assert config["test"]["mutation_skip_globs"] == ["tests/**", "**/test_*.py"]
+        assert config["test"]["mutation_include_globs"] == ["framework/test/*.py"]
+
+    def test_empty_lists_accepted(self, tmp_path):
+        from code_forge.gate_check import load_gate_config
+
+        config = load_gate_config(
+            self._cfg(tmp_path, skip_literal="[]", include_literal="[]")
+        )
+        assert config["test"]["mutation_skip_globs"] == []
+        assert config["test"]["mutation_include_globs"] == []
+
+
+class TestMutationSkipIncludeGlobs:
+    """Acceptance tests for mutation skip and include globs."""
+
+    def test_case1_only_tests_path_skipped(self, tmp_path):
+        """A tests-only diff still skips with the tests-only message."""
+        findings, _infra = run_mutation(
+            diff_files=["tests/test_cli.py"],
+            baseline_cmd=["pytest", "tests/"],
+            cwd=tmp_path,
+        )
+        assert len(findings) == 1
+        assert findings[0].id == "MUTATION_SKIPPED"
+        assert "tests-only" in findings[0].description
+
+    def test_case2_default_config_includes_prod_under_test_dir(self, tmp_path):
+        """Default skip list keeps a production file whose parent is named test.
+
+        only_mutate includes the production module and excludes the real
+        test file; the run must not return the tests-only skip marker.
+        """
+        prod = "framework/test/select_package.py"
+        test = "tests/test_select_package_fs.py"
+        diff_files = [prod, test]
+        cfg = _build_mutmut_config(
+            diff_files,
+            ["pytest", "tests/"],
+            cwd=tmp_path,
+        )
+        from configparser import ConfigParser
+
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        mutated = parser.get("mutmut", "only_mutate").splitlines()
+        assert prod in mutated
+        assert test not in mutated
+        assert parser.get("mutmut", "source_paths").splitlines() == ["framework"]
+
+        # Also verify run_mutation does not return tests-only skip
+        with patch("code_forge.mutation._run_baseline_guard") as mock_guard:
+            from code_forge.state import StateFinding
+
+            mock_guard.return_value = (
+                "skip",
+                [
+                    StateFinding(
+                        id="BASELINE_FAIL",
+                        fingerprint="f",
+                        source="L0",
+                        disposition=Disposition.CONFIRMED,
+                        file="",
+                        line_range=[],
+                        description="baseline guard exit 1",
+                    )
+                ],
+                [],
+            )
+            findings, _ = run_mutation(diff_files, ["pytest"], cwd=tmp_path)
+            assert not any(
+                f.id == "MUTATION_SKIPPED" and "tests-only" in f.description
+                for f in findings
+            )
+
+    def test_case3_mutation_skip_globs_matches_dir(self, tmp_path):
+        """A configured skip glob excludes that directory with no include list."""
+        file_path = "framework/test/select_package.py"
+        assert _is_test_path(file_path, skip_globs=["framework/test/**"]) is True
+        roots = _source_roots(
+            [file_path],
+            skip_globs=["framework/test/**"],
+            cwd=tmp_path,
+        )
+        assert roots == []
+
+    def test_case4_include_takes_precedence_over_skip(self, tmp_path):
+        """A path matching both skip and include still enters only_mutate."""
+        file_path = "framework/test/select_package.py"
+        assert (
+            _is_test_path(
+                file_path,
+                skip_globs=["framework/test/**"],
+                include_globs=[file_path],
+                cwd=tmp_path,
+            )
+            is False
+        )
+        cfg = _build_mutmut_config(
+            [file_path],
+            ["pytest", "tests/"],
+            skip_globs=["framework/test/**"],
+            include_globs=[file_path],
+            cwd=tmp_path,
+        )
+        from configparser import ConfigParser
+
+        parser = ConfigParser()
+        parser.read_string(cfg)
+        mutated = parser.get("mutmut", "only_mutate").splitlines()
+        assert file_path in mutated
+
+    def test_case5_mutation_check_does_not_falsely_pass(self, tmp_path):
+        """mutation-check on a production file under a test-named dir must not PASS.
+
+        The old path-component heuristic treated the whole diff as tests-only
+        and printed PASS without creating a sandbox.
+        """
+        import argparse
+        import sys
+        from io import StringIO
+
+        from code_forge.cli import _run_mutation_check
+        from code_forge.mutation import Survivor
+
+        diff_content = (
+            "diff --git a/framework/test/select_package.py b/framework/test/select_package.py\n"
+            "--- a/framework/test/select_package.py\n"
+            "+++ b/framework/test/select_package.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-# old\n"
+            "+# new\n"
+        )
+        diff_file = tmp_path / "test.diff"
+        diff_file.write_text(diff_content, encoding="utf-8")
+
+        args = argparse.Namespace(
+            subcommand="mutation-check",
+            diff=str(diff_file),
+            timeout=10,
+            paths=None,
+        )
+
+        with (
+            patch("code_forge.mutation._run_baseline_guard") as mock_guard,
+            patch("code_forge.mutation._resolve_mutmut_invocation") as mock_inv,
+            patch("subprocess.run") as mock_sub,
+            patch("code_forge.mutation.parse_mutmut_results") as mock_parse,
+        ):
+            mock_guard.return_value = ("ok", [], [])
+            mock_inv.return_value = ["mutmut"]
+            mock_sub.return_value.returncode = 0
+            mock_sub.return_value.stdout = "mod.fn__mutmut_1: survived\n"
+            mock_parse.return_value = ([Survivor("mod.fn__mutmut_1", "")], [])
+
+            captured_err = StringIO()
+            old_stderr = sys.stderr
+            try:
+                sys.stderr = captured_err
+                code = _run_mutation_check(args, cwd=tmp_path)
+            finally:
+                sys.stderr = old_stderr
+
+            output = captured_err.getvalue()
+            # Under the bug, it falsely printed "code-forge: mutation-check: PASS" and returned 0
+            # because diff was treated as tests-only before creating a sandbox.
+            # Now it must proceed to the sandbox, finding survivors, and fail.
+            assert "mutation-check: PASS" not in output
+            assert code == 1
+            assert "1 survivor(s) found" in output
+
+    def test_default_skip_does_not_treat_test_named_dirs_as_tests_only(self, tmp_path):
+        """A production file under a test_* directory is not tests-only.
+
+        Default skip glob **/test_*.py must match a filename, not a path
+        substring. fnmatch lets * cross /, so src/test_data/load.py (basename
+        load.py) was skipped and mutation-check would PASS without mutating.
+        """
+        from code_forge.state import StateFinding
+
+        prod_paths = (
+            "src/test_data/load.py",
+            "pkg/test_helpers/util.py",
+        )
+        for path in prod_paths:
+            assert _is_test_path(path) is False, path
+            with patch("code_forge.mutation._run_baseline_guard") as mock_guard:
+                mock_guard.return_value = (
+                    "skip",
+                    [
+                        StateFinding(
+                            id="BASELINE_FAIL",
+                            fingerprint="f",
+                            source="L0",
+                            disposition=Disposition.CONFIRMED,
+                            file="",
+                            line_range=[],
+                            description="baseline guard exit 1",
+                        )
+                    ],
+                    [],
+                )
+                findings, _ = run_mutation([path], ["pytest"], cwd=tmp_path)
+                mock_guard.assert_called()
+                assert not any(
+                    f.id == "MUTATION_SKIPPED" and "tests-only" in f.description
+                    for f in findings
+                ), path
+
+    def test_star_glob_does_not_match_nested_segments(self):
+        """A user glob with a single * matches one path segment only."""
+        skip = ["lib/test/*.py"]
+        assert _is_test_path("lib/test/x.py", skip_globs=skip) is True
+        assert _is_test_path("lib/test/nested/x.py", skip_globs=skip) is False
+
+    def test_case6_no_business_strings_in_mutation_py(self):
+        """mutation.py must not special-case a business directory as a predicate."""
+        from pathlib import Path
+
+        mutation_py = (
+            Path(__file__).resolve().parent.parent
+            / "src"
+            / "code_forge"
+            / "mutation.py"
+        )
+        content = mutation_py.read_text(encoding="utf-8")
+        assert "framework/test" not in content
+        assert "select_package" not in content
+
+    def test_run_mutation_honors_skip_globs_from_gate_yaml(self, tmp_path):
+        """gate.yaml skip list is the shared source for review and mutation-check."""
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        (gate_dir / "gate.yaml").write_text(
+            "test:\n"
+            "  command: [pytest, -q]\n"
+            "  mutation_skip_globs: [\"lib/test/**\"]\n",
+            encoding="utf-8",
+        )
+        findings, _infra = run_mutation(
+            diff_files=["lib/test/select_package.py"],
+            baseline_cmd=["pytest", "tests/"],
+            cwd=tmp_path,
+        )
+        assert len(findings) == 1
+        assert findings[0].id == "MUTATION_SKIPPED"
+        assert "tests-only" in findings[0].description
+
+    def test_run_mutation_include_overrides_gate_yaml_skip(self, tmp_path):
+        """Include globs from gate.yaml beat skip globs on the same path."""
+        gate_dir = tmp_path / ".code-forge"
+        gate_dir.mkdir()
+        (gate_dir / "gate.yaml").write_text(
+            "test:\n"
+            "  command: [pytest, -q]\n"
+            "  mutation_skip_globs: [\"lib/test/**\"]\n"
+            "  mutation_include_globs: [\"lib/test/select_package.py\"]\n",
+            encoding="utf-8",
+        )
+        with patch("code_forge.mutation._run_baseline_guard") as mock_guard:
+            from code_forge.state import StateFinding
+
+            mock_guard.return_value = (
+                "skip",
+                [
+                    StateFinding(
+                        id="BASELINE_FAIL",
+                        fingerprint="f",
+                        source="L0",
+                        disposition=Disposition.CONFIRMED,
+                        file="",
+                        line_range=[],
+                        description="baseline guard exit 1",
+                    )
+                ],
+                [],
+            )
+            findings, _ = run_mutation(
+                diff_files=["lib/test/select_package.py"],
+                baseline_cmd=["pytest"],
+                cwd=tmp_path,
+            )
+            assert not any(
+                f.id == "MUTATION_SKIPPED" and "tests-only" in f.description
+                for f in findings
+            )
+
+

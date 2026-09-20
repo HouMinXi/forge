@@ -49,7 +49,7 @@ def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr
 
 
 @pytest.mark.parametrize("outcome", ["error", "exception", "survivor", "clean"])
-def test_detached_script_preserves_outcome(tmp_path, outcome):
+def test_detached_script_preserves_outcome(tmp_path, outcome, run_detached_payload):
     captured = {}
 
     def spawn(args, **kwargs):
@@ -74,7 +74,7 @@ def test_detached_script_preserves_outcome(tmp_path, outcome):
         else:
             run.return_value = ([finding] if outcome != "clean" else [], [])
         # Only the script generated above by our launcher is executed.
-        exec(compile(captured["script"], "<detached-mutation>", "exec"), {})  # noqa: S102
+        run_detached_payload(captured["script"])
     data = json.loads(result_path.read_text())
     if outcome in ("error", "exception"):
         assert data["status"] == "error"

@@ -581,12 +581,16 @@ class StateMachine:
                 mutation_memory_limit = (
                     int(mem_mb) * 1024**2 if mem_mb is not None else None
                 )
+                mutation_skip_globs = test_config.get("mutation_skip_globs")
+                mutation_include_globs = test_config.get("mutation_include_globs")
             except FileNotFoundError as exc:
                 baseline_cmd = None
                 baseline_timeout = 120
                 also_copy = None
                 mutation_max_children = None
                 mutation_memory_limit = None
+                mutation_skip_globs = None
+                mutation_include_globs = None
                 self._state.infra_errors.append(
                     f"CI: mutation skipped -- gate.yaml not found: {exc}"
                 )
@@ -596,6 +600,8 @@ class StateMachine:
                 also_copy = None
                 mutation_max_children = None
                 mutation_memory_limit = None
+                mutation_skip_globs = None
+                mutation_include_globs = None
                 # Both sibling skips below say why they skipped. Without
                 # this one the gate simply never launches: no finding, no
                 # error, and a PASS indistinguishable from a run where
@@ -614,6 +620,8 @@ class StateMachine:
                         result_path, baseline_timeout, also_copy,
                         max_children=mutation_max_children,
                         memory_limit_bytes=mutation_memory_limit,
+                        mutation_skip_globs=mutation_skip_globs,
+                        mutation_include_globs=mutation_include_globs,
                     )
                 except Exception as exc:  # noqa: BLE001
                     started = False

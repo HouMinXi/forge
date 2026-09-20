@@ -52,6 +52,21 @@
           "type": "array",
           "items": {"type": "string"},
           "description": "List of glob patterns. Gate skips if no staged file matches any pattern."
+        },
+        "also_copy": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Extra relative paths copied into the mutants/ mirror."
+        },
+        "mutation_skip_globs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of glob patterns for files to exclude from mutation testing."
+        },
+        "mutation_include_globs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of glob patterns for files to include in mutation testing, taking precedence over skip globs."
         }
       }
     },
