@@ -60,7 +60,7 @@ class TestBuildMutmutConfig:
         parser.read_string(cfg)
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
         assert [x for x in raw.split("\n") if x] == [
-            "tests/test_mod.py", "-q", "-m", "not integration",
+            "tests/test_mod.py", "-q", "-m", "not integration and not source_scan",
         ]
 
     def test_config_multiple_diff_files(self):
@@ -198,7 +198,7 @@ class TestBuildMutmutConfig:
         parser.read_string(cfg)
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
         assert [x for x in raw.split("\n") if x] == [
-            "tests/", "-m", "not integration",
+            "tests/", "-m", "not integration and not source_scan",
         ]
 
 
@@ -423,7 +423,7 @@ class TestTestSelectionSurvivesConfigRoundTrip:
             "-q",
             "--ignore=tests/test_slow.py",
             "-m",
-            "not integration",
+            "not integration and not source_scan",
         ]
 
     def test_single_arg_selection_stays_on_the_key_line(self):
@@ -437,7 +437,7 @@ class TestTestSelectionSurvivesConfigRoundTrip:
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
         assert not raw.startswith("\n")
         assert [x for x in raw.split("\n") if x] == [
-            "tests/", "-m", "not integration",
+            "tests/", "-m", "not integration and not source_scan",
         ]
 
 

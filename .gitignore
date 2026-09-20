@@ -10,10 +10,13 @@ build/
 .coverage.*
 
 # Forge per-project runtime data (findings, review state)
-# Ignore everything inside .forge/ except committed config (tools.yaml, gate.yaml)
-.forge/*
-!.forge/tools.yaml
-!.forge/gate.yaml
+# Ignore everything inside .code-forge/ except committed config
+# (tools.yaml, gate.yaml). The config says how this repo builds and
+# tests; leaving it untracked means a fresh clone silently runs the
+# gate with different settings.
+.code-forge/*
+!.code-forge/tools.yaml
+!.code-forge/gate.yaml
 
 # Virtual environments
 .venv/
@@ -53,8 +56,10 @@ dogfood/
 # unanchored eval/ also matches tests/eval/, which is the tracked corpus.
 /eval/
 
-# code-forge runtime and receipts (local artifacts, not tracked)
-.code-forge/
+# code-forge receipts and caches: see the .code-forge/ rules above,
+# which keep tools.yaml and gate.yaml tracked. A second directory-level
+# ignore here would win over those exceptions, because git never
+# descends into an ignored directory to see them.
 .code-forge/cache/
 .worktrees/
 REVIEW.md

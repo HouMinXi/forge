@@ -110,24 +110,32 @@ def _limit_address_space(memory_limit_bytes: int) -> None:
     resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
 
 
-_INTEGRATION_EXCLUSION = "not integration"
+_MUTATION_STAGE_EXCLUSION = "not integration and not source_scan"
 
 
-def _exclude_integration_tests(selection: list[str]) -> list[str]:
-    """Add -m 'not integration' to the pytest selection mutmut re-runs.
+def _exclude_unmirrorable_tests(selection: list[str]) -> list[str]:
+    """Add the mutation-stage marker exclusions to mutmut's selection.
 
     The per-mutant loop re-runs the gate's pytest selection once per
-    mutant. Tests that themselves spawn real mutation runs (marked
-    'integration') would nest a full mutmut tree inside every mutant
-    child. The R1 gate baseline still runs them unchanged; this narrows
-    only the mutation stage's repeated runs.
+    mutant. Two kinds of test do not survive that loop:
+
+    'integration' spawns real mutation runs, nesting a full mutmut tree
+    inside every mutant child.
+
+    'source_scan' greps the source tree as data. Inside the mirror that
+    tree is mutmut's rewritten copy, so a mutated string literal reads as
+    the very violation the scan forbids, at a line number past the end of
+    the real file.
+
+    The R1 gate baseline still runs both unchanged; this narrows only the
+    mutation stage's repeated runs.
     """
     result = list(selection)
     for i, tok in enumerate(result):
         if tok == "-m" and i + 1 < len(result):
-            result[i + 1] = f"({result[i + 1]}) and ({_INTEGRATION_EXCLUSION})"
+            result[i + 1] = f"({result[i + 1]}) and ({_MUTATION_STAGE_EXCLUSION})"
             return result
-    return result + ["-m", _INTEGRATION_EXCLUSION]
+    return result + ["-m", _MUTATION_STAGE_EXCLUSION]
 
 
 def _source_roots(py_files: list[str]) -> list[str]:
@@ -209,7 +217,7 @@ def _build_mutmut_config(
     # continuations leaves a leading newline mutmut keeps as an empty token).
     # The selection is narrowed to unit scope: integration tests spawn real
     # mutation runs and would nest a mutmut tree inside every mutant child.
-    selection = _exclude_integration_tests(_baseline_test_selection(baseline_cmd))
+    selection = _exclude_unmirrorable_tests(_baseline_test_selection(baseline_cmd))
     if selection:
         lines.append("pytest_add_cli_args_test_selection=" + selection[0])
         lines.extend("    " + a for a in selection[1:])
