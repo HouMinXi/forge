@@ -578,6 +578,30 @@ output (`stopReason=maxTokens`); Copilot CLI stub models
 (`copilotcli/...`); `type: cli` backends (they are not HTTP). Socket
 timeouts stay unretriable unless `retry_timeout: true`.
 
+### Malformed model JSON
+
+API backends and Model Context Protocol (MCP) sampling can request one fresh
+answer after a model JSON syntax error. The original decoder and extraction
+rules run first. Correction is eligible only when the stripped body starts
+with `{` or `[`, is at most 1,048,576 Python characters, and the existing
+end-of-input check does not classify it as truncated. Prose, empty bodies,
+and broken transport envelopes do not enter this correction path.
+
+Correction consumes the next remaining `max_attempts` slot. With
+`max_attempts: 1`, or after the final attempt, there is no correction request.
+The backend, timeout, and output limit stay unchanged. The new prompt contains
+the original task and error coordinates, not the malformed response. Forge
+does not repair quotes, escapes, or source excerpts locally.
+
+A correction failure ends the current invocation, including an empty reply,
+network error, timeout, or truncation. It cannot start another correction,
+continuation, or output-budget expansion. Initial truncation recovery and
+caller-level backend fallback keep their existing behavior. On success, the
+API result includes the known usage from both responses; sampling usage stays
+unknown. A valid correction still needs the usual schema and evidence checks.
+Command-line (`type: cli`) backends do not launch a second process for this
+correction.
+
 ### Logs
 
 Each retry writes one flushed line to stderr so MCP `forge_job_status`

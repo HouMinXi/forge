@@ -979,6 +979,32 @@ def _no_json_diagnostic(
     )
 
 
+_JSON_CORRECTION_MAX_CHARS = 1_048_576
+
+
+def _json_correction_prompt(
+    prompt: str, content: str, error: json.JSONDecodeError,
+) -> str | None:
+    """Request a fresh answer rather than guess the meaning of broken strings."""
+    if (
+        not content
+        or len(content) > _JSON_CORRECTION_MAX_CHARS
+        or content[0] not in "{["
+        or _json_cut_at_eof(content)
+    ):
+        return None
+    return (
+        f"{prompt}\n\n"
+        "Your previous response could not be decoded as JSON "
+        f"(JSONDecodeError at line {error.lineno}, column {error.colno}). "
+        "Return the complete response again as valid JSON, not a continuation. "
+        "Use valid JSON escaping for quotes and backslashes in strings. "
+        "Follow all original task requirements, fields, and source excerpts. "
+        "Preserve source whitespace and literal characters. "
+        "Do not replace required content with empty or default values."
+    )
+
+
 def _model_json_decoder() -> json.JSONDecoder:
     return json.JSONDecoder(strict=False)
 
@@ -1925,6 +1951,8 @@ def _invoke_api(
         else TruncationBreaker()
     )
 
+    correction_active = False
+    initial_syntax_usage = None
     # Retry loop with exponential backoff + jitter.
     # Inner try catches TimeoutError (socket.timeout alias on Python 3.12+).
     # Outer except catches LLMInvokeError from both the format dispatch and
@@ -2043,6 +2071,21 @@ def _invoke_api(
                                 kind="truncated",
                                 retryable=False,
                             ) from exc
+                        if not correction_active and attempt + 1 < max_attempts:
+                            corrected_prompt = _json_correction_prompt(
+                                prompt, content, exc,
+                            )
+                            if corrected_prompt is not None:
+                                initial_syntax_usage = usage
+                                correction_active = True
+                                prompt = corrected_prompt
+                                logging.getLogger(__name__).info(
+                                    "JSON correction at attempt %d/%d "
+                                    "after error at line %d column %d",
+                                    attempt + 2, max_attempts,
+                                    exc.lineno, exc.colno,
+                                )
+                                continue
                         diag = _no_json_diagnostic(exc, content, finish_reason)
                         raise LLMInvokeError(
                             "API response content is not valid JSON -- %s"
@@ -2063,6 +2106,9 @@ def _invoke_api(
                     retryable=retry_timeout,
                 ) from exc
         except LLMInvokeError as exc:
+            if correction_active:
+                exc.retryable = False
+                raise
             if isinstance(exc, _TruncatedResponse):
                 # The partial belongs to the original truncation; the
                 # spent-budget error below carries no content.
@@ -2143,6 +2189,14 @@ def _invoke_api(
 
     duration = time.monotonic() - start
 
+    if initial_syntax_usage is not None:
+        usage = Usage(
+            input_tokens=initial_syntax_usage.input_tokens + usage.input_tokens,
+            output_tokens=initial_syntax_usage.output_tokens + usage.output_tokens,
+            cached_input_tokens=(
+                initial_syntax_usage.cached_input_tokens + usage.cached_input_tokens
+            ),
+        )
     return LLMResult(content=parsed_content, usage=usage, duration_s=duration)
 
 
@@ -2713,6 +2767,7 @@ async def invoke_sampling(
         content=MCPTextContent(type="text", text=prompt),
     )]
     last_exc: LLMInvokeError | None = None
+    correction_active = False
     for attempt in range(max_attempts):
         try:
             result = await session.create_message(messages, **kwargs)
@@ -2769,9 +2824,29 @@ async def invoke_sampling(
             text = _strip_fences(raw_text)
             try:
                 parsed = _loads_model_json(text)
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as exc:
                 parsed = _extract_json_from_text(raw_text)
                 if parsed is None:
+                    if (
+                        not correction_active
+                        and attempt + 1 < max_attempts
+                        and isinstance(exc, json.JSONDecodeError)
+                    ):
+                        corrected_prompt = _json_correction_prompt(prompt, text, exc)
+                        if corrected_prompt is not None:
+                            messages = [SamplingMessage(
+                                role="user",
+                                content=MCPTextContent(
+                                    type="text", text=corrected_prompt,
+                                ),
+                            )]
+                            correction_active = True
+                            logging.getLogger(__name__).info(
+                                "JSON correction at sampling attempt %d/%d "
+                                "after error at line %d column %d",
+                                attempt + 2, max_attempts, exc.lineno, exc.colno,
+                            )
+                            continue
                     raise LLMInvokeError(
                         "sampling response contains no valid JSON "
                         "(first 120 chars: %r)" % raw_text[:120],
@@ -2788,6 +2863,9 @@ async def invoke_sampling(
                 duration_s=elapsed,
             )
         except LLMInvokeError as exc:
+            if correction_active:
+                exc.retryable = False
+                raise
             last_exc = exc
             cause = _retry_cause(exc)
             if not exc.retryable or attempt == max_attempts - 1:
