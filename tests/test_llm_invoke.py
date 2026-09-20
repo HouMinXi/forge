@@ -4177,32 +4177,18 @@ class TestBadJsonRetry:
         assert calls[0] == 3, "every attempt parses its own reply"
         assert exc_info.value.kind == "no_json"
 
-    def test_complete_invalid_json_does_not_retry(self):
-        """A stopped, complete reply that is not JSON must not be replayed.
-
-        Live agnes-cn adversarial: finish_reason=stop, content_len=15209,
-        same delimiter error on all five attempts -- replaying one prompt
-        can only buy the same answer again.
-
-        Assert on what is sent, not on how many calls happen: a
-        continuation carries the partial and asks for the rest, so it is
-        a different request and does not count as a replay. Counting
-        calls conflated the two, and the count moved when continuation
-        learned to recognise a cut container.
-
-        Bug-injection proof: make _exhaustion_error retryable=True and
-        the replay assertion below FAILS with two original prompts.
-        """
+    def test_complete_invalid_json_gets_one_correction(self):
+        """A completed syntax error gets one changed prompt, never a loop."""
         from code_forge.llm_invoke import _invoke_api
 
         backend = _make_api_backend(name="ds", fmt="openai")
-        calls = [0]
+        prompts = []
         # Mid-object syntax error: the reply finished, the document did
         # not. An EOF cut is a different case (continuation).
         broken = '{"findings":[{"ok": true},,{"ok": false}]}'
 
         def _mock_openai_complete_invalid(prompt, *args, **kwargs):
-            calls[0] += 1
+            prompts.append(prompt)
             return broken, {
                 "prompt_tokens": 10,
                 "completion_tokens": 5,
@@ -4216,7 +4202,10 @@ class TestBadJsonRetry:
             with pytest.raises(LLMInvokeError) as exc_info:
                 _invoke_api("prompt", backend, timeout_s=10, max_attempts=5)
 
-        assert calls[0] == 1, "complete invalid JSON retried %d times" % calls[0]
+        assert len(prompts) == 2
+        assert prompts[0] == "prompt"
+        assert prompts[1] != prompts[0]
+        assert broken not in prompts[1]
         assert not slept.called
         assert exc_info.value.kind == "no_json"
         assert exc_info.value.retryable is False
