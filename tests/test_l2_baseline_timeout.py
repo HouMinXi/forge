@@ -85,7 +85,7 @@ def test_noop_runners_accept_configured_deadline(tmp_path, monkeypatch, runner):
 
 
 @pytest.mark.parametrize("configured, expected", [(900, 900), (None, 120)])
-def test_ci_deadline_reaches_detached_child(tmp_path, monkeypatch, configured, expected):
+def test_ci_deadline_reaches_detached_child(tmp_path, monkeypatch, configured, expected, run_detached_payload):
     monkeypatch.setattr(factories.shutil, "which", lambda command: "/tools/mutmut")
     machine = make_machine(tmp_path, [sys.executable, "-m", "pytest"], configured)
     machine.mode = Mode.CI
@@ -112,13 +112,13 @@ def test_ci_deadline_reaches_detached_child(tmp_path, monkeypatch, configured, e
     def run_child(
         diff_files, baseline_cmd, *, cwd, baseline_timeout=120, also_copy=None,
         max_children=None, memory_limit_bytes=None,
+        mutation_skip_globs=None, mutation_include_globs=None,
     ):
         seen.append(baseline_timeout)
         return [], []
 
     monkeypatch.setattr(mutation, "run_mutation", run_child)
-    # Execute only the child script generated above by our own launcher.
-    exec(compile(captured[0][2], "<mutation-child>", "exec"), {})  # noqa: S102
+    run_detached_payload(captured[0][2])
     assert seen == [expected]
 
 
@@ -143,7 +143,7 @@ def test_env_retry_keeps_configured_deadline(tmp_path, monkeypatch, mode):
 
 
 @pytest.mark.parametrize("configured", ["60", None, 0, -1, 1.5])
-def test_invalid_deadline_never_reaches_runner(tmp_path, monkeypatch, configured):
+def test_invalid_deadline_never_reaches_runner(tmp_path, configured):
     machine = make_machine(tmp_path, [sys.executable, "-m", "pytest"], 900)
     gate = tmp_path / ".code-forge" / "gate.yaml"
     data = yaml.safe_load(gate.read_text())

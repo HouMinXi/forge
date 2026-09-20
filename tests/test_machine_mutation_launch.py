@@ -418,7 +418,8 @@ class TestAlsoCopyReachesTheMirror:
 
         def fake_launch(diff_files, baseline_cmd, cwd, result_path,
                         baseline_timeout=120, also_copy=None,
-                        max_children=None, memory_limit_bytes=None):
+                        max_children=None, memory_limit_bytes=None,
+                        mutation_skip_globs=None, mutation_include_globs=None):
             captured["also_copy"] = also_copy
             captured["resource_guards"] = (max_children, memory_limit_bytes)
             return 5150

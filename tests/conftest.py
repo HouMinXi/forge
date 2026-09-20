@@ -1,12 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
+import ast
 import difflib
 import hashlib
+import inspect
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
+
+import code_forge.mutation
 
 _git_snapshot_key = pytest.StashKey[dict]()
 
@@ -26,6 +31,52 @@ def plant_mutmut_cfg(root: Path) -> None:
     cfg = root / "setup.cfg"
     if not cfg.exists():
         cfg.write_text(_MUTMUT_SCRATCH_CFG, encoding="utf-8")
+
+
+def _detach_prologue() -> str:
+    """Recover the launcher's fork/_exit prologue from the product source.
+
+    Hard-coding a copy here lets the two drift apart in silence: change the
+    prologue's spacing in mutation.py and this file keeps matching nothing,
+    the strip becomes a no-op, and every exec'd payload forks the pytest
+    session again. Read the literal out of the module instead so a drift
+    turns into a loud failure rather than a silent one.
+    """
+    source = inspect.getsource(code_forge.mutation.launch_detached_mutation)
+    tree = ast.parse(textwrap.dedent(source))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "os.fork()" in node.value and "os._exit" in node.value:
+                return node.value
+    raise AssertionError(
+        "launch_detached_mutation no longer carries a fork/_exit prologue "
+        "literal; update _run_detached_payload to match the new shape"
+    )
+
+
+def _run_detached_payload(script: str, globals_dict: dict | None = None) -> None:
+    """Run a launcher-generated script without forking the test session.
+
+    ``launch_detached_mutation`` prepends a fork/_exit prologue so the real run
+    can reparent to init. Executing that prologue inside pytest forks the
+    session itself: the child carries on through the remaining tests, writing
+    to the same stdout and the same .git as the parent, and the parent's own
+    report never appears. Strip the prologue and run only the payload.
+    """
+    prologue = _detach_prologue()
+    assert script.startswith(prologue), (
+        "payload does not start with the prologue read from mutation.py; "
+        "exec would fork the pytest session"
+    )
+    script = script[len(prologue) :]
+    assert "os._exit" not in script, "detach prologue still present; exec would fork pytest"
+    exec(compile(script, "<detached-mutation>", "exec"), globals_dict or {})  # noqa: S102
+
+
+@pytest.fixture
+def run_detached_payload():
+    """Expose :func:`run_detached_payload` without a cross-file import."""
+    return _run_detached_payload
 
 
 @pytest.fixture(autouse=True)

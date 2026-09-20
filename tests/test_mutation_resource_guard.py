@@ -116,11 +116,11 @@ def test_run_mutation_sets_rlimit_as_backstop(tmp_path):
     assert os.waitstatus_to_exitcode(status) == 0
 
 
-def test_memory_limit_param_beats_default(tmp_path):
+def test_memory_limit_param_beats_default():
     assert _memory_limit_bytes(256 * 1024**2) == 256 * 1024**2
 
 
-def test_memory_limit_env_in_mb(tmp_path, monkeypatch):
+def test_memory_limit_env_in_mb(monkeypatch):
     monkeypatch.setenv("FORGE_MUTATION_MEMORY_LIMIT_MB", "128")
     assert _memory_limit_bytes(None) == 128 * 1024**2
 
@@ -163,7 +163,7 @@ def test_build_mutmut_config_excludes_integration(tmp_path):
     assert lines[idx + 2] == "    not integration and not source_scan"
 
 
-def test_detached_script_forwards_resource_guards(tmp_path):
+def test_detached_script_forwards_resource_guards(tmp_path, run_detached_payload):
     captured = {}
 
     def spawn(args, **kwargs):
@@ -182,7 +182,7 @@ def test_detached_script_forwards_resource_guards(tmp_path):
         "disposition": Disposition.CONFIRMED,
     })()
     with patch("code_forge.mutation.run_mutation", return_value=([finding], [])) as run:
-        exec(compile(captured["script"], "<detached-mutation>", "exec"), {})  # noqa: S102
+        run_detached_payload(captured["script"])
     _, kwargs = run.call_args
     assert kwargs["max_children"] == 3
     assert kwargs["memory_limit_bytes"] == 64 * 1024**2
@@ -217,3 +217,30 @@ class TestRepoGateConfigIsTracked:
                 "%s holds files tests open by path; without it the "
                 "mutation gate dies with FileNotFoundError" % needed
             )
+
+
+def test_review_forwards_skip_globs_from_gate_config():
+    """The review path must carry the glob keys, not just the mutation API.
+
+    Every skip/include test below this line drives run_mutation directly,
+    so all of them stayed green while machine.py read gate.yaml without
+    ever looking up mutation_skip_globs -- the keys parsed, validated
+    against the schema, and were dropped one call short of the runner.
+    A gate.yaml skip list that silently does nothing is worse than none:
+    the run reports PASS over mutants nobody meant to score.
+    """
+    source = pathlib.Path(
+        __import__("code_forge.machine", fromlist=["x"]).__file__
+    ).read_text()
+    lookup_start = source.index("mutation_max_children = test_config.get")
+    call_end = source.index(")", source.index("launch_detached_mutation(", lookup_start))
+    region = source[lookup_start:call_end]
+
+    for key in ("mutation_skip_globs", "mutation_include_globs"):
+        assert "test_config.get(\"%s\")" % key in region, (
+            "machine.py never reads %s out of gate.yaml, so the "
+            "configured list dies before reaching the runner" % key
+        )
+        assert "%s=%s" % (key, key) in region, (
+            "%s is read but not passed to launch_detached_mutation" % key
+        )

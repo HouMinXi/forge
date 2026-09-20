@@ -21,6 +21,7 @@ mutmut integration notes (>=3.4, where source_paths replaced the old key):
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -41,15 +42,162 @@ class Survivor:
     file: str         # source file (empty; mutmut 3.x results omit file paths)
 
 
-def _is_test_path(path: str) -> bool:
-    """True for a path under tests/ or test/, relative or absolute.
+_DEFAULT_MUTATION_SKIP_GLOBS = [
+    "tests/**",
+    "**/test_*.py",
+    "**/*_test.py",
+    "**/conftest.py",
+]
 
-    Review source_files can be absolute Paths stringified; a prefix
-    check on 'tests/' misses /repo/tests/foo.py.
+
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a glob so * and ? stay inside one path segment.
+
+    ** matches across directories. fnmatch lets * cross /, which made
+    **/test_*.py skip a production file under a test_* directory.
+    """
+    i = 0
+    n = len(pattern)
+    parts: list[str] = ["^"]
+    while i < n:
+        char = pattern[i]
+        if char == "*":
+            if i + 1 < n and pattern[i + 1] == "*":
+                i += 2
+                if i < n and pattern[i] == "/":
+                    i += 1
+                    parts.append("(?:.*/)?")
+                else:
+                    parts.append(".*")
+            else:
+                parts.append("[^/]*")
+                i += 1
+        elif char == "?":
+            parts.append("[^/]")
+            i += 1
+        else:
+            parts.append(re.escape(char))
+            i += 1
+    parts.append("$")
+    return re.compile("".join(parts))
+
+
+def _glob_match(posix: str, pattern: str) -> bool:
+    return _glob_to_regex(pattern).fullmatch(posix) is not None
+
+
+def _matches_glob(path: str, pattern: str, cwd: Path | str | None = None) -> bool:
+    """Match a path against a glob pattern.
+
+    Handles POSIX normalization, directory patterns, and basename patterns.
+    A single * does not cross /.
     """
     posix = path.replace("\\", "/")
-    parts = [p for p in posix.split("/") if p]
-    return "tests" in parts or "test" in parts
+    if cwd is not None and Path(path).is_absolute():
+        try:
+            posix = str(Path(path).relative_to(cwd)).replace("\\", "/")
+        except ValueError:
+            pass
+
+    # A pattern with no slash matches the filename at any depth.
+    if "/" not in pattern:
+        filename = posix.rsplit("/", 1)[-1]
+        if _glob_match(filename, pattern):
+            return True
+
+    effective = pattern
+    if effective.endswith("/") and not effective.endswith("**/"):
+        effective = effective + "**"
+
+    if _glob_match(posix, effective):
+        return True
+
+    # Absolute path, relative pattern: match against each suffix.
+    if posix.startswith("/") and not effective.startswith("/"):
+        parts = posix.lstrip("/").split("/")
+        for i in range(len(parts)):
+            if _glob_match("/".join(parts[i:]), effective):
+                return True
+
+    return False
+
+
+def _is_test_path(
+    path: str,
+    skip_globs: list[str] | None = None,
+    include_globs: list[str] | None = None,
+    cwd: Path | str | None = None,
+) -> bool:
+    """True for a path that should be excluded from mutation.
+
+    Include globs take precedence over skip globs.
+    When skip_globs is None, defaults to top-level tests/ and
+    test_*.py, *_test.py, conftest.py files.
+    """
+    effective_skips = _DEFAULT_MUTATION_SKIP_GLOBS if skip_globs is None else skip_globs
+    effective_includes = [] if include_globs is None else include_globs
+
+    for pat in effective_includes:
+        if _matches_glob(path, pat, cwd=cwd):
+            return False
+
+    for pat in effective_skips:
+        if _matches_glob(path, pat, cwd=cwd):
+            return True
+
+    return False
+
+
+def _globs_from_gate_yaml(
+    cwd: Path,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Read mutation skip/include globs from .code-forge/gate.yaml if present.
+
+    Returns (skip_globs, include_globs). Either side is None when the key
+    is omitted or the file cannot be loaded. load_gate_config is the
+    preferred path so type errors surface the same as also_copy; a
+    best-effort YAML parse is the fallback when the file is incomplete
+    (review worktrees often carry a partial gate.yaml).
+    """
+    gate_yaml = cwd / ".code-forge" / "gate.yaml"
+    if not gate_yaml.is_file():
+        return (None, None)
+    try:
+        from .gate_check import load_gate_config
+
+        gate_cfg = load_gate_config(gate_yaml)
+        test_cfg = gate_cfg.get("test", {})
+        return (
+            test_cfg.get("mutation_skip_globs"),
+            test_cfg.get("mutation_include_globs"),
+        )
+    except (OSError, ValueError, TypeError, ImportError):
+        pass
+    try:
+        import yaml
+    except ImportError:
+        return (None, None)
+    try:
+        with open(gate_yaml, encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError):
+        return (None, None)
+    if not isinstance(raw, dict):
+        return (None, None)
+    test_cfg = raw.get("test", {})
+    if not isinstance(test_cfg, dict):
+        return (None, None)
+    skip = test_cfg.get("mutation_skip_globs")
+    include = test_cfg.get("mutation_include_globs")
+    if skip is not None and (
+        not isinstance(skip, list) or not all(isinstance(e, str) for e in skip)
+    ):
+        skip = None
+    if include is not None and (
+        not isinstance(include, list) or not all(isinstance(e, str) for e in include)
+    ):
+        include = None
+    return (skip, include)
 
 
 # Resource guards for the mutmut subprocess tree. mutmut >=3.4 defaults
@@ -138,7 +286,12 @@ def _exclude_unmirrorable_tests(selection: list[str]) -> list[str]:
     return result + ["-m", _MUTATION_STAGE_EXCLUSION]
 
 
-def _source_roots(py_files: list[str]) -> list[str]:
+def _source_roots(
+    py_files: list[str],
+    skip_globs: list[str] | None = None,
+    include_globs: list[str] | None = None,
+    cwd: Path | str | None = None,
+) -> list[str]:
     """Derive mirror roots from diff-scoped python files.
 
     mutmut copies only source_paths into the mutants/ mirror, and the
@@ -149,10 +302,15 @@ def _source_roots(py_files: list[str]) -> list[str]:
     """
     roots: set[str] = set()
     for f in py_files:
-        if _is_test_path(f):
+        if _is_test_path(f, skip_globs=skip_globs, include_globs=include_globs, cwd=cwd):
             continue
         # Mutmut config is POSIX; Windows diffs still arrive with "\\".
         posix = f.replace("\\", "/")
+        if cwd is not None and Path(f).is_absolute():
+            try:
+                posix = str(Path(f).relative_to(cwd)).replace("\\", "/")
+            except ValueError:
+                pass
         head, sep, _ = posix.partition("/")
         roots.add(head if sep else posix)
     return sorted(roots)
@@ -186,6 +344,9 @@ def _build_mutmut_config(
     py_files: list[str],
     baseline_cmd: list[str],
     also_copy: list[str] | None = None,
+    skip_globs: list[str] | None = None,
+    include_globs: list[str] | None = None,
+    cwd: Path | str | None = None,
 ) -> str:
     """Render the temporary [mutmut] setup.cfg content.
 
@@ -198,8 +359,11 @@ def _build_mutmut_config(
     also_copy: extra relative paths copied into the mutants/ mirror
     (mutmut also_copy). Empty or whitespace entries are dropped.
     """
-    roots = _source_roots(py_files)
-    mutate = [f for f in py_files if not _is_test_path(f)]
+    roots = _source_roots(py_files, skip_globs=skip_globs, include_globs=include_globs, cwd=cwd)
+    mutate = [
+        f for f in py_files
+        if not _is_test_path(f, skip_globs=skip_globs, include_globs=include_globs, cwd=cwd)
+    ]
     if not mutate:
         raise ValueError(
             "no production files to mutate; tests-only diffs must skip "
@@ -517,6 +681,8 @@ def run_mutation(
     also_copy: list[str] | None = None,
     max_children: int | None = None,
     memory_limit_bytes: int | None = None,
+    mutation_skip_globs: list[str] | None = None,
+    mutation_include_globs: list[str] | None = None,
 ) -> tuple[list[StateFinding], list[str]]:
     """Run mutation testing on diff-scoped files.
 
@@ -538,6 +704,9 @@ def run_mutation(
             mutmut tree (parent + forked mutant children). A runaway
             child dies with MemoryError instead of the OOM killer taking
             the review service. Default 8 GiB.
+        mutation_skip_globs: glob patterns for files to exclude from mutation.
+        mutation_include_globs: glob patterns for files to include in mutation,
+            taking precedence over skip globs.
 
     Implementation note:
         mutmut 3.x requires cwd to be the project root. A temporary
@@ -556,6 +725,13 @@ def run_mutation(
     if cwd is None:
         cwd = Path.cwd()
     repo_root = str(cwd.resolve())
+
+    if mutation_skip_globs is None or mutation_include_globs is None:
+        file_skip, file_include = _globs_from_gate_yaml(cwd)
+        if mutation_skip_globs is None:
+            mutation_skip_globs = file_skip
+        if mutation_include_globs is None:
+            mutation_include_globs = file_include
 
     # Empty files: no work
     if not diff_files:
@@ -578,7 +754,12 @@ def run_mutation(
         infra_errors.append("no Python files in the diff")
         return (findings, infra_errors)
 
-    roots = _source_roots(py_files)
+    roots = _source_roots(
+        py_files,
+        skip_globs=mutation_skip_globs,
+        include_globs=mutation_include_globs,
+        cwd=cwd,
+    )
     if not roots:
         findings.append(
             StateFinding(
@@ -702,7 +883,14 @@ def run_mutation(
         # 3.3 does not recognise the new name and falls back to guessing the
         # source tree, which silently widens the run past the diff scope, so
         # pyproject pins >=3.4. Paths stay relative to the project root.
-        config_content = _build_mutmut_config(py_files, baseline_cmd, also_copy)
+        config_content = _build_mutmut_config(
+            py_files,
+            baseline_cmd,
+            also_copy,
+            skip_globs=mutation_skip_globs,
+            include_globs=mutation_include_globs,
+            cwd=cwd,
+        )
 
         # Write to a temp file first, then rename for atomicity
         fd, tmp_cfg = tempfile.mkstemp(
@@ -832,6 +1020,8 @@ def launch_detached_mutation(
     also_copy: list[str] | None = None,
     max_children: int | None = None,
     memory_limit_bytes: int | None = None,
+    mutation_skip_globs: list[str] | None = None,
+    mutation_include_globs: list[str] | None = None,
 ) -> bool:
     """Launch the mutation run detached, reporting whether it started.
 
@@ -893,6 +1083,8 @@ cwd_ref = Path({str(cwd)!r})
 diff_files = {diff_files!r}
 baseline_cmd = {baseline_cmd!r}
 also_copy = {also_copy!r}
+mutation_skip_globs = {mutation_skip_globs!r}
+mutation_include_globs = {mutation_include_globs!r}
 
 try:
     with open(result_path, "r", encoding="utf-8") as f:
@@ -916,6 +1108,8 @@ try:
         also_copy=also_copy,
         max_children={max_children!r},
         memory_limit_bytes={memory_limit_bytes!r},
+        mutation_skip_globs=mutation_skip_globs,
+        mutation_include_globs=mutation_include_globs,
     )
     survivor_list = [
         f.id

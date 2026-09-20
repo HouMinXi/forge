@@ -114,6 +114,20 @@ def load_gate_config(
         ):
             raise ValueError("'test.also_copy' must be a list of strings")
 
+    if "mutation_skip_globs" in test:
+        entries = test["mutation_skip_globs"]
+        if not isinstance(entries, list) or not all(
+            isinstance(e, str) for e in entries
+        ):
+            raise ValueError("'test.mutation_skip_globs' must be a list of strings")
+
+    if "mutation_include_globs" in test:
+        entries = test["mutation_include_globs"]
+        if not isinstance(entries, list) or not all(
+            isinstance(e, str) for e in entries
+        ):
+            raise ValueError("'test.mutation_include_globs' must be a list of strings")
+
     if "mutation_max_children" in test:
         children = test["mutation_max_children"]
         if not isinstance(children, int) or isinstance(children, bool) or children < 1:
