@@ -15,6 +15,8 @@ import subprocess
 import sys
 from unittest.mock import patch
 
+import pytest
+
 from code_forge.disposition import Disposition
 from code_forge.mutation import (
     _DEFAULT_MAX_CHILDREN_CAP,
@@ -191,6 +193,7 @@ def test_detached_script_forwards_resource_guards(tmp_path, run_detached_payload
     assert data["survivors"] == ["mutant-x"]
 
 
+@pytest.mark.source_scan
 class TestRepoGateConfigIsTracked:
     """This repo's own gate.yaml must ship its mutation-mirror needs.
 
