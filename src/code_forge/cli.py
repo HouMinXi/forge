@@ -1299,7 +1299,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
             repo_root = Path(_gr.stdout.strip())
         else:
             repo_root = cwd
-    except Exception:
+    except OSError:
         repo_root = cwd
 
     # Compute current diff for hash keying
@@ -1310,7 +1310,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
             capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=repo_root, check=False,
         )
         diff_text = _diff.stdout if _diff.returncode == 0 else ""
-    except Exception:
+    except OSError:
         diff_text = ""
 
     receipts_dir = repo_root / ".code-forge" / "smoke-receipts"
@@ -1338,7 +1338,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         print(
             "code-forge smoke-run: error running command: %s" % exc,
             file=sys.stderr,
@@ -1347,7 +1347,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
 
     exit_code = _result.returncode
     transcript = _result.stdout + _result.stderr
-    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cmd_str = " ".join(shlex.quote(a) for a in cmd_args)
 
     try:
@@ -1365,7 +1365,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
             "smoke-run: %s [surface=%s] -> %s" % (status, surface, receipt_path),
             file=sys.stderr,
         )
-    except Exception as exc:
+    except OSError as exc:
         print(
             "code-forge smoke-run: warning: could not write receipt: %s" % exc,
             file=sys.stderr,
