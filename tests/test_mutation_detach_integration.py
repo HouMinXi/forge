@@ -70,14 +70,46 @@ _m.run_mutation = _fake_run_mutation
 '''
 
 
-def _wait_for(path: Path, timeout: float = 30.0) -> None:
-    """Block until the detached grandchild writes ``path``."""
+def _wait_for(path: Path, timeout: float = 30.0) -> dict:
+    """Wait for parseable terminal output, not the launcher's running marker."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if path.exists() and path.stat().st_size > 0:
-            return
+        try:
+            result = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            result = None
+        if isinstance(result, dict) and result.get("status") in {"done", "error", "skipped"}:
+            return result
         time.sleep(0.05)
-    raise AssertionError(f"{path} was never written by the detached run")
+    raise AssertionError(f"{path} did not reach a terminal result")
+
+
+@pytest.mark.parametrize("terminal_status", ["done", "error", "skipped"])
+def test_wait_for_requires_complete_terminal_json(tmp_path, monkeypatch, terminal_status):
+    path = tmp_path / "result.json"
+    states = iter(["{", '{"status": "running"}',
+                   json.dumps({"status": terminal_status})])
+    path.write_text(next(states), encoding="utf-8")
+    pauses = []
+
+    def advance(_seconds):
+        pauses.append(_seconds)
+        path.write_text(next(states), encoding="utf-8")
+
+    monkeypatch.setattr(time, "sleep", advance)
+    result = _wait_for(path)
+    assert result == {"status": terminal_status}
+    assert len(pauses) == 2
+
+
+def test_wait_for_times_out_on_nonterminal_result(tmp_path, monkeypatch):
+    path = tmp_path / "result.json"
+    path.write_text('{"status": "running"}', encoding="utf-8")
+    ticks = iter([0.0, 0.0, 31.0])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    with pytest.raises(AssertionError, match="terminal"):
+        _wait_for(path)
 
 
 @pytest.fixture
@@ -115,8 +147,7 @@ def test_detached_run_reparents_and_reports(tmp_path, detach_env):
     )
     assert started is True, "launcher reported the detached run failed to start"
 
-    _wait_for(result_path)
-    data = json.loads(result_path.read_text(encoding="utf-8"))
+    data = _wait_for(result_path)
     assert data["status"] == "done"
     assert data["survivors"] == ["MUTANT_1"]
 
