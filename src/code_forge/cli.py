@@ -2445,7 +2445,7 @@ def main() -> int:
             print("code-forge: interrupted", file=sys.stderr)
             # Exit with the conventional SIGINT code (130) without an
             # interpreter traceback; a bare re-raise would print one.
-            raise SystemExit(130)
+            raise SystemExit(130) from None
 
         # B2: PENDING guard before verdict_to_exit.
         if verdict == Verdict.PENDING:
@@ -2561,11 +2561,11 @@ def main() -> int:
         gate_dir = Path.cwd() / ".code-forge"
         try:
             gate_dir.mkdir(parents=True, exist_ok=True)
-        except (FileExistsError, NotADirectoryError):
+        except (FileExistsError, NotADirectoryError) as exc:
             raise CliError(
                 ".code-forge exists but is not a directory",
                 remediation="Remove the file: rm %s" % gate_dir,
-            )
+            ) from exc
         gate_path = gate_dir / "gate.yaml"
         if gate_path.exists() and not args.force:
             print(
@@ -2632,7 +2632,7 @@ def _load_gate_siblings(gate_yaml_path: Path) -> tuple:
         raise CliError(
             "malformed gate.yaml at %s: %s" % (gate_yaml_path, exc),
             remediation="Validate YAML syntax. Run 'code-forge init --force' to regenerate.",
-        )
+        ) from exc
     if raw is None:
         return {}, None
     if not isinstance(raw, dict):
@@ -2722,29 +2722,29 @@ def _load_contract_file(path_str: str, warn_fn=None) -> str:
     if path_str == "-":
         try:
             raw = sys.stdin.buffer.read(65537)
-        except (OSError, ValueError):
-            raise CliError("contract: cannot read from stdin")
+        except (OSError, ValueError) as exc:
+            raise CliError("contract: cannot read from stdin") from exc
         if len(raw) > 65536:
             raise CliError("contract from stdin exceeds 64KB limit")
         if b"\x00" in raw:
             raise CliError("contract from stdin appears to be binary")
         try:
             content = raw.decode("utf-8")
-        except (ValueError, UnicodeDecodeError):
-            raise CliError("contract from stdin is not valid UTF-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise CliError("contract from stdin is not valid UTF-8") from exc
     else:
         try:
             content = Path(path_str).read_text(encoding="utf-8")
-        except FileNotFoundError:
-            raise CliError("contract file not found: %s" % path_str)
-        except PermissionError:
-            raise CliError("contract file not readable: %s" % path_str)
+        except FileNotFoundError as exc:
+            raise CliError("contract file not found: %s" % path_str) from exc
+        except PermissionError as exc:
+            raise CliError("contract file not readable: %s" % path_str) from exc
         except OSError as exc:
-            raise CliError("contract file error: %s" % exc)
-        except ValueError:
+            raise CliError("contract file error: %s" % exc) from exc
+        except ValueError as exc:
             raise CliError(
                 "contract file is not valid UTF-8: %s" % path_str
-            )
+            ) from exc
 
     if not content.strip():
         raise CliError("contract file is empty: %s" % path_str)
@@ -3010,11 +3010,11 @@ def _load_focus_file(path_str: str, warn_fn=None) -> str:
             )
         try:
             content = p.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as exc:
             raise CliError(
                 "Focus file is not valid UTF-8: %s" % path_str,
                 remediation="Provide a text file.",
-            )
+            ) from exc
     if len(content.encode("utf-8")) > 8192:
         if warn_fn:
             warn_fn(
@@ -3654,7 +3654,7 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     try:
         registry = _safe_load_registry(args.registry)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         if is_default_registry:
             from .detect import detect_and_init
             detect_and_init(cwd, quiet=True)
@@ -3663,7 +3663,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             raise CliError(
                 "registry load failed: %s not found" % args.registry,
                 remediation="Verify the path exists. Omit --registry to use the default (.code-forge/tools.yaml).",
-            )
+            ) from exc
 
     if registry == {} and is_default_registry:
         from .detect import detect_and_init
@@ -3694,7 +3694,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         raise CliError(
             "baseline resolution failed: %s" % exc,
             remediation="Check that the ref exists: git rev-parse <ref>. Omit --baseline to skip delta.",
-        )
+        ) from exc
     # Late-phase paths: extract from diff if user passed none.
     if not initial_paths:
         effective_paths = _paths(args, cwd, resolved=resolved)
@@ -3766,7 +3766,7 @@ def _run(args, env, cwd: Path) -> Verdict:
                 raise CliError(
                     "snapshot baseline resolution failed: %s"
                     % exc
-                )
+                ) from exc
             baseline_repr = serialize_baseline_spec(
                 baseline_spec
             )
@@ -4003,7 +4003,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     try:
         coverage_exempt = load_coverage_exempt_patterns(cwd)
     except CoverageConfigError as exc:
-        raise CliError(str(exc))
+        raise CliError(str(exc)) from exc
 
     # Enabled requests keep the early single-repository configuration snapshot.
     if kernel_cfg.enabled:
@@ -4573,10 +4573,10 @@ def _resolve_whole_file_specs(args, cwd: Path):
         resolved_p = (cwd / pp).resolve()
         try:
             resolved_p.relative_to(cwd_resolved)
-        except ValueError:
+        except ValueError as exc:
             raise CliError(
                 "--whole-file: path escapes repo root: %s" % p
-            )
+            ) from exc
     head_spec = GitRefBaseline("WORKING") if in_git else None
     return EmptyBaseline(), head_spec, [Path(p) for p in whole_file]
 
