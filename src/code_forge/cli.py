@@ -76,7 +76,7 @@ def _load_advisories(path: Path) -> list:
         from .advisory import AdvisoryFinding
         data = json.loads(path.read_text(encoding="utf-8"))
         return [AdvisoryFinding(**d) for d in data]
-    except Exception:
+    except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError):
         return []
 
 
@@ -200,7 +200,7 @@ def _merge_user_into(
         return cfgs
     try:
         extra = load_backend_configs({"backends": user_only})
-    except Exception as exc:
+    except (CliError, TypeError, ValueError, AttributeError) as exc:
         log.warning("User backend config error, using project only: %s", exc)
         return cfgs
     cfgs.extend(extra)
