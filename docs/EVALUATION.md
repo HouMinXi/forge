@@ -39,9 +39,9 @@ available.
 
 - Backend: `mimo-v2.5-pro` on the depth and ablation arms. Switching
   models mid-sweep would confound those comparisons. Later depth-1 arms
-  used `agnes-cn`, `qwen-27b-dflash`, the international Agnes effort
-  ladder (`agnes-intl` / `-2` / `-3`), and `onmi-gemini3.6`; those
-  comparisons are their own sections.
+  used `agnes-cn`, `qwen-27b-dflash` (thinking off and on), the
+  international Agnes effort ladder (`agnes-intl` / `-2` / `-3`), and
+  `onmi-gemini3.6`; those comparisons are their own sections.
 - One run per entry. Replicates at three depths would have cost over 100
   hours of review time; the consequence is stated under caveats.
 - Entry-level scoring: a defect entry counts as caught when the verdict is
@@ -232,6 +232,70 @@ FORGE_CLEAN_ROUND_THRESHOLD=1 FORGE_LOCAL_KEY=local code-forge eval \
 python3 scripts/analyse_arms.py docs/eval/qwen-dflash-d1.jsonl
 ```
 
+## Local 27B with thinking on (depth 1)
+
+A later arm kept the same host, weights, draft, llama.cpp binary, depth,
+engine, and corpus. The review backend was `qwen-27b-dflash-think`: the
+same Qwen3.8-27B UD-IQ4_XS + DFlash2 pair with `enable_thinking: true`.
+The eval-host review timeout was 7200 s.
+
+Ledger: `docs/eval/qwen-dflash-think-d1.jsonl`
+SHA-256: `beec316c9e69f1a6ca6bd2064c4405f2020d9ab1c6b3bc5f78287ca4cebc4502`
+
+SKIPPED rows, all `infra: code-forge review timeout after 7200s`, ledger
+lines 86, 96 and 142: `pylint-dev__pylint-8898-clean`,
+`pytest-dev__pytest-6197-clean`, `sympy__sympy-13974-clean`. All three
+are clean controls.
+
+Entry-level, n=150. A SKIPPED defect counts as a miss and a SKIPPED
+control as passed, same rule as the rest of this page.
+
+| Backend | Defects caught | Controls passed | Recall | Precision | F1 | Wall per entry |
+|---|---|---|---|---|---|---|
+| `qwen-27b-dflash` (thinking off, above) | 41/75 | 44/75 | 0.547 | 0.569 | 0.558 | 85 s (SE 6) |
+| `qwen-27b-dflash-think` | 53/75 | 34/75 | 0.707 | 0.564 | 0.627 | 2776 s (SE 136) |
+
+Finding-level from `scripts/analyse_arms.py`. SKIPPED rows have no
+finding counts, so they drop out of the scored n:
+
+| Backend | Hits | Misses | False positives | Precision | Recall | F1 | Scored |
+|---|---|---|---|---|---|---|---|
+| `qwen-27b-dflash` | 33 | 119 | 91 | 26.6% | 21.7% | 0.239 | 150/150 |
+| `qwen-27b-dflash-think` | 50 | 102 | 151 | 24.9% | 32.9% | 0.283 | 147/150 |
+
+What this says, one run per entry:
+
+- Thinking caught 12 more defects (53 against 41) and passed 10 fewer
+  clean controls (34 against 44). Three of those 34 are SKIPPED rows
+  counted as passed. Entry-level F1 is 0.627 against 0.558.
+  Finding-level F1 is 0.283 against 0.239: more hits and more false
+  positives. Thinking moved the hold/pass gate. Finding-level precision
+  did not rise (24.9% against 26.6%).
+- Exact McNemar on all 150: defects 20 only thinking vs 8 only off
+  (p=0.036); clean PASS 5 only thinking vs 18 only off (p=0.011).
+  Counting SKIPPED controls as passed, the clean comparison is 8 vs 18
+  (p=0.076).
+- Wall 2776 s includes the three 7200 s timeouts. Mean on the 147 rows
+  that produced a verdict: 2685 s. About 32 times the thinking-off arm.
+  The 3080 ran this arm from 2026-09-15 13:56 to 2026-09-20 09:06 CST.
+- This arm does not replace `agnes-cn` as the default review backend.
+  Missed defects still cost more than extra false positives on this
+  corpus, and 46 minutes per entry is not an online default.
+
+Reproduce (tunnel to 8081 and the `qwen-27b-dflash-think` user backend
+already in place):
+
+```bash
+FORGE_CLEAN_ROUND_THRESHOLD=1 FORGE_LOCAL_KEY=local \
+FORGE_EVAL_REVIEW_TIMEOUT_S=7200 code-forge eval \
+    --corpus tests/eval/swebench/corpus.yaml --backend qwen-27b-dflash-think \
+    --jobs 1 --runs 1 --arm-depth 1 \
+    --resume-log docs/eval/qwen-dflash-think-d1.jsonl
+python3 scripts/analyse_arms.py \
+    docs/eval/qwen-dflash-d1.jsonl \
+    docs/eval/qwen-dflash-think-d1.jsonl
+```
+
 ## International Agnes effort and Gemini (depth 1)
 
 Four later arms kept depth 1, `engine=real`, one run per entry, and the
@@ -376,8 +440,9 @@ These apply to every number on this page.
   they do not belong in one table.
 - Several backends at depth 1, one backend everywhere else. Depth sweep
   and ablation ran on `mimo-v2.5-pro`. Later depth-1 arms ran on
-  `agnes-cn`, `qwen-27b-dflash`, the international Agnes effort ladder,
-  and `onmi-gemini3.6`. Whether the pipeline or the model sets the
+  `agnes-cn`, `qwen-27b-dflash` (thinking off and on), the international
+  Agnes effort ladder, and `onmi-gemini3.6`. Whether the pipeline or the
+  model sets the
   ceiling is still not separable for depths 2 and 3, or for the gate.
   The depth-1 swaps show the backend moving recall and precision; they
   do not answer the depth or gate questions. The international Agnes
