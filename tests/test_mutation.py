@@ -89,6 +89,12 @@ class TestParseMutmutResults:
         assert survivors[0].file == ""
 
 
+@pytest.fixture(autouse=True)
+def isolated_working_directory(tmp_path, monkeypatch):
+    """Keep runner probes independent of the invoking project's config."""
+    monkeypatch.chdir(tmp_path)
+
+
 class TestRunMutation:
     """Test run_mutation with various scenarios."""
 

@@ -14,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from code_forge.autofix import StubAutoFixer
 from code_forge.baseline import ResolvedReview
 from code_forge.falsify import StubFalsifier
@@ -152,6 +154,7 @@ class TestTaintRunnerSourceFilesInjection:
         assert Path("a.py") in runner.source_files
 
 
+@pytest.mark.source_scan
 class TestProvenanceQuestion:
     """Provenance question present in pass3-adversarial.md (runs every review).
 
