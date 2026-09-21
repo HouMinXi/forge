@@ -417,7 +417,8 @@ three raised recall (52 to 60 of 75 defects caught) and left precision
 where it was. Turning the falsification gate off makes every one of the
 150 entries exit HOLD, including all 75 clean controls. A later depth-1 arm on the same
 corpus used `agnes-cn`, another used local `qwen-27b-dflash`
-(Qwen3.8-27B UD-IQ4_XS with a DFlash2 draft), and a later set of four
+(Qwen3.8-27B UD-IQ4_XS with a DFlash2 draft; thinking off, then a later
+arm with thinking on), and a later set of four
 arms ran the international Agnes effort ladder (`agnes-intl` none /
 xhigh / max) plus `onmi-gemini3.6`; those tables are in
 [docs/EVALUATION.md](docs/EVALUATION.md).

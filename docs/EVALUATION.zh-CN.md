@@ -19,7 +19,7 @@
 
 ## 设置
 
-- 后端：深度扫描和证伪消融都用 `mimo-v2.5-pro`。扫的中途换模型会把那些对比搅混。后来深度 1 又跑过 `agnes-cn`、`qwen-27b-dflash`、国际站 Agnes 档位梯子（`agnes-intl` / `-2` / `-3`）和 `onmi-gemini3.6`，各自成节。
+- 后端：深度扫描和证伪消融都用 `mimo-v2.5-pro`。扫的中途换模型会把那些对比搅混。后来深度 1 又跑过 `agnes-cn`、`qwen-27b-dflash`（关思考和开思考）、国际站 Agnes 档位梯子（`agnes-intl` / `-2` / `-3`）和 `onmi-gemini3.6`，各自成节。
 - 每条跑一次。三个深度各跑三遍要一百多小时的评审时间；后果写在注意事项里。
 - 条目级打分：缺陷条目裁决为 HOLD 算抓到；干净对照裁决为 PASS 算放过。precision 和 recall 就在这两个计数上算。
 - 发现级打分：运行最终状态里每条 CONFIRMED 的发现，按文件、行范围和 token 重叠跟答案匹配。命中、漏报、误报跨条目累加。
@@ -144,6 +144,49 @@ FORGE_CLEAN_ROUND_THRESHOLD=1 FORGE_LOCAL_KEY=local code-forge eval \
 python3 scripts/analyse_arms.py docs/eval/qwen-dflash-d1.jsonl
 ```
 
+## 本机 27B 开思考（深度 1）
+
+后来一臂保持同一台机器、同一套权重和草稿、同一个 llama.cpp 二进制、同一深度、同一引擎、同一份语料。评审后端换成 `qwen-27b-dflash-think`：还是 Qwen3.8-27B UD-IQ4_XS 加 DFlash2，`enable_thinking: true`。评测机评审超时 7200 秒。
+
+账本：`docs/eval/qwen-dflash-think-d1.jsonl`
+SHA-256：`beec316c9e69f1a6ca6bd2064c4405f2020d9ab1c6b3bc5f78287ca4cebc4502`
+
+SKIPPED 行，原因都是 `infra: code-forge review timeout after 7200s`，账本第 86、96、142 行：`pylint-dev__pylint-8898-clean`、`pytest-dev__pytest-6197-clean`、`sympy__sympy-13974-clean`。三条都是干净对照。
+
+条目级，n=150。跳过的缺陷算漏报，跳过的对照算放过，和这一页其余数字同一条规则。
+
+| 后端 | 抓到缺陷 | 放过对照 | Recall | Precision | F1 | 每条耗时 |
+|---|---|---|---|---|---|---|
+| `qwen-27b-dflash`（上面关思考） | 41/75 | 44/75 | 0.547 | 0.569 | 0.558 | 85 s（SE 6） |
+| `qwen-27b-dflash-think` | 53/75 | 34/75 | 0.707 | 0.564 | 0.627 | 2776 s（SE 136） |
+
+发现级来自 `scripts/analyse_arms.py`。SKIPPED 行没有发现计数，不进打分 n：
+
+| 后端 | 命中 | 漏报 | 误报 | Precision | Recall | F1 | 打分 |
+|---|---|---|---|---|---|---|---|
+| `qwen-27b-dflash` | 33 | 119 | 91 | 26.6% | 21.7% | 0.239 | 150/150 |
+| `qwen-27b-dflash-think` | 50 | 102 | 151 | 24.9% | 32.9% | 0.283 | 147/150 |
+
+按每条只跑一次读：
+
+- 开思考多抓 12 个缺陷（53 对 41），干净对照少放 10 张（34 对 44）。那 34 张里有 3 张是 SKIPPED 按规则算放过。条目级 F1 是 0.627，对 0.558。发现级 F1 是 0.283，对 0.239：命中多，误报也多。思考动的是拦/放这道闸。发现级精度没升（24.9% 对 26.6%）。
+- 150 条精确 McNemar：缺陷只有思考抓到 20 条、只有关思考抓到 8 条（p=0.036）；干净 PASS 只有思考放过 5 条、只有关思考放过 18 条（p=0.011）。SKIPPED 对照算放过时，干净对照是 8 对 18（p=0.076）。
+- 每条 2776 秒把三条 7200 秒超时算进去了。147 条出了裁决的行均时 2685 秒，大约是关思考的 32 倍。3080 从 2026-09-15 13:56 跑到 2026-09-20 09:06 CST。
+- 这一臂替不了默认评审后端 `agnes-cn`。这份语料上漏检仍比多报更伤，每条 46 分钟也当不了在线默认。
+
+复现（隧道已打到 8081、用户配置里已有 `qwen-27b-dflash-think`）：
+
+```bash
+FORGE_CLEAN_ROUND_THRESHOLD=1 FORGE_LOCAL_KEY=local \
+FORGE_EVAL_REVIEW_TIMEOUT_S=7200 code-forge eval \
+    --corpus tests/eval/swebench/corpus.yaml --backend qwen-27b-dflash-think \
+    --jobs 1 --runs 1 --arm-depth 1 \
+    --resume-log docs/eval/qwen-dflash-think-d1.jsonl
+python3 scripts/analyse_arms.py \
+    docs/eval/qwen-dflash-d1.jsonl \
+    docs/eval/qwen-dflash-think-d1.jsonl
+```
+
 ## 国际站 Agnes 档位和 Gemini（深度 1）
 
 后来四臂保持深度 1、`engine=real`、每条一次、同一份 150 条语料，只换评审后端。四臂都从同一台评测机走公网 OmniRoute，jobs=1。
@@ -227,7 +270,7 @@ python3 scripts/analyse_arms.py \
 - SKIPPED 条目计入，不剔除。harness 给某条出不了裁决时，账本记为没抓到：跳过的缺陷算漏报，跳过的对照算放过。深度 2 和门开臂各跳过一条缺陷，深度 3 跳过一条对照，所以深度 3 的精度最多被一条条目美化。分析脚本会打印每条 SKIPPED 行的账本行号。
 - 每条耗时受 API 延迟干扰。各臂对着同一个端点串行跑了很多小时，一天里的时段对数字的影响比配置本身还大。耗时列当作粗略成本看，不是对深度或证伪门的测量。
 - 不能跟公开的代码评审 F1 数字比。Martian 的在线分数以开发者是否据此改了代码来判定一条评论有用，没有已知缺陷集。它的离线集是 50 个 PR、173 条人工写的标准评论、三个模型当裁判。CodeRabbit 和 Qodo 各自用自己的注入缺陷集。这一页是对着 SWE-bench Verified 的缺陷、以上游修复为答案、配对干净对照来打分。基准事实不同，数字就不同；不能放进一张表里。
-- 深度 1 有多套后端，其余臂只有一套。深度扫描和消融在 `mimo-v2.5-pro` 上跑。后来深度 1 又跑过 `agnes-cn`、`qwen-27b-dflash`、国际站 Agnes 档位梯子和 `onmi-gemini3.6`。深度 2、深度 3 和证伪门的天花板是流水线定的还是模型定的，这份数据仍分不出来。深度 1 这几次对换说明后端会推动召回和精度；它们回答不了深度或证伪门的问题。国际站 Agnes 那几行不能跟已经发表的 `agnes-cn` 那一行互换。
+- 深度 1 有多套后端，其余臂只有一套。深度扫描和消融在 `mimo-v2.5-pro` 上跑。后来深度 1 又跑过 `agnes-cn`、`qwen-27b-dflash`（关思考和开思考）、国际站 Agnes 档位梯子和 `onmi-gemini3.6`。深度 2、深度 3 和证伪门的天花板是流水线定的还是模型定的，这份数据仍分不出来。深度 1 这几次对换说明后端会推动召回和精度；它们回答不了深度或证伪门的问题。国际站 Agnes 那几行不能跟已经发表的 `agnes-cn` 那一行互换。
 - 语料形态。带上游修复的 Python 库代码，评审时没有周围上下文。结果不能不加检验地推到其他语言，或推到 SWE-bench 里没有的缺陷类别。
 
 ## 复现
