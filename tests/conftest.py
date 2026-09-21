@@ -112,26 +112,21 @@ def _git_isolation():
         os.environ["GIT_CEILING_DIRECTORIES"] = original
 
 
+def _git_output(repo_root, *args):
+    """Reject a failed Git query instead of snapshotting empty output."""
+    return subprocess.run(
+        ["git", *args], cwd=str(repo_root), check=True,
+        capture_output=True, text=True, timeout=10,
+    ).stdout
+
+
 def _snapshot_git_state(repo_root):
-    """Capture .git state for drift comparison."""
-    snap = {}
+    """Capture repository state using Git's worktree-aware paths."""
+    snap: dict = {"config": _git_output(repo_root, "config", "--list", "--local")}
 
-    result = subprocess.run(
-        ["git", "config", "--list", "--local"],
-        cwd=str(repo_root), capture_output=True, text=True, timeout=10,
-    )
-    snap["config"] = result.stdout
-
-    try:
-        git_dir_result = subprocess.run(
-            ["git", "rev-parse", "--absolute-git-dir"],
-            cwd=str(repo_root), capture_output=True, text=True, timeout=10,
-        )
-        git_dir = Path(git_dir_result.stdout.strip())
-    except Exception:
-        git_dir = repo_root / ".git"
-
-    hooks_dir = git_dir / "hooks"
+    hooks_dir = Path(_git_output(
+        repo_root, "rev-parse", "--path-format=absolute", "--git-path", "hooks",
+    ).strip())
     hooks = {}
     if hooks_dir.is_dir():
         for f in sorted(hooks_dir.iterdir()):
@@ -139,18 +134,14 @@ def _snapshot_git_state(repo_root):
                 hooks[f.name] = hashlib.sha256(f.read_bytes()).hexdigest()
     snap["hooks"] = hooks
 
-    result = subprocess.run(
-        ["git", "for-each-ref", "refs/heads/",
-         "--format=%(refname) %(objectname)"],
-        cwd=str(repo_root), capture_output=True, text=True, timeout=10,
+    snap["refs_heads"] = _git_output(
+        repo_root, "for-each-ref", "refs/heads/", "--format=%(refname) %(objectname)",
     )
-    snap["refs_heads"] = result.stdout
-
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=str(repo_root), capture_output=True, text=True, timeout=10,
-    )
-    snap["HEAD"] = result.stdout.strip()
+    try:
+        snap["HEAD"] = _git_output(repo_root, "rev-parse", "--verify", "HEAD").strip()
+    except subprocess.CalledProcessError:
+        # An initialized repository may have no commits; retain its branch.
+        snap["HEAD"] = "ref: " + _git_output(repo_root, "symbolic-ref", "HEAD").strip()
 
     dotfiles = {}
     for item in sorted(repo_root.glob(".git*")):
@@ -172,6 +163,10 @@ def pytest_configure(config):
 
 def pytest_sessionstart(session):
     repo_root = Path(__file__).resolve().parent.parent
+    # Mutation mirrors and source archives deliberately omit repository metadata.
+    # A broken .git marker still reaches Git and must fail rather than be ignored.
+    if not os.path.lexists(repo_root / ".git"):
+        return
     session.config.stash[_git_snapshot_key] = _snapshot_git_state(repo_root)
 
 
@@ -201,13 +196,9 @@ def pytest_sessionfinish(session, exitstatus):
             k for k in set(before["hooks"]) & set(after["hooks"])
             if before["hooks"][k] != after["hooks"][k]
         }
-        parts = []
-        for k in sorted(added):
-            parts.append(f"  + {k} (new)")
-        for k in sorted(removed):
-            parts.append(f"  - {k} (removed)")
-        for k in sorted(changed):
-            parts.append(f"  ~ {k} (content changed)")
+        parts = [f"  + {k} (new)" for k in sorted(added)]
+        parts.extend(f"  - {k} (removed)" for k in sorted(removed))
+        parts.extend(f"  ~ {k} (content changed)" for k in sorted(changed))
         diffs.append("Changed: .git/hooks/\n" + "\n".join(parts))
 
     if before["dotfiles"] != after["dotfiles"]:
