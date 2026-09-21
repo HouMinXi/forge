@@ -451,7 +451,16 @@ class TestReviewAutoDetect:
 class TestCostSummaryStderr:
     """CLI-08: state.json cost section and stderr cost summary."""
 
-    def test_cost_section_in_state_json(self, tmp_path):
+    @pytest.fixture
+    def isolated_process_state(self):
+        original_cwd = os.getcwd()
+        original_argv = sys.argv
+        with pytest.MonkeyPatch.context() as process_state:
+            yield process_state
+        assert os.getcwd() == original_cwd
+        assert sys.argv is original_argv
+
+    def test_cost_section_in_state_json(self, tmp_path, isolated_process_state):
         """After review, state.json contains cost section with required keys."""
         import json
         repo = tmp_path / "repo"
@@ -469,10 +478,10 @@ class TestCostSummaryStderr:
         )
         (repo / "a.py").write_text("# clean\nx = 1\n")
 
-        import sys as _sys
-        _sys.argv = ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"]
-        import os
-        os.chdir(str(repo))
+        isolated_process_state.setattr(sys, "argv", [
+            "code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py",
+        ])
+        isolated_process_state.chdir(repo)
 
         from code_forge.cli import main as _main
         with patch(
@@ -492,7 +501,9 @@ class TestCostSummaryStderr:
         assert "passes" in cost
         assert "per_pass" in cost
 
-    def test_cost_summary_shows_na_for_stub_engine(self, tmp_path, capsys):
+    def test_cost_summary_shows_na_for_stub_engine(
+        self, tmp_path, capsys, isolated_process_state,
+    ):
         """Stub engine (no token data) prints 'N/A' cost line, not silence."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -509,10 +520,10 @@ class TestCostSummaryStderr:
         )
         (repo / "a.py").write_text("# clean\nx = 1\n")
 
-        import sys as _sys
-        _sys.argv = ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"]
-        import os
-        os.chdir(str(repo))
+        isolated_process_state.setattr(sys, "argv", [
+            "code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py",
+        ])
+        isolated_process_state.chdir(repo)
 
         from code_forge.cli import main as _main
         with patch(
