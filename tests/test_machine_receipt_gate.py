@@ -124,6 +124,16 @@ def _payload(name: str) -> dict:
     }]}
     if name == "valid":
         return base
+    if name == "nonblank_tail":
+        v = copy.deepcopy(base)
+        v["code_excerpts"][0]["content"] = "\n".join(CONTENT.splitlines()[:2])
+        return v
+    if name == "minus_two":
+        v = copy.deepcopy(base)
+        v["code_excerpts"][0].update(
+            content="\n".join(CONTENT_10.splitlines()[:8]), start_line=3, end_line=10,
+        )
+        return v
     if name == "wrong_literal":
         v = copy.deepcopy(base)
         v["code_excerpts"][0]["content"] = CONTENT.replace(
@@ -347,6 +357,49 @@ def test_one_line_coordinate_slip_does_not_fail_the_gate(mode, tmp_path):
         f["source"] == "INFRA" and "misnumbered" in f["description"]
         for f in res["findings"]
     ), res["findings"]
+
+
+@pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
+@pytest.mark.parametrize("payload_name,diff", [("nonblank_tail", DIFF), ("minus_two", DIFF_10)])
+def test_source_proven_metadata_is_audited_without_parsing_prose(mode, payload_name, diff, tmp_path):
+    res = _run(mode, payload_name, tmp_path, diff=diff)
+    assert res["returned"] == Verdict.PASS.value, res
+    assert res["disk_verdict"] == Verdict.PASS.value
+    audit = [f for f in res["findings"] if f["source"] == "UNTRUSTED"]
+    assert audit, res["findings"]
+    assert not res["disk_infra_errors"]
+    for path in (tmp_path / ".code-forge/receipts").glob("receipt-*.json"):
+        actual = json.loads(path.read_text())["code_excerpts"][0]
+        expected = _payload(payload_name)["code_excerpts"][0]
+        for key in ("start_line", "end_line", "content"):
+            assert actual[key] == expected[key]
+
+
+def test_typed_audit_preserves_existing_product_finding(tmp_path, monkeypatch):
+    from code_forge.disposition import Disposition
+    from code_forge.state import StateFinding
+    import code_forge.verify as verify
+
+    machine = object.__new__(StateMachine)
+    machine.cwd = tmp_path
+    machine._receipt_diff = lambda: DIFF
+    product = StateFinding(
+        id="product", fingerprint="actual-product-defect", file="control.ts",
+        line_range=[2, 2], source="L1", disposition=Disposition.CONFIRMED,
+        description="Actual product finding must survive audit classification",
+    )
+    excerpts = _payload("nonblank_tail")["code_excerpts"]
+
+    def forbidden(_error):
+        pytest.fail("machine parsed diagnostic text")
+
+    monkeypatch.setattr(verify, "is_evidence_quality_fault", forbidden)
+    findings, kept = machine._downgrade_one_line_slips([product], excerpts)
+    assert kept == excerpts
+    assert findings[0] is product
+    assert product.disposition is Disposition.CONFIRMED
+    assert len(findings) == 2
+    assert findings[1].source == "UNTRUSTED"
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])

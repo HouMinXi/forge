@@ -1402,29 +1402,26 @@ class StateMachine:
         findings: list[StateFinding],
         excerpts: list[dict],
     ) -> tuple[list[StateFinding], list[dict]]:
-        """Record +/-1 coordinate slips as UNTRUSTED audit data.
+        """Record source-proven metadata damage as UNTRUSTED audit data.
 
-        The quote still matches the file, just one line over. That is
-        evidence quality, not a dead backend: keep the excerpt so the
-        hunk stays witnessed, and keep the diagnosis as UNTRUSTED.
+        The private name remains for existing callers. Classification uses
+        typed evidence, while the original quote and product findings stay.
         """
         diff_text = self._receipt_diff()
         if not diff_text or not excerpts:
             return findings, excerpts
         from .verify import (
+            ExcerptStatus,
             _diff_validation_context,
-            is_evidence_quality_fault,
-            validate_excerpt_evidence,
+            assess_excerpt_evidence,
         )
 
         post_image, hunk_map, exempt_files = _diff_validation_context(diff_text, cwd=self.cwd)
-        kept: list[dict] = []
         extra: list[StateFinding] = []
         for exc in excerpts:
-            err = validate_excerpt_evidence(
-                exc, hunk_map, post_image, exempt_files,
-            )
-            if err is not None and is_evidence_quality_fault(err):
+            assessment = assess_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
+            if assessment.status is ExcerptStatus.UNTRUSTED:
+                err = assessment.diagnostic or "untrusted excerpt metadata"
                 digest = hashlib.sha256(err.encode("utf-8")).hexdigest()[:12]
                 fp = f"receipt-{digest}"
                 extra.append(StateFinding(
@@ -1439,19 +1436,17 @@ class StateMachine:
                     ],
                     description=err,
                 ))
-            kept.append(exc)
         if extra:
             findings = list(findings) + extra
-        return findings, kept
+        return findings, excerpts
 
     def _record_receipt_gate_failure(self, error: str) -> None:
         """Persist a deterministic CONFIRMED finding for invalid evidence.
 
-        A CONFIRMED INFRA finding blocks convergence (clean rounds reset
-        on any new CONFIRMED) and makes the persisted state agree with
-        the returned verdict. The fingerprint is a stable hash of the
-        message so repeated rounds dedupe instead of inventing new
-        fingerprints each time.
+        The receipt gate returns before fixpoint accounting, preserving
+        already-earned clean rounds while failing this attempt. Persist the
+        diagnostic so state agrees with the returned verdict. Stable message
+        hashes deduplicate repeated failures.
         """
         import hashlib
 
