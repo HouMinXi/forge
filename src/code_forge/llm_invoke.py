@@ -449,7 +449,8 @@ def _read_with_deadline(response, deadline, backend_name):
                 is_timeout=True,
                 retryable=False,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - cross-thread transport,
+            # re-raised by the main thread below; nothing is swallowed.
             error[0] = exc
 
     # Capture the raw socket before starting the read.  shutdown()
@@ -458,7 +459,10 @@ def _read_with_deadline(response, deadline, backend_name):
     sock = None
     try:
         sock = response.fp.raw._sock
-    except Exception:
+    except MemoryError:
+        raise
+    except Exception:  # noqa: BLE001, S110 - best-effort: a missing raw
+        # socket is a normal configuration, not an event worth logging.
         pass
     if sock is not None:
         # Tighten the idle bound: urlopen() set timeout_s on this
@@ -474,7 +478,9 @@ def _read_with_deadline(response, deadline, backend_name):
         # is skipped and the deadline join above remains the guard.
         try:
             sock.settimeout(idle_installed)
-        except Exception as exc:
+        except MemoryError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - best-effort hardening
             logging.warning(
                 "could not install idle timeout on %s socket: %s",
                 backend_name, exc,
