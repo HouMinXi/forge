@@ -2485,7 +2485,9 @@ def test_job_cap_s_backend_explicit_timeout():
     with (
         patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
         patch("code_forge.backend.resolve_backend", return_value=be),
+        patch.dict(os.environ, {}, clear=False),
     ):
+        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
         assert _job_cap_s(Path("/tmp")) == 2400.0
 
 
@@ -2495,7 +2497,9 @@ def test_job_cap_s_api_backend_default_timeout():
     with (
         patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
         patch("code_forge.backend.resolve_backend", return_value=be),
+        patch.dict(os.environ, {}, clear=False),
     ):
+        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
         assert _job_cap_s(Path("/tmp")) == 1200.0
 
 
@@ -2505,7 +2509,9 @@ def test_job_cap_s_cli_backend_default_timeout():
     with (
         patch("code_forge.cli._load_gate_backends", return_value=({}, {})),
         patch("code_forge.backend.resolve_backend", return_value=be),
+        patch.dict(os.environ, {}, clear=False),
     ):
+        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
         assert _job_cap_s(Path("/tmp")) == 900.0
 
 
@@ -2553,8 +2559,10 @@ def test_job_cap_s_resolution_failure_falls_back(caplog):
             "code_forge.cli._load_gate_backends",
             side_effect=RuntimeError("broken yaml"),
         ),
+        patch.dict(os.environ, {}, clear=False),
         caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
     ):
+        os.environ.pop("FORGE_MCP_JOB_TIMEOUT_S", None)
         result = _job_cap_s(Path("/tmp"))
     assert result == 900.0
     assert any("falling back" in r.message for r in caplog.records)
