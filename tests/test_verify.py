@@ -2413,23 +2413,20 @@ class TestTask1TwoHunkFixture:
             "a = 1", "b = 2", "c = 3"]
         assert 5 not in post["src/f.py"]
 
-class TestTask1UnderlengthIsRejected:
-    """Content must carry exactly end_line - start_line + 1 source lines.
+class TestExcerptCountEvidence:
+    """A proven single-tail omission earns only the lines actually carried."""
 
-    Both shorter and longer payloads fail, even when the shown lines keep
-    total coverage above the old 60% gate -- otherwise a witness can claim
-    lines it never showed.
-    """
+    def test_proven_thin_tail_with_sufficient_coverage_is_accepted(self, tmp_path):
+        """Five demonstrated lines out of six meet the coverage floor.
 
-    def test_thin_tail_with_high_coverage_is_rejected(self, tmp_path):
-        """Declares 10-12 but carries only two lines; shown coverage is
-        5/6 = 83% so the floor cannot be what convicts it."""
+        The known omitted tail is audit metadata, not a fabricated quote;
+        the other two lines still witness the second hunk.
+        """
         thin = {"file": "src/f.py", "start_line": 10, "end_line": 12,
                 "content": "a = 1\nb = 2"}
         sha, diff_files = _t1_write(tmp_path, [_T1_E1, thin])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
-        assert not r.passed, (
-            f"underlength excerpt verified: {r.reason}")
+        assert r.passed, r.reason
 
     def test_declared_range_spanning_the_gap_is_rejected(self, tmp_path):
         """Declares 1-12, crossing gap lines 4-9 that no post-image line

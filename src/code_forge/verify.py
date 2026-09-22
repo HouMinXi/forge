@@ -18,6 +18,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from enum import Enum
 from itertools import combinations
 from pathlib import Path
 
@@ -352,31 +353,24 @@ def _cycle_covered(receipts: list[dict], cycle: int) -> set[tuple[str, int]]:
     return u
 
 
-def _excerpt_covered(receipt: dict) -> set[tuple[str, int]]:
-    s = set()
-    for exc in receipt.get("code_excerpts", []):
-        f = exc.get("file", "")
-        start = exc.get("start_line", 0)
-        end = exc.get("end_line", 0)
-        content = exc.get("content", "")
-        if isinstance(start, int) and isinstance(end, int) and f:
-            # Credit only the lines the excerpt actually shows. The declared
-            # range used to be trusted on its own, so claiming 1-1000 while
-            # pasting three lines earned 1000 lines toward the 60% floor in
-            # check 6 -- and the content check upstream never noticed,
-            # because it only compares lines the content actually has.
-            shown = len(content.splitlines()) if isinstance(content, str) else 0
-            for ln in range(start, min(end, start + shown - 1) + 1):
-                s.add((f, ln))
-    return s
+def _excerpt_covered(
+    receipt: dict, assessments: dict[int, ExcerptAssessment],
+) -> set[tuple[str, int]]:
+    return {
+        (exc["file"], line)
+        for exc in receipt.get("code_excerpts", [])
+        for line in assessments[id(exc)].proven_lines
+    }
 
 
-def _cycle_excerpt_covered(receipts: list[dict], cycle: int) -> set[tuple[str, int]]:
-    u = set()
-    for r in receipts:
-        if r["cycle"] == cycle:
-            u |= _excerpt_covered(r)
-    return u
+def _cycle_excerpt_covered(
+    receipts: list[dict], cycle: int, assessments: dict[int, ExcerptAssessment],
+) -> set[tuple[str, int]]:
+    covered = set()
+    for receipt in receipts:
+        if receipt["cycle"] == cycle:
+            covered |= _excerpt_covered(receipt, assessments)
+    return covered
 
 
 def _coverage_failure_detail(
@@ -525,163 +519,178 @@ def _blank_boundary_slip(
     )
 
 
+class ExcerptStatus(str, Enum):
+    VALID = "VALID"
+    UNTRUSTED = "UNTRUSTED"
+    INVALID = "INVALID"
+
+
+@dataclass(frozen=True)
+class ExcerptAssessment:
+    """Derived evidence; never rewrite the supplied quote or coordinates.
+
+    The set excludes unknown halo lines and gaps in a sparse post-image.
+    Its bounds alone are insufficient to compute coverage or hunk witnesses.
+    Shape-only and exempt assessments have no source-proven coordinates.
+    """
+
+    status: ExcerptStatus
+    diagnostic: str | None = None
+    proven_lines: frozenset[int] = frozenset()
+
+    @property
+    def proven_start(self) -> int | None:
+        return min(self.proven_lines) if self.proven_lines else None
+
+    @property
+    def proven_end(self) -> int | None:
+        return max(self.proven_lines) if self.proven_lines else None
+
+
+def _anchored_assessment(status, diagnostic, proven, hunks, location):
+    """A demonstrated quote must witness a hunk at its actual coordinates."""
+    proven = frozenset(proven)
+    if not any(h["start"] <= n <= h["end"] for h in hunks for n in proven):
+        return ExcerptAssessment(
+            ExcerptStatus.INVALID,
+            f"excerpt {location} is outside every hunk; unchanged context belongs in context_quotes",
+        )
+    return ExcerptAssessment(status, diagnostic, proven)
+
+
+def assess_excerpt_evidence(
+    exc: dict,
+    hunk_map: dict[str, list[dict]] | None = None,
+    post_image: dict[str, dict[int, str]] | None = None,
+    exempt_files: list[str] | None = None,
+) -> ExcerptAssessment:
+    """Assess model-controlled evidence against frozen source, not prose.
+
+    Shape-only calls retain the parser's one-line count slack. With a source
+    context, missing nonblank tails need an exact prefix and a known tail;
+    offset recovery needs all lines to match within the bounded search.
+    """
+    invalid = ExcerptStatus.INVALID
+    valid = ExcerptStatus.VALID
+    untrusted = ExcerptStatus.UNTRUSTED
+    if not isinstance(exc, dict):
+        return ExcerptAssessment(invalid, "excerpt must be a dictionary")
+    exc_file = exc.get("file", "<unknown>")
+    exc_start = exc.get("start_line")
+    exc_end = exc.get("end_line")
+    if not isinstance(exc_file, str) or not exc_file.strip():
+        return ExcerptAssessment(invalid, "excerpt file must be a non-empty string")
+    if (not isinstance(exc_start, int) or isinstance(exc_start, bool)
+            or not isinstance(exc_end, int) or isinstance(exc_end, bool)):
+        return ExcerptAssessment(invalid, f"excerpt {exc_file} coordinates must be integers")
+    location = f"{exc_file}:{exc_start}-{exc_end}"
+    if exc_start <= 0 or exc_end <= 0 or exc_start > exc_end:
+        return ExcerptAssessment(invalid, f"excerpt {location} has nonpositive or unordered range")
+    content = exc.get("content", "")
+    if isinstance(content, list):
+        if not all(isinstance(line, str) for line in content):
+            return ExcerptAssessment(invalid, f"excerpt {location} content list must contain only strings")
+        text = "\n".join(content)
+    elif isinstance(content, str):
+        text = content
+    else:
+        return ExcerptAssessment(invalid, f"excerpt {location} content must be a string")
+    if not text or not text.strip():
+        return ExcerptAssessment(invalid, f"excerpt {exc_file}:{exc_start} has empty content")
+    claimed = exc_end - exc_start + 1
+    actual_lines = excerpt_lines(text)
+    count_error = f"excerpt {location} declares {claimed} lines but carries {len(actual_lines)}"
+    if not excerpt_line_count_matches(text, claimed):
+        return ExcerptAssessment(invalid, count_error)
+    if hunk_map is None:
+        return ExcerptAssessment(valid)
+    exempt = exempt_files or []
+    if exc_file not in hunk_map and exc_file not in exempt:
+        return ExcerptAssessment(invalid, f"excerpt {exc_file}:{exc_start} not in diff")
+    hunks = hunk_map.get(exc_file, [])
+    if post_image is None or exc_file in exempt:
+        if claimed != len(actual_lines):
+            return ExcerptAssessment(invalid, count_error)
+        if exc_file not in exempt and not any(
+            max(exc_start, h["start"]) <= min(exc_end, h["end"]) for h in hunks
+        ):
+            return ExcerptAssessment(invalid, f"excerpt {location} is outside every hunk")
+        return ExcerptAssessment(valid)
+
+    file_lines = post_image.get(exc_file, {})
+    body_start = exc_start
+    short_by_one = claimed == len(actual_lines) + 1
+    blank_spent = False
+    if short_by_one:
+        tail = file_lines.get(exc_end)
+        head = file_lines.get(exc_start)
+        tail_blank = tail is not None and not tail.strip()
+        head_blank = head is not None and not head.strip()
+        prefix = {exc_start + i: line for i, line in enumerate(actual_lines)}
+        exact_prefix = all(
+            n in file_lines and line.rstrip() == file_lines[n].rstrip()
+            for n, line in prefix.items()
+        )
+        # Try the declared prefix first, including a carried leading blank.
+        # Moving it before comparison would spend the blank twice.
+        if exact_prefix and tail is not None:
+            return _anchored_assessment(
+                valid if tail_blank else untrusted,
+                None if tail_blank else count_error,
+                prefix, hunks, location,
+            )
+        if head_blank and not tail_blank:
+            body_start += 1
+            blank_spent = True
+        elif not tail_blank and not (tail is None and head is None):
+            return ExcerptAssessment(invalid, count_error)
+
+    quoted = {body_start + i: line for i, line in enumerate(actual_lines)}
+    overlap = quoted.keys() & file_lines.keys()
+    mismatches = sorted(n for n in overlap if quoted[n].rstrip() != file_lines[n].rstrip())
+    if mismatches or not overlap:
+        offset = _constant_offset(quoted, file_lines, -64, 65)
+        if offset is not None:
+            blank_slip = not blank_spent and _blank_boundary_slip(
+                exc_start, exc_end, offset, file_lines,
+            )
+            n = mismatches[0] if mismatches else min(quoted)
+            diagnostic = None if blank_slip else (
+                f"excerpt misnumbered by {offset:+d} at {location} "
+                f"(claims {exc_file}:{n}, actually {exc_file}:{n + offset})"
+            )
+            return _anchored_assessment(
+                valid if blank_slip else untrusted, diagnostic,
+                (n + offset for n in quoted), hunks, location,
+            )
+        if mismatches:
+            bad = next((n for n in mismatches
+                        if not _only_leading_ws_differs(quoted[n], file_lines[n])), None)
+            if bad is not None:
+                return ExcerptAssessment(invalid, f"excerpt content mismatch at {location} (line {bad})")
+            return _anchored_assessment(
+                untrusted, f"excerpt indent-stripped at {location}", overlap, hunks, location,
+            )
+        if not any(max(exc_start, h["start"]) <= min(exc_end, h["end"]) for h in hunks):
+            return ExcerptAssessment(
+                invalid, f"excerpt {location} is outside every hunk; it belongs in context_quotes",
+            )
+        return ExcerptAssessment(
+            invalid,
+            f"excerpt {location} claims line {min(quoted)} outside the diff post-image; it cannot be verified",
+        )
+    # Preserve hunk-halo compatibility without crediting its unknown lines.
+    return _anchored_assessment(valid, None, overlap, hunks, location)
+
+
 def validate_excerpt_evidence(
     exc: dict,
     hunk_map: dict[str, list[dict]] | None = None,
     post_image: dict[str, dict[int, str]] | None = None,
     exempt_files: list[str] | None = None,
 ) -> str | None:
-    """Validate one excerpt's shape, line-count parity and literal anchoring.
-
-    Shared deterministic predicate used by both producer acceptance and
-    run_verify: returns an error message string when the excerpt is
-    invalid, or None when it is valid. Shape and line-count checks run
-    unconditionally; diff-anchoring and literal checks run only when the
-    caller supplies hunk_map/post_image/exempt_files parsed from the
-    frozen diff_text (never the mutable working tree).
-    """
-    exc_file = exc.get("file", "<unknown>")
-    exc_start = exc.get("start_line", None)
-    exc_end = exc.get("end_line", None)
-    if not isinstance(exc_file, str) or not exc_file.strip():
-        return "excerpt file must be a non-empty string"
-    if (
-        not isinstance(exc_start, int)
-        or isinstance(exc_start, bool)
-        or not isinstance(exc_end, int)
-        or isinstance(exc_end, bool)
-    ):
-        return f"excerpt {exc_file} coordinates must be integers"
-    if exc_start <= 0 or exc_end <= 0 or exc_start > exc_end:
-        return (
-            f"excerpt {exc_file}:{exc_start!r}-{exc_end!r} has nonpositive or unordered range"
-        )
-    content = exc.get("content", "")
-    if isinstance(content, list):
-        # Preserve the writer's all-string list join; a mixed list is
-        # not evidence and must not be stringified into it.
-        if not all(isinstance(ln, str) for ln in content):
-            return f"excerpt {exc_file}:{exc_start}-{exc_end} content list must contain only strings"
-        text = "\n".join(content)
-    elif isinstance(content, str):
-        text = content
-    else:
-        return f"excerpt {exc_file}:{exc_start}-{exc_end} content must be a string"
-    if not text or not text.strip():
-        return f"excerpt {exc_file}:{exc_start} has empty content"
-    claimed = exc_end - exc_start + 1
-    actual_lines = excerpt_lines(text)
-    short_by_one = claimed == len(actual_lines) + 1
-    count_error = f"excerpt {exc_file}:{exc_start}-{exc_end} declares {claimed} lines but carries {len(actual_lines)}"
-    if not excerpt_line_count_matches(text, claimed):
-        return count_error
-    if hunk_map is None:
-        return None
-    exempt = exempt_files or []
-    if exc_file not in hunk_map and exc_file not in exempt:
-        return f"excerpt {exc_file}:{exc_start} not in diff"
-    if exc_file in hunk_map and not any(
-        max(exc_start, h["start"]) <= min(exc_end, h["end"])
-        for h in hunk_map[exc_file]
-    ):
-        return (
-            f"excerpt {exc_file}:{exc_start}-{exc_end} is outside every hunk; if the reviewer read it for context rather than checking it, it belongs in context_quotes"
-        )
-    if post_image is None or exc_file in exempt:
-        # No post-image to confirm the +/-1 slack from
-        # excerpt_line_count_matches. Count must be exact: a dropped
-        # trailing blank and an extra pasted line are equally unverified.
-        return count_error if claimed != len(actual_lines) else None
-    file_lines = post_image.get(exc_file, {})
-    body_start = exc_start
-    # A boundary blank can excuse the body shift below or a one-line offset
-    # further down, but not both: spending it twice skips the content check
-    # altogether and lets an excerpt drop a real line unnoticed.
-    blank_spent = False
-    if short_by_one:
-        # The count check let this through as a dropped blank line. The
-        # post-image says which end lost it. A quote running across a
-        # paragraph separator leaves it out at whichever end it falls,
-        # so both bounds have to be asked; a content line at both means
-        # the excerpt is genuinely thin rather than missing a separator.
-        # Absent is not the same answer as present-and-non-blank: a quote
-        # reaching into context lines has no post-image entry for its
-        # bounds at all, and treating that silence as "carries content"
-        # rejected intact evidence every round.
-        tail = file_lines.get(exc_end)
-        head = file_lines.get(exc_start)
-        tail_blank = tail is not None and not tail.strip()
-        head_blank = head is not None and not head.strip()
-        bounds_unknown = tail is None and head is None
-        if not tail_blank and not head_blank and not bounds_unknown:
-            return count_error
-        if head_blank and not tail_blank:
-            # The separator sits at the start, so the body that was actually
-            # quoted begins one line into the declared range.
-            body_start = exc_start + 1
-            blank_spent = True
-    excerpt_line_map = {
-        body_start + i: line for i, line in enumerate(actual_lines)
-    }
-    overlap = set(excerpt_line_map) & set(file_lines)
-    if overlap:
-        offset = None
-        indent_ln = None
-        mismatch_ln = None
-        for ln in sorted(overlap):
-            if excerpt_line_map[ln].rstrip() != file_lines[ln].rstrip():
-                if offset is None:
-                    offset = _constant_offset(
-                        excerpt_line_map, file_lines, -64, 65)
-                if _only_leading_ws_differs(
-                    excerpt_line_map[ln], file_lines[ln]
-                ):
-                    if indent_ln is None:
-                        indent_ln = ln
-                else:
-                    mismatch_ln = ln
-                    break
-        if mismatch_ln is not None or indent_ln is not None:
-            ln = mismatch_ln if mismatch_ln is not None else indent_ln
-            if offset is not None and (
-                blank_spent
-                or not _blank_boundary_slip(
-                    exc_start, exc_end, offset, file_lines
-                )
-            ):
-                return (
-                    f"excerpt misnumbered by {offset:+d} at {exc_file}:{exc_start}-{exc_end} (claims {exc_file}:{ln}, actually {exc_file}:{ln + offset})"
-                )
-            if offset is not None:
-                # Blank-boundary slip: the quote is anchored one line off
-                # across a paragraph separator that carries no evidence.
-                # The content itself checked out at the shift, so there is
-                # nothing left to report.
-                return None
-            if mismatch_ln is not None:
-                return (
-                    f"excerpt content mismatch at {exc_file}:{exc_start}-{exc_end} (line {mismatch_ln})"
-                )
-            return (
-                f"excerpt indent-stripped at {exc_file}:{exc_start}-{exc_end}"
-            )
-    outside = set(excerpt_line_map) - set(file_lines)
-    if outside and not overlap:
-        offset = _constant_offset(excerpt_line_map, file_lines, -64, 65)
-        if offset is not None and (
-            blank_spent
-            or not _blank_boundary_slip(exc_start, exc_end, offset, file_lines)
-        ):
-            ln = min(outside)
-            return (
-                f"excerpt misnumbered by {offset:+d} at {exc_file}:{exc_start}-{exc_end} (claims {exc_file}:{ln}, actually {exc_file}:{ln + offset})"
-            )
-        if offset is not None:
-            return None
-        return (
-            f"excerpt {exc_file}:{exc_start}-{exc_end} claims line {min(outside)} outside the diff post-image; it cannot be verified"
-        )
-    return None
+    """Compatibility diagnostic view; production gates consume the assessment."""
+    return assess_excerpt_evidence(exc, hunk_map, post_image, exempt_files).diagnostic
 
 
 def _diff_validation_context(
@@ -835,11 +844,9 @@ def validate_excerpts_against_diff(
     post_image, hunk_map, exempt_files = _diff_validation_context(diff_text, cwd=cwd)
     errors: list[str] = []
     for exc in excerpts:
-        err = validate_excerpt_evidence(
-            exc, hunk_map, post_image, exempt_files
-        )
-        if err is not None and not is_evidence_quality_fault(err):
-            errors.append(err)
+        assessment = assess_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
+        if assessment.status is ExcerptStatus.INVALID:
+            errors.append(assessment.diagnostic or "invalid excerpt evidence")
     return errors
 
 
@@ -1047,22 +1054,23 @@ def run_verify(
             if r.get("cycle") in last_n:
                 all_excerpts.extend(r.get("code_excerpts", []))
 
-        # STEP 0: excerpt shape and line-count parity, via the shared
-        # helper (before any field access in STEP A). Underlength now
-        # fails instead of receiving partial credit.
+        # Assess once. The same derived coordinates drive witness, coverage
+        # and overlap checks; persisted model coordinates stay untouched.
+        assessments = {}
         for exc in all_excerpts:
-            err = validate_excerpt_evidence(exc)
-            if err is not None:
-                return VerifyResult(False, err, 5, cp)
+            assessment = assess_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
+            if assessment.status is ExcerptStatus.INVALID:
+                return VerifyResult(False, assessment.diagnostic or "invalid excerpt evidence", 5, cp)
+            assessments[id(exc)] = assessment
 
-        # STEP A: per-hunk witness check
         for file, hunks in hunk_map.items():
             for hunk in hunks:
                 if hunk["is_deletion_only"]:
                     continue
                 witnessed = any(
                     exc["file"] == file
-                    and max(exc["start_line"], hunk["start"]) <= min(exc["end_line"], hunk["end"])
+                    and any(hunk["start"] <= n <= hunk["end"]
+                            for n in assessments[id(exc)].proven_lines)
                     for exc in all_excerpts
                 )
                 if not witnessed:
@@ -1071,114 +1079,6 @@ def run_verify(
                         f"unwitnessed hunk {file}:{hunk['start']}-{hunk['end']}",
                         5, cp,
                     )
-
-        # STEP B: excerpt-to-hunk anchoring plus literal post-image
-        # match, via the same shared helper the producer uses. Every
-        # claimed source line must be in the frozen diff post-image and
-        # match under the existing trailing-whitespace rule only.
-        #
-        # An excerpt names lines the reviewer says it checked, so every one has
-        # to land somewhere this can check it -- the diff. Code read for
-        # orientation but outside the diff is real and worth recording, and it
-        # belongs in context_quotes, which claims nothing and is never read
-        # here. Letting it into code_excerpts instead would mean accepting a
-        # line nobody can confirm next to lines that were confirmed, with
-        # nothing in the receipt telling the two apart. Checking it against the
-        # working tree is not the way out: the diff is fixed at verify time and
-        # the tree is not, so the tree can change between the reviewer reading
-        # it and this running.
-        for exc in all_excerpts:
-            err = validate_excerpt_evidence(exc, hunk_map, post_image, exempt_files)
-            if err is not None and not is_evidence_quality_fault(err):
-                return VerifyResult(False, err, 5, cp)
-
-        # STEP C: content verification against diff post-image
-        # The diff is immutable at verify time -- no TOCTOU with working tree.
-        # Only lines overlapping between excerpt and diff are compared (GM-B1).
-        # Known limitation: STEP C verifies that covered lines are faithful to the
-        # post-image but cannot distinguish "covers only context lines" from "covers
-        # actual changed lines." A reviewer can pass STEP C by citing only context
-        # lines around the change. The 60% coverage floor (check 6) mitigates this.
-        for exc in all_excerpts:
-            actual_lines = exc.get("content", "").splitlines()
-            excerpt_line_map = {}
-            start = exc["start_line"]
-            for i, line in enumerate(actual_lines):
-                excerpt_line_map[start + i] = line
-
-            file_lines = post_image.get(exc["file"], {})
-            overlap_lines = set(excerpt_line_map.keys()) & set(file_lines.keys())
-
-            # Exempt files (binary/rename/mode-only) have no hunks and
-            # therefore no post-image lines; every claimed line would
-            # read as outside. They are checked at STEP B and skipped
-            # here by design.
-            if exc["file"] in exempt_files:
-                continue
-
-            one_line_slip = False
-            indent_only = False
-            if overlap_lines:
-                def normalize(s):
-                    return s.rstrip()
-                for ln in sorted(overlap_lines):
-                    if normalize(excerpt_line_map[ln]) != normalize(file_lines[ln]):
-                        if _only_leading_ws_differs(
-                            excerpt_line_map[ln], file_lines[ln]
-                        ):
-                            indent_only = True
-                            continue
-                        # Distinguish a misnumbered excerpt from a fabricated
-                        # one. A reviewer that ignored the annotated line
-                        # numbers produces content that matches the file at a
-                        # constant offset; a fabricated excerpt matches at no
-                        # offset at all. Report the offset so the diagnosis
-                        # does not point at the wrong line.
-                        offset = _constant_offset(
-                            excerpt_line_map, file_lines, -64, 65,
-                        )
-                        if offset is not None:
-                            if abs(offset) == 1:
-                                # Content matches one line over: evidence
-                                # quality, not a dead backend. Skip the
-                                # outside-line check for this excerpt.
-                                one_line_slip = True
-                                break
-                            return VerifyResult(
-                                False,
-                                f"excerpt misnumbered by {offset:+d} at {exc['file']}:{exc['start_line']}-{exc['end_line']} (claims {exc['file']}:{ln}, actually {exc['file']}:{ln + offset})",
-                                5, cp,
-                            )
-                        return VerifyResult(
-                            False,
-                            f"excerpt content mismatch at {exc['file']}:{exc['start_line']}-{exc['end_line']} (line {ln})",
-                            5, cp,
-                        )
-
-            if indent_only:
-                one_line_slip = True
-
-            # Every claimed line must land in the post-image. A line
-            # outside it is content nobody can check -- the tail of a
-            # genuine excerpt can carry invented lines and the receipt
-            # would read as "the reviewer verified these" while they were
-            # never compared against anything. This runs after the
-            # misnumber check so a shifted excerpt reports its offset
-            # rather than a bare outside-the-diff line.
-            if one_line_slip:
-                cp += 1
-                continue
-            outside = set(excerpt_line_map.keys()) - set(file_lines.keys())
-            if outside and not overlap_lines:
-                return VerifyResult(
-                    False,
-                    f"excerpt {exc['file']}:{exc['start_line']}-{exc['end_line']} claims line "
-                    f"{min(outside)} outside the diff post-image; it cannot be verified",
-                    5, cp,
-                )
-            # Hunk-halo: overlapping excerpts that also quote lines
-            # outside the @@ span are skipped. Invented tails with
-            # no overlap already failed above. Do not read cwd.
         # 6. excerpt-derived coverage >= 60%
         # The floor deliberately counts test lines: tests do not test
         # themselves, so a test-heavy diff is exactly where a reviewer
@@ -1189,7 +1089,7 @@ def run_verify(
         all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
         if all_diff:
             for c in last_n:
-                cov = _cycle_excerpt_covered(receipts, c) & all_diff
+                cov = _cycle_excerpt_covered(receipts, c, assessments) & all_diff
                 if len(cov) / len(all_diff) < 0.6:
                     # The prefix before ';' is the stable format a
                     # consumer may match; the suffix is human guidance.
@@ -1219,8 +1119,8 @@ def run_verify(
                 cycle_findings.get(b, [])
             ):
                 continue
-            cov_a = _cycle_excerpt_covered(receipts, a)
-            cov_b = _cycle_excerpt_covered(receipts, b)
+            cov_a = _cycle_excerpt_covered(receipts, a, assessments)
+            cov_b = _cycle_excerpt_covered(receipts, b, assessments)
             if not cov_a and not cov_b:
                 return VerifyResult(
                     False,
