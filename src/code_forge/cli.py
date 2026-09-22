@@ -1245,7 +1245,11 @@ def _run_test_assertion_review(
             validated, "test-assertion",
             backend=backend.name if backend else None,
         )
-    except Exception:
+    # Let memory exhaustion abort the review rather than degrade it; an empty
+    # finding list is indistinguishable from a genuinely clean assertion review.
+    except MemoryError:
+        raise
+    except Exception:  # noqa: BLE001 - degradation path, review fails open
         return []
 
 
@@ -1701,7 +1705,9 @@ def _run_eval(args) -> int:
                     runs=args.runs,
                     backend_config=_backend_config,
                 )
-            except Exception as exc:
+            except MemoryError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - degradation path, named
                 # Pool path records a consistent raise as SKIPPED so
                 # resume's retry cap can stop it. Serial used to crash
                 # before _record, so a resume restarted the same entry
@@ -2851,7 +2857,7 @@ def _safe_load_contract_digest(
     # PASS reached without contract context is worse than a hard failure.
     except MemoryError:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - degradation path, named
         sys.stderr.write(
             "code-forge: contracts.yaml load failed: %s\n" % exc
         )
@@ -2908,7 +2914,9 @@ def _merge_contract_spec(
                         )
                 else:
                     effective_content = summary
-            except Exception:
+            except MemoryError:
+                raise
+            except Exception:  # noqa: BLE001 - degradation path, raw content kept
                 if warn_fn:
                     warn_fn(
                         "contract: summarization failed, "
@@ -3080,7 +3088,9 @@ def _dispatch_inline_canary(
                     env, configs=cfgs,
                     cli_value=getattr(args, "backend", None),
                 )
-            except Exception:
+            except MemoryError:
+                raise
+            except Exception:  # noqa: BLE001 - degradation path, backend optional
                 backend = None
 
             n_canaries = canary_config.get("n", 5)
@@ -3111,7 +3121,9 @@ def _dispatch_inline_canary(
                         return content.get("mutations", [])
                     parsed = _json.loads(str(content))
                     return parsed.get("mutations", [])
-                except Exception as exc:
+                except MemoryError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - falls back to templates
                     sys.stderr.write(
                         "code-forge: canary generation failed: %s, "
                         "falling back to templates\n" % exc
@@ -3156,7 +3168,9 @@ def _dispatch_inline_canary(
                         f.get("severity", "?"), f.get("description", "?"),
                     ))
             return verdict
-        except Exception as exc:
+        except MemoryError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - degradation path, falls back
             sys.stderr.write(
                 "code-forge: canary check failed (%s), "
                 "falling back to DELEGATED\n" % exc
@@ -4027,7 +4041,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         try:
             from .llm_invoke import effective_invoke_timeout_s
             _banner_timeout = effective_invoke_timeout_s(backend, None)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 - banner must never abort the run
             pass
     # The resolved review carries the target head sha (git mode), so
     # the banner labels the actual review target -- --head <sha>,
@@ -4044,7 +4058,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             _banner_diff_count = len(
                 parse_diff_files(resolved.git_diff)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 - banner must never abort the run
             pass
     # Phase 53a EXEC-FALSIFY: resolve flag + gate.yaml budget.
     _exec_falsify = bool(getattr(args, "exec_falsify", False))
@@ -4690,7 +4704,9 @@ def _run_install_skill(args, cwd: Path) -> int:
     # Locate bundled skills via importlib.resources
     try:
         src_root = _pkg_files("code_forge") / "skills"
-    except Exception as exc:
+    except MemoryError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - packaging fault, exits with error
         _warn("cannot locate bundled skills: %s" % exc)
         return EXIT_CLI_ERROR
 
@@ -4705,7 +4721,9 @@ def _run_install_skill(args, cwd: Path) -> int:
         def _show_available() -> None:
             try:
                 avail = sorted(e.name for e in src_root.iterdir() if e.is_dir())
-            except Exception:
+            except MemoryError:
+                raise
+            except Exception:  # noqa: BLE001 - advisory listing only
                 avail = []
             if avail:
                 _warn("available skills: %s" % ", ".join(avail))
@@ -4729,7 +4747,9 @@ def _run_install_skill(args, cwd: Path) -> int:
                 entry.name for entry in src_root.iterdir()
                 if entry.is_dir()
             )
-        except Exception as exc:
+        except MemoryError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - packaging fault, exits with error
             _warn("cannot list bundled skills: %s" % exc)
             return EXIT_CLI_ERROR
         if not skill_names:
