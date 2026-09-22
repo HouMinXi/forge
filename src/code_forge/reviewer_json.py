@@ -3,6 +3,13 @@
 """Shared reviewer JSON validation and excerpt collection.
 
 Used by both factories.py (Outlet A) and outlet_c.py (Outlet C).
+
+Exception contract: every validation failure raises ValueError (or its
+subclass ExcerptEvidenceError), never TypeError. Both factories call sites
+catch ValueError to route malformed reviewer output into the salvage path;
+raising TypeError for type violations would escape that net and crash the
+review. The TRY004 suppressions below are deliberate and pinned by
+tests/test_reviewer_json_contract.py.
 """
 from __future__ import annotations
 
@@ -197,7 +204,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
             raise ValueError(f"not valid JSON: {e}") from e
 
     if not isinstance(data, dict):
-        raise ValueError("not a JSON object")
+        raise ValueError("not a JSON object")  # noqa: TRY004 - salvage routing catches ValueError
 
     _hoist_nested_excerpts(data)
 
@@ -206,13 +213,13 @@ def validate_reviewer_json(raw: str | dict) -> dict:
             raise ValueError(f"missing required field: {field}")
 
     if not isinstance(data["findings"], list):
-        raise ValueError("findings must be a list")
+        raise ValueError("findings must be a list")  # noqa: TRY004 - salvage routing catches ValueError
     if not isinstance(data["code_excerpts"], list):
-        raise ValueError("code_excerpts must be a list")
+        raise ValueError("code_excerpts must be a list")  # noqa: TRY004 - salvage routing catches ValueError
 
     for i, f in enumerate(data["findings"]):
         if not isinstance(f, dict):
-            raise ValueError("finding[%d] is not a dict" % i)
+            raise ValueError("finding[%d] is not a dict" % i)  # noqa: TRY004 - salvage routing catches ValueError
         for key in _FINDING_REQUIRED:
             if key not in f:
                 raise ValueError("finding[%d] missing: %s" % (i, key))
@@ -221,7 +228,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
 
     for i, exc in enumerate(data["code_excerpts"]):
         if not isinstance(exc, dict):
-            raise ValueError("code_excerpt[%d] is not a dict" % i)
+            raise ValueError("code_excerpt[%d] is not a dict" % i)  # noqa: TRY004 - salvage routing catches ValueError
         for key in _EXCERPT_REQUIRED:
             if key not in exc:
                 raise ValueError("code_excerpt[%d] missing: %s" % (i, key))
@@ -231,7 +238,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         for coord in ("start_line", "end_line"):
             v = exc.get(coord)
             if not isinstance(v, int) or isinstance(v, bool):
-                raise ValueError("code_excerpt[%d] %s must be int" % (i, coord))
+                raise ValueError("code_excerpt[%d] %s must be int" % (i, coord))  # noqa: TRY004 - salvage routing catches ValueError
         s = exc["start_line"]
         e = exc["end_line"]
         if s <= 0 or e <= 0:
@@ -253,7 +260,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         elif isinstance(content, str):
             text = content
         else:
-            raise ValueError("code_excerpt[%d] content must be str" % i)
+            raise ValueError("code_excerpt[%d] content must be str" % i)  # noqa: TRY004 - salvage routing catches ValueError
         if not text.strip():
             raise ValueError("code_excerpt[%d] content must not be empty" % i)
         claimed = e - s + 1
