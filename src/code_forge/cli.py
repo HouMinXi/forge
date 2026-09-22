@@ -1059,8 +1059,7 @@ def _window_file_text(
     for lo, hi in wanted:
         if lo > prev_hi + 1:
             out.append("... [%d lines omitted]" % (lo - prev_hi - 1))
-        for n in range(lo, hi + 1):
-            out.append("%d: %s" % (n, lines[n - 1]))
+        out.extend("%d: %s" % (n, lines[n - 1]) for n in range(lo, hi + 1))
         prev_hi = hi
     if prev_hi < len(lines):
         out.append("... [%d lines omitted]" % (len(lines) - prev_hi))
@@ -4155,7 +4154,7 @@ def _run_hold_loop(
     exec_falsify_command=None,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
-    for cycle in range(MAX_HOLD_CYCLES):
+    for _cycle in range(MAX_HOLD_CYCLES):
         # Fresh runners per cycle to prevent cross-cycle state
         # accumulation (infra_errors, source_files).
         from .taint import TaintRunner
