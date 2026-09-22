@@ -1087,8 +1087,7 @@ class StateMachine:
         workers = _falsify_workers(total, self.falsifier)
         items = list(enumerate(l1_candidates, 1))
         if workers <= 1 or total <= 1:
-            for item in items:
-                l1_findings.append(_one(item))
+            l1_findings.extend(_one(item) for item in items)
         else:
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -2667,10 +2666,11 @@ class StateMachine:
         # Build a map: fingerprint -> most recent disposition across all
         # round_history entries.  Iterate forward so later entries
         # overwrite earlier ones; the final value is the most recent.
-        latest_disps: dict[str, str] = {}
-        for snapshot in self._state.round_history:
-            for fp, disp in snapshot.get("dispositions", {}).items():
-                latest_disps[fp] = disp
+        latest_disps: dict[str, str] = {
+            fp: disp
+            for snapshot in self._state.round_history
+            for fp, disp in snapshot.get("dispositions", {}).items()
+        }
         for f in findings:
             prior = latest_disps.get(f.fingerprint)
             if prior in self._STICKY_TERMINAL_DISPOSITIONS:
