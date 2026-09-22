@@ -23,6 +23,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -387,10 +388,25 @@ def _apply_params(
         configured, backend.name,
         lambda msg: LLMInvokeError(msg, retryable=False),
     )
-    for k, v in configured.items():
-        body[k] = v
+    body.update(configured)
 
     return cap
+
+
+def _require_http_scheme(url: str) -> None:
+    """Fail closed on non-HTTP(S) endpoint URLs.
+
+    backend.base_url is user configuration. A mistaken or tampered scheme
+    (file:, ftp:) would turn the LLM call into a local file read or an
+    unexpected protocol dial. Checked once per invoke so the urlopen sites
+    below have a uniform answer to the S310 audit.
+    """
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise LLMInvokeError(
+            "endpoint URL scheme %r is not http/https: %s" % (scheme, url),
+            retryable=False,
+        )
 
 
 # A response that has gone silent for this many seconds is treated as
@@ -1182,17 +1198,19 @@ def _install_signal_handlers() -> None:
     """
     import signal as _signal
 
-    global _original_sigint, _original_sigterm, _handlers_installed
+    # Process-wide signal state lives at module scope by design (the signal
+    # module itself is process-global); a registry object would add indirection
+    # without changing the semantics.
+    global _original_sigint, _original_sigterm, _handlers_installed  # noqa: PLW0603
     if _handlers_installed:
         return
 
     def _make_chained_handler(prev: Any):
         def _handler(signum: int, frame: Any) -> None:
-            global _active_proc
             if _active_proc is not None:
                 try:
                     _kill_tree(_active_proc)
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110 - signal handler: best-effort kill, logging unsafe here
                     pass
             if callable(prev):
                 prev(signum, frame)
@@ -1242,7 +1260,7 @@ def _retry_delay_s(
         initial_delay_s * (2 ** attempt),
         MAX_BACKOFF_S,
     )
-    jitter = 0.0 if initial_delay_s == 0 else random.uniform(0, 0.5)
+    jitter = 0.0 if initial_delay_s == 0 else random.uniform(0, 0.5)  # noqa: S311 - retry backoff jitter, not a security decision
     delay = base + jitter
     if retry_after is not None:
         delay = max(delay, retry_after)
@@ -1426,7 +1444,7 @@ def _invoke_cli(
             exit_code=-1, stderr=str(exc), duration_s=duration,
         ) from exc
 
-    global _active_proc
+    global _active_proc  # noqa: PLW0603 - process-wide signal target, module scope by design
     _active_proc = proc
     try:
         try:
@@ -2168,7 +2186,7 @@ def _invoke_api(
                     # Report the spent budget, not the last cut-off
                     # reply: the exhaustion message names every attempt
                     # and the reason each failed.
-                    raise spent_error
+                    raise spent_error from None
             cause = _retry_cause(exc)
             if not exc.retryable or attempt == max_attempts - 1:
                 if attempt > 0 or (exc.retryable and max_attempts == 1):
@@ -2247,6 +2265,7 @@ def _invoke_openai(
 ) -> tuple[str, dict]:
     """OpenAI-format API call. Returns (content_str, usage_dict)."""
     url = backend.base_url + "/chat/completions"
+    _require_http_scheme(url)
     headers = _request_headers({
         "Authorization": "Bearer " + api_key,
         "Content-Type": "application/json",
@@ -2265,11 +2284,11 @@ def _invoke_openai(
     )
 
     try:
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
         deadline = time.monotonic() + timeout_s
-        with urllib.request.urlopen(req, timeout=timeout_s) as response:
+        with urllib.request.urlopen(req, timeout=timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
             if backend.stream:
                 resp_data = _read_sse(
                     response, deadline=deadline,
@@ -2423,6 +2442,7 @@ def _invoke_anthropic(
             "use format: openai" % (backend.name, backend.format)
         )
     url = backend.base_url + "/v1/messages"
+    _require_http_scheme(url)
     headers = _request_headers({
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
@@ -2440,11 +2460,11 @@ def _invoke_anthropic(
     )
 
     try:
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
         deadline = time.monotonic() + timeout_s
-        with urllib.request.urlopen(req, timeout=timeout_s) as response:
+        with urllib.request.urlopen(req, timeout=timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
             raw = _read_with_deadline(response, deadline, backend.name)
             resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
@@ -2635,6 +2655,7 @@ def _invoke_vertex(
     url = _build_vertex_url(
         backend.project_id, backend.region or "global", backend.model
     )
+    _require_http_scheme(url)
     headers = _request_headers({
         "Authorization": "Bearer " + creds.token,
         "Content-Type": "application/json",
@@ -2651,11 +2672,11 @@ def _invoke_vertex(
     )
 
     try:
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310 - scheme allowlist enforced above
             url, data=json.dumps(body).encode("utf-8"), headers=headers
         )
         deadline = time.monotonic() + timeout_s
-        with urllib.request.urlopen(req, timeout=timeout_s) as response:
+        with urllib.request.urlopen(req, timeout=timeout_s) as response:  # noqa: S310 - scheme allowlist enforced above
             raw = _read_with_deadline(response, deadline, backend.name)
             resp_data = _parse_response_body(raw, backend.name)
     except urllib.error.HTTPError as exc:
@@ -2861,7 +2882,7 @@ async def invoke_sampling(
                         retryable=_no_json_retryable(
                             getattr(result, "stopReason", "") or ""
                         ),
-                    )
+                    ) from exc
 
             return LLMResult(
                 content=parsed,
