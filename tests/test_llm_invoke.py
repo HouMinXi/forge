@@ -13,6 +13,7 @@ from unittest.mock import patch, MagicMock, Mock
 
 import pytest
 
+from code_forge import json_cut
 from code_forge.llm_invoke import (
     llm_invoke,
     LLMInvokeError,
@@ -1410,7 +1411,7 @@ def _make_vertex_backend(**kwargs):
     return BackendConfig(**defaults)
 
 
-def _vertex_mock_response(content_str: str, usage: dict = None):
+def _vertex_mock_response(content_str: str, usage: dict | None = None):
     """Build a mock urlopen response for Vertex."""
     resp_data = {
         "content": [{"type": "text", "text": content_str}],
@@ -3103,7 +3104,7 @@ class TestVertexBuildUrl:
 class TestVertexInvoke:
     """Tests for _invoke_vertex wire protocol and error handling."""
 
-    def _mock_google_auth(self, monkeypatch, token="fake-token"):
+    def _mock_google_auth(self, monkeypatch, token="fake-token"):  # noqa: S107 - test fixture credential, never a real secret
         """Patch google-auth modules and return mock credentials."""
         mock_creds = MagicMock()
         mock_creds.token = token
@@ -4370,9 +4371,6 @@ class TestJsonCutInsideString:
         assert _json_cut_at_eof(text) is False
 
 
-from code_forge import json_cut
-
-
 class TestJsonCutStructuralCoverage:
     """Every prefix of a valid reply is a cut the provider could produce.
 
@@ -4386,8 +4384,6 @@ class TestJsonCutStructuralCoverage:
     """
 
     def _cuts(self, doc):
-        from code_forge.llm_invoke import _json_cut_inside_string
-
         return [i for i in range(1, len(doc)) if not json_cut.is_truncated(doc[:i])]
 
     def test_findings_array_every_prefix_is_a_cut(self):
@@ -4438,8 +4434,6 @@ class TestJsonCutRejectsFinishedOutput:
     """
 
     def _cut(self, text):
-        from code_forge.llm_invoke import _json_cut_inside_string
-
         return json_cut.is_truncated(text)
 
     def test_complete_array_is_not_a_cut(self):
@@ -5092,9 +5086,7 @@ from code_forge.errors import CliError  # noqa: E402
 
 def _sse_lines(*chunks):
     """Build fake SSE response lines (bytes iterator)."""
-    lines = []
-    for c in chunks:
-        lines.append(("data: " + json.dumps(c) + "\n").encode())
+    lines = [("data: " + json.dumps(c) + "\n").encode() for c in chunks]
     lines.append(b"data: [DONE]\n")
     return iter(lines)
 
@@ -6069,7 +6061,7 @@ class TestReadSSEDeadline:
         from code_forge.llm_invoke import _read_sse, LLMInvokeError
 
         def _slow_lines():
-            for i in range(100):
+            for _ in range(100):
                 time.sleep(0.05)
                 yield b'data: {"choices":[{"delta":{"content":"x"}}]}\n'
 
@@ -6151,14 +6143,14 @@ class TestReadWithDeadlineRealPath:
 
         baseline_threads = threading.active_count()
         url = "http://127.0.0.1:%d/" % port_box[0]
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310 - loopback drip-feed test server
             url,
             data=b"{}",
             headers={"Content-Type": "application/json"},
         )
         deadline = time.monotonic() + TIMEOUT
         t0 = time.monotonic()
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310 - loopback drip-feed test server
             with pytest.raises(LLMInvokeError, match="total read"):
                 _read_with_deadline(resp, deadline, "test")
         elapsed = time.monotonic() - t0
@@ -6185,7 +6177,7 @@ class TestReadWithDeadlineRealPath:
         from code_forge.llm_invoke import _read_sse, LLMInvokeError
 
         def _slow_lines():
-            for i in range(100):
+            for _ in range(100):
                 time.sleep(0.05)
                 yield b'data: {"choices":[{"delta":{"content":"x"}}]}\n'
 
