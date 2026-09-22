@@ -252,10 +252,18 @@ def _limit_address_space(memory_limit_bytes: int) -> None:
     mutmut forks one child per mutant and the limit is inherited, so a
     single runaway mutant kills itself with MemoryError instead of the
     OOM killer taking the whole review service. POSIX only.
+
+    The hard ceiling cannot be raised. An outer prlimit already below the
+    requested cap must be kept, not treated as a launch failure.
     """
     import resource
 
-    resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
+    _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    if hard != resource.RLIM_INFINITY:
+        memory_limit_bytes = min(memory_limit_bytes, hard)
+    resource.setrlimit(
+        resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes)
+    )
 
 
 _MUTATION_STAGE_EXCLUSION = "not integration and not source_scan"
