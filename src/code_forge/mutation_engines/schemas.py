@@ -168,8 +168,9 @@ def _validate_relative_path(path: str, field_name: str) -> None:
         raise ValueError("%s: backslash not allowed: %s" % (field_name, path))
     if len(path) >= 2 and path[0].isalpha() and path[1] == ":":
         raise ValueError("%s: drive-letter path not allowed: %s" % (field_name, path))
-    # Check for traversal components
-    for part in path.replace("\\", "/").split("/"):
+    # Check for traversal components (backslash is rejected above, so a
+    # plain split on the POSIX separator suffices)
+    for part in path.split("/"):
         if part == "..":
             raise ValueError("%s: traversal (..) not allowed: %s" % (field_name, path))
 
