@@ -77,7 +77,7 @@ def load_user_backends() -> dict[str, dict]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = _y.safe_load(f)
-    except Exception as exc:
+    except (OSError, UnicodeDecodeError, _y.YAMLError) as exc:
         log.warning("Cannot read user config %s: %s", path, exc)
         return {}
     if not isinstance(data, dict):
@@ -123,7 +123,7 @@ def load_user_retry() -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = _y.safe_load(f)
-    except Exception as exc:
+    except (OSError, UnicodeDecodeError, _y.YAMLError) as exc:
         log.warning("Cannot read user config %s: %s", path, exc)
         return {}
     if not isinstance(data, dict):

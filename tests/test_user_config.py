@@ -334,3 +334,38 @@ class TestMergeUserInto:
         assert _project_backend_names(
             {"backends": {"proj": {"type": "api"}}},
         ) == {"proj"}
+
+
+def test_bad_user_config_is_empty(tmp_path, monkeypatch):
+    from code_forge.user_config import load_user_backends, load_user_retry
+
+    path = tmp_path / "config.yaml"
+    path.write_text("backends: [\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "code_forge.user_config.user_config_path", lambda: path,
+    )
+    assert load_user_backends() == {}
+    assert load_user_retry() == {}
+
+
+def test_bad_bytes_in_user_config_are_empty(tmp_path, monkeypatch):
+    from code_forge.user_config import load_user_backends, load_user_retry
+
+    path = tmp_path / "config.yaml"
+    path.write_bytes(b"\xff")
+    monkeypatch.setattr(
+        "code_forge.user_config.user_config_path", lambda: path,
+    )
+    assert load_user_backends() == {}
+    assert load_user_retry() == {}
+
+
+def test_missing_user_config_file_is_empty(tmp_path, monkeypatch):
+    from code_forge.user_config import load_user_backends, load_user_retry
+
+    path = tmp_path / "config.yaml"
+    monkeypatch.setattr(
+        "code_forge.user_config.user_config_path", lambda: path,
+    )
+    assert load_user_backends() == {}
+    assert load_user_retry() == {}
