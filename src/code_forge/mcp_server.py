@@ -273,8 +273,8 @@ def _backend_names_for(workspace: Path) -> list[str]:
         project_backends = gate_data.get("backends", {})
         if not isinstance(project_backends, dict):
             project_backends = {}
-    except Exception:
-        pass
+    except (OSError, cli.CliError) as exc:
+        log.warning("project gate.yaml backends unreadable: %s", exc)
     return list(merge_backends(project_backends, user_backends).keys())
 
 
