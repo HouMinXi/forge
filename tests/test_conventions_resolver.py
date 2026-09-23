@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from code_forge.conventions_resolver import (
     ResolvedSource,
     extract_conventions,
@@ -228,6 +230,21 @@ class TestSourceResolver:
         (cfg / "conventions.yaml").write_text("{{{{invalid yaml\n")
         result = resolve_sources(tmp_path)
         assert isinstance(result, list)  # does not crash
+
+    def test_custom_loader_bug_is_not_swallowed(self, tmp_path, monkeypatch):
+        """A bug inside the YAML loader is not turned into an empty source list."""
+        import yaml
+
+        cfg = tmp_path / ".code-forge"
+        cfg.mkdir()
+        (cfg / "conventions.yaml").write_text("siblings: []\n")
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("loader bug")
+
+        monkeypatch.setattr(yaml, "safe_load", boom)
+        with pytest.raises(RuntimeError, match="loader bug"):
+            resolve_sources(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +518,22 @@ class TestCaching:
         non_empty = [s for s in sources if extract_conventions(s)]
         if len(non_empty) > 1:
             assert result.count("\n\n") == len(non_empty) - 1
+
+
+def test_bad_utf8_package_json_is_skipped(tmp_path):
+    repo = tmp_path / "pkg"
+    repo.mkdir()
+    (tmp_path / "package.json").write_bytes(b'{"dependencies": {"x": "file:pkg"}\xff')
+    result = resolve_sources(tmp_path)
+    assert result == []
+
+
+def test_bad_utf8_cache_is_a_miss(tmp_path):
+    from code_forge.conventions_resolver import _read_cache
+
+    cache = tmp_path / "cache.json"
+    cache.write_bytes(b'{"digest": "abc"}\xff')
+    assert _read_cache(cache) is None
 
 
 # ---------------------------------------------------------------------------

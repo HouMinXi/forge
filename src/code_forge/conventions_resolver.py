@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 from .conventions import _SKIP_DIRS, _extract_python_public_names
 
 # ---------------------------------------------------------------------------
@@ -148,7 +150,6 @@ def _resolve_source_custom(cwd: Path) -> list[ResolvedSource]:
     if not yaml_path.is_file():
         return []
     try:
-        import yaml  # pyyaml is already a project dependency
         with open(str(yaml_path), encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         if not isinstance(data, dict):
@@ -156,7 +157,7 @@ def _resolve_source_custom(cwd: Path) -> list[ResolvedSource]:
         siblings = data.get("siblings", [])
         if not isinstance(siblings, list):
             return []
-    except Exception:
+    except (OSError, yaml.YAMLError):
         return []
 
     results: list[ResolvedSource] = []
@@ -230,7 +231,6 @@ def _resolve_source_agents_md(cwd: Path) -> list[ResolvedSource]:
     # Frontmatter detection: MUST use startswith("---\n").
     if content.startswith("---\n"):
         try:
-            import yaml
             # Find the closing "---" line.
             rest = content[4:]  # skip opening "---\n"
             end_idx = rest.find("\n---")
@@ -248,7 +248,7 @@ def _resolve_source_agents_md(cwd: Path) -> list[ResolvedSource]:
                                     r = item.get("repo", "")
                                     if r:
                                         repo_paths.append(Path(r))
-        except Exception:
+        except yaml.YAMLError:
             pass  # Degrade gracefully -- fall through to regex
 
     # Always also try regex extraction on the full content (captures paths
@@ -364,7 +364,7 @@ def _resolve_source_dependency(cwd: Path) -> list[ResolvedSource]:
                                 repo_paths.append((cwd / rel).resolve())
                             elif val.startswith("../"):
                                 repo_paths.append((cwd / val).resolve())
-        except Exception:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             pass
 
     # pyproject.toml: concrete regex for path= fields.
@@ -770,7 +770,7 @@ def _read_cache(cache_file: Path) -> Optional[str]:
     try:
         data = json.loads(cache_file.read_text(encoding="utf-8"))
         return data.get("digest", None)
-    except Exception:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
 
