@@ -106,7 +106,7 @@ def _verinfo_is_dead(cond_text: bytes) -> bool:
         if not isinstance(ver, tuple):
             return False
         guard_true = _CMP[m.group(1)](sys.version_info, ver)
-    except Exception:
+    except (ValueError, SyntaxError, MemoryError, TypeError):
         return False
     return not guard_true
 
