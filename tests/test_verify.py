@@ -3262,6 +3262,70 @@ class TestDroppedBlankIsToleratedAtEitherEnd:
         )
 
 
+class TestExtraLeadingBlankIsNotContent:
+    """A quote that starts with one extra blank line is still the source.
+
+    The declared range is exact. The model pasted one blank line before
+    the body. Content comparison then treats that blank as line one and
+    reports the next source line as a mismatch. The body itself matches.
+    """
+
+    _DIFF = (
+        "diff --git a/m.py b/m.py\n"
+        "--- /dev/null\n"
+        "+++ b/m.py\n"
+        "@@ -0,0 +1,3 @@\n"
+        "+\n"
+        "+def keep():\n"
+        "+    return 1\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_one_extra_leading_blank_matches_the_body(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Source lines 1-3. The quote adds one blank in front of that blank.
+        exc = {
+            "file": "m.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": "\n\ndef keep():\n    return 1",
+        }
+        assert validate_excerpt_evidence(exc, hunk_map, post, exempt) is None
+
+    def test_extra_blank_does_not_hide_a_changed_body(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        exc = {
+            "file": "m.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": "\n\ndef keep():\n    return 2",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None
+        assert "content mismatch" in err
+
+    def test_extra_trailing_blank_still_fails(self):
+        from code_forge.verify import validate_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        exc = {
+            "file": "m.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": "\ndef keep():\n    return 1\n\n",
+        }
+        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert err is not None
+
+
 class TestTheBlankIsSpentOnlyOnce:
     """A boundary blank excuses one thing, not two.
 
