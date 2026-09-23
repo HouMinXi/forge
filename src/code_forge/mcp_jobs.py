@@ -287,6 +287,17 @@ async def _wait_for_job(job_id: str) -> None:
         }
     except BaseException as exc:
         elapsed = time.monotonic() - entry["created_at"]
+        # A comm_task failure must not strand a live child: reap it the
+        # same way the timeout branch does, or the orphan keeps holding
+        # the worktree lock with no job left on the books.
+        proc = entry.get("proc")
+        if proc is not None:
+            try:
+                await _terminate_and_reap(proc)
+            except Exception:
+                log.warning(
+                    "reap after job failure raised", exc_info=True,
+                )
         entry["status"] = "failed"
         entry["result"] = {
             "stdout": "",
