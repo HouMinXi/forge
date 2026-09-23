@@ -1622,6 +1622,56 @@ class TestUserConfig:
             names = _backend_names_for(tmp_path)
         assert names == ["user-back"]
 
+    def test_backend_names_for_load_error_is_logged(self, tmp_path, caplog):
+        """A failed project gate load still falls back, and the error is logged."""
+        import logging
+        from code_forge.mcp_server import _backend_names_for
+
+        with (
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                side_effect=OSError("permission denied"),
+            ),
+            caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
+        ):
+            names = _backend_names_for(tmp_path)
+        assert names == []
+        assert any("permission denied" in rec.getMessage() for rec in caplog.records)
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
+
+    def test_backend_names_for_cli_error_is_logged(self, tmp_path, caplog):
+        """A corrupt project gate falls back and the CliError is logged."""
+        import logging
+        from code_forge.errors import CliError
+        from code_forge.mcp_server import _backend_names_for
+
+        with (
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                side_effect=CliError("gate.yaml parse error"),
+            ),
+            caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
+        ):
+            names = _backend_names_for(tmp_path)
+        assert names == []
+        assert any("parse error" in rec.getMessage() for rec in caplog.records)
+
+    def test_backend_names_for_unexpected_error_is_not_swallowed(self, tmp_path):
+        """A bug in the loader is not turned into an empty backend list."""
+        from code_forge.mcp_server import _backend_names_for
+
+        with (
+            patch("code_forge.mcp_server.load_user_backends", return_value={}),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                side_effect=RuntimeError("loader bug"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="loader bug"):
+                _backend_names_for(tmp_path)
+
 
 class TestShutdownInfrastructure:
     """Tests for signal-driven shutdown (Finding 2 coverage)."""
