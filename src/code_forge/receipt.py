@@ -183,9 +183,10 @@ def write_receipts(
     else:
         try:
             from .manifest import extract_manifest
-            effective_tier = extract_manifest(cwd).tier
-        except Exception:
+        except ImportError:
             effective_tier = ManifestTier.DECLARED
+        else:
+            effective_tier = extract_manifest(cwd).tier
 
     by_pass = _split_by_pass(l1_findings)
     # UNTRUSTED findings are audit data carried in state, not attested
