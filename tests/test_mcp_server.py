@@ -1258,6 +1258,66 @@ async def test_dispatch_sampling_staged_gate_check_names_failure_kind():
 
 
 @pytest.mark.asyncio
+async def test_whole_file_escape_keeps_value_error(tmp_path):
+    from code_forge.mcp_server import _normalize_whole_file
+
+    with pytest.raises(ToolError, match="escapes repo root") as caught:
+        _normalize_whole_file("../outside.py", workspace=tmp_path)
+    assert isinstance(caught.value.__cause__, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_sampling_failure_keeps_invoke_error():
+    from code_forge.llm_invoke import LLMInvokeError
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, _, p4 = _sampling_dispatch_patches("", ["deepseek"])
+    cause = LLMInvokeError("backend returned an empty truncated response")
+    p3 = patch(
+        "code_forge.mcp_server.asyncio.to_thread",
+        new_callable=AsyncMock,
+        side_effect=cause,
+    )
+    with p1, p2, p3, p4:
+        with pytest.raises(ToolError, match="Sampling failed") as caught:
+            await _dispatch_sampling(
+                session=MagicMock(), committed=False,
+                workspace=_resolve_workspace(),
+            )
+    assert caught.value.__cause__ is cause
+
+
+@pytest.mark.asyncio
+async def test_recoverable_sampling_without_backend_keeps_invoke_error():
+    from code_forge.llm_invoke import LLMInvokeError
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, p3, p4 = _sampling_dispatch_patches("empty", [])
+    with p1, p2, p3, p4:
+        with pytest.raises(ToolError, match="Configure an API backend") as caught:
+            await _dispatch_sampling(
+                session=MagicMock(), committed=False,
+                workspace=_resolve_workspace(),
+            )
+    assert isinstance(caught.value.__cause__, LLMInvokeError)
+
+
+@pytest.mark.asyncio
+async def test_staged_sampling_failure_keeps_invoke_error():
+    from code_forge.llm_invoke import LLMInvokeError
+    from code_forge.mcp_server import _dispatch_sampling
+
+    p1, p2, p3, p4 = _sampling_dispatch_patches("stub_model", ["deepseek"])
+    with p1, p2, p3, p4:
+        with pytest.raises(ToolError, match="stub_model") as caught:
+            await _dispatch_sampling(
+                session=MagicMock(), committed=False,
+                workspace=_resolve_workspace(), staged=True,
+            )
+    assert isinstance(caught.value.__cause__, LLMInvokeError)
+
+
+@pytest.mark.asyncio
 async def test_forge_job_status_known_completed():
     with patch(
         "code_forge.mcp_server.get_job",
