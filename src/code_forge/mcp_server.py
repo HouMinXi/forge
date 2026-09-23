@@ -817,8 +817,8 @@ def _normalize_whole_file(
         resolved_p = (cwd / pp).resolve()
         try:
             resolved_p.relative_to(cwd_resolved)
-        except ValueError:
-            raise ToolError("--whole-file: path escapes repo root: %s" % p)
+        except ValueError as exc:
+            raise ToolError("--whole-file: path escapes repo root: %s" % p) from exc
         normalized.append(p)
     return normalized
 
@@ -1107,7 +1107,7 @@ async def _dispatch_sampling(
                     "Sampling failed during gate-check (%s). "
                     "Run gate-check via the CLI with a configured "
                     "backend instead." % (exc.kind or exc)
-                )
+                ) from exc
             cli_args = ["review", "--no-color", "--backend", fallback_backend,
                         "--outlet", "subprocess"]
             if committed:
@@ -1129,9 +1129,9 @@ async def _dispatch_sampling(
             raise ToolError(
                 "Sampling failed: %s. Configure an API backend in "
                 "gate.yaml for automatic fallback." % exc
-            )
+            ) from exc
         else:
-            raise ToolError("Sampling failed: %s" % exc)
+            raise ToolError("Sampling failed: %s" % exc) from exc
 
     elapsed = time.monotonic() - t0
 
