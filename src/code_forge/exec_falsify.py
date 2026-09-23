@@ -275,7 +275,7 @@ class ExecFalsifier:
                     env=_clean_subprocess_env(),
                 )
                 raw_version = (probe_res.stdout.strip() or probe_res.stderr.strip())
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, ValueError, subprocess.SubprocessError):
                 pass
 
         environment: dict[str, Any] = {
