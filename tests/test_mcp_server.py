@@ -342,7 +342,7 @@ async def test_run_cli_budgeted_timeout_returns_task_and_proc():
         inner_task.cancel()
         try:
             await inner_task
-        except (asyncio.CancelledError, Exception):
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001 - cancel may surface CancelledError or the task error
             pass
         # cleanup tempfile
         try:
@@ -679,11 +679,11 @@ async def test_forge_review_whole_file_sampling_builds_empty_baseline(tmp_path):
 
     test_file = tmp_path / "hello.py"
     test_file.write_text("print('hello')\n")
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
 
     with (
         patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
@@ -723,11 +723,11 @@ async def test_forge_review_whole_file_sampling_fallback_forwards_paths(tmp_path
 
     test_file = tmp_path / "hello.py"
     test_file.write_text("print('hello')\n")
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
 
     with (
         patch.dict(os.environ, {"FORGE_OUTLET": "sampling"}),
@@ -820,18 +820,18 @@ async def test_build_review_context_with_baseline_and_head(tmp_path):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
 
     f = repo / "file.txt"
     f.write_text("v1\n")
-    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
 
     f.write_text("v2\n")
-    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "c2"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "commit", "-m", "c2"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
 
     resolved, source_hash, baseline_repr = _build_review_context(
         repo, committed=False, baseline="HEAD~1", head="HEAD"
@@ -860,12 +860,12 @@ async def test_build_review_context_invalid_baseline(tmp_path):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
     (repo / "file.txt").write_text("v1\n")
-    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
+    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)  # noqa: ASYNC221 - test builds a real git repo before the async body
 
     with pytest.raises(ToolError, match="baseline resolution failed"):
         _build_review_context(repo, committed=False, baseline="nonexistent_ref_xyz")
@@ -2094,7 +2094,7 @@ class TestWorkspaceFor:
         try:
             ws = await mod._workspace_for(ctx,
                                           project_dir="/explicit/path")
-            assert ws == Path("/explicit/path").expanduser().resolve()
+            assert ws == Path("/explicit/path").expanduser().resolve()  # noqa: ASYNC240 - test asserts a real path after the async body
         finally:
             mod._cached_session_ref = saved_ref
             mod._cached_workspace = saved_ws
@@ -2868,7 +2868,7 @@ async def test_dispatch_cli_job_success_keeps_contract():
         tmp_arg = mock_start.call_args.kwargs.get("tempfile_path")
         assert tmp_arg is not None
         # tmpfile still exists on disk (ownership transferred)
-        assert os.path.exists(tmp_arg)
+        assert os.path.exists(tmp_arg)  # noqa: ASYNC240 - test asserts a real path after the async body
         os.unlink(tmp_arg)
 
 
@@ -2899,7 +2899,7 @@ async def test_dispatch_cli_run_raises_unlinks_contract():
             )
         # Contract tmpfile was created then cleaned up
         assert captured_tmp_path is not None
-        assert not os.path.exists(captured_tmp_path)
+        assert not os.path.exists(captured_tmp_path)  # noqa: ASYNC240 - test asserts a real path after the async body
 
 
 @pytest.mark.asyncio
@@ -2933,7 +2933,7 @@ async def test_dispatch_cli_run_raises_cancelled_error_unlinks_contract():
                 contract="doomed spec",
             )
         assert captured_tmp_path is not None
-        assert not os.path.exists(captured_tmp_path)
+        assert not os.path.exists(captured_tmp_path)  # noqa: ASYNC240 - test asserts a real path after the async body
 
 
 @pytest.mark.asyncio
@@ -2975,9 +2975,9 @@ async def test_dispatch_cli_start_job_raises_unlinks_both():
             )
         # Contract tmpfile was created then cleaned up
         assert captured_tmp_path is not None
-        assert not os.path.exists(captured_tmp_path)
+        assert not os.path.exists(captured_tmp_path)  # noqa: ASYNC240 - test asserts a real path after the async body
         # Stderr log also cleaned up
-        assert not os.path.exists(stderr_tmp.name)
+        assert not os.path.exists(stderr_tmp.name)  # noqa: ASYNC240 - test asserts a real path after the async body
 
 
 @pytest.mark.asyncio
