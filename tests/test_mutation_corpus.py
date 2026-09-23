@@ -185,6 +185,16 @@ class TestLoadCorpus:
         with pytest.raises(CorpusError, match="drive-letter"):
             load_corpus(_corpus_json(entries=[entry]))
 
+    def test_reject_lone_surrogate_in_old(self):
+        entry = _valid_entry(old="x\ud800y")
+        with pytest.raises(CorpusError, match="not valid UTF-8"):
+            load_corpus(_corpus_json(entries=[entry]))
+
+    def test_reject_lone_surrogate_in_new(self):
+        entry = _valid_entry(new="x\ud800y")
+        with pytest.raises(CorpusError, match="not valid UTF-8"):
+            load_corpus(_corpus_json(entries=[entry]))
+
     def test_reject_empty_old(self):
         entry = _valid_entry(old="")
         with pytest.raises(CorpusError, match="old must be nonempty"):

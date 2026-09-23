@@ -81,6 +81,16 @@ class Corpus:
         }
 
 
+def _utf8_len(value: str, field: str, idx: int) -> int:
+    """Byte length of *value*, rejecting lone surrogates as CorpusError."""
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise CorpusError(
+            "entry[%d]: %s is not valid UTF-8" % (idx, field)
+        ) from None
+
+
 def _validate_entry(idx: int, raw: dict[str, Any]) -> CorpusEntry:
     """Validate and construct a single CorpusEntry from a raw dict."""
     if not isinstance(raw, dict):
@@ -155,7 +165,7 @@ def _validate_entry(idx: int, raw: dict[str, Any]) -> CorpusEntry:
         )
     if not old:
         raise CorpusError("entry[%d]: old must be nonempty" % idx)
-    if len(old.encode("utf-8")) > MAX_OLD_NEW_BYTES:
+    if _utf8_len(old, "old", idx) > MAX_OLD_NEW_BYTES:
         raise CorpusError(
             "entry[%d]: old exceeds %d bytes" % (idx, MAX_OLD_NEW_BYTES)
         )
@@ -165,7 +175,7 @@ def _validate_entry(idx: int, raw: dict[str, Any]) -> CorpusEntry:
         raise CorpusError(
             "entry[%d]: new must be a string, got %s" % (idx, type(new).__name__)
         )
-    if len(new.encode("utf-8")) > MAX_OLD_NEW_BYTES:
+    if _utf8_len(new, "new", idx) > MAX_OLD_NEW_BYTES:
         raise CorpusError(
             "entry[%d]: new exceeds %d bytes" % (idx, MAX_OLD_NEW_BYTES)
         )
