@@ -413,7 +413,9 @@ def build_l1_provider(
             for i in range(len(pass_configs)):
                 try:
                     pass_results.append(_run_pass(i))
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001  any failure of one
+                    # pass becomes an INFRA finding below; it must not take
+                    # the other passes down with it
                     pass_results.append(exc)
         else:
             from concurrent.futures import ThreadPoolExecutor
@@ -428,7 +430,9 @@ def build_l1_provider(
                 for f in futures:
                     try:
                         pass_results.append(f.result())
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001  any failure of
+                        # one pass becomes an INFRA finding below; it must
+                        # not take the other passes down with it
                         pass_results.append(exc)
             _parallel_wall = time.monotonic() - _t0
 

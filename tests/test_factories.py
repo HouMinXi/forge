@@ -1299,6 +1299,45 @@ class TestParallelL1:
         assert len(l1) == 2
         breaker.record_other_error.assert_called_once()
 
+    def test_unexpected_exception_isolation_cli(self):
+        """Serial CLI path: one pass crashing leaves the other passes."""
+        from unittest.mock import MagicMock, patch
+
+        from code_forge.backend import BackendConfig
+        from code_forge.factories import build_l1_provider
+
+        cli_backend = BackendConfig(
+            name="test-cli", type="cli", model="test",
+            format=None, base_url=None)
+
+        def mock_invoke(prompt, **kw):
+            if "senior engineer" in prompt:
+                raise RuntimeError("unexpected crash")
+            if "structural code reviewer" in prompt:
+                line = 1
+            else:
+                line = 3
+            return _stub_llm_response(
+                [{"file": "src/a.py", "line": line, "severity": "P2",
+                  "description": "cli-finding"}], self._EXCERPTS)
+
+        resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
+        breaker = MagicMock()
+
+        with patch("code_forge.llm_invoke.llm_invoke",
+                   side_effect=mock_invoke):
+            provider = build_l1_provider(
+                "auto", resolved, backend=cli_backend,
+                breaker=breaker)
+            findings, _, _, _ = provider()
+
+        infra = [f for f in findings if f.source == "INFRA"]
+        assert len(infra) == 1
+        assert "expert" in infra[0].id
+        assert "RuntimeError" in infra[0].description
+        l1 = [f for f in findings if f.source == "L1"]
+        assert len(l1) == 2
+
     def test_per_coroutine_timeout_sampling(self):
         """Per-coroutine timeout produces INFRA finding, others survive."""
         import concurrent.futures
