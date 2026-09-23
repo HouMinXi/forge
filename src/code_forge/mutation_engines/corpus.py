@@ -121,9 +121,13 @@ def _validate_entry(idx: int, raw: dict[str, Any]) -> CorpusEntry:
         raise CorpusError(
             "entry[%d]: source path exceeds %d chars" % (idx, MAX_SOURCE_PATH_LEN)
         )
-    # Validate as a relative path (no absolute, no traversal)
+    # Validate as a relative path (no absolute, no traversal, no backslash)
     if source.startswith("/"):
         raise CorpusError("entry[%d]: source must be relative, got %r" % (idx, source))
+    if "\\" in source:
+        raise CorpusError(
+            "entry[%d]: source must not contain backslash, got %r" % (idx, source)
+        )
     if ".." in source.split("/"):
         raise CorpusError(
             "entry[%d]: source must not contain traversal (..), got %r"

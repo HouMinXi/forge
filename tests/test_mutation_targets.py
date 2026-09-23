@@ -400,3 +400,16 @@ class TestGlobCharacterClasses:
         assert rx.match("pkg/x_test.go")
         assert rx.match("pkg/sub/deep/x_test.go")
         assert not rx.match("pkg/main.go")
+
+    def test_caret_mid_class_is_literal(self):
+        # Regex caret negates only immediately after '['; mid-class caret
+        # is a literal in both glob and regex.
+        rx = _glob_to_regex("x/[a^b]y")
+        assert rx.match("x/^y")
+        assert rx.match("x/ay")
+        assert rx.match("x/by")
+        assert not rx.match("x/cy")
+
+    def test_bang_then_close_bracket_is_unterminated_literal(self):
+        rx = _glob_to_regex("a[!]b")
+        assert rx.match("a[!]b")

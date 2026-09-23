@@ -175,6 +175,11 @@ class TestLoadCorpus:
         with pytest.raises(CorpusError, match="traversal"):
             load_corpus(_corpus_json(entries=[entry]))
 
+    def test_reject_backslash_in_source(self):
+        entry = _valid_entry(source=r"..\outside\file.sh")
+        with pytest.raises(CorpusError, match="backslash"):
+            load_corpus(_corpus_json(entries=[entry]))
+
     def test_reject_empty_old(self):
         entry = _valid_entry(old="")
         with pytest.raises(CorpusError, match="old must be nonempty"):
