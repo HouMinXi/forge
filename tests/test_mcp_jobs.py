@@ -233,6 +233,36 @@ async def test_wait_for_job_exception_sets_failed():
         assert "process died" in entry["result"]["stderr"]
 
 
+@pytest.mark.asyncio
+async def test_wait_for_job_exception_reaps_child():
+    """A comm_task failure must not strand a live child process."""
+    proc = await asyncio.create_subprocess_exec(
+        "sleep", "300",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+
+    async def _comm():
+        raise RuntimeError("comm blew up")
+
+    try:
+        task = asyncio.ensure_future(_comm())
+        job_id = start_job(task, proc)
+        for _ in range(200):
+            entry = _jobs.get(job_id)
+            if entry and entry["status"] == "failed":
+                break
+            await asyncio.sleep(0.05)
+        entry = _jobs.get(job_id)
+        assert entry is not None
+        assert entry["status"] == "failed"
+        assert proc.returncode is not None
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+
+
 # -- cleanup_all --
 
 
