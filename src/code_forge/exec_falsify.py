@@ -275,7 +275,7 @@ class ExecFalsifier:
                     env=_clean_subprocess_env(),
                 )
                 raw_version = (probe_res.stdout.strip() or probe_res.stderr.strip())
-            except Exception:
+            except (OSError, subprocess.SubprocessError):
                 pass
 
         environment: dict[str, Any] = {
@@ -309,7 +309,7 @@ class ExecFalsifier:
                     ignore=shutil.ignore_patterns(".git", ".code-forge"),
                     dirs_exist_ok=True,
                 )
-            except Exception as exc:
+            except (OSError, shutil.Error) as exc:
                 return ExecEvidence(
                     status=ExecStatus.UNAVAILABLE,
                     command=cmd,
