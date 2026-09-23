@@ -54,7 +54,7 @@ try:
     from tree_sitter_language_pack import get_parser as _ts_get_parser
 
     _PYTHON_PARSER = _ts_get_parser("python")
-except Exception:  # ImportError, OSError, or build failure
+except (ImportError, OSError):  # missing pack, or a native build failure
     pass
 
 
