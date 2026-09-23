@@ -3526,6 +3526,23 @@ class TestTruncatedLastLinePrefix:
         assert assessment.repaired_tail is True
         assert exc["content"].splitlines()[-1] == full
 
+    def test_list_content_last_line_prefix_is_repaired(self):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        full = post["src/a.py"][3]
+        cut = full[:12]
+        exc = {
+            "file": "src/a.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": ["alpha = 1", post["src/a.py"][2], cut],
+        }
+        assessment = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert assessment.status is ExcerptStatus.VALID, assessment.diagnostic
+        assert assessment.repaired_tail is True
+        assert exc["content"][-1] == full
+
     def test_non_prefix_edit_stays_a_mismatch(self):
         from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 

@@ -681,10 +681,16 @@ def assess_excerpt_evidence(
                     and source.startswith(cut)
                     and cut != source
                 ):
-                    lines = list(exc["content"].splitlines())
-                    if lines:
-                        lines[-1] = source
-                        exc["content"] = "\n".join(lines)
+                    stored = exc["content"]
+                    if isinstance(stored, list):
+                        repaired = list(stored)
+                        repaired[-1] = source
+                        exc["content"] = repaired
+                    else:
+                        lines = list(stored.splitlines())
+                        if lines:
+                            lines[-1] = source
+                            exc["content"] = "\n".join(lines)
                     quoted[last] = source
                     return _anchored_assessment(
                         valid, None, overlap, hunks, location, repaired_tail=True,
