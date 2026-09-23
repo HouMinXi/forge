@@ -426,5 +426,13 @@ def _json_to_state_findings(
                 if f_raw.get("severity") in _VALID_SEVERITIES
                 else None
             ),
+            excerpt=_finding_excerpt(f_raw),
         ))
     return findings
+
+
+def _finding_excerpt(raw: dict) -> str | None:
+    text = raw.get("excerpt")
+    if isinstance(text, str) and text.strip():
+        return text
+    return None

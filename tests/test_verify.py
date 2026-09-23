@@ -3483,6 +3483,79 @@ class TestIndentStrippedExcerpt:
         assert r.passed, r.reason
 
 
+class TestTruncatedLastLinePrefix:
+    """A quote whose last line is a strict prefix of the source line.
+
+    Issue 110: the receipt writer cuts a long line, so the last quoted
+    line is a proper prefix of the post-image. That is not a content
+    mismatch. The assessment completes the tail and records repaired_tail.
+    A non-prefix edit, or a prefix anywhere but the last line, stays a
+    mismatch.
+    """
+
+    _DIFF = (
+        "diff --git a/src/a.py b/src/a.py\n"
+        "--- a/src/a.py\n"
+        "+++ b/src/a.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        "-old\n"
+        "+alpha = 1\n"
+        "+beta = 2\n"
+        "+gamma = a long source line that the receipt cuts\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+        return _diff_validation_context(self._DIFF)
+
+    def test_strict_prefix_on_last_line_is_repaired(self):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        full = post["src/a.py"][3]
+        cut = full[:12]
+        assert cut != full and full.startswith(cut)
+        exc = {
+            "file": "src/a.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": "alpha = 1\n" + post["src/a.py"][2] + "\n" + cut,
+        }
+        assessment = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert assessment.status is ExcerptStatus.VALID, assessment.diagnostic
+        assert assessment.repaired_tail is True
+        assert exc["content"].splitlines()[-1] == full
+
+    def test_non_prefix_edit_stays_a_mismatch(self):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        exc = {
+            "file": "src/a.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": "alpha = 1\nbeta = WRONG\ngamma = a long source line that the receipt cuts",
+        }
+        assessment = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert assessment.status is ExcerptStatus.INVALID
+        assert "content mismatch" in (assessment.diagnostic or "")
+
+    def test_prefix_on_an_earlier_line_stays_a_mismatch(self):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        full_mid = post["src/a.py"][2]
+        exc = {
+            "file": "src/a.py",
+            "start_line": 1,
+            "end_line": 3,
+            "content": "alp\n" + full_mid + "\n" + post["src/a.py"][3],
+        }
+        assessment = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert assessment.status is ExcerptStatus.INVALID
+        assert "content mismatch" in (assessment.diagnostic or "")
+
+
 class TestIndentStrippedClassifier:
     def test_indent_tag_matches(self):
         from code_forge.verify import is_indent_stripped
@@ -3533,3 +3606,37 @@ class TestOnlyLeadingWsDiffers:
         from code_forge.verify import _only_leading_ws_differs
 
         assert not _only_leading_ws_differs("echo bye", "    echo hi")
+
+
+class TestConfirmedNeedsBoundExcerpt:
+    """Issue 108 layer 2: a CONFIRMED finding must carry its own excerpt.
+
+    An envelope-level code_excerpts list does not bind to a finding.
+    Missing or empty binding demotes CONFIRMED to UNCERTAIN.
+    """
+
+    def test_missing_binding_demotes(self):
+        from code_forge.disposition import Disposition
+        from code_forge.verify import bound_excerpt_disposition
+
+        assert bound_excerpt_disposition(Disposition.CONFIRMED, None) is Disposition.UNCERTAIN
+
+    def test_empty_binding_demotes(self):
+        from code_forge.disposition import Disposition
+        from code_forge.verify import bound_excerpt_disposition
+
+        assert bound_excerpt_disposition(Disposition.CONFIRMED, "") is Disposition.UNCERTAIN
+
+    def test_bound_excerpt_keeps_confirmed(self):
+        from code_forge.disposition import Disposition
+        from code_forge.verify import bound_excerpt_disposition
+
+        assert bound_excerpt_disposition(
+            Disposition.CONFIRMED, "alpha = 1\n",
+        ) is Disposition.CONFIRMED
+
+    def test_other_dispositions_are_unchanged(self):
+        from code_forge.disposition import Disposition
+        from code_forge.verify import bound_excerpt_disposition
+
+        assert bound_excerpt_disposition(Disposition.DISMISSED, None) is Disposition.DISMISSED

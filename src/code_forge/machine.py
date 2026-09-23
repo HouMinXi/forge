@@ -1022,6 +1022,10 @@ class StateMachine:
             t_falsify = time.monotonic()
             try:
                 f.disposition = self.falsifier.falsify(f)
+                from .verify import bound_excerpt_disposition
+                f.disposition = bound_excerpt_disposition(
+                    f.disposition, getattr(f, "excerpt", None),
+                )
                 progress.emit(
                     "falsify %d/%d: done %s (%.1fs)"
                     % (i, total, f.disposition,
