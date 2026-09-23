@@ -428,7 +428,7 @@ def _read_record(config_dir: Path, kind: str, name: str) -> tuple[bytes, dict]:
     raw = path.read_bytes()
     try:
         parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_duplicate_object)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+    except (UnicodeDecodeError, ValueError) as exc:
         reason, _ = _reasons(kind, invalid=True)
         raise _LoadError(
             reason, "%s record %r is not valid JSON: %s" % (kind, name, exc)

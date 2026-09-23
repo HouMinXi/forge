@@ -132,14 +132,14 @@ def test_missing_worker_maps_to_worker_missing(config_dir):
     assert result.reason == "worker_missing"
 
 
-def test_missing_profile_and_environment_reasons(config_dir):
+def test_missing_profile_reason(config_dir):
     (config_dir / "profiles" / "linux-isolated.json").unlink()
     assert _load(config_dir).reason == "profile_missing"
+
+
+def test_missing_environment_reason_with_profile_present(config_dir):
     (config_dir / "environments" / "python-core-v1.json").unlink()
-    assert _load(config_dir, profile="linux-isolated").reason in (
-        "profile_missing",
-        "environment_missing",
-    )
+    assert _load(config_dir).reason == "environment_missing"
 
 
 def test_missing_approval_is_execution_not_authorized(config_dir):
