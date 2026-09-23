@@ -207,7 +207,7 @@ class TestSelectTargets:
         assert result.targets[0].target_id == "python-core"
 
     def test_rename_selects_via_old_path(self):
-        """Rename: old_path matches in before-targets map."""
+        """Rename: old_path selects from the after-map when no before-map is given."""
         targets = self._py_target()
         changes = [
             ChangedPath(old_path="src/old_name.py", new_path="src/new_name.py")
