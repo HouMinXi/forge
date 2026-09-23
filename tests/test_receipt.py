@@ -76,6 +76,56 @@ class TestWriteReceipts:
         assert "code_excerpts" in r
         assert "covered_line_ranges" in r
 
+    def test_manifest_loader_bug_is_not_declared(self, tmp_path, monkeypatch):
+        import code_forge.manifest as manifest
+
+        def boom(_cwd):
+            raise RuntimeError("manifest loader bug")
+
+        monkeypatch.setattr(manifest, "extract_manifest", boom)
+        try:
+            write_receipts(
+                receipts_dir=tmp_path / ".code-forge" / "receipts",
+                round_index=0,
+                l1_findings=[_finding("qodo", "fp1")],
+                diff_sha256=hashlib.sha256(b"diff").hexdigest(),
+                source_files=[Path("src/foo.py")],
+                cwd=tmp_path,
+            )
+        except RuntimeError as exc:
+            assert "manifest loader bug" in str(exc)
+            return
+        raise AssertionError("loader bug was swallowed")
+
+    def test_missing_manifest_module_is_declared(self, tmp_path, monkeypatch):
+        import builtins
+        import sys
+
+        real_import = builtins.__import__
+        calls = []
+
+        def hide_manifest(name, *args, **kwargs):
+            calls.append(name)
+            if name in {"manifest", "code_forge.manifest"}:
+                raise ImportError("manifest missing")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", hide_manifest)
+        monkeypatch.delitem(sys.modules, "code_forge.manifest", raising=False)
+        write_receipts(
+            receipts_dir=tmp_path / ".code-forge" / "receipts",
+            round_index=0,
+            l1_findings=[_finding("qodo", "fp1")],
+            diff_sha256=hashlib.sha256(b"diff").hexdigest(),
+            source_files=[Path("src/foo.py")],
+            cwd=tmp_path,
+        )
+        assert "manifest" in calls
+        written = json.loads(
+            (tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text()
+        )
+        assert written["findings"][0]["basis"]["authority"] == "llm-docs-pinned"
+
     def test_empty_l1_still_writes_3_receipts(self, tmp_path):
         diff_sha = hashlib.sha256(b"diff").hexdigest()
         write_receipts(
