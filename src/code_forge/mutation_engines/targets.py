@@ -177,12 +177,14 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
                 j += 1
             if j < n and j > i + 1 and pattern[i + 1 : j]:
                 content = pattern[i + 1 : j]
+                content = content.replace("\\", "\\\\")
                 if content.startswith("!"):
                     content = "^" + content[1:]
                 elif content.startswith("^"):
-                    # Glob has no caret negation; keep it literal.
+                    # Glob has no caret negation; keep it literal. Prepend
+                    # the escape only after doubling backslashes, or the
+                    # escape itself gets doubled and the class over-matches.
                     content = "\\^" + content[1:]
-                content = content.replace("\\", "\\\\")
                 parts.append("[" + content + "]")
                 i = j + 1
             else:
