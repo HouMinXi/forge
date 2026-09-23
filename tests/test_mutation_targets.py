@@ -387,3 +387,16 @@ class TestGlobCharacterClasses:
         rx = _glob_to_regex("a[]x]b")
         assert rx.match("a]b")
         assert rx.match("axb")
+
+    def test_globstar_matches_zero_one_and_nested_dirs(self):
+        rx = _glob_to_regex("src/**/*.py")
+        assert rx.match("src/a.py")
+        assert rx.match("src/a/b.py")
+        assert rx.match("src/a/b/c.py")
+        assert not rx.match("src/a/b/c.pyc")
+
+    def test_globstar_suffix_pattern(self):
+        rx = _glob_to_regex("pkg/**/*_test.go")
+        assert rx.match("pkg/x_test.go")
+        assert rx.match("pkg/sub/deep/x_test.go")
+        assert not rx.match("pkg/main.go")

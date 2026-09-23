@@ -178,7 +178,9 @@ def _validate_relative_pattern(pattern: str, field_name: str) -> None:
         raise ValueError("%s: empty pattern" % field_name)
     if pattern.startswith("/"):
         raise ValueError("%s: absolute pattern not allowed: %s" % (field_name, pattern))
-    for part in pattern.replace("\\", "/").split("/"):
+    if "\\" in pattern:
+        raise ValueError("%s: backslash not allowed: %s" % (field_name, pattern))
+    for part in pattern.split("/"):
         if part == "..":
             raise ValueError("%s: traversal (..) not allowed: %s" % (field_name, pattern))
 

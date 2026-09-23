@@ -43,10 +43,6 @@ class CorpusError(Exception):
     """Raised when a corpus file is invalid."""
 
 
-class StaleDigestError(CorpusError):
-    """Raised when a corpus entry's source_digest does not match the file."""
-
-
 @dataclass(frozen=True)
 class CorpusEntry:
     """A single corpus entry from the corpus JSON file."""

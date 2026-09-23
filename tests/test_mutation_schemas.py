@@ -485,6 +485,18 @@ class TestEnums:
         }
 
 
+class TestPatternBackslashRejection:
+    def test_sources_reject_backslash(self):
+        d = _valid_target_dict(sources=[r"src\**\*.py"])
+        with pytest.raises(ValueError, match="backslash"):
+            TargetDeclaration.from_dict(d)
+
+    def test_tests_reject_backslash(self):
+        d = _valid_target_dict(tests=[r"tests\sub\**"])
+        with pytest.raises(ValueError, match="backslash"):
+            TargetDeclaration.from_dict(d)
+
+
 class TestDirectConstructionGuards:
     def test_direct_construction_rejects_list_command(self):
         """from_dict coerces lists to tuples, but direct construction does
