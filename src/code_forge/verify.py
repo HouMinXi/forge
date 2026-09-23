@@ -618,6 +618,9 @@ def assess_excerpt_evidence(
         return ExcerptAssessment(valid)
 
     file_lines = post_image.get(exc_file, {})
+    long_by_one = len(actual_lines) == claimed + 1
+    if long_by_one and actual_lines and not actual_lines[0].strip():
+        actual_lines = actual_lines[1:]
     body_start = exc_start
     short_by_one = claimed == len(actual_lines) + 1
     blank_spent = False
