@@ -16,7 +16,26 @@ import sys
 import pytest
 import yaml
 
-SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "forge-provider.py"
+# Under mutmut the suite runs from mutants/. also_copy should place
+# scripts/ beside the tests, but a collection that happens before that
+# copy, or a mirror that dropped the directory, must still find the real
+# script outside the mutants/ root. Same fallback as test_analyse_arms.py.
+def _script_path() -> pathlib.Path:
+    here = pathlib.Path(__file__).resolve()
+    candidate = here.parents[1] / "scripts" / "forge-provider.py"
+    if candidate.exists():
+        return candidate
+    for parent in here.parents:
+        if parent.name != "mutants":
+            continue
+        for root in parent.parents:
+            outside = root / "scripts" / "forge-provider.py"
+            if outside.exists():
+                return outside
+    return candidate
+
+
+SCRIPT = _script_path()
 
 
 def _load():
