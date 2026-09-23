@@ -13,6 +13,7 @@ from code_forge.mutation_engines.schemas import MAX_TARGETS
 from code_forge.mutation_engines.targets import (
     ChangedPath,
     DeclarationError,
+    _glob_to_regex,
     load_targets,
     select_targets,
 )
@@ -334,3 +335,55 @@ class TestSelectTargets:
         changes = [ChangedPath(old_path=None, new_path="tests/test_new.py")]
         result = select_targets(targets, changes)
         assert result.targets[0].granularity == "full"
+
+
+class TestDeclarationPolicyReasons:
+    def test_both_flags_record_both_reasons(self):
+        targets = load_targets(_config(_valid_target()))
+        result = select_targets(
+            targets, [], declaration_changed=True, policy_changed=True
+        )
+        reasons = result.targets[0].reasons
+        assert any("declaration changed" in r for r in reasons)
+        assert any("policy changed" in r for r in reasons)
+
+
+class TestRenameFileAttribution:
+    def test_files_attributed_from_both_maps(self):
+        before = load_targets(_config(
+            _valid_target("core", sources=["old_src/**/*.py"]),
+        ))
+        after = load_targets(_config(
+            _valid_target("core", sources=["new_src/**/*.py"]),
+        ))
+        changes = [
+            ChangedPath(old_path="old_src/a.py", new_path="new_src/a.py")
+        ]
+        result = select_targets(after, changes, before_targets=before)
+        sel = result.targets[0]
+        assert sel.target_id == "core"
+        assert "old_src/a.py" in sel.files
+        assert "new_src/a.py" in sel.files
+
+
+class TestGlobCharacterClasses:
+    def test_bang_negates_class(self):
+        rx = _glob_to_regex("src/[!a]*.py")
+        assert rx.match("src/b.py")
+        assert rx.match("src/!.py")
+        assert not rx.match("src/a.py")
+
+    def test_caret_is_literal_in_class(self):
+        rx = _glob_to_regex("src/[^a]*.py")
+        assert rx.match("src/a.py")
+        assert rx.match("src/^.py")
+        assert not rx.match("src/b.py")
+
+    def test_empty_class_is_literal_bracket(self):
+        rx = _glob_to_regex("a[]b")
+        assert rx.match("a[]b")
+
+    def test_class_with_literal_close_bracket(self):
+        rx = _glob_to_regex("a[]x]b")
+        assert rx.match("a]b")
+        assert rx.match("axb")

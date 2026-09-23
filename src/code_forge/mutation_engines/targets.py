@@ -168,10 +168,22 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
             continue
         if char == "[":
             j = i + 1
+            if j < n and pattern[j] == "!":
+                j += 1
+            if j < n and pattern[j] == "]":
+                # A ']' immediately after '[' or '[!' is a literal member.
+                j += 1
             while j < n and pattern[j] != "]":
                 j += 1
-            if j < n:
-                parts.append(pattern[i : j + 1])
+            if j < n and j > i + 1 and pattern[i + 1 : j]:
+                content = pattern[i + 1 : j]
+                if content.startswith("!"):
+                    content = "^" + content[1:]
+                elif content.startswith("^"):
+                    # Glob has no caret negation; keep it literal.
+                    content = "\\^" + content[1:]
+                content = content.replace("\\", "\\\\")
+                parts.append("[" + content + "]")
                 i = j + 1
             else:
                 parts.append(re.escape(char))
@@ -230,11 +242,11 @@ def select_targets(
 
     # Declaration or policy change selects every target
     if declaration_changed or policy_changed:
-        reason = (
-            "declaration changed" if declaration_changed else "policy changed"
-        )
         for tid in all_ids:
-            selected.setdefault(tid, []).append(reason)
+            if declaration_changed:
+                selected.setdefault(tid, []).append("declaration changed")
+            if policy_changed:
+                selected.setdefault(tid, []).append("policy changed")
 
     # Per-change selection
     matched_paths: set[str] = set()
@@ -292,21 +304,25 @@ def select_targets(
     # Build selection results
     target_selections: list[TargetSelection] = []
     for tid, reasons in sorted(selected.items()):
-        # Determine matched files for this target
+        # Determine matched files for this target. Both the before and the
+        # after declaration contribute patterns: a rename can select via
+        # the before map while the after map carries different patterns.
+        candidates: list[TargetDeclaration] = []
+        for decl in (after_by_id.get(tid), before_by_id.get(tid)):
+            if decl is not None and decl not in candidates:
+                candidates.append(decl)
         target_files: list[str] = []
         for change in changes:
             for p in (change.old_path, change.new_path):
                 if p is None:
                     continue
-                tgt = after_by_id.get(tid) or before_by_id.get(tid)
-                if tgt is None:
-                    continue
-                if (
+                if any(
                     _path_matches_patterns(p, tgt.sources)
                     or _path_matches_patterns(p, tgt.tests)
                     or _path_matches_exact(p, tgt.inputs)
                     or (tgt.corpus is not None and p == tgt.corpus)
                     or (tgt.engine_config is not None and p == tgt.engine_config)
+                    for tgt in candidates
                 ):
                     if p not in target_files:
                         target_files.append(p)

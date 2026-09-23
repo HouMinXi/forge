@@ -483,3 +483,15 @@ class TestEnums:
             CleanupState.COMPLETE, CleanupState.INCOMPLETE,
             CleanupState.PENDING,
         }
+
+
+class TestDirectConstructionGuards:
+    def test_direct_construction_rejects_list_command(self):
+        """from_dict coerces lists to tuples, but direct construction does
+        not; the tuple-of-strings check in __post_init__ must stay
+        reachable for that path."""
+        import dataclasses
+
+        target = TargetDeclaration.from_dict(_valid_target_dict())
+        with pytest.raises(ValueError, match="tuple of strings"):
+            dataclasses.replace(target, command=["python"])
