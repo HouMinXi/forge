@@ -78,7 +78,7 @@ def _check_workspace(
     try:
         ws = resolve_workspace(cwd, env)
         return (True, str(ws), ws)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  workspace resolution reports any failure instead of crashing doctor
         return (False, str(exc), None)
 
 
@@ -139,7 +139,7 @@ def _check_backends(
         configs = load_backend_configs({"backends": merged_raw})
     except CliError as exc:
         return ([(False, "backend config error: %s" % exc)], None)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  non-CliError means no backends; CliError is handled above
         return ([(False, "backend config error: %s" % exc)], [])
 
     if not configs:
@@ -160,7 +160,7 @@ def _check_backends(
                 diag.append((False, "%s %s: %s" % (
                     cfg.name, provenance,
                     result.error or "probe failed")))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  a probe failure is a failed check, not a doctor crash
             diag.append(
                 (False, "%s %s: %s" % (cfg.name, provenance, exc)))
 
@@ -191,7 +191,7 @@ def _check_backends(
                        live_result.detail,
                        live_result.suggestion),
                 ))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  a live probe failure is a failed check, not a doctor crash
             diag.append((
                 False,
                 "%s %s live: %s" % (cfg.name, provenance, exc),
@@ -211,7 +211,7 @@ def _check_outlet(
             env, gate_yaml_path, cli_value=None, configs=configs,
             has_explicit_backend=False, reachability_fn=None,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  outlet resolution failure is reported as a failed check
         return (False, str(exc))
     if outlet == "sampling":
         return (
@@ -248,7 +248,7 @@ def _check_handshake() -> tuple[bool, str]:
                 "mcp not installed -- pip install code-forge[mcp]")
     except asyncio.TimeoutError:
         return (False, "handshake timed out after 15s")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  handshake failures other than import and timeout are reported
         return (False, str(exc))
     finally:
         # asyncio.run may raise before it ever awaits the coroutine
@@ -372,7 +372,7 @@ def _check_hook_drift(
         if inputs is None:
             try:
                 inputs = collect_hook_inputs(workspace)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001  hook input collection failure fails the drift check
                 # A forge hook is installed and we cannot tell whether it
                 # is current. Fail rather than imply it was checked.
                 return results + [
@@ -523,7 +523,7 @@ def _audit_tools(
                 else:
                     results.append(
                         (True, "%s: %s" % (tc.name, version)))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001  a tool audit error is reported per tool
                 results.append(
                     (False,
                      "%s: audit error: %s" % (tc.name, exc)))
