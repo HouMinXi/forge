@@ -407,6 +407,19 @@ class TestGlobCharacterClasses:
         assert not rx.match("b")
         assert not rx.match("[a]")
 
+    def test_class_regex_specials_are_literal(self):
+        # Inside a character class, regex specials need no escaping.
+        assert _glob_to_regex("[a+b]").match("+")
+        assert _glob_to_regex("[(x)]").match("(")
+        assert _glob_to_regex("x/[+()]y").match("x/()y") is None  # single char only
+        assert _glob_to_regex("x/[+()]y").match("x/+y")
+
+    def test_class_range_and_negation(self):
+        assert _glob_to_regex("[0-9]").match("5")
+        assert not _glob_to_regex("[0-9]").match("d")
+        assert _glob_to_regex("[!+]").match("b")
+        assert not _glob_to_regex("[!+]").match("+")
+
     def test_caret_mid_class_is_literal(self):
         # Regex caret negates only immediately after '['; mid-class caret
         # is a literal in both glob and regex.
