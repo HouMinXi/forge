@@ -166,6 +166,8 @@ def _validate_relative_path(path: str, field_name: str) -> None:
         raise ValueError("%s: absolute path not allowed: %s" % (field_name, path))
     if "\\" in path:
         raise ValueError("%s: backslash not allowed: %s" % (field_name, path))
+    if len(path) >= 2 and path[0].isalpha() and path[1] == ":":
+        raise ValueError("%s: drive-letter path not allowed: %s" % (field_name, path))
     # Check for traversal components
     for part in path.replace("\\", "/").split("/"):
         if part == "..":
@@ -180,6 +182,8 @@ def _validate_relative_pattern(pattern: str, field_name: str) -> None:
         raise ValueError("%s: absolute pattern not allowed: %s" % (field_name, pattern))
     if "\\" in pattern:
         raise ValueError("%s: backslash not allowed: %s" % (field_name, pattern))
+    if len(pattern) >= 2 and pattern[0].isalpha() and pattern[1] == ":":
+        raise ValueError("%s: drive-letter pattern not allowed: %s" % (field_name, pattern))
     for part in pattern.split("/"):
         if part == "..":
             raise ValueError("%s: traversal (..) not allowed: %s" % (field_name, pattern))

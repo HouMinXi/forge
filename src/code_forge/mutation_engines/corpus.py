@@ -128,6 +128,10 @@ def _validate_entry(idx: int, raw: dict[str, Any]) -> CorpusEntry:
         raise CorpusError(
             "entry[%d]: source must not contain backslash, got %r" % (idx, source)
         )
+    if len(source) >= 2 and source[0].isalpha() and source[1] == ":":
+        raise CorpusError(
+            "entry[%d]: source must not contain drive-letter, got %r" % (idx, source)
+        )
     if ".." in source.split("/"):
         raise CorpusError(
             "entry[%d]: source must not contain traversal (..), got %r"

@@ -180,6 +180,11 @@ class TestLoadCorpus:
         with pytest.raises(CorpusError, match="backslash"):
             load_corpus(_corpus_json(entries=[entry]))
 
+    def test_reject_drive_letter_in_source(self):
+        entry = _valid_entry(source="C:/windows/system32/evil.sh")
+        with pytest.raises(CorpusError, match="drive-letter"):
+            load_corpus(_corpus_json(entries=[entry]))
+
     def test_reject_empty_old(self):
         entry = _valid_entry(old="")
         with pytest.raises(CorpusError, match="old must be nonempty"):

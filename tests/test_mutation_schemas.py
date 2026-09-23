@@ -279,6 +279,16 @@ class TestTargetDeclaration:
         with pytest.raises(ValueError, match="traversal"):
             TargetDeclaration.from_dict(d)
 
+    def test_reject_drive_letter_root(self):
+        d = _valid_target_dict(root="C:/windows")
+        with pytest.raises(ValueError, match="drive-letter"):
+            TargetDeclaration.from_dict(d)
+
+    def test_reject_drive_letter_source_pattern(self):
+        d = _valid_target_dict(sources=["C:/abs/*.py"])
+        with pytest.raises(ValueError, match="drive-letter"):
+            TargetDeclaration.from_dict(d)
+
     def test_reject_absolute_root(self):
         d = _valid_target_dict(root="/absolute")
         with pytest.raises(ValueError, match="absolute path"):
