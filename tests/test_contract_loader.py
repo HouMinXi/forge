@@ -411,6 +411,36 @@ def test_cache_key_uses_12_hex_chars(tmp_path):
     assert len(parts[1]) == 12
 
 
+def test_bad_cache_is_a_miss(tmp_path):
+    from code_forge.contract_loader import _read_spec_cache
+
+    cache = tmp_path / "cache.json"
+    cache.write_bytes(b'{"summary": "ok"}\xff')
+    assert _read_spec_cache(cache) is None
+
+
+def test_non_object_cache_is_a_miss(tmp_path):
+    from code_forge.contract_loader import _read_spec_cache
+
+    cache = tmp_path / "cache.json"
+    cache.write_text("[1, 2]", encoding="utf-8")
+    assert _read_spec_cache(cache) is None
+
+
+def test_cache_reader_bug_is_not_swallowed(tmp_path, monkeypatch):
+    from code_forge import contract_loader
+
+    cache = tmp_path / "cache.json"
+    cache.write_text('{"summary": "ok"}', encoding="utf-8")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("reader bug")
+
+    monkeypatch.setattr(contract_loader.json, "loads", boom)
+    with pytest.raises(RuntimeError, match="reader bug"):
+        contract_loader._read_spec_cache(cache)
+
+
 def test_summarization_failure_graceful(tmp_path, trust_dir, monkeypatch):
     """llm_invoke raises LLMInvokeError, returns empty for that spec."""
     from code_forge.contract_loader import load_contract_digest

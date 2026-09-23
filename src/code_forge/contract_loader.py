@@ -235,7 +235,7 @@ def _read_spec_cache(cache_path: Path) -> Optional[str]:
     try:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
         return data.get("summary")
-    except Exception:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, AttributeError):
         return None
 
 
