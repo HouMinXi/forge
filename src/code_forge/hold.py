@@ -7,6 +7,7 @@ implements DISPO-05(c) deferred from 02-02.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -47,10 +48,26 @@ def run_hold_ui(
 
     Idempotent: if zero UNCERTAIN findings, returns immediately with
     no I/O (caller may invoke unconditionally after PENDING return).
+
+    FORGE_HOLD_NONINTERACTIVE=1 records the findings and returns without
+    reading stdin. hold_reason is cleared because this prompt cycle is
+    over; UNCERTAIN dispositions stay UNCERTAIN. Unattended LOCAL reviews
+    otherwise die on EOF.
     """
     uncertain = [
         f for f in state.findings if f.disposition == Disposition.UNCERTAIN
     ]
+    if os.environ.get("FORGE_HOLD_NONINTERACTIVE") == "1":
+        if uncertain:
+            output_fn(
+                "HOLD: %d UNCERTAIN finding(s) left recorded; "
+                "noninteractive, not prompting."
+                % len(uncertain)
+            )
+        state.hold_reason = None
+        state.dispositions = {f.id: f.disposition for f in state.findings}
+        save_state(state, state_path)
+        return
     if not uncertain:
         state.hold_reason = None
         save_state(state, state_path)
