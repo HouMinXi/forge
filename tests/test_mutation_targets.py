@@ -401,6 +401,12 @@ class TestGlobCharacterClasses:
         assert rx.match("pkg/sub/deep/x_test.go")
         assert not rx.match("pkg/main.go")
 
+    def test_single_member_class(self):
+        rx = _glob_to_regex("[a]")
+        assert rx.match("a")
+        assert not rx.match("b")
+        assert not rx.match("[a]")
+
     def test_caret_mid_class_is_literal(self):
         # Regex caret negates only immediately after '['; mid-class caret
         # is a literal in both glob and regex.
