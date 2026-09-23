@@ -241,6 +241,34 @@ class TestSubprocessIsolationAndCleanup:
         assert ev.status == ExecStatus.UNAVAILABLE
         assert "FileNotFoundError" in ev.reason
 
+    def test_copy_failure_is_unavailable(self, tmp_path):
+        lockfile = tmp_path / "requirements.txt"
+        lockfile.write_text("pytest\n", encoding="utf-8")
+        falsifier = ExecFalsifier(
+            manifest=_declared_manifest(),
+            timeout_seconds=10,
+            command=["python3", "-c", "print(1)"],
+        )
+        with mock.patch("code_forge.exec_falsify.shutil.copytree", side_effect=OSError("copy failed")):
+            ev = falsifier.run(tmp_path)
+        assert ev.status == ExecStatus.UNAVAILABLE
+        assert "copy failed" in ev.reason
+
+    def test_copy_bug_is_not_swallowed(self, tmp_path):
+        lockfile = tmp_path / "requirements.txt"
+        lockfile.write_text("pytest\n", encoding="utf-8")
+        falsifier = ExecFalsifier(
+            manifest=_declared_manifest(),
+            timeout_seconds=10,
+            command=["python3", "-c", "print(1)"],
+        )
+        with mock.patch(
+            "code_forge.exec_falsify.shutil.copytree",
+            side_effect=RuntimeError("copy bug"),
+        ):
+            with pytest.raises(RuntimeError, match="copy bug"):
+                falsifier.run(tmp_path)
+
     def test_stdin_devnull(self, tmp_path):
         lockfile = tmp_path / "requirements.txt"
         lockfile.write_text("pytest\n", encoding="utf-8")
