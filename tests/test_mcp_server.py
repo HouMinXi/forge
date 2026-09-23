@@ -1857,6 +1857,21 @@ class TestShutdownInfrastructure:
             mod._install_pdeathsig()
         assert "PR_SET_PDEATHSIG unavailable" in caplog.text
 
+    def test_install_pdeathsig_loader_bug_is_not_a_warning(self, caplog):
+        import code_forge.mcp_server as mod
+        import logging
+
+        with (
+            patch("code_forge.mcp_server.sys") as mock_sys,
+            patch("ctypes.CDLL", side_effect=RuntimeError("loader bug")),
+            patch("code_forge.mcp_server.os.getppid", return_value=12345),
+            caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
+        ):
+            mock_sys.platform = "linux"
+            with pytest.raises(RuntimeError, match="loader bug"):
+                mod._install_pdeathsig()
+        assert "PR_SET_PDEATHSIG unavailable" not in caplog.text
+
     @pytest.mark.asyncio
     async def test_lifespan_calls_pdeathsig(self):
         import code_forge.mcp_server as mod
