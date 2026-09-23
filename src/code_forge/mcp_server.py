@@ -102,7 +102,7 @@ def _install_pdeathsig() -> None:
             log.warning(
                 "prctl(PR_SET_PDEATHSIG) failed: rc=%d errno=%d", rc, errno
             )
-    except Exception as exc:
+    except OSError as exc:
         log.warning("PR_SET_PDEATHSIG unavailable: %s", exc)
 
     # Startup race: if the parent died between fork and prctl, the
