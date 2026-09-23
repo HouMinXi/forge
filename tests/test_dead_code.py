@@ -201,6 +201,21 @@ class TestIsDeadCallSitePython:
         # Line 4 is "this_is_live_on_any_realistic_py3()" -- LIVE
         assert _is_dead_call_site(str(f), 4) is False
 
+    def test_malformed_version_literal_is_live(self) -> None:
+        from code_forge.dead_code import _verinfo_is_dead
+
+        assert _verinfo_is_dead(b"sys.version_info < (1+2,)") is False
+
+    def test_version_compare_bug_is_not_swallowed(self, monkeypatch) -> None:
+        from code_forge import dead_code
+
+        def boom(*_args):
+            raise RuntimeError("compare bug")
+
+        monkeypatch.setitem(dead_code._CMP, b"<", boom)
+        with pytest.raises(RuntimeError, match="compare bug"):
+            dead_code._verinfo_is_dead(b"sys.version_info < (3, 0)")
+
     def test_live_code_is_live(self, tmp_path: Path) -> None:
         f = tmp_path / "tc.py"
         f.write_text(_PY_TYPE_CHECKING)
