@@ -77,18 +77,18 @@ def load_gate_config(
 
     test = data["test"]
     if not isinstance(test, dict):
-        raise ValueError("'test' section must be a mapping")
+        raise ValueError("'test' section must be a mapping")  # noqa: TRY004  # callers and tests catch ValueError for config shape
 
     # Validate required fields
     if "command" not in test:
         raise ValueError("'test.command' is required")
     if not isinstance(test["command"], list):
-        raise ValueError("'test.command' must be a list")
+        raise ValueError("'test.command' must be a list")  # noqa: TRY004  # callers and tests catch ValueError for config shape
     if not test["command"]:
         raise ValueError("'test.command' cannot be empty")
     for arg in test["command"]:
         if not isinstance(arg, str) or isinstance(arg, bool):
-            raise ValueError("'test.command' elements must be strings")
+            raise ValueError("'test.command' elements must be strings")  # noqa: TRY004  # callers and tests catch ValueError for config shape
 
     # Optional fields with defaults
     if "env" in test and not isinstance(test.get("env"), dict):
@@ -219,7 +219,7 @@ def validate_exec_falsify_config(section: object) -> None:
             out-of-bounds timeout_seconds, or unknown keys.
     """
     if not isinstance(section, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "gate.yaml 'exec_falsify' must be a mapping, got: %s"
             % type(section).__name__
         )
@@ -253,13 +253,13 @@ def validate_pinned_paths(section: object) -> None:
         ValueError: if not a list of strings.
     """
     if not isinstance(section, list):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "gate.yaml 'pinned_paths' must be a list, got: %s"
             % type(section).__name__
         )
     for idx, item in enumerate(section):
         if not isinstance(item, str):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
                 "gate.yaml 'pinned_paths[%d]' must be a string, got: %s"
                 % (idx, type(item).__name__)
             )
@@ -276,20 +276,20 @@ def validate_style_downgrade_config(section: object) -> None:
         ValueError: if known fields have wrong types.
     """
     if not isinstance(section, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "gate.yaml 'style_downgrade' must be a mapping, got: %s"
             % type(section).__name__
         )
     for key in ("pass_names", "keywords"):
         val = section.get(key, [])
         if not isinstance(val, list):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
                 "gate.yaml 'style_downgrade.%s' must be a list, got: %s"
                 % (key, type(val).__name__)
             )
         for idx, item in enumerate(val):
             if not isinstance(item, str):
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
                     "gate.yaml 'style_downgrade.%s[%d]' must be a string, got: %s"
                     % (key, idx, type(item).__name__)
                 )
@@ -298,7 +298,7 @@ def validate_style_downgrade_config(section: object) -> None:
 def validate_ledger_config(ledger_cfg: object) -> None:
     """Validate optional ledger configuration section in gate.yaml (D-19)."""
     if not isinstance(ledger_cfg, dict):
-        raise ValueError("gate.yaml 'ledger' section must be a mapping")
+        raise ValueError("gate.yaml 'ledger' section must be a mapping")  # noqa: TRY004  # callers and tests catch ValueError for config shape
     if "enabled" in ledger_cfg and not isinstance(ledger_cfg["enabled"], bool):
         raise ValueError("gate.yaml 'ledger.enabled' must be a boolean")
 
@@ -318,7 +318,7 @@ def validate_graph_triage(section: dict) -> None:
         ValueError: if known fields have wrong types.
     """
     if not isinstance(section, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "gate.yaml 'graph_triage' must be a mapping, got: %s"
             % type(section).__name__
         )
@@ -355,7 +355,7 @@ def validate_daemon_state(section: object) -> None:
         ValueError: if known fields have wrong types or required sub-fields missing.
     """
     if not isinstance(section, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "gate.yaml 'daemon_state' must be a mapping, got: %s"
             % type(section).__name__
         )
@@ -373,7 +373,7 @@ def validate_daemon_state(section: object) -> None:
             )
         for s in section["subsystems"]:
             if not isinstance(s, str):
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
                     "'daemon_state.subsystems' elements must be strings"
                 )
     if "patterns" in section:
@@ -390,7 +390,7 @@ def validate_daemon_state(section: object) -> None:
             )
         for idx, c in enumerate(section["conflicts"]):
             if not isinstance(c, dict):
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
                     "daemon_state.conflicts[%d] must be a mapping" % idx
                 )
             for req_key in ("subsystem", "mutates", "interferes_with"):
@@ -400,7 +400,7 @@ def validate_daemon_state(section: object) -> None:
                         % (idx, req_key)
                     )
                 if not isinstance(c[req_key], str):
-                    raise ValueError(
+                    raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
                         "daemon_state.conflicts[%d].%s must be a string"
                         % (idx, req_key)
                     )
@@ -428,7 +428,7 @@ def validate_canary_config(section: object) -> None:
         ValueError: if known fields have wrong types or values out of range.
     """
     if not isinstance(section, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "gate.yaml 'canary' must be a mapping, got: %s"
             % type(section).__name__
         )
@@ -480,7 +480,7 @@ def validate_retry_config(section: object) -> None:
         ValueError: if known fields have wrong types or values out of range.
     """
     if not isinstance(section, dict):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "gate.yaml 'retry' must be a mapping, got: %s"
             % type(section).__name__
         )
@@ -579,7 +579,7 @@ def validate_siblings(
         ValueError: on any validation failure.
     """
     if not isinstance(siblings, list):
-        raise ValueError("siblings: must be a list")
+        raise ValueError("siblings: must be a list")  # noqa: TRY004  # callers and tests catch ValueError for config shape
 
     from .conventions_resolver import _symlink_guard_passes
 
@@ -588,7 +588,7 @@ def validate_siblings(
 
     for idx, entry in enumerate(siblings):
         if not isinstance(entry, dict):
-            raise ValueError("siblings[%d]: must be a mapping" % idx)
+            raise ValueError("siblings[%d]: must be a mapping" % idx)  # noqa: TRY004  # callers and tests catch ValueError for config shape
 
         # Required fields (must be non-empty strings)
         repo_val = entry.get("repo")
@@ -719,12 +719,12 @@ def validate_presubmit_command(command: list[str]) -> None:
         ValueError: if any element contains a shell metacharacter
     """
     if not isinstance(command, list):
-        raise ValueError("presubmit command must be a list")
+        raise ValueError("presubmit command must be a list")  # noqa: TRY004  # callers and tests catch ValueError for config shape
     if not command:
         raise ValueError("presubmit command cannot be empty")
     for arg in command:
         if not isinstance(arg, str):
-            raise ValueError("presubmit command elements must be strings")
+            raise ValueError("presubmit command elements must be strings")  # noqa: TRY004  # callers and tests catch ValueError for config shape
         for char in SHELL_METACHARACTERS:
             if char in arg:
                 raise ValueError(
@@ -761,7 +761,7 @@ def validate_presubmit_entry(entry: dict) -> None:
         ValueError: if required fields are missing or values are invalid
     """
     if not isinstance(entry, dict):
-        raise ValueError("each presubmit entry must be a mapping")
+        raise ValueError("each presubmit entry must be a mapping")  # noqa: TRY004  # callers and tests catch ValueError for config shape
 
     # command: required, list, no shell metacharacters
     if "command" not in entry:
@@ -769,7 +769,7 @@ def validate_presubmit_entry(entry: dict) -> None:
             "presubmit entry missing required field 'command'"
         )
     if not isinstance(entry["command"], list):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "presubmit entry 'command' must be a list, got: %s"
             % type(entry["command"]).__name__
         )
@@ -781,7 +781,7 @@ def validate_presubmit_entry(entry: dict) -> None:
             "presubmit entry missing required field 'applies_to'"
         )
     if not isinstance(entry["applies_to"], str):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "presubmit entry 'applies_to' must be a string"
         )
     if "'" in entry["applies_to"]:
@@ -858,7 +858,7 @@ def validate_command_safety(command: list[str]) -> None:
     if not command:
         raise ValueError("command cannot be empty")
     if not isinstance(command, list):
-        raise ValueError("command must be a list")
+        raise ValueError("command must be a list")  # noqa: TRY004  # callers and tests catch ValueError for config shape
 
     # First element must be a known runner
     if command[0] not in KNOWN_RUNNERS:
@@ -870,7 +870,7 @@ def validate_command_safety(command: list[str]) -> None:
     # No element may contain shell metacharacters
     for arg in command:
         if not isinstance(arg, str) or isinstance(arg, bool):
-            raise ValueError("command elements must be strings")
+            raise ValueError("command elements must be strings")  # noqa: TRY004  # callers and tests catch ValueError for config shape
         for char in SHELL_METACHARACTERS:
             if char in arg:
                 raise ValueError(
@@ -957,7 +957,7 @@ def load_test_baseline(
         raise ValueError("Invalid JSON in baseline: %s" % e) from e
 
     if not isinstance(data, dict):
-        raise ValueError("Baseline must be a JSON object")
+        raise ValueError("Baseline must be a JSON object")  # noqa: TRY004  # callers and tests catch ValueError for config shape
     if "schema_version" not in data:
         raise ValueError("Baseline missing 'schema_version' field")
 
