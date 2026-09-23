@@ -537,6 +537,7 @@ class ExcerptAssessment:
     status: ExcerptStatus
     diagnostic: str | None = None
     proven_lines: frozenset[int] = frozenset()
+    repaired_tail: bool = False
 
     @property
     def proven_start(self) -> int | None:
@@ -547,7 +548,7 @@ class ExcerptAssessment:
         return max(self.proven_lines) if self.proven_lines else None
 
 
-def _anchored_assessment(status, diagnostic, proven, hunks, location):
+def _anchored_assessment(status, diagnostic, proven, hunks, location, *, repaired_tail=False):
     """A demonstrated quote must witness a hunk at its actual coordinates."""
     proven = frozenset(proven)
     if not any(h["start"] <= n <= h["end"] for h in hunks for n in proven):
@@ -555,7 +556,7 @@ def _anchored_assessment(status, diagnostic, proven, hunks, location):
             ExcerptStatus.INVALID,
             f"excerpt {location} is outside every hunk; unchanged context belongs in context_quotes",
         )
-    return ExcerptAssessment(status, diagnostic, proven)
+    return ExcerptAssessment(status, diagnostic, proven, repaired_tail)
 
 
 def assess_excerpt_evidence(
@@ -670,6 +671,30 @@ def assess_excerpt_evidence(
             bad = next((n for n in mismatches
                         if not _only_leading_ws_differs(quoted[n], file_lines[n])), None)
             if bad is not None:
+                last = max(quoted)
+                cut = quoted.get(last, "")
+                source = file_lines.get(last, "")
+                if (
+                    bad == last
+                    and mismatches == [last]
+                    and cut
+                    and source.startswith(cut)
+                    and cut != source
+                ):
+                    stored = exc["content"]
+                    if isinstance(stored, list):
+                        repaired = list(stored)
+                        repaired[-1] = source
+                        exc["content"] = repaired
+                    else:
+                        lines = list(stored.splitlines())
+                        if lines:
+                            lines[-1] = source
+                            exc["content"] = "\n".join(lines)
+                    quoted[last] = source
+                    return _anchored_assessment(
+                        valid, None, overlap, hunks, location, repaired_tail=True,
+                    )
                 return ExcerptAssessment(invalid, f"excerpt content mismatch at {location} (line {bad})")
             return _anchored_assessment(
                 untrusted, f"excerpt indent-stripped at {location}", overlap, hunks, location,
@@ -815,6 +840,21 @@ def _diff_validation_context(
 def is_one_line_misnumber(err: str) -> bool:
     """True when err names a constant +/-1 coordinate slip."""
     return bool(re.search(r"excerpt misnumbered by [+-]1 ", err))
+
+
+def bound_excerpt_disposition(disposition, excerpt):
+    """A CONFIRMED finding without its own excerpt is not confirmed.
+
+    Envelope-level code_excerpts do not bind to a finding. Missing or
+    blank binding demotes CONFIRMED to UNCERTAIN. Other dispositions
+    stay as they are.
+    """
+    from .disposition import Disposition
+
+    text = excerpt if isinstance(excerpt, str) else ""
+    if disposition is Disposition.CONFIRMED and not text.strip():
+        return Disposition.UNCERTAIN
+    return disposition
 
 
 def is_indent_stripped(err: str) -> bool:

@@ -100,6 +100,9 @@ class StateFinding:
     # to the convergence gate, and the P3-only density path was
     # unreachable.
     severity: str | None = None
+    # The finding's own quote. Envelope-level code_excerpts do not count.
+    # A CONFIRMED finding with this empty is demoted to UNCERTAIN.
+    excerpt: str | None = None
 
 
 def derive_pass_outcomes(
@@ -234,6 +237,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
         # loadable; they simply carry no reviewer severity, which is the
         # same position they were in when they were written.
         severity=d.get("severity"),
+        excerpt=d.get("excerpt"),
     )
 
 
@@ -360,6 +364,7 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "evidence_files": f.evidence_files,
         "is_timeout": f.is_timeout,
         "backend": f.backend,
+        "excerpt": f.excerpt,
     }
     return d
 

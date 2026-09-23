@@ -272,9 +272,9 @@ class TestStateFindingFieldCount:
     """
 
     def test_field_count(self):
-        expected = 13  # id, fingerprint, source, disposition, file,
+        expected = 14  # id, fingerprint, source, disposition, file,
         # line_range, description, error, anchor, evidence_files,
-        # is_timeout, backend, severity
+        # is_timeout, backend, severity, excerpt
         assert len(fields(StateFinding)) == expected
 
 

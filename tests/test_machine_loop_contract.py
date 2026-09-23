@@ -49,11 +49,12 @@ def finding(
     fingerprint: str,
     disposition: Disposition = Disposition.UNCERTAIN,
     source: Literal["L1", "INFRA", "UNTRUSTED"] = "L1",
+    excerpt: str | None = "bound quote\n",
 ) -> StateFinding:
     return StateFinding(
         id=fingerprint, fingerprint=fingerprint, source=source,
         disposition=disposition, file="sample.py", line_range=[1, 1],
-        description=f"Finding {fingerprint}",
+        description=f"Finding {fingerprint}", excerpt=excerpt,
     )
 
 
@@ -92,6 +93,16 @@ def test_serial_falsify_preserves_non_product_candidates(machine, monkeypatch, s
     result, _ = machine._run_l1_phase()
     assert machine.falsifier.calls == ["second"]
     assert result[0] is candidates[0]
+    assert result[0].disposition == Disposition.UNCERTAIN
+    assert result[1].disposition == Disposition.CONFIRMED
+
+
+def test_confirmed_without_own_excerpt_is_uncertain(machine, monkeypatch):
+    monkeypatch.setenv("FORGE_FALSIFY_WORKERS", "1")
+    bare = finding("bare", excerpt=None)
+    bound = finding("bound")
+    machine.l1_provider = lambda: ([bare, bound], [{"file": "sample.py"}], Usage(), 0.0)
+    result, _ = machine._run_l1_phase()
     assert result[0].disposition == Disposition.UNCERTAIN
     assert result[1].disposition == Disposition.CONFIRMED
 
