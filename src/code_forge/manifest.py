@@ -360,23 +360,24 @@ def extract_manifest(cwd: Path) -> EnvManifest:
                 dependencies=deps,
                 raw_summary="%s (%d deps)" % (filename, len(deps)),
             )
-        except (json.JSONDecodeError, tomllib.TOMLDecodeError, UnicodeDecodeError, OSError, Exception):
+        except (json.JSONDecodeError, tomllib.TOMLDecodeError, UnicodeDecodeError, OSError, ValueError):
             continue
 
-    # Fallback: toolchain probes
+    # Fallback: toolchain probes. The probe handles its own process
+    # errors. Anything else still degrades to an absent manifest so
+    # doctor does not crash on an unexpected probe failure.
     try:
         runtime, r_name, r_ver, r_bin, deps = _probe_toolchain()
-        if runtime:
-            return EnvManifest(
-                tier=ManifestTier.OBSERVED,
-                runtime=runtime,
-                runtime_name=r_name,
-                runtime_version=r_ver,
-                runtime_bin=r_bin,
-                dependencies=deps,
-                raw_summary="observed: %s" % runtime,
-            )
-    except Exception:
-        pass
-
+    except Exception:  # noqa: BLE001  unexpected probe failure degrades to absent
+        return EnvManifest(tier=ManifestTier.ABSENT)
+    if runtime:
+        return EnvManifest(
+            tier=ManifestTier.OBSERVED,
+            runtime=runtime,
+            runtime_name=r_name,
+            runtime_version=r_ver,
+            runtime_bin=r_bin,
+            dependencies=deps,
+            raw_summary="observed: %s" % runtime,
+        )
     return EnvManifest(tier=ManifestTier.ABSENT)

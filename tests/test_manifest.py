@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from code_forge.manifest import (
     EnvManifest,
     ManifestTier,
@@ -253,6 +255,49 @@ class TestExtractManifest:
             assert manifest.tier == ManifestTier.ABSENT
             assert manifest.runtime == ""
             assert manifest.dependencies == {}
+
+    def test_parser_bug_is_not_swallowed(self, tmp_path: Path):
+        (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        import code_forge.manifest as manifest
+
+        def boom(_path):
+            raise RuntimeError("parser bug")
+
+        detectors = [
+            item if item[0] != "package-lock.json" else (item[0], item[1], boom)
+            for item in manifest._LOCKFILE_DETECTORS
+        ]
+        with patch.object(manifest, "_LOCKFILE_DETECTORS", detectors):
+            with pytest.raises(RuntimeError, match="parser bug"):
+                extract_manifest(tmp_path)
+
+    def test_probe_failure_degrades_to_absent(self, tmp_path: Path):
+        with patch(
+            "code_forge.manifest._probe_toolchain",
+            side_effect=RuntimeError("probe bug"),
+        ):
+            manifest = extract_manifest(tmp_path)
+        assert manifest.tier == ManifestTier.ABSENT
+
+    def test_parser_value_error_falls_through(self, tmp_path: Path):
+        (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+        import code_forge.manifest as manifest
+
+        def bad_value(_path):
+            raise ValueError("malformed value")
+
+        detectors = [
+            item if item[0] != "package-lock.json" else (item[0], item[1], bad_value)
+            for item in manifest._LOCKFILE_DETECTORS
+        ]
+        with patch.object(manifest, "_LOCKFILE_DETECTORS", detectors):
+            with patch(
+                "code_forge.manifest._probe_toolchain",
+                return_value=("python 3.12.3", "python", "3.12.3", "python3", {}),
+            ):
+                manifest_out = extract_manifest(tmp_path)
+        assert manifest_out.tier == ManifestTier.OBSERVED
 
     def test_probe_toolchain_uses_three_second_timeout(self, tmp_path: Path):
         with patch("subprocess.run") as mock_run:
