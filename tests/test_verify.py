@@ -3236,16 +3236,18 @@ class TestDroppedBlankIsToleratedAtEitherEnd:
         err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
         assert err is None, err
 
-    def test_short_quote_without_a_blank_still_fails(self):
-        from code_forge.verify import validate_excerpt_evidence
+    def test_short_quote_with_one_gap_degrades_to_untrusted(self):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
         post, hunk_map, exempt = self._ctx()
-        # 4-6 are all non-blank, so a two-line quote is genuinely short.
+        # 4-6 are all non-blank; the quote drops the head line gamma but
+        # the carried lines align exactly once line 4 is set aside.
         exc = {"file": "doc.md", "start_line": 4, "end_line": 6,
                "content": "delta\nepsilon"}
-        err = validate_excerpt_evidence(exc, hunk_map, post, exempt)
-        assert err is not None
-        assert "declares 3 lines but carries 2" in err
+        a = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert a.status is ExcerptStatus.UNTRUSTED
+        assert a.diagnostic is not None
+        assert "missing source line 4" in a.diagnostic
 
     def test_blank_head_does_not_excuse_a_fabricated_quote(self):
         from code_forge.verify import validate_excerpt_evidence
@@ -3260,6 +3262,64 @@ class TestDroppedBlankIsToleratedAtEitherEnd:
         assert "declares" not in err, (
             f"the fault is the content, not the count: {err}"
         )
+
+
+class TestOneGapInTheMiddleIsUntrusted:
+    """A quote missing exactly one non-blank middle line is near-miss.
+
+    The reviewer declared the range and transcribed every carried line
+    verbatim; only one non-blank line never made it. That is weaker
+    evidence than a whole quote but nothing like a fabrication, so the
+    assessment degrades to UNTRUSTED and names the missing line.
+    """
+
+    _DIFF = (
+        "diff --git a/srv.ts b/srv.ts\n"
+        "--- /dev/null\n"
+        "+++ b/srv.ts\n"
+        "@@ -0,0 +1,5 @@\n"
+        "+const a = open();\n"
+        "+const b = bind(a);\n"
+        "+const c = listen(b);\n"
+        "+const d = accept(c);\n"
+        "+const e = serve(d);\n"
+    )
+
+    def _ctx(self):
+        from code_forge.verify import _diff_validation_context
+
+        return _diff_validation_context(self._DIFF)
+
+    def test_missing_middle_line_is_untrusted_and_named(self):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        # Declares 1-5, drops line 3 (listen), the rest verbatim.
+        exc = {"file": "srv.ts", "start_line": 1, "end_line": 5,
+               "content": (
+                   "const a = open();\n"
+                   "const b = bind(a);\n"
+                   "const d = accept(c);\n"
+                   "const e = serve(d);"
+               )}
+        a = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert a.status is ExcerptStatus.UNTRUSTED
+        assert a.diagnostic is not None
+        assert "missing source line 3" in a.diagnostic
+
+    def test_two_mismatched_lines_stay_invalid(self):
+        from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
+
+        post, hunk_map, exempt = self._ctx()
+        exc = {"file": "srv.ts", "start_line": 1, "end_line": 5,
+               "content": (
+                   "const a = open();\n"
+                   "const b = bind(a);\n"
+                   "const d = forged(c);\n"
+                   "const e = forged(d);"
+               )}
+        a = assess_excerpt_evidence(exc, hunk_map, post, exempt)
+        assert a.status is ExcerptStatus.INVALID
 
 
 class TestExtraLeadingBlankIsNotContent:
