@@ -533,17 +533,22 @@ class MutmutAdapter:
             % (source_args, _PLUGIN_MODULE, test_selection)
         )
 
-    def _sandbox_env(self, context: ExecutionContext) -> tuple[tuple[str, str], ...]:
+    def _sandbox_env(
+        self, context: ExecutionContext, mutant_id: str | None = None
+    ) -> tuple[tuple[str, str], ...]:
         python_paths = [_FORGE_SRC_BIND] + [
             "/opt/extra-%d" % i for i in range(len(context.extra_python_paths))
         ]
-        return (
+        env = [
             ("PATH", "/usr/bin:/bin"),
             ("HOME", "/workspace"),
             ("PYTHONPATH", ":".join(python_paths)),
             ("FORGE_MUTATION_EVENTS_DIR", "/workspace/events"),
             ("FORGE_MUTATION_RUN_ID", context.run_id),
-        )
+        ]
+        if mutant_id:
+            env.append(("MUTANT_UNDER_TEST", mutant_id))
+        return tuple(env)
 
     def _extra_binds(self, context: ExecutionContext) -> tuple[tuple[str, str], ...]:
         binds = [(_PLUGIN_SRC_ROOT, _FORGE_SRC_BIND)]
@@ -561,6 +566,7 @@ class MutmutAdapter:
         workspace: Path,
         receipt_id: str,
         target_id: str,
+        mutant_id: str | None = None,
     ) -> tuple[int, bool, CommandReceipt]:
         spec = isolate.SandboxSpec(
             run_id=context.run_id + "-" + receipt_id[:24],
@@ -569,7 +575,7 @@ class MutmutAdapter:
             memory_mb=context.memory_mb,
             pids=context.pids,
             workspace_mb=context.workspace_mb,
-            env=self._sandbox_env(context),
+            env=self._sandbox_env(context, mutant_id),
             workspace_host=str(workspace),
             extra_ro_binds=self._extra_binds(context),
         )
