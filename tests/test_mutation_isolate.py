@@ -312,3 +312,20 @@ def test_remove_cgroup_force_rewrites_kill(tmp_path, monkeypatch):
     fast_clock.now = 0.0
     sup._remove_cgroup(force=False)
     assert force_writes > len(writes) > 0
+
+
+@requires_isolation
+def test_sandbox_has_dev_null_and_proc(tmp_path):
+    """pytest capture and getpid need /dev/null and /proc inside the sandbox.
+
+    A namespace without them fails any real test runner before the payload
+    assertion can run.
+    """
+    spec = _spec(
+        ["/bin/sh", "-c",
+         "test -c /dev/null && test -r /proc/self/status "
+         "&& echo ok > /workspace/devproc.txt"],
+        tmp_path,
+    )
+    assert _run_sandbox(spec) == 0
+    assert (tmp_path / "devproc.txt").read_text().strip() == "ok"

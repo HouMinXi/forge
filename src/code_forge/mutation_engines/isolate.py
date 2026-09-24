@@ -98,6 +98,7 @@ class SandboxSpec:
     env: tuple[tuple[str, str], ...] = ()
     workspace_host: str = ""
     runtime_root: str | None = None
+    extra_ro_binds: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not valid_identifier(self.run_id):
@@ -106,6 +107,11 @@ class SandboxSpec:
             raise ValueError("sandbox command must be nonempty")
         if self.memory_mb <= 0 or self.pids <= 0 or self.workspace_mb <= 0:
             raise ValueError("sandbox limits must be positive")
+        for host, inner in self.extra_ro_binds:
+            if not host.startswith("/") or not inner.startswith("/"):
+                raise ValueError(
+                    "extra ro-bind paths must be absolute, got %r -> %r" % (host, inner)
+                )
 
 
 def _write(path: str, value: str) -> None:
@@ -188,9 +194,14 @@ class Supervisor:
         else:
             for d in ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc"):
                 argv += ["--ro-bind", d, d]
+        # pytest capture opens /dev/null; --unshare-pid needs a private /proc
+        # or the payload cannot see its own pid namespace.
+        argv += ["--dev", "/dev", "--proc", "/proc"]
         argv += ["--tmpfs", "/workspace"]
         if spec.workspace_host:
             argv += ["--bind", spec.workspace_host, "/workspace"]
+        for host, inner in spec.extra_ro_binds:
+            argv += ["--ro-bind", host, inner]
         for key, value in spec.env:
             argv += ["--setenv", key, value]
         argv += ["--chdir", spec.cwd, "--"]
@@ -302,6 +313,28 @@ class Supervisor:
             finally:
                 self._remove_cgroup(force=True)
             raise
+
+    def read_resource_peak(self, name: str) -> int | None:
+        """Read an integer counter (e.g. memory.peak) from the run cgroup.
+
+        Returns None when the counter file is absent or unreadable.
+        spec: peak counters unavailable on a supported kernel are
+        recorded as null, enforcement itself must still work.
+        """
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            raise ValueError("counter name must be a plain file name, got %r" % name)
+        path = os.path.join(self.cgroup_path, name)
+        try:
+            with open(path) as handle:
+                value = handle.read().strip()
+        except OSError:
+            return None
+        if value == "max":
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
 
     def wait(self, timeout: float | None = None) -> int:
         if self._process is None:
