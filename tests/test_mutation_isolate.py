@@ -270,3 +270,45 @@ def test_cleanup_removes_cgroup_and_payloads(tmp_path):
     assert not os.path.isdir(cg)
     with pytest.raises(ProcessLookupError):
         os.kill(sup.payload_pid, 0)
+
+
+def test_run_id_must_be_identifier(tmp_path):
+    with pytest.raises(ValueError):
+        SandboxSpec(
+            run_id="../escape",
+            command=("/bin/true",),
+            cwd="/",
+            memory_mb=16,
+            pids=8,
+            workspace_mb=8,
+            workspace_host=str(tmp_path),
+        )
+
+
+def test_remove_cgroup_force_rewrites_kill(tmp_path, monkeypatch):
+    import code_forge.mutation_engines.isolate as iso
+
+    cgroup = tmp_path / "cg"
+    cgroup.mkdir()
+    (cgroup / "cgroup.kill").write_text("")
+    (cgroup / "busy").write_text("x")  # rmdir always fails
+    writes = []
+    monkeypatch.setattr(iso, "_write", lambda path, value: writes.append(path))
+    monkeypatch.setattr(iso.time, "sleep", lambda seconds: None)
+
+    def fast_clock():
+        fast_clock.now += 2.0
+        return fast_clock.now
+
+    sup = object.__new__(iso.Supervisor)
+    sup.cgroup_path = str(cgroup)
+
+    fast_clock.now = 0.0
+    monkeypatch.setattr(iso.time, "monotonic", fast_clock)
+    sup._remove_cgroup(force=True)
+    force_writes = len(writes)
+
+    writes.clear()
+    fast_clock.now = 0.0
+    sup._remove_cgroup(force=False)
+    assert force_writes > len(writes) > 0

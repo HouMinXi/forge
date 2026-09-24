@@ -27,6 +27,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from code_forge.mutation_engines.schemas import valid_identifier
+
 _REQUIRED_CONTROLLERS = ("memory", "pids")
 _CGROUP2_MAGIC = "cgroup2fs"
 
@@ -98,6 +100,8 @@ class SandboxSpec:
     runtime_root: str | None = None
 
     def __post_init__(self) -> None:
+        if not valid_identifier(self.run_id):
+            raise ValueError("sandbox run_id must be an identifier, got %r" % (self.run_id,))
         if not self.command:
             raise ValueError("sandbox command must be nonempty")
         if self.memory_mb <= 0 or self.pids <= 0 or self.workspace_mb <= 0:
@@ -317,10 +321,13 @@ class Supervisor:
                 os.rmdir(self.cgroup_path)
                 return
             except OSError:
-                if not force:
-                    time.sleep(0.1)
-                else:
-                    time.sleep(0.1)
+                if force and os.path.exists(kill_file):
+                    # keep killing stragglers between rmdir retries
+                    try:
+                        _write(kill_file, "1")
+                    except OSError:
+                        pass
+                time.sleep(0.1)
 
     def teardown(self) -> None:
         if self._torn_down:
