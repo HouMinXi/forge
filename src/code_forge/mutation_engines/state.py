@@ -238,7 +238,9 @@ def read_published(directory: Path, name: str) -> bytes:
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
-    tmp = path.with_name(".tmp-%d-%s" % (os.getpid(), path.name))
+    tmp = path.with_name(
+        ".tmp-%d-%s-%s" % (os.getpid(), os.urandom(6).hex(), path.name)
+    )
     try:
         with open(tmp, "wb") as handle:
             handle.write(payload)

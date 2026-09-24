@@ -208,3 +208,41 @@ def test_owner_record_rejects_unknown_fields(tmp_path):
     (d / "owner.json").write_text(json.dumps(raw))
     with pytest.raises(StateError):
         read_owner(d)
+
+
+def test_atomic_write_concurrent_same_target(tmp_path, monkeypatch):
+    """Two threads publishing the same path must both succeed cleanly."""
+    import threading
+
+    import code_forge.mutation_engines.state as st
+
+    out = tmp_path / "data.bin"
+    barrier = threading.Barrier(2)
+    real_fsync = os.fsync
+
+    def slow_fsync(fd):
+        try:
+            barrier.wait(timeout=10)
+        except threading.BrokenBarrierError:
+            pass
+        real_fsync(fd)
+
+    monkeypatch.setattr(st.os, "fsync", slow_fsync)
+    errors = []
+
+    def writer(tag):
+        try:
+            st._atomic_write(out, tag)
+        except Exception as exc:  # noqa: BLE001 - collect for assertion
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=writer, args=(b"A" * 16,)),
+        threading.Thread(target=writer, args=(b"B" * 16,)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    assert not errors, errors
+    assert out.read_bytes() in (b"A" * 16, b"B" * 16)
