@@ -747,3 +747,55 @@ def test_memoryerror_in_digest_assembly_propagates(tmp_path):
     ):
         with pytest.raises(MemoryError):
             load_contract_digest(cfg_path, tmp_path)
+
+
+# ====================================================================
+# A loader bug is not a bad contract
+# ====================================================================
+
+def test_loader_bug_during_resolution_is_not_swallowed(tmp_path):
+    """RuntimeError from the resolver aborts; it is not a bad contract.
+
+    A broken contracts.yaml degrades to an empty digest. A defect in the
+    loader itself must not take the same path, or a review that lost its
+    contract context still reports PASS.
+    """
+    from code_forge.contract_loader import load_contract_digest
+
+    cfg_path = tmp_path / "contracts.yaml"
+    cfg_path.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
+
+    with patch(
+        "code_forge.contract_loader.resolve_contract_specs",
+        side_effect=RuntimeError("loader bug"),
+    ):
+        with pytest.raises(RuntimeError, match="loader bug"):
+            load_contract_digest(cfg_path, tmp_path)
+
+
+def test_loader_bug_during_assembly_is_not_swallowed(tmp_path):
+    """RuntimeError from the trust check aborts rather than degrading."""
+    from code_forge.contract_loader import load_contract_digest
+
+    cfg_path = tmp_path / "contracts.yaml"
+    cfg_path.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
+
+    with patch(
+        "code_forge.contract_loader.resolve_contract_specs",
+        return_value=[],
+    ), patch(
+        "code_forge.contract_loader.is_trusted_contracts",
+        side_effect=RuntimeError("trust bug"),
+    ):
+        with pytest.raises(RuntimeError, match="trust bug"):
+            load_contract_digest(cfg_path, tmp_path)
+
+
+def test_malformed_contracts_yaml_degrades_to_empty(tmp_path):
+    """A broken contracts file is a bad contract, not a loader bug."""
+    from code_forge.contract_loader import load_contract_digest
+
+    cfg_path = tmp_path / "contracts.yaml"
+    cfg_path.write_text("repos: [\n")
+
+    assert load_contract_digest(cfg_path, tmp_path) == ""
