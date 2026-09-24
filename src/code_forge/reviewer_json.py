@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 _REQUIRED_FIELDS = {"findings", "code_excerpts"}
 _FINDING_REQUIRED = {"file", "line", "severity", "description"}
@@ -226,6 +229,7 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         if f.get("severity") not in _VALID_SEVERITIES:
             raise ValueError("finding[%d] invalid severity: %s" % (i, f.get("severity")))
 
+    kept = []
     for i, exc in enumerate(data["code_excerpts"]):
         if not isinstance(exc, dict):
             raise ValueError("code_excerpt[%d] is not a dict" % i)  # noqa: TRY004 - salvage routing catches ValueError
@@ -262,15 +266,18 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         else:
             raise ValueError("code_excerpt[%d] content must be str" % i)  # noqa: TRY004 - salvage routing catches ValueError
         if not text.strip():
-            raise ValueError("code_excerpt[%d] content must not be empty" % i)
+            logger.warning("code_excerpt[%d] content is empty; skipping it", i)
+            continue
         claimed = e - s + 1
         if not excerpt_line_count_matches(text, claimed):
             raise ExcerptEvidenceError(
                 "code_excerpt[%d] %s:%d-%d declares %d lines but carries %d"
                 % (i, exc_file, s, e, claimed, len(excerpt_lines(text)))
             )
+        kept.append(exc)
 
-    if len(data["findings"]) == 0 and len(data["code_excerpts"]) == 0:
+    data["code_excerpts"] = kept
+    if len(data["findings"]) == 0 and len(kept) == 0:
         raise ExcerptEvidenceError(
             "findings=0 but code_excerpts empty -- reviewer must provide "
             "per-hunk excerpts even for clean passes"

@@ -498,3 +498,44 @@ class TestEmptyCleanPassEnvelope:
                 f"empty clean-pass envelope must not be a plain ValueError: {exc!r}"
             ) from exc
         raise AssertionError("empty clean-pass envelope must raise")
+
+
+class TestOneEmptyExcerptIsSkipped:
+    """One blank excerpt must not fail the pass.
+
+    The chatcore review had code_excerpt[7] empty and the whole pass
+    became a schema failure. Skip that excerpt. Fail only when nothing
+    remains and there are no findings.
+    """
+
+    def _exc(self, content, start):
+        return {
+            "file": "a.ts",
+            "start_line": start,
+            "end_line": start,
+            "content": content,
+        }
+
+    def test_seventh_empty_excerpt_is_dropped(self):
+        from code_forge.reviewer_json import validate_reviewer_json
+        excerpts = [self._exc("line %d" % i, i) for i in range(1, 8)]
+        excerpts[6]["content"] = ""
+        data = {
+            "findings": [{
+                "file": "a.ts", "line": 1, "severity": "P2", "description": "kept",
+            }],
+            "code_excerpts": excerpts,
+        }
+        out = validate_reviewer_json(data)
+        assert len(out["code_excerpts"]) == 6
+        assert out["findings"][0]["description"] == "kept"
+        assert all(item["content"] for item in out["code_excerpts"])
+
+    def test_only_empty_excerpts_and_no_findings_still_fail(self):
+        from code_forge.reviewer_json import ExcerptEvidenceError, validate_reviewer_json
+        import pytest
+        with pytest.raises(ExcerptEvidenceError):
+            validate_reviewer_json({
+                "findings": [],
+                "code_excerpts": [self._exc("", 1)],
+            })
