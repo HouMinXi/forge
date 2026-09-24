@@ -353,10 +353,17 @@ class PatchCorpusAdapter:
 
         argv = _pytest_argv(target.command, context, entry)
         runner = MutmutAdapter()
+        # Baseline and one corpus entry do not share a budget. A mutant
+        # that runs for the whole baseline allowance hides a hang.
+        timeout = (
+            target.budget.baseline_seconds
+            if entry is None
+            else target.budget.mutant_seconds
+        )
         code, timed_out, receipt = runner._run_sandboxed(
             context,
             argv,
-            target.budget.baseline_seconds,
+            timeout,
             workspace,
             label + "-" + context.run_id,
             target.id,

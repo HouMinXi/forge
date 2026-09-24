@@ -21,6 +21,7 @@ from code_forge.mutation_engines.adapters.base import (
     InputSnapshot,
 )
 from code_forge.mutation_engines.adapters.patch_corpus import PatchCorpusAdapter
+from code_forge.mutation_engines.corpus import CorpusEntry
 from code_forge.mutation_engines.corpus import compute_source_digest
 from code_forge.mutation_engines.schemas import (
     BaselineState,
@@ -54,7 +55,7 @@ def _budget() -> Budget:
     return Budget(
         total_seconds=120,
         baseline_seconds=60,
-        mutant_seconds=60,
+        mutant_seconds=20,
         concurrency=1,
         memory_mb=256,
         processes=32,
@@ -244,3 +245,79 @@ def test_apply_rejects_repeated_old_text():
     )
     with pytest.raises(AdapterError):
         _apply_entry(source, entry)
+
+
+def test_mutant_run_uses_mutant_budget(monkeypatch):
+    """A corpus entry must not inherit the baseline timeout."""
+    seen = []
+
+    def fake_run(self, context, argv, timeout, workspace, receipt_id, target_id, mutant_id=None):
+        seen.append((timeout, mutant_id))
+        receipt = t_receipt(receipt_id, target_id)
+        return 0, False, receipt
+
+    monkeypatch.setattr(
+        "code_forge.mutation_engines.adapters.python_mutmut.MutmutAdapter._run_sandboxed",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "code_forge.mutation_engines.adapters.patch_corpus._load_event",
+        lambda events, run_id, mutant: _passed_event(run_id, mutant),
+    )
+    adapter = PatchCorpusAdapter()
+    target = _target()
+    entry = CorpusEntry(
+        id="drop-empty-guard",
+        source="scripts/check-ref.sh",
+        source_digest="a" * 64,
+        old="old",
+        new="",
+        operator="guard-removal",
+        test_selector="tests/test_check_ref.py::test_rejects_empty_ref",
+    )
+    state, _receipt, _event = adapter._run_selector(
+        target, Path("/tmp"), Path("/tmp"), _context(Path("/tmp")), entry, "entry"
+    )
+    assert seen == [(target.budget.mutant_seconds, "drop-empty-guard")]
+    assert state is BaselineState.PASSED
+
+
+def t_receipt(receipt_id, target_id):
+    from code_forge.mutation_engines.schemas import CommandReceipt
+
+    return CommandReceipt(
+        id=receipt_id,
+        run_id="run-corpus1",
+        target_id=target_id,
+        executable_digest="b" * 64,
+        argv=("/usr/bin/python3", "-m", "pytest"),
+        started_at="t0",
+        finished_at="t1",
+        exit_code=0,
+        signal=None,
+        timeout=False,
+        applied_limits={},
+        resource_events={},
+        evidence_refs=(),
+    )
+
+
+def _passed_event(run_id, mutant):
+    return {
+        "schema_version": 1,
+        "plugin": "forge-mutation-report",
+        "plugin_version": "1",
+        "run_id": run_id,
+        "mutant_id": mutant,
+        "final": True,
+        "collected": 1,
+        "executed": 1,
+        "failed_assertions": 0,
+        "setup_errors": 0,
+        "teardown_errors": 0,
+        "collection_errors": 0,
+        "internal_errors": 0,
+        "skipped": 0,
+        "exit_status": 0,
+        "failed_nodes": [],
+    }
