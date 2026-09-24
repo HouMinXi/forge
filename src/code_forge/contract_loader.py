@@ -358,10 +358,13 @@ def load_contract_digest(
         resolved_specs = resolve_contract_specs(config_path, cwd)
     # Memory exhaustion is not a contract problem.  Degrading to an empty
     # digest would hand back a review that quietly lost its contract
-    # context and can still report PASS; fail loudly instead.
+    # context and can still report PASS; fail loudly instead.  A defect
+    # in the loader itself is the same kind of failure: the resolver
+    # already degrades OSError, so what remains here is a bad contract
+    # file (CliError, YAML, encoding, I/O) -- anything else propagates.
     except MemoryError:
         raise
-    except Exception as exc:
+    except (CliError, yaml.YAMLError, OSError, UnicodeError) as exc:
         _warn("failed to resolve specs: %s" % exc)
         return ""
 
@@ -425,9 +428,11 @@ def load_contract_digest(
         return "\n\n".join(sections) if sections else ""
 
     # Same reasoning as the resolve guard above: an out-of-memory failure
-    # must not be laundered into "no contract context, carry on".
+    # or a defect in the loader must not be laundered into "no contract
+    # context, carry on".  What degrades is a bad contract: trust-store
+    # I/O, an unreadable spec, or a config the schema rejected.
     except MemoryError:
         raise
-    except Exception as exc:
+    except (CliError, OSError, UnicodeError) as exc:
         _warn("unexpected error: %s" % exc)
         return ""
