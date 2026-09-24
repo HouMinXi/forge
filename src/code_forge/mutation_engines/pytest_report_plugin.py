@@ -118,14 +118,16 @@ class _Hooks:
         recorder = self.recorder
         if recorder is None:
             return
+        if report.skipped:
+            # skipif / pytest.mark.skip fire in setup, never the call phase
+            recorder.skipped += 1
+            return
         if report.when == "call":
             recorder.executed += 1
             if report.failed:
                 recorder.failed_assertions += 1
                 if len(recorder.failed_nodes) < _MAX_FAILED_NODES:
                     recorder.failed_nodes.append(report.nodeid[:_MAX_MESSAGE])
-            if report.skipped:
-                recorder.skipped += 1
         elif report.when == "setup" and report.failed:
             recorder.setup_errors += 1
         elif report.when == "teardown" and report.failed:

@@ -255,8 +255,8 @@ class MutmutAdapter:
                     evidence_refs=(),
                 )
             )
-        version = (out.stdout.strip() if out is not None and out.returncode == 0 else None)
-        if version is None and out is not None and out.returncode == 0:
+        version = None
+        if out is not None and out.returncode == 0:
             version = out.stdout.strip() or None
         if version is None:
             if not any(e.code == "probe-exec-failed" for e in errors):
@@ -533,7 +533,7 @@ class MutmutAdapter:
             % (source_args, _PLUGIN_MODULE, test_selection)
         )
 
-    def _sandbox_env(self, context: ExecutionContext, events_dir: Path) -> tuple[tuple[str, str], ...]:
+    def _sandbox_env(self, context: ExecutionContext) -> tuple[tuple[str, str], ...]:
         python_paths = [_FORGE_SRC_BIND] + [
             "/opt/extra-%d" % i for i in range(len(context.extra_python_paths))
         ]
@@ -569,7 +569,7 @@ class MutmutAdapter:
             memory_mb=context.memory_mb,
             pids=context.pids,
             workspace_mb=context.workspace_mb,
-            env=self._sandbox_env(context, workspace / "events"),
+            env=self._sandbox_env(context),
             workspace_host=str(workspace),
             extra_ro_binds=self._extra_binds(context),
         )

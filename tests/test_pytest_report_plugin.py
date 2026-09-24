@@ -155,3 +155,28 @@ def test_setup_error_counted(tmp_path):
     record = _read_event(events)
     assert record["setup_errors"] >= 1
     assert record["failed_assertions"] == 0
+
+
+def test_skipped_test_is_not_executed(tmp_path):
+    """A skip never enters the call phase, so it must not count as executed.
+
+    Counting skips as executed would let a fully skipped suite look like a
+    clean survival.
+    """
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    _write(
+        suite,
+        "test_skip.py",
+        "import pytest\n\n\n"
+        "@pytest.mark.skip(reason='not this run')\n"
+        "def test_skipped():\n"
+        "    assert False\n",
+    )
+    events = tmp_path / "events"
+    result = _run_pytest(suite, events, "run-skip")
+    event = _read_event(events, "run-skip")
+    assert event["skipped"] == 1
+    assert event["executed"] == 0
+    assert event["failed_assertions"] == 0
+    assert result.returncode != 1
