@@ -548,6 +548,39 @@ class ExcerptAssessment:
         return max(self.proven_lines) if self.proven_lines else None
 
 
+def _single_gap_line(start, end, carried, file_lines):
+    """The one source line whose removal aligns carried with the range.
+
+    Linear prefix/suffix scan: p leading and s trailing carried lines
+    match the range ends verbatim. p + s == len(carried) means exactly
+    one dropped line, at start + p. p + s greater means duplicate
+    neighbour lines make the gap ambiguous; smaller means no single-
+    gap alignment. Ambiguous and absent alignments stay invalid.
+    """
+    if end - start != len(carried):
+        return None
+
+    def _text(n):
+        line = file_lines.get(n)
+        return None if line is None else line.rstrip()
+
+    p = 0
+    while p < len(carried):
+        src = _text(start + p)
+        if src is None or carried[p].rstrip() != src:
+            break
+        p += 1
+    s = 0
+    while s < len(carried):
+        src = _text(end - s)
+        if src is None or carried[len(carried) - 1 - s].rstrip() != src:
+            break
+        s += 1
+    if p + s != len(carried):
+        return None
+    return start + p
+
+
 def _anchored_assessment(status, diagnostic, proven, hunks, location, *, repaired_tail=False):
     """A demonstrated quote must witness a hunk at its actual coordinates."""
     proven = frozenset(proven)
@@ -647,6 +680,15 @@ def assess_excerpt_evidence(
             body_start += 1
             blank_spent = True
         elif not tail_blank and not (tail is None and head is None):
+            missing = _single_gap_line(exc_start, exc_end, actual_lines, file_lines)
+            if missing is not None:
+                return _anchored_assessment(
+                    untrusted,
+                    f"excerpt {location} is missing source line {missing}",
+                    (n for n in range(exc_start, exc_end + 1)
+                     if n != missing and n in file_lines),
+                    hunks, location,
+                )
             return ExcerptAssessment(invalid, count_error)
 
     quoted = {body_start + i: line for i, line in enumerate(actual_lines)}
