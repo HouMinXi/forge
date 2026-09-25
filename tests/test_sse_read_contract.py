@@ -129,3 +129,35 @@ def test_error_without_message_uses_empty_default():
     assert err.retryable is True
     assert "code stream_error" in str(err)
     assert "cut" in str(err)
+
+
+@pytest.mark.parametrize(
+    ("backend", "code", "advice", "retryable"),
+    [
+        ("zhipu", "1113", "Top up at open.bigmodel.cn", False),
+        ("minimax", "1008", "Top up at platform.minimaxi.com", False),
+        (
+            "minimax",
+            "1002",
+            "Retry after a short wait or reduce request rate",
+            True,
+        ),
+    ],
+)
+def test_mid_stream_error_advice_and_retry_follow_backend_and_code(
+    backend,
+    code,
+    advice,
+    retryable,
+):
+    with pytest.raises(LLMInvokeError) as caught:
+        _read_sse(
+            _lines(
+                _chunk(content="hel"),
+                {"error": {"code": code, "message": "quota"}},
+            ),
+            backend_name=backend,
+        )
+    err = caught.value
+    assert f"(code {code}). {advice}" in str(err)
+    assert err.retryable is retryable
