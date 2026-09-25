@@ -16,6 +16,7 @@ from code_forge.mutation_engines.adapters.base import (
 from code_forge.mutation_engines.adapters.patch_corpus import PatchCorpusAdapter
 from code_forge.mutation_engines.adapters.js_stryker import StrykerAdapter
 from code_forge.mutation_engines.adapters.go_gremlins import GremlinsAdapter
+from code_forge.mutation_engines.adapters.rust_cargo_mutants import CargoMutantsAdapter
 from code_forge.mutation_engines.adapters.python_mutmut import MutmutAdapter
 from code_forge.mutation_engines.schemas import TargetDeclaration, TargetResult
 
@@ -51,7 +52,7 @@ _REGISTRY: dict[str, MutationAdapter] = {
     "python-mutmut": MutmutAdapter(),
     JS_STRYKER: StrykerAdapter(),
     GO_GREMLINS: GremlinsAdapter(),
-    RUST_CARGO_MUTANTS: UnavailableAdapter(RUST_CARGO_MUTANTS),
+    RUST_CARGO_MUTANTS: CargoMutantsAdapter(),
     PATCH_CORPUS: PatchCorpusAdapter(),
 }
 
