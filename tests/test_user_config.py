@@ -5,7 +5,13 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from code_forge.user_config import merge_backends, merge_retry
+# Capture the real readers before the global backend-isolation fixture runs.
+from code_forge.user_config import (
+    load_user_backends,
+    load_user_retry,
+    merge_backends,
+    merge_retry,
+)
 
 
 class TestMergeBackends:
@@ -337,8 +343,6 @@ class TestMergeUserInto:
 
 
 def test_bad_user_config_is_empty(tmp_path, monkeypatch):
-    from code_forge.user_config import load_user_backends, load_user_retry
-
     path = tmp_path / "config.yaml"
     path.write_text("backends: [\n", encoding="utf-8")
     monkeypatch.setattr(
@@ -349,8 +353,6 @@ def test_bad_user_config_is_empty(tmp_path, monkeypatch):
 
 
 def test_bad_bytes_in_user_config_are_empty(tmp_path, monkeypatch):
-    from code_forge.user_config import load_user_backends, load_user_retry
-
     path = tmp_path / "config.yaml"
     path.write_bytes(b"\xff")
     monkeypatch.setattr(
@@ -361,8 +363,6 @@ def test_bad_bytes_in_user_config_are_empty(tmp_path, monkeypatch):
 
 
 def test_missing_user_config_file_is_empty(tmp_path, monkeypatch):
-    from code_forge.user_config import load_user_backends, load_user_retry
-
     path = tmp_path / "config.yaml"
     monkeypatch.setattr(
         "code_forge.user_config.user_config_path", lambda: path,
