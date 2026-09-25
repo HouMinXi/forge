@@ -155,6 +155,16 @@ def _mutant_key(body: dict) -> str:
     )
 
 
+def _contained(root: Path, relative: str) -> Path | None:
+    """A path stays inside root. Traversal and absolute paths are refused."""
+    if not relative or relative.startswith("/") or ".." in Path(relative).parts:
+        return None
+    path = root / relative
+    if not path.is_file():
+        return None
+    return path
+
+
 class CargoMutantsAdapter:
     """Rust adapter driving a local cargo-mutants binary."""
 
@@ -332,17 +342,18 @@ class CargoMutantsAdapter:
             body = item["scenario"]["Mutant"]
             native = str(item.get("summary", ""))
             normalized = map_cargo_status(native)
-            log_rel = item.get("log_path") or ""
-            log_path = owned / log_rel if log_rel else None
-            log_text = log_path.read_text(errors="replace") if log_path and log_path.is_file() else ""
+            log_rel = str(item.get("log_path") or "")
+            log_path = _contained(owned, log_rel)
+            log_text = log_path.read_text(errors="replace") if log_path is not None else ""
             if normalized is NormalizedStatus.KILLED and not killed_has_failure(log_text):
                 normalized = NormalizedStatus.UNKNOWN
             source = str(body.get("file", ""))
+            source_file = _contained(owned.parent.parent, source)
             built.append(
                 Outcome(
                     mutant_id=_mutant_key(body),
                     source_path=source,
-                    source_digest=_sha256_file(owned.parent.parent / source) if source else "",
+                    source_digest=_sha256_file(source_file) if source_file is not None else "",
                     location="%s:%s" % (
                         (body.get("span") or {}).get("start", {}).get("line", ""),
                         (body.get("span") or {}).get("start", {}).get("column", ""),

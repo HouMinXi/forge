@@ -54,3 +54,27 @@ def test_mutant_list_must_match_outcomes():
     assert not ok
     assert "2" in reason and "1" in reason
     assert reconcile(None, outcomes)[0] is False
+
+
+def test_log_path_cannot_leave_the_output_dir(tmp_path):
+    """A log_path with .. must not be read, even if the file exists."""
+    from code_forge.mutation_engines.adapters.rust_cargo_mutants import CargoMutantsAdapter
+    from code_forge.mutation_engines.schemas import ArtifactReference
+
+    outside = tmp_path / "secret.txt"
+    outside.write_text("SECRET")
+    owned = tmp_path / "results" / "mutants.out"
+    owned.mkdir(parents=True)
+    doc = {
+        "outcomes": [
+            {
+                "scenario": {"Mutant": {"name": "m", "file": "src/lib.rs", "genre": "FnValue",
+                                         "span": {"start": {"line": 1, "column": 1}}}},
+                "summary": "CaughtMutant",
+                "log_path": "../../secret.txt",
+            }
+        ]
+    }
+    ref = ArtifactReference(relative_run_path="outcomes.json", digest="d", bytes=1)
+    outcomes = CargoMutantsAdapter()._outcomes(tmp_path, owned, doc, ref)
+    assert outcomes[0].test_evidence == ()
