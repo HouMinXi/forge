@@ -1,0 +1,38 @@
+"""The builder refuses a host that cannot map identities."""
+
+import pytest
+
+from code_forge.mutation_engines.adapters.builder_support import (
+    BuilderUnavailable,
+    identity_mapping_error,
+    require_identity_mapping,
+)
+
+
+def test_nonewprivs_is_refused():
+    reason = identity_mapping_error("NoNewPrivs:\t1\n", "builder:100000:65536\n")
+    assert reason is not None
+    assert "NoNewPrivs" in reason
+
+
+def test_a_mapped_host_is_allowed(monkeypatch):
+    monkeypatch.setenv("USER", "builder")
+    assert identity_mapping_error("NoNewPrivs:\t0\n", "builder:100000:65536\n") is None
+
+
+def test_missing_subuid_range_is_refused(monkeypatch):
+    monkeypatch.setenv("USER", "builder")
+    reason = identity_mapping_error("NoNewPrivs:\t0\n", "other:100000:65536\n")
+    assert reason is not None
+    assert "subordinate uid" in reason
+    with pytest.raises(BuilderUnavailable, match="subordinate uid"):
+        monkeypatch.setattr(
+            "code_forge.mutation_engines.adapters.builder_support.identity_mapping_error",
+            lambda: reason,
+        )
+        require_identity_mapping()
+
+
+def test_this_session_cannot_map():
+    reason = identity_mapping_error()
+    assert reason is not None
