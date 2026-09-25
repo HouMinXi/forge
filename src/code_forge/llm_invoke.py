@@ -424,7 +424,7 @@ def _require_http_scheme(url: str) -> None:
 _IDLE_READ_TIMEOUT_S = 900
 
 
-def _read_with_deadline(response, deadline, backend_name):
+def _read_with_deadline(response, deadline, backend_name, *, read=None):
     """Read response body, enforcing a total-wall deadline.
 
     urllib's timeout only bounds per-socket reads.  A server that drips
@@ -437,6 +437,7 @@ def _read_with_deadline(response, deadline, backend_name):
     The socket additionally gets the idle timeout above, shorter than
     the caller's timeout_s, so a connection that stops producing bytes
     entirely (as opposed to dripping them slowly) is caught early.
+    An optional read callable lets streaming assembly share these bounds.
     """
     import socket as _socket
 
@@ -447,7 +448,7 @@ def _read_with_deadline(response, deadline, backend_name):
             is_timeout=True,
             retryable=False,
         )
-    result = [None]
+    result: list[Any] = [None]
     error = [None]
 
     # The bound actually installed: the idle window clamped to the
@@ -457,7 +458,7 @@ def _read_with_deadline(response, deadline, backend_name):
 
     def _worker():
         try:
-            result[0] = response.read()
+            result[0] = response.read() if read is None else read()
         except TimeoutError:
             error[0] = LLMInvokeError(
                 "%s backend went silent for %ds mid-response"
@@ -518,10 +519,14 @@ def _read_with_deadline(response, deadline, backend_name):
                 pass
         # Suppress EBADF from response.close() in the caller's
         # with-statement __exit__.
-        try:
-            response.close()
-        except OSError:
-            pass
+        # A custom streaming iterator may have a non-thread-safe close
+        # (generators do), and no socket we can interrupt. Its owner
+        # retains cleanup responsibility; do not block timeout delivery.
+        if read is None or sock is not None:
+            try:
+                response.close()
+            except OSError:
+                pass
         raise LLMInvokeError(
             "%s backend exceeded total read deadline" % backend_name,
             is_timeout=True,
@@ -545,6 +550,16 @@ def _sse_data_payload(line: str) -> str | None:
 
 
 def _read_sse(response, deadline=None, backend_name="") -> dict:
+    """Assemble a stream under the same read bounds as a non-stream body."""
+    if deadline is None:
+        return _assemble_sse(response, deadline, backend_name)
+    return _read_with_deadline(
+        response, deadline, backend_name,
+        read=lambda: _assemble_sse(response, deadline, backend_name),
+    )
+
+
+def _assemble_sse(response, deadline=None, backend_name="") -> dict:
     """Read OpenAI SSE stream, assemble into a single response dict.
 
     Drops reasoning_content (thinking output) -- forge review needs the
