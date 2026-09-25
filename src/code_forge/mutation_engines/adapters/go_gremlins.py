@@ -186,11 +186,17 @@ journal = os.environ.get("FORGE_GO_JOURNAL")
 real = os.environ.get("FORGE_REAL_GO", "/usr/bin/go")
 result = subprocess.run([real, *sys.argv[1:]], capture_output=True, check=False)
 if journal:
+    from pathlib import Path
+    sources = {
+        str(path): path.read_text(errors="replace")
+        for path in Path(".").rglob("*.go")
+    }
     record = {
         "argv": sys.argv[1:],
         "returncode": result.returncode,
         "stdout": result.stdout.decode("utf-8", "replace"),
         "stderr": result.stderr.decode("utf-8", "replace"),
+        "sources": sources,
     }
     with open(journal, "a", encoding="utf-8") as stream:
         stream.write(json.dumps(record) + "\\n")
@@ -217,11 +223,7 @@ def _load_journal(path: Path) -> list[dict]:
 
 
 def _recorded_failures(records: list[dict]) -> list[dict]:
-    """`go test` records whose output names a failed test.
-
-    Coverage and baseline invocations also run `go test` and pass. Only a
-    record that printed a failure can support a killed verdict.
-    """
+    """`go test` records whose output names a failed test."""
     return [
         record
         for record in records
@@ -229,6 +231,46 @@ def _recorded_failures(records: list[dict]) -> list[dict]:
         and "--- FAIL:" in record["stdout"]
         and record.get("returncode") not in (0, None)
     ]
+
+
+def _single_edit(original: str, mutated: str) -> str | None:
+    """Return the one line that changed, or None when the edit is not one line."""
+    before = original.splitlines()
+    after = mutated.splitlines()
+    if len(before) != len(after):
+        return None
+    changed = [b for a, b in zip(before, after, strict=True) if a != b]
+    if len(changed) != 1:
+        return None
+    return changed[0]
+
+
+def _failure_for_mutant(
+    records: list[dict], original: str, line: int, column: int
+) -> dict | None:
+    """The failed `go test` whose recorded source has this mutant's one-line edit.
+
+    gremlins copies the module and edits the copy. The recorder stores that
+    copy. A killed verdict matches only the record whose source differs from
+    the original on the mutant's line, and whose output names a failed test.
+    """
+    if not original or line <= 0:
+        return None
+    for record in _recorded_failures(records):
+        sources = record.get("sources")
+        if not isinstance(sources, dict):
+            continue
+        for text in sources.values():
+            if not isinstance(text, str):
+                continue
+            edited = _single_edit(original, text)
+            if edited is None:
+                continue
+            rows = text.splitlines()
+            if line - 1 < len(rows) and rows[line - 1] == edited:
+                if column <= 0 or column - 1 < len(edited):
+                    return record
+    return None
 
 
 class GremlinsAdapter:
@@ -408,7 +450,11 @@ class GremlinsAdapter:
             mutant_id = "%s:%s:%s:%s" % (
                 name, mutation.get("type", ""), mutation.get("line", 0), mutation.get("column", 0)
             )
-            if normalized is NormalizedStatus.KILLED and not _recorded_failures(records):
+            original = (workspace / name).read_text() if name and (workspace / name).is_file() else ""
+            failure = _failure_for_mutant(
+                records, original, int(mutation.get("line") or 0), int(mutation.get("column") or 0)
+            )
+            if normalized is NormalizedStatus.KILLED and failure is None:
                 normalized = NormalizedStatus.UNKNOWN
             digest = _sha256_file(workspace / name) if name else ""
             built.append(

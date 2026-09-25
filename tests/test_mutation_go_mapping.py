@@ -5,6 +5,7 @@ from code_forge.mutation_engines.adapters.go_gremlins import (
     killed_has_failure,
     map_gremlins_status,
     reconcile,
+    _failure_for_mutant,
 )
 from code_forge.mutation_engines.schemas import BaselineState, NormalizedStatus
 
@@ -54,3 +55,17 @@ def test_inventory_identifier_missing_is_hold():
     complete = {"files": [{"file_name": "probe.go", "mutations": [{"type": "A", "line": 3, "column": 10}, {"type": "B", "line": 3, "column": 20}]}]}
     assert reconcile(inventory, complete)[0] is True
     assert reconcile(None, complete)[0] is False
+
+
+def test_failure_matches_only_its_own_edit():
+    """A failed test of another mutant must not support this one."""
+    original = "func Allows(n int) bool { return n >= 0 }\n"
+    records = [
+        {
+            "returncode": 1,
+            "stdout": "--- FAIL: TestBoundary\n",
+            "sources": {"probe.go": "func Allows(n int) bool { return n > 0 }\n"},
+        }
+    ]
+    assert _failure_for_mutant(records, original, 1, 36) is not None
+    assert _failure_for_mutant(records, original, 2, 36) is None
