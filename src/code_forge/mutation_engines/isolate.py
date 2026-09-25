@@ -197,7 +197,7 @@ class Supervisor:
                 argv += ["--ro-bind", d, d]
         # pytest capture opens /dev/null; --unshare-pid needs a private /proc
         # or the payload cannot see its own pid namespace.
-        argv += ["--dev", "/dev", "--proc", "/proc"]
+        argv += ["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]  # noqa: S108
         argv += ["--tmpfs", "/workspace"]
         if spec.workspace_host:
             argv += ["--bind", spec.workspace_host, "/workspace"]

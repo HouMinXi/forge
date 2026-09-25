@@ -540,8 +540,14 @@ class MutmutAdapter:
             "/opt/extra-%d" % i for i in range(len(context.extra_python_paths))
         ]
         env = [
-            ("PATH", "/usr/bin:/bin"),
+            ("PATH", "/opt/recorder:/usr/bin:/bin"),
             ("HOME", "/workspace"),
+            ("FORGE_GO_JOURNAL", "/workspace/go-journal.jsonl"),
+            ("FORGE_REAL_GO", "/opt/realgo/go"),
+            ("GOROOT", "/usr/lib/go-1.22"),
+            ("GOFLAGS", "-mod=mod"),
+            ("GOPROXY", "off"),
+            ("GO111MODULE", "on"),
             ("PYTHONPATH", ":".join(python_paths)),
             ("FORGE_MUTATION_EVENTS_DIR", "/workspace/events"),
             ("FORGE_MUTATION_RUN_ID", context.run_id),
