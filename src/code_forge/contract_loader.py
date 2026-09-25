@@ -136,12 +136,19 @@ def load_contracts_config(config_path: Path) -> ContractsConfig:
                 specs.append(ContractSpec(path=spec_entry))
             elif isinstance(spec_entry, dict):
                 spec_path = spec_entry.get("path", "")
-                if not spec_path:
+                if not isinstance(spec_path, str) or not spec_path:
                     raise CliError(
-                        "contracts.yaml spec in '%s' must have a 'path'" % repo_name
+                        "contracts.yaml spec in '%s' must have a 'path' string" % repo_name
                     )
                 max_raw = spec_entry.get("max_raw_size", 32768)
-                specs.append(ContractSpec(path=spec_path, max_raw_size=int(max_raw)))
+                try:
+                    max_raw = int(max_raw)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise CliError(
+                        "contracts.yaml spec '%s' in '%s' has invalid max_raw_size"
+                        % (spec_path, repo_name)
+                    ) from exc
+                specs.append(ContractSpec(path=spec_path, max_raw_size=max_raw))
             else:
                 raise CliError(
                     "contracts.yaml spec in '%s' must be a string or dict" % repo_name
