@@ -78,3 +78,12 @@ def test_log_path_cannot_leave_the_output_dir(tmp_path):
     ref = ArtifactReference(relative_run_path="outcomes.json", digest="d", bytes=1)
     outcomes = CargoMutantsAdapter()._outcomes(tmp_path, owned, doc, ref)
     assert outcomes[0].test_evidence == ()
+
+
+def test_summary_total_must_be_a_number():
+    """A non-numeric total is incomplete evidence, not a crash."""
+    mutants = [{"name": "m"}]
+    outcomes = {"outcomes": [{"scenario": "Mutant"}], "total_mutants": "two"}
+    ok, reason = reconcile(mutants, outcomes)
+    assert ok is False
+    assert "number" in reason

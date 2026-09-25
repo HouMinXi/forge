@@ -129,7 +129,11 @@ def reconcile(mutants: list | None, outcomes: dict | None) -> tuple[bool, str]:
     mutant_outcomes = [item for item in listed if _scenario_name(item) != "Baseline"]
     if len(mutants) != len(mutant_outcomes):
         return False, "mutants %d != outcomes %d" % (len(mutants), len(mutant_outcomes))
-    if int(outcomes.get("total_mutants", -1)) != len(mutants):
+    try:
+        total = int(outcomes.get("total_mutants", -1))
+    except (TypeError, ValueError):
+        return False, "summary total is not a number"
+    if total != len(mutants):
         return False, "summary total does not match the mutant list"
     return True, "inventory-matches-outcomes"
 
@@ -249,7 +253,7 @@ class CargoMutantsAdapter:
         binds = self._runtime_binds(context)
 
         baseline_out = workspace / "baseline.txt"
-        baseline_argv = ("/bin/sh", "-c", "/opt/cargo/cargo test --offline > baseline.txt 2>&1")
+        baseline_argv = ("/bin/sh", "-c", "/opt/cargo/cargo test --offline > /workspace/baseline.txt 2>&1")
         code, timed_out, baseline_receipt = runner._run_sandboxed(
             context, baseline_argv, target.budget.baseline_seconds, workspace,
             "cargo-" + context.run_id, target.id, extra_binds=binds,
