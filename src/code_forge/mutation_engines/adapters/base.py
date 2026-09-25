@@ -103,6 +103,8 @@ class ExecutionContext:
     workspace_mb: int
     process_headroom_mb: int
     extra_python_paths: tuple[str, ...] = ()
+    approved_node: str = ""
+    extra_node_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not valid_identifier(self.run_id):
@@ -128,6 +130,11 @@ class ExecutionContext:
             if not path.startswith("/"):
                 raise ValueError(
                     "extra python paths must be absolute, got %r" % (path,)
+                )
+        for path in self.extra_node_paths:
+            if not path.startswith("/"):
+                raise ValueError(
+                    "extra node paths must be absolute, got %r" % (path,)
                 )
 
 

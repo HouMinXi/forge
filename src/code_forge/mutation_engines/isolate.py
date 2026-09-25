@@ -99,6 +99,7 @@ class SandboxSpec:
     workspace_host: str = ""
     runtime_root: str | None = None
     extra_ro_binds: tuple[tuple[str, str], ...] = ()
+    extra_rw_binds: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not valid_identifier(self.run_id):
@@ -107,10 +108,10 @@ class SandboxSpec:
             raise ValueError("sandbox command must be nonempty")
         if self.memory_mb <= 0 or self.pids <= 0 or self.workspace_mb <= 0:
             raise ValueError("sandbox limits must be positive")
-        for host, inner in self.extra_ro_binds:
+        for host, inner in self.extra_ro_binds + self.extra_rw_binds:
             if not host.startswith("/") or not inner.startswith("/"):
                 raise ValueError(
-                    "extra ro-bind paths must be absolute, got %r -> %r" % (host, inner)
+                    "extra bind paths must be absolute, got %r -> %r" % (host, inner)
                 )
 
 
@@ -202,6 +203,8 @@ class Supervisor:
             argv += ["--bind", spec.workspace_host, "/workspace"]
         for host, inner in spec.extra_ro_binds:
             argv += ["--ro-bind", host, inner]
+        for host, inner in spec.extra_rw_binds:
+            argv += ["--bind", host, inner]
         for key, value in spec.env:
             argv += ["--setenv", key, value]
         argv += ["--chdir", spec.cwd, "--"]

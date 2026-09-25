@@ -567,6 +567,8 @@ class MutmutAdapter:
         receipt_id: str,
         target_id: str,
         mutant_id: str | None = None,
+        extra_binds: tuple[tuple[str, str], ...] = (),
+        extra_rw_binds: tuple[tuple[str, str], ...] = (),
     ) -> tuple[int, bool, CommandReceipt]:
         spec = isolate.SandboxSpec(
             run_id=context.run_id + "-" + receipt_id[:24],
@@ -577,7 +579,8 @@ class MutmutAdapter:
             workspace_mb=context.workspace_mb,
             env=self._sandbox_env(context, mutant_id),
             workspace_host=str(workspace),
-            extra_ro_binds=self._extra_binds(context),
+            extra_ro_binds=self._extra_binds(context) + extra_binds,
+            extra_rw_binds=extra_rw_binds,
         )
         supervisor = isolate.Supervisor(spec, context.cgroup_root)
         thread = isolate.SupervisorThread(supervisor)
