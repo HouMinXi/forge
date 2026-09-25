@@ -540,7 +540,7 @@ class MutmutAdapter:
             "/opt/extra-%d" % i for i in range(len(context.extra_python_paths))
         ]
         env = [
-            ("PATH", "/opt/recorder:/opt/cargo:/opt/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:/opt/node/bin:/usr/bin:/bin"),
+            ("PATH", "/opt/recorder:/opt/cargo:/opt/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:/opt/node-0:/usr/bin:/bin"),
             ("HOME", "/workspace"),
             ("FORGE_GO_JOURNAL", "/workspace/go-journal.jsonl"),
             ("FORGE_REAL_GO", "/opt/realgo/go"),
