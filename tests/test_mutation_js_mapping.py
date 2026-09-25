@@ -51,3 +51,20 @@ def test_plan_count_must_match_report():
     assert "2" in reason and "1" in reason
     assert reconcile(None, report, 1)[0] is False
     assert reconcile(plan, report, 0)[0] is False
+
+
+def test_mutant_keeps_its_own_file():
+    """A mutant from the second file must not be recorded under the first."""
+    from code_forge.mutation_engines.adapters.js_stryker import mutants_by_file
+
+    report = {
+        "files": {
+            "src/a.js": {"mutants": [{"id": "0", "status": "Killed"}]},
+            "src/b.js": {"mutants": [{"id": "1", "status": "Survived"}]},
+        }
+    }
+    paired = mutants_by_file(report)
+    assert paired == [
+        ("src/a.js", {"id": "0", "status": "Killed"}),
+        ("src/b.js", {"id": "1", "status": "Survived"}),
+    ]

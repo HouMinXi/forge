@@ -93,18 +93,25 @@ def _package_version(node_modules: Path, name: str) -> str | None:
     return version if isinstance(version, str) and version else None
 
 
-def _mutants_of(report: dict) -> list[dict]:
+def mutants_by_file(report: dict) -> list[tuple[str, dict]]:
+    """Each mutant stays with the file the report listed it under."""
     files = report.get("files")
     if not isinstance(files, dict):
         return []
-    mutants: list[dict] = []
-    for body in files.values():
+    paired: list[tuple[str, dict]] = []
+    for path, body in files.items():
         if not isinstance(body, dict):
             continue
         listed = body.get("mutants")
         if isinstance(listed, list):
-            mutants.extend(item for item in listed if isinstance(item, dict))
-    return mutants
+            paired.extend(
+                (str(path), item) for item in listed if isinstance(item, dict)
+            )
+    return paired
+
+
+def _mutants_of(report: dict) -> list[dict]:
+    return [mutant for _path, mutant in mutants_by_file(report)]
 
 
 def _plan_ids(plan_event: dict) -> list[str]:
@@ -344,7 +351,7 @@ class StrykerAdapter:
         }
         outcomes: list[Outcome] = []
         manifest: list[InventoryManifestEntry] = []
-        for mutant in _mutants_of(report):
+        for source, mutant in mutants_by_file(report):
             native = str(mutant.get("status", ""))
             normalized = map_stryker_status(native)
             mutant_id = str(mutant.get("id"))
@@ -355,7 +362,6 @@ class StrykerAdapter:
             loc = ""
             if isinstance(start, dict):
                 loc = "%s:%s" % (start.get("line", ""), start.get("column", ""))
-            source = next(iter(report.get("files", {})), "")
             outcomes.append(
                 Outcome(
                     mutant_id=mutant_id,
