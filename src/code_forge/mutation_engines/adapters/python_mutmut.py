@@ -540,7 +540,7 @@ class MutmutAdapter:
             "/opt/extra-%d" % i for i in range(len(context.extra_python_paths))
         ]
         env = [
-            ("PATH", "/opt/recorder:/opt/cargo:/opt/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:/usr/bin:/bin"),
+            ("PATH", "/opt/recorder:/opt/cargo:/opt/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:/opt/node/bin:/usr/bin:/bin"),
             ("HOME", "/workspace"),
             ("FORGE_GO_JOURNAL", "/workspace/go-journal.jsonl"),
             ("FORGE_REAL_GO", "/opt/realgo/go"),
@@ -564,6 +564,8 @@ class MutmutAdapter:
             (host, "/opt/extra-%d" % i)
             for i, host in enumerate(context.extra_python_paths)
         ]
+        for index, host in enumerate(context.extra_node_paths):
+            binds.append((host, "/opt/node-%d" % index))
         return tuple(binds)
 
     def _run_sandboxed(
