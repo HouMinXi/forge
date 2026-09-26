@@ -44,3 +44,16 @@ def test_absent_subuid_file_is_refused(monkeypatch):
     reason = identity_mapping_error("NoNewPrivs:\t0\n", "")
     assert reason is not None
     assert "subordinate uid" in reason
+
+
+def test_missing_unshare_is_a_refusal(monkeypatch):
+    """A missing unshare is a refusal, not a crash."""
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("unshare")
+
+    monkeypatch.setattr(
+        "code_forge.mutation_engines.adapters.builder_support.subprocess.run", boom
+    )
+    reason = identity_mapping_error()
+    assert reason is not None
+    assert "unshare" in reason

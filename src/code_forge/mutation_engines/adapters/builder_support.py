@@ -42,10 +42,13 @@ def identity_mapping_error(status_text: str | None = None, subuid_text: str | No
             return "no subordinate uid range for %s" % user
     if caller_supplied:
         return None
-    probe = subprocess.run(
-        ["unshare", "--user", "--map-root-user", "true"],
-        capture_output=True, text=True, timeout=10, check=False,
-    )
+    try:
+        probe = subprocess.run(
+            ["unshare", "--user", "--map-root-user", "true"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "user namespace probe failed: %s" % exc
     if probe.returncode != 0:
         detail = (probe.stderr or probe.stdout or "").strip().splitlines()
         return "user namespace mapping failed: %s" % (detail[-1] if detail else "unshare exited %d" % probe.returncode)
