@@ -18,7 +18,8 @@ from code_forge.mutation_engines.schemas import (
     TargetResult,
 )
 
-from code_forge.mutation_engines.reconcile import decide, _fails, exit_code
+from code_forge.mutation_engines.hostconfig import HostUnavailable
+from code_forge.mutation_engines.reconcile import decide, exit_code, undeclared_decision, undeclared_target, _fails
 
 
 def _result(statuses, baseline=BaselineState.PASSED, state=RunState.COMPLETE):
@@ -121,3 +122,16 @@ def test_exit_code_follows_the_decision():
 def test_exit_code_rejects_an_unknown_decision():
     with pytest.raises(ValueError):
         exit_code("maybe")
+
+
+
+
+def test_an_undeclared_project_holds():
+    """No approval record means no measurement, which is a hold."""
+    decision = undeclared_decision(HostUnavailable("execution_not_authorized", "no record"))
+    assert decision is AggregateDecision.HOLD
+
+
+def test_an_undeclared_project_names_python():
+    target = undeclared_target()
+    assert target.adapter == "python-mutmut"

@@ -5,8 +5,11 @@ never constructs one. Hold beats fail, fail beats pass. A survivor in
 any target is a test-quality failure even when another target holds.
 """
 
+from code_forge.mutation_engines.hostconfig import HostUnavailable
 from code_forge.mutation_engines.schemas import (
     AggregateDecision,
+    Budget,
+    TargetDeclaration,
     BaselineState,
     CleanupState,
     NormalizedStatus,
@@ -80,3 +83,26 @@ def exit_code(decision: AggregateDecision) -> int:
         return _EXIT[decision]
     except KeyError:
         raise ValueError("no exit code for decision %r" % (decision,)) from None
+
+
+def undeclared_target() -> TargetDeclaration:
+    """A project with no approval record is measured as Python."""
+    return TargetDeclaration(
+        id="undeclared",
+        adapter="python-mutmut",
+        root=".",
+        sources=("src",),
+        tests=("tests",),
+        inputs=(),
+        oracle="",
+        command=("python3", "-m", "pytest"),
+        execution_profile="",
+        environment="",
+        budget=Budget(1, 1, 1, 1, 1, 1, 1, 1),
+    )
+
+
+def undeclared_decision(reason: HostUnavailable) -> AggregateDecision:
+    """No approval means no measurement. That is a hold, not a pass."""
+    del reason
+    return AggregateDecision.HOLD
