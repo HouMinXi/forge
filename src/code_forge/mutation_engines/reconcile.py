@@ -60,3 +60,23 @@ def _fails(result: TargetResult) -> bool:
         item.normalized_status in (NormalizedStatus.SURVIVED, NormalizedStatus.NO_COVERAGE)
         for item in result.outcomes
     )
+
+
+_EXIT = {
+    AggregateDecision.PASS: 0,
+    AggregateDecision.NOT_APPLICABLE: 0,
+    AggregateDecision.FAIL: 1,
+    AggregateDecision.HOLD: 7,
+}
+
+
+def exit_code(decision: AggregateDecision) -> int:
+    """Pass and not-applicable exit 0, fail exits 1, hold exits 7.
+
+    Invalid input exits 2, an active run exits 5 and contention exits 3.
+    Those three are raised by the caller before a decision exists.
+    """
+    try:
+        return _EXIT[decision]
+    except KeyError:
+        raise ValueError("no exit code for decision %r" % (decision,)) from None

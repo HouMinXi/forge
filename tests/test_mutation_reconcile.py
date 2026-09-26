@@ -1,5 +1,7 @@
 """Aggregate decision from adapter results. reconcile never builds a result."""
 
+import pytest
+
 from code_forge.mutation_engines.schemas import (
     ArtifactReference,
     AggregateDecision,
@@ -16,7 +18,7 @@ from code_forge.mutation_engines.schemas import (
     TargetResult,
 )
 
-from code_forge.mutation_engines.reconcile import decide, _fails
+from code_forge.mutation_engines.reconcile import decide, _fails, exit_code
 
 
 def _result(statuses, baseline=BaselineState.PASSED, state=RunState.COMPLETE):
@@ -107,3 +109,15 @@ def test_a_survivor_still_counts_when_another_target_holds():
     failed = _result([NormalizedStatus.SURVIVED])
     assert decide((held, failed)) is AggregateDecision.HOLD
     assert _fails(failed)
+
+
+def test_exit_code_follows_the_decision():
+    assert exit_code(AggregateDecision.PASS) == 0
+    assert exit_code(AggregateDecision.NOT_APPLICABLE) == 0
+    assert exit_code(AggregateDecision.FAIL) == 1
+    assert exit_code(AggregateDecision.HOLD) == 7
+
+
+def test_exit_code_rejects_an_unknown_decision():
+    with pytest.raises(ValueError):
+        exit_code("maybe")
