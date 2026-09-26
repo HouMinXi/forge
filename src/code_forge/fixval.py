@@ -82,8 +82,6 @@ _TEST_PATTERNS: tuple[re.Pattern, ...] = (
 )
 
 
-
-
 def _is_test_file(path: str) -> bool:
     """Return True if path matches any test file pattern."""
     for pattern in _TEST_PATTERNS:
