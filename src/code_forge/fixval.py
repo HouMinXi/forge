@@ -27,7 +27,7 @@ import unidiff
 
 from .advisory import AdvisoryFinding
 from .disposition import Disposition
-from .mutation import _run_baseline_guard, _strip_venv_from_env
+from code_forge.baseline_guard import _run_baseline_guard, _strip_venv_from_env
 from .state import StateFinding
 
 _logger = logging.getLogger("code_forge")
@@ -80,6 +80,8 @@ _TEST_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\.spec\.ts$"),
     re.compile(r"_test\.go$"),
 )
+
+
 
 
 def _is_test_file(path: str) -> bool:
