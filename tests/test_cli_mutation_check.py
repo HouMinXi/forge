@@ -164,7 +164,7 @@ class TestMutationCheckDispatch:
         with patch("code_forge.mutation.run_mutation", return_value=([error], [])):
             monkeypatch.setattr(sys, "argv", ["code-forge", "mutation-check", "--diff", str(diff_file)])
             result = main()
-        assert result == EXIT_CLI_ERROR
+        assert result == 7
         output = capsys.readouterr()
         assert "cause" in output.err
         assert "PASS" not in output.err + output.out
