@@ -36,3 +36,11 @@ def test_missing_subuid_range_is_refused(monkeypatch):
 def test_this_session_cannot_map():
     reason = identity_mapping_error()
     assert reason is not None
+
+
+def test_absent_subuid_file_is_refused(monkeypatch):
+    """No subuid file means no range, not an allowed build."""
+    monkeypatch.setenv("USER", "builder")
+    reason = identity_mapping_error("NoNewPrivs:\t0\n", "")
+    assert reason is not None
+    assert "subordinate uid" in reason
