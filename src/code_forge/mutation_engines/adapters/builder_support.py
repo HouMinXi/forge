@@ -28,7 +28,7 @@ def identity_mapping_error(status_text: str | None = None, subuid_text: str | No
         status = Path("/proc/self/status")
         status_text = status.read_text() if status.is_file() else ""
     for line in status_text.splitlines():
-            if line.startswith("NoNewPrivs:") and line.split()[-1] == "1":
+        if line.startswith("NoNewPrivs:") and line.split()[-1] == "1":
                 return "NoNewPrivs is set, so a user namespace cannot be mapped"
     user = os.environ.get("USER") or ""
     if subuid_text is None:
