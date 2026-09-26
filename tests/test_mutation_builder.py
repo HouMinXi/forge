@@ -57,3 +57,11 @@ def test_missing_unshare_is_a_refusal(monkeypatch):
     reason = identity_mapping_error()
     assert reason is not None
     assert "unshare" in reason
+
+
+def test_prefix_user_is_not_a_match(monkeypatch):
+    """builder must not inherit a range owned by builder-extra."""
+    monkeypatch.setenv("USER", "builder")
+    reason = identity_mapping_error("NoNewPrivs:\t0\n", "builder-extra:100000:65536\n")
+    assert reason is not None
+    assert "subordinate uid" in reason
