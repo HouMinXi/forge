@@ -8,6 +8,7 @@ import pytest
 from code_forge.llm_invoke import (
     _REVIEW_ENVELOPE_KEYS,
     _extract_json_from_text,
+    _is_forge_envelope,
     _model_json_decoder,
     _strip_fences,
 )
@@ -49,6 +50,12 @@ class TestStripFencesContract:
 
 
 class TestExtractJsonFromTextContract:
+    def test_explicit_keys_accept_exact_envelope(self):
+        keys = frozenset({"verdict", "reasoning"})
+        envelope = {"verdict": "CONFIRMED", "reasoning": "checked"}
+        assert _is_forge_envelope(envelope, keys) is True
+        assert _extract_json_from_text(json.dumps(envelope), expected_keys=keys) == envelope
+
     def test_extract_json_returns_first_matching_dict(self):
         text = (
             'preamble {"unrelated": 1} '
