@@ -539,3 +539,26 @@ class TestOneEmptyExcerptIsSkipped:
                 "findings": [],
                 "code_excerpts": [self._exc("", 1)],
             })
+
+
+def test_a_positive_comment_is_not_a_finding():
+    """'the code is correct' is praise, not a defect. Collecting it resets
+    the clean count and stops an unattended review."""
+    from code_forge.reviewer_json import _json_to_state_findings
+
+    data = {"findings": [{
+        "file": "tests/test_x.py", "line": 10,
+        "description": "源码正确实现了超时回退，测试逻辑是健全的",
+    }]}
+    assert _json_to_state_findings(data, "expert") == []
+
+
+def test_a_real_defect_is_still_collected():
+    from code_forge.reviewer_json import _json_to_state_findings
+
+    data = {"findings": [{
+        "file": "src/a.py", "line": 4,
+        "description": "the lock is released before the write finishes",
+    }]}
+    found = _json_to_state_findings(data, "expert")
+    assert len(found) == 1

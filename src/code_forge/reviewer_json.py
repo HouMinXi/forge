@@ -378,6 +378,15 @@ def _dedup_by_fingerprint(
     return kept
 
 
+_PRAISE = ("正确实现", "逻辑是健全", "is correct", "looks correct", "no issue")
+
+
+def _is_praise(description: str) -> bool:
+    """A comment that only says the code is fine is not a defect."""
+    text = description.strip().lower()
+    return any(mark in text or mark in description for mark in _PRAISE)
+
+
 def _json_to_state_findings(
     data: dict, pass_name: str, backend: str | None = None,
 ) -> list:
@@ -407,6 +416,8 @@ def _json_to_state_findings(
         except (ValueError, TypeError):
             line = 0
         desc = f_raw.get("description") or ""
+        if _is_praise(desc):
+            continue
         fp = _location_fingerprint(file_path, line, pass_name)
         findings.append(StateFinding(
             id=f"l1-{pass_name}-{fp}",
