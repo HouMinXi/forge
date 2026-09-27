@@ -60,11 +60,9 @@ def test_sampling_audit_parity(tmp_path, monkeypatch):
     for path in written:
         receipt = json.loads(path.read_text())
         assert receipt["code_excerpts"] == []
-        # The pass itself completed: the response parsed and carried findings.
-        # Only its excerpt coordinates were rejected. write_receipts drops
-        # UNTRUSTED candidates before attesting, so the receipt carries no
-        # findings at all -- the audit trail for them lives in attempted/.
-        assert receipt["pass_status"] == "completed"
+        # A parsed response is not a complete review when its evidence
+        # was rejected. Keep the failed attempt separate and unchanged.
+        assert receipt["pass_status"] == "incomplete"
         assert receipt["findings"] == []
     attempts = list((receipts / "attempted").glob("*.json"))
     assert len(attempts) == 3

@@ -222,6 +222,14 @@ def write_receipts(
     all_assembled = [exc for p_excs in assembled_by_pass.values() for exc in p_excs]
     _warn_on_fabricated_excerpts(diff_text, all_assembled)
     pass_outcomes = derive_pass_outcomes(l1_findings)
+    # A rejected payload may contain no findings. Other chunks' accepted
+    # excerpts cannot attest that missing part of this pass's review.
+    for attempted in attempted_excerpts or []:
+        if not isinstance(attempted, dict):
+            continue
+        pname = attempted.get("pass_name")
+        if pname in _PASS_NAMES and pass_outcomes[pname] == PassOutcome.COMPLETED:
+            pass_outcomes[pname] = PassOutcome.INCOMPLETE
 
     # Correct pass status BEFORE write: a pass whose excerpts do not match
     # the frozen diff post-image is not COMPLETED evidence, even when the

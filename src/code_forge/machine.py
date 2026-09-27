@@ -1322,6 +1322,8 @@ class StateMachine:
         _receipt_gate_terminal_errors at the terminal.
         """
         errors: list[str] = list(self._last_receipt_write_errors)
+        if self._attempted_last_round:
+            errors.append("review evidence rejected in current round; see receipts/attempted")
         diff_text = self._receipt_diff()
         excerpts = self._excerpts_last_round
         if diff_text and excerpts:
