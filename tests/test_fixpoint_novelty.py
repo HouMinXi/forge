@@ -36,7 +36,7 @@ FIX = Path(__file__).parent / "fixtures" / "fixpoint"
 def _F(fp: str, d: Disposition, sev: str = "P3") -> StateFinding:
     return StateFinding(id=fp, fingerprint=fp, source="L1", disposition=d,
                         file="a.py", line_range=[1, 1],
-                        description="%s: %s" % (sev, fp))
+                        description="%s: %s" % (sev, fp), excerpt="x0 = 1\n")
 
 
 class _Keep:

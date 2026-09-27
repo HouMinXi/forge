@@ -18,7 +18,8 @@ from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding
 
 
-def _make_finding(fp="fp-r-1", disp=Disposition.CONFIRMED, source="L0"):
+def _make_finding(fp="fp-r-1", disp=Disposition.CONFIRMED, source="L0",
+                  excerpt=None):
     return StateFinding(
         id=fp,
         fingerprint=fp,
@@ -27,6 +28,7 @@ def _make_finding(fp="fp-r-1", disp=Disposition.CONFIRMED, source="L0"):
         file="test.py",
         line_range=[1, 1],
         description="test finding",
+        excerpt=excerpt,
     )
 
 
@@ -104,7 +106,8 @@ class TestL1Falsified:
 
     def test_l1_dispositioned(self, tmp_path):
         def l1_provider():
-            return ([_make_finding(fp="fp-l1", source="L1")], [], Usage(), 0.0)
+            return ([_make_finding(fp="fp-l1", source="L1", excerpt="value = 1\n")],
+                    [], Usage(), 0.0)
 
         # StubFalsifier default = CONFIRMED
         machine = _make_ci_machine(

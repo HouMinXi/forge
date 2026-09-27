@@ -21,6 +21,7 @@ def _finding(fp="fp-1"):
         id=fp, fingerprint=fp, source="L1",
         disposition=Disposition.CONFIRMED,
         file="test.py", line_range=[1, 1], description="test",
+        excerpt="value = 1\n",
     )
 
 
