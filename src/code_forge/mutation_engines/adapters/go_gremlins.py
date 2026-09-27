@@ -170,7 +170,7 @@ def _mutations(report: dict) -> list[tuple[str, int, dict]]:
 
 def _read_json(path: Path) -> dict | None:
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeError):
         return None
     return data if isinstance(data, dict) else None
@@ -210,7 +210,7 @@ def _load_journal(path: Path) -> list[dict]:
     if not path.is_file():
         return []
     records: list[dict] = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         try:
@@ -379,7 +379,7 @@ class GremlinsAdapter:
             extra_binds=binds,
         )
         baseline_out = workspace / "baseline.json"
-        stream = baseline_out.read_text() if baseline_out.is_file() else ""
+        stream = baseline_out.read_text(encoding="utf-8") if baseline_out.is_file() else ""
         baseline_state, test_count = baseline_from_go_json(stream)
         if timed_out:
             baseline_state = BaselineState.UNKNOWN
@@ -450,7 +450,7 @@ class GremlinsAdapter:
             mutant_id = "%s:%s:%s:%s" % (
                 name, mutation.get("type", ""), mutation.get("line", 0), mutation.get("column", 0)
             )
-            original = (workspace / name).read_text() if name and (workspace / name).is_file() else ""
+            original = (workspace / name).read_text(encoding="utf-8") if name and (workspace / name).is_file() else ""
             failure = _failure_for_mutant(
                 records, original, int(mutation.get("line") or 0), int(mutation.get("column") or 0)
             )
@@ -496,7 +496,7 @@ class GremlinsAdapter:
         recorder = workspace / "recorder"
         recorder.mkdir()
         script = recorder / "go"
-        script.write_text(_RECORDER)
+        script.write_text(_RECORDER, encoding="utf-8")
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return recorder
 

@@ -239,7 +239,7 @@ class MutmutAdapter:
             out = subprocess.run(
                 [python, "-c", "import mutmut; print(mutmut.__version__)"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8",
                 timeout=30,
                 env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
             )
@@ -530,7 +530,8 @@ class MutmutAdapter:
             "source_paths=%s\n"
             "pytest_add_cli_args=-p %s\n"
             "pytest_add_cli_args_test_selection=%s\n"
-            % (source_args, _PLUGIN_MODULE, test_selection)
+            % (source_args, _PLUGIN_MODULE, test_selection),
+            encoding="utf-8",
         )
 
     def _sandbox_env(
