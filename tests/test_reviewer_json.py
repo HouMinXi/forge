@@ -539,3 +539,42 @@ class TestOneEmptyExcerptIsSkipped:
                 "findings": [],
                 "code_excerpts": [self._exc("", 1)],
             })
+
+
+def test_a_positive_comment_is_not_a_finding():
+    """'the code is correct' is praise, not a defect. Collecting it resets
+    the clean count and stops an unattended review."""
+    from code_forge.reviewer_json import _json_to_state_findings
+
+    data = {"findings": [{
+        "file": "tests/test_x.py", "line": 10,
+        "description": "源码正确实现了超时回退，测试逻辑是健全的",
+    }]}
+    assert _json_to_state_findings(data, "expert") == []
+
+
+def test_a_real_defect_is_still_collected():
+    from code_forge.reviewer_json import _json_to_state_findings
+
+    data = {"findings": [{
+        "file": "src/a.py", "line": 4,
+        "description": "the lock is released before the write finishes",
+    }]}
+    found = _json_to_state_findings(data, "expert")
+    assert len(found) == 1
+
+
+def test_praise_followed_by_a_defect_is_kept():
+    """'correct, but leaks memory' names a defect. The praise must not hide it."""
+    from code_forge.reviewer_json import _json_to_state_findings
+    data = {"findings": [{"file": "a.py", "line": 1,
+        "description": "The implementation is correct but the buffer leaks memory"}]}
+    assert _json_to_state_findings(data, "qodo")
+
+
+def test_correct_error_handling_is_still_praise():
+    """'error handling is correct' describes no defect."""
+    from code_forge.reviewer_json import _json_to_state_findings
+    data = {"findings": [{"file": "a.py", "line": 1,
+        "description": "The error handling is correct"}]}
+    assert not _json_to_state_findings(data, "qodo")
