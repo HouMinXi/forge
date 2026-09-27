@@ -378,12 +378,17 @@ def _dedup_by_fingerprint(
     return kept
 
 
+_DEFECT = ("but", "however", "leak", "bug", "error", "fail", "wrong", "missing")
+
+
 _PRAISE = ("正确实现", "逻辑是健全", "is correct", "looks correct", "no issue")
 
 
 def _is_praise(description: str) -> bool:
     """A comment that only says the code is fine is not a defect."""
     text = description.strip().lower()
+    if not text or any(word in text for word in _DEFECT):
+        return False
     return any(mark in text or mark in description for mark in _PRAISE)
 
 

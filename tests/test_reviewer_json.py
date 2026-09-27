@@ -562,3 +562,11 @@ def test_a_real_defect_is_still_collected():
     }]}
     found = _json_to_state_findings(data, "expert")
     assert len(found) == 1
+
+
+def test_praise_followed_by_a_defect_is_kept():
+    """'correct, but leaks memory' names a defect. The praise must not hide it."""
+    from code_forge.reviewer_json import _json_to_state_findings
+    data = {"findings": [{"file": "a.py", "line": 1,
+        "description": "The implementation is correct but the buffer leaks memory"}]}
+    assert _json_to_state_findings(data, "qodo")
