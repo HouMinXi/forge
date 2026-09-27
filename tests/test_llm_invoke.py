@@ -3647,6 +3647,18 @@ class TestParseRetryAfter:
         from code_forge.llm_invoke import _parse_retry_after
         assert _parse_retry_after({"Retry-After": "-1"}) is None
 
+    def test_non_mapping_headers_return_none(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        assert _parse_retry_after(object()) is None
+
+    def test_zero_value_returns_none(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        assert _parse_retry_after({"Retry-After": "0"}) is None
+
+    def test_one_second_is_accepted(self):
+        from code_forge.llm_invoke import _parse_retry_after
+        assert _parse_retry_after({"Retry-After": "1"}) == 1.0
+
     def test_non_numeric_returns_none(self):
         from code_forge.llm_invoke import _parse_retry_after
         assert _parse_retry_after({"Retry-After": "abc"}) is None
