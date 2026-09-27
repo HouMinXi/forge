@@ -130,6 +130,7 @@ class TestCycleCountingViaStateMachine:
                         "line": 2,
                         "severity": "P1",
                         "description": "bug-%d" % calls["n"],
+                        "excerpt": _POST_IMAGE_CONTENT.splitlines(keepends=True)[1],
                     }],
                     "code_excerpts": [{
                         "file": "test.py",

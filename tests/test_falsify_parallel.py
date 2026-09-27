@@ -33,6 +33,7 @@ def _f(i: int, source="L1") -> StateFinding:
         id="f%d" % i, fingerprint="fp-%d" % i, source=source,
         disposition=Disposition.CONFIRMED, file="a.py",
         line_range=[i, i], description="finding %d" % i,
+        excerpt="value = 1\n",
     )
 
 

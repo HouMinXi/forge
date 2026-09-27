@@ -24,7 +24,8 @@ from tests.test_runtime_machine import _make_sm
 
 def _F(fp: str, d: Disposition) -> StateFinding:
     return StateFinding(id=fp, fingerprint=fp, source="L1", disposition=d,
-                        file="a.py", line_range=[1, 1], description=fp)
+                        file="a.py", line_range=[1, 1], description=fp,
+                        excerpt="value = 1\n")
 
 
 class _Keep:
