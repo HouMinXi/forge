@@ -132,3 +132,22 @@ def test_empty_follow_up_returns_original_with_real_usage(monkeypatch):
     assert repaired is _PARSED
     assert got_usage is usage
     assert got_duration == 1.5
+
+
+def test_success_returns_copy_with_excerpts_added_and_keys_kept(monkeypatch):
+    parsed = {"findings": _PARSED["findings"], "summary": "one issue"}
+    follow = LLMResult(content={"code_excerpts": _EXCERPTS})
+    _record(monkeypatch, "_invoke_api", result=follow)
+    _capture_progress(monkeypatch)
+
+    repaired, _, _ = _repair_missing_excerpts(parsed, "review a.py", _backend("api"), 90)
+
+    assert repaired == {
+        "findings": _PARSED["findings"],
+        "summary": "one issue",
+        "code_excerpts": _EXCERPTS,
+    }
+    assert parsed == {
+        "findings": _PARSED["findings"],
+        "summary": "one issue",
+    }
