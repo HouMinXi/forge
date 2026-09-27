@@ -498,14 +498,18 @@ class StateMachine:
                             self._write_ci_ledger_rows()
                             return Verdict.FAIL
                         if verdict is Verdict.UNRELIABLE:
-                            self._state.verdict = Verdict.UNRELIABLE
-                            self._state.converged = False
+                            # Same one-shot rule as a clean done: the
+                            # file is already consumed above, so an
+                            # unproven baseline is re-measured by the
+                            # relaunch below instead of holding every
+                            # later review red. Holding here would poison
+                            # the next run with a note this run left,
+                            # exactly what the DISMISSED-on-this-run
+                            # skip path below exists to avoid.
                             self._state.infra_errors.append(
-                                "CI: mutation done without a proven baseline"
+                                "CI: mutation done without a proven "
+                                "baseline; re-measuring"
                             )
-                            self._persist_state()
-                            self._write_ci_ledger_rows()
-                            return Verdict.UNRELIABLE
                     elif status == "running":
                         pid = result_data.get("pid")
                         if pid is None or (
