@@ -135,3 +135,13 @@ def test_an_undeclared_project_holds():
 def test_an_undeclared_project_names_python():
     target = undeclared_target()
     assert target.adapter == "python-mutmut"
+
+
+def test_a_timeout_holds():
+    """A tool timeout is incomplete evidence, not a clean result."""
+    assert decide((_result([NormalizedStatus.TIMED_OUT]),)) is AggregateDecision.HOLD
+
+
+def test_a_nonviable_mutant_does_not_fail():
+    """A mutant that could not compile is excluded, not a survivor."""
+    assert decide((_result([NormalizedStatus.KILLED, NormalizedStatus.NONVIABLE]),)) is AggregateDecision.PASS
