@@ -2212,6 +2212,11 @@ def _run_ledger(args, cwd: Path) -> int:
             evidence_class=evidence_value,
             ts=ts,
             version_sensitive=version_sensitive_value,
+            backend=latest_row.backend,
+            ctx_graph_triage=latest_row.ctx_graph_triage,
+            ctx_contract=latest_row.ctx_contract,
+            ctx_whole_file=latest_row.ctx_whole_file,
+            ctx_canary=latest_row.ctx_canary,
         ))
         print(
             "ledger: adjudicated %s as %s (file=%s line=%d axis_claim=%s base_sha=%s head_sha=%s)"
@@ -4122,6 +4127,10 @@ def _run(args, env, cwd: Path) -> Verdict:
                 backend=backend,
                 pre_graph_findings=_pre_graph_findings,
                 wall_t0=_wall_t0,
+                ctx_graph_triage=bool(_graph_impact_context),
+                ctx_contract=bool(_contract_spec_a),
+                ctx_whole_file=bool(_whole_file),
+                ctx_canary=_load_canary_config(args, gate_data) is not None,
             )
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
@@ -4167,6 +4176,10 @@ def _run_hold_loop(
     exec_falsify=False,
     exec_falsify_timeout=120,
     exec_falsify_command=None,
+    ctx_graph_triage=False,
+    ctx_contract=False,
+    ctx_whole_file=False,
+    ctx_canary=False,
 ) -> Verdict:
     """HOLD-resume loop. Bounded by MAX_HOLD_CYCLES."""
     for _cycle in range(MAX_HOLD_CYCLES):
@@ -4217,6 +4230,10 @@ def _run_hold_loop(
             exec_falsify=exec_falsify,
             exec_falsify_timeout=exec_falsify_timeout,
             exec_falsify_command=exec_falsify_command,
+            ctx_graph_triage=ctx_graph_triage,
+            ctx_contract=ctx_contract,
+            ctx_whole_file=ctx_whole_file,
+            ctx_canary=ctx_canary,
         )
         verdict = sm.run()
         # CLI-08 B6: load final state from disk for cost fields.

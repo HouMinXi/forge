@@ -477,6 +477,8 @@ def test_adjudicate_inherits_source_metadata(tmp_path):
         evidence_class="test failure",
         ts="2026-08-20T00:00:00Z",
         version_sensitive=True,
+        backend="mimo-pro",
+        ctx_graph_triage=True,
     ))
 
     rc = _call(tmp_path, "ledger", "adjudicate", "fp-adj-a", "FIXED", "--evidence", "verified-by-human")
@@ -496,6 +498,8 @@ def test_adjudicate_inherits_source_metadata(tmp_path):
     assert latest.pass_provenance == "adjudicated"
     assert latest.evidence_class == "verified-by-human"
     assert latest.version_sensitive is True
+    assert latest.backend == "mimo-pro"
+    assert latest.ctx_graph_triage is True
 
 
 def test_adjudicate_is_append_only(tmp_path):

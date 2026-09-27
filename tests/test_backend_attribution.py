@@ -121,3 +121,27 @@ def test_ledger_row_backend_empty_when_finding_has_none():
         repo_root="/repo",
     )
     assert row.backend == ""
+
+
+def test_cli_passes_context_flags_into_the_machine():
+    """The flags are computed above the constructor. Dropping them there
+    writes False for every review, which is the same as no attribution."""
+    import inspect
+    from code_forge import cli
+    source = inspect.getsource(cli._run_hold_loop)
+    assert "ctx_graph_triage=ctx_graph_triage" in source
+    assert "ctx_contract=ctx_contract" in source
+    assert "ctx_whole_file=ctx_whole_file" in source
+    assert "ctx_canary=ctx_canary" in source
+
+
+def test_run_computes_the_context_flags():
+    """The values are known in _run. If the call drops them, the machine
+    keeps the defaults and every row records False."""
+    import inspect
+    from code_forge import cli
+    source = inspect.getsource(cli._run)
+    assert "ctx_graph_triage=bool(_graph_impact_context)" in source
+    assert "ctx_contract=bool(_contract_spec_a)" in source
+    assert "ctx_whole_file=bool(_whole_file)" in source
+    assert "ctx_canary=_load_canary_config(args, gate_data) is not None" in source
