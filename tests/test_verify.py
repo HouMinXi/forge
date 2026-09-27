@@ -98,9 +98,12 @@ class TestVerifyChecks:
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 51))})
         assert not r.passed
 
-    def test_fail_low_coverage(self, tmp_path):
+    def test_low_coverage_passes_when_no_finding_is_open(self, tmp_path):
+        """A clean round has nothing to quote. The floor applies while findings are open."""
         rd = tmp_path / ".code-forge" / "receipts"
         rd.mkdir(parents=True)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
         sha = _sha("diff")
         for c in range(1, 4):
             for p in range(1, 4):
@@ -109,7 +112,7 @@ class TestVerifyChecks:
                     _receipt(c, p, sha, covered_start=1, covered_end=5)
                 ))
         r = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 201))})
-        assert not r.passed
+        assert r.passed, r.reason
 
 class TestCorruptReceipt:
     """A receipt that cannot be parsed must fail verify, not crash it.
@@ -752,7 +755,8 @@ class TestHardenedVerify:
             {"file": "bar.py", "start_line": 3, "end_line": 3,
              "content": "r = 3"},
         ]
-        _write_hardened(rd, sha, excerpts=sparse)
+        _write_hardened(rd, sha, excerpts=sparse,
+                        findings=[{"file": "foo.py", "disposition": "CONFIRMED"}])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert not r.passed
         assert "< 60%" in r.reason
@@ -786,7 +790,8 @@ class TestHardenedVerify:
             {"file": "bar.py", "start_line": 1, "end_line": 1,
              "content": "p = 1"},
         ]
-        _write_hardened(rd, sha, excerpts=inflated)
+        _write_hardened(rd, sha, excerpts=inflated,
+                        findings=[{"file": "foo.py", "disposition": "CONFIRMED"}])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert not r.passed
         assert "< 60%" in r.reason
@@ -2246,9 +2251,11 @@ class TestLegacyCheck6Coverage:
         diff_files = {"src/f.py": list(range(1, 11))}
         sparse_cover = [{"file": "src/f.py", "start": 1, "end": 3}]
         for p in range(1, 4):
-            (rd / ("receipt-c1p%d.json" % p)).write_text(
-                json.dumps(_hreceipt(1, p, sha, excerpts=[],
-                                     covered_line_ranges=sparse_cover)))
+            receipt = _hreceipt(1, p, sha, excerpts=[],
+                                covered_line_ranges=sparse_cover)
+            receipt["findings"] = [{"file": "src/f.py", "disposition": "CONFIRMED"}]
+            receipt["findings_count"] = 1
+            (rd / ("receipt-c1p%d.json" % p)).write_text(json.dumps(receipt))
         r = run_verify(tmp_path, sha, diff_files)
         assert not r.passed
         assert "< 60%" in r.reason
@@ -3726,3 +3733,23 @@ class TestConfirmedNeedsBoundExcerpt:
         from code_forge.verify import bound_excerpt_disposition
 
         assert bound_excerpt_disposition(Disposition.DISMISSED, None) is Disposition.DISMISSED
+
+
+def test_low_coverage_still_fails_while_a_finding_is_open(tmp_path):
+    """The floor stays while the reviewer still has something open."""
+    import json
+    from code_forge.verify import run_verify
+    rd = tmp_path / ".code-forge" / "receipts"
+    rd.mkdir(parents=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+    sha = _sha("diff")
+    for c in range(1, 4):
+        for p in range(1, 4):
+            receipt = _receipt(c, p, sha, covered_start=1, covered_end=5)
+            receipt["findings"] = [{"file": "src/f.py", "disposition": "CONFIRMED"}]
+            receipt["findings_count"] = 1
+            (rd / ("receipt-c%dp%d.json" % (c, p))).write_text(json.dumps(receipt))
+    result = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 201))})
+    assert not result.passed
+    assert "coverage" in result.reason

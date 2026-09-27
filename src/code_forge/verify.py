@@ -1179,6 +1179,9 @@ def run_verify(
         if all_diff:
             for c in last_n:
                 cov = _cycle_excerpt_covered(receipts, c, assessments) & all_diff
+                cycle_items = [f for r in receipts if r.get("cycle") == c for f in r.get("findings", [])]
+                if not _open_findings(cycle_items):
+                    continue
                 if len(cov) / len(all_diff) < 0.6:
                     # The prefix before ';' is the stable format a
                     # consumer may match; the suffix is human guidance.
@@ -1262,6 +1265,9 @@ def run_verify(
         if all_diff:
             for c in last_n:
                 cov = _cycle_covered(receipts, c) & all_diff
+                cycle_items = [f for r in receipts if r.get("cycle") == c for f in r.get("findings", [])]
+                if not _open_findings(cycle_items):
+                    continue
                 if len(cov) / len(all_diff) < 0.6:
                     # Same format contract as the excerpt-derived check 6.
                     return VerifyResult(
