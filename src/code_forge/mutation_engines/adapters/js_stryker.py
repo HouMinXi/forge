@@ -425,20 +425,17 @@ class StrykerAdapter:
 
     def _link_modules(self, workspace: Path, context: ExecutionContext) -> None:
         self._runtime_binds(context)
+        host = context.extra_node_paths[0] if context.extra_node_paths else ""
+        if host:
+            Path(host, ".vite-temp").mkdir(exist_ok=True)
         os.symlink("/opt/node_modules", workspace / "node_modules")
-        # Vite writes a temp bundle next to node_modules. The modules tree
-        # is read-only, so give it a writable directory on the workspace.
-        temp = workspace / ".vite-temp"
-        temp.mkdir()
-        # The bind that covers the read-only path is added in _runtime_binds
-        # only after the workspace exists, so record it on the context copy
-        # the caller already passes through extra_binds. Nothing to do here
-        # beyond creating the directory; the bind is declared below.
-        del temp
 
     def _vite_bind(self, workspace: Path) -> tuple[tuple[str, str], ...]:
         temp = workspace / ".vite-temp"
         temp.mkdir(exist_ok=True)
+        # node_modules is a symlink into the read-only mount. Vite follows
+        # it, so the writable bind has to cover the mount, and the directory
+        # has to exist there before bwrap tries to mount over it.
         return ((str(temp), "/opt/node_modules/.vite-temp"),)
 
     def _write_config(self, workspace: Path) -> None:
