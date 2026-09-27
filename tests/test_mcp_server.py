@@ -1375,6 +1375,43 @@ def test_no_print_in_production_modules():
 class TestResolveWorkspace:
     """Tests for _resolve_workspace walkup and env override."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_workspace_markers(self, tmp_path, monkeypatch):
+        """Keep host gate files outside the test's filesystem scenario."""
+        root = tmp_path.resolve()
+        real_is_file = Path.is_file
+
+        def isolated_is_file(path):
+            if path.name == "gate.yaml" and path.parent.name == ".code-forge":
+                if not path.is_relative_to(root):
+                    return False
+            return real_is_file(path)
+
+        monkeypatch.setattr(Path, "is_file", isolated_is_file)
+        monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
+
+    def test_marker_isolation_preserves_other_files(self, tmp_path, tmp_path_factory):
+        """Only gate files outside the scenario are hidden."""
+        outside = tmp_path_factory.mktemp("host-config")
+        outside_gate = outside / ".code-forge" / "gate.yaml"
+        outside_gate.parent.mkdir()
+        outside_gate.write_text("{}\n")
+        ordinary = outside / "ordinary.txt"
+        ordinary.write_text("visible\n")
+        similarly_named = outside / "gate.yaml"
+        similarly_named.write_text("visible\n")
+        local_gate = tmp_path / ".code-forge" / "gate.yaml"
+        local_gate.parent.mkdir()
+        local_gate.write_text("{}\n")
+
+        assert outside_gate.read_text() == "{}\n"
+        assert not outside_gate.is_file()
+        assert ordinary.is_file()
+        assert similarly_named.is_file()
+        assert local_gate.is_file()
+        assert not (tmp_path / "missing").is_file()
+        assert not local_gate.parent.is_file()
+
     def test_walkup_from_subdirectory(self, tmp_path):
         """T1: walkup finds project root from a subdirectory."""
         root = tmp_path / "project"
