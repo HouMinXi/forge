@@ -390,7 +390,7 @@ class TestCriteriaPayload:
                 resolved_review=_resolved_with_diff(),
                 source_hash=_source_hash(),
                 cwd=tmp_path,
-                spawn_fn=lambda pn, dt: spawn(pn, dt),
+                spawn_fn=spawn,
                 falsifier=StubFalsifier(),
                 max_total_rounds=20,
             )
@@ -448,7 +448,7 @@ class TestContextIsolation:
                 resolved_review=_resolved_with_diff(),
                 source_hash=_source_hash(),
                 cwd=tmp_path,
-                spawn_fn=lambda pn, dt: spawn(pn, dt),
+                spawn_fn=spawn,
                 falsifier=StubFalsifier(),
                 max_total_rounds=20,
             )

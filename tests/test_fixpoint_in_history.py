@@ -39,7 +39,8 @@ def _sm_with_sequence(tmp_path, seq, threshold=3, cap=8):
     i = {"n": 0}
 
     def l1():
-        k = i["n"]; i["n"] += 1
+        k = i["n"]
+        i["n"] += 1
         return (seq[k] if k < len(seq) else [], [], Usage(), 0.0)
     sm.l1_provider = l1
     sm.clean_round_threshold = threshold
