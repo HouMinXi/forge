@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from code_forge.cli import _build_parser, main
-from code_forge.exit_codes import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS
+from code_forge.exit_codes import EXIT_CLI_ERROR, EXIT_FAIL, EXIT_PASS, EXIT_UNRELIABLE
 
 
 class TestMutationCheckParser:
@@ -164,7 +164,7 @@ class TestMutationCheckDispatch:
         with patch("code_forge.mutation.run_mutation", return_value=([error], [])):
             monkeypatch.setattr(sys, "argv", ["code-forge", "mutation-check", "--diff", str(diff_file)])
             result = main()
-        assert result == EXIT_CLI_ERROR
+        assert result == EXIT_UNRELIABLE
         output = capsys.readouterr()
         assert "cause" in output.err
         assert "PASS" not in output.err + output.out

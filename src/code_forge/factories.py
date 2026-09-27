@@ -211,10 +211,10 @@ def build_l2_runner() -> Callable:
                     id="MUTATION_SKIPPED",
                     fingerprint="mutation-unavailable",
                     source="MUTANT",
-                    disposition=Disposition.DISMISSED,
+                    disposition=Disposition.CONFIRMED,
                     file="",
                     line_range=[],
-                    description="mutmut not installed (soft dependency)",
+                    description="mutmut not installed, mutation measurement unavailable",
                 )
             ]
             infra_errors = ["mutmut not found on PATH"]

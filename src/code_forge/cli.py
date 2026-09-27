@@ -44,6 +44,7 @@ from .exit_codes import (
     EXIT_FAIL,
     EXIT_PASS,
     EXIT_TIMEOUT,
+    EXIT_UNRELIABLE,
     verdict_to_exit,
 )
 from .factories import (
@@ -4408,7 +4409,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
     if tool_errors:
         for error in tool_errors:
             print(f"code-forge: mutation-check: {error.description}", file=sys.stderr)
-        return EXIT_CLI_ERROR
+        return EXIT_UNRELIABLE
 
     for item in skipped:
         print(f"code-forge: mutation-check: SKIP: {item.description}", file=sys.stderr)

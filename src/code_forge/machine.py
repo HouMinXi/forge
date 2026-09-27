@@ -240,6 +240,22 @@ def _severity_tier(finding: StateFinding) -> str:
     return "P2"
 
 
+
+def mutation_result_verdict(result_data: dict) -> "Verdict | None":
+    """What a finished mutation result means.
+
+    A done run with survivors fails. A done run that never proved its
+    baseline holds. Anything else is left to the caller.
+    """
+    if result_data.get("status") != "done":
+        return None
+    if result_data.get("survivors"):
+        return Verdict.FAIL
+    if not result_data.get("baseline_passed"):
+        return Verdict.UNRELIABLE
+    return None
+
+
 @dataclass
 class StateMachine:
     """Forge state machine. Constructor wires dependencies; .run() executes.
@@ -469,8 +485,9 @@ class StateMachine:
                         # re-measures on the next review instead of
                         # replaying this verdict forever.
                         self._unlink_mutation_result(result_path)
+                        verdict = mutation_result_verdict(result_data)
                         survivors = result_data.get("survivors", [])
-                        if survivors:
+                        if verdict is Verdict.FAIL:
                             self._state.verdict = Verdict.FAIL
                             self._state.converged = False
                             self._state.infra_errors.append(
@@ -480,6 +497,15 @@ class StateMachine:
                             self._persist_state()
                             self._write_ci_ledger_rows()
                             return Verdict.FAIL
+                        if verdict is Verdict.UNRELIABLE:
+                            self._state.verdict = Verdict.UNRELIABLE
+                            self._state.converged = False
+                            self._state.infra_errors.append(
+                                "CI: mutation done without a proven baseline"
+                            )
+                            self._persist_state()
+                            self._write_ci_ledger_rows()
+                            return Verdict.UNRELIABLE
                     elif status == "running":
                         pid = result_data.get("pid")
                         if pid is None or (

@@ -538,3 +538,12 @@ def test_a_middle_process_that_hangs_is_cleaned_up(tmp_path, monkeypatch):
     )
     assert started is False
     assert events == ["waited", "killed", "reaped"]
+
+
+def test_a_done_run_without_a_baseline_holds():
+    """No survivors is not a pass when the run never proved a baseline."""
+    from code_forge.machine import mutation_result_verdict
+
+    assert mutation_result_verdict({"status": "done", "survivors": []}) is Verdict.UNRELIABLE
+    assert mutation_result_verdict({"status": "done", "survivors": ["m1"]}) is Verdict.FAIL
+    assert mutation_result_verdict({"status": "done", "survivors": [], "baseline_passed": True}) is None

@@ -287,7 +287,7 @@ class TestBuildL2Runner:
             assert len(findings) == 1
             assert findings[0].id == "MUTATION_SKIPPED"
             assert findings[0].source == "MUTANT"
-            assert findings[0].disposition == Disposition.DISMISSED
+            assert findings[0].disposition == Disposition.CONFIRMED
             assert "not installed" in findings[0].description
             assert len(infra) == 1
             assert "not found" in infra[0]
