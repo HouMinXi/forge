@@ -329,3 +329,33 @@ def test_sandbox_has_dev_null_and_proc(tmp_path):
     )
     assert _run_sandbox(spec) == 0
     assert (tmp_path / "devproc.txt").read_text().strip() == "ok"
+
+
+def test_read_resource_peak_returns_none_on_undecodable_counter(tmp_path):
+    """Documented contract: None when the counter file is unreadable.
+
+    A counter file whose bytes are not UTF-8 decodably fails with
+    UnicodeDecodeError, which is not an OSError; the read is still
+    "unreadable", so the documented None must be returned.
+    """
+    cgroup = tmp_path / "cg"
+    cgroup.mkdir()
+    (cgroup / "memory.peak").write_bytes(b"\xff\xfe invalid")
+
+    sup = object.__new__(isolate.Supervisor)
+    sup.cgroup_path = str(cgroup)
+    assert sup.read_resource_peak("memory.peak") is None
+
+
+def test_read_maps_decode_failure_to_isolation_unavailable(tmp_path):
+    """_read on non-UTF-8 cgroup content raises IsolationUnavailable.
+
+    Setup callers already translate failures into IsolationUnavailable; a
+    bare UnicodeDecodeError escaping start() would bypass that contract and
+    skip the documented cleanup-then-unavailable path.
+    """
+    target = tmp_path / "cgroup.controllers"
+    target.write_bytes(b"\x80\x81 not utf-8")
+
+    with pytest.raises(isolate.IsolationUnavailable):
+        isolate._read(str(target))

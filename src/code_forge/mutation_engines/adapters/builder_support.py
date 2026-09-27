@@ -26,14 +26,14 @@ def identity_mapping_error(status_text: str | None = None, subuid_text: str | No
     caller_supplied = status_text is not None or subuid_text is not None
     if status_text is None:
         status = Path("/proc/self/status")
-        status_text = status.read_text() if status.is_file() else ""
+        status_text = status.read_text(encoding="utf-8") if status.is_file() else ""
     for line in status_text.splitlines():
         if line.startswith("NoNewPrivs:") and line.split()[-1] == "1":
             return "NoNewPrivs is set, so a user namespace cannot be mapped"
     user = os.environ.get("USER") or ""
     if subuid_text is None:
         subuid = Path("/etc/subuid")
-        subuid_text = subuid.read_text() if user and subuid.is_file() else ""
+        subuid_text = subuid.read_text(encoding="utf-8") if user and subuid.is_file() else ""
     if user:
         owned = [
             line for line in subuid_text.splitlines() if line.startswith(user + ":")
@@ -45,7 +45,7 @@ def identity_mapping_error(status_text: str | None = None, subuid_text: str | No
     try:
         probe = subprocess.run(
             ["unshare", "--user", "--map-root-user", "true"],
-            capture_output=True, text=True, timeout=10, check=False,
+            capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return "user namespace probe failed: %s" % exc

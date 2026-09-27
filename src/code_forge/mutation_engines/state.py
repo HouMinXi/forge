@@ -115,13 +115,13 @@ class Reservation:
 
 
 def current_boot_id() -> str:
-    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
 
 
 def _process_start_ticks(pid: int) -> int | None:
     """Start time (clock ticks) of *pid*, or None when not readable."""
     try:
-        text = Path("/proc/%d/stat" % pid).read_text()
+        text = Path("/proc/%d/stat" % pid).read_text(encoding="utf-8")
     except (FileNotFoundError, PermissionError, ProcessLookupError):
         return None
     # field 1 may contain spaces inside parentheses; split after ") "

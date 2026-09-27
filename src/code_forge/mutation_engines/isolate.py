@@ -53,7 +53,7 @@ def verify_isolation_support(cgroup_root: str) -> None:
     try:
         fs_type = subprocess.run(
             ["stat", "-fc", "%T", cgroup_root],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         raise IsolationUnavailable("cannot stat cgroup root: %s" % exc) from exc
@@ -116,13 +116,18 @@ class SandboxSpec:
 
 
 def _write(path: str, value: str) -> None:
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(value)
 
 
 def _read(path: str) -> str:
-    with open(path) as fh:
-        return fh.read().strip()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except UnicodeDecodeError as exc:
+        raise IsolationUnavailable(
+            "cgroup file %r is not UTF-8 decodable: %s" % (path, exc)
+        ) from exc
 
 
 class _ChildProcess:
@@ -328,9 +333,9 @@ class Supervisor:
             raise ValueError("counter name must be a plain file name, got %r" % name)
         path = os.path.join(self.cgroup_path, name)
         try:
-            with open(path) as handle:
+            with open(path, encoding="utf-8") as handle:
                 value = handle.read().strip()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return None
         if value == "max":
             return None

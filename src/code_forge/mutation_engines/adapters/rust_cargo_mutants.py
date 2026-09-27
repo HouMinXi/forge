@@ -67,7 +67,7 @@ class CargoMutantsError(Exception):
 
 def _read_json(path: Path) -> dict | list | None:
     try:
-        value = json.loads(path.read_text())
+        value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeError):
         return None
     if isinstance(value, (dict, list)):
@@ -258,7 +258,7 @@ class CargoMutantsAdapter:
             context, baseline_argv, target.budget.baseline_seconds, workspace,
             "cargo-" + context.run_id, target.id, extra_binds=binds,
         )
-        output = baseline_out.read_text() if baseline_out.is_file() else ""
+        output = baseline_out.read_text(encoding="utf-8") if baseline_out.is_file() else ""
         baseline_state, test_count = baseline_from_cargo(output or None, code)
         if timed_out:
             baseline_state = BaselineState.UNKNOWN
@@ -383,7 +383,7 @@ class CargoMutantsAdapter:
         try:
             out = subprocess.run(
                 [tool, "mutants", "--version"],
-                capture_output=True, text=True, timeout=20, check=False,
+                capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
             )
         except (OSError, subprocess.SubprocessError):
             return None
