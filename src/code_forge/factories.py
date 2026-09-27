@@ -463,7 +463,7 @@ def build_l1_provider(
                     disposition=Disposition.CONFIRMED,
                     file="<llm-invoke>",
                     line_range=[0, 0],
-                    description="L1 invoke failed: %s" % pr,
+                    description="L1 invoke failed: %s: %s" % (backend.name if backend else "unknown", pr),
                     is_timeout=pr.is_timeout,
                 ))
                 if breaker is not None:
@@ -489,8 +489,8 @@ def build_l1_provider(
                     disposition=Disposition.CONFIRMED,
                     file="<llm-invoke>",
                     line_range=[0, 0],
-                    description="L1 invoke failed: %s: %s"
-                    % (type(pr).__name__, pr),
+                    description="L1 invoke failed: %s: %s: %s"
+                    % (backend.name if backend else "unknown", type(pr).__name__, pr),
                 ))
                 if breaker is not None:
                     breaker.record_other_error()

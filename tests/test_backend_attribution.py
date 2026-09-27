@@ -145,3 +145,12 @@ def test_run_computes_the_context_flags():
     assert "ctx_contract=bool(_contract_spec_a)" in source
     assert "ctx_whole_file=bool(_whole_file)" in source
     assert "ctx_canary=_load_canary_config(args, gate_data) is not None" in source
+
+
+def test_invoke_failure_names_the_backend():
+    """A failed pass that only names its role cannot be traced to a model."""
+    import inspect
+    from code_forge import factories
+    source = inspect.getsource(factories.build_l1_provider)
+    head = source.split("L1 invoke failed", 1)[1][:160]
+    assert "backend.name" in head
