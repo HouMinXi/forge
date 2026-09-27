@@ -378,7 +378,7 @@ def _dedup_by_fingerprint(
     return kept
 
 
-_DEFECT = ("but", "however", "leak", "bug", "error", "fail", "wrong", "missing")
+_DEFECT = ("but", "however", "leak", "bug")
 
 
 _PRAISE = ("正确实现", "逻辑是健全", "is correct", "looks correct", "no issue")

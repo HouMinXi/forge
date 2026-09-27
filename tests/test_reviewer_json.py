@@ -570,3 +570,11 @@ def test_praise_followed_by_a_defect_is_kept():
     data = {"findings": [{"file": "a.py", "line": 1,
         "description": "The implementation is correct but the buffer leaks memory"}]}
     assert _json_to_state_findings(data, "qodo")
+
+
+def test_correct_error_handling_is_still_praise():
+    """'error handling is correct' describes no defect."""
+    from code_forge.reviewer_json import _json_to_state_findings
+    data = {"findings": [{"file": "a.py", "line": 1,
+        "description": "The error handling is correct"}]}
+    assert not _json_to_state_findings(data, "qodo")
