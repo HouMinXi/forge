@@ -127,7 +127,6 @@ def test_shift_into_unchanged_context_cannot_witness_hunk(tmp_path):
 @pytest.mark.parametrize("exc", [
     _exc(1, 4, "alpha\nbeta"),
     _exc(1, 3, "alpha\nwrong"),
-    _exc(1, 3, "alpha\ngamma"),
     _exc(1, 3, "alpha\nbeta\nfabricated"),
     _exc(1, 3, "gamma"),
 ])
@@ -135,9 +134,115 @@ def test_incomplete_or_changed_content_stays_invalid(exc):
     assert validate_excerpts_against_diff(_diff(["alpha", "beta", "gamma"]), [exc])
 
 
+def test_unknown_endpoints_cannot_ride_known_hunk_overlap():
+    diff = (
+        "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+        "@@ -2 +2 @@\n-old\n+beta\n"
+    )
+    exc = _exc(1, 3, "alpha\nbeta")
+    result = _assess(diff, exc)
+    assert result.status.value == "INVALID"
+    assert not result.proven_lines
+    assert validate_excerpts_against_diff(diff, [exc])
+
+
+@pytest.mark.parametrize("tail", ["fabricated", "beta"])
+def test_blank_head_cannot_vouch_for_unknown_tail(tail):
+    diff = (
+        "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+        "@@ -1,2 +1,2 @@\n \n-old\n+alpha\n"
+    )
+    exc = _exc(1, 3, f"alpha\n{tail}")
+    result = _assess(diff, exc)
+    assert result.status.value == "INVALID"
+    assert not result.proven_lines
+    assert validate_excerpts_against_diff(diff, [exc])
+
+
+@pytest.mark.parametrize("source", [None, "\nalpha\n", "\nalpha\nactual\n"])
+def test_complete_unknown_tail_fails_real_receipt_gate(tmp_path, source):
+    diff = (
+        "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+        "@@ -1,2 +1,2 @@\n \n-old\n+alpha\n"
+    )
+    if source is not None:
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, timeout=10)
+        oid = subprocess.check_output(
+            ["git", "hash-object", "-w", "--stdin"], input=source,
+            cwd=tmp_path, text=True, timeout=10,
+        ).strip()
+        diff = diff.replace("--- a/mod.py", f"index {'1' * 40}..{oid} 100644\n--- a/mod.py")
+    # Even matching live text is not evidence for the frozen source.
+    (tmp_path / "mod.py").write_text("\nalpha\nfabricated\n")
+    exc = _exc(1, 3, "\nalpha\nfabricated")
+    result, receipts = _verify(tmp_path, diff, [exc])
+    assert not result.passed, result.reason
+    assert all(r["pass_status"] == "schema_fail" for r in receipts)
+    assert _assess(diff, exc, tmp_path).status.value == "INVALID"
+
+
+def test_frozen_neighbour_survives_live_file_tampering(tmp_path):
+    diff = _committed_diff(tmp_path, "\nold\nactual\n", "\nalpha\nactual\n")
+    (tmp_path / "mod.py").write_text("\nalpha\nfabricated\n")
+    exc = _exc(1, 3, "\nalpha\nactual")
+    result, receipts = _verify(tmp_path, diff, [exc])
+    assert result.passed, result.reason
+    assert all(r["pass_status"] == "completed" for r in receipts)
+    assert _assess(diff, exc, tmp_path).proven_lines == frozenset({1, 2, 3})
+
+
+def test_blank_head_with_unknown_end_recovers_fully_known_offset():
+    diff = (
+        "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
+        "@@ -1,2 +1,2 @@\n \n-old\n+wrong\n"
+        "@@ -4,2 +4,2 @@\n-old-alpha\n-old-beta\n+alpha\n+beta\n"
+    )
+    exc = _exc(1, 3, "alpha\nbeta")
+    result = _assess(diff, exc)
+    assert result.status.value == "UNTRUSTED"
+    assert result.proven_lines == frozenset({4, 5})
+    assert result.diagnostic is not None
+    assert "misnumbered by +2" in result.diagnostic
+    assert validate_excerpts_against_diff(diff, [exc]) == []
+
+
+def test_known_middle_gap_stays_untrusted():
+    diff = _diff(["alpha", "beta", "gamma"])
+    exc = _exc(1, 3, "alpha\ngamma")
+    result = _assess(diff, exc)
+    assert result.status.value == "UNTRUSTED"
+    assert result.proven_lines == frozenset({1, 3})
+    assert result.diagnostic is not None
+    assert "missing source line 2" in result.diagnostic
+    assert validate_excerpts_against_diff(diff, [exc]) == []
+
+
 def test_unknown_tail_is_not_source_proven():
     diff = _diff(["alpha", "beta"])
     assert validate_excerpts_against_diff(diff, [_exc(1, 3, "alpha\nbeta")])
+
+
+@pytest.mark.parametrize("missing", [1, 2, 3])
+@pytest.mark.parametrize("known", [False, True])
+def test_single_gap_requires_a_known_source_line(missing, known):
+    from code_forge.verify import assess_excerpt_evidence
+
+    lines = {1: "alpha", 2: "beta", 3: "gamma"}
+    carried = "\n".join(line for number, line in lines.items() if number != missing)
+    source = dict(lines)
+    if not known:
+        del source[missing]
+    result = assess_excerpt_evidence(
+        _exc(1, 3, carried),
+        {"mod.py": [{"start": 1, "end": 3}]},
+        {"mod.py": source},
+    )
+    if known:
+        assert result.status.value == "UNTRUSTED"
+        assert result.proven_lines == frozenset({1, 2, 3} - {missing})
+    else:
+        assert result.status.value == "INVALID"
+        assert not result.proven_lines
 
 
 def test_assessment_is_immutable_and_keeps_blank_at_claimed_start():

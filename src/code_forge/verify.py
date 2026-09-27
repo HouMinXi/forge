@@ -578,7 +578,8 @@ def _single_gap_line(start, end, carried, file_lines):
         s += 1
     if p + s != len(carried):
         return None
-    return start + p
+    missing = start + p
+    return missing if missing in file_lines else None
 
 
 def _anchored_assessment(status, diagnostic, proven, hunks, location, *, repaired_tail=False):
@@ -694,7 +695,8 @@ def assess_excerpt_evidence(
     quoted = {body_start + i: line for i, line in enumerate(actual_lines)}
     overlap = quoted.keys() & file_lines.keys()
     mismatches = sorted(n for n in overlap if quoted[n].rstrip() != file_lines[n].rstrip())
-    if mismatches or not overlap:
+    unknown = quoted.keys() - file_lines.keys()
+    if mismatches or unknown or not overlap:
         offset = _constant_offset(quoted, file_lines, -64, 65)
         if offset is not None:
             blank_slip = not blank_spent and _blank_boundary_slip(
@@ -708,6 +710,17 @@ def assess_excerpt_evidence(
             return _anchored_assessment(
                 valid if blank_slip else untrusted, diagnostic,
                 (n + offset for n in quoted), hunks, location,
+            )
+        if unknown and not mismatches and not any(
+            max(exc_start, h["start"]) <= min(exc_end, h["end"]) for h in hunks
+        ):
+            return ExcerptAssessment(
+                invalid, f"excerpt {location} is outside every hunk; it belongs in context_quotes",
+            )
+        if unknown:
+            return ExcerptAssessment(
+                invalid,
+                f"excerpt {location} claims line {min(unknown)} outside the diff post-image; it cannot be verified",
             )
         if mismatches:
             bad = next((n for n in mismatches
@@ -741,15 +754,6 @@ def assess_excerpt_evidence(
             return _anchored_assessment(
                 untrusted, f"excerpt indent-stripped at {location}", overlap, hunks, location,
             )
-        if not any(max(exc_start, h["start"]) <= min(exc_end, h["end"]) for h in hunks):
-            return ExcerptAssessment(
-                invalid, f"excerpt {location} is outside every hunk; it belongs in context_quotes",
-            )
-        return ExcerptAssessment(
-            invalid,
-            f"excerpt {location} claims line {min(quoted)} outside the diff post-image; it cannot be verified",
-        )
-    # Preserve hunk-halo compatibility without crediting its unknown lines.
     return _anchored_assessment(valid, None, overlap, hunks, location)
 
 

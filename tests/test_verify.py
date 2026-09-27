@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1320,7 +1321,8 @@ class TestOutOfHunkExcerpts:
                 name = "receipt-c%dp%d.json" % (c, p)
                 (rd / name).write_text(json.dumps(receipt))
         r = run_verify(tmp_path, sha, diff_files, diff_text=diff_content)
-        assert r.passed, r.reason
+        assert not r.passed
+        assert "outside the diff post-image" in r.reason
 
     def test_excerpt_content_beyond_the_declared_range_is_rejected(self, tmp_path):
         """Content lines that map to no claimed line number are never
@@ -2325,7 +2327,7 @@ class TestPreflightAgreesWithVerify:
             "content": "def f():\n    return 2\n    extra()",
         }
         assert self._preflight_warns(excerpt) is True
-        assert self._verify_passes(tmp_path, excerpt) is True
+        assert self._verify_passes(tmp_path, excerpt) is False
 
     def test_an_unknown_file_is_refused_by_both(self, tmp_path):
         excerpt = {
@@ -2449,9 +2451,9 @@ class TestTask1OverflowAndLiteralPins:
                "content": "a = 1\nb = 2\nc = 3\nextra = 4"}
         sha, diff_files = _t1_write(tmp_path, [_T1_E1, fat])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_T1_DIFF)
-        # One extra context line on an overlapping hunk is halo skip.
-        # Line-count slack is +/-1, so 4-vs-3 is not a count fail.
-        assert r.passed, r.reason
+        # Count tolerance cannot vouch for content absent from frozen source.
+        assert not r.passed
+        assert "outside the diff post-image" in r.reason
 
     def test_punctuation_difference_is_rejected(self, tmp_path):
         punct = {"file": "src/f.py", "start_line": 1, "end_line": 3,
@@ -3051,6 +3053,13 @@ class TestHunkHaloContext:
             " \n"
         )
         post = "def f():\n    x = 1\n    return 2\n\ndef g():\n    return 3\n"
+        # Freeze the neighbour in Git; the mutable working file is not evidence.
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, timeout=10)
+        oid = subprocess.check_output(
+            ["git", "hash-object", "-w", "--stdin"], input=post,
+            cwd=tmp_path, text=True, timeout=10,
+        ).strip()
+        diff = f"diff --git a/src/f.py b/src/f.py\nindex {'1' * 40}..{oid} 100644\n" + diff
         rd = tmp_path / ".code-forge" / "receipts"
         rd.mkdir(parents=True)
         (tmp_path / "src").mkdir()
