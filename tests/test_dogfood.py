@@ -157,8 +157,8 @@ class TestDogfood:
         hook_script = textwrap.dedent("""\
             #!/bin/sh
             # dogfood test hook: gate-check only
-            PYTHONPATH=%s exec %s -m code_forge gate-check
-        """) % (src_dir, sys.executable)
+            PATH=%s:$PATH PYTHONPATH=%s exec %s -m code_forge gate-check
+        """) % (os.path.dirname(sys.executable), src_dir, sys.executable)
 
         # Step 6: write hook and make executable
         hook_path = tmp_path / ".git" / "hooks" / "pre-commit"

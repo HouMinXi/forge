@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import textwrap
 from io import StringIO
 
@@ -68,6 +69,7 @@ def test_test_gate_imports_the_repo_under_check(tmp_path, monkeypatch):
 
     # The stale copy wins on PYTHONPATH unless the gate pins its own.
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["PYTHONPATH"] = str(stale / "src")
     env["FORGE_ALLOW_MAIN"] = "1"
 
@@ -116,6 +118,7 @@ def test_staged_files_come_from_the_repo_under_check(tmp_path, monkeypatch):
     monkeypatch.chdir(elsewhere)
 
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
     # The gate must actually invoke the runner. A skipped run also
@@ -185,6 +188,7 @@ def test_existing_pythonpath_is_kept_behind_the_repo_source(tmp_path,
     _make_repo(stale, "stale")
 
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["PYTHONPATH"] = os.pathsep.join([str(extra), str(stale / "src")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
@@ -229,6 +233,7 @@ def test_collection_errors_are_not_treated_as_an_interrupt(tmp_path,
     monkeypatch.chdir(repo)
 
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
     rc = run_gate_check(args=None, env=env, cwd=repo,
@@ -268,6 +273,7 @@ def test_a_real_interrupt_is_still_waved_through(tmp_path, monkeypatch):
     monkeypatch.chdir(repo)
 
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
     rc = run_gate_check(args=None, env=env, cwd=repo,
@@ -313,6 +319,7 @@ def test_the_word_alone_does_not_wave_a_failed_collection_through(
     monkeypatch.chdir(repo)
 
     env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
     rc = run_gate_check(args=None, env=env, cwd=repo,

@@ -10,6 +10,7 @@ tests); real CLI smoke tests using cwd parameter (no os.chdir).
 """
 
 import shutil
+import sys
 import subprocess
 from unittest.mock import patch
 
@@ -628,7 +629,7 @@ class TestMutationRealCLI:
         _skip_unless_mutmut_on_path()
         findings, infra_errors = run_mutation(
             diff_files=["src/add.py"],
-            baseline_cmd=["python3", "-m", "pytest", "tests/"],
+            baseline_cmd=[sys.executable, "-m", "pytest", "tests/"],
             cwd=tmp_path,
         )
         mutant_findings = [
@@ -672,7 +673,7 @@ class TestMutationRealCLI:
 
         findings, infra_errors = run_mutation(
             diff_files=["src/add.py"],
-            baseline_cmd=["python3", "-m", "pytest", "tests/"],
+            baseline_cmd=[sys.executable, "-m", "pytest", "tests/"],
             cwd=tmp_path,
         )
 
@@ -717,7 +718,7 @@ class TestMutationRealCLI:
 
         findings, infra_errors = run_mutation(
             diff_files=["src/add.py"],
-            baseline_cmd=["python3", "-m", "pytest", "tests/"],
+            baseline_cmd=[sys.executable, "-m", "pytest", "tests/"],
             cwd=tmp_path,
         )
 
@@ -746,7 +747,7 @@ class TestMutationRealCLI:
 
         run_mutation(
             diff_files=["src/add.py"],
-            baseline_cmd=["python3", "-m", "pytest", "tests/"],
+            baseline_cmd=[sys.executable, "-m", "pytest", "tests/"],
             cwd=tmp_path,
         )
 
