@@ -62,6 +62,7 @@ from .state import (
     State,
     StateFinding,
     Verdict,
+    is_receipt_audit,
     load_state,
     save_state,
 )
@@ -317,8 +318,17 @@ class StateMachine:
 
     @property
     def active_findings(self) -> list:
-        """Non-dismissed findings (public accessor for MCP layer)."""
-        return [f for f in self._state.findings if f.disposition != Disposition.DISMISSED]
+        """Non-dismissed findings, excluding metadata-only receipt diagnostics."""
+        return [
+            f
+            for f in self._state.findings
+            if f.disposition != Disposition.DISMISSED and not is_receipt_audit(f)
+        ]
+
+    @property
+    def receipt_audit(self) -> list[StateFinding]:
+        """Metadata diagnostics retained separately from actionable findings."""
+        return [f for f in self._state.findings if is_receipt_audit(f)]
 
     def __post_init__(self) -> None:
         """Initialize per-round cost accumulator (CLI-08 H3)."""

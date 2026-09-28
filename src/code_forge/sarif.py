@@ -20,7 +20,9 @@ from .state import (
     Mode,
     PassOutcome,
     derive_pass_outcomes,
+    is_receipt_audit,
     _PASS_NAMES,
+    _finding_to_dict,
 )
 
 
@@ -97,6 +99,9 @@ def build_sarif_log(
     if manifest is None and getattr(state, "env_manifest", None) is not None:
         manifest = state.env_manifest
     run = _build_run(state, tool_versions, forge_version, manifest=manifest)
+    receipt_audit = [_finding_to_dict(f) for f in state.findings if is_receipt_audit(f)]
+    if receipt_audit:
+        run.setdefault("properties", {})["receiptAudit"] = receipt_audit
     if backend_name is not None and state.cost_passes > 0:
         run.setdefault("properties", {})["tokenCost"] = {
             "inputTokens": state.cost_total_input,
@@ -180,6 +185,7 @@ def _build_run(
                 exec_evidence=_exec_ev,
             )
             for f in state.findings
+            if not is_receipt_audit(f)
         ],
     }
 
@@ -319,9 +325,9 @@ def format_summary(
 ) -> str:
     """One-line stderr summary per LAYER0-07.
 
-    Format matches regex:
-      ^code-forge: (PASS|FAIL|ESCALATED|PENDING) findings=\\d+ confirmed=\\d+
-      uncertain=\\d+ dismissed=\\d+ fixed=\\d+( infra=\\d+)?( advisory=\\d+)?$
+    The fixed prefix ends at fixed=N. Optional suffixes include receipt_audit=N,
+    style=N, infra=N, advisory=N, passes=N/N, manifest, and exec status.
+    Consumers must not anchor a prefix-only expression at the end of the line.
 
     LOCAL PENDING is rejected (the HOLD UX resolves it; caller guards).
     CI PENDING is legitimate: UNCERTAIN findings with no human at the
@@ -340,11 +346,15 @@ def format_summary(
         Disposition.STYLE: 0,
     }
     infra = 0
+    receipt_audit_count = 0
     for f in state.findings:
+        if is_receipt_audit(f):
+            receipt_audit_count += 1
+            continue
         counts[f.disposition] += 1
         if f.source == "INFRA":
             infra += 1
-    total = len(state.findings)
+    total = len(state.findings) - receipt_audit_count
     line = "code-forge: %s findings=%d confirmed=%d uncertain=%d dismissed=%d fixed=%d" % (
         state.verdict.value,
         total,
@@ -353,6 +363,8 @@ def format_summary(
         counts[Disposition.DISMISSED],
         counts[Disposition.FIXED],
     )
+    if receipt_audit_count:
+        line += " receipt_audit=%d" % receipt_audit_count
     if counts[Disposition.STYLE]:
         line += " style=%d" % counts[Disposition.STYLE]
     if infra:
