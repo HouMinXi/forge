@@ -13,6 +13,10 @@ def test_panel_width():
         capture_output=True,
         text=True,
         timeout=60,
-        env={"PATH": "/usr/bin:/bin", "HOME": "/workspace", "FORGE_CSS_STRONG": os.environ.get("FORGE_CSS_STRONG", "1")},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "HOME": "/workspace",
+            "FORGE_CSS_STRONG": os.environ.get("FORGE_CSS_STRONG", "1"),
+        },
     )
     assert result.returncode == 0, result.stderr

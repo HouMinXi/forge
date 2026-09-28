@@ -55,6 +55,7 @@ def test_unadjudicated_round_trip(tmp_path):
 
 def test_iter_skips_unadjudicated_under_old_vocabulary(tmp_path, capsys, monkeypatch):
     """Old readers with 4-state enum skip UNADJUDICATED rows (D-06)."""
+
     class OldTerminalState(str, Enum):
         FIXED = "FIXED"
         DISPROVED = "DISPROVED"
@@ -68,6 +69,7 @@ def test_iter_skips_unadjudicated_under_old_vocabulary(tmp_path, capsys, monkeyp
     ledger_path.write_text(valid + "\n" + unadj + "\n")
 
     import code_forge.ledger as ledger_mod
+
     monkeypatch.setattr(ledger_mod, "TerminalState", OldTerminalState)
     rows = list(iter_rows(tmp_path))
     assert [r.fingerprint for r in rows] == ["fp-good"]
@@ -78,6 +80,7 @@ def test_iter_skips_unadjudicated_under_old_vocabulary(tmp_path, capsys, monkeyp
 def test_resolve_ledger_root_non_git(tmp_path):
     """From a non-git directory, resolve_ledger_root returns cwd unchanged (D-11)."""
     from code_forge.ledger import resolve_ledger_root
+
     non_git = tmp_path / "not_git"
     non_git.mkdir()
     assert resolve_ledger_root(non_git) == non_git
@@ -178,9 +181,11 @@ def test_iter_skips_malformed_line(tmp_path, capsys):
     ledger_path = tmp_path / ".code-forge" / "ledger.jsonl"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     ledger_path.write_text(
-        json.dumps(_make_row(fp="fp-good").__dict__) + "\n"
+        json.dumps(_make_row(fp="fp-good").__dict__)
+        + "\n"
         + "this is not valid json\n"
-        + json.dumps(_make_row(fp="fp-good-2").__dict__) + "\n"
+        + json.dumps(_make_row(fp="fp-good-2").__dict__)
+        + "\n"
     )
     rows = list(iter_rows(tmp_path))
     fps = [r.fingerprint for r in rows]
@@ -250,6 +255,7 @@ def test_append_writes_valid_one_json_per_line(tmp_path):
         assert "terminal_state" in parsed
         assert "base_sha" in parsed
         assert "head_sha" in parsed
+
 
 def test_v1_row_without_telemetry_fields_still_parses(tmp_path, capsys):
     """A pre-enrichment row must survive the reader, not be skipped.

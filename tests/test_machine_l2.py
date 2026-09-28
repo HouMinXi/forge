@@ -80,9 +80,7 @@ class TestL2RunnerConfirmedMutant:
             return ([], [])
 
         def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
-            finding = _make_finding(
-                fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
-            )
+            finding = _make_finding(fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED)
             return ([finding], [])
 
         machine = StateMachine(
@@ -119,9 +117,7 @@ class TestMutantFindingsSkipAutofix:
             return ([], [])
 
         def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
-            finding = _make_finding(
-                fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
-            )
+            finding = _make_finding(fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED)
             return ([finding], [])
 
         machine = StateMachine(
@@ -155,9 +151,7 @@ class TestConsecutiveSurvivorRounds:
         def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             round_counter["n"] += 1
             if round_counter["n"] <= 2:
-                finding = _make_finding(
-                    fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
-                )
+                finding = _make_finding(fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED)
                 return ([finding], [])
             return ([], [])
 
@@ -188,9 +182,7 @@ class TestConsecutiveSurvivorRounds:
         def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             round_counter["n"] += 1
             if round_counter["n"] == 1:
-                finding = _make_finding(
-                    fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
-                )
+                finding = _make_finding(fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED)
                 return ([finding], [])
             return ([], [])
 
@@ -222,9 +214,7 @@ class TestThreeConsecutiveSurvivorRounds:
             return ([], [])
 
         def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
-            finding = _make_finding(
-                fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED
-            )
+            finding = _make_finding(fp="mutant-1", source="MUTANT", disp=Disposition.CONFIRMED)
             return ([finding], [])
 
         machine = StateMachine(
@@ -323,9 +313,7 @@ class TestL2SkipsBeforeRequiringGateConfig:
 
         assert verdict == Verdict.PASS
         errors = " ".join(machine._state.infra_errors)
-        assert "gate.yaml" not in errors, (
-            "a TypeScript repo was told to fix gate.yaml: %s" % errors
-        )
+        assert "gate.yaml" not in errors, "a TypeScript repo was told to fix gate.yaml: %s" % errors
         # The runner decides the skip, and needs no baseline command to
         # do it -- that is what lets it run without a gate.yaml at all.
         assert seen.get("called"), "L2 runner never ran"
@@ -369,9 +357,7 @@ class TestCIModeReadsMutationResult:
         assert verdict == Verdict.FAIL
         assert any("mutation survivors" in e for e in machine._state.infra_errors)
 
-    def test_ci_status_running_dead_pid_appends_skipped(
-        self, tmp_path, monkeypatch
-    ):
+    def test_ci_status_running_dead_pid_appends_skipped(self, tmp_path, monkeypatch):
         forge_dir = tmp_path / ".code-forge"
         forge_dir.mkdir()
         result_path = forge_dir / "mutation-result.json"
@@ -408,9 +394,7 @@ class TestCIModeReadsMutationResult:
         )
         verdict = machine.run()
         assert verdict == Verdict.PASS
-        skipped_findings = [
-            f for f in machine._state.findings if f.id == "MUTATION_SKIPPED"
-        ]
+        skipped_findings = [f for f in machine._state.findings if f.id == "MUTATION_SKIPPED"]
         assert len(skipped_findings) == 1
         assert "process died" in skipped_findings[0].description
 
@@ -447,9 +431,7 @@ class TestCIMutationResultNotSticky:
         assert self._machine(tmp_path).run() == Verdict.PASS
         second = self._machine(tmp_path)
         assert second.run() == Verdict.PASS
-        assert not any(
-            "mutation error" in e for e in second._state.infra_errors
-        )
+        assert not any("mutation error" in e for e in second._state.infra_errors)
 
     def test_skip_leaves_no_result_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
@@ -459,9 +441,7 @@ class TestCIMutationResultNotSticky:
         result_path = tmp_path / ".code-forge" / "mutation-result.json"
         assert not result_path.exists()
 
-    def test_prior_error_result_degrades_gracefully(
-        self, tmp_path, monkeypatch
-    ):
+    def test_prior_error_result_degrades_gracefully(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         _setup_gate_yaml(tmp_path)
         result_path = tmp_path / ".code-forge" / "mutation-result.json"
@@ -478,14 +458,10 @@ class TestCIMutationResultNotSticky:
 
         machine = self._machine(tmp_path)
         assert machine.run() == Verdict.PASS
-        assert any(
-            "mutation error: boom" in e for e in machine._state.infra_errors
-        )
+        assert any("mutation error: boom" in e for e in machine._state.infra_errors)
         assert not result_path.exists()
 
-    def test_unlink_failure_reports_remove_not_read(
-        self, tmp_path, monkeypatch
-    ):
+    def test_unlink_failure_reports_remove_not_read(self, tmp_path, monkeypatch):
         """A failed delete must be labeled as a delete failure, not
         folded into the JSON-read except clause's "failed to read"
         message -- the two are different problems for an operator to
@@ -516,9 +492,7 @@ class TestCIMutationResultNotSticky:
         assert any("failed to remove" in e for e in errors)
         assert not any("failed to read" in e for e in errors)
 
-    def test_missing_status_field_consumes_result_file(
-        self, tmp_path, monkeypatch
-    ):
+    def test_missing_status_field_consumes_result_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         _setup_gate_yaml(tmp_path)
         result_path = tmp_path / ".code-forge" / "mutation-result.json"
@@ -526,15 +500,10 @@ class TestCIMutationResultNotSticky:
 
         machine = self._machine(tmp_path)
         assert machine.run() == Verdict.PASS
-        assert any(
-            "missing status field" in e
-            for e in machine._state.infra_errors
-        )
+        assert any("missing status field" in e for e in machine._state.infra_errors)
         assert not result_path.exists()
 
-    def test_running_status_missing_pid_consumes_result_file(
-        self, tmp_path, monkeypatch
-    ):
+    def test_running_status_missing_pid_consumes_result_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         _setup_gate_yaml(tmp_path)
         result_path = tmp_path / ".code-forge" / "mutation-result.json"
@@ -550,9 +519,7 @@ class TestCIMutationResultNotSticky:
 
         machine = self._machine(tmp_path)
         assert machine.run() == Verdict.PASS
-        assert any(
-            "pid not set" in e for e in machine._state.infra_errors
-        )
+        assert any("pid not set" in e for e in machine._state.infra_errors)
         assert not result_path.exists()
 
     def test_non_dict_json_degrades_gracefully(self, tmp_path, monkeypatch):
@@ -565,14 +532,10 @@ class TestCIMutationResultNotSticky:
 
         machine = self._machine(tmp_path)
         assert machine.run() == Verdict.PASS
-        assert any(
-            "not a JSON object" in e for e in machine._state.infra_errors
-        )
+        assert any("not a JSON object" in e for e in machine._state.infra_errors)
         assert not result_path.exists()
 
-    def test_done_no_survivors_consumes_result_file(
-        self, tmp_path, monkeypatch
-    ):
+    def test_done_no_survivors_consumes_result_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         _setup_gate_yaml(tmp_path)
         result_path = tmp_path / ".code-forge" / "mutation-result.json"
@@ -617,9 +580,7 @@ class TestCISkipIsVisibleAsFinding:
     """
 
     def _skipped(self, machine):
-        return [
-            f for f in machine._state.findings if f.id == "MUTATION_SKIPPED"
-        ]
+        return [f for f in machine._state.findings if f.id == "MUTATION_SKIPPED"]
 
     def test_no_python_files_appends_dismissed_finding(self, tmp_path):
         # No shutil.which mock needed: `if py_files and ...` short-
@@ -654,9 +615,7 @@ class TestCISkipIsVisibleAsFinding:
         assert skipped[0].fingerprint == "mutation-no-python"
         assert skipped[0].disposition == Disposition.DISMISSED
 
-    def test_mutmut_absent_appends_dismissed_finding(
-        self, tmp_path, monkeypatch
-    ):
+    def test_mutmut_absent_appends_dismissed_finding(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         _setup_gate_yaml(tmp_path)
 
@@ -693,9 +652,7 @@ class TestBugInjectTeeth:
             return ([], [])
 
         def mock_l2_toothless(diff_files, baseline_cmd, *, baseline_timeout):
-            finding = _make_finding(
-                fp="mutant-toothless", source="MUTANT", disp=Disposition.CONFIRMED
-            )
+            finding = _make_finding(fp="mutant-toothless", source="MUTANT", disp=Disposition.CONFIRMED)
             return ([finding], [])
 
         machine = StateMachine(

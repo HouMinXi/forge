@@ -70,9 +70,7 @@ class TestDeterministicVerdict:
                 baseline_spec_repr="empty",
                 cwd=tmp_path,
                 registry={},
-                l0_runner=lambda r, f: (
-                    [_make_finding()], []
-                ),
+                l0_runner=lambda r, f: ([_make_finding()], []),
             )
             results.append(machine.run())
         assert all(v == Verdict.FAIL for v in results)

@@ -50,15 +50,11 @@ class TestBaselineSpecReprRoundTrip:
         assert loaded.baseline_spec_repr == "git:HEAD"
 
     def test_snapshot_repr_round_trips(self, tmp_path):
-        state = State(
-            baseline_spec_repr="snapshot:.code-forge/snapshots/abc123.json"
-        )
+        state = State(baseline_spec_repr="snapshot:.code-forge/snapshots/abc123.json")
         p = tmp_path / "state.json"
         save_state(state, p)
         loaded = load_state(p)
-        assert loaded.baseline_spec_repr == (
-            "snapshot:.code-forge/snapshots/abc123.json"
-        )
+        assert loaded.baseline_spec_repr == ("snapshot:.code-forge/snapshots/abc123.json")
 
 
 class TestRoundHistoryGrowth:
@@ -73,13 +69,15 @@ class TestRoundHistoryGrowth:
 
     def test_grows_on_append(self, tmp_path):
         state = State()
-        state.round_history.append({
-            "round": 0,
-            "l0_fingerprints": ["fp-1"],
-            "l1_fingerprints": [],
-            "dispositions": {"fp-1": "CONFIRMED"},
-            "fixed_fingerprints": [],
-        })
+        state.round_history.append(
+            {
+                "round": 0,
+                "l0_fingerprints": ["fp-1"],
+                "l1_fingerprints": [],
+                "dispositions": {"fp-1": "CONFIRMED"},
+                "fixed_fingerprints": [],
+            }
+        )
         p = tmp_path / "state.json"
         save_state(state, p)
         loaded = load_state(p)
@@ -89,13 +87,15 @@ class TestRoundHistoryGrowth:
     def test_multiple_rounds_preserved(self, tmp_path):
         state = State()
         for i in range(5):
-            state.round_history.append({
-                "round": i,
-                "l0_fingerprints": [],
-                "l1_fingerprints": [],
-                "dispositions": {},
-                "fixed_fingerprints": [],
-            })
+            state.round_history.append(
+                {
+                    "round": i,
+                    "l0_fingerprints": [],
+                    "l1_fingerprints": [],
+                    "dispositions": {},
+                    "fixed_fingerprints": [],
+                }
+            )
         p = tmp_path / "state.json"
         save_state(state, p)
         loaded = load_state(p)

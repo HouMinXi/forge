@@ -9,6 +9,7 @@ Tests cover:
   - No-contracts backward compatibility
   - Trust CLI (record, status, revoke) for contracts.yaml
 """
+
 from __future__ import annotations
 
 import json
@@ -16,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 
 @pytest.fixture(autouse=True)
 def _isolate_project_dir(monkeypatch):
@@ -26,7 +28,6 @@ def _isolate_project_dir(monkeypatch):
     here, not just the new walk-up ones.
     """
     monkeypatch.delenv("FORGE_PROJECT_DIR", raising=False)
-
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +57,12 @@ class TestOutletAContractSpec:
         captured_prompts = []
 
         fake_result = MagicMock()
-        fake_result.content = json.dumps({
-            "findings": [],
-            "code_excerpts": [
-                {"file": "foo.py", "start_line": 1, "end_line": 1, "content": "new"}
-            ],
-        })
+        fake_result.content = json.dumps(
+            {
+                "findings": [],
+                "code_excerpts": [{"file": "foo.py", "start_line": 1, "end_line": 1, "content": "new"}],
+            }
+        )
         fake_result.usage = MagicMock(input_tokens=10, output_tokens=5)
         fake_result.duration_s = 0.1
 
@@ -71,7 +72,9 @@ class TestOutletAContractSpec:
 
         with patch("code_forge.llm_invoke.llm_invoke", _capture_invoke):
             provider = build_l1_provider(
-                "auto", resolved, backend=None,
+                "auto",
+                resolved,
+                backend=None,
                 contract_spec=contract_text,
             )
             provider()
@@ -83,9 +86,7 @@ class TestOutletAContractSpec:
         # Design Intent must appear before Diff:
         cr_idx = prompt.index("## Design Intent")
         diff_idx = prompt.index("\nDiff:\n")
-        assert cr_idx < diff_idx, (
-            "## Design Intent must appear before Diff:"
-        )
+        assert cr_idx < diff_idx, "## Design Intent must appear before Diff:"
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,9 @@ class TestOutletCContractSpec:
 
         with patch("code_forge.llm_invoke.llm_invoke", _capture):
             spawn_fn = _make_subagent_spawn(
-                backend=None, conv_digest="", post_image="",
+                backend=None,
+                conv_digest="",
+                post_image="",
                 contract_spec=contract_text,
             )
             spawn_fn("qodo", "--- a/bar.py\n+++ b/bar.py\n@@ -1 +1 @@\n-x\n+y\n")
@@ -149,12 +152,12 @@ class TestNoContractsYaml:
         captured_prompts = []
 
         fake_result = MagicMock()
-        fake_result.content = json.dumps({
-            "findings": [],
-            "code_excerpts": [
-                {"file": "z.py", "start_line": 1, "end_line": 1, "content": "b"}
-            ],
-        })
+        fake_result.content = json.dumps(
+            {
+                "findings": [],
+                "code_excerpts": [{"file": "z.py", "start_line": 1, "end_line": 1, "content": "b"}],
+            }
+        )
         fake_result.usage = MagicMock(input_tokens=10, output_tokens=5)
         fake_result.duration_s = 0.1
 
@@ -164,7 +167,9 @@ class TestNoContractsYaml:
 
         with patch("code_forge.llm_invoke.llm_invoke", _capture):
             provider = build_l1_provider(
-                "auto", resolved, backend=None,
+                "auto",
+                resolved,
+                backend=None,
                 contract_spec="",
             )
             provider()
@@ -196,12 +201,12 @@ class TestPromptSectionOrder:
         captured_prompts = []
 
         fake_result = MagicMock()
-        fake_result.content = json.dumps({
-            "findings": [],
-            "code_excerpts": [
-                {"file": "f.py", "start_line": 1, "end_line": 1, "content": "new"}
-            ],
-        })
+        fake_result.content = json.dumps(
+            {
+                "findings": [],
+                "code_excerpts": [{"file": "f.py", "start_line": 1, "end_line": 1, "content": "new"}],
+            }
+        )
         fake_result.usage = MagicMock(input_tokens=10, output_tokens=5)
         fake_result.duration_s = 0.1
 
@@ -211,7 +216,9 @@ class TestPromptSectionOrder:
 
         with patch("code_forge.llm_invoke.llm_invoke", _capture):
             provider = build_l1_provider(
-                "auto", resolved, backend=None,
+                "auto",
+                resolved,
+                backend=None,
                 post_image="file content here",
                 conventions_digest="naming rules",
                 graph_impact_context="| Entity | File | Downstream | Deps |",
@@ -237,8 +244,7 @@ class TestPromptSectionOrder:
         di_idx = prompt.index("\nDiff:\n")
 
         assert pi_idx < cd_idx < br_idx < cr_idx < di_idx, (
-            "Section order must be: Post-Image < Conventions < "
-            "Blast Radius < Design Intent < Diff"
+            "Section order must be: Post-Image < Conventions < Blast Radius < Design Intent < Diff"
         )
 
 
@@ -285,8 +291,10 @@ class TestRunTrustRecordsContracts:
 
         args = SimpleNamespace(status=False, revoke=False)
 
-        with patch("code_forge.trust.record_trust") as mock_gate_trust, \
-             patch("code_forge.trust.record_trust_contracts") as mock_contracts_trust:
+        with (
+            patch("code_forge.trust.record_trust") as mock_gate_trust,
+            patch("code_forge.trust.record_trust_contracts") as mock_contracts_trust,
+        ):
             _run_trust(args, tmp_path)
 
         mock_gate_trust.assert_called_once()
@@ -327,18 +335,24 @@ class TestRunTrustStatusShowsContracts:
         (peer_dir / "api.yaml").write_text("endpoint: /status\n")
 
         gate_status = TrustStatus(
-            trusted=True, stored_hash="abc", current_hash="abc",
+            trusted=True,
+            stored_hash="abc",
+            current_hash="abc",
             gate_yaml_path=str(gate_path),
         )
         contracts_status = TrustStatus(
-            trusted=False, stored_hash=None, current_hash="def",
+            trusted=False,
+            stored_hash=None,
+            current_hash="def",
             gate_yaml_path=str(contracts_path),
         )
 
         args = SimpleNamespace(status=True, revoke=False)
 
-        with patch("code_forge.trust.trust_status", return_value=gate_status), \
-             patch("code_forge.trust.trust_status_contracts", return_value=contracts_status):
+        with (
+            patch("code_forge.trust.trust_status", return_value=gate_status),
+            patch("code_forge.trust.trust_status_contracts", return_value=contracts_status),
+        ):
             result = _run_trust(args, tmp_path)
 
         assert result == 0
@@ -377,8 +391,10 @@ class TestRunTrustRevokeCoversContracts:
 
         args = SimpleNamespace(status=False, revoke=True)
 
-        with patch("code_forge.trust.revoke_trust") as mock_revoke_gate, \
-             patch("code_forge.trust.revoke_trust_contracts") as mock_revoke_contracts:
+        with (
+            patch("code_forge.trust.revoke_trust") as mock_revoke_gate,
+            patch("code_forge.trust.revoke_trust_contracts") as mock_revoke_contracts,
+        ):
             result = _run_trust(args, tmp_path)
 
         assert result == 0

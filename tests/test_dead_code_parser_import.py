@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Parser-import failures stay separate from a missing optional pack."""
+
 from __future__ import annotations
 
 import pytest

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression checks for tests that run inside a mutation mirror."""
+
 from __future__ import annotations
 
 import os
@@ -17,7 +18,11 @@ def _pytest_from(root, *args):
     env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
     return subprocess.run(
         [sys.executable, "-m", "pytest", *args, "-q", "-p", "no:randomly"],
-        cwd=root, env=env, capture_output=True, text=True, timeout=60,
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
 
@@ -33,9 +38,7 @@ def test_mutation_unit_tests_ignore_invoking_repository_config(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "passed" in result.stdout
-    assert config.read_text(encoding="utf-8") == (
-        "test:\n  mutation_skip_globs: ['**']\n"
-    )
+    assert config.read_text(encoding="utf-8") == ("test:\n  mutation_skip_globs: ['**']\n")
 
 
 @pytest.mark.integration
@@ -55,7 +58,10 @@ def test_mutation_unit_tests_ignore_invoking_repository_config(tmp_path):
     ],
 )
 def test_checkout_scans_are_excluded_only_in_mutation_stage(
-    tmp_path, file, checkout_class, behavior_test,
+    tmp_path,
+    file,
+    checkout_class,
+    behavior_test,
 ):
     test_path = str(ROOT / "tests" / file)
     normal = _pytest_from(tmp_path, test_path, "--collect-only")
@@ -64,7 +70,10 @@ def test_checkout_scans_are_excluded_only_in_mutation_stage(
     assert behavior_test in normal.stdout
 
     mutation = _pytest_from(
-        tmp_path, test_path, "--collect-only", "-m",
+        tmp_path,
+        test_path,
+        "--collect-only",
+        "-m",
         "not integration and not source_scan",
     )
     assert mutation.returncode == 0, mutation.stdout + mutation.stderr

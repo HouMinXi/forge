@@ -13,12 +13,12 @@ from code_forge.lock import ForgeLockBusy
 class TestLockBusy:
     """SC-11: ForgeLockBusy -> exit 3."""
 
-    def test_lock_busy_returns_exit_busy(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_lock_busy_returns_exit_busy(self, tmp_path, monkeypatch, capsys):
         """ForgeLockBusy -> stderr message + exit 3."""
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(tmp_path))
 
@@ -26,9 +26,7 @@ class TestLockBusy:
         # at any point inside the pipeline).
         with patch(
             "code_forge.cli._run",
-            side_effect=ForgeLockBusy(
-                12345, tmp_path / ".code-forge" / "code-forge.lock"
-            ),
+            side_effect=ForgeLockBusy(12345, tmp_path / ".code-forge" / "code-forge.lock"),
         ):
             exit_code = main()
 
@@ -40,24 +38,29 @@ class TestLockBusy:
 class TestLockReleasedOnExit:
     """SC-10(c): lock released on terminal exit."""
 
-    def test_lock_released_after_run(
-        self, tmp_path, monkeypatch
-    ):
+    def test_lock_released_after_run(self, tmp_path, monkeypatch):
         """Lock file absent after successful run."""
         import subprocess
+
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(
-            ["git", "init"], cwd=str(repo),
-            capture_output=True, check=True,
+            ["git", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "test"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
@@ -65,18 +68,22 @@ class TestLockReleasedOnExit:
         (repo / "a.py").write_text("# initial\n")
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "--mode", "ci",
-             "--falsification-engine", "stub", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--mode", "ci", "--falsification-engine", "stub", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -95,24 +102,29 @@ class TestLockReleasedOnExit:
 class TestLockReleasedOnException:
     """SC-10(d): lock released on exception."""
 
-    def test_lock_released_on_exception(
-        self, tmp_path, monkeypatch
-    ):
+    def test_lock_released_on_exception(self, tmp_path, monkeypatch):
         """Exception mid-run -> lock released by __exit__."""
         import subprocess
+
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(
-            ["git", "init"], cwd=str(repo),
-            capture_output=True, check=True,
+            ["git", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "test"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         forge_dir = repo / ".code-forge"
         forge_dir.mkdir(parents=True, exist_ok=True)
@@ -120,18 +132,22 @@ class TestLockReleasedOnException:
         (repo / "a.py").write_text("# initial\n")
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "--mode", "ci",
-             "--falsification-engine", "stub", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--mode", "ci", "--falsification-engine", "stub", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -148,6 +164,7 @@ class TestLockReleasedOnException:
 
         # Exception caught by top-level handler -> EXIT_FAIL.
         from code_forge import EXIT_FAIL
+
         assert exit_code == EXIT_FAIL
 
         lock_path = forge_dir / "code-forge.lock"

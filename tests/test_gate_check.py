@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for the gate-check subcommand."""
+
 import json
 import tempfile
 from pathlib import Path
@@ -28,6 +29,7 @@ from code_forge.gate_check import (
 
 # --- Parse + Translate + FAIL-OPEN ---
 
+
 class TestLoadGateConfig:
     def test_valid_config(self):
         """Loads gate.yaml and returns dict."""
@@ -47,6 +49,7 @@ test:
 
     def test_missing_file_raises(self):
         """FileNotFoundError when file absent."""
+
         def raise_fnf(*args, **kwargs):
             raise FileNotFoundError("gate.yaml not found")
 
@@ -77,7 +80,6 @@ test:
         m_bool = mock_open(read_data=yaml_content_bool)
         with pytest.raises(ValueError, match="elements must be strings"):
             load_gate_config("gate.yaml", fs_open=m_bool)
-
 
     def test_missing_test_section_error_contains_snippet(self):
         """Error message includes a pasteable YAML snippet."""
@@ -180,11 +182,9 @@ class TestFailOpenGuard:
             # gate.yaml absent
 
             from io import StringIO
+
             stderr = StringIO()
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr
-            )
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=stderr)
             assert result == EXIT_FAIL
             assert "error" in stderr.getvalue().lower()
 
@@ -197,11 +197,9 @@ class TestFailOpenGuard:
             (forge_dir / "gate.yaml").write_text("{ invalid")
 
             from io import StringIO
+
             stderr = StringIO()
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr
-            )
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=stderr)
             assert result == EXIT_FAIL
 
     def test_unsafe_command_blocks(self):
@@ -219,11 +217,9 @@ class TestFailOpenGuard:
             (forge_dir / "gate.yaml").write_text(yaml.dump(config))
 
             from io import StringIO
+
             stderr = StringIO()
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr
-            )
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=stderr)
             assert result == EXIT_FAIL
 
     def test_never_returns_exit_2(self):
@@ -234,15 +230,14 @@ class TestFailOpenGuard:
             (cwd / ".code-forge").mkdir()
 
             from io import StringIO
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=StringIO()
-            )
+
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=StringIO())
             assert result != 2  # EXIT_CLI_ERROR
             assert result in (0, 1)  # Only PASS or FAIL
 
 
 # --- CI Detection ---
+
 
 class TestCIDetection:
     def test_forge_mode_ci(self):
@@ -287,6 +282,7 @@ class TestCIDetection:
 
 # --- Baseline Delta ---
 
+
 class TestBaselineDelta:
     def test_no_baseline_allows(self):
         """None baseline -> (False, []) -- allow (bootstrap)."""
@@ -297,20 +293,14 @@ class TestBaselineDelta:
 
     def test_known_failure_not_new(self):
         """Failure in baseline -> not new -> allow."""
-        baseline = {
-            "test_results": {
-                "tests/test_foo.py::test_bar": "failed"
-            }
-        }
+        baseline = {"test_results": {"tests/test_foo.py::test_bar": "failed"}}
         test_output = "FAILED tests/test_foo.py::test_bar\n"
         should_block, failures = compute_baseline_delta(test_output, baseline)
         assert should_block is False
 
     def test_new_failure_blocks(self):
         """Failure not in baseline -> NEW -> BLOCK."""
-        baseline = {
-            "test_results": {}
-        }
+        baseline = {"test_results": {}}
         test_output = "FAILED tests/test_foo.py::test_new\n"
         should_block, failures = compute_baseline_delta(test_output, baseline)
         assert should_block is True
@@ -318,20 +308,14 @@ class TestBaselineDelta:
 
     def test_new_test_passes_ok(self):
         """Test not in baseline, passes -> not a failure -> allow."""
-        baseline = {
-            "test_results": {}
-        }
+        baseline = {"test_results": {}}
         test_output = "PASSED tests/test_foo.py::test_new\n"
         should_block, failures = compute_baseline_delta(test_output, baseline)
         assert should_block is False
 
     def test_previously_passing_now_fails(self):
         """Regression: was passing, now fails -> NEW -> BLOCK."""
-        baseline = {
-            "test_results": {
-                "tests/test_foo.py::test_bar": "passed"
-            }
-        }
+        baseline = {"test_results": {"tests/test_foo.py::test_bar": "passed"}}
         test_output = "FAILED tests/test_foo.py::test_bar\n"
         should_block, failures = compute_baseline_delta(test_output, baseline)
         assert should_block is True
@@ -340,13 +324,14 @@ class TestBaselineDelta:
 
 # --- Source Pattern Matching ---
 
+
 class TestSourcePatterns:
     def test_py_file_matches(self):
-        """"foo.py" matches ["*.py"]."""
+        """\"foo.py" matches ["*.py"]."""
         assert match_source_patterns(["foo.py"], ["*.py"]) is True
 
     def test_md_file_no_match(self):
-        """"README.md" does not match ["*.py"]."""
+        """\"README.md" does not match ["*.py"]."""
         assert match_source_patterns(["README.md"], ["*.py"]) is False
 
     def test_empty_patterns_matches_all(self):
@@ -361,6 +346,7 @@ class TestSourcePatterns:
 
 
 # Integration Tests
+
 
 class TestGateCheckIntegration:
     """End-to-end tests for run_gate_check."""
@@ -380,13 +366,14 @@ class TestGateCheckIntegration:
             (forge_dir / "gate.yaml").write_text(yaml.dump(config))
 
             from io import StringIO
+
             stderr = StringIO()
             result = run_gate_check(
                 args=None,
                 env={"FORGE_SKIP_TESTS": "1"},  # No CI vars
                 cwd=cwd,
                 stdout=StringIO(),
-                stderr=stderr
+                stderr=stderr,
             )
             assert result == EXIT_PASS
             assert "FORGE_SKIP_TESTS" in stderr.getvalue()
@@ -394,6 +381,7 @@ class TestGateCheckIntegration:
     def test_quiet_flag_suppresses_warnings(self):
         """args.quiet=True suppresses warning messages."""
         import types
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cwd = Path(tmpdir)
             forge_dir = cwd / ".code-forge"
@@ -408,6 +396,7 @@ class TestGateCheckIntegration:
 
             args = types.SimpleNamespace(quiet=True)
             from io import StringIO
+
             stderr = StringIO()
             result = run_gate_check(
                 args=args,
@@ -443,6 +432,7 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
+
             stderr = StringIO()
             result = run_gate_check(
                 args=None,
@@ -480,10 +470,8 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=StringIO()
-            )
+
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=StringIO())
             assert result == EXIT_PASS
 
     @patch("code_forge.gate_check.subprocess.run")
@@ -502,10 +490,7 @@ class TestGateCheckIntegration:
             (forge_dir / "gate.yaml").write_text(yaml.dump(config))
 
             # Empty baseline (all failures are new)
-            baseline = {
-                "schema_version": "1.0",
-                "test_results": {}
-            }
+            baseline = {"schema_version": "1.0", "test_results": {}}
             (forge_dir / "test_baseline.json").write_text(json.dumps(baseline))
 
             # Mock subprocess
@@ -513,20 +498,14 @@ class TestGateCheckIntegration:
                 if args[0][0] == "git":
                     return Mock(returncode=0, stdout="foo.py\n", stderr="")
                 # Test command fails
-                return Mock(
-                    returncode=1,
-                    stdout="FAILED tests/test_foo.py::test_bar\n",
-                    stderr=""
-                )
+                return Mock(returncode=1, stdout="FAILED tests/test_foo.py::test_bar\n", stderr="")
 
             mock_run.side_effect = side_effect
 
             from io import StringIO
+
             stderr = StringIO()
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr
-            )
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=stderr)
             assert result == EXIT_FAIL
             assert "NEW test failures" in stderr.getvalue()
 
@@ -557,10 +536,14 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
+
             stderr = StringIO()
             result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr,
+                args=None,
+                env={},
+                cwd=cwd,
+                stdout=StringIO(),
+                stderr=stderr,
             )
             assert result == EXIT_FAIL
             assert "no baseline established" in stderr.getvalue()
@@ -592,12 +575,14 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
+
             stderr = StringIO()
             result = run_gate_check(
                 args=None,
                 env={"FORGE_ALLOW_NO_BASELINE": "1"},
                 cwd=cwd,
-                stdout=StringIO(), stderr=stderr,
+                stdout=StringIO(),
+                stderr=stderr,
             )
             assert result == EXIT_PASS
             assert "no baseline" in stderr.getvalue()
@@ -620,13 +605,9 @@ class TestGateCheckIntegration:
             # Permissive baseline: known failure listed as failed
             baseline = {
                 "schema_version": "1.0",
-                "test_results": {
-                    "tests/test_foo.py::test_bar": "failed"
-                }
+                "test_results": {"tests/test_foo.py::test_bar": "failed"},
             }
-            (forge_dir / "test_baseline.json").write_text(
-                json.dumps(baseline)
-            )
+            (forge_dir / "test_baseline.json").write_text(json.dumps(baseline))
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
@@ -637,14 +618,9 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=StringIO()
-            )
-            assert result == EXIT_FAIL, (
-                "exit 4 must BLOCK (1) regardless of baseline, got %d"
-                % result
-            )
+
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=StringIO())
+            assert result == EXIT_FAIL, "exit 4 must BLOCK (1) regardless of baseline, got %d" % result
 
     @patch("code_forge.gate_check.subprocess.run")
     def test_exit_5_blocks_regardless_of_baseline(self, mock_run):
@@ -662,13 +638,8 @@ class TestGateCheckIntegration:
             (forge_dir / "gate.yaml").write_text(yaml.dump(config))
 
             # Empty baseline: no known failures, so vacuous delta would PASS
-            baseline = {
-                "schema_version": "1.0",
-                "test_results": {}
-            }
-            (forge_dir / "test_baseline.json").write_text(
-                json.dumps(baseline)
-            )
+            baseline = {"schema_version": "1.0", "test_results": {}}
+            (forge_dir / "test_baseline.json").write_text(json.dumps(baseline))
 
             def side_effect(*args, **kwargs):
                 if args[0][0] == "git":
@@ -679,15 +650,9 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=StringIO()
-            )
-            assert result == EXIT_FAIL, (
-                "exit 5 must BLOCK (1) regardless of baseline, got %d"
-                % result
-            )
 
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=StringIO())
+            assert result == EXIT_FAIL, "exit 5 must BLOCK (1) regardless of baseline, got %d" % result
 
     @patch("code_forge.gate_check.subprocess.run")
     def test_git_not_found_blocks(self, mock_run):
@@ -712,10 +677,14 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
+
             stderr = StringIO()
             result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr,
+                args=None,
+                env={},
+                cwd=cwd,
+                stdout=StringIO(),
+                stderr=stderr,
             )
             assert result == EXIT_FAIL
             assert "error" in stderr.getvalue().lower()
@@ -744,16 +713,21 @@ class TestGateCheckIntegration:
             mock_run.side_effect = side_effect
 
             from io import StringIO
+
             stderr = StringIO()
             result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr,
+                args=None,
+                env={},
+                cwd=cwd,
+                stdout=StringIO(),
+                stderr=stderr,
             )
             assert result == EXIT_FAIL
             assert "error" in stderr.getvalue().lower()
 
 
 # --- Bug-inject tests ---
+
 
 class TestBugInjectExitTranslation:
     """Break exit-code translation, verify tests catch it."""
@@ -763,9 +737,7 @@ class TestBugInjectExitTranslation:
         from code_forge.gate_check import translate_exit_code
 
         for code in [1, 4, 5, 99]:
-            assert translate_exit_code(code) == 1, (
-                "exit %d should BLOCK (1)" % code
-            )
+            assert translate_exit_code(code) == 1, "exit %d should BLOCK (1)" % code
 
 
 class TestBugInjectFailOpen:
@@ -781,13 +753,8 @@ class TestBugInjectFailOpen:
             (cwd / ".code-forge" / "gate.yaml").write_text("{{invalid yaml")
 
             stderr = StringIO()
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr
-            )
-            assert result == EXIT_FAIL, (
-                "config parse error must BLOCK (1), got %d" % result
-            )
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=stderr)
+            assert result == EXIT_FAIL, "config parse error must BLOCK (1), got %d" % result
 
     def test_missing_config_must_block(self):
         """If gate.yaml is missing, the gate must block."""
@@ -797,13 +764,8 @@ class TestBugInjectFailOpen:
             cwd = Path(cwd)
 
             stderr = StringIO()
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr
-            )
-            assert result == EXIT_FAIL, (
-                "missing gate.yaml must BLOCK (1), got %d" % result
-            )
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=stderr)
+            assert result == EXIT_FAIL, "missing gate.yaml must BLOCK (1), got %d" % result
 
     def test_unsafe_command_must_block(self):
         """If test.command has shell metacharacters, gate blocks."""
@@ -813,20 +775,12 @@ class TestBugInjectFailOpen:
             cwd = Path(cwd)
             (cwd / ".code-forge").mkdir()
             (cwd / ".code-forge" / "gate.yaml").write_text(
-                "---\ntest:\n"
-                "  command: ['sh', '-c', 'rm -rf /']\n"
-                "  timeout_seconds: 10\n"
-                "  cwd: '.'\n"
+                "---\ntest:\n  command: ['sh', '-c', 'rm -rf /']\n  timeout_seconds: 10\n  cwd: '.'\n"
             )
 
             stderr = StringIO()
-            result = run_gate_check(
-                args=None, env={}, cwd=cwd,
-                stdout=StringIO(), stderr=stderr
-            )
-            assert result == EXIT_FAIL, (
-                "unsafe command must BLOCK (1), got %d" % result
-            )
+            result = run_gate_check(args=None, env={}, cwd=cwd, stdout=StringIO(), stderr=stderr)
+            assert result == EXIT_FAIL, "unsafe command must BLOCK (1), got %d" % result
 
 
 # --- Presubmit Schema Validation ---
@@ -1289,15 +1243,17 @@ daemon_state:
         from code_forge.gate_check import validate_daemon_state
 
         with pytest.raises(ValueError, match="mutates"):
-            validate_daemon_state({
-                "conflicts": [
-                    {
-                        "subsystem": "killswitch",
-                        "interferes_with": "health check",
-                        # missing "mutates"
-                    },
-                ],
-            })
+            validate_daemon_state(
+                {
+                    "conflicts": [
+                        {
+                            "subsystem": "killswitch",
+                            "interferes_with": "health check",
+                            # missing "mutates"
+                        },
+                    ],
+                }
+            )
 
     def test_daemon_state_conflicts_file_string(self):
         """conflicts_file not string raises ValueError."""

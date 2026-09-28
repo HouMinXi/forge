@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for user_config shared module and cli._merge_user_into."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -75,13 +76,22 @@ class TestMergeUserInto:
         from code_forge.cli import _merge_user_into
 
         proj_cfg = BackendConfig(
-            name="proj", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="proj",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
-        user_raw = {"user-back": {
-            "type": "api", "model": "u", "format": "openai",
-            "base_url": "http://y", "api_key_env": "UK",
-        }}
+        user_raw = {
+            "user-back": {
+                "type": "api",
+                "model": "u",
+                "format": "openai",
+                "base_url": "http://y",
+                "api_key_env": "UK",
+            }
+        }
         gate_data = {"backends": {"proj": {"type": "api"}}}
 
         with patch("code_forge.user_config.load_user_backends", return_value=user_raw):
@@ -95,13 +105,22 @@ class TestMergeUserInto:
         from code_forge.cli import _merge_user_into
 
         proj_cfg = BackendConfig(
-            name="shared", type="api", model="proj-model", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="shared",
+            type="api",
+            model="proj-model",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
-        user_raw = {"shared": {
-            "type": "api", "model": "user-model", "format": "openai",
-            "base_url": "http://y", "api_key_env": "UK",
-        }}
+        user_raw = {
+            "shared": {
+                "type": "api",
+                "model": "user-model",
+                "format": "openai",
+                "base_url": "http://y",
+                "api_key_env": "UK",
+            }
+        }
         gate_data = {"backends": {"shared": {"type": "api"}}}
 
         with patch("code_forge.user_config.load_user_backends", return_value=user_raw):
@@ -115,8 +134,12 @@ class TestMergeUserInto:
         from code_forge.cli import _merge_user_into
 
         proj_cfg = BackendConfig(
-            name="p", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="p",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
         with patch("code_forge.user_config.load_user_backends", return_value={}):
             result = _merge_user_into([proj_cfg], {"backends": {"p": {}}})
@@ -129,8 +152,12 @@ class TestMergeUserInto:
         from code_forge.cli import _merge_user_into
 
         proj_cfg = BackendConfig(
-            name="p", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="p",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
         # "bad" entry has no type field -- load_backend_configs will raise
         user_raw = {"bad": {"not_a_valid": "config"}}
@@ -149,13 +176,22 @@ class TestMergeUserInto:
         from code_forge.cli import _merge_user_into
 
         proj_cfg = BackendConfig(
-            name="p", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="p",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
-        user_raw = {"user-back": {
-            "type": "api", "model": "u", "format": "openai",
-            "base_url": "http://y", "api_key_env": "UK",
-        }}
+        user_raw = {
+            "user-back": {
+                "type": "api",
+                "model": "u",
+                "format": "openai",
+                "base_url": "http://y",
+                "api_key_env": "UK",
+            }
+        }
         # backends is a list, not a dict -- triggers :166 guard
         gate_data = {"backends": ["not", "a", "dict"]}
 
@@ -172,12 +208,20 @@ class TestMergeUserInto:
         from code_forge.cli import probe_backend_with_fallback
 
         user_cfg = BackendConfig(
-            name="stray", type="api", model="u", format="openai",
-            base_url="http://bad", api_key_env="MISSING",
+            name="stray",
+            type="api",
+            model="u",
+            format="openai",
+            base_url="http://bad",
+            api_key_env="MISSING",
         )
         proj_cfg = BackendConfig(
-            name="proj", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="proj",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
 
         def probe_results(backend, env=None):
@@ -185,10 +229,11 @@ class TestMergeUserInto:
                 return ProbeResult(ok=False, error="unreachable")
             return ProbeResult(ok=True)
 
-        with patch("code_forge.backend.probe_backend",
-                   side_effect=probe_results) as probe_spy:
+        with patch("code_forge.backend.probe_backend", side_effect=probe_results) as probe_spy:
             result = probe_backend_with_fallback(
-                user_cfg, [proj_cfg], project_names={"proj"},
+                user_cfg,
+                [proj_cfg],
+                project_names={"proj"},
             )
 
         assert result.ok
@@ -201,12 +246,20 @@ class TestMergeUserInto:
         from code_forge.cli import probe_backend_with_fallback
 
         proj_cfg = BackendConfig(
-            name="proj", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="proj",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
         other_cfg = BackendConfig(
-            name="other", type="api", model="o", format="openai",
-            base_url="http://y", api_key_env="K2",
+            name="other",
+            type="api",
+            model="o",
+            format="openai",
+            base_url="http://y",
+            api_key_env="K2",
         )
 
         def probe_results(backend, env=None):
@@ -214,10 +267,10 @@ class TestMergeUserInto:
                 return ProbeResult(ok=False, error="unreachable")
             return ProbeResult(ok=True)
 
-        with patch("code_forge.backend.probe_backend",
-                   side_effect=probe_results) as probe_spy:
+        with patch("code_forge.backend.probe_backend", side_effect=probe_results) as probe_spy:
             result = probe_backend_with_fallback(
-                proj_cfg, [proj_cfg, other_cfg],
+                proj_cfg,
+                [proj_cfg, other_cfg],
                 project_names={"proj", "other"},
             )
 
@@ -231,23 +284,33 @@ class TestMergeUserInto:
         from code_forge.cli import probe_backend_with_fallback
 
         user_cfg = BackendConfig(
-            name="stray", type="api", model="u", format="openai",
-            base_url="http://bad", api_key_env="MISSING",
+            name="stray",
+            type="api",
+            model="u",
+            format="openai",
+            base_url="http://bad",
+            api_key_env="MISSING",
         )
         proj_cfg = BackendConfig(
-            name="proj", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="proj",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
 
         def probe_results(backend, env=None):
             return ProbeResult(
-                ok=False, error="down: %s" % backend.name,
+                ok=False,
+                error="down: %s" % backend.name,
             )
 
-        with patch("code_forge.backend.probe_backend",
-                   side_effect=probe_results):
+        with patch("code_forge.backend.probe_backend", side_effect=probe_results):
             result = probe_backend_with_fallback(
-                user_cfg, [proj_cfg], project_names={"proj"},
+                user_cfg,
+                [proj_cfg],
+                project_names={"proj"},
             )
 
         assert not result.ok
@@ -259,14 +322,21 @@ class TestMergeUserInto:
         from code_forge.cli import probe_backend_with_fallback
 
         user_cfg = BackendConfig(
-            name="stray", type="api", model="u", format="openai",
-            base_url="http://bad", api_key_env="MISSING",
+            name="stray",
+            type="api",
+            model="u",
+            format="openai",
+            base_url="http://bad",
+            api_key_env="MISSING",
         )
 
-        with patch("code_forge.backend.probe_backend",
-                   return_value=ProbeResult(ok=False, error="down")) as probe_spy:
+        with patch(
+            "code_forge.backend.probe_backend", return_value=ProbeResult(ok=False, error="down")
+        ) as probe_spy:
             result = probe_backend_with_fallback(
-                user_cfg, [], project_names=set(),
+                user_cfg,
+                [],
+                project_names=set(),
             )
 
         assert not result.ok
@@ -280,12 +350,20 @@ class TestMergeUserInto:
         from code_forge.cli import resolve_backend_with_fallback
 
         user_cfg = BackendConfig(
-            name="stray", type="api", model="u", format="openai",
-            base_url="http://bad", api_key_env="MISSING",
+            name="stray",
+            type="api",
+            model="u",
+            format="openai",
+            base_url="http://bad",
+            api_key_env="MISSING",
         )
         proj_cfg = BackendConfig(
-            name="proj", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="proj",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
 
         def probe_results(backend, env=None):
@@ -293,10 +371,11 @@ class TestMergeUserInto:
                 return ProbeResult(ok=False, error="unreachable")
             return ProbeResult(ok=True)
 
-        with patch("code_forge.backend.probe_backend",
-                   side_effect=probe_results):
+        with patch("code_forge.backend.probe_backend", side_effect=probe_results):
             chosen = resolve_backend_with_fallback(
-                user_cfg, [proj_cfg], project_names={"proj"},
+                user_cfg,
+                [proj_cfg],
+                project_names={"proj"},
             )
 
         assert chosen is proj_cfg
@@ -308,18 +387,26 @@ class TestMergeUserInto:
         from code_forge.cli import resolve_backend_with_fallback
 
         proj_cfg = BackendConfig(
-            name="proj", type="api", model="m", format="openai",
-            base_url="http://x", api_key_env="K",
+            name="proj",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
         )
         other_cfg = BackendConfig(
-            name="other", type="api", model="o", format="openai",
-            base_url="http://y", api_key_env="K2",
+            name="other",
+            type="api",
+            model="o",
+            format="openai",
+            base_url="http://y",
+            api_key_env="K2",
         )
 
-        with patch("code_forge.backend.probe_backend",
-                   return_value=ProbeResult(ok=False, error="down")):
+        with patch("code_forge.backend.probe_backend", return_value=ProbeResult(ok=False, error="down")):
             chosen = resolve_backend_with_fallback(
-                proj_cfg, [proj_cfg, other_cfg],
+                proj_cfg,
+                [proj_cfg, other_cfg],
                 project_names={"proj", "other"},
             )
 
@@ -346,7 +433,8 @@ def test_bad_user_config_is_empty(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
     path.write_text("backends: [\n", encoding="utf-8")
     monkeypatch.setattr(
-        "code_forge.user_config.user_config_path", lambda: path,
+        "code_forge.user_config.user_config_path",
+        lambda: path,
     )
     assert load_user_backends() == {}
     assert load_user_retry() == {}
@@ -356,7 +444,8 @@ def test_bad_bytes_in_user_config_are_empty(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
     path.write_bytes(b"\xff")
     monkeypatch.setattr(
-        "code_forge.user_config.user_config_path", lambda: path,
+        "code_forge.user_config.user_config_path",
+        lambda: path,
     )
     assert load_user_backends() == {}
     assert load_user_retry() == {}
@@ -365,7 +454,8 @@ def test_bad_bytes_in_user_config_are_empty(tmp_path, monkeypatch):
 def test_missing_user_config_file_is_empty(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
     monkeypatch.setattr(
-        "code_forge.user_config.user_config_path", lambda: path,
+        "code_forge.user_config.user_config_path",
+        lambda: path,
     )
     assert load_user_backends() == {}
     assert load_user_retry() == {}

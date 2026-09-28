@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for the doctor tool-audit check."""
+
 from __future__ import annotations
 
 import inspect
@@ -28,7 +29,8 @@ _FIXTURE_TEMPLATE = textwrap.dedent("""\
 
 
 def _write_tools_yaml(
-    ws: Path, name: str = "testtool",
+    ws: Path,
+    name: str = "testtool",
     command: str = "python3",
 ) -> Path:
     """Write a minimal valid tools.yaml and return its path."""
@@ -40,6 +42,7 @@ def _write_tools_yaml(
 
 
 # -- Unit tests ------------------------------------------------------------
+
 
 class TestAuditTools:
     """Unit tests for _audit_tools."""
@@ -56,7 +59,8 @@ class TestAuditTools:
     def test_fail_when_not_installed(self, tmp_path):
         """Test 2: capture_tool_version returns not_installed -> FAIL."""
         _write_tools_yaml(
-            tmp_path, name="missing",
+            tmp_path,
+            name="missing",
             command="nonexistent-binary-xyz",
         )
         results = _audit_tools(tmp_path)
@@ -69,12 +73,15 @@ class TestAuditTools:
     def test_pass_when_unknown(self, tmp_path):
         """Test 3: capture_tool_version returns unknown -> PASS."""
         _write_tools_yaml(tmp_path, command="python3")
-        with patch(
-            "code_forge.runner._resolve_command",
-            return_value="/usr/bin/python3",
-        ), patch(
-            "code_forge.runner.subprocess.run",
-            side_effect=TimeoutExpired(cmd="python3", timeout=5),
+        with (
+            patch(
+                "code_forge.runner._resolve_command",
+                return_value="/usr/bin/python3",
+            ),
+            patch(
+                "code_forge.runner.subprocess.run",
+                side_effect=TimeoutExpired(cmd="python3", timeout=5),
+            ),
         ):
             results = _audit_tools(tmp_path)
         assert len(results) == 1
@@ -87,11 +94,11 @@ class TestAuditTools:
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
         script = scripts_dir / "checkpatch.pl"
-        script.write_text("#!/bin/sh\necho \"1.0.0\"\n")
-        script.chmod(script.stat().st_mode
-                      | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        script.write_text('#!/bin/sh\necho "1.0.0"\n')
+        script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         _write_tools_yaml(
-            tmp_path, name="checkpatch",
+            tmp_path,
+            name="checkpatch",
             command="scripts/checkpatch.pl",
         )
         # Drive from pytest's default CWD -- the audit's own chdir
@@ -187,6 +194,7 @@ class TestAuditTools:
 
 # -- Integration test ------------------------------------------------------
 
+
 class TestDoctorIntegration:
     """Integration test: run_doctor catches missing tool."""
 
@@ -195,7 +203,8 @@ class TestDoctorIntegration:
         ws = tmp_path / "project"
         gate_dir = ws / ".code-forge"
         gate_dir.mkdir(parents=True)
-        (gate_dir / "gate.yaml").write_text(textwrap.dedent("""\
+        (gate_dir / "gate.yaml").write_text(
+            textwrap.dedent("""\
             backends:
               demo:
                 type: api
@@ -204,21 +213,24 @@ class TestDoctorIntegration:
                 base_url: https://api.example.com/v1
                 api_key_env: DEMO_API_KEY
             outlet: subprocess
-        """))
-        (gate_dir / "tools.yaml").write_text(textwrap.dedent("""\
+        """)
+        )
+        (gate_dir / "tools.yaml").write_text(
+            textwrap.dedent("""\
             tools:
               bad-tool:
                 command: nonexistent-binary-xyz
                 output_format: grep_line
                 file_patterns: ["*.py"]
-        """))
+        """)
+        )
         env = {"DEMO_API_KEY": "dummy-key-for-probe"}
 
-        with patch("code_forge.doctor._check_handshake",
-                    return_value=(True, "code-forge-mcp")), \
-             patch("code_forge.doctor._check_registries",
-                    return_value=[("Claude Code", "PRESENT")]), \
-             patch("code_forge.trust.trust_status") as mt:
+        with (
+            patch("code_forge.doctor._check_handshake", return_value=(True, "code-forge-mcp")),
+            patch("code_forge.doctor._check_registries", return_value=[("Claude Code", "PRESENT")]),
+            patch("code_forge.trust.trust_status") as mt,
+        ):
             mt.return_value = MagicMock(trusted=True)
             rc = run_doctor(cwd=ws, env=env)
 
@@ -236,6 +248,7 @@ class TestAuditPythonDeps:
     @staticmethod
     def _md(requires, versions):
         """Patch the metadata calls the audit actually makes."""
+
         def _version(name):
             if name not in versions:
                 raise _RealPackageNotFound(name)
@@ -248,29 +261,29 @@ class TestAuditPythonDeps:
         )
 
     def test_version_below_floor_is_reported(self):
-        with self._md(['mutmut<4.0,>=3.3; extra == "dev"'],
-                      {"mutmut": "2.5.1"}):
+        with self._md(['mutmut<4.0,>=3.3; extra == "dev"'], {"mutmut": "2.5.1"}):
             results = _audit_python_deps(extras=("dev",))
         assert results == [(False, "mutmut: 2.5.1 installed, want <4.0,>=3.3")]
 
     def test_version_within_range_passes(self):
-        with self._md(['mutmut<4.0,>=3.3; extra == "dev"'],
-                      {"mutmut": "3.7.0"}):
+        with self._md(['mutmut<4.0,>=3.3; extra == "dev"'], {"mutmut": "3.7.0"}):
             results = _audit_python_deps(extras=("dev",))
         assert results == [(True, "mutmut: 3.7.0")]
 
     def test_missing_package_not_on_path_fails(self):
-        with self._md(['pytest-asyncio>=1.0; extra == "dev"'], {}), \
-                patch("code_forge.doctor.shutil.which", return_value=None):
+        with (
+            self._md(['pytest-asyncio>=1.0; extra == "dev"'], {}),
+            patch("code_forge.doctor.shutil.which", return_value=None),
+        ):
             results = _audit_python_deps(extras=("dev",))
-        assert results == [
-            (False, "pytest-asyncio: not installed (want >=1.0)")]
+        assert results == [(False, "pytest-asyncio: not installed (want >=1.0)")]
 
     def test_missing_package_on_path_skips(self):
         """semgrep is shelled out to, so a PATH install is enough."""
-        with self._md(['semgrep>=1.176,<1.177; extra == "semgrep"'], {}), \
-                patch("code_forge.doctor.shutil.which",
-                      return_value="/usr/bin/semgrep"):
+        with (
+            self._md(['semgrep>=1.176,<1.177; extra == "semgrep"'], {}),
+            patch("code_forge.doctor.shutil.which", return_value="/usr/bin/semgrep"),
+        ):
             results = _audit_python_deps(extras=("semgrep",))
         assert results == [(None, "semgrep: on PATH, version unchecked")]
 
@@ -324,16 +337,17 @@ class TestAuditPythonDeps:
         proves nothing -- treating it as satisfied hides the exact silent
         breakage this audit exists to catch.
         """
-        with self._md(['mcp<2,>=1.27; extra == "mcp"'], {}), \
-             patch("code_forge.doctor.shutil.which",
-                   return_value="/some/other/venv/bin/mcp"):
+        with (
+            self._md(['mcp<2,>=1.27; extra == "mcp"'], {}),
+            patch("code_forge.doctor.shutil.which", return_value="/some/other/venv/bin/mcp"),
+        ):
             results = _audit_python_deps(extras=("mcp",))
         assert results == [(False, "mcp: not installed (want <2,>=1.27)")]
 
     def test_broken_metadata_is_reported_not_raised(self):
         """A diagnostic that crashes tells the user less than one that
         names the spec it could not read."""
-        with self._md(['this is not a requirement!!'], {}):
+        with self._md(["this is not a requirement!!"], {}):
             results = _audit_python_deps(extras=("mcp",))
         assert len(results) == 1
         ok, msg = results[0]

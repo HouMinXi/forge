@@ -30,16 +30,22 @@ def test_three_passing_runs_report_passed(monkeypatch):
 
     def fake_run(*_a, **_k):
         calls["n"] += 1
+
         class R:
             returncode = 0
             stdout = ""
             stderr = ""
+
         return R()
 
     monkeypatch.setattr("code_forge.baseline_guard.subprocess.run", fake_run)
     from code_forge.baseline_guard import _run_baseline_guard
+
     status, findings, errors = _run_baseline_guard(
-        ["python3", "-m", "pytest"], {}, "/repo", allow_strip_retry=False,
+        ["python3", "-m", "pytest"],
+        {},
+        "/repo",
+        allow_strip_retry=False,
     )
     assert status == "passed"
     assert findings == [] and errors == []

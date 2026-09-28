@@ -1,4 +1,5 @@
 """Tests for reviewer_json fence stripping and schema validation."""
+
 import json
 
 import pytest
@@ -80,9 +81,7 @@ class TestSchemaFailClosed:
             validate_reviewer_json("no json here")
 
     @pytest.mark.parametrize("value", [5, [1, 2], None])
-    def test_non_string_input_raises_value_error_not_attribute_error(
-        self, value
-    ):
+    def test_non_string_input_raises_value_error_not_attribute_error(self, value):
         """The fence helper runs before json.loads; a non-string must
         still fail as ValueError, not crash on .strip()."""
         with pytest.raises(ValueError, match="not valid JSON"):
@@ -125,8 +124,7 @@ class TestReviewJsonContract:
 
 
 def _rj_exc(**kw):
-    base = {"file": "a.py", "start_line": 1, "end_line": 2,
-            "content": "x = 1\ny = 2"}
+    base = {"file": "a.py", "start_line": 1, "end_line": 2, "content": "x = 1\ny = 2"}
     base.update(kw)
     return base
 
@@ -177,14 +175,12 @@ class TestProducerEvidenceShapeRed:
             validate_reviewer_json(data)
 
     def test_zero_start_line_rejected(self):
-        data = _rj_data([_rj_exc(start_line=0, end_line=0,
-                                 content="x = 1")])
+        data = _rj_data([_rj_exc(start_line=0, end_line=0, content="x = 1")])
         with pytest.raises(ValueError):
             validate_reviewer_json(data)
 
     def test_negative_start_line_rejected(self):
-        data = _rj_data([_rj_exc(start_line=-1, end_line=1,
-                                 content="l-1\nl0\nl1")])
+        data = _rj_data([_rj_exc(start_line=-1, end_line=1, content="l-1\nl0\nl1")])
         with pytest.raises(ValueError):
             validate_reviewer_json(data)
 
@@ -452,13 +448,15 @@ class TestNestedFindingExcerpts:
         characters onto the root list. Only a non-empty list counts.
         """
         data = {
-            "findings": [{
-                "file": "a.py",
-                "line": 1,
-                "severity": "P3",
-                "description": "x",
-                "code_excerpts": "not-a-list",
-            }],
+            "findings": [
+                {
+                    "file": "a.py",
+                    "line": 1,
+                    "severity": "P3",
+                    "description": "x",
+                    "code_excerpts": "not-a-list",
+                }
+            ],
         }
         _hoist_nested_excerpts(data)
         assert "code_excerpts" not in data
@@ -518,12 +516,18 @@ class TestOneEmptyExcerptIsSkipped:
 
     def test_seventh_empty_excerpt_is_dropped(self):
         from code_forge.reviewer_json import validate_reviewer_json
+
         excerpts = [self._exc("line %d" % i, i) for i in range(1, 8)]
         excerpts[6]["content"] = ""
         data = {
-            "findings": [{
-                "file": "a.ts", "line": 1, "severity": "P2", "description": "kept",
-            }],
+            "findings": [
+                {
+                    "file": "a.ts",
+                    "line": 1,
+                    "severity": "P2",
+                    "description": "kept",
+                }
+            ],
             "code_excerpts": excerpts,
         }
         out = validate_reviewer_json(data)
@@ -534,11 +538,14 @@ class TestOneEmptyExcerptIsSkipped:
     def test_only_empty_excerpts_and_no_findings_still_fail(self):
         from code_forge.reviewer_json import ExcerptEvidenceError, validate_reviewer_json
         import pytest
+
         with pytest.raises(ExcerptEvidenceError):
-            validate_reviewer_json({
-                "findings": [],
-                "code_excerpts": [self._exc("", 1)],
-            })
+            validate_reviewer_json(
+                {
+                    "findings": [],
+                    "code_excerpts": [self._exc("", 1)],
+                }
+            )
 
 
 def test_a_positive_comment_is_not_a_finding():
@@ -546,20 +553,30 @@ def test_a_positive_comment_is_not_a_finding():
     the clean count and stops an unattended review."""
     from code_forge.reviewer_json import _json_to_state_findings
 
-    data = {"findings": [{
-        "file": "tests/test_x.py", "line": 10,
-        "description": "源码正确实现了超时回退，测试逻辑是健全的",
-    }]}
+    data = {
+        "findings": [
+            {
+                "file": "tests/test_x.py",
+                "line": 10,
+                "description": "源码正确实现了超时回退，测试逻辑是健全的",
+            }
+        ]
+    }
     assert _json_to_state_findings(data, "expert") == []
 
 
 def test_a_real_defect_is_still_collected():
     from code_forge.reviewer_json import _json_to_state_findings
 
-    data = {"findings": [{
-        "file": "src/a.py", "line": 4,
-        "description": "the lock is released before the write finishes",
-    }]}
+    data = {
+        "findings": [
+            {
+                "file": "src/a.py",
+                "line": 4,
+                "description": "the lock is released before the write finishes",
+            }
+        ]
+    }
     found = _json_to_state_findings(data, "expert")
     assert len(found) == 1
 
@@ -567,14 +584,22 @@ def test_a_real_defect_is_still_collected():
 def test_praise_followed_by_a_defect_is_kept():
     """'correct, but leaks memory' names a defect. The praise must not hide it."""
     from code_forge.reviewer_json import _json_to_state_findings
-    data = {"findings": [{"file": "a.py", "line": 1,
-        "description": "The implementation is correct but the buffer leaks memory"}]}
+
+    data = {
+        "findings": [
+            {
+                "file": "a.py",
+                "line": 1,
+                "description": "The implementation is correct but the buffer leaks memory",
+            }
+        ]
+    }
     assert _json_to_state_findings(data, "qodo")
 
 
 def test_correct_error_handling_is_still_praise():
     """'error handling is correct' describes no defect."""
     from code_forge.reviewer_json import _json_to_state_findings
-    data = {"findings": [{"file": "a.py", "line": 1,
-        "description": "The error handling is correct"}]}
+
+    data = {"findings": [{"file": "a.py", "line": 1, "description": "The error handling is correct"}]}
     assert not _json_to_state_findings(data, "qodo")

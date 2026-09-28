@@ -15,7 +15,13 @@ import pytest
 
 from code_forge.mutation_engines.adapters.base import ExecutionContext, InputEntry, InputSnapshot
 from code_forge.mutation_engines.adapters.rust_cargo_mutants import CargoMutantsAdapter
-from code_forge.mutation_engines.schemas import BaselineState, Budget, NormalizedStatus, RunState, TargetDeclaration
+from code_forge.mutation_engines.schemas import (
+    BaselineState,
+    Budget,
+    NormalizedStatus,
+    RunState,
+    TargetDeclaration,
+)
 from code_forge.mutation_engines.targets import TargetSelection
 
 CARGO_MUTANTS = "/home/houminxi/code/hermes/cache/scratch/cargo-tools/bin/cargo-mutants"
@@ -123,9 +129,7 @@ def _selection() -> TargetSelection:
 def _statuses(tmp_path: Path, weak: bool) -> dict[str, NormalizedStatus]:
     dest = tmp_path / "proj"
     _copy(dest, weak)
-    result = CargoMutantsAdapter().run(
-        _target(), _selection(), _snapshot(dest), _context(tmp_path)
-    )
+    result = CargoMutantsAdapter().run(_target(), _selection(), _snapshot(dest), _context(tmp_path))
     assert result.run_state is RunState.COMPLETE, result.reason_code
     assert result.baseline.state is BaselineState.PASSED
     assert result.baseline.test_count >= 1

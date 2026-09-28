@@ -74,9 +74,7 @@ def test_downgrade_one_line_slips_single_nonblank_tail_omission():
     input_excerpts = [exc]
     input_excerpts_snapshot = copy.deepcopy(input_excerpts)
 
-    out_findings, out_excerpts = machine._downgrade_one_line_slips(
-        input_findings, input_excerpts
-    )
+    out_findings, out_excerpts = machine._downgrade_one_line_slips(input_findings, input_excerpts)
 
     # Input findings list and contents must remain unmodified
     assert input_findings == input_findings_snapshot
@@ -181,24 +179,18 @@ def test_empty_diff_and_empty_excerpts_return_originals():
         description="Existing confirmed finding",
     )
     initial_findings = [existing_finding]
-    initial_excerpts = [
-        {"file": "mod.py", "start_line": 1, "end_line": 3, "content": "alpha = 1"}
-    ]
+    initial_excerpts = [{"file": "mod.py", "start_line": 1, "end_line": 3, "content": "alpha = 1"}]
 
     # Case 1: empty diff returns original findings and excerpts
     machine_empty_diff = _make_machine("")
-    f_res1, e_res1 = machine_empty_diff._downgrade_one_line_slips(
-        initial_findings, initial_excerpts
-    )
+    f_res1, e_res1 = machine_empty_diff._downgrade_one_line_slips(initial_findings, initial_excerpts)
     assert f_res1 is initial_findings
     assert e_res1 is initial_excerpts
 
     # Case 2: empty excerpts returns original findings and excerpts
     machine_with_diff = _make_machine(FROZEN_DIFF)
     empty_excerpts = []
-    f_res2, e_res2 = machine_with_diff._downgrade_one_line_slips(
-        initial_findings, empty_excerpts
-    )
+    f_res2, e_res2 = machine_with_diff._downgrade_one_line_slips(initial_findings, empty_excerpts)
     assert f_res2 is initial_findings
     assert e_res2 is empty_excerpts
 

@@ -217,9 +217,7 @@ def test_probe_unsupported_version(tmp_path):
 
 def test_probe_unavailable_isolation(tmp_path):
     python = _fake_python(tmp_path, "echo 3.8.0\n")
-    report = MutmutAdapter().probe(
-        _target(), _context(python, cgroup="/no/such/cgroup")
-    )
+    report = MutmutAdapter().probe(_target(), _context(python, cgroup="/no/such/cgroup"))
     assert report.state is CapabilityState.UNAVAILABLE_ISOLATION
 
 

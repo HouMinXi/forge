@@ -12,14 +12,18 @@ from code_forge.state import Verdict
 class TestPendingExitCode:
     def test_pending_returns_busy(self):
         """Verdict.PENDING -> EXIT_BUSY (3), blocks pre-commit hooks."""
-        with patch("code_forge.cli._run", return_value=Verdict.PENDING), \
-             patch("sys.argv", ["code-forge", "review"]):
+        with (
+            patch("code_forge.cli._run", return_value=Verdict.PENDING),
+            patch("sys.argv", ["code-forge", "review"]),
+        ):
             result = main()
         assert result == EXIT_BUSY
 
     def test_pass_still_returns_zero(self):
         """Verdict.PASS -> EXIT_PASS (0), unchanged."""
-        with patch("code_forge.cli._run", return_value=Verdict.PASS), \
-             patch("sys.argv", ["code-forge", "review"]):
+        with (
+            patch("code_forge.cli._run", return_value=Verdict.PASS),
+            patch("sys.argv", ["code-forge", "review"]),
+        ):
             result = main()
         assert result == EXIT_PASS

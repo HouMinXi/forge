@@ -6,6 +6,7 @@ Covers: corpus JSON parsing, schema validation, single exact old-byte
 occurrence, digest binding, stale-digest hold, duplicate entry ids,
 unknown fields, bounded identifiers.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,13 +29,14 @@ from code_forge.mutation_engines.corpus import (
 
 # -- Helpers ------------------------------------------------------------------
 
+
 def _valid_entry(**overrides):
     d = {
         "id": "reject-empty-ref",
         "source": "scripts/check-ref.sh",
         "source_digest": "a" * 64,
         "old": 'if [ -z "$ref" ]; then',
-        "new": '# removed guard',
+        "new": "# removed guard",
         "operator": "guard-removal",
         "test_selector": "tests/test_scripts.py::test_rejects_empty_ref",
     }
@@ -57,6 +59,7 @@ def _corpus_json(**overrides):
 
 
 # -- load_corpus --------------------------------------------------------------
+
 
 class TestLoadCorpus:
     def test_valid_corpus_round_trip(self):
@@ -132,9 +135,7 @@ class TestLoadCorpus:
             load_corpus(json.dumps(d))
 
     def test_reject_too_many_entries(self):
-        entries = [
-            _valid_entry(id="e%04d" % i) for i in range(MAX_CORPUS_ENTRIES + 1)
-        ]
+        entries = [_valid_entry(id="e%04d" % i) for i in range(MAX_CORPUS_ENTRIES + 1)]
         with pytest.raises(CorpusError, match="exceeding maximum"):
             load_corpus(_corpus_json(entries=entries))
 
@@ -237,11 +238,13 @@ class TestLoadCorpus:
 
 # -- check_old_byte_occurrence ------------------------------------------------
 
+
 class TestOldByteOccurrence:
     def test_exactly_one_occurrence(self):
         source = b'if [ -z "$ref" ]; then\n  echo "empty"\nfi\n'
         entry = CorpusEntry(
-            id="e1", source="s.sh",
+            id="e1",
+            source="s.sh",
             source_digest="d",
             old='if [ -z "$ref" ]; then',
             new="# removed",
@@ -253,7 +256,8 @@ class TestOldByteOccurrence:
     def test_zero_occurrences(self):
         source = b"some other content\n"
         entry = CorpusEntry(
-            id="e1", source="s.sh",
+            id="e1",
+            source="s.sh",
             source_digest="d",
             old="not-present",
             new="replacement",
@@ -265,7 +269,8 @@ class TestOldByteOccurrence:
     def test_multiple_occurrences(self):
         source = b"hello world hello world\n"
         entry = CorpusEntry(
-            id="e1", source="s.sh",
+            id="e1",
+            source="s.sh",
             source_digest="d",
             old="hello",
             new="bye",
@@ -277,6 +282,7 @@ class TestOldByteOccurrence:
 
 # -- validate_corpus_against_sources ------------------------------------------
 
+
 class TestValidateCorpusAgainstSources:
     def _source_content(self):
         return b'if [ -z "$ref" ]; then\n  exit 1\nfi\n'
@@ -287,9 +293,7 @@ class TestValidateCorpusAgainstSources:
     def test_valid_corpus(self):
         content = self._source_content()
         digest = self._matching_digest(content)
-        corpus = load_corpus(_corpus_json(
-            entries=[_valid_entry(source_digest=digest)]
-        ))
+        corpus = load_corpus(_corpus_json(entries=[_valid_entry(source_digest=digest)]))
         errors = validate_corpus_against_sources(
             corpus,
             {"scripts/check-ref.sh": content},
@@ -304,9 +308,7 @@ class TestValidateCorpusAgainstSources:
 
     def test_stale_digest(self):
         content = self._source_content()
-        corpus = load_corpus(_corpus_json(
-            entries=[_valid_entry(source_digest="0" * 64)]
-        ))
+        corpus = load_corpus(_corpus_json(entries=[_valid_entry(source_digest="0" * 64)]))
         errors = validate_corpus_against_sources(
             corpus,
             {"scripts/check-ref.sh": content},
@@ -317,9 +319,7 @@ class TestValidateCorpusAgainstSources:
     def test_old_text_not_found(self):
         content = b"no match here\n"
         digest = self._matching_digest(content)
-        corpus = load_corpus(_corpus_json(
-            entries=[_valid_entry(source_digest=digest)]
-        ))
+        corpus = load_corpus(_corpus_json(entries=[_valid_entry(source_digest=digest)]))
         errors = validate_corpus_against_sources(
             corpus,
             {"scripts/check-ref.sh": content},
@@ -331,9 +331,7 @@ class TestValidateCorpusAgainstSources:
         old_text = 'if [ -z "$ref" ]; then'
         content = (old_text + "\n" + old_text + "\n").encode("utf-8")
         digest = self._matching_digest(content)
-        corpus = load_corpus(_corpus_json(
-            entries=[_valid_entry(source_digest=digest)]
-        ))
+        corpus = load_corpus(_corpus_json(entries=[_valid_entry(source_digest=digest)]))
         errors = validate_corpus_against_sources(
             corpus,
             {"scripts/check-ref.sh": content},
@@ -343,6 +341,7 @@ class TestValidateCorpusAgainstSources:
 
 
 # -- compute_source_digest ----------------------------------------------------
+
 
 class TestComputeSourceDigest:
     def test_matches_hashlib(self):

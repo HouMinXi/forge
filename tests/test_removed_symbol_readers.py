@@ -13,6 +13,7 @@ RemovedSymbolReaders is a ContextSource that, for each identifier removed
 by the diff, lists the post-image files that still reference it. Working
 tree only, no index, no snapshot gate (snapshot_sha returns None).
 """
+
 from __future__ import annotations
 
 import ast
@@ -61,17 +62,22 @@ def tree(tmp_path: Path) -> Path:
         "    def fit(self, X, y):\n"
         "        if self.store_cv_values:\n"
         "            self.cv_values_ = 1\n"
-        "        return self\n")
+        "        return self\n"
+    )
     (tmp_path / "pkg" / "other.py").write_text(
-        "# store_cv_values is documented elsewhere\n"
-        "def helper():\n    return 1\n")
+        "# store_cv_values is documented elsewhere\ndef helper():\n    return 1\n"
+    )
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_ridge.py").write_text(
-        "def test_it():\n    r = RidgeClassifierCV(store_cv_values=True)\n")
+        "def test_it():\n    r = RidgeClassifierCV(store_cv_values=True)\n"
+    )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "post"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "post"],
+        cwd=tmp_path,
+        check=True,
+    )
     return tmp_path
 
 
@@ -113,11 +119,16 @@ def test_short_and_common_tokens_are_ignored(tmp_path: Path):
     (tmp_path / "b.py").write_text("y = x + ab + abc\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -1,3 +1,1 @@\n-x = 1\n-ab = 2\n-abc = 3\n-if x:\n"
-            "-    pass\n+pass\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+        "@@ -1,3 +1,1 @@\n-x = 1\n-ab = 2\n-abc = 3\n-if x:\n"
+        "-    pass\n+pass\n"
+    )
     rows = RemovedSymbolReaders(tmp_path).facts(["a.py"], diff)
     assert rows == []
 
@@ -136,16 +147,19 @@ def test_vocabulary_tokens_are_dropped_and_rows_are_fewest_first(tmp_path: Path)
     one identifier that mattered (`store_cv_values`, 6 hits). Anything
     over max_readers_to_report is vocabulary; what remains is ordered so
     the rarest name, the likeliest API, comes first."""
-    (tmp_path / "m.py").write_text(
-        "\n".join("v%d = values" % i for i in range(3))
-        + "\nrare_name = 1\n")
+    (tmp_path / "m.py").write_text("\n".join("v%d = values" % i for i in range(3)) + "\nrare_name = 1\n")
     (tmp_path / "n.py").write_text("print(rare_name)\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-            "@@ -1,1 +1,1 @@\n-x = values + rare_name\n+x = 0\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+        "@@ -1,1 +1,1 @@\n-x = values + rare_name\n+x = 0\n"
+    )
     src = RemovedSymbolReaders(tmp_path, max_readers_to_report=2)
     rows = src.facts(["m.py"], diff)
     assert [r.entity for r in rows] == ["rare_name"]
@@ -156,14 +170,18 @@ def test_vocabulary_tokens_are_dropped_and_rows_are_fewest_first(tmp_path: Path)
 
 # ---- the falsifier receives it ------------------------------------------
 
+
 def _capture(fals, finding):
     seen = {}
 
     def fake(prompt, **kw):
         seen["prompt"] = prompt
         from types import SimpleNamespace
+
         return SimpleNamespace(content={"verdict": "DISMISSED", "reasoning": "r"})
+
     import code_forge.falsify_real as fr
+
     old = fr.llm_invoke
     fr.llm_invoke = fake
     try:
@@ -175,10 +193,15 @@ def _capture(fals, finding):
 
 def test_falsifier_prompt_carries_the_readers(tree: Path):
     rows = RemovedSymbolReaders(tree).facts(["pkg/ridge.py"], DIFF)
-    f = StateFinding(id="x", fingerprint="x", source="L1",
-                     disposition=Disposition.CONFIRMED,
-                     file="pkg/ridge.py", line_range=[10, 12],
-                     description="store_cv_values dropped but fit still reads it")
+    f = StateFinding(
+        id="x",
+        fingerprint="x",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="pkg/ridge.py",
+        line_range=[10, 12],
+        description="store_cv_values dropped but fit still reads it",
+    )
     p = _capture(RealFalsifier(backend=None, diff_text=DIFF, context_rows=rows), f)
     assert "store_cv_values" in p
     assert "pkg/ridge.py:7" in p
@@ -189,25 +212,37 @@ def test_falsifier_prompt_carries_the_readers(tree: Path):
 
 def test_falsifier_without_rows_is_byte_identical_to_a4_0(tree: Path):
     """No rows, no change: the A4-0 prompt stays exactly what it was."""
-    f = StateFinding(id="y", fingerprint="y", source="L1",
-                     disposition=Disposition.CONFIRMED,
-                     file="pkg/ridge.py", line_range=[10, 12], description="d")
+    f = StateFinding(
+        id="y",
+        fingerprint="y",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="pkg/ridge.py",
+        line_range=[10, 12],
+        description="d",
+    )
     a = _capture(RealFalsifier(backend=None, diff_text=DIFF), f)
     b = _capture(RealFalsifier(backend=None, diff_text=DIFF, context_rows=[]), f)
     assert a == b
     # And neither carries the section: a==b alone is satisfied by both
     # sides emitting an empty header (injection I6 stayed green on it).
     assert "still referenced" not in a.lower()
-    assert a.rstrip().endswith("[ 13]     super().__init__(alphas=alphas)") \
-        or a.count("\n## ") == 1  # exactly the diff section
+    assert (
+        a.rstrip().endswith("[ 13]     super().__init__(alphas=alphas)") or a.count("\n## ") == 1
+    )  # exactly the diff section
 
 
 # ---- wiring ---------------------------------------------------------------
 
+
 def test_factory_threads_context_rows():
     from code_forge.factories import build_falsifier
-    rows = [FactRow(entity="e", file="f.py", downstream="1",
-                    dependents="g.py:3", source="removed-symbol-readers")]
+
+    rows = [
+        FactRow(
+            entity="e", file="f.py", downstream="1", dependents="g.py:3", source="removed-symbol-readers"
+        )
+    ]
     f = build_falsifier("real", backend=None, diff_text="", context_rows=rows)
     assert f._context_rows == rows
 
@@ -230,9 +265,18 @@ def test_l1_prompt_does_not_see_reader_rows():
     falsifier evidence, not L1 context; leaking them would change the
     L1 byte-identity oracle (24ed2e0) and double their token cost."""
     from code_forge.context_sources import GatherResult, render_context_sources
-    r = GatherResult(rows=[FactRow(entity="e", file="f.py", downstream="1",
-                                   dependents="g.py:3",
-                                   source="removed-symbol-readers")])
+
+    r = GatherResult(
+        rows=[
+            FactRow(
+                entity="e",
+                file="f.py",
+                downstream="1",
+                dependents="g.py:3",
+                source="removed-symbol-readers",
+            )
+        ]
+    )
     assert render_context_sources(r) == ""
 
 
@@ -269,11 +313,11 @@ def tree_c08(tmp_path: Path) -> Path:
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "ridge.py").write_text(
         "class RidgeClassifierCV(_BaseRidgeCV):\n"
-        "    \"\"\"Ridge classifier with built-in cross-validation.\n"
+        '    """Ridge classifier with built-in cross-validation.\n'
         "\n"
         "    Cross-validation values for each alpha (if `store_cv_values=True` and\n"
         "        `cv=None`). This attribute exists only when store_cv_values is True.\n"
-        "    \"\"\"\n"
+        '    """\n'
         "    def __init__(self, alphas=(0.1, 1.0, 10.0), fit_intercept=True,\n"
         "                 normalize=False, scoring=None, cv=None, class_weight=None):\n"
         "        super().__init__(alphas=alphas, fit_intercept=fit_intercept,\n"
@@ -288,11 +332,15 @@ def tree_c08(tmp_path: Path) -> Path:
         "\n"
         "class Other:\n"
         "    def __init__(self):\n"
-        "        self.gone_param = 0\n")
+        "        self.gone_param = 0\n"
+    )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "post"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "post"],
+        cwd=tmp_path,
+        check=True,
+    )
     return tmp_path
 
 
@@ -317,28 +365,34 @@ def test_parameter_still_in_signature_is_not_a_fact(tree_c08: Path):
 def test_self_assignment_is_not_a_read(tree_c08: Path):
     # `gone_param` leaves a signature and the only surviving self.gone_param
     # is the constructor's own assignment: a write, not a dependency.
-    diff = ("diff --git a/pkg/ridge.py b/pkg/ridge.py\n"
-            "--- a/pkg/ridge.py\n+++ b/pkg/ridge.py\n"
-            "@@ -17,2 +17,2 @@ class Other:\n"
-            "-    def __init__(self, gone_param=0):\n"
-            "+    def __init__(self):\n"
-            "         self.gone_param = 0\n")
+    diff = (
+        "diff --git a/pkg/ridge.py b/pkg/ridge.py\n"
+        "--- a/pkg/ridge.py\n+++ b/pkg/ridge.py\n"
+        "@@ -17,2 +17,2 @@ class Other:\n"
+        "-    def __init__(self, gone_param=0):\n"
+        "+    def __init__(self):\n"
+        "         self.gone_param = 0\n"
+    )
     rows = RemovedSymbolReaders(tree_c08).facts(["pkg/ridge.py"], diff)
     assert rows == []
 
 
 def test_dropped_parameter_with_no_self_read_is_not_a_fact(tmp_path: Path):
-    (tmp_path / "a.py").write_text(
-        "class A:\n    def __init__(self, x):\n        self.x = x\n")
+    (tmp_path / "a.py").write_text("class A:\n    def __init__(self, x):\n        self.x = x\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -2,2 +2,2 @@ class A:\n"
-            "-    def __init__(self, x, unused_flag=False):\n"
-            "+    def __init__(self, x):\n"
-            "         self.x = x\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+        "@@ -2,2 +2,2 @@ class A:\n"
+        "-    def __init__(self, x, unused_flag=False):\n"
+        "+    def __init__(self, x):\n"
+        "         self.x = x\n"
+    )
     rows = RemovedSymbolReaders(tmp_path).facts(["a.py"], diff)
     assert rows == []
 
@@ -347,22 +401,26 @@ def test_removed_prose_lines_are_not_mined_for_identifiers(tmp_path: Path):
     """A docstring line removed from the file is not an API removal. On
     real trees `values`, `cross`, `indicating` from removed prose each had
     dozens of readers and buried the one identifier that mattered."""
-    (tmp_path / "m.py").write_text(
-        "def f():\n    return indicating\n"
-        "def g():\n    return each\n")
+    (tmp_path / "m.py").write_text("def f():\n    return indicating\ndef g():\n    return each\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-            "@@ -1,2 +1,1 @@\n"
-            "-        Flag indicating if the values for each alpha (see below).\n"
-            "-    x = 1\n+    x = 2\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+        "@@ -1,2 +1,1 @@\n"
+        "-        Flag indicating if the values for each alpha (see below).\n"
+        "-    x = 1\n+    x = 2\n"
+    )
     rows = RemovedSymbolReaders(tmp_path).facts(["m.py"], diff)
     assert rows == []
 
 
 # ---- A4-0c: readers carry the lines, not just the addresses -----------------
+
 
 def test_reader_rows_carry_post_image_snippets(tree_c08: Path):
     """A4-0b measured 13/20 and the judge on c08 said it: 'the diff alone
@@ -397,15 +455,21 @@ def test_enclosing_is_the_outer_def_not_a_nested_helper(tmp_path: Path):
         "        def helper():\n"
         "            return 1\n"
         "        if self.victim:\n"
-        "            pass\n")
+        "            pass\n"
+    )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-            "@@ -2,1 +2,1 @@ class C:\n"
-            "-    def __init__(self, victim=0):\n"
-            "+    def __init__(self):\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
+        "@@ -2,1 +2,1 @@ class C:\n"
+        "-    def __init__(self, victim=0):\n"
+        "+    def __init__(self):\n"
+    )
     rows = RemovedSymbolReaders(tmp_path).facts(["m.py"], diff)
     row = next(r for r in rows if r.entity == "victim")
     assert row.enclosing["m.py:5"] == "def fit(self):"
@@ -413,10 +477,15 @@ def test_enclosing_is_the_outer_def_not_a_nested_helper(tmp_path: Path):
 
 def test_falsifier_prompt_shows_the_lines(tree_c08: Path):
     rows = RemovedSymbolReaders(tree_c08).facts(["pkg/ridge.py"], DIFF_C08)
-    f = StateFinding(id="c", fingerprint="c", source="L1",
-                     disposition=Disposition.CONFIRMED,
-                     file="pkg/ridge.py", line_range=[7, 10],
-                     description="store_cv_values dropped")
+    f = StateFinding(
+        id="c",
+        fingerprint="c",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file="pkg/ridge.py",
+        line_range=[7, 10],
+        description="store_cv_values dropped",
+    )
     p = _capture(RealFalsifier(backend=None, diff_text=DIFF_C08, context_rows=rows), f)
     assert "pkg/ridge.py:13" in p
     assert "if self.store_cv_values:" in p
@@ -426,14 +495,15 @@ def test_falsifier_prompt_shows_the_lines(tree_c08: Path):
 def test_snippet_budget_is_bounded(tmp_path: Path):
     """Twelve readers max per symbol, one line each plus its def: the
     section cannot grow past a few hundred tokens per identifier."""
-    (tmp_path / "m.py").write_text(
-        "def f():\n" + "".join("    y%d = victim\n" % i for i in range(40)))
+    (tmp_path / "m.py").write_text("def f():\n" + "".join("    y%d = victim\n" % i for i in range(40)))
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/n.py b/n.py\n--- a/n.py\n+++ b/n.py\n"
-            "@@ -1,1 +1,1 @@\n-victim = 1\n+other = 1\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = "diff --git a/n.py b/n.py\n--- a/n.py\n+++ b/n.py\n@@ -1,1 +1,1 @@\n-victim = 1\n+other = 1\n"
     rows = RemovedSymbolReaders(tmp_path).facts(["n.py"], diff)
     row = next(r for r in rows if r.entity == "victim")
     # rule-1 rows carry snippets too (injection I17: dropping them from
@@ -446,27 +516,35 @@ def test_snippet_budget_is_bounded(tmp_path: Path):
 
 # ---- review R2 (3dc47ce): two real gaps, one pin --------------------------
 
+
 def test_typed_parameters_are_seen_when_dropped(tmp_path: Path):
     """_PARAM only matched `name=`, `name,`, `name)`; a typed parameter
     `name: int = 3` was invisible, so rule 2 never fired on annotated
     code, which is most code written after 2018."""
     (tmp_path / "a.py").write_text(
         "class A:\n    def __init__(self, x):\n        self.x = x\n"
-        "    def go(self):\n        return self.typed_one\n")
+        "    def go(self):\n        return self.typed_one\n"
+    )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -2,1 +2,1 @@ class A:\n"
-            "-    def __init__(self, x, typed_one: int = 3):\n"
-            "+    def __init__(self, x):\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+        "@@ -2,1 +2,1 @@ class A:\n"
+        "-    def __init__(self, x, typed_one: int = 3):\n"
+        "+    def __init__(self, x):\n"
+    )
     rows = RemovedSymbolReaders(tmp_path).facts(["a.py"], diff)
     assert [r.entity for r in rows] == ["typed_one"]
     # and it is rule 2 that saw it (rule 1 also catches this fixture; the
     # rule-2 row is the one that names the signature)
     assert "parameter removed from signature" in rows[0].dependents
     from code_forge.context_sources import _dropped_parameters_by_file
+
     assert _dropped_parameters_by_file(diff) == {"a.py": {"typed_one"}}
 
 
@@ -477,11 +555,16 @@ def test_return_and_yield_lines_are_code(tmp_path: Path):
     (tmp_path / "b.py").write_text("y = victim_name\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -2,1 +2,1 @@ def g():\n"
-            "-    return victim_name\n+    return 1\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+        "@@ -2,1 +2,1 @@ def g():\n"
+        "-    return victim_name\n+    return 1\n"
+    )
     rows = RemovedSymbolReaders(tmp_path).facts(["a.py"], diff)
     assert [r.entity for r in rows] == ["victim_name"]
 
@@ -492,26 +575,46 @@ def test_deleted_file_is_not_attributed_to_dev_null(tmp_path: Path):
     (tmp_path / "keep.py").write_text("z = gone_fn()\n")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=tmp_path, check=True)
-    diff = ("diff --git a/old.py b/old.py\n--- a/old.py\n+++ /dev/null\n"
-            "@@ -1,2 +0,0 @@\n-def gone_fn():\n-    return 1\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=tmp_path,
+        check=True,
+    )
+    diff = (
+        "diff --git a/old.py b/old.py\n--- a/old.py\n+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n-def gone_fn():\n-    return 1\n"
+    )
     rows = RemovedSymbolReaders(tmp_path).facts(["old.py"], diff)
     assert all(r.file != "/dev/null" for r in rows)
 
 
 # ---- review R3 (8f3b741) ----------------------------------------------------
 
+
 def test_fact_row_stays_hashable_with_snippets():
     """frozen=True generates __hash__ from every field; two plain dict
     fields made every FactRow unhashable, including graph_triage rows
     that never carry snippets (flagged three rounds running)."""
-    r = FactRow(entity="e", file="f", downstream="1", dependents="d", source="s",
-                snippets={"f:1": "x = 1"}, enclosing={"f:1": "def g():"})
-    assert hash(r) == hash(FactRow(entity="e", file="f", downstream="1",
-                                   dependents="d", source="s",
-                                   snippets={"f:1": "x = 1"},
-                                   enclosing={"f:1": "def g():"}))
+    r = FactRow(
+        entity="e",
+        file="f",
+        downstream="1",
+        dependents="d",
+        source="s",
+        snippets={"f:1": "x = 1"},
+        enclosing={"f:1": "def g():"},
+    )
+    assert hash(r) == hash(
+        FactRow(
+            entity="e",
+            file="f",
+            downstream="1",
+            dependents="d",
+            source="s",
+            snippets={"f:1": "x = 1"},
+            enclosing={"f:1": "def g():"},
+        )
+    )
     assert len({r, r}) == 1
     assert r.snippets["f:1"] == "x = 1"  # still a mapping to callers
 
@@ -523,8 +626,9 @@ def test_git_failure_in_readers_is_raised_not_emptied(tmp_path: Path):
     answer that must never be fabricated. tmp_path is not a git repo,
     so git grep fails; that must surface through gather() as an error."""
     (tmp_path / "a.py").write_text("x = victim_name\n")
-    diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
-            "@@ -1,1 +1,1 @@\n-y = victim_name\n+y = 1\n")
+    diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,1 @@\n-y = victim_name\n+y = 1\n"
+    )
     src = RemovedSymbolReaders(tmp_path)
     r = gather([src], ["a.py"], diff, head_sha=None, allow_unsnapshotted=True)
     assert r.errors, "git failure was swallowed into an empty table"
@@ -533,19 +637,22 @@ def test_git_failure_in_readers_is_raised_not_emptied(tmp_path: Path):
 
 # ---- review R4 (2d6d58f) ----------------------------------------------------
 
+
 def test_deleted_file_keyed_by_its_real_path_not_dev_null():
     """`+++ /dev/null` is what git writes for a deleted file. Keying the
     removed identifiers under '/dev/null' means facts() skips them (the
     changed_files guard sees a path that was never changed) and a
     deleted module's readers are never reported -- the one case where
     every remaining reader is broken by construction."""
-    diff = ("diff --git a/pkg/gone.py b/pkg/gone.py\n"
-            "deleted file mode 100644\n"
-            "--- a/pkg/gone.py\n"
-            "+++ /dev/null\n"
-            "@@ -1,2 +0,0 @@\n"
-            "-def helper_that_was_deleted():\n"
-            "-    return 1\n")
+    diff = (
+        "diff --git a/pkg/gone.py b/pkg/gone.py\n"
+        "deleted file mode 100644\n"
+        "--- a/pkg/gone.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n"
+        "-def helper_that_was_deleted():\n"
+        "-    return 1\n"
+    )
     out = _removed_identifiers_by_file(diff)
     assert "/dev/null" not in out
     assert "helper_that_was_deleted" in out.get("pkg/gone.py", set())
@@ -562,12 +669,14 @@ def test_prose_heuristic_does_not_swallow_a_call_with_spaces(tmp_path):
 
 # ---- review R5 (3095eab) ----------------------------------------------------
 
+
 def test_grep_line_split_survives_colon_in_path(tmp_path):
     """git grep prints path:lineno:text. A path with ':' in it (Windows
     drive, or a POSIX file literally named 'a:b.py') must not shift the
     line number into the path. Split from the right of the lineno
     field, not the left of the path."""
     from code_forge.context_sources import _split_grep_line
+
     assert _split_grep_line("a:b.py:12:    x = 1") == ("a:b.py", 12, "    x = 1")
     assert _split_grep_line("C:/w/f.py:7:self.x = y") == ("C:/w/f.py", 7, "self.x = y")
     assert _split_grep_line("f.py:3:url = 'http://h:80'") == ("f.py", 3, "url = 'http://h:80'")
@@ -586,35 +695,45 @@ def test_params_ignore_parens_inside_string_defaults():
     """A default like sep=')' must not close the signature early and
     drop the parameters after it."""
     from code_forge.context_sources import _dropped_parameters_by_file
-    diff = ("+++ b/a.py\n@@ -1,4 +1,3 @@\n"
-            "-def f(self, sep=')',\n"
-            "-      victim_name=None):\n"
-            "+def f(self, sep=')'):\n"
-            "-    self.victim_name = victim_name\n")
+
+    diff = (
+        "+++ b/a.py\n@@ -1,4 +1,3 @@\n"
+        "-def f(self, sep=')',\n"
+        "-      victim_name=None):\n"
+        "+def f(self, sep=')'):\n"
+        "-    self.victim_name = victim_name\n"
+    )
     out = _dropped_parameters_by_file(diff)
     assert "victim_name" in out.get("a.py", set())
 
 
 # ---- review R6 (ea5096c) ----------------------------------------------------
 
+
 def test_default_values_are_not_parameters():
     """`def f(a=some_var)` -> `def f(a=other_var)` drops no parameter.
     _PARAM matched any name followed by `=`, so a default's VALUE was
     read as a parameter and its replacement reported as a drop."""
     from code_forge.context_sources import _dropped_parameters_by_file
-    diff = ("+++ b/a.py\n@@ -1,2 +1,2 @@\n"
-            "-def f(self, alpha=some_var):\n"
-            "+def f(self, alpha=other_var):\n"
-            "-    self.some_var = 1\n")
+
+    diff = (
+        "+++ b/a.py\n@@ -1,2 +1,2 @@\n"
+        "-def f(self, alpha=some_var):\n"
+        "+def f(self, alpha=other_var):\n"
+        "-    self.some_var = 1\n"
+    )
     assert _dropped_parameters_by_file(diff) == {}
 
 
 def test_typed_param_with_default_is_a_parameter():
     from code_forge.context_sources import _dropped_parameters_by_file
-    diff = ("+++ b/a.py\n@@ -1,2 +1,2 @@\n"
-            "-def f(self, victim_name: str = 'x', keep: int = 3):\n"
-            "+def f(self, keep: int = 3):\n"
-            "-    self.victim_name = victim_name\n")
+
+    diff = (
+        "+++ b/a.py\n@@ -1,2 +1,2 @@\n"
+        "-def f(self, victim_name: str = 'x', keep: int = 3):\n"
+        "+def f(self, keep: int = 3):\n"
+        "-    self.victim_name = victim_name\n"
+    )
     assert _dropped_parameters_by_file(diff) == {"a.py": {"victim_name"}}
 
 
@@ -623,15 +742,19 @@ def test_signature_end_is_the_colon_not_a_balanced_line():
     (an annotation like `Dict[str, int]` or a default `f()`) has not
     ended; the parameters on the next line are still parameters."""
     from code_forge.context_sources import _dropped_parameters_by_file
-    diff = ("+++ b/a.py\n@@ -1,4 +1,3 @@\n"
-            "-def f(self, cb=noop(),\n"
-            "-      victim_name=None):\n"
-            "+def f(self, cb=noop()):\n"
-            "-    self.victim_name = victim_name\n")
+
+    diff = (
+        "+++ b/a.py\n@@ -1,4 +1,3 @@\n"
+        "-def f(self, cb=noop(),\n"
+        "-      victim_name=None):\n"
+        "+def f(self, cb=noop()):\n"
+        "-    self.victim_name = victim_name\n"
+    )
     assert _dropped_parameters_by_file(diff) == {"a.py": {"victim_name"}}
 
 
 # ---- review R7 (a70881b fix) ------------------------------------------------
+
 
 def test_lines_at_handles_path_with_spaces_and_colons(tmp_path: Path):
     """Paths containing spaces or colons must not lose their line number
@@ -667,11 +790,14 @@ def test_dropped_parameters_survives_escaped_quotes_and_parens():
     """An escaped quote inside a string default like sep=\"escaped \\\" quote )\" must
     not end the string early or balance parens incorrectly."""
     from code_forge.context_sources import _dropped_parameters_by_file
-    diff = ('+++ b/a.py\n@@ -1,3 +1,2 @@\n'
-            '-def f(self, sep="escaped \\" quote )",\n'
-            '-      victim_param=None):\n'
-            '+def f(self, sep="escaped \\" quote )"):\n'
-            '-    self.victim_param = victim_param\n')
+
+    diff = (
+        "+++ b/a.py\n@@ -1,3 +1,2 @@\n"
+        '-def f(self, sep="escaped \\" quote )",\n'
+        "-      victim_param=None):\n"
+        '+def f(self, sep="escaped \\" quote )"):\n'
+        "-    self.victim_param = victim_param\n"
+    )
     out = _dropped_parameters_by_file(diff)
     assert out == {"a.py": {"victim_param"}}
 
@@ -680,32 +806,39 @@ def test_dropped_parameters_survives_multiline_triple_quotes():
     """Multiline triple-quoted default string containing parens must not
     close signature depth early or misidentify words as parameters."""
     from code_forge.context_sources import _dropped_parameters_by_file
-    diff = ("+++ b/a.py\n@@ -1,4 +1,3 @@\n"
-            "-def f(self, doc='''multi (\n"
-            "-      line )''',\n"
-            "-      victim_param=None):\n"
-            "+def f(self, doc='''multi line'''):\n"
-            "-    self.victim_param = victim_param\n")
+
+    diff = (
+        "+++ b/a.py\n@@ -1,4 +1,3 @@\n"
+        "-def f(self, doc='''multi (\n"
+        "-      line )''',\n"
+        "-      victim_param=None):\n"
+        "+def f(self, doc='''multi line'''):\n"
+        "-    self.victim_param = victim_param\n"
+    )
     out = _dropped_parameters_by_file(diff)
     assert out == {"a.py": {"victim_param"}}
 
 
 # ---- A4 closure: F-01 / F-02 ----------------------------------------------
 
+
 def _init_git(root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-q", "-m", "p"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "p"],
+        cwd=root,
+        check=True,
+    )
 
 
-def test_readers_keep_deleted_file_when_changed_files_is_additions_only(
-        tmp_path: Path):
+def test_readers_keep_deleted_file_when_changed_files_is_additions_only(tmp_path: Path):
     """get_changed_files lists only files with an added line. A mixed
     diff that edits a.py and deletes b.py therefore hands facts()
     ['a.py']. The deleted file's identifiers still have live readers
     and must not be dropped by that secondary filter."""
     from code_forge.diff import get_changed_files
+
     (tmp_path / "a.py").write_text("def keep():\n    return 1\n")
     (tmp_path / "caller.py").write_text("from b import deleted_fn\nx = deleted_fn()\n")
     _init_git(tmp_path)
@@ -740,6 +873,7 @@ def test_readers_keep_pure_deletion_file_in_mixed_diff(tmp_path: Path):
     get_changed_files. Mixed with an addition elsewhere, its removed
     identifiers must still become facts."""
     from code_forge.diff import get_changed_files
+
     (tmp_path / "a.py").write_text("def keep():\n    return 1\n")
     (tmp_path / "c.py").write_text(
         "def leftover():\n    return 1\n\ndef dropped_helper():\n    return 1\n"
@@ -804,6 +938,7 @@ def test_dropped_parameter_is_scoped_to_its_function():
     victim from func_a in the same file. Whole-file set subtraction
     loses function identity."""
     from code_forge.context_sources import _dropped_parameters_by_file
+
     diff = (
         "diff --git a/a.py b/a.py\n"
         "--- a/a.py\n"
@@ -823,6 +958,7 @@ def test_dropped_parameter_same_name_in_other_class_is_not_a_keep():
     """Same parameter name on a different class in the same file is
     still a different signature."""
     from code_forge.context_sources import _dropped_parameters_by_file
+
     diff = (
         "diff --git a/a.py b/a.py\n"
         "--- a/a.py\n"
@@ -844,6 +980,7 @@ def test_dropped_parameter_split_hunks_keep_function_identity():
     """A later hunk of context that contains another function with the
     same parameter name must not cancel the drop."""
     from code_forge.context_sources import _dropped_parameters_by_file
+
     diff = (
         "diff --git a/a.py b/a.py\n"
         "--- a/a.py\n"
@@ -861,10 +998,15 @@ def test_dropped_parameter_split_hunks_keep_function_identity():
 def _source_diff(before: str, after: str) -> str:
     ast.parse(before)
     ast.parse(after)
-    return "diff --git a/a.py b/a.py\n" + "".join(difflib.unified_diff(
-        before.splitlines(keepends=True), after.splitlines(keepends=True),
-        fromfile="a/a.py", tofile="b/a.py", n=3,
-    ))
+    return "diff --git a/a.py b/a.py\n" + "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile="a/a.py",
+            tofile="b/a.py",
+            n=3,
+        )
+    )
 
 
 @pytest.mark.parametrize("visible", [False, True])
@@ -875,16 +1017,19 @@ def test_same_named_methods_keep_separate_signature_locations(visible, remove):
     padding = "    # padding\n" * 8
     prefix = "" if visible else padding
     before = "".join(
-        f"class {name}:\n{prefix}    def go(self, alpha):\n"
-        f"        return 1\n{padding}\n" for name in ("A", "B")
+        f"class {name}:\n{prefix}    def go(self, alpha):\n        return 1\n{padding}\n"
+        for name in ("A", "B")
     )
     after = before.replace("return 1", "return 2")
     if remove:
         after = after.replace("go(self, alpha)", "go(self)", 1)
     diff = _source_diff(before, after)
     assert sum(line.startswith("@@") for line in diff.splitlines()) == 2
-    classes = [line[1:].strip() for line in diff.splitlines()
-               if line[:1] in (" ", "+", "-") and line[1:].lstrip().startswith("class ")]
+    classes = [
+        line[1:].strip()
+        for line in diff.splitlines()
+        if line[:1] in (" ", "+", "-") and line[1:].lstrip().startswith("class ")
+    ]
     assert classes == (["class A:", "class B:"] if visible else [])
     assert _dropped_parameters_by_file(diff) == ({"a.py": {"alpha"}} if remove else {})
 
@@ -894,8 +1039,8 @@ def test_same_named_methods_without_class_context_real_git(tmp_path: Path):
 
     padding = "    # padding\n" * 8
     before = "".join(
-        f"class {name}:\n{padding}    def go(self, alpha):\n"
-        f"        return self.alpha\n{padding}\n" for name in ("A", "B")
+        f"class {name}:\n{padding}    def go(self, alpha):\n        return self.alpha\n{padding}\n"
+        for name in ("A", "B")
     )
     after = before.replace("go(self, alpha)", "go(self)", 1)
     after = after.replace("return self.alpha", "return self.alpha + 1")
@@ -907,10 +1052,16 @@ def test_same_named_methods_without_class_context_real_git(tmp_path: Path):
     target.write_text(after)
     diff = subprocess.run(
         ["git", "diff", "--no-ext-diff", "--unified=3", "--", "a.py"],
-        cwd=tmp_path, capture_output=True, text=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
-    assert not any(line[1:].lstrip().startswith("class ")
-                   for line in diff.splitlines() if line[:1] in (" ", "+", "-"))
+    assert not any(
+        line[1:].lstrip().startswith("class ")
+        for line in diff.splitlines()
+        if line[:1] in (" ", "+", "-")
+    )
     assert _dropped_parameters_by_file(diff) == {"a.py": {"alpha"}}
     rows = RemovedSymbolReaders(tmp_path).facts(["a.py"], diff)
     assert [row.entity for row in rows] == ["alpha"]
@@ -922,10 +1073,7 @@ def test_one_signature_continues_across_hunks(remove):
     from code_forge.context_sources import _dropped_parameters_by_file
 
     padding = "    # padding\n" * 8
-    before = (
-        "def go(\n    alpha=None,\n" + padding
-        + "    beta=None,\n):\n    return 1\n"
-    )
+    before = "def go(\n    alpha=None,\n" + padding + "    beta=None,\n):\n    return 1\n"
     after = before.replace("    alpha=None,\n", "")
     replacement = "    beta=1,\n" if remove else "    beta=None,\n    alpha=None,\n"
     after = after.replace("    beta=None,\n", replacement)
@@ -934,17 +1082,22 @@ def test_one_signature_continues_across_hunks(remove):
     assert _dropped_parameters_by_file(diff) == ({"a.py": {"alpha"}} if remove else {})
 
 
-
 @pytest.mark.parametrize("context", [3, 80])
 @pytest.mark.parametrize("move,remove", [(True, False), (False, True), (True, True)])
 def test_method_move_preserves_parameter_identity(tmp_path, context, move, remove):
     stable = "".join(f"    def stable_{i}(self):\n        return {i}\n\n" for i in range(8))
-    target = ("    def configure(self, alpha=1, bravo=2):\n"
-              "        self.alpha = alpha\n        self.bravo = bravo\n        return self\n\n")
+    target = (
+        "    def configure(self, alpha=1, bravo=2):\n"
+        "        self.alpha = alpha\n        self.bravo = bravo\n        return self\n\n"
+    )
     reader = "    def read(self):\n        return self.alpha, self.bravo\n"
     prefix = "class Box:\n" + "    # padding\n" * 8
     before = prefix + target + stable + reader
-    changed = target.replace("alpha=1, ", "").replace("self.alpha = alpha", "self.alpha = 1") if remove else target
+    changed = (
+        target.replace("alpha=1, ", "").replace("self.alpha = alpha", "self.alpha = 1")
+        if remove
+        else target
+    )
     after = prefix + (stable + changed if move else changed + stable) + reader
     _assert_parameter_diff(tmp_path, before, after, {"alpha"} if remove else set(), context)
 
@@ -960,18 +1113,27 @@ def test_nested_signatures_use_enclosing_names(tmp_path, prefix, change):
             arg = "alpha=2" if after else "alpha=1"
             if after and name == "one" and change in ("remove", "reorder_remove"):
                 arg = ""
-            chunks.append(f"{base}def factory_{name}(self): # {'after' if after else 'before'}\n"
-                          f"{base}    def go({arg}):\n"
-                          f"{base}        return self.alpha{' + 0' if after else ''}\n"
-                          f"{base}    return {'(go)' if after else 'go'}\n")
+            chunks.append(
+                f"{base}def factory_{name}(self): # {'after' if after else 'before'}\n"
+                f"{base}    def go({arg}):\n"
+                f"{base}        return self.alpha{' + 0' if after else ''}\n"
+                f"{base}    return {'(go)' if after else 'go'}\n"
+            )
         return prefix + "".join(chunks)
 
     before_names = ["one", "two", "three"]
-    after_names = {"insert": ["zero", *before_names], "delete": ["one", "three"],
-                   "reorder": ["three", "one", "two"],
-                   "reorder_remove": ["three", "one", "two"]}.get(change, before_names)
-    _assert_parameter_diff(tmp_path, source(before_names, False), source(after_names, True),
-                           {"alpha"} if change in ("remove", "reorder_remove") else set())
+    after_names = {
+        "insert": ["zero", *before_names],
+        "delete": ["one", "three"],
+        "reorder": ["three", "one", "two"],
+        "reorder_remove": ["three", "one", "two"],
+    }.get(change, before_names)
+    _assert_parameter_diff(
+        tmp_path,
+        source(before_names, False),
+        source(after_names, True),
+        {"alpha"} if change in ("remove", "reorder_remove") else set(),
+    )
 
 
 @pytest.mark.parametrize("known_scope", [False, True])
@@ -979,16 +1141,19 @@ def test_unresolved_repeated_signatures_do_not_claim_removal(tmp_path, known_sco
     prefix = ("class Box:\n" if known_scope else "def factory():\n") + "    # padding\n" * 8
     before = prefix + "".join(
         f"    def go(self, {arg}=1):\n        return self.alpha, self.bravo\n"
-        for arg in ("alpha", "bravo", "alpha"))
+        for arg in ("alpha", "bravo", "alpha")
+    )
     after = prefix + "".join(
-        f"    def go(self, {arg}=2):\n        return self.alpha, self.bravo + 0\n"
-        for arg in ("alpha",))
+        f"    def go(self, {arg}=2):\n        return self.alpha, self.bravo + 0\n" for arg in ("alpha",)
+    )
     _assert_parameter_diff(tmp_path, before, after, set())
 
 
 def test_deleted_signature_is_not_parameter_removal(tmp_path):
-    before = ("class Box:\n    def gone(self, alpha=1):\n        return self.alpha\n"
-              "    def read(self):\n        return self.alpha\n")
+    before = (
+        "class Box:\n    def gone(self, alpha=1):\n        return self.alpha\n"
+        "    def read(self):\n        return self.alpha\n"
+    )
     after = "class Box:\n    def read(self):\n        return self.alpha\n"
     _assert_parameter_diff(tmp_path, before, after, set())
 
@@ -1005,10 +1170,15 @@ def _assert_parameter_diff(root, before, after, expected, context=3):
     target.write_text(after)
     diff = subprocess.run(
         ["git", "diff", "--no-ext-diff", "--no-textconv", f"--unified={context}", "--", "a.py"],
-        cwd=root, capture_output=True, text=True, check=True,
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     rows = RemovedSymbolReaders(root).facts(["a.py"], diff)
-    parameter_rows = [row for row in rows if row.dependents.startswith("parameter removed from signature;")]
+    parameter_rows = [
+        row for row in rows if row.dependents.startswith("parameter removed from signature;")
+    ]
     assert {row.entity for row in parameter_rows} == expected
     assert len(parameter_rows) == len(expected)
     for row in parameter_rows:
@@ -1053,19 +1223,28 @@ def test_helpers_accept_a_shared_parse_without_changing_output():
         _removal_scope,
     )
 
-    diff = ("--- a/a.py\n+++ b/a.py\n@@ -1,3 +1,2 @@ class Box:\n"
-            " class Box:\n"
-            "-    def go(self, alpha=1):\n"
-            "-        return alpha + helper_marker\n"
-            "+    def go(self):\n"
-            "+        return 0\n")
+    diff = (
+        "--- a/a.py\n+++ b/a.py\n@@ -1,3 +1,2 @@ class Box:\n"
+        " class Box:\n"
+        "-    def go(self, alpha=1):\n"
+        "-        return alpha + helper_marker\n"
+        "+    def go(self):\n"
+        "+        return 0\n"
+    )
     shared = list(_diff_body_lines(diff, include_hunks=True))
-    assert (_removal_scope(diff, ["a.py"], parsed_lines=shared)
-            == _removal_scope(diff, ["a.py"]) == {"a.py"})
-    assert (_removed_identifiers_by_file(diff, parsed_lines=shared)
-            == _removed_identifiers_by_file(diff) == {"a.py": {"alpha"}})
-    assert (_dropped_parameters_by_file(diff, parsed_lines=shared)
-            == _dropped_parameters_by_file(diff) == {"a.py": {"alpha"}})
+    assert (
+        _removal_scope(diff, ["a.py"], parsed_lines=shared) == _removal_scope(diff, ["a.py"]) == {"a.py"}
+    )
+    assert (
+        _removed_identifiers_by_file(diff, parsed_lines=shared)
+        == _removed_identifiers_by_file(diff)
+        == {"a.py": {"alpha"}}
+    )
+    assert (
+        _dropped_parameters_by_file(diff, parsed_lines=shared)
+        == _dropped_parameters_by_file(diff)
+        == {"a.py": {"alpha"}}
+    )
 
 
 def test_parsed_lines_none_reparses_and_empty_list_stays_empty(monkeypatch):
@@ -1084,12 +1263,14 @@ def test_parsed_lines_none_reparses_and_empty_list_stays_empty(monkeypatch):
     assert _removal_scope(DIFF, ["pkg/ridge.py"], parsed_lines=[]) == {"pkg/ridge.py"}
     assert _removed_identifiers_by_file(DIFF, parsed_lines=[]) == {}
     assert _dropped_parameters_by_file(DIFF, parsed_lines=[]) == {}
-    for call in (lambda: _removal_scope(DIFF, ["pkg/ridge.py"]),
-                 lambda: _removal_scope(DIFF, ["pkg/ridge.py"], parsed_lines=None),
-                 lambda: _removed_identifiers_by_file(DIFF),
-                 lambda: _removed_identifiers_by_file(DIFF, parsed_lines=None),
-                 lambda: _dropped_parameters_by_file(DIFF),
-                 lambda: _dropped_parameters_by_file(DIFF, parsed_lines=None)):
+    for call in (
+        lambda: _removal_scope(DIFF, ["pkg/ridge.py"]),
+        lambda: _removal_scope(DIFF, ["pkg/ridge.py"], parsed_lines=None),
+        lambda: _removed_identifiers_by_file(DIFF),
+        lambda: _removed_identifiers_by_file(DIFF, parsed_lines=None),
+        lambda: _dropped_parameters_by_file(DIFF),
+        lambda: _dropped_parameters_by_file(DIFF, parsed_lines=None),
+    ):
         with pytest.raises(RuntimeError, match="parse attempted"):
             call()
 

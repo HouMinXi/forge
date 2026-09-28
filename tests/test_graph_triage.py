@@ -6,6 +6,7 @@ Covers: dual-backend detection (sem preferred, graphdb fallback),
 blast-radius ranking, top-10 output, gate.yaml validation,
 find_entity_dependents utility, and tool-absent loud-fail.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,6 +28,7 @@ from code_forge.graph_triage import (
 # Helpers: mock data factories
 # ---------------------------------------------------------------------------
 
+
 def _sem_diff_json(entities: list[dict]) -> str:
     """Build sem diff --format json stdout."""
     return json.dumps({"summary": {}, "changes": entities})
@@ -40,16 +42,17 @@ def _sem_impact_json(
     """Build sem impact --json stdout."""
     if dependents is None:
         dependents = [
-            {"entityId": "dep_%d" % i, "entityName": "dep_%d" % i}
-            for i in range(min(total, 5))
+            {"entityId": "dep_%d" % i, "entityName": "dep_%d" % i} for i in range(min(total, 5))
         ]
-    return json.dumps({
-        "entity": {"entityName": entity_name},
-        "dependencies": [],
-        "dependents": dependents,
-        "impact": {"depth": 1, "entities": [], "total": total},
-        "tests": [],
-    })
+    return json.dumps(
+        {
+            "entity": {"entityName": entity_name},
+            "dependencies": [],
+            "dependents": dependents,
+            "impact": {"depth": 1, "entities": [], "total": total},
+            "tests": [],
+        }
+    )
 
 
 def _make_entity(
@@ -90,6 +93,7 @@ def _make_diff(files: list[str]) -> str:
 # GraphTriageRunner core behavior
 # ---------------------------------------------------------------------------
 
+
 class TestGraphTriageRunnerProtocol:
     """AxisRunner Protocol compliance."""
 
@@ -114,6 +118,7 @@ class TestGraphTriageRunnerProtocol:
 # ---------------------------------------------------------------------------
 # Backend detection
 # ---------------------------------------------------------------------------
+
 
 class TestDetectBackend:
     """_detect_backend() priority: sem > gate.yaml db_path > auto > env."""
@@ -234,6 +239,7 @@ class TestSemHasIndex:
 # Tool-absent + explicit disable
 # ---------------------------------------------------------------------------
 
+
 class TestToolAbsent:
     """Both-absent and explicit-disable behavior."""
 
@@ -245,12 +251,10 @@ class TestToolAbsent:
         result = runner.run(diff, Path("/tmp"))
         assert result == []
         assert len(runner.infra_errors) >= 1
-        assert "sem" in runner.infra_errors[0].lower() or \
-               "graph" in runner.infra_errors[0].lower()
+        assert "sem" in runner.infra_errors[0].lower() or "graph" in runner.infra_errors[0].lower()
         # Verify stderr output
         captured = capsys.readouterr()
-        assert "sem" in captured.err.lower() or \
-               "graph" in captured.err.lower()
+        assert "sem" in captured.err.lower() or "graph" in captured.err.lower()
 
     @patch("code_forge.graph_triage.shutil.which", return_value="/usr/bin/sem")
     def test_explicit_disable(self, mock_which, tmp_path):
@@ -261,10 +265,7 @@ class TestToolAbsent:
         forge_dir.mkdir()
         gate_yaml = forge_dir / "gate.yaml"
         gate_yaml.write_text(
-            "test:\n"
-            "  command: ['python3', '-m', 'pytest']\n"
-            "graph_triage:\n"
-            "  enabled: false\n"
+            "test:\n  command: ['python3', '-m', 'pytest']\ngraph_triage:\n  enabled: false\n"
         )
         diff = _make_diff(["src/foo.py"])
         result = runner.run(diff, tmp_path)
@@ -275,6 +276,7 @@ class TestToolAbsent:
 # sem backend
 # ---------------------------------------------------------------------------
 
+
 class TestSemBackend:
     """sem CLI invocation and ranking."""
 
@@ -282,7 +284,8 @@ class TestSemBackend:
     def test_sem_diff_invocation(self, mock_run):
         """sem diff called with correct list args and --patch flag."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0,
+            args=[],
+            returncode=0,
             stdout=_sem_diff_json([_make_entity("foo", "src/foo.py")]),
             stderr="",
         )
@@ -303,11 +306,13 @@ class TestSemBackend:
     def test_sem_impact_invocation(self, mock_run):
         """sem impact called with list args and --json flag."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0,
+            args=[],
+            returncode=0,
             stdout=_sem_impact_json("foo", 10),
             stderr="",
         )
         from code_forge.graph_triage import _get_sem_impact
+
         _get_sem_impact("foo", "src/foo.py", Path("/repo"))
         call_args = mock_run.call_args
         cmd = call_args[0][0] if call_args[0] else call_args[1].get("args", [])
@@ -318,22 +323,17 @@ class TestSemBackend:
 
     @patch("code_forge.graph_triage._get_sem_impact")
     @patch("code_forge.graph_triage._run_sem")
-    @patch("code_forge.graph_triage._detect_backend",
-           return_value=("sem", "/usr/bin/sem"))
+    @patch("code_forge.graph_triage._detect_backend", return_value=("sem", "/usr/bin/sem"))
     def test_sem_ranking_top10(self, mock_detect, mock_sem, mock_impact):
         """Given 15 entities, run() returns exactly 10 sorted descending."""
-        entities = [
-            _make_entity("func_%d" % i, "src/f%d.py" % i)
-            for i in range(15)
-        ]
+        entities = [_make_entity("func_%d" % i, "src/f%d.py" % i) for i in range(15)]
         mock_sem.return_value = entities
         # Each entity has impact = 100 - i
         mock_impact.side_effect = [
             {
                 "impact": {"total": 100 - i},
                 "dependents": [
-                    {"entityId": "d%d" % j, "entityName": "d%d" % j}
-                    for j in range(min(100 - i, 5))
+                    {"entityId": "d%d" % j, "entityName": "d%d" % j} for j in range(min(100 - i, 5))
                 ],
             }
             for i in range(15)
@@ -348,8 +348,7 @@ class TestSemBackend:
 
     @patch("code_forge.graph_triage._get_sem_impact")
     @patch("code_forge.graph_triage._run_sem")
-    @patch("code_forge.graph_triage._detect_backend",
-           return_value=("sem", "/usr/bin/sem"))
+    @patch("code_forge.graph_triage._detect_backend", return_value=("sem", "/usr/bin/sem"))
     def test_sem_entity_skip_unnamed(self, mock_detect, mock_sem, mock_impact):
         """Entities with 'module-level' or 'lines N' names are skipped."""
         entities = [
@@ -371,10 +370,12 @@ class TestSemBackend:
 
     @patch("code_forge.graph_triage._get_sem_impact")
     @patch("code_forge.graph_triage._run_sem")
-    @patch("code_forge.graph_triage._detect_backend",
-           return_value=("sem", "/usr/bin/sem"))
+    @patch("code_forge.graph_triage._detect_backend", return_value=("sem", "/usr/bin/sem"))
     def test_all_entities_unnamed_returns_empty(
-        self, mock_detect, mock_sem, mock_impact,
+        self,
+        mock_detect,
+        mock_sem,
+        mock_impact,
     ):
         """When all entities are unnamed, run() returns [] with no crash."""
         entities = [
@@ -390,8 +391,7 @@ class TestSemBackend:
         mock_impact.assert_not_called()
 
     @patch("code_forge.graph_triage._run_sem")
-    @patch("code_forge.graph_triage._detect_backend",
-           return_value=("sem", "/usr/bin/sem"))
+    @patch("code_forge.graph_triage._detect_backend", return_value=("sem", "/usr/bin/sem"))
     def test_sem_subprocess_timeout(self, mock_detect, mock_sem):
         """TimeoutExpired on one entity gives impact=0; others processed."""
         entities = [
@@ -423,8 +423,7 @@ class TestSemBackend:
 
     @patch("code_forge.graph_triage._get_sem_impact")
     @patch("code_forge.graph_triage._run_sem")
-    @patch("code_forge.graph_triage._detect_backend",
-           return_value=("sem", "/usr/bin/sem"))
+    @patch("code_forge.graph_triage._detect_backend", return_value=("sem", "/usr/bin/sem"))
     def test_sem_finding_format(self, mock_detect, mock_sem, mock_impact):
         """AdvisoryFinding fields match axis='GRAPH-TRIAGE' etc."""
         entities = [_make_entity("my_func", "src/my.py", 10, 20)]
@@ -452,6 +451,7 @@ class TestSemBackend:
 # graphdb backend
 # ---------------------------------------------------------------------------
 
+
 class TestGraphDBBackend:
     """graph.db SQLite backend with IMPORTS_FROM disambiguation."""
 
@@ -472,8 +472,7 @@ class TestGraphDBBackend:
         # Return one node for the queried file
         mock_cursor.fetchall.side_effect = [
             # nodes query
-            [("fn1", "function", "my_func", "src/foo.py::my_func",
-              "src/foo.py", 1, 10)],
+            [("fn1", "function", "my_func", "src/foo.py::my_func", "src/foo.py", 1, 10)],
             # edges CALLS query for disambiguation
             [("caller::a",)],
             # No more nodes
@@ -503,8 +502,7 @@ class TestGraphDBBackend:
         # Return multiple nodes with different dependent counts
         mock_cursor.fetchall.side_effect = [
             # nodes query
-            [("fn1", "function", "run", "src/runner.py::run",
-              "src/runner.py", 1, 10)],
+            [("fn1", "function", "run", "src/runner.py::run", "src/runner.py", 1, 10)],
             # edges disambiguation query -- returns 3 dependents after filter
             [("cli::main",), ("machine::dispatch",), ("test::test_run",)],
             [],
@@ -534,17 +532,14 @@ class TestGraphDBBackend:
 
         # 12 nodes, each with decreasing dependent counts
         nodes = [
-            ("fn%d" % i, "function", "func_%d" % i,
-             "src/f.py::func_%d" % i, "src/f.py", i, i + 5)
+            ("fn%d" % i, "function", "func_%d" % i, "src/f.py::func_%d" % i, "src/f.py", i, i + 5)
             for i in range(12)
         ]
         # Build fetchall responses: first the nodes query, then per-node edges
         responses = [nodes]
         for i in range(12):
             dep_count = 12 - i
-            responses.append(
-                [("dep_%d" % j,) for j in range(dep_count)]
-            )
+            responses.append([("dep_%d" % j,) for j in range(dep_count)])
         responses.append([])  # Final empty for loop termination
         mock_cursor.fetchall.side_effect = responses
 
@@ -555,11 +550,15 @@ class TestGraphDBBackend:
 
     @patch("code_forge.graph_triage._get_sem_impact")
     @patch("code_forge.graph_triage._run_sem")
-    @patch("code_forge.graph_triage._detect_backend",
-           return_value=("graphdb", "/path/graph.db"))
+    @patch("code_forge.graph_triage._detect_backend", return_value=("graphdb", "/path/graph.db"))
     @patch("code_forge.graph_triage.sqlite3.connect")
     def test_graphdb_quality_caveat(
-        self, mock_connect, mock_detect, mock_sem, mock_impact, tmp_path,
+        self,
+        mock_connect,
+        mock_detect,
+        mock_sem,
+        mock_impact,
+        tmp_path,
     ):
         """graphdb findings attribution contains 'graph.db (degraded)'."""
         mock_cursor = MagicMock()
@@ -570,8 +569,7 @@ class TestGraphDBBackend:
         mock_conn.__exit__ = MagicMock(return_value=False)
 
         mock_cursor.fetchall.side_effect = [
-            [("fn1", "function", "unique_func", "src/x.py::unique_func",
-              "src/x.py", 1, 10)],
+            [("fn1", "function", "unique_func", "src/x.py::unique_func", "src/x.py", 1, 10)],
             [("caller::a",), ("caller::b",)],
             [],
         ]
@@ -589,6 +587,7 @@ class TestGraphDBBackend:
 # Security: no shell=True
 # ---------------------------------------------------------------------------
 
+
 class TestNoShellTrue:
     """Verify no subprocess call uses shell=True."""
 
@@ -596,6 +595,7 @@ class TestNoShellTrue:
         """grep the source for shell=True -- must not appear."""
         import inspect
         import code_forge.graph_triage as mod
+
         source = inspect.getsource(mod)
         assert "shell=True" not in source
 
@@ -603,6 +603,7 @@ class TestNoShellTrue:
 # ---------------------------------------------------------------------------
 # find_entity_dependents utility
 # ---------------------------------------------------------------------------
+
 
 class TestFindEntityDependents:
     """find_entity_dependents() exported utility."""
@@ -612,12 +613,17 @@ class TestFindEntityDependents:
     def test_find_entity_dependents_sem(self, mock_which, mock_run):
         """Uses sem when available, returns dependent IDs."""
         mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=_sem_impact_json("my_func", 3, dependents=[
-                {"entityId": "a::caller1", "entityName": "caller1"},
-                {"entityId": "b::caller2", "entityName": "caller2"},
-                {"entityId": "c::caller3", "entityName": "caller3"},
-            ]),
+            args=[],
+            returncode=0,
+            stdout=_sem_impact_json(
+                "my_func",
+                3,
+                dependents=[
+                    {"entityId": "a::caller1", "entityName": "caller1"},
+                    {"entityId": "b::caller2", "entityName": "caller2"},
+                    {"entityId": "c::caller3", "entityName": "caller3"},
+                ],
+            ),
             stderr="",
         )
         result = find_entity_dependents("my_func", "src/foo.py", Path("/repo"))

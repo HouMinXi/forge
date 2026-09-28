@@ -42,11 +42,15 @@ class TestE2eCheckParser:
     def test_all_flags_together(self):
         """All flags set simultaneously."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "e2e-check",
-            "--diff", "/tmp/y.diff",
-            "--repo-root", "/home/user/repo",
-        ])
+        args = parser.parse_args(
+            [
+                "e2e-check",
+                "--diff",
+                "/tmp/y.diff",
+                "--repo-root",
+                "/home/user/repo",
+            ]
+        )
         assert args.subcommand == "e2e-check"
         assert args.diff == "/tmp/y.diff"
         assert args.repo_root == "/home/user/repo"
@@ -78,9 +82,9 @@ class TestE2eCheckDispatch:
         diff_file = tmp_path / "empty.diff"
         diff_file.write_text("", encoding="utf-8")
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "e2e-check", "--diff", str(diff_file),
-             "--repo-root", str(tmp_path)],
+            sys,
+            "argv",
+            ["code-forge", "e2e-check", "--diff", str(diff_file), "--repo-root", str(tmp_path)],
         )
         result = main()
         assert result == EXIT_PASS
@@ -113,9 +117,9 @@ class TestE2eCheckDispatch:
             return_value=([advisory], []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
-                ["code-forge", "e2e-check", "--diff", str(diff_file),
-                 "--repo-root", str(tmp_path)],
+                sys,
+                "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file), "--repo-root", str(tmp_path)],
             )
             result = main()
         assert result == EXIT_PASS
@@ -124,7 +128,10 @@ class TestE2eCheckDispatch:
         assert "PASS (1 advisory)" in err
 
     def test_dispatch_pass_no_advisory_bare_pass(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """No advisory -> bare PASS without parenthetical count."""
         diff_file = tmp_path / "test.diff"
@@ -141,9 +148,9 @@ class TestE2eCheckDispatch:
             return_value=([], []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
-                ["code-forge", "e2e-check", "--diff", str(diff_file),
-                 "--repo-root", str(tmp_path)],
+                sys,
+                "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file), "--repo-root", str(tmp_path)],
             )
             result = main()
         assert result == EXIT_PASS
@@ -180,16 +187,19 @@ class TestE2eCheckDispatch:
             return_value=([advisory], []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
-                ["code-forge", "e2e-check", "--diff", str(diff_file),
-                 "--repo-root", str(tmp_path)],
+                sys,
+                "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file), "--repo-root", str(tmp_path)],
             )
             result = main()
         assert result == EXIT_PASS
         assert result == 0
 
     def test_dispatch_multiple_advisories_plural(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """Pluralization: 2 advisories -> 'PASS (2 advisories)'."""
         from code_forge.disposition import Disposition
@@ -229,9 +239,9 @@ class TestE2eCheckDispatch:
             return_value=(advisories, []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
-                ["code-forge", "e2e-check", "--diff", str(diff_file),
-                 "--repo-root", str(tmp_path)],
+                sys,
+                "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file), "--repo-root", str(tmp_path)],
             )
             result = main()
         assert result == EXIT_PASS
@@ -241,7 +251,10 @@ class TestE2eCheckDispatch:
         assert "advisory two" in err
 
     def test_dispatch_non_e2e_dismissed_not_printed(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """Source filter: DISMISSED from non-E2E_CHECK source -> bare PASS."""
         from code_forge.disposition import Disposition
@@ -270,9 +283,9 @@ class TestE2eCheckDispatch:
             return_value=([non_e2e], []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
-                ["code-forge", "e2e-check", "--diff", str(diff_file),
-                 "--repo-root", str(tmp_path)],
+                sys,
+                "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file), "--repo-root", str(tmp_path)],
             )
             result = main()
         assert result == EXIT_PASS
@@ -308,9 +321,9 @@ class TestE2eCheckDispatch:
             return_value=([blocking], []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
-                ["code-forge", "e2e-check", "--diff", str(diff_file),
-                 "--repo-root", str(tmp_path)],
+                sys,
+                "argv",
+                ["code-forge", "e2e-check", "--diff", str(diff_file), "--repo-root", str(tmp_path)],
             )
             result = main()
         assert result == EXIT_FAIL
@@ -318,7 +331,8 @@ class TestE2eCheckDispatch:
     def test_dispatch_cli_error_missing_diff(self, tmp_path, monkeypatch):
         """e2e-check returns EXIT_CLI_ERROR when --diff file not found."""
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["code-forge", "e2e-check", "--diff", "/nonexistent/b.diff"],
         )
         result = main()

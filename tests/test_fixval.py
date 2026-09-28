@@ -6,6 +6,7 @@ TDD RED phase: tests written first, implementation follows.
 Covers: classify_fixval_candidate, parse_fixval_waiver, run_fixval,
         FixvalResult findings, run_overfit_guard, end-to-end real git.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -32,9 +33,7 @@ class TestClassifyFixvalCandidate:
     """Structural trigger -- BOTH test and non-test files required."""
 
     def test_both_code_and_test_returns_candidate(self):
-        result = classify_fixval_candidate(
-            ["src/foo.py", "tests/test_foo.py"]
-        )
+        result = classify_fixval_candidate(["src/foo.py", "tests/test_foo.py"])
         assert isinstance(result, FixvalCandidate)
         assert result.test_files == ["tests/test_foo.py"]
         assert result.non_test_files == ["src/foo.py"]
@@ -54,30 +53,28 @@ class TestClassifyFixvalCandidate:
         assert isinstance(result, FixvalSkip)
 
     def test_multi_lang_patterns(self):
-        result = classify_fixval_candidate(
-            ["src/foo.py", "foo.test.ts", "bar_test.go"]
-        )
+        result = classify_fixval_candidate(["src/foo.py", "foo.test.ts", "bar_test.go"])
         assert isinstance(result, FixvalCandidate)
         assert sorted(result.test_files) == ["bar_test.go", "foo.test.ts"]
         assert result.non_test_files == ["src/foo.py"]
 
     def test_python_test_patterns(self):
         """All Python test patterns: tests/test_*.py, *_test.py, test_*.py"""
-        result = classify_fixval_candidate([
-            "src/app.py",
-            "tests/test_app.py",
-            "utils_test.py",
-            "test_helpers.py",
-        ])
+        result = classify_fixval_candidate(
+            [
+                "src/app.py",
+                "tests/test_app.py",
+                "utils_test.py",
+                "test_helpers.py",
+            ]
+        )
         assert isinstance(result, FixvalCandidate)
         assert len(result.test_files) == 3
         assert result.non_test_files == ["src/app.py"]
 
     def test_ts_spec_pattern(self):
         """TypeScript .spec.ts recognized as test."""
-        result = classify_fixval_candidate(
-            ["src/app.ts", "src/app.spec.ts"]
-        )
+        result = classify_fixval_candidate(["src/app.ts", "src/app.spec.ts"])
         assert isinstance(result, FixvalCandidate)
         assert result.test_files == ["src/app.spec.ts"]
 
@@ -168,15 +165,17 @@ class TestRunFixval:
     def test_baseline_failure_skips(self, mock_guard, tmp_path):
         mock_guard.return_value = (
             "skip",
-            [StateFinding(
-                id="FIXVAL_SKIPPED",
-                fingerprint="fixval-baseline-fail",
-                source="FIXVAL",
-                disposition=Disposition.DISMISSED,
-                file="",
-                line_range=[],
-                description="baseline failed",
-            )],
+            [
+                StateFinding(
+                    id="FIXVAL_SKIPPED",
+                    fingerprint="fixval-baseline-fail",
+                    source="FIXVAL",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description="baseline failed",
+                )
+            ],
             ["baseline failed"],
         )
         candidate = _make_candidate()
@@ -191,17 +190,12 @@ class TestRunFixval:
 
     @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_revert_apply_failure_skips(
-        self, mock_run, mock_guard, tmp_path
-    ):
+    def test_revert_apply_failure_skips(self, mock_run, mock_guard, tmp_path):
         mock_guard.return_value = ("passed", [], [])
         # git apply -R fails
         mock_run.return_value = MagicMock(returncode=1, stderr="error")
         candidate = _make_candidate()
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         result = run_fixval(
             candidate,
             test_cmd=["python", "-m", "pytest"],
@@ -214,9 +208,7 @@ class TestRunFixval:
 
     @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_test_fails_on_revert_passes(
-        self, mock_run, mock_guard, tmp_path
-    ):
+    def test_test_fails_on_revert_passes(self, mock_run, mock_guard, tmp_path):
         mock_guard.return_value = ("passed", [], [])
         # First call: git apply -R (revert) succeeds
         # Second call: test run -> fails (RED) = PASS
@@ -227,10 +219,7 @@ class TestRunFixval:
             MagicMock(returncode=0),  # git apply (restore)
         ]
         candidate = _make_candidate()
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         result = run_fixval(
             candidate,
             test_cmd=["python", "-m", "pytest"],
@@ -242,9 +231,7 @@ class TestRunFixval:
 
     @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_test_passes_on_revert_blocks(
-        self, mock_run, mock_guard, tmp_path
-    ):
+    def test_test_passes_on_revert_blocks(self, mock_run, mock_guard, tmp_path):
         mock_guard.return_value = ("passed", [], [])
         mock_run.side_effect = [
             MagicMock(returncode=0),  # git apply -R (revert)
@@ -252,10 +239,7 @@ class TestRunFixval:
             MagicMock(returncode=0),  # git apply (restore)
         ]
         candidate = _make_candidate()
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         result = run_fixval(
             candidate,
             test_cmd=["python", "-m", "pytest"],
@@ -268,9 +252,7 @@ class TestRunFixval:
 
     @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_restore_via_apply_not_checkout(
-        self, mock_run, mock_guard, tmp_path
-    ):
+    def test_restore_via_apply_not_checkout(self, mock_run, mock_guard, tmp_path):
         mock_guard.return_value = ("passed", [], [])
         mock_run.side_effect = [
             MagicMock(returncode=0),  # git apply -R
@@ -278,10 +260,7 @@ class TestRunFixval:
             MagicMock(returncode=0),  # git apply (forward restore)
         ]
         candidate = _make_candidate()
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         run_fixval(
             candidate,
             test_cmd=["python", "-m", "pytest"],
@@ -302,21 +281,16 @@ class TestRunFixval:
     @patch("code_forge.fixval._logger")
     @patch("code_forge.fixval._run_baseline_guard")
     @patch("subprocess.run")
-    def test_restore_failure_logs_error(
-        self, mock_run, mock_guard, mock_logger, tmp_path
-    ):
+    def test_restore_failure_logs_error(self, mock_run, mock_guard, mock_logger, tmp_path):
         """If restore patch fails, _logger.error is called with details."""
         mock_guard.return_value = ("passed", [], [])
         mock_run.side_effect = [
-            MagicMock(returncode=0),                     # git apply -R
-            MagicMock(returncode=0),                     # test passes -> BLOCK
+            MagicMock(returncode=0),  # git apply -R
+            MagicMock(returncode=0),  # test passes -> BLOCK
             MagicMock(returncode=1, stderr="conflict"),  # restore FAILS
         ]
         candidate = _make_candidate()
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         result = run_fixval(
             candidate,
             test_cmd=["python", "-m", "pytest"],
@@ -340,10 +314,7 @@ class TestRunFixval:
             test_files=["tests/test_a.py", "tests/test_b.py"],
             non_test_files=["src/foo.py"],
         )
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         run_fixval(
             candidate,
             test_cmd=["python", "-m", "pytest"],
@@ -367,10 +338,7 @@ class TestRunFixval:
             ("passed", [], []),
         ]
         candidate = _make_candidate()
-        diff = (
-            "--- a/src/foo.py\n+++ b/src/foo.py\n"
-            "@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0),  # git apply -R
@@ -430,8 +398,10 @@ class TestFixvalResultFindings:
     def test_block_produces_dismissed(self, tmp_path):
         """BLOCK -> DISMISSED StateFinding (block via Verdict.FAIL,
         not CONFIRMED -- CONFIRMED blocks reconvergence)."""
-        with patch("code_forge.fixval._run_baseline_guard") as mock_guard, \
-             patch("subprocess.run") as mock_run:
+        with (
+            patch("code_forge.fixval._run_baseline_guard") as mock_guard,
+            patch("subprocess.run") as mock_run,
+        ):
             mock_guard.return_value = ("passed", [], [])
             mock_run.side_effect = [
                 MagicMock(returncode=0),
@@ -439,10 +409,7 @@ class TestFixvalResultFindings:
                 MagicMock(returncode=0),
             ]
             candidate = _make_candidate()
-            diff = (
-                "--- a/src/foo.py\n+++ b/src/foo.py\n"
-                "@@ -1 +1 @@\n-old\n+new\n"
-            )
+            diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
             result = run_fixval(
                 candidate,
                 test_cmd=["python", "-m", "pytest"],
@@ -459,8 +426,10 @@ class TestFixvalResultFindings:
         assert f.fingerprint == "fixval-hollow"
 
     def test_pass_produces_empty(self, tmp_path):
-        with patch("code_forge.fixval._run_baseline_guard") as mock_guard, \
-             patch("subprocess.run") as mock_run:
+        with (
+            patch("code_forge.fixval._run_baseline_guard") as mock_guard,
+            patch("subprocess.run") as mock_run,
+        ):
             mock_guard.return_value = ("passed", [], [])
             mock_run.side_effect = [
                 MagicMock(returncode=0),
@@ -468,10 +437,7 @@ class TestFixvalResultFindings:
                 MagicMock(returncode=0),
             ]
             candidate = _make_candidate()
-            diff = (
-                "--- a/src/foo.py\n+++ b/src/foo.py\n"
-                "@@ -1 +1 @@\n-old\n+new\n"
-            )
+            diff = "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
             result = run_fixval(
                 candidate,
                 test_cmd=["python", "-m", "pytest"],
@@ -499,9 +465,7 @@ class TestFixvalResultFindings:
         assert f.id == "FIXVAL_SKIPPED"
 
     @patch("code_forge.fixval.parse_fixval_waiver")
-    def test_waived_produces_dismissed_plus_advisory(
-        self, mock_waiver, tmp_path
-    ):
+    def test_waived_produces_dismissed_plus_advisory(self, mock_waiver, tmp_path):
         mock_waiver.return_value = "flaky"
         candidate = _make_candidate()
         result = run_fixval(
@@ -530,16 +494,22 @@ class TestEndToEndRealGit:
         with real git apply -R / git apply (forward restore)."""
         # Init git repo
         subprocess.run(
-            ["git", "init"], cwd=tmp_path, check=True,
+            ["git", "init"],
+            cwd=tmp_path,
+            check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True,
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True,
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
         )
 
         # Create initial code file
@@ -552,34 +522,33 @@ class TestEndToEndRealGit:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         test_file = tests_dir / "test_calc.py"
-        test_file.write_text(
-            "from src.calc import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 0\n"
-        )
+        test_file.write_text("from src.calc import add\ndef test_add():\n    assert add(1, 2) == 0\n")
 
         # Initial commit
         subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True,
+            ["git", "add", "."],
+            cwd=tmp_path,
+            check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "initial"],
-            cwd=tmp_path, check=True, capture_output=True,
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
         )
 
         # Fix the code
         code_file.write_text("def add(a, b):\n    return a + b\n")
         # Fix the test
-        test_file.write_text(
-            "from src.calc import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
-        )
+        test_file.write_text("from src.calc import add\ndef test_add():\n    assert add(1, 2) == 3\n")
 
         # Generate diff
         diff_result = subprocess.run(
-            ["git", "diff"], cwd=tmp_path, capture_output=True, text=True,
+            ["git", "diff"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
         )
         diff_text = diff_result.stdout
 
@@ -594,11 +563,14 @@ class TestEndToEndRealGit:
             mock_guard.return_value = ("passed", [], [])
             result = run_fixval(
                 candidate,
-                test_cmd=["python3", "-c",
-                           "import sys; sys.path.insert(0, 'src'); "
-                           "sys.path.insert(0, '.'); "
-                           "from src.calc import add; "
-                           "assert add(1, 2) == 3, 'expected 3'"],
+                test_cmd=[
+                    "python3",
+                    "-c",
+                    "import sys; sys.path.insert(0, 'src'); "
+                    "sys.path.insert(0, '.'); "
+                    "from src.calc import add; "
+                    "assert add(1, 2) == 3, 'expected 3'",
+                ],
                 cwd=tmp_path,
                 commit_message="fix: correct add function",
                 diff_text=diff_text,
@@ -653,11 +625,7 @@ class TestRunOverfitGuard:
         # Create a .py file with a local variable
         src_file = tmp_path / "src" / "module.py"
         src_file.parent.mkdir(parents=True, exist_ok=True)
-        src_file.write_text(
-            "def compute():\n"
-            "    result = 42\n"
-            "    return result\n"
-        )
+        src_file.write_text("def compute():\n    result = 42\n    return result\n")
         candidate = FixvalCandidate(
             test_files=["tests/test_module.py"],
             non_test_files=[str(src_file)],
@@ -677,11 +645,7 @@ class TestRunOverfitGuard:
     def test_rename_keeps_test_passing_no_advisory(self, tmp_path):
         src_file = tmp_path / "src" / "module.py"
         src_file.parent.mkdir(parents=True, exist_ok=True)
-        src_file.write_text(
-            "def compute():\n"
-            "    result = 42\n"
-            "    return result\n"
-        )
+        src_file.write_text("def compute():\n    result = 42\n    return result\n")
         candidate = FixvalCandidate(
             test_files=["tests/test_module.py"],
             non_test_files=[str(src_file)],

@@ -20,9 +20,7 @@ _git_snapshot_key = pytest.StashKey[dict]()
 # subprocess started from a scratch git repo has none of those and dies on
 # FileNotFoundError before the command runs. Plant a marked cfg + empty src/
 # so the guess succeeds and the subprocess can start.
-_MUTMUT_SCRATCH_CFG = (
-    "# managed-by-code-forge-mutation\n[mutmut]\nsource_paths=src\n"
-)
+_MUTMUT_SCRATCH_CFG = "# managed-by-code-forge-mutation\n[mutmut]\nsource_paths=src\n"
 
 
 def plant_mutmut_cfg(root: Path) -> None:
@@ -94,9 +92,7 @@ def _isolate_user_config(monkeypatch):
     api_key_env requirements cause preflight failures in CI and on
     machines where the keys are not exported.
     """
-    monkeypatch.setattr(
-        "code_forge.user_config.load_user_backends", lambda: {}
-    )
+    monkeypatch.setattr("code_forge.user_config.load_user_backends", lambda: {})
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -115,8 +111,12 @@ def _git_isolation():
 def _git_output(repo_root, *args):
     """Reject a failed Git query instead of snapshotting empty output."""
     return subprocess.run(
-        ["git", *args], cwd=str(repo_root), check=True,
-        capture_output=True, text=True, timeout=10,
+        ["git", *args],
+        cwd=str(repo_root),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
     ).stdout
 
 
@@ -124,9 +124,15 @@ def _snapshot_git_state(repo_root):
     """Capture repository state using Git's worktree-aware paths."""
     snap: dict = {"config": _git_output(repo_root, "config", "--list", "--local")}
 
-    hooks_dir = Path(_git_output(
-        repo_root, "rev-parse", "--path-format=absolute", "--git-path", "hooks",
-    ).strip())
+    hooks_dir = Path(
+        _git_output(
+            repo_root,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "hooks",
+        ).strip()
+    )
     hooks = {}
     if hooks_dir.is_dir():
         for f in sorted(hooks_dir.iterdir()):
@@ -135,7 +141,10 @@ def _snapshot_git_state(repo_root):
     snap["hooks"] = hooks
 
     snap["refs_heads"] = _git_output(
-        repo_root, "for-each-ref", "refs/heads/", "--format=%(refname) %(objectname)",
+        repo_root,
+        "for-each-ref",
+        "refs/heads/",
+        "--format=%(refname) %(objectname)",
     )
     try:
         snap["HEAD"] = _git_output(repo_root, "rev-parse", "--verify", "HEAD").strip()
@@ -193,7 +202,8 @@ def pytest_sessionfinish(session, exitstatus):
         added = set(after["hooks"]) - set(before["hooks"])
         removed = set(before["hooks"]) - set(after["hooks"])
         changed = {
-            k for k in set(before["hooks"]) & set(after["hooks"])
+            k
+            for k in set(before["hooks"]) & set(after["hooks"])
             if before["hooks"][k] != after["hooks"][k]
         }
         parts = [f"  + {k} (new)" for k in sorted(added)]

@@ -3,6 +3,7 @@
 Covers: hash stability, trust store CRUD, XDG config resolution,
 dangerous field detection, corrupted store recovery.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -74,9 +75,15 @@ def test_hash_backends_block_ignores_benign_fields():
 
     base = {"backends": {"a": {"base_url": "https://a.com", "api_key_env": "K"}}}
     h1 = hash_backends_block(base)
-    with_model = {"backends": {"a": {
-        "base_url": "https://a.com", "api_key_env": "K", "model": "gpt-4",
-    }}}
+    with_model = {
+        "backends": {
+            "a": {
+                "base_url": "https://a.com",
+                "api_key_env": "K",
+                "model": "gpt-4",
+            }
+        }
+    }
     h2 = hash_backends_block(with_model)
     assert h1 == h2
 

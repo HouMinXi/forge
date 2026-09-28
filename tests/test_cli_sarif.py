@@ -14,6 +14,7 @@
   (i) PENDING through CI defensive path
   (j) load_state None defensive
 """
+
 import json
 from io import StringIO
 from unittest.mock import MagicMock, patch
@@ -83,8 +84,11 @@ class TestCIModeZeroFindings:
         stdout = StringIO()
         stderr = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(state_path, mock_registry)
 
         # Parse SARIF from stdout
@@ -109,8 +113,11 @@ class TestCIModeConfirmedFinding:
 
         stdout = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", StringIO()),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(state_path, mock_registry)
 
         sarif = json.loads(stdout.getvalue())
@@ -129,8 +136,11 @@ class TestCIModeUncertainFinding:
 
         stdout = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", StringIO()),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(state_path, mock_registry)
 
         sarif = json.loads(stdout.getvalue())
@@ -174,8 +184,11 @@ class TestToolVersionsCaptured:
         def mock_version(cmd):
             return {"shellcheck": "0.10.0", "ruff": "0.4.2"}.get(cmd, "unknown")
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("code_forge.cli.capture_tool_version", side_effect=mock_version):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", StringIO()),
+            patch("code_forge.cli.capture_tool_version", side_effect=mock_version),
+        ):
             _emit_ci_output(state_path, mock_registry)
 
         sarif = json.loads(stdout.getvalue())
@@ -196,8 +209,11 @@ class TestEscalatedWithInfraErrors:
         stdout = StringIO()
         stderr = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(state_path, mock_registry)
 
         # SARIF still emitted
@@ -220,8 +236,11 @@ class TestStdoutStderrSeparation:
         stdout = StringIO()
         stderr = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(state_path, mock_registry)
 
         # stdout is pure JSON
@@ -251,9 +270,11 @@ class TestForgeLockHeldDuringEmission:
         def check_lock():
             lock_present_during_emit.append(lock_path.exists())
 
-        with patch("sys.stdout", StringIO()), \
-             patch("sys.stderr", StringIO()), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("sys.stdout", StringIO()),
+            patch("sys.stderr", StringIO()),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(state_path, mock_registry, post_emit_hook=check_lock)
 
         assert lock_present_during_emit == [True]
@@ -267,7 +288,9 @@ class TestPendingCIDefensivePath:
     """
 
     def test_pending_ci_emits_sarif_with_pending_summary(
-        self, state_dir, mock_registry,
+        self,
+        state_dir,
+        mock_registry,
     ):
         state_path = state_dir / "state.json"
         state = _make_state(Verdict.PASS, [])
@@ -278,10 +301,12 @@ class TestPendingCIDefensivePath:
         stdout = StringIO()
         stderr = StringIO()
 
-        with patch("code_forge.cli._load_state", return_value=pending_state), \
-             patch("sys.stdout", stdout), \
-             patch("sys.stderr", stderr), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("code_forge.cli._load_state", return_value=pending_state),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(state_path, mock_registry)
 
         # SARIF on stdout, PENDING summary on stderr -- no crash.
@@ -300,8 +325,11 @@ class TestLoadStateNoneDefensive:
         stdout = StringIO()
         stderr = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             # Should not raise, should return silently
             _emit_ci_output(state_path, mock_registry)
 
@@ -329,11 +357,14 @@ class TestTokenCostWiringApiBackend:
 
         stdout = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("code_forge.cli.capture_tool_version",
-                   return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", StringIO()),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(
-                state_path, mock_registry,
+                state_path,
+                mock_registry,
                 backend_name="deepseek",
                 backend_model="deepseek-v4-pro",
             )
@@ -350,8 +381,7 @@ class TestTokenCostWiringApiBackend:
         assert tc["passes"] == 2
         assert tc["durationSeconds"] == 5.0
 
-    def test_token_cost_carries_cached_tokens(self, state_dir,
-                                               mock_registry):
+    def test_token_cost_carries_cached_tokens(self, state_dir, mock_registry):
         state_path = state_dir / "state.json"
         state = _make_state(Verdict.PASS, [])
         state.cost_total_input = 31
@@ -361,12 +391,14 @@ class TestTokenCostWiringApiBackend:
         save_state(state, state_path)
 
         stdout = StringIO()
-        with patch("sys.stdout", stdout), patch("sys.stderr",
-                                                StringIO()), \
-             patch("code_forge.cli.capture_tool_version",
-                   return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", StringIO()),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(
-                state_path, mock_registry,
+                state_path,
+                mock_registry,
                 backend_name="mimo-pro",
                 backend_model="mimo-v2.5-pro",
             )
@@ -393,11 +425,14 @@ class TestTokenCostWiringCliBackend:
 
         stdout = StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", StringIO()), \
-             patch("code_forge.cli.capture_tool_version",
-                   return_value="0.1.0"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", StringIO()),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1.0"),
+        ):
             _emit_ci_output(
-                state_path, mock_registry,
+                state_path,
+                mock_registry,
                 backend_name=None,
                 backend_model=None,
             )
@@ -405,5 +440,4 @@ class TestTokenCostWiringCliBackend:
         sarif = json.loads(stdout.getvalue())
         run = sarif["runs"][0]
         props = run.get("properties", {})
-        assert "tokenCost" not in props, \
-            "tokenCost should be absent for cli backend"
+        assert "tokenCost" not in props, "tokenCost should be absent for cli backend"

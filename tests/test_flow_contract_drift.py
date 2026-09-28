@@ -22,9 +22,7 @@ from code_forge.flow_contract import (
     P3_DISTINCT_PER_FILE_THRESHOLD,
 )
 
-_SKILL_MD = (
-    pathlib.Path(__file__).parent.parent / "skills" / "code-forge" / "SKILL.md"
-)
+_SKILL_MD = pathlib.Path(__file__).parent.parent / "skills" / "code-forge" / "SKILL.md"
 
 
 class TestFlowContractFreeze:
@@ -60,15 +58,9 @@ class TestFlowContractDrift:
         m_diff = re.search(r"distinct_per_diff\s*>\s*(\d+)", skill_text)
         m_density = re.search(r"density\s*>\s*([\d.]+)", skill_text)
 
-        assert m_file is not None, (
-            "SKILL.md: could not find 'distinct_per_file > N' threshold line"
-        )
-        assert m_diff is not None, (
-            "SKILL.md: could not find 'distinct_per_diff > N' threshold line"
-        )
-        assert m_density is not None, (
-            "SKILL.md: could not find 'density > N.NN' threshold line"
-        )
+        assert m_file is not None, "SKILL.md: could not find 'distinct_per_file > N' threshold line"
+        assert m_diff is not None, "SKILL.md: could not find 'distinct_per_diff > N' threshold line"
+        assert m_density is not None, "SKILL.md: could not find 'density > N.NN' threshold line"
 
         skill_per_file = int(m_file.group(1))
         skill_per_diff = int(m_diff.group(1))

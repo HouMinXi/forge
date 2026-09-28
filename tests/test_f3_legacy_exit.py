@@ -21,14 +21,7 @@ from code_forge.state import Mode, StateFinding, Verdict
 
 # Unified diff: changes line 10 of test.py (adds a line)
 _DIFF_CHANGES_LINE_10 = (
-    "--- a/test.py\n"
-    "+++ b/test.py\n"
-    "@@ -7,3 +7,4 @@\n"
-    " line7\n"
-    " line8\n"
-    " line9\n"
-    "+new_line_10\n"
-    " line10\n"
+    "--- a/test.py\n+++ b/test.py\n@@ -7,3 +7,4 @@\n line7\n line8\n line9\n+new_line_10\n line10\n"
 )
 
 
@@ -73,9 +66,7 @@ class TestP1PreExistingToAdvisory:
             falsifier=StubFalsifier(),
             autofixer=NoChangeAutoFixer(),
             revert_fn=lambda f: None,
-            resolved_review=_make_resolved(
-                git_diff=_DIFF_CHANGES_LINE_10
-            ),
+            resolved_review=_make_resolved(git_diff=_DIFF_CHANGES_LINE_10),
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,
@@ -100,9 +91,8 @@ class TestP1PreExistingToAdvisory:
 
         # Finding appears in advisories exactly once (dedup'd).
         advisories = machine._advisories
-        assert len(advisories) == 1, (
-            "expected 1 advisory, got %d (per-round accumulation bug)"
-            % len(advisories)
+        assert len(advisories) == 1, "expected 1 advisory, got %d (per-round accumulation bug)" % len(
+            advisories
         )
         first = advisories[0]
         assert first.file == "test.py"
@@ -122,9 +112,7 @@ class TestP1PreExistingToAdvisory:
             falsifier=StubFalsifier(),
             autofixer=NoChangeAutoFixer(),
             revert_fn=lambda f: None,
-            resolved_review=_make_resolved(
-                git_diff=_DIFF_CHANGES_LINE_10
-            ),
+            resolved_review=_make_resolved(git_diff=_DIFF_CHANGES_LINE_10),
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,
@@ -183,9 +171,7 @@ class TestP3NewUnfixableConverges:
             falsifier=StubFalsifier(),
             autofixer=NoChangeAutoFixer(),
             revert_fn=lambda f: None,
-            resolved_review=_make_resolved(
-                git_diff=_DIFF_CHANGES_LINE_10
-            ),
+            resolved_review=_make_resolved(git_diff=_DIFF_CHANGES_LINE_10),
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,
@@ -215,9 +201,7 @@ class TestP4Dispo05Once:
             falsifier=StubFalsifier(),
             autofixer=NoChangeAutoFixer(),
             revert_fn=lambda f: None,
-            resolved_review=_make_resolved(
-                git_diff=_DIFF_CHANGES_LINE_10
-            ),
+            resolved_review=_make_resolved(git_diff=_DIFF_CHANGES_LINE_10),
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,
@@ -251,9 +235,7 @@ class TestP5AdvisoryDedup:
             falsifier=StubFalsifier(),
             autofixer=NoChangeAutoFixer(),
             revert_fn=lambda f: None,
-            resolved_review=_make_resolved(
-                git_diff=_DIFF_CHANGES_LINE_10
-            ),
+            resolved_review=_make_resolved(git_diff=_DIFF_CHANGES_LINE_10),
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,
@@ -281,9 +263,7 @@ class TestP7AbsolutePathClassifiedNew:
             falsifier=StubFalsifier(),
             autofixer=NoChangeAutoFixer(),
             revert_fn=lambda f: None,
-            resolved_review=_make_resolved(
-                git_diff=_DIFF_CHANGES_LINE_10
-            ),
+            resolved_review=_make_resolved(git_diff=_DIFF_CHANGES_LINE_10),
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,
@@ -312,9 +292,7 @@ class TestR7CiModeStillFails:
             falsifier=StubFalsifier(),
             autofixer=NoChangeAutoFixer(),
             revert_fn=lambda f: None,
-            resolved_review=_make_resolved(
-                git_diff=_DIFF_CHANGES_LINE_10
-            ),
+            resolved_review=_make_resolved(git_diff=_DIFF_CHANGES_LINE_10),
             source_hash="abc",
             baseline_spec_repr="test",
             cwd=tmp_path,

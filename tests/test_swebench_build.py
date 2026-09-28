@@ -35,10 +35,7 @@ class TestEmitsBothShapes:
 
     def test_the_hold_entry_reviews_the_reversed_patch(self, tmp_path):
         build_corpus([_inst("a-1")], tmp_path, rejections=[])
-        hold = [
-            e for e in load_corpus(tmp_path / "corpus.yaml")
-            if e.expected_verdict == "HOLD"
-        ][0]
+        hold = [e for e in load_corpus(tmp_path / "corpus.yaml") if e.expected_verdict == "HOLD"][0]
         diff = (tmp_path / hold.diff_file).read_text()
         # Reversed: the fix's removal becomes an addition.
         assert "+bad" in diff
@@ -46,10 +43,7 @@ class TestEmitsBothShapes:
 
     def test_the_pass_entry_reviews_the_fix_itself(self, tmp_path):
         build_corpus([_inst("a-1")], tmp_path, rejections=[])
-        clean = [
-            e for e in load_corpus(tmp_path / "corpus.yaml")
-            if e.expected_verdict == "PASS"
-        ][0]
+        clean = [e for e in load_corpus(tmp_path / "corpus.yaml") if e.expected_verdict == "PASS"][0]
         diff = (tmp_path / clean.diff_file).read_text()
         assert "+good" in diff
         assert "-bad" in diff
@@ -66,19 +60,13 @@ class TestEmitsBothShapes:
 
         d = pathlib.Path(tempfile.mkdtemp())
         build_corpus([_inst("a-1")], d, rejections=[])
-        clean = [
-            e for e in load_corpus(d / "corpus.yaml")
-            if e.expected_verdict == "PASS"
-        ][0]
+        clean = [e for e in load_corpus(d / "corpus.yaml") if e.expected_verdict == "PASS"][0]
         assert clean.asserts_no_findings is True
         assert clean.expected_findings == []
 
     def test_hold_entries_carry_the_answer_key(self, tmp_path):
         build_corpus([_inst("a-1")], tmp_path, rejections=[])
-        hold = [
-            e for e in load_corpus(tmp_path / "corpus.yaml")
-            if e.expected_verdict == "HOLD"
-        ][0]
+        hold = [e for e in load_corpus(tmp_path / "corpus.yaml") if e.expected_verdict == "HOLD"][0]
         assert len(hold.expected_findings) == 1
         assert hold.expected_findings[0].file == "m.py"
 
@@ -104,18 +92,27 @@ class TestBaseFiles:
             work.mkdir(parents=True)
             subprocess.run(["git", "init", "-q", "."], cwd=work, check=True)
             src = tmp_path / "base_files" / e.name
-            subprocess.run(
-                ["cp", "-r", "%s/." % src, str(work)], check=True
-            )
+            subprocess.run(["cp", "-r", "%s/." % src, str(work)], check=True)
             subprocess.run(["git", "add", "-A"], cwd=work, check=True)
             subprocess.run(
-                ["git", "-c", "user.name=t", "-c", "user.email=t@t",
-                 "commit", "-qm", "b", "--allow-empty"],
-                cwd=work, check=True,
+                [
+                    "git",
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "commit",
+                    "-qm",
+                    "b",
+                    "--allow-empty",
+                ],
+                cwd=work,
+                check=True,
             )
             rc = subprocess.run(
                 ["git", "apply", "--check", str(tmp_path / e.diff_file)],
-                cwd=work, capture_output=True,
+                cwd=work,
+                capture_output=True,
             )
             assert rc.returncode == 0, (e.name, rc.stderr.decode())
 

@@ -14,7 +14,6 @@ The distinction the plan turns on, and which these tests encode:
   the qualified pool.
 """
 
-
 from code_forge.eval.swebench import (
     RejectReason,
     qualifies,
@@ -72,9 +71,7 @@ class TestQualificationPredicates:
 
     def test_rejects_more_than_five_hunks(self):
         head = "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-        body = "".join(
-            "@@ -%d,2 +%d,2 @@\n ctx\n-old\n" % (i * 10, i * 10) for i in range(6)
-        )
+        body = "".join("@@ -%d,2 +%d,2 @@\n ctx\n-old\n" % (i * 10, i * 10) for i in range(6))
         assert qualifies(_inst(patch=head + body)) is RejectReason.TOO_MANY_HUNKS
 
     def test_rejects_an_oversized_hunk(self):
@@ -88,15 +85,11 @@ class TestQualificationPredicates:
         assert got is RejectReason.UNUSABLE_STATEMENT
 
     def test_rejects_an_empty_statement(self):
-        assert qualifies(_inst(problem_statement="  \n\n")) is (
-            RejectReason.UNUSABLE_STATEMENT
-        )
+        assert qualifies(_inst(problem_statement="  \n\n")) is (RejectReason.UNUSABLE_STATEMENT)
 
     def test_rejects_a_traceback_as_the_title(self):
         stmt = 'Traceback (most recent call last):\n  File "x.py", line 1\n'
-        assert qualifies(_inst(problem_statement=stmt)) is (
-            RejectReason.UNUSABLE_STATEMENT
-        )
+        assert qualifies(_inst(problem_statement=stmt)) is (RejectReason.UNUSABLE_STATEMENT)
 
     def test_rejects_a_pure_feature_addition(self):
         """Reversing it removes a working feature, which is not a defect.

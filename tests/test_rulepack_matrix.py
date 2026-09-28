@@ -5,6 +5,7 @@
 Covers schema conformance (schema_version 1), atomic persistence to
 .code-forge/rulepack-matrix.json, and the stderr summary line format.
 """
+
 from __future__ import annotations
 
 import json
@@ -82,8 +83,7 @@ class TestAtomicPersistence:
         m2 = RulepackMatrix(packs=[])
         m2.write(tmp_path)
         data = json.loads(
-            (tmp_path / ".code-forge" / "rulepack-matrix.json")
-            .read_text(encoding="utf-8")
+            (tmp_path / ".code-forge" / "rulepack-matrix.json").read_text(encoding="utf-8")
         )
         assert data["packs"] == []
 

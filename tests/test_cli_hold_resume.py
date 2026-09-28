@@ -59,11 +59,12 @@ class TestHoldAbortedExit:
             call_count[0] += 1
             return Verdict.PENDING
 
-        with patch(
-            "code_forge.cli.StateMachine.run", mock_sm_run
-        ), patch(
-            "code_forge.cli.run_hold_ui",
-            side_effect=HoldAborted("user quit"),
+        with (
+            patch("code_forge.cli.StateMachine.run", mock_sm_run),
+            patch(
+                "code_forge.cli.run_hold_ui",
+                side_effect=HoldAborted("user quit"),
+            ),
         ):
             verdict = _run_hold_loop(
                 mode=Mode.LOCAL,
@@ -102,10 +103,11 @@ class TestHoldResumeTerminal:
         def mock_sm_run(self_sm):
             return next(results)
 
-        with patch(
-            "code_forge.cli.StateMachine.run", mock_sm_run
-        ), patch(
-            "code_forge.cli.run_hold_ui",
+        with (
+            patch("code_forge.cli.StateMachine.run", mock_sm_run),
+            patch(
+                "code_forge.cli.run_hold_ui",
+            ),
         ):
             verdict = _run_hold_loop(
                 mode=Mode.LOCAL,
@@ -144,10 +146,11 @@ class TestMaxHoldCyclesExhaustion:
         def mock_sm_run(self_sm):
             return Verdict.PENDING
 
-        with patch(
-            "code_forge.cli.StateMachine.run", mock_sm_run
-        ), patch(
-            "code_forge.cli.run_hold_ui",
+        with (
+            patch("code_forge.cli.StateMachine.run", mock_sm_run),
+            patch(
+                "code_forge.cli.run_hold_ui",
+            ),
         ):
             verdict = _run_hold_loop(
                 mode=Mode.LOCAL,
@@ -173,10 +176,7 @@ class TestMaxHoldCyclesExhaustion:
         with open(state_path, encoding="utf-8") as f:
             data = json.load(f)
         assert data["verdict"] == "ESCALATED"
-        assert any(
-            "MAX_HOLD_CYCLES=2 exhausted" in e
-            for e in data["infra_errors"]
-        )
+        assert any("MAX_HOLD_CYCLES=2 exhausted" in e for e in data["infra_errors"])
         assert data["converged"] is False
 
 
@@ -202,10 +202,12 @@ class TestPendingContinuesToHold:
         def hold_spy(loaded, path, input_fn=None, output_fn=None):
             hold_called[0] = True
 
-        with patch(
-            "code_forge.cli.StateMachine.run", mock_sm_run
-        ), patch(
-            "code_forge.cli.run_hold_ui", side_effect=hold_spy,
+        with (
+            patch("code_forge.cli.StateMachine.run", mock_sm_run),
+            patch(
+                "code_forge.cli.run_hold_ui",
+                side_effect=hold_spy,
+            ),
         ):
             _run_hold_loop(
                 mode=Mode.LOCAL,
@@ -226,8 +228,7 @@ class TestPendingContinuesToHold:
             )
 
         assert hold_called[0] is True, (
-            "a PENDING verdict must continue into the HOLD branch, "
-            "not return early"
+            "a PENDING verdict must continue into the HOLD branch, not return early"
         )
         captured = capsys.readouterr()
         assert "code-forge: cost:" in captured.err, (
@@ -253,6 +254,7 @@ class TestMaxHoldNoneStateFallback:
         # Patch load_state in state module to return None at the
         # MAX exhaustion path (simulates state.json deleted).
         from code_forge.state import load_state as real_load
+
         load_call_count = [0]
 
         def patched_load(path):
@@ -266,12 +268,15 @@ class TestMaxHoldNoneStateFallback:
                 return real_load(path)
             return None
 
-        with patch(
-            "code_forge.cli.StateMachine.run", mock_sm_run
-        ), patch(
-            "code_forge.cli.run_hold_ui",
-        ), patch(
-            "code_forge.state.load_state", side_effect=patched_load,
+        with (
+            patch("code_forge.cli.StateMachine.run", mock_sm_run),
+            patch(
+                "code_forge.cli.run_hold_ui",
+            ),
+            patch(
+                "code_forge.state.load_state",
+                side_effect=patched_load,
+            ),
         ):
             verdict = _run_hold_loop(
                 mode=Mode.LOCAL,

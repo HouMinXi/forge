@@ -133,16 +133,12 @@ class TestScoringInvariant:
         # because none of them exercised a right-file/wrong-place actual.
         # That is the shape a matching regression would actually take.
         entry = _entry(1)
-        confirmed = [
-            {"file": "a.py", "line_range": (900, 910), "message": "unrelated wording"}
-        ]
+        confirmed = [{"file": "a.py", "line_range": (900, 910), "message": "unrelated wording"}]
         assert score_findings(entry, confirmed) == (0, 1, 1)
 
     def test_wrong_file_same_range_is_not_a_hit(self):
         entry = _entry(1)
-        confirmed = [
-            {"file": "other.py", "line_range": (1, 3), "message": "defect number 0"}
-        ]
+        confirmed = [{"file": "other.py", "line_range": (1, 3), "message": "defect number 0"}]
         assert score_findings(entry, confirmed) == (0, 1, 1)
 
 

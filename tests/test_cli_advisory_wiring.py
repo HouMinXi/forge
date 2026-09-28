@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for advisory-findings.json -> SARIF/summary wiring."""
+
 from __future__ import annotations
 
 import json
@@ -104,8 +105,11 @@ class TestAdvisorySeamWiring:
         registry = {"sh": MagicMock(command="shellcheck")}
         stdout, stderr = StringIO(), StringIO()
 
-        with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
-             patch("code_forge.cli.capture_tool_version", return_value="0.1"):
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+            patch("code_forge.cli.capture_tool_version", return_value="0.1"),
+        ):
             _emit_ci_output(state_path, registry)
 
         sarif = json.loads(stdout.getvalue())

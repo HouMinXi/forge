@@ -36,15 +36,17 @@ def _git_apply_check(tmp_path, files, patch):
         # base files at all, and git refuses an empty commit by default.
         # Without this the file-creation case fails in the harness rather
         # than in the code under test.
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t",
-         "commit", "-qm", "base", "--allow-empty"],
-        cwd=tmp_path, check=True,
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base", "--allow-empty"],
+        cwd=tmp_path,
+        check=True,
     )
     patch_file = tmp_path / "p.diff"
     patch_file.write_text(patch)
     return subprocess.run(
         ["git", "apply", "--check", str(patch_file)],
-        cwd=tmp_path, capture_output=True, text=True,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -79,14 +81,7 @@ class TestSingleHunk:
         assert "added" not in text
 
     def test_hunk_is_placed_at_its_start_line(self):
-        patch = (
-            "diff --git a/m.py b/m.py\n"
-            "--- a/m.py\n+++ b/m.py\n"
-            "@@ -10,2 +10,2 @@\n"
-            " ctx\n"
-            "-old\n"
-            "+new\n"
-        )
+        patch = "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -10,2 +10,2 @@\n ctx\n-old\n+new\n"
         lines = reconstruct_base_files(patch)["m.py"].split("\n")
         assert lines[9] == "ctx"
         assert lines[10] == "old"
@@ -178,14 +173,7 @@ class TestReversedDirection:
     def test_base_accepts_the_reversed_patch(self, tmp_path):
         from code_forge.eval.swebench import reverse_patch
 
-        fix = (
-            "diff --git a/m.py b/m.py\n"
-            "--- a/m.py\n+++ b/m.py\n"
-            "@@ -3,2 +3,2 @@\n"
-            " ctx\n"
-            "-buggy\n"
-            "+fixed\n"
-        )
+        fix = "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -3,2 +3,2 @@\n ctx\n-buggy\n+fixed\n"
         reversed_patch = reverse_patch(fix)
         # The reversed patch's pre-image is the FIXED tree, so its base is
         # reconstructed from the reversed patch itself.

@@ -9,6 +9,7 @@ The ledger is the artifact a killed run resumes from and the one the report
 traces its headline numbers to. Finding counts that exist only in the
 in-memory result list do not survive either.
 """
+
 import json
 
 import pytest
@@ -18,7 +19,10 @@ from code_forge.eval.ledger_jsonl import ResumeKey, make_record
 
 def _key(entry_id="e1"):
     return ResumeKey(
-        entry_id=entry_id, depth=1, engine="real", backend="review-default",
+        entry_id=entry_id,
+        depth=1,
+        engine="real",
+        backend="review-default",
     )
 
 
@@ -64,12 +68,15 @@ class TestFindingsAreRecorded:
         # cannot use is no better than not writing it.
         rec = make_record(_key(), "HOLD", findings=(2, 0, 1))
         back = json.loads(json.dumps(rec))
-        assert (back["finding_hits"], back["finding_misses"],
-                back["finding_fps"]) == (2, 0, 1)
+        assert (back["finding_hits"], back["finding_misses"], back["finding_fps"]) == (2, 0, 1)
 
     def test_existing_fields_are_untouched(self):
         rec = make_record(
-            _key("astropy-1"), "HOLD", runs=1, caught=1, wall_s=181.6822,
+            _key("astropy-1"),
+            "HOLD",
+            runs=1,
+            caught=1,
+            wall_s=181.6822,
             findings=(1, 0, 0),
         )
         assert rec["entry_id"] == "astropy-1"
@@ -104,8 +111,7 @@ class TestCliFillsThemIn:
         assert "finding_runs" in src or "len(" in src
 
     @pytest.mark.parametrize("runs,expect_fields", [(0, False), (1, True)])
-    def test_scored_flag_decides_whether_fields_appear(self, runs,
-                                                       expect_fields):
+    def test_scored_flag_decides_whether_fields_appear(self, runs, expect_fields):
         # Mirrors the CLI's condition against make_record directly.
         findings = (1, 0, 0) if runs else None
         rec = make_record(_key(), "HOLD", findings=findings)

@@ -52,28 +52,28 @@ class TestBuildMutmutConfig:
     def test_config_scopes_mutation_to_diff_files(self):
         from configparser import ConfigParser
 
-        cfg = _build_mutmut_config(
-            ["src/pkg/mod.py"], ["pytest", "tests/test_mod.py", "-q"]
-        )
+        cfg = _build_mutmut_config(["src/pkg/mod.py"], ["pytest", "tests/test_mod.py", "-q"])
         assert "source_paths=src" in cfg
         assert "only_mutate=src/pkg/mod.py" in cfg
         parser = ConfigParser()
         parser.read_string(cfg)
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
         assert [x for x in raw.split("\n") if x] == [
-            "tests/test_mod.py", "-q", "-m", "not integration and not source_scan",
+            "tests/test_mod.py",
+            "-q",
+            "-m",
+            "not integration and not source_scan",
         ]
 
     def test_config_multiple_diff_files(self):
-        cfg = _build_mutmut_config(
-            ["src/a.py", "src/b.py"], ["pytest", "tests/", "-q"]
-        )
+        cfg = _build_mutmut_config(["src/a.py", "src/b.py"], ["pytest", "tests/", "-q"])
         from configparser import ConfigParser
 
         parser = ConfigParser()
         parser.read_string(cfg)
         assert parser.get("mutmut", "only_mutate").splitlines() == [
-            "src/a.py", "src/b.py",
+            "src/a.py",
+            "src/b.py",
         ]
 
     def test_config_excludes_test_files_from_only_mutate(self):
@@ -172,9 +172,7 @@ class TestBuildMutmutConfig:
     def test_config_skips_empty_also_copy_entries(self):
         from configparser import ConfigParser
 
-        cfg = _build_mutmut_config(
-            ["src/pkg/mod.py"], ["pytest", "tests/"], also_copy=["", "docs/", ""]
-        )
+        cfg = _build_mutmut_config(["src/pkg/mod.py"], ["pytest", "tests/"], also_copy=["", "docs/", ""])
         parser = ConfigParser()
         parser.read_string(cfg)
         raw = parser.get("mutmut", "also_copy")
@@ -185,9 +183,7 @@ class TestBuildMutmutConfig:
         # [python3, -m, pytest, tests/]: only "tests/" is a pytest
         # argument; "-m pytest" leaking into selection would be
         # parsed as a marker expression.
-        cfg = _build_mutmut_config(
-            ["src/add.py"], ["python3", "-m", "pytest", "tests/"]
-        )
+        cfg = _build_mutmut_config(["src/add.py"], ["python3", "-m", "pytest", "tests/"])
         selection = cfg.split("test_selection=")[1]
         assert selection.startswith("tests/")
         # The interpreter prefix "-m pytest" must not leak into the
@@ -199,7 +195,9 @@ class TestBuildMutmutConfig:
         parser.read_string(cfg)
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
         assert [x for x in raw.split("\n") if x] == [
-            "tests/", "-m", "not integration and not source_scan",
+            "tests/",
+            "-m",
+            "not integration and not source_scan",
         ]
 
 
@@ -210,14 +208,10 @@ class TestBaselineTestSelection:
         assert _baseline_test_selection(["pytest", "tests/", "-q"]) == ["tests/", "-q"]
 
     def test_venv_pytest_keeps_args(self):
-        assert _baseline_test_selection(
-            ["/proj/.venv/bin/pytest", "tests/"]
-        ) == ["tests/"]
+        assert _baseline_test_selection(["/proj/.venv/bin/pytest", "tests/"]) == ["tests/"]
 
     def test_python_dash_m_pytest_strips_prefix(self):
-        assert _baseline_test_selection(
-            ["python3", "-m", "pytest", "tests/"]
-        ) == ["tests/"]
+        assert _baseline_test_selection(["python3", "-m", "pytest", "tests/"]) == ["tests/"]
 
     def test_non_pytest_runner_returns_empty(self):
         # Fallback used to return baseline_cmd[1:], leaking "-m unittest"
@@ -228,14 +222,13 @@ class TestBaselineTestSelection:
         assert _baseline_test_selection([]) == []
 
     def test_windows_pytest_exe_keeps_args(self):
-        assert _baseline_test_selection(
-            [r"C:\\proj\\.venv\\Scripts\\pytest.exe", "tests/", "-q"]
-        ) == ["tests/", "-q"]
+        assert _baseline_test_selection([r"C:\\proj\\.venv\\Scripts\\pytest.exe", "tests/", "-q"]) == [
+            "tests/",
+            "-q",
+        ]
 
     def test_windows_forward_slash_pytest_exe_keeps_args(self):
-        assert _baseline_test_selection(
-            ["C:/proj/.venv/Scripts/pytest.exe", "tests/"]
-        ) == ["tests/"]
+        assert _baseline_test_selection(["C:/proj/.venv/Scripts/pytest.exe", "tests/"]) == ["tests/"]
 
 
 class TestResolveMutmutInvocation:
@@ -243,9 +236,7 @@ class TestResolveMutmutInvocation:
 
     @patch("code_forge.mutation.subprocess.run")
     def test_venv_baseline_uses_sibling_python(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         cmd = _resolve_mutmut_invocation(["/proj/.venv/bin/pytest", "tests/", "-q"])
         assert cmd == ["/proj/.venv/bin/python", "-m", "mutmut"]
         probe = mock_run.call_args_list[0][0][0]
@@ -270,33 +261,23 @@ class TestResolveMutmutInvocation:
 
     @patch("code_forge.mutation.subprocess.run")
     def test_windows_pytest_exe_uses_python_exe(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-        cmd = _resolve_mutmut_invocation(
-            ["/proj/.venv/Scripts/pytest.exe", "tests/"]
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        cmd = _resolve_mutmut_invocation(["/proj/.venv/Scripts/pytest.exe", "tests/"])
         assert cmd == ["/proj/.venv/Scripts/python.exe", "-m", "mutmut"]
 
     @patch("code_forge.mutation.subprocess.run")
     def test_trailing_separator_keeps_dirpart(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         cmd = _resolve_mutmut_invocation(["/proj/.venv/bin/", "tests/"])
         assert cmd == ["/proj/.venv/bin/python", "-m", "mutmut"]
 
     @patch("code_forge.mutation.subprocess.run")
     def test_windows_python3_exe_keeps_python3_exe(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         cmd = _resolve_mutmut_invocation(
             [r"C:\\proj\\.venv\\Scripts\\python3.exe", "-m", "pytest", "tests/"]
         )
-        assert cmd == [
-            r"C:\\proj\\.venv\\Scripts\\python3.exe", "-m", "mutmut"
-        ]
+        assert cmd == [r"C:\\proj\\.venv\\Scripts\\python3.exe", "-m", "mutmut"]
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_bare_pytest_keeps_path_resolution(self, mock_which):
@@ -320,9 +301,7 @@ class TestRunMutationVenvBaseline:
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
-        findings, _infra = run_mutation(
-            ["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"]
-        )
+        findings, _infra = run_mutation(["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"])
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].fingerprint == "mutation-probe-timeout"
@@ -340,9 +319,7 @@ class TestRunMutationVenvBaseline:
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
-        findings, _infra = run_mutation(
-            ["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"]
-        )
+        findings, _infra = run_mutation(["src/pkg/mod.py"], ["/proj/.venv/bin/pytest", "tests/", "-q"])
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].disposition == Disposition.DISMISSED
@@ -362,9 +339,7 @@ class TestRunMutationVenvBaseline:
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and "results" in cmd:
-                return subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="", stderr=""
-                )
+                return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
@@ -386,9 +361,7 @@ class TestRunMutationVenvBaseline:
         assert "mutants/" not in posix
 
     def test_tests_only_diff_skips(self):
-        findings, infra = run_mutation(
-            ["tests/test_cli.py"], ["pytest", "tests/test_cli.py"]
-        )
+        findings, infra = run_mutation(["tests/test_cli.py"], ["pytest", "tests/test_cli.py"])
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].disposition == Disposition.DISMISSED
@@ -438,7 +411,9 @@ class TestTestSelectionSurvivesConfigRoundTrip:
         raw = parser.get("mutmut", "pytest_add_cli_args_test_selection")
         assert not raw.startswith("\n")
         assert [x for x in raw.split("\n") if x] == [
-            "tests/", "-m", "not integration and not source_scan",
+            "tests/",
+            "-m",
+            "not integration and not source_scan",
         ]
 
 
@@ -448,9 +423,7 @@ class TestAlsoCopyConfigValidation:
     def _cfg(self, tmp_path, also_copy_literal):
         p = tmp_path / "gate.yaml"
         p.write_text(
-            "test:\n"
-            "  command: [pytest, -q]\n"
-            f"  also_copy: {also_copy_literal}\n",
+            f"test:\n  command: [pytest, -q]\n  also_copy: {also_copy_literal}\n",
             encoding="utf-8",
         )
         return p
@@ -484,9 +457,7 @@ class TestMutationResourceGuardConfigValidation:
     def _cfg(self, tmp_path, extra):
         p = tmp_path / "gate.yaml"
         p.write_text(
-            "test:\n"
-            "  command: [pytest, -q]\n"
-            f"  {extra}\n",
+            f"test:\n  command: [pytest, -q]\n  {extra}\n",
             encoding="utf-8",
         )
         return p
@@ -505,9 +476,7 @@ class TestMutationResourceGuardConfigValidation:
         from code_forge.gate_check import load_gate_config
 
         with pytest.raises(ValueError, match="mutation_memory_limit_mb"):
-            load_gate_config(
-                self._cfg(tmp_path, 'mutation_memory_limit_mb: "8GiB"')
-            )
+            load_gate_config(self._cfg(tmp_path, 'mutation_memory_limit_mb: "8GiB"'))
 
     def test_valid_guards_are_accepted(self, tmp_path):
         from code_forge.gate_check import load_gate_config
@@ -520,7 +489,6 @@ class TestMutationResourceGuardConfigValidation:
         )
         assert config["test"]["mutation_max_children"] == 2
         assert config["test"]["mutation_memory_limit_mb"] == 4096
-
 
 
 class TestMutatedImportSurvivesAnEmptyCwd:
@@ -547,9 +515,7 @@ class TestMutatedImportSurvivesAnEmptyCwd:
             except FileNotFoundError as exc:
                 assert "source_paths" in str(exc)
             else:
-                raise AssertionError(
-                    "empty cwd must make mutmut guess source_paths and fail"
-                )
+                raise AssertionError("empty cwd must make mutmut guess source_paths and fail")
         finally:
             os.chdir(old)
 
@@ -591,9 +557,7 @@ class TestMutationSkipGlobsConfigValidation:
 
         from code_forge.gate_check import load_gate_config
 
-        with pytest.raises(
-            ValueError, match=r"'test\.mutation_skip_globs' must be a list of strings"
-        ):
+        with pytest.raises(ValueError, match=r"'test\.mutation_skip_globs' must be a list of strings"):
             load_gate_config(self._cfg(tmp_path, skip_literal="tests/**"))
 
     def test_non_string_skip_globs_rejected(self, tmp_path):
@@ -601,9 +565,7 @@ class TestMutationSkipGlobsConfigValidation:
 
         from code_forge.gate_check import load_gate_config
 
-        with pytest.raises(
-            ValueError, match=r"'test\.mutation_skip_globs' must be a list of strings"
-        ):
+        with pytest.raises(ValueError, match=r"'test\.mutation_skip_globs' must be a list of strings"):
             load_gate_config(self._cfg(tmp_path, skip_literal="[tests/**, 123]"))
 
     def test_non_list_include_globs_rejected(self, tmp_path):
@@ -642,9 +604,7 @@ class TestMutationSkipGlobsConfigValidation:
     def test_empty_lists_accepted(self, tmp_path):
         from code_forge.gate_check import load_gate_config
 
-        config = load_gate_config(
-            self._cfg(tmp_path, skip_literal="[]", include_literal="[]")
-        )
+        config = load_gate_config(self._cfg(tmp_path, skip_literal="[]", include_literal="[]"))
         assert config["test"]["mutation_skip_globs"] == []
         assert config["test"]["mutation_include_globs"] == []
 
@@ -707,8 +667,7 @@ class TestMutationSkipIncludeGlobs:
             )
             findings, _ = run_mutation(diff_files, ["pytest"], cwd=tmp_path)
             assert not any(
-                f.id == "MUTATION_SKIPPED" and "tests-only" in f.description
-                for f in findings
+                f.id == "MUTATION_SKIPPED" and "tests-only" in f.description for f in findings
             )
 
     def test_case3_mutation_skip_globs_matches_dir(self, tmp_path):
@@ -841,8 +800,7 @@ class TestMutationSkipIncludeGlobs:
                 findings, _ = run_mutation([path], ["pytest"], cwd=tmp_path)
                 mock_guard.assert_called()
                 assert not any(
-                    f.id == "MUTATION_SKIPPED" and "tests-only" in f.description
-                    for f in findings
+                    f.id == "MUTATION_SKIPPED" and "tests-only" in f.description for f in findings
                 ), path
 
     def test_star_glob_does_not_match_nested_segments(self):
@@ -855,12 +813,7 @@ class TestMutationSkipIncludeGlobs:
         """mutation.py must not special-case a business directory as a predicate."""
         from pathlib import Path
 
-        mutation_py = (
-            Path(__file__).resolve().parent.parent
-            / "src"
-            / "code_forge"
-            / "mutation.py"
-        )
+        mutation_py = Path(__file__).resolve().parent.parent / "src" / "code_forge" / "mutation.py"
         content = mutation_py.read_text(encoding="utf-8")
         assert "framework/test" not in content
         assert "select_package" not in content
@@ -870,9 +823,7 @@ class TestMutationSkipIncludeGlobs:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         (gate_dir / "gate.yaml").write_text(
-            "test:\n"
-            "  command: [pytest, -q]\n"
-            "  mutation_skip_globs: [\"lib/test/**\"]\n",
+            'test:\n  command: [pytest, -q]\n  mutation_skip_globs: ["lib/test/**"]\n',
             encoding="utf-8",
         )
         findings, _infra = run_mutation(
@@ -891,8 +842,8 @@ class TestMutationSkipIncludeGlobs:
         (gate_dir / "gate.yaml").write_text(
             "test:\n"
             "  command: [pytest, -q]\n"
-            "  mutation_skip_globs: [\"lib/test/**\"]\n"
-            "  mutation_include_globs: [\"lib/test/select_package.py\"]\n",
+            '  mutation_skip_globs: ["lib/test/**"]\n'
+            '  mutation_include_globs: ["lib/test/select_package.py"]\n',
             encoding="utf-8",
         )
         with patch("code_forge.mutation._run_baseline_guard") as mock_guard:
@@ -919,8 +870,5 @@ class TestMutationSkipIncludeGlobs:
                 cwd=tmp_path,
             )
             assert not any(
-                f.id == "MUTATION_SKIPPED" and "tests-only" in f.description
-                for f in findings
+                f.id == "MUTATION_SKIPPED" and "tests-only" in f.description for f in findings
             )
-
-

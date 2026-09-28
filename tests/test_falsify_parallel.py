@@ -15,6 +15,7 @@ Contract this file pins:
   - INFRA candidates bypass the falsifier as before
   - FORGE_FALSIFY_WORKERS=1 restores serial behaviour
 """
+
 from __future__ import annotations
 
 import threading
@@ -30,9 +31,13 @@ from tests.test_runtime_machine import _make_sm
 
 def _f(i: int, source="L1") -> StateFinding:
     return StateFinding(
-        id="f%d" % i, fingerprint="fp-%d" % i, source=source,
-        disposition=Disposition.CONFIRMED, file="a.py",
-        line_range=[i, i], description="finding %d" % i,
+        id="f%d" % i,
+        fingerprint="fp-%d" % i,
+        source=source,
+        disposition=Disposition.CONFIRMED,
+        file="a.py",
+        line_range=[i, i],
+        description="finding %d" % i,
         excerpt="value = 1\n",
     )
 
@@ -40,6 +45,7 @@ def _f(i: int, source="L1") -> StateFinding:
 class _SlowFalsifier:
     def __init__(self, delay: float, verdicts=None, backend_type="api"):
         from types import SimpleNamespace
+
         # An API backend is the parallel case; CLI backends are forced
         # serial (module-global _active_proc in llm_invoke).
         self._backend = SimpleNamespace(type=backend_type)
@@ -90,6 +96,7 @@ def test_output_order_is_input_order_not_completion_order(tmp_path):
             # later candidates finish first
             time.sleep(0.05 * (5 - int(f.fingerprint.split("-")[1])))
             return Disposition.DISMISSED
+
     sm.falsifier = _Reverse()
     cands = [_f(i) for i in range(1, 5)]
     sm.l1_provider = lambda: (cands, [], Usage(), 0.0)
@@ -99,12 +106,15 @@ def test_output_order_is_input_order_not_completion_order(tmp_path):
 
 def test_every_error_arm_still_routes(tmp_path):
     sm = _make_sm(tmp_path)
-    fals = _SlowFalsifier(0.01, verdicts={
-        "fp-0": Disposition.CONFIRMED,
-        "fp-1": FalsifyProtocolError("bad shape", raw="x"),
-        "fp-2": LLMInvokeError("down"),
-        "fp-3": RuntimeError("boom"),
-    })
+    fals = _SlowFalsifier(
+        0.01,
+        verdicts={
+            "fp-0": Disposition.CONFIRMED,
+            "fp-1": FalsifyProtocolError("bad shape", raw="x"),
+            "fp-2": LLMInvokeError("down"),
+            "fp-3": RuntimeError("boom"),
+        },
+    )
     sm.falsifier = fals
     cands = [_f(i) for i in range(4)]
     sm.l1_provider = lambda: (cands, [], Usage(), 0.0)
@@ -161,10 +171,13 @@ def test_infra_convergence_guard_still_sees_failures(tmp_path):
     sm = _make_sm(tmp_path)
     got = {}
     sm._check_falsify_can_still_converge = lambda fps: got.setdefault("fps", list(fps))
-    fals = _SlowFalsifier(0.01, verdicts={
-        "fp-0": LLMInvokeError("down"),
-        "fp-2": FalsifyProtocolError("bad", raw=None),
-    })
+    fals = _SlowFalsifier(
+        0.01,
+        verdicts={
+            "fp-0": LLMInvokeError("down"),
+            "fp-2": FalsifyProtocolError("bad", raw=None),
+        },
+    )
     sm.falsifier = fals
     cands = [_f(i) for i in range(3)]
     sm.l1_provider = lambda: (cands, [], Usage(), 0.0)

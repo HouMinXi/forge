@@ -127,9 +127,7 @@ def _selection() -> TargetSelection:
 def _statuses(tmp_path: Path, weak: bool) -> dict[str, NormalizedStatus]:
     root = tmp_path / "fixture"
     _copy(root, weak)
-    result = GremlinsAdapter().run(
-        _target(), _selection(), _snapshot(root), _context(tmp_path)
-    )
+    result = GremlinsAdapter().run(_target(), _selection(), _snapshot(root), _context(tmp_path))
     assert result.run_state is RunState.COMPLETE, result.reason_code
     return {item.mutant_id: item.normalized_status for item in result.outcomes}
 

@@ -103,11 +103,13 @@ def test_timed_popen_retries_kill_when_wait_times_out():
 
 
 def _run_lock_holder(lock_path: Path):
-    return _TimedPopen(subprocess.Popen(
-        [sys.executable, "-c", _lock_holder_script(str(lock_path))],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    ))
+    return _TimedPopen(
+        subprocess.Popen(
+            [sys.executable, "-c", _lock_holder_script(str(lock_path))],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    )
 
 
 @pytest.mark.integration
@@ -230,12 +232,7 @@ def test_sigint_wait_runs_inside_the_holder():
 
     guarded = [t for t in tries if any(_is_wait(n) for n in ast.walk(t))]
     assert guarded, "no wait() call inside a try in the with-block"
-    handled = [
-        ast.unparse(h.type)
-        for t in guarded
-        for h in t.handlers
-        if h.type is not None
-    ]
+    handled = [ast.unparse(h.type) for t in guarded for h in t.handlers if h.type is not None]
     assert any("TimeoutExpired" in h for h in handled), handled
 
 
@@ -249,21 +246,18 @@ def test_leak_check_binds_handle_before_ready_assert():
         return hits[0]
 
     bind = _line_of(
-        lambda n: isinstance(n, ast.Assign)
-        and any(
-            isinstance(t, ast.Name) and t.id == "leaked" for t in n.targets
+        lambda n: (
+            isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "leaked" for t in n.targets)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "proc"
         )
-        and isinstance(n.value, ast.Name)
-        and n.value.id == "proc"
     )
 
     def _is_ready_assert(n) -> bool:
         if not isinstance(n, ast.Assert):
             return False
-        return any(
-            isinstance(c, ast.Constant) and c.value == "READY"
-            for c in ast.walk(n.test)
-        )
+        return any(isinstance(c, ast.Constant) and c.value == "READY" for c in ast.walk(n.test))
 
     ready = _line_of(_is_ready_assert)
     assert bind < ready, (bind, ready)
@@ -277,8 +271,7 @@ def test_leak_check_binds_handle_before_ready_assert():
 
     # once cleanup has run, nothing may wait on the child again
     leak_assert = _line_of(
-        lambda n: isinstance(n, ast.Assert)
-        and ast.unparse(n) == "assert leaked is not None"
+        lambda n: isinstance(n, ast.Assert) and ast.unparse(n) == "assert leaked is not None"
     )
     late_waits = [
         n.lineno

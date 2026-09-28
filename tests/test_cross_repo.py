@@ -5,6 +5,7 @@
 Uses real git repos with tmp_path + monkeypatch GIT_CEILING_DIRECTORIES
 to prevent test repos from leaking into the parent repo's git state.
 """
+
 from __future__ import annotations
 
 import os
@@ -44,8 +45,11 @@ def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     run = lambda *cmd: subprocess.run(  # noqa: E731
-        list(cmd), cwd=repo, check=True,
-        capture_output=True, text=True,
+        list(cmd),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     run("git", "init", "-b", "main")
     run("git", "config", "user.email", "test@test.com")
@@ -158,6 +162,7 @@ def test_make_per_repo_cwd_creates_dirs() -> None:
         assert (cwd / ".code-forge").is_dir()
     finally:
         import shutil
+
         shutil.rmtree(cwd, ignore_errors=True)
 
 
@@ -169,6 +174,7 @@ def test_make_per_repo_cwd_unique() -> None:
         assert cwd1 != cwd2
     finally:
         import shutil
+
         shutil.rmtree(cwd1, ignore_errors=True)
         shutil.rmtree(cwd2, ignore_errors=True)
 
@@ -184,6 +190,7 @@ def test_make_per_repo_cwd_seeds_gate_config() -> None:
         assert loaded["outlet"] == "subprocess"
     finally:
         import shutil
+
         shutil.rmtree(cwd, ignore_errors=True)
 
 
@@ -219,16 +226,19 @@ def test_derive_source_files_empty_diff() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad_ref", [
-    "main-feature",       # no ".."
-    "main...feature",     # three dots
-    "..feature",          # empty baseline
-    "main..",             # empty head
-    "-dash..feature",     # baseline starts with dash (option injection)
-    "main..-dash",        # head starts with dash
-    ".dot..feature",      # baseline starts with dot
-    "main; rm -rf..head", # shell metacharacters in baseline
-])
+@pytest.mark.parametrize(
+    "bad_ref",
+    [
+        "main-feature",  # no ".."
+        "main...feature",  # three dots
+        "..feature",  # empty baseline
+        "main..",  # empty head
+        "-dash..feature",  # baseline starts with dash (option injection)
+        "main..-dash",  # head starts with dash
+        ".dot..feature",  # baseline starts with dot
+        "main; rm -rf..head",  # shell metacharacters in baseline
+    ],
+)
 def test_ref_validation_consistent(
     tmp_path: Path,
     git_repo: Path,
@@ -271,7 +281,8 @@ def test_thread_isolation() -> None:
 
 
 def test_same_stack_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """validate_siblings() rejects sibling with different language when primary_language set."""
     from code_forge.detect import DetectionResult
@@ -289,7 +300,9 @@ def test_same_stack_validation(
     siblings = [{"repo": str(sibling_dir), "ref": "main..feature"}]
     with pytest.raises(ValueError, match="same-stack"):
         validate_siblings(
-            siblings, gate_yaml_dir=gate_yaml_dir, primary_language="python",
+            siblings,
+            gate_yaml_dir=gate_yaml_dir,
+            primary_language="python",
         )
 
 
@@ -312,11 +325,13 @@ def test_invalid_ref_fail_closed(
             primary_path=git_repo,
             primary_ref="main..feature",
             primary_label="primary",
-            siblings=[{
-                "repo": str(git_repo),
-                "ref": "main..nonexistent-xyz",
-                "label": "bad-sib",
-            }],
+            siblings=[
+                {
+                    "repo": str(git_repo),
+                    "ref": "main..nonexistent-xyz",
+                    "label": "bad-sib",
+                }
+            ],
             gate_config={"test": {"command": ["pytest", "-q"]}},
             mode=Mode.LOCAL,
             engine_choice="stub",
@@ -449,9 +464,7 @@ def test_run_cross_repo_uses_narrow_base(
     )
 
     captured = {}
-    real_vs = __import__(
-        "code_forge.gate_check", fromlist=["validate_siblings"]
-    ).validate_siblings
+    real_vs = __import__("code_forge.gate_check", fromlist=["validate_siblings"]).validate_siblings
 
     def _spy(siblings, gate_yaml_dir, primary_language=None):
         captured["gate_yaml_dir"] = gate_yaml_dir
@@ -465,6 +478,7 @@ def test_run_cross_repo_uses_narrow_base(
 
         def run(self):
             from code_forge.state import Verdict
+
             return Verdict.PASS
 
     monkeypatch.setattr("code_forge.machine.StateMachine", _PassMachine)
@@ -528,7 +542,11 @@ def test_sibling_crash_is_advisory(
     sib = tmp_path / "sibling"
     sib.mkdir()
     run = lambda *cmd: subprocess.run(  # noqa: E731
-        list(cmd), cwd=sib, check=True, capture_output=True, text=True,
+        list(cmd),
+        cwd=sib,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     run("git", "init", "-b", "main")
     run("git", "config", "user.email", "t@t.com")
@@ -547,11 +565,13 @@ def test_sibling_crash_is_advisory(
         primary_path=git_repo,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sib),
-            "ref": "main..feature",
-            "label": "sib",
-        }],
+        siblings=[
+            {
+                "repo": str(sib),
+                "ref": "main..feature",
+                "label": "sib",
+            }
+        ],
         gate_config={"test": {"command": ["pytest", "-q"]}},
         mode=Mode.LOCAL,
         engine_choice="stub",
@@ -571,7 +591,8 @@ def test_sibling_crash_is_advisory(
 
 
 def test_single_repo_zero_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No-siblings gate.yaml returns falsy siblings from _load_gate_siblings.
 
@@ -597,10 +618,7 @@ def test_single_repo_zero_drift(
 
     # Also verify with a gate.yaml that HAS siblings -> truthy
     gate_yaml.write_text(
-        "test:\n  command: [pytest, -q]\n"
-        "siblings:\n"
-        "  - repo: ../sib\n"
-        "    ref: main..feat\n"
+        "test:\n  command: [pytest, -q]\nsiblings:\n  - repo: ../sib\n    ref: main..feat\n"
     )
     _raw2, _sibs2 = _load_gate_siblings(gate_yaml)
     assert _sibs2  # non-empty -> dispatch would fire
@@ -652,7 +670,7 @@ def test_dispatch_verdict_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("code_forge.cross_repo.run_cross_repo", mock_run_cross_repo)
 
     from code_forge.baseline import GitRefBaseline
-    
+
     baseline_spec = GitRefBaseline("main")
     head_spec = GitRefBaseline("feature")
 
@@ -662,23 +680,36 @@ def test_dispatch_verdict_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     # No siblings -> returns None
     gate_yaml.write_text("test:\n  command: [pytest, -q]\n")
     res = _cross_repo_verdict_or_none(
-        gate_yaml_path=gate_yaml, cwd=tmp_path, baseline_spec=baseline_spec,
-        head_spec=head_spec, mode=None, engine_choice=None, backend=None,
-        max_rounds=1, max_fix=1, _clean_threshold=1, warn=mock_warn
+        gate_yaml_path=gate_yaml,
+        cwd=tmp_path,
+        baseline_spec=baseline_spec,
+        head_spec=head_spec,
+        mode=None,
+        engine_choice=None,
+        backend=None,
+        max_rounds=1,
+        max_fix=1,
+        _clean_threshold=1,
+        warn=mock_warn,
     )
     assert res is None
 
     # With siblings -> calls run_cross_repo -> returns Verdict.PASS
     gate_yaml.write_text(
-        "test:\n  command: [pytest, -q]\n"
-        "siblings:\n"
-        f"  - repo: {tmp_path}\n"
-        "    ref: main..feature\n"
+        f"test:\n  command: [pytest, -q]\nsiblings:\n  - repo: {tmp_path}\n    ref: main..feature\n"
     )
     res = _cross_repo_verdict_or_none(
-        gate_yaml_path=gate_yaml, cwd=tmp_path, baseline_spec=baseline_spec,
-        head_spec=head_spec, mode=None, engine_choice=None, backend=None,
-        max_rounds=1, max_fix=1, _clean_threshold=1, warn=mock_warn
+        gate_yaml_path=gate_yaml,
+        cwd=tmp_path,
+        baseline_spec=baseline_spec,
+        head_spec=head_spec,
+        mode=None,
+        engine_choice=None,
+        backend=None,
+        max_rounds=1,
+        max_fix=1,
+        _clean_threshold=1,
+        warn=mock_warn,
     )
     assert res == Verdict.PASS
 
@@ -733,7 +764,11 @@ def _make_repo(
     repo = base / name
     repo.mkdir(parents=True, exist_ok=True)
     run = lambda *cmd: subprocess.run(  # noqa: E731
-        list(cmd), cwd=repo, check=True, capture_output=True, text=True,
+        list(cmd),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     run("git", "init", "-b", "main")
     run("git", "config", "user.email", "test@test.com")
@@ -750,20 +785,27 @@ def _make_repo(
 
 
 def test_joint_context_contains_both_diffs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two real repos produce a joint context with both repo headings."""
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
     p_diff = get_sibling_diff(primary, "main..feature")
     s_diff = get_sibling_diff(sibling, "main..feature")
-    ctx = build_cross_repo_context([
-        {"label": "primary", "ref": "main..feature", "diff": p_diff},
-        {"label": "sibling", "ref": "main..feature", "diff": s_diff},
-    ])
+    ctx = build_cross_repo_context(
+        [
+            {"label": "primary", "ref": "main..feature", "diff": p_diff},
+            {"label": "sibling", "ref": "main..feature", "diff": s_diff},
+        ]
+    )
     assert ctx.startswith("Cross-repo review:")
     assert "## Repo: [primary]" in ctx
     assert "## Repo: [sibling]" in ctx
@@ -772,20 +814,27 @@ def test_joint_context_contains_both_diffs(
 
 
 def test_findings_attributed_label(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Per-repo diff blocks contain only their own diff text."""
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
     p_diff = get_sibling_diff(primary, "main..feature")
     s_diff = get_sibling_diff(sibling, "main..feature")
-    ctx = build_cross_repo_context([
-        {"label": "primary", "ref": "main..feature", "diff": p_diff},
-        {"label": "sibling", "ref": "main..feature", "diff": s_diff},
-    ])
+    ctx = build_cross_repo_context(
+        [
+            {"label": "primary", "ref": "main..feature", "diff": p_diff},
+            {"label": "sibling", "ref": "main..feature", "diff": s_diff},
+        ]
+    )
     header = ctx.splitlines()[0]
     assert "primary" in header and "sibling" in header
     primary_start = ctx.index("## Repo: [primary]")
@@ -799,7 +848,8 @@ def test_findings_attributed_label(
 
 
 def test_run_cross_repo_real_primary_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """run_cross_repo() with real L1 evidence on two real repos returns PASS."""
     from code_forge.cross_repo import run_cross_repo
@@ -809,24 +859,36 @@ def test_run_cross_repo_real_primary_pass(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
     from code_forge.receipt_scope import repository_scope
-    _, manifest = repository_scope({
-        'primary': get_sibling_diff(primary, 'main..feature'),
-        'sibling': get_sibling_diff(sibling, 'main..feature'),
-    })
+
+    _, manifest = repository_scope(
+        {
+            "primary": get_sibling_diff(primary, "main..feature"),
+            "sibling": get_sibling_diff(sibling, "main..feature"),
+        }
+    )
     excerpts = [
-        {'pass_name': p, 'file': '%s@%s/%s' % (label, manifest[label], filename),
-         'start_line': 1, 'end_line': 1, 'content': content, 'rationale': 'witnessed'}
-        for p in ('qodo', 'expert', 'adversarial')
-        for label, filename, content in (
-            ('primary', 'main.py', 'x = 2'), ('sibling', 'lib.py', 'y = 2'))
+        {
+            "pass_name": p,
+            "file": "%s@%s/%s" % (label, manifest[label], filename),
+            "start_line": 1,
+            "end_line": 1,
+            "content": content,
+            "rationale": "witnessed",
+        }
+        for p in ("qodo", "expert", "adversarial")
+        for label, filename, content in (("primary", "main.py", "x = 2"), ("sibling", "lib.py", "y = 2"))
     ]
     monkeypatch.setattr(
         "code_forge.factories.build_l1_provider",
-        lambda *a, **kw: (lambda: ([], excerpts, Usage(), 0.0)),
+        lambda *a, **kw: lambda: ([], excerpts, Usage(), 0.0),
     )
     monkeypatch.setattr(
         "code_forge.factories.build_falsifier",
@@ -836,11 +898,13 @@ def test_run_cross_repo_real_primary_pass(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="real",
@@ -853,7 +917,8 @@ def test_run_cross_repo_real_primary_pass(
 
 
 def test_run_cross_repo_primary_determines_verdict(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Primary PASS + sibling FAIL yields joint PASS with advisory warning.
 
@@ -866,8 +931,12 @@ def test_run_cross_repo_primary_determines_verdict(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
 
     class _PrimaryPassSiblingFail:
@@ -891,11 +960,13 @@ def test_run_cross_repo_primary_determines_verdict(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="stub",
@@ -909,14 +980,12 @@ def test_run_cross_repo_primary_determines_verdict(
     # run_cross_repo emits a "[cross-repo] WARNING: sibling(s) ...
     # have findings" message when a sibling verdict is FAIL/ESCALATED.
     assert len(messages) > 0, "expected advisory output but got none"
-    assert any(
-        "[cross-repo] WARNING" in m and "findings" in m
-        for m in messages
-    )
+    assert any("[cross-repo] WARNING" in m and "findings" in m for m in messages)
 
 
 def test_l0_runs_on_each_repo(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Source files handed to StateMachine are non-empty absolute paths for
     both repos, proving per-repo source derivation is correct.
@@ -932,8 +1001,12 @@ def test_l0_runs_on_each_repo(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
 
     captured = {}
@@ -949,8 +1022,7 @@ def test_l0_runs_on_each_repo(
             )
             resolved = kwargs.get("resolved_review")
             assert resolved is not None, (
-                "%s: resolved_review was None; "
-                "run_cross_repo should always construct one" % label
+                "%s: resolved_review was None; run_cross_repo should always construct one" % label
             )
             assert hasattr(resolved, "source_files"), (
                 "%s: resolved_review has no source_files attr; "
@@ -967,11 +1039,13 @@ def test_l0_runs_on_each_repo(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="stub",
@@ -989,7 +1063,8 @@ def test_l0_runs_on_each_repo(
 
 
 def test_receipt_naming_primary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Per-repo receipts (primary AND sibling) are label-prefixed in primary .code-forge/.
 
@@ -1004,24 +1079,36 @@ def test_receipt_naming_primary(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
     from code_forge.receipt_scope import repository_scope
-    _, manifest = repository_scope({
-        'primary': get_sibling_diff(primary, 'main..feature'),
-        'sibling': get_sibling_diff(sibling, 'main..feature'),
-    })
+
+    _, manifest = repository_scope(
+        {
+            "primary": get_sibling_diff(primary, "main..feature"),
+            "sibling": get_sibling_diff(sibling, "main..feature"),
+        }
+    )
     excerpts = [
-        {'pass_name': p, 'file': '%s@%s/%s' % (label, manifest[label], filename),
-         'start_line': 1, 'end_line': 1, 'content': content, 'rationale': 'witnessed'}
-        for p in ('qodo', 'expert', 'adversarial')
-        for label, filename, content in (
-            ('primary', 'main.py', 'x = 2'), ('sibling', 'lib.py', 'y = 2'))
+        {
+            "pass_name": p,
+            "file": "%s@%s/%s" % (label, manifest[label], filename),
+            "start_line": 1,
+            "end_line": 1,
+            "content": content,
+            "rationale": "witnessed",
+        }
+        for p in ("qodo", "expert", "adversarial")
+        for label, filename, content in (("primary", "main.py", "x = 2"), ("sibling", "lib.py", "y = 2"))
     ]
     monkeypatch.setattr(
         "code_forge.factories.build_l1_provider",
-        lambda *a, **kw: (lambda: ([], excerpts, Usage(), 0.0)),
+        lambda *a, **kw: lambda: ([], excerpts, Usage(), 0.0),
     )
     monkeypatch.setattr(
         "code_forge.factories.build_falsifier",
@@ -1031,11 +1118,13 @@ def test_receipt_naming_primary(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="real",
@@ -1057,7 +1146,8 @@ def test_receipt_naming_primary(
 
 
 def test_invalid_sibling_ref_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bad sibling ref raises BaselineResolutionError (fail-closed).
 
@@ -1071,19 +1161,25 @@ def test_invalid_sibling_ref_fails_closed(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
     with pytest.raises(BaselineResolutionError):
         run_cross_repo(
             primary_path=primary,
             primary_ref="main..feature",
             primary_label="primary",
-            siblings=[{
-                "repo": str(sibling),
-                "ref": "main..no-such-branch",
-                "label": "bad-sib",
-            }],
+            siblings=[
+                {
+                    "repo": str(sibling),
+                    "ref": "main..no-such-branch",
+                    "label": "bad-sib",
+                }
+            ],
             gate_config={"test": {"command": ["echo", "ok"]}},
             mode=Mode.LOCAL,
             engine_choice="stub",
@@ -1095,7 +1191,8 @@ def test_invalid_sibling_ref_fails_closed(
 
 
 def test_primary_receives_joint_diff_as_l1_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Primary thread gets the joint cross-repo diff for L1 review; siblings do not.
 
@@ -1115,21 +1212,33 @@ def test_primary_receives_joint_diff_as_l1_context(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
 
     from code_forge.receipt_scope import repository_scope
-    _, manifest = repository_scope({
-        'primary': get_sibling_diff(primary, 'main..feature'),
-        'sibling': get_sibling_diff(sibling, 'main..feature'),
-    })
+
+    _, manifest = repository_scope(
+        {
+            "primary": get_sibling_diff(primary, "main..feature"),
+            "sibling": get_sibling_diff(sibling, "main..feature"),
+        }
+    )
     excerpts = [
-        {'pass_name': p, 'file': '%s@%s/%s' % (label, manifest[label], filename),
-         'start_line': 1, 'end_line': 1, 'content': content, 'rationale': 'witnessed'}
-        for p in ('qodo', 'expert', 'adversarial')
-        for label, filename, content in (
-            ('primary', 'main.py', 'x = 2'), ('sibling', 'lib.py', 'y = 2'))
+        {
+            "pass_name": p,
+            "file": "%s@%s/%s" % (label, manifest[label], filename),
+            "start_line": 1,
+            "end_line": 1,
+            "content": content,
+            "rationale": "witnessed",
+        }
+        for p in ("qodo", "expert", "adversarial")
+        for label, filename, content in (("primary", "main.py", "x = 2"), ("sibling", "lib.py", "y = 2"))
     ]
     spy_calls = []
 
@@ -1150,11 +1259,13 @@ def test_primary_receives_joint_diff_as_l1_context(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="real",
@@ -1166,8 +1277,7 @@ def test_primary_receives_joint_diff_as_l1_context(
     assert result == Verdict.PASS
     # build_l1_provider must be called exactly once (primary thread only).
     assert len(spy_calls) == 1, (
-        "expected build_l1_provider called once (primary only), "
-        "got %d calls" % len(spy_calls)
+        "expected build_l1_provider called once (primary only), got %d calls" % len(spy_calls)
     )
     joint_diff = spy_calls[0]
     assert joint_diff is not None, "l1 diff was None; joint context not passed"
@@ -1179,7 +1289,8 @@ def test_primary_receives_joint_diff_as_l1_context(
 
 
 def test_sibling_escalated_verdict_triggers_advisory_warning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A sibling with an ESCALATED verdict triggers the advisory warning.
 
@@ -1192,8 +1303,12 @@ def test_sibling_escalated_verdict_triggers_advisory_warning(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
 
     class _PrimaryPassSiblingEscalated:
@@ -1214,7 +1329,8 @@ def test_sibling_escalated_verdict_triggers_advisory_warning(
             return Verdict.PASS if self._is_primary else Verdict.ESCALATED
 
     monkeypatch.setattr(
-        "code_forge.machine.StateMachine", _PrimaryPassSiblingEscalated,
+        "code_forge.machine.StateMachine",
+        _PrimaryPassSiblingEscalated,
     )
 
     messages = []
@@ -1222,11 +1338,13 @@ def test_sibling_escalated_verdict_triggers_advisory_warning(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="stub",
@@ -1238,10 +1356,7 @@ def test_sibling_escalated_verdict_triggers_advisory_warning(
     )
     assert result == Verdict.PASS
     assert len(messages) > 0, "expected advisory output but got none"
-    assert any(
-        "[cross-repo] WARNING" in m and "findings" in m
-        for m in messages
-    )
+    assert any("[cross-repo] WARNING" in m and "findings" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -1259,7 +1374,9 @@ def test_grouped_verdict_output() -> None:
         "plugin": [{"file": "src/b.py", "line": 2, "description": "issue"}],
     }
     format_cross_repo_output(
-        per_repo_findings, ["primary", "plugin"], output_fn=captured.append,
+        per_repo_findings,
+        ["primary", "plugin"],
+        output_fn=captured.append,
     )
     assert captured[0] == "=== [primary] ==="
     assert captured[1] == "[primary] src/a.py:1 -- bug"
@@ -1277,11 +1394,13 @@ def test_finding_attribution_no_cross_contamination() -> None:
         "plugin": [{"file": "src/b.py", "line": 2, "description": "plugin-issue"}],
     }
     format_cross_repo_output(
-        per_repo_findings, ["primary", "plugin"], output_fn=captured.append,
+        per_repo_findings,
+        ["primary", "plugin"],
+        output_fn=captured.append,
     )
     plugin_header_idx = captured.index("=== [plugin] ===")
     primary_section = captured[1:plugin_header_idx]
-    plugin_section = captured[plugin_header_idx + 1:]
+    plugin_section = captured[plugin_header_idx + 1 :]
     assert not any("[plugin]" in line for line in primary_section), (
         "plugin finding leaked into primary section"
     )
@@ -1294,7 +1413,9 @@ def test_empty_per_repo_findings_graceful() -> None:
 
     captured = []
     format_cross_repo_output(
-        {}, ["primary", "sibling"], output_fn=captured.append,
+        {},
+        ["primary", "sibling"],
+        output_fn=captured.append,
     )
     assert "=== [primary] ===" in captured
     assert "=== [sibling] ===" in captured
@@ -1302,7 +1423,8 @@ def test_empty_per_repo_findings_graceful() -> None:
 
 
 def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Runtime primary/sibling coverage matrix: primary+real L1=True, sibling=False, stub=False.
 
@@ -1317,8 +1439,12 @@ def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
 
     captured_kwargs: dict[str, dict] = {}
@@ -1327,12 +1453,16 @@ def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
         def __init__(self, *args, **kwargs):
             label = str(kwargs.get("baseline_spec_repr"))
             captured_kwargs[label] = kwargs
-            self._state = type("State", (), {
-                "verdict": Verdict.PASS,
-                "findings": [],
-                "round_history": [],
-                "infra_errors": [],
-            })()
+            self._state = type(
+                "State",
+                (),
+                {
+                    "verdict": Verdict.PASS,
+                    "findings": [],
+                    "round_history": [],
+                    "infra_errors": [],
+                },
+            )()
 
         def run(self):
             return Verdict.PASS
@@ -1340,7 +1470,7 @@ def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
     monkeypatch.setattr("code_forge.machine.StateMachine", _MockStateMachine)
     monkeypatch.setattr(
         "code_forge.factories.build_l1_provider",
-        lambda *a, **kw: (lambda: ([], [], Usage(), 0.0)),
+        lambda *a, **kw: lambda: ([], [], Usage(), 0.0),
     )
     monkeypatch.setattr(
         "code_forge.factories.build_falsifier",
@@ -1353,11 +1483,13 @@ def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="real",
@@ -1379,11 +1511,13 @@ def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="stub",
@@ -1401,7 +1535,8 @@ def test_cross_repo_coverage_l1_active_primary_sibling_matrix(
 
 
 def test_cross_repo_real_l1_primary_retains_receipt_enforcement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Primary with real L1 and empty evidence must fail receipt acceptance; sibling does not.
 
@@ -1416,14 +1551,18 @@ def test_cross_repo_real_l1_primary_retains_receipt_enforcement(
 
     primary = _make_repo(tmp_path, monkeypatch, "primary")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="y = 1\n", content_v2="y = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="y = 1\n",
+        content_v2="y = 2\n",
     )
 
     # Mock build_l1_provider on primary to return an active provider that returns empty evidence
     monkeypatch.setattr(
         "code_forge.factories.build_l1_provider",
-        lambda *a, **kw: (lambda: ([], [], Usage(), 0.0)),
+        lambda *a, **kw: lambda: ([], [], Usage(), 0.0),
     )
     # Stub falsifier (MCP sampling shape)
     monkeypatch.setattr(
@@ -1435,11 +1574,13 @@ def test_cross_repo_real_l1_primary_retains_receipt_enforcement(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="real",
@@ -1453,7 +1594,8 @@ def test_cross_repo_real_l1_primary_retains_receipt_enforcement(
 
 
 def test_cross_repo_unreviewed_file_without_l0_or_l1_fails_with_coverage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Without active L1 or matching L0, unreviewed files must fail with COVERAGE diagnostic.
 
@@ -1466,12 +1608,20 @@ def test_cross_repo_unreviewed_file_without_l0_or_l1_fails_with_coverage(
     from code_forge.state import Mode, Verdict
 
     primary = _make_repo(
-        tmp_path, monkeypatch, "primary",
-        filename="unreviewed.py", content_v1="a = 1\n", content_v2="a = 2\n",
+        tmp_path,
+        monkeypatch,
+        "primary",
+        filename="unreviewed.py",
+        content_v1="a = 1\n",
+        content_v2="a = 2\n",
     )
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling",
-        filename="lib.py", content_v1="b = 1\n", content_v2="b = 2\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="lib.py",
+        content_v1="b = 1\n",
+        content_v2="b = 2\n",
     )
 
     captured_sm = {}
@@ -1488,11 +1638,13 @@ def test_cross_repo_unreviewed_file_without_l0_or_l1_fails_with_coverage(
         primary_path=primary,
         primary_ref="main..feature",
         primary_label="primary",
-        siblings=[{
-            "repo": str(sibling),
-            "ref": "main..feature",
-            "label": "sibling",
-        }],
+        siblings=[
+            {
+                "repo": str(sibling),
+                "ref": "main..feature",
+                "label": "sibling",
+            }
+        ],
         gate_config={"test": {"command": ["echo", "ok"]}},
         mode=Mode.LOCAL,
         engine_choice="stub",
@@ -1505,13 +1657,6 @@ def test_cross_repo_unreviewed_file_without_l0_or_l1_fails_with_coverage(
     assert result == Verdict.FAIL
     assert any("primary returned PENDING (HOLD)" in m for m in messages)
     primary_sm = captured_sm["primary"]
-    coverage_findings = [
-        f for f in primary_sm._state.findings if f.source == "COVERAGE"
-    ]
-    assert len(coverage_findings) > 0, (
-        "Expected COVERAGE finding on unreviewed primary file"
-    )
-    assert any(
-        "no review layer examined this file" in f.description
-        for f in coverage_findings
-    )
+    coverage_findings = [f for f in primary_sm._state.findings if f.source == "COVERAGE"]
+    assert len(coverage_findings) > 0, "Expected COVERAGE finding on unreviewed primary file"
+    assert any("no review layer examined this file" in f.description for f in coverage_findings)

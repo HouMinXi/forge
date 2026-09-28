@@ -136,9 +136,7 @@ class TestRunMutation:
     @patch("code_forge.mutation.shutil.which", return_value=None)
     def test_mutmut_not_installed(self, mock_which, mock_run):
         """Test 12: mutmut not installed returns MUTATION_SKIPPED"""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         findings, infra = run_mutation(["test.py"], ["pytest"])
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
@@ -178,8 +176,7 @@ class TestRunMutation:
         """
         # mutmut 3.x results: module.fn__mutmut_N: survived
         mutmut_results_stdout = (
-            "    test.x_foo__mutmut_1: survived\n"
-            "    test.x_foo__mutmut_2: survived\n"
+            "    test.x_foo__mutmut_1: survived\n    test.x_foo__mutmut_2: survived\n"
         )
 
         def side_effect(*args, **kwargs):
@@ -204,12 +201,11 @@ class TestRunMutation:
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     def test_successful_run_zero_survivors(self, mock_which, mock_run):
         """Test 15: successful run with zero survivors returns empty findings"""
+
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and "mutmut" in cmd and "results" in cmd:
-                return subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="", stderr=""
-                )
+                return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
@@ -223,6 +219,7 @@ class TestRunMutation:
 
         Regression: attempt 2 only caught exit==2. Any non-zero is an error.
         """
+
         def side_effect(*args, **kwargs):
             cmd = args[0]
             if isinstance(cmd, list) and "mutmut" in cmd and "run" in cmd:
@@ -261,10 +258,14 @@ class TestVenvFallback:
     """
 
     @patch("code_forge.mutation.subprocess.run")
-    @patch.dict("os.environ", {
-        "VIRTUAL_ENV": "/fake/venv",
-        "PATH": "/fake/venv/bin:/usr/bin:/bin",
-    }, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/fake/venv",
+            "PATH": "/fake/venv/bin:/usr/bin:/bin",
+        },
+        clear=True,
+    )
     def test_inherited_baseline_passes_no_strip(self, mock_run):
         """T-A: When inherited baseline passes, VIRTUAL_ENV stays intact.
 
@@ -276,9 +277,7 @@ class TestVenvFallback:
         def side_effect(*args, **kwargs):
             env = kwargs.get("env", {})
             envs_seen.append(dict(env))
-            return subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
         run_mutation(["test.py"], ["python3", "-m", "pytest"])
@@ -287,17 +286,19 @@ class TestVenvFallback:
         baseline_envs = envs_seen[:3]
         assert len(baseline_envs) == 3
         for i, env in enumerate(baseline_envs):
-            assert "VIRTUAL_ENV" in env, (
-                "baseline run %d lost VIRTUAL_ENV" % (i + 1)
-            )
+            assert "VIRTUAL_ENV" in env, "baseline run %d lost VIRTUAL_ENV" % (i + 1)
             assert env["VIRTUAL_ENV"] == "/fake/venv"
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     @patch("code_forge.mutation.subprocess.run")
-    @patch.dict("os.environ", {
-        "VIRTUAL_ENV": "/fake/venv",
-        "PATH": "/fake/venv/bin:/usr/bin:/bin",
-    }, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/fake/venv",
+            "PATH": "/fake/venv/bin:/usr/bin:/bin",
+        },
+        clear=True,
+    )
     def test_runner_missing_triggers_strip_retry(self, mock_run, mock_which):
         """T-B: Runner-missing error triggers strip-retry that succeeds.
 
@@ -318,7 +319,8 @@ class TestVenvFallback:
             # First baseline call: runner missing in inherited env
             if call_count["n"] == 1:
                 return subprocess.CompletedProcess(
-                    args=cmd, returncode=1,
+                    args=cmd,
+                    returncode=1,
                     stdout="",
                     stderr="No module named 'pytest'",
                 )
@@ -326,16 +328,13 @@ class TestVenvFallback:
             if isinstance(cmd, list) and "mutmut" in cmd:
                 if "results" in cmd:
                     return subprocess.CompletedProcess(
-                        args=cmd, returncode=0,
+                        args=cmd,
+                        returncode=0,
                         stdout="    mod.fn__mutmut_1: survived\n",
                         stderr="",
                     )
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=0, stdout="", stderr=""
-                )
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
         findings, infra = run_mutation(["test.py"], ["python3", "-m", "pytest"])
@@ -344,21 +343,21 @@ class TestVenvFallback:
         assert "VIRTUAL_ENV" in envs_seen[0]
         # Find the retry calls (after the strip)
         retry_envs = [e for e in envs_seen[1:] if "VIRTUAL_ENV" not in e]
-        assert len(retry_envs) > 0, (
-            "no retry with VIRTUAL_ENV stripped was attempted"
-        )
+        assert len(retry_envs) > 0, "no retry with VIRTUAL_ENV stripped was attempted"
 
         # Must NOT be MUTATION_SKIPPED -- mutation should have proceeded
         skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
-        assert skipped == [], (
-            "mutation was skipped despite successful retry: %s" % skipped
-        )
+        assert skipped == [], "mutation was skipped despite successful retry: %s" % skipped
 
     @patch("code_forge.mutation.subprocess.run")
-    @patch.dict("os.environ", {
-        "VIRTUAL_ENV": "/fake/venv",
-        "PATH": "/fake/venv/bin:/usr/bin:/bin",
-    }, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/fake/venv",
+            "PATH": "/fake/venv/bin:/usr/bin:/bin",
+        },
+        clear=True,
+    )
     def test_genuine_failure_no_strip_retry(self, mock_run):
         """T-C: Genuine test failure does NOT trigger strip-retry.
 
@@ -373,7 +372,8 @@ class TestVenvFallback:
             env = kwargs.get("env", {})
             envs_seen.append(dict(env))
             return subprocess.CompletedProcess(
-                args=[], returncode=1,
+                args=[],
+                returncode=1,
                 stdout="FAILED tests/test_foo.py::test_bar - AssertionError",
                 stderr="",
             )
@@ -382,9 +382,7 @@ class TestVenvFallback:
         findings, infra = run_mutation(["test.py"], ["python3", "-m", "pytest"])
 
         # Only 1 call should have been made (no retry)
-        assert len(envs_seen) == 1, (
-            "expected 1 subprocess call (no retry), got %d" % len(envs_seen)
-        )
+        assert len(envs_seen) == 1, "expected 1 subprocess call (no retry), got %d" % len(envs_seen)
         # All calls should have VIRTUAL_ENV (no stripping)
         for env in envs_seen:
             assert "VIRTUAL_ENV" in env, "VIRTUAL_ENV was stripped on genuine failure"
@@ -395,10 +393,14 @@ class TestVenvFallback:
         assert "flaky" in skipped[0].description or "baseline" in infra[0]
 
     @patch("code_forge.mutation.subprocess.run")
-    @patch.dict("os.environ", {
-        "VIRTUAL_ENV": "/fake/venv",
-        "PATH": "/fake/venv/bin:/usr/bin:/bin",
-    }, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/fake/venv",
+            "PATH": "/fake/venv/bin:/usr/bin:/bin",
+        },
+        clear=True,
+    )
     def test_project_dep_missing_no_strip_retry(self, mock_run):
         """T-C2: Missing PROJECT dep (not runner) does NOT trigger strip.
 
@@ -412,30 +414,31 @@ class TestVenvFallback:
             env = kwargs.get("env", {})
             envs_seen.append(dict(env))
             return subprocess.CompletedProcess(
-                args=[], returncode=1,
+                args=[],
+                returncode=1,
                 stdout="",
                 stderr="No module named 'venvonly_marker'",
             )
 
         mock_run.side_effect = side_effect
-        findings, infra = run_mutation(
-            ["test.py"], ["python3", "-m", "pytest"]
-        )
+        findings, infra = run_mutation(["test.py"], ["python3", "-m", "pytest"])
 
         # Only 1 call -- no retry
-        assert len(envs_seen) == 1, (
-            "strip-retry triggered on project dep missing (should not)"
-        )
+        assert len(envs_seen) == 1, "strip-retry triggered on project dep missing (should not)"
         assert "VIRTUAL_ENV" in envs_seen[0]
 
         skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
         assert len(skipped) == 1
 
     @patch("code_forge.mutation.subprocess.run")
-    @patch.dict("os.environ", {
-        "VIRTUAL_ENV": "/fake/venv",
-        "PATH": "/fake/venv/bin:/usr/bin:/bin",
-    }, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/fake/venv",
+            "PATH": "/fake/venv/bin:/usr/bin:/bin",
+        },
+        clear=True,
+    )
     def test_bare_binary_not_found_triggers_strip(self, mock_run):
         """T-B2: Bare binary not on PATH triggers strip-retry.
 
@@ -453,9 +456,7 @@ class TestVenvFallback:
 
             if call_count["n"] == 1:
                 raise FileNotFoundError("pytest")
-            return subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = side_effect
         # Use bare binary form -- mutmut not installed so it will skip
@@ -469,10 +470,14 @@ class TestVenvFallback:
 
     @patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut")
     @patch("code_forge.mutation.subprocess.run")
-    @patch.dict("os.environ", {
-        "VIRTUAL_ENV": "/fake/venv",
-        "PATH": "/fake/venv/bin:/usr/bin:/bin",
-    }, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/fake/venv",
+            "PATH": "/fake/venv/bin:/usr/bin:/bin",
+        },
+        clear=True,
+    )
     def test_python_flags_before_m_still_detected(self, mock_run, _which):
         """Flags between python and -m (e.g. -W ignore) do not break
         runner-missing detection."""
@@ -483,41 +488,51 @@ class TestVenvFallback:
             cmd = args[0]
             if call_count["n"] == 1:
                 return subprocess.CompletedProcess(
-                    args=cmd, returncode=1,
+                    args=cmd,
+                    returncode=1,
                     stdout="",
                     stderr="No module named 'pytest'",
                 )
             if isinstance(cmd, list) and "mutmut" in cmd:
                 if "results" in cmd:
                     return subprocess.CompletedProcess(
-                        args=cmd, returncode=0,
+                        args=cmd,
+                        returncode=0,
                         stdout="    mod.fn__mutmut_1: survived\n",
                         stderr="",
                     )
                 return subprocess.CompletedProcess(
-                    args=cmd, returncode=0, stdout="", stderr="",
+                    args=cmd,
+                    returncode=0,
+                    stdout="",
+                    stderr="",
                 )
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr="",
+                args=cmd,
+                returncode=0,
+                stdout="",
+                stderr="",
             )
 
         mock_run.side_effect = side_effect
         findings, _ = run_mutation(
-            ["test.py"], ["python3", "-W", "ignore", "-m", "pytest"],
+            ["test.py"],
+            ["python3", "-W", "ignore", "-m", "pytest"],
         )
-        skipped = [f for f in findings
-                    if f.id == "MUTATION_SKIPPED"
-                    and f.fingerprint == "mutation-flaky"]
-        assert skipped == [], (
-            "mutation skipped despite successful retry with flags: %s"
-            % skipped
-        )
+        skipped = [
+            f for f in findings if f.id == "MUTATION_SKIPPED" and f.fingerprint == "mutation-flaky"
+        ]
+        assert skipped == [], "mutation skipped despite successful retry with flags: %s" % skipped
 
     @patch("code_forge.mutation.subprocess.run")
-    @patch.dict("os.environ", {
-        "VIRTUAL_ENV": "/fake/venv",
-        "PATH": "/fake/venv/bin:/usr/bin:/bin",
-    }, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/fake/venv",
+            "PATH": "/fake/venv/bin:/usr/bin:/bin",
+        },
+        clear=True,
+    )
     def test_pytest_marker_flag_not_confused_with_python_m(self, mock_run):
         """pytest -m slow must NOT trigger runner-missing detection."""
         envs_seen = []
@@ -525,16 +540,15 @@ class TestVenvFallback:
         def side_effect(*args, **kwargs):
             envs_seen.append(dict(kwargs.get("env", {})))
             return subprocess.CompletedProcess(
-                args=[], returncode=1,
+                args=[],
+                returncode=1,
                 stdout="FAILED test_foo.py -m slow",
                 stderr="",
             )
 
         mock_run.side_effect = side_effect
         findings, _ = run_mutation(["test.py"], ["pytest", "-m", "slow"])
-        assert len(envs_seen) == 1, (
-            "strip-retry triggered for pytest -m flag (should not)"
-        )
+        assert len(envs_seen) == 1, "strip-retry triggered for pytest -m flag (should not)"
         assert "VIRTUAL_ENV" in envs_seen[0]
         skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
         assert len(skipped) == 1
@@ -564,10 +578,7 @@ def test_real_cli_tests_do_not_use_collection_time_skipif():
             continue
         for deco in item.decorator_list:
             text = ast.unparse(deco)
-            assert "skipif" not in text, (
-                "%s still uses collection-time skipif: %s"
-                % (item.name, text)
-            )
+            assert "skipif" not in text, "%s still uses collection-time skipif: %s" % (item.name, text)
             assert "which" not in text or "mutmut" not in text
 
 
@@ -609,10 +620,7 @@ class TestMutationRealCLI:
         monkeypatch.setattr(shutil, "which", lambda name: None)
         src_dir = tmp_path / "src"
         src_dir.mkdir()
-        (src_dir / "add.py").write_text(
-            "def add(a, b):\n"
-            "    return a + b\n"
-        )
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
@@ -633,8 +641,10 @@ class TestMutationRealCLI:
             cwd=tmp_path,
         )
         mutant_findings = [
-            f for f in findings
-            if f.source == "MUTANT" and f.disposition == Disposition.CONFIRMED
+            f
+            for f in findings
+            if f.source == "MUTANT"
+            and f.disposition == Disposition.CONFIRMED
             and f.id != "MUTATION_ERROR"
         ]
         assert len(mutant_findings) > 0, (
@@ -657,10 +667,7 @@ class TestMutationRealCLI:
         # Build minimal project: src/add.py + weak test
         src_dir = tmp_path / "src"
         src_dir.mkdir()
-        (src_dir / "add.py").write_text(
-            "def add(a, b):\n"
-            "    return a + b\n"
-        )
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
@@ -679,15 +686,17 @@ class TestMutationRealCLI:
 
         # Positive assertion: the weak test must NOT kill the mutant
         mutant_findings = [
-            f for f in findings
-            if f.source == "MUTANT" and f.disposition == Disposition.CONFIRMED
+            f
+            for f in findings
+            if f.source == "MUTANT"
+            and f.disposition == Disposition.CONFIRMED
             and f.id != "MUTATION_ERROR"
         ]
         error_findings = [f for f in findings if f.id == "MUTATION_ERROR"]
 
-        assert error_findings == [], (
-            "mutmut invocation failed: %s\ninfra_errors: %s"
-            % (error_findings, infra_errors)
+        assert error_findings == [], "mutmut invocation failed: %s\ninfra_errors: %s" % (
+            error_findings,
+            infra_errors,
         )
         assert len(mutant_findings) > 0, (
             "no real mutants survived -- "
@@ -704,16 +713,11 @@ class TestMutationRealCLI:
         _skip_unless_mutmut_on_path()
         src_dir = tmp_path / "src"
         src_dir.mkdir()
-        (src_dir / "add.py").write_text(
-            "def add(a, b):\n"
-            "    return a + b\n"
-        )
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
-            "from add import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
+            "from add import add\ndef test_add():\n    assert add(1, 2) == 3\n"
         )
 
         findings, infra_errors = run_mutation(
@@ -733,16 +737,11 @@ class TestMutationRealCLI:
         _skip_unless_mutmut_on_path()
         src_dir = tmp_path / "src"
         src_dir.mkdir()
-        (src_dir / "add.py").write_text(
-            "def add(a, b):\n"
-            "    return a + b\n"
-        )
+        (src_dir / "add.py").write_text("def add(a, b):\n    return a + b\n")
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
-            "from add import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
+            "from add import add\ndef test_add():\n    assert add(1, 2) == 3\n"
         )
 
         run_mutation(
@@ -755,12 +754,8 @@ class TestMutationRealCLI:
         mutants_dir = tmp_path / "mutants"
         setup_cfg = tmp_path / "setup.cfg"
 
-        assert not mutants_dir.exists(), (
-            "mutants/ dir not cleaned up after run_mutation"
-        )
-        assert not setup_cfg.exists(), (
-            "setup.cfg not cleaned up after run_mutation"
-        )
+        assert not mutants_dir.exists(), "mutants/ dir not cleaned up after run_mutation"
+        assert not setup_cfg.exists(), "setup.cfg not cleaned up after run_mutation"
 
 
 class TestSetupCfgKey:
@@ -783,9 +778,7 @@ class TestSetupCfgKey:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_add.py").write_text(
-            "from add import add\n"
-            "def test_add():\n"
-            "    assert add(1, 2) == 3\n"
+            "from add import add\ndef test_add():\n    assert add(1, 2) == 3\n"
         )
 
         seen = {}
@@ -795,16 +788,17 @@ class TestSetupCfgKey:
                 cfg = tmp_path / "setup.cfg"
                 seen["text"] = cfg.read_text() if cfg.exists() else ""
                 raise RuntimeError("stop after config write")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        with patch(
-            "code_forge.mutation.shutil.which",
-            return_value="/usr/bin/mutmut",
-        ), patch(
-            "code_forge.mutation.subprocess.run",
-            side_effect=_capture,
+        with (
+            patch(
+                "code_forge.mutation.shutil.which",
+                return_value="/usr/bin/mutmut",
+            ),
+            patch(
+                "code_forge.mutation.subprocess.run",
+                side_effect=_capture,
+            ),
         ):
             try:
                 run_mutation(
@@ -816,12 +810,8 @@ class TestSetupCfgKey:
                 pass
 
         text = seen.get("text", "")
-        assert "source_paths" in text, (
-            "setup.cfg must use the 3.x key; got:\n" + repr(text)
-        )
-        assert "paths_to_mutate" not in text, (
-            "the 2.x key is silently ignored by mutmut 3.x"
-        )
+        assert "source_paths" in text, "setup.cfg must use the 3.x key; got:\n" + repr(text)
+        assert "paths_to_mutate" not in text, "the 2.x key is silently ignored by mutmut 3.x"
         assert "src/add.py" in text
 
     def test_pin_excludes_versions_without_the_key(self):
@@ -832,8 +822,7 @@ class TestSetupCfgKey:
 
         from packaging.requirements import Requirement
 
-        spec = next(s for s in md.requires("code-review-forge") or []
-                    if Requirement(s).name == "mutmut")
+        spec = next(s for s in md.requires("code-review-forge") or [] if Requirement(s).name == "mutmut")
         specifier = Requirement(spec).specifier
         assert "3.3" not in specifier
         assert "3.3.1" not in specifier

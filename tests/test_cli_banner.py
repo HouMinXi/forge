@@ -25,8 +25,12 @@ from code_forge.state import Verdict
 class TestStartupBannerLine:
     def test_full_line_without_env_override(self):
         line = _startup_banner_line(
-            repo_name="repo", sha="abc12345", diff_count=3,
-            mode="local", backend_name="deepseek-nocache", timeout_s=2400,
+            repo_name="repo",
+            sha="abc12345",
+            diff_count=3,
+            mode="local",
+            backend_name="deepseek-nocache",
+            timeout_s=2400,
         )
         assert line == (
             "code-forge: reviewing repo @ abc12345 (diff: 3 files); "
@@ -36,8 +40,12 @@ class TestStartupBannerLine:
 
     def test_timeout_note_appended(self):
         line = _startup_banner_line(
-            repo_name="repo", sha="abc12345", diff_count=3,
-            mode="local", backend_name="deepseek-nocache", timeout_s=5400,
+            repo_name="repo",
+            sha="abc12345",
+            diff_count=3,
+            mode="local",
+            backend_name="deepseek-nocache",
+            timeout_s=5400,
             timeout_note=" (from FORGE_LLM_TIMEOUT_S)",
         )
         assert "LLM timeout: 5400s (from FORGE_LLM_TIMEOUT_S)" in line
@@ -45,8 +53,12 @@ class TestStartupBannerLine:
     def test_backend_name_control_chars_stripped(self):
         """A hostile backend name in config must not corrupt the line."""
         line = _startup_banner_line(
-            repo_name="repo", sha="abc12345", diff_count=1,
-            mode="ci", backend_name="evil\x1b[31mbackend", timeout_s=1800,
+            repo_name="repo",
+            sha="abc12345",
+            diff_count=1,
+            mode="ci",
+            backend_name="evil\x1b[31mbackend",
+            timeout_s=1800,
         )
         assert "\x1b" not in line
         assert "evil[31mbackend" in line
@@ -54,32 +66,48 @@ class TestStartupBannerLine:
     def test_sha_control_chars_stripped(self):
         """A --head-supplied sha with escapes must not corrupt the line."""
         line = _startup_banner_line(
-            repo_name="repo", sha="abc12\x1b345", diff_count=1,
-            mode="ci", backend_name="b", timeout_s=1800,
+            repo_name="repo",
+            sha="abc12\x1b345",
+            diff_count=1,
+            mode="ci",
+            backend_name="b",
+            timeout_s=1800,
         )
         assert "\x1b" not in line
         assert "abc12345" in line
 
     def test_singular_diff(self):
         line = _startup_banner_line(
-            repo_name="repo", sha="abc12345", diff_count=1,
-            mode="ci", backend_name="none", timeout_s=1800,
+            repo_name="repo",
+            sha="abc12345",
+            diff_count=1,
+            mode="ci",
+            backend_name="none",
+            timeout_s=1800,
         )
         assert "(diff: 1 file)" in line
         assert "(diff: 1 files)" not in line
 
     def test_missing_sha_omits_at_sign(self):
         line = _startup_banner_line(
-            repo_name="repo", sha="", diff_count=0,
-            mode="ci", backend_name="none", timeout_s=1800,
+            repo_name="repo",
+            sha="",
+            diff_count=0,
+            mode="ci",
+            backend_name="none",
+            timeout_s=1800,
         )
         assert "reviewing repo (diff:" in line
         assert "repo @ " not in line
 
     def test_unknown_values_render_n_a(self):
         line = _startup_banner_line(
-            repo_name="repo", sha="abc12345", diff_count=None,
-            mode="ci", backend_name="none", timeout_s=None,
+            repo_name="repo",
+            sha="abc12345",
+            diff_count=None,
+            mode="ci",
+            backend_name="none",
+            timeout_s=None,
         )
         assert "diff: n/a" in line
         assert "LLM timeout: n/a" in line
@@ -92,6 +120,7 @@ class TestBannerTimeoutNote:
             name = "b"
             timeout_s = ts
             type = "api"
+
         return _B()
 
     def test_env_unset_returns_empty(self):
@@ -130,9 +159,7 @@ class TestBannerTimeoutNote:
         assert _banner_timeout_note(self._backend(0), "abc") == ""
         assert _banner_timeout_note(self._backend(0), "0") == ""
         assert _banner_timeout_note(self._backend(0), "-5") == ""
-        assert _banner_timeout_note(
-            self._backend(0), "5400"
-        ) == " (from FORGE_LLM_TIMEOUT_S)"
+        assert _banner_timeout_note(self._backend(0), "5400") == " (from FORGE_LLM_TIMEOUT_S)"
 
 
 class TestRepoDisplayName:
@@ -140,7 +167,10 @@ class TestRepoDisplayName:
         repo = tmp_path / "repo"
         (repo / "sub").mkdir(parents=True)
         subprocess.run(
-            ["git", "init"], cwd=str(repo), capture_output=True, check=True,
+            ["git", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         monkeypatch.chdir(str(repo / "sub"))
         assert _repo_display_name(repo / "sub") == "repo"
@@ -199,34 +229,45 @@ class TestBannerCallSite:
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(
-            ["git", "init"], cwd=str(repo), capture_output=True, check=True,
+            ["git", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "test"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         forge_dir = repo / ".code-forge"
         forge_dir.mkdir()
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text('"""Clean module."""\nX = 1\n')
         subprocess.run(
-            ["git", "add", "-A"], cwd=str(repo), capture_output=True,
+            ["git", "add", "-A"],
+            cwd=str(repo),
+            capture_output=True,
             check=True,
         )
         subprocess.run(
-            ["git", "commit", "-m", "init"], cwd=str(repo),
-            capture_output=True, check=True,
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text('"""Clean module."""\nX = 2\n')
 
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "--falsification-engine", "stub",
-             "--mode", "ci", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -238,49 +279,61 @@ class TestBannerCallSite:
             exit_code = main()
         assert exit_code == EXIT_PASS
         err = capsys.readouterr().err
-        assert "reviewing repo @" in err, (
-            "banner missing from stderr: %r" % err
-        )
+        assert "reviewing repo @" in err, "banner missing from stderr: %r" % err
         assert "LLM timeout" in err
         # Env var unset: the banner must NOT claim an override.
         assert "FORGE_LLM_TIMEOUT_S" not in err
 
     def test_banner_names_env_override_when_set(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """The env_override wiring at the call site: with
         FORGE_LLM_TIMEOUT_S set, the banner says so."""
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(
-            ["git", "init"], cwd=str(repo), capture_output=True, check=True,
+            ["git", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "test"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         forge_dir = repo / ".code-forge"
         forge_dir.mkdir()
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text('"""Clean module."""\nX = 1\n')
         subprocess.run(
-            ["git", "add", "-A"], cwd=str(repo), capture_output=True,
+            ["git", "add", "-A"],
+            cwd=str(repo),
+            capture_output=True,
             check=True,
         )
         subprocess.run(
-            ["git", "commit", "-m", "init"], cwd=str(repo),
-            capture_output=True, check=True,
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text('"""Clean module."""\nX = 2\n')
 
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "--falsification-engine", "stub",
-             "--mode", "ci", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -295,41 +348,55 @@ class TestBannerCallSite:
         assert "from FORGE_LLM_TIMEOUT_S" in capsys.readouterr().err
 
     def test_banner_survives_timeout_resolver_error(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """The banner is diagnostics: a raising timeout resolver must
         degrade to n/a, not crash the review."""
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(
-            ["git", "init"], cwd=str(repo), capture_output=True, check=True,
+            ["git", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "test"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         forge_dir = repo / ".code-forge"
         forge_dir.mkdir()
         (forge_dir / "tools.yaml").write_text("tools: {}\n")
         (repo / "a.py").write_text('"""Clean module."""\nX = 1\n')
         subprocess.run(
-            ["git", "add", "-A"], cwd=str(repo), capture_output=True,
+            ["git", "add", "-A"],
+            cwd=str(repo),
+            capture_output=True,
             check=True,
         )
         subprocess.run(
-            ["git", "commit", "-m", "init"], cwd=str(repo),
-            capture_output=True, check=True,
+            ["git", "commit", "-m", "init"],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text('"""Clean module."""\nX = 2\n')
 
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "--falsification-engine", "stub",
-             "--mode", "ci", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -337,10 +404,13 @@ class TestBannerCallSite:
         )
         monkeypatch.setenv("FORGE_LLM_TIMEOUT_S", "5400")
         monkeypatch.chdir(str(repo))
-        with patch(
-            "code_forge.llm_invoke.effective_invoke_timeout_s",
-            side_effect=RuntimeError("boom"),
-        ), patch("code_forge.cli._run_hold_loop") as mock_loop:
+        with (
+            patch(
+                "code_forge.llm_invoke.effective_invoke_timeout_s",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("code_forge.cli._run_hold_loop") as mock_loop,
+        ):
             mock_loop.return_value = Verdict.PASS
             exit_code = main()
         assert exit_code == EXIT_PASS

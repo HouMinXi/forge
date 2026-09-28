@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for LegacyRunner advisory axis (REVIEW-LEGACY-01 + REVIEW-INTENT-01)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -65,8 +66,10 @@ def _make_finding(
 
 def _fake_runner(findings, infra_errors=None):
     """Return a callable that mimics _default_l0_runner."""
+
     def runner(registry, files):
         return (findings, infra_errors or [])
+
     return runner
 
 
@@ -95,9 +98,7 @@ class TestPreExistingDetection:
         runner.registry = {"tools": []}
 
         # Write a source file so _classify_intent can read it.
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -116,9 +117,7 @@ class TestPreExistingDetection:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 10)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 10)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -135,9 +134,7 @@ class TestPreExistingDetection:
         runner.registry = {"tools": []}
 
         (tmp_path / "foo.py").write_text("line 1\n")
-        (tmp_path / "bar.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "bar.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -155,9 +152,7 @@ class TestPreExistingDetection:
         runner.source_files = [tmp_path / "foo.py"]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -217,9 +212,7 @@ class TestPreExistingDetection:
         assert result == []
 
     @patch("code_forge.legacy.git_blame")
-    def test_git_blame_unavailable_produces_unavailable_attribution(
-        self, mock_blame, tmp_path
-    ):
+    def test_git_blame_unavailable_produces_unavailable_attribution(self, mock_blame, tmp_path):
         """git_blame returns {} -> attribution = 'git-blame: unavailable'."""
         mock_blame.return_value = {}
         finding = _make_finding(file="foo.py", line=20)
@@ -227,9 +220,7 @@ class TestPreExistingDetection:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -247,9 +238,7 @@ class TestPreExistingDetection:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -268,9 +257,7 @@ class TestPreExistingDetection:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -289,9 +276,7 @@ class TestPreExistingDetection:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -320,9 +305,7 @@ class TestIntentClassification:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -363,9 +346,7 @@ class TestIntentClassification:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -383,9 +364,7 @@ class TestIntentClassification:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -403,9 +382,7 @@ class TestIntentClassification:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -447,9 +424,7 @@ class TestIntentClassification:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -471,9 +446,7 @@ class TestIntentClassification:
         runner.source_files = [Path("foo.py")]
         runner.registry = {"tools": []}
 
-        (tmp_path / "foo.py").write_text(
-            "\n".join(["line %d" % i for i in range(1, 25)]) + "\n"
-        )
+        (tmp_path / "foo.py").write_text("\n".join(["line %d" % i for i in range(1, 25)]) + "\n")
 
         result = runner.run(DIFF_FOO_LINE5, tmp_path)
 
@@ -482,6 +455,7 @@ class TestIntentClassification:
 
     def test_l0_runner_exception_returns_skipped(self, tmp_path):
         """l0_runner raises RuntimeError -> SKIPPED + infra_errors populated."""
+
         def bad_runner(registry, files):
             raise RuntimeError("L0 tools crashed")
 

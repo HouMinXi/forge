@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Preserve serial evaluation and latest-snapshot precedence during loop cleanup."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,11 +38,16 @@ def machine(tmp_path):
         autofixer=StubAutoFixer(),
         revert_fn=lambda finding: None,
         resolved_review=ResolvedReview(
-            source_files=[Path("sample.py")], baseline_content=None,
-            git_diff="diff --git a/sample.py b/sample.py\n", mode_hint="git",
+            source_files=[Path("sample.py")],
+            baseline_content=None,
+            git_diff="diff --git a/sample.py b/sample.py\n",
+            mode_hint="git",
         ),
-        source_hash="sample-source", baseline_spec_repr="empty", cwd=tmp_path,
-        registry={}, l0_runner=lambda registry, files: ([], []),
+        source_hash="sample-source",
+        baseline_spec_repr="empty",
+        cwd=tmp_path,
+        registry={},
+        l0_runner=lambda registry, files: ([], []),
     )
 
 
@@ -52,9 +58,14 @@ def finding(
     excerpt: str | None = "bound quote\n",
 ) -> StateFinding:
     return StateFinding(
-        id=fingerprint, fingerprint=fingerprint, source=source,
-        disposition=disposition, file="sample.py", line_range=[1, 1],
-        description=f"Finding {fingerprint}", excerpt=excerpt,
+        id=fingerprint,
+        fingerprint=fingerprint,
+        source=source,
+        disposition=disposition,
+        file="sample.py",
+        line_range=[1, 1],
+        description=f"Finding {fingerprint}",
+        excerpt=excerpt,
     )
 
 
@@ -107,23 +118,25 @@ def test_confirmed_without_own_excerpt_is_uncertain(machine, monkeypatch):
     assert result[1].disposition == Disposition.CONFIRMED
 
 
-@pytest.mark.parametrize("latest", [Disposition.DISMISSED, Disposition.STYLE,
-                                    Disposition.CONFIRMED, Disposition.FIXED])
+@pytest.mark.parametrize(
+    "latest", [Disposition.DISMISSED, Disposition.STYLE, Disposition.CONFIRMED, Disposition.FIXED]
+)
 def test_latest_snapshot_wins(machine, latest):
-    earlier = (Disposition.CONFIRMED if latest == Disposition.DISMISSED
-               else Disposition.DISMISSED)
+    earlier = Disposition.CONFIRMED if latest == Disposition.DISMISSED else Disposition.DISMISSED
     machine._state.round_history = [
         {"dispositions": {"a": earlier.value, "b": "STYLE"}},
         {"dispositions": {"a": latest.value}},
-        {}, {"dispositions": {}},
+        {},
+        {"dispositions": {}},
     ]
     findings = [finding("a"), finding("b"), finding("new")]
     result = machine._apply_dismissed_stickiness(findings)
-    expected = (latest if latest in {Disposition.DISMISSED, Disposition.STYLE}
-                else Disposition.UNCERTAIN)
+    expected = latest if latest in {Disposition.DISMISSED, Disposition.STYLE} else Disposition.UNCERTAIN
     assert result is findings
     assert [item.disposition for item in result] == [
-        expected, Disposition.STYLE, Disposition.UNCERTAIN,
+        expected,
+        Disposition.STYLE,
+        Disposition.UNCERTAIN,
     ]
 
 

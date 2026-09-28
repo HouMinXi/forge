@@ -310,6 +310,7 @@ class TestNonForgeHookWithBackup:
             prepend=os.pathsep,
         )
         import io
+
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -335,8 +336,11 @@ class TestNonForgeHookWithBackup:
 
         stderr = io.StringIO()
         result = run_install_hooks(
-            args=None, env={}, cwd=tmp_path,
-            stdout=None, stderr=stderr,
+            args=None,
+            env={},
+            cwd=tmp_path,
+            stdout=None,
+            stderr=stderr,
         )
         assert result == EXIT_FAIL
         assert "error" in stderr.getvalue().lower()
@@ -420,10 +424,7 @@ class TestHooksDirResolution:
         hooks_dir = resolve_hooks_dir(tmp_path, run_cmd=mock_run)
 
         # Check that git rev-parse --git-path hooks was called
-        assert any(
-            "git" in str(call[0]) and "--git-path" in str(call[0])
-            for call in calls
-        )
+        assert any("git" in str(call[0]) and "--git-path" in str(call[0]) for call in calls)
         assert hooks_dir.exists()
 
     def test_not_git_repo_fails(self, tmp_path, monkeypatch):
@@ -593,6 +594,7 @@ class TestQuietFlag:
             prepend=os.pathsep,
         )
         import types
+
         subprocess.run(
             ["git", "init"],
             cwd=tmp_path,
@@ -601,11 +603,15 @@ class TestQuietFlag:
         )
 
         import io
+
         stderr = io.StringIO()
         args = types.SimpleNamespace(quiet=True)
         result = run_install_hooks(
-            args=args, env={}, cwd=tmp_path,
-            stdout=None, stderr=stderr,
+            args=args,
+            env={},
+            cwd=tmp_path,
+            stdout=None,
+            stderr=stderr,
         )
         assert result == EXIT_PASS
         # With quiet=True, no informational output
@@ -626,10 +632,14 @@ class TestQuietFlag:
         )
 
         import io
+
         stderr = io.StringIO()
         result = run_install_hooks(
-            args=None, env={}, cwd=tmp_path,
-            stdout=None, stderr=stderr,
+            args=None,
+            env={},
+            cwd=tmp_path,
+            stdout=None,
+            stderr=stderr,
         )
         assert result == EXIT_PASS
         assert "pre-commit hook installed" in stderr.getvalue()
@@ -763,28 +773,24 @@ class TestResolveForgeLiveness:
                 assert sys.executable in path or "-m code_forge" in path
 
 
-
 class TestPresubmitRunner:
     """Task 1: presubmit runner block in generate_hook_content."""
 
     def test_no_entries_no_presubmit_block(self):
         """generate_hook_content with presubmit_entries=[] produces no presubmit block."""
-        content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None, presubmit_entries=[]
-        )
+        content = generate_hook_content("/usr/bin/code-forge gate-check", None, presubmit_entries=[])
         assert "code-forge: presubmit" not in content
 
     def test_none_entries_no_presubmit_block(self):
         """generate_hook_content with presubmit_entries=None produces no presubmit block."""
-        content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None, presubmit_entries=None
-        )
+        content = generate_hook_content("/usr/bin/code-forge gate-check", None, presubmit_entries=None)
         assert "code-forge: presubmit" not in content
 
     def test_on_diff_pipes_git_diff_cached(self):
         """on=diff entry pipes git diff --cached to command."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_DIFF],
         )
         assert "git diff --cached" in content
@@ -793,7 +799,8 @@ class TestPresubmitRunner:
     def test_on_patch_pipes_git_diff_cached(self):
         """on=patch entry also pipes git diff --cached to command."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_PATCH],
         )
         assert "git diff --cached" in content
@@ -809,14 +816,16 @@ class TestPresubmitRunner:
         }
         with pytest.raises(ValueError, match="on"):
             generate_hook_content(
-                "/usr/bin/code-forge gate-check", None,
+                "/usr/bin/code-forge gate-check",
+                None,
                 presubmit_entries=[bad_entry],
             )
 
     def test_presubmit_block_after_carveout(self):
         """Presubmit block appears after carveout block (non-code commits exit first)."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_DIFF],
         )
         lines = content.split("\n")
@@ -834,7 +843,8 @@ class TestPresubmitRunner:
     def test_presubmit_block_before_gate_check(self):
         """Presubmit block appears before exec gate-check."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_DIFF],
         )
         lines = content.split("\n")
@@ -852,7 +862,8 @@ class TestPresubmitRunner:
     def test_no_match_files_literal_in_hook(self):
         """Generated hook never contains the literal '$_MATCH_FILES' substring."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_DIFF],
         )
         assert "$_MATCH_FILES" not in content
@@ -860,7 +871,8 @@ class TestPresubmitRunner:
     def test_command_existence_check_both_forms(self):
         """Generated hook checks command existence with both command -v AND [ -x ]."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_DIFF],
         )
         assert "command -v" in content
@@ -869,7 +881,8 @@ class TestPresubmitRunner:
     def test_when_exists_wraps_in_guard(self):
         """Presubmit entry with when_exists wraps block in if-exists guard."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_WHEN_EXISTS],
         )
         assert "scripts/checkpatch.pl" in content
@@ -879,7 +892,8 @@ class TestPresubmitRunner:
     def test_applies_to_filters_staged_files(self):
         """Presubmit entry with applies_to filters staged files via grep."""
         content = generate_hook_content(
-            "/usr/bin/code-forge gate-check", None,
+            "/usr/bin/code-forge gate-check",
+            None,
             presubmit_entries=[_ENTRY_DIFF],
         )
         # applies_to_grep value must appear in generated shell
@@ -889,9 +903,7 @@ class TestPresubmitRunner:
 
     def test_run_install_hooks_reads_presubmit_from_gate_yaml(self, tmp_path, monkeypatch):
         """run_install_hooks reads presubmit from gate.yaml and passes to generate_hook_content."""
-        monkeypatch.setenv(
-            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep
-        )
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep)
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
 
         forge_dir = tmp_path / ".code-forge"
@@ -911,7 +923,10 @@ class TestPresubmitRunner:
 
         hooks_result = subprocess.run(
             ["git", "rev-parse", "--git-path", "hooks"],
-            cwd=tmp_path, capture_output=True, text=True, check=True,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         hooks_dir = tmp_path / hooks_result.stdout.strip()
         content = (hooks_dir / "pre-commit").read_text()
@@ -919,9 +934,7 @@ class TestPresubmitRunner:
 
     def test_run_install_hooks_no_gate_yaml_no_presubmit(self, tmp_path, monkeypatch):
         """run_install_hooks with no gate.yaml generates hook with no presubmit block."""
-        monkeypatch.setenv(
-            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep
-        )
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep)
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
 
         result = run_install_hooks(args=None, env={}, cwd=tmp_path)
@@ -929,7 +942,10 @@ class TestPresubmitRunner:
 
         hooks_result = subprocess.run(
             ["git", "rev-parse", "--git-path", "hooks"],
-            cwd=tmp_path, capture_output=True, text=True, check=True,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         hooks_dir = tmp_path / hooks_result.stdout.strip()
         content = (hooks_dir / "pre-commit").read_text()
@@ -938,9 +954,8 @@ class TestPresubmitRunner:
     def test_run_install_hooks_malformed_presubmit_fails(self, tmp_path, monkeypatch):
         """run_install_hooks with malformed presubmit returns EXIT_FAIL (fail-fast)."""
         import io as _io
-        monkeypatch.setenv(
-            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep
-        )
+
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep)
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
 
         forge_dir = tmp_path / ".code-forge"
@@ -963,6 +978,7 @@ class TestPresubmitRunner:
 # ---------------------------------------------------------------------------
 # TestBuiltinD12Check -- built-in non-ASCII + AI-vocab check
 # ---------------------------------------------------------------------------
+
 
 class TestBuiltinD12Check:
     """built-in staged-diff non-ASCII and AI-vocab checks."""
@@ -997,13 +1013,15 @@ class TestBuiltinD12Check:
     def _run_perl_pattern(self, mode, data):
         """Extract perl pattern from generated hook and run it on data."""
         import re as _re
+
         content = generate_hook_content("code-forge gate-check", None, non_ascii_mode=mode)
         m = _re.search(r"perl -ne 'print if /([^/]+)/'", content)
         assert m is not None, "perl pattern not found in hook"
         pattern = m.group(1)
         return subprocess.run(
             ["perl", "-ne", "print if /%s/" % pattern],
-            input=data, capture_output=True,
+            input=data,
+            capture_output=True,
         )
 
     def test_ai_smell_mode_em_dash_blocked(self):
@@ -1055,21 +1073,16 @@ class TestBuiltinD12Check:
         content = generate_hook_content("code-forge gate-check", None, non_ascii_mode="ai-smell")
         start = content.index("_AI_VOCAB=$(git diff")
         end = content.index("fi\n", start) + len("fi\n")
-        fragment = content[start:end].replace(
-            "git diff --cached -U0", "printf '%s\\n' \"$STAGED\""
-        )
+        fragment = content[start:end].replace("git diff --cached -U0", "printf '%s\\n' \"$STAGED\"")
         script = 'STAGED="+X = 1  # we delve deeper"\n' + fragment
         r = subprocess.run(["sh", "-c", script], capture_output=True)
         assert r.stderr == (
-            b"code-forge: AI vocabulary detected in staged diff:\n"
-            b"+X = 1  # we delve deeper\n"
+            b"code-forge: AI vocabulary detected in staged diff:\n+X = 1  # we delve deeper\n"
         ), "expected the flagged line on stderr, got %r" % r.stderr
 
     def test_run_install_hooks_installs_commit_msg(self, tmp_path, monkeypatch):
         """run_install_hooks installs BOTH pre-commit AND commit-msg hooks."""
-        monkeypatch.setenv(
-            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep
-        )
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep)
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         result = run_install_hooks(args=None, env={}, cwd=tmp_path)
         assert result == EXIT_PASS
@@ -1080,6 +1093,7 @@ class TestBuiltinD12Check:
     def test_commit_msg_hook_readable(self, tmp_path, monkeypatch):
         """commit-msg hook contains non-ASCII and AI-vocab checks."""
         from code_forge.install_hooks import generate_commit_msg_hook_content
+
         content = generate_commit_msg_hook_content(None, non_ascii_mode="ai-smell")
         assert "_MSG_FILE=" in content
         assert "_NON_ASCII=" in content
@@ -1089,6 +1103,7 @@ class TestBuiltinD12Check:
     def test_commit_msg_hook_no_carveout(self, tmp_path, monkeypatch):
         """commit-msg hook has no non-code carveout (checks ALL commits)."""
         from code_forge.install_hooks import generate_commit_msg_hook_content
+
         content = generate_commit_msg_hook_content(None)
         assert "skipping verify" not in content
         assert "NON_CODE" not in content
@@ -1101,10 +1116,12 @@ class TestClaudeWorktreeHook:
     def test_creates_settings_when_absent(self, tmp_path):
         """Creates settings.local.json with check_worktree entry when absent."""
         from code_forge.install_hooks import ensure_claude_worktree_hook
+
         ensure_claude_worktree_hook(tmp_path)
         settings_path = tmp_path / ".claude" / "settings.local.json"
         assert settings_path.exists()
         import json
+
         settings = json.loads(settings_path.read_text())
         pre_tool = settings["hooks"]["PreToolUse"]
         ew = next(e for e in pre_tool if e["matcher"] == "Edit|Write")
@@ -1114,6 +1131,7 @@ class TestClaudeWorktreeHook:
     def test_adds_to_existing_settings(self, tmp_path):
         """Adds check_worktree.sh to existing settings without clobbering them."""
         import json
+
         settings_path = tmp_path / ".claude" / "settings.local.json"
         settings_path.parent.mkdir(parents=True)
         existing = {
@@ -1121,19 +1139,17 @@ class TestClaudeWorktreeHook:
                 "PreToolUse": [
                     {
                         "matcher": "Edit|Write",
-                        "hooks": [{"type": "command", "command": "/other.sh", "timeout": 15}]
+                        "hooks": [{"type": "command", "command": "/other.sh", "timeout": 15}],
                     }
                 ]
             }
         }
         settings_path.write_text(json.dumps(existing))
         from code_forge.install_hooks import ensure_claude_worktree_hook
+
         ensure_claude_worktree_hook(tmp_path)
         settings = json.loads(settings_path.read_text())
-        ew = next(
-            e for e in settings["hooks"]["PreToolUse"]
-            if e["matcher"] == "Edit|Write"
-        )
+        ew = next(e for e in settings["hooks"]["PreToolUse"] if e["matcher"] == "Edit|Write")
         commands = [h["command"] for h in ew["hooks"]]
         assert any("check_worktree.sh" in c for c in commands)
         assert "/other.sh" in commands  # existing hook preserved
@@ -1141,31 +1157,28 @@ class TestClaudeWorktreeHook:
     def test_idempotent_on_rerun(self, tmp_path):
         """Running twice does not add duplicate check_worktree entries."""
         from code_forge.install_hooks import ensure_claude_worktree_hook
+
         ensure_claude_worktree_hook(tmp_path)
         ensure_claude_worktree_hook(tmp_path)
         import json
-        settings = json.loads(
-            (tmp_path / ".claude" / "settings.local.json").read_text()
-        )
-        ew = next(
-            e for e in settings["hooks"]["PreToolUse"]
-            if e["matcher"] == "Edit|Write"
-        )
+
+        settings = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+        ew = next(e for e in settings["hooks"]["PreToolUse"] if e["matcher"] == "Edit|Write")
         wt_entries = [h for h in ew["hooks"] if "check_worktree.sh" in h.get("command", "")]
         assert len(wt_entries) == 1
 
     def test_run_install_hooks_registers_worktree_hook(self, tmp_path, monkeypatch):
         """run_install_hooks writes check_worktree entry to settings.local.json."""
-        monkeypatch.setenv(
-            "GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep
-        )
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent), prepend=os.pathsep)
         import subprocess as sp
+
         sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
         result = run_install_hooks(args=None, env={}, cwd=tmp_path)
         assert result == EXIT_PASS
         settings_path = tmp_path / ".claude" / "settings.local.json"
         assert settings_path.exists()
         import json
+
         settings = json.loads(settings_path.read_text())
         pre_tool = settings["hooks"]["PreToolUse"]
         ew = next(e for e in pre_tool if e["matcher"] == "Edit|Write")
@@ -1197,9 +1210,7 @@ class TestPlanningLeakGuard:
 
     def test_planning_leak_guard_enabled(self):
         """planning_leak_guard=True emits the guard before the carveout."""
-        content = generate_hook_content(
-            "code-forge gate-check", None, planning_leak_guard=True
-        )
+        content = generate_hook_content("code-forge gate-check", None, planning_leak_guard=True)
         assert "planning-leak guard" in content
         assert content.index("planning-leak") < content.index("carve-out")
 
@@ -1220,6 +1231,7 @@ class TestReviewBlock:
     def test_review_block_quoted_path_no_stray_quotes(self):
         """When forge_invocation contains shlex.quoted paths, cmd_name is clean."""
         import shlex
+
         invocation = shlex.quote("/usr/bin/code-forge") + " gate-check"
         block = _build_review_block(invocation)
         # cmd_name must not include surrounding single quotes
@@ -1258,9 +1270,7 @@ class TestHookExecutionOrder:
 
     def test_hook_execution_order(self):
         """Full hook ordering: leak -> carveout -> attestation -> -> review -> exec."""
-        content = generate_hook_content(
-            "code-forge gate-check", None, planning_leak_guard=True
-        )
+        content = generate_hook_content("code-forge gate-check", None, planning_leak_guard=True)
         # Use specific anchors to avoid false matches
         idx_gitdir = content.index("git rev-parse --git-dir")
         idx_leak = content.index("planning-leak")
@@ -1276,7 +1286,8 @@ class TestHookExecutionOrder:
     def test_review_block_in_chained_hook(self):
         """In a chained hook, review appears before the chain call and gate-check."""
         content = generate_hook_content(
-            "code-forge gate-check", Path("/backup/pre-commit"),
+            "code-forge gate-check",
+            Path("/backup/pre-commit"),
             planning_leak_guard=True,
         )
         idx_review = content.index("command -v code-forge")
@@ -1302,7 +1313,7 @@ class TestAttestationOutputCapture:
         stub = bin_dir / "code-forge"
         stub.write_text(
             "#!/bin/sh\n"
-            "case \"$1\" in\n"
+            'case "$1" in\n'
             "  verify)\n"
             "    echo '%s' >&2\n"
             "    exit %d\n"
@@ -1321,22 +1332,25 @@ class TestAttestationOutputCapture:
             prepend=os.pathsep,
         )
         subprocess.run(
-            ["git", "init"], cwd=tmp_path,
-            capture_output=True, check=True,
+            ["git", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
         # Stage a dummy file so git diff --cached is non-empty
         (tmp_path / "dummy.py").write_text("x = 1\n")
         subprocess.run(
-            ["git", "add", "dummy.py"], cwd=tmp_path,
-            capture_output=True, check=True,
+            ["git", "add", "dummy.py"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
 
     def test_fail_replays_verify_output(self, tmp_path, monkeypatch):
         """When verify fails, the operator sees the reason in the hook output."""
         self._setup_git_repo(tmp_path, monkeypatch)
         bin_dir = self._write_stub_forge(tmp_path, exit_code=1)
-        content = generate_hook_content(
-            str(bin_dir / "code-forge gate-check"), None)
+        content = generate_hook_content(str(bin_dir / "code-forge gate-check"), None)
         hook_path = tmp_path / "pre-commit"
         hook_path.write_text(content)
         hook_path.chmod(0o755)
@@ -1345,7 +1359,10 @@ class TestAttestationOutputCapture:
         env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
         result = subprocess.run(
             [str(hook_path)],
-            capture_output=True, text=True, cwd=tmp_path, env=env,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
         )
         assert result.returncode == 1
         assert self.MARKER in result.stderr
@@ -1354,8 +1371,7 @@ class TestAttestationOutputCapture:
         """When verify passes, the hook produces no output."""
         self._setup_git_repo(tmp_path, monkeypatch)
         bin_dir = self._write_stub_forge(tmp_path, exit_code=0)
-        content = generate_hook_content(
-            str(bin_dir / "code-forge gate-check"), None)
+        content = generate_hook_content(str(bin_dir / "code-forge gate-check"), None)
         hook_path = tmp_path / "pre-commit"
         hook_path.write_text(content)
         hook_path.chmod(0o755)
@@ -1364,7 +1380,10 @@ class TestAttestationOutputCapture:
         env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
         result = subprocess.run(
             [str(hook_path)],
-            capture_output=True, text=True, cwd=tmp_path, env=env,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
         )
         assert result.returncode == 0
         assert self.MARKER not in result.stderr
@@ -1376,15 +1395,15 @@ class TestAttestationOutputCapture:
         self._setup_git_repo(tmp_path, monkeypatch)
         bin_dir = self._write_stub_forge(tmp_path, exit_code=1)
         # Inject the old broken mechanism into the generated content
-        content = generate_hook_content(
-            str(bin_dir / "code-forge gate-check"), None)
+        content = generate_hook_content(str(bin_dir / "code-forge gate-check"), None)
         content = content.replace(
-            "VERIFY_OUT=$(code-forge verify 2>&1)",
-            "code-forge verify --quiet 2>/dev/null")
+            "VERIFY_OUT=$(code-forge verify 2>&1)", "code-forge verify --quiet 2>/dev/null"
+        )
         content = content.replace(
             '    echo "$VERIFY_OUT" >&2\n    exit 1\n',
             '    echo "code-forge: receipt verification failed.'
-            ' See verify output above for details." >&2\n    exit 1\n')
+            ' See verify output above for details." >&2\n    exit 1\n',
+        )
         hook_path = tmp_path / "pre-commit"
         hook_path.write_text(content)
         hook_path.chmod(0o755)
@@ -1393,7 +1412,10 @@ class TestAttestationOutputCapture:
         env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
         result = subprocess.run(
             [str(hook_path)],
-            capture_output=True, text=True, cwd=tmp_path, env=env,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            env=env,
         )
         # With --quiet 2>/dev/null, the marker is suppressed
         assert self.MARKER not in result.stderr

@@ -16,6 +16,7 @@ Covers:
 - Generic _display_advisories loop skips runtime-smoke-summary and
   runtime-skipped (DEDUP)
 """
+
 from __future__ import annotations
 
 import json
@@ -33,6 +34,7 @@ from code_forge.state import Mode
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_resolved(git_diff: str = "diff --git a/f.py b/f.py\n") -> ResolvedReview:
     return ResolvedReview(
@@ -86,11 +88,13 @@ def _runtime_summary_finding(desc: str) -> AdvisoryFinding:
 # CLI parser tests
 # ---------------------------------------------------------------------------
 
+
 class TestSmokeRunParser:
     """_build_parser() registers smoke-run subcommand."""
 
     def test_smoke_run_subcommand_exists(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         # Parse smoke-run with minimal args: should not raise
         args = parser.parse_args(["smoke-run", "echo", "hello"])
@@ -98,18 +102,21 @@ class TestSmokeRunParser:
 
     def test_smoke_run_default_surface(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         args = parser.parse_args(["smoke-run", "echo", "hello"])
         assert args.surface == "default"
 
     def test_smoke_run_custom_surface(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         args = parser.parse_args(["smoke-run", "--surface", "nftables", "echo", "hello"])
         assert args.surface == "nftables"
 
     def test_smoke_run_command_captured(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         args = parser.parse_args(["smoke-run", "pytest", "-x", "-q"])
         # command captured as remainder list
@@ -117,6 +124,7 @@ class TestSmokeRunParser:
 
     def test_smoke_run_no_command_gives_empty_list(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         args = parser.parse_args(["smoke-run"])
         assert args.command == [] or args.command is None or not args.command
@@ -125,6 +133,7 @@ class TestSmokeRunParser:
 # ---------------------------------------------------------------------------
 # RuntimeRunner wiring tests (machine.py)
 # ---------------------------------------------------------------------------
+
 
 class TestRuntimeRunnerAdvisoryPlacement:
     """RuntimeRunner findings go into _advisories, not _state.findings."""
@@ -142,8 +151,7 @@ class TestRuntimeRunnerAdvisoryPlacement:
         assert summary_f in sm._advisories
         # Must NOT be in _state.findings
         assert not any(
-            getattr(f, "description", "") == summary_f.description
-            for f in sm._state.findings
+            getattr(f, "description", "") == summary_f.description for f in sm._state.findings
         )
 
     def test_runtime_findings_do_not_affect_fixpoint(self, tmp_path):
@@ -183,6 +191,7 @@ class TestRuntimeRunnerAdvisoryPlacement:
 # Advisory serialization includes RUNTIME findings
 # ---------------------------------------------------------------------------
 
+
 class TestRuntimeAdvisorySerialize:
     """RUNTIME findings serialize into advisory-findings.json."""
 
@@ -206,6 +215,7 @@ class TestRuntimeAdvisorySerialize:
 # ---------------------------------------------------------------------------
 # _display_smoke_status tests (: ALWAYS prints)
 # ---------------------------------------------------------------------------
+
 
 class TestDisplaySmokeStatus:
     """_display_smoke_status prints smoke section unconditionally."""
@@ -290,14 +300,18 @@ class TestDisplaySmokeStatus:
 # DEDUP: generic loop skips runtime-smoke-summary and runtime-skipped
 # ---------------------------------------------------------------------------
 
+
 class TestAdvisoryLoopDedup:
     """Generic _display_advisories loop does not double-print RUNTIME summary."""
 
     def test_generic_loop_skips_runtime_smoke_summary(self, tmp_path, capsys):
         summary_f = _runtime_summary_finding("smoke: all 1 surfaces verified (foo[ab12cd34])")
         other_f = AdvisoryFinding(
-            id="taint-1", axis="TAINT", file="a.py",
-            line_range=[1, 1], description="taint finding",
+            id="taint-1",
+            axis="TAINT",
+            file="a.py",
+            line_range=[1, 1],
+            description="taint finding",
             attribution="taint/test",
         )
         sm = _make_sm(tmp_path)
@@ -332,12 +346,8 @@ class TestAdvisoryLoopDedup:
         # Generic advisory block prints [AXIS] file:range - description
         # The SKIPPED finding must not appear in generic [RUNTIME] ... format
         # (it is handled by _display_smoke_status exclusively)
-        generic_lines = [
-            line for line in captured.err.splitlines()
-            if line.startswith("[RUNTIME]")
-        ]
+        generic_lines = [line for line in captured.err.splitlines() if line.startswith("[RUNTIME]")]
         skipped_generic = [line for line in generic_lines if "SKIPPED" in line]
         assert len(skipped_generic) == 0, (
-            "runtime-skipped finding appeared in generic [RUNTIME] output: %s"
-            % skipped_generic
+            "runtime-skipped finding appeared in generic [RUNTIME] output: %s" % skipped_generic
         )

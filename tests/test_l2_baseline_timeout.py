@@ -1,4 +1,5 @@
 """Keep the configured test deadline through the LOCAL mutation path."""
+
 import subprocess
 import sys
 from pathlib import Path
@@ -42,9 +43,7 @@ def make_machine(tmp_path, command, timeout=None):
 
 @pytest.mark.parametrize("mode", [Mode.LOCAL, Mode.CI])
 @pytest.mark.parametrize("configured, expected", [(900, 900), (1, 1), (None, 120)])
-def test_deadline_reaches_baseline_subprocess(
-    tmp_path, monkeypatch, configured, expected, mode
-):
+def test_deadline_reaches_baseline_subprocess(tmp_path, monkeypatch, configured, expected, mode):
     monkeypatch.setattr(factories.shutil, "which", lambda command: "/tools/mutmut")
     seen = []
 
@@ -85,13 +84,13 @@ def test_noop_runners_accept_configured_deadline(tmp_path, monkeypatch, runner):
 
 
 @pytest.mark.parametrize("configured, expected", [(900, 900), (None, 120)])
-def test_ci_deadline_reaches_detached_child(tmp_path, monkeypatch, configured, expected, run_detached_payload):
+def test_ci_deadline_reaches_detached_child(
+    tmp_path, monkeypatch, configured, expected, run_detached_payload
+):
     monkeypatch.setattr(factories.shutil, "which", lambda command: "/tools/mutmut")
     machine = make_machine(tmp_path, [sys.executable, "-m", "pytest"], configured)
     machine.mode = Mode.CI
-    monkeypatch.setattr(
-        StateMachine, "_execute_round", lambda self, round_index: None
-    )
+    monkeypatch.setattr(StateMachine, "_execute_round", lambda self, round_index: None)
     captured = []
     real_popen = subprocess.Popen
 
@@ -110,9 +109,16 @@ def test_ci_deadline_reaches_detached_child(tmp_path, monkeypatch, configured, e
     seen = []
 
     def run_child(
-        diff_files, baseline_cmd, *, cwd, baseline_timeout=120, also_copy=None,
-        max_children=None, memory_limit_bytes=None,
-        mutation_skip_globs=None, mutation_include_globs=None,
+        diff_files,
+        baseline_cmd,
+        *,
+        cwd,
+        baseline_timeout=120,
+        also_copy=None,
+        max_children=None,
+        memory_limit_bytes=None,
+        mutation_skip_globs=None,
+        mutation_include_globs=None,
     ):
         seen.append(baseline_timeout)
         return [], []

@@ -27,27 +27,37 @@ from code_forge.git import (
 def git_repo(tmp_path):
     """Create a temporary git repo with one initial commit."""
     subprocess.run(
-        ["git", "init"], cwd=tmp_path,
-        capture_output=True, check=True,
+        ["git", "init"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     # Create initial commit
     tracked = tmp_path / "tracked.py"
     tracked.write_text("print('hello')\n")
     subprocess.run(
         ["git", "add", "tracked.py"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "commit", "-m", "initial"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     return tmp_path
 
@@ -172,11 +182,15 @@ class TestWorkingTreeDiff:
         gitignore.write_text("ignored.py\n")
         subprocess.run(
             ["git", "add", ".gitignore"],
-            cwd=git_repo, capture_output=True, check=True,
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "add gitignore"],
-            cwd=git_repo, capture_output=True, check=True,
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
         )
         ignored = git_repo / "ignored.py"
         ignored.write_text("should be ignored\n")
@@ -190,14 +204,10 @@ class TestWorkingTreeDiff:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             working_tree_diff("HEAD", [Path(".")], git_repo)
-            binary_warns = [
-                x for x in w
-                if "binary untracked" in str(x.message)
-            ]
+            binary_warns = [x for x in w if "binary untracked" in str(x.message)]
             assert len(binary_warns) == 1
             assert str(binary_warns[0].message) == (
-                "forge: skipped 1 binary untracked file(s) from "
-                "working-tree diff: ['image.bin']"
+                "forge: skipped 1 binary untracked file(s) from working-tree diff: ['image.bin']"
             )
 
     @patch("code_forge.git.warnings.warn")
@@ -212,11 +222,7 @@ class TestWorkingTreeDiff:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             working_tree_diff("HEAD", [Path(".")], git_repo)
-        messages = [
-            str(item.message)
-            for item in caught
-            if "binary untracked" in str(item.message)
-        ]
+        messages = [str(item.message) for item in caught if "binary untracked" in str(item.message)]
         assert messages == [
             (
                 "forge: skipped 4 binary untracked file(s) from "
@@ -230,11 +236,7 @@ class TestWorkingTreeDiff:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             working_tree_diff("HEAD", [Path(".")], git_repo)
-        messages = [
-            str(item.message)
-            for item in caught
-            if "binary untracked" in str(item.message)
-        ]
+        messages = [str(item.message) for item in caught if "binary untracked" in str(item.message)]
         assert messages == [
             (
                 "forge: skipped 3 binary untracked file(s) from "
@@ -292,9 +294,7 @@ class TestWorkingTreeDiff:
 
     @patch("code_forge.git._is_likely_binary", return_value=False)
     @patch("code_forge.git.subprocess.run")
-    def test_untracked_uses_no_index_and_newline_join(
-        self, mock_run, _mock_binary, tmp_path
-    ):
+    def test_untracked_uses_no_index_and_newline_join(self, mock_run, _mock_binary, tmp_path):
         first = tmp_path / "a.py"
         second = tmp_path / "b.py"
         mock_run.side_effect = [
@@ -326,9 +326,7 @@ class TestWorkingTreeDiff:
 
     @patch("code_forge.git._is_likely_binary", return_value=False)
     @patch("code_forge.git.subprocess.run")
-    def test_untracked_no_index_exit_zero_is_kept(
-        self, mock_run, _mock_binary, tmp_path
-    ):
+    def test_untracked_no_index_exit_zero_is_kept(self, mock_run, _mock_binary, tmp_path):
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="a.py\n", stderr=""),
@@ -367,7 +365,9 @@ class TestCachedDiff:
         f.write_text("print('staged')\n")
         subprocess.run(
             ["git", "add", "tracked.py"],
-            cwd=git_repo, capture_output=True, check=True,
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
         )
         diff = cached_diff("HEAD", [Path(".")], git_repo)
         assert "staged" in diff
@@ -403,18 +403,12 @@ class TestCachedDiff:
 
     @patch("code_forge.git.subprocess.run")
     def test_cached_diff_exit_one_is_a_diff(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(
-            returncode=1, stdout="diff --git a/f b/f\n", stderr=""
-        )
-        assert cached_diff("HEAD", [Path(".")], tmp_path) == (
-            "diff --git a/f b/f\n"
-        )
+        mock_run.return_value = MagicMock(returncode=1, stdout="diff --git a/f b/f\n", stderr="")
+        assert cached_diff("HEAD", [Path(".")], tmp_path) == ("diff --git a/f b/f\n")
 
     @patch("code_forge.git.subprocess.run")
     def test_cached_diff_exit_two_raises(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(
-            returncode=2, stdout="", stderr="usage: git diff"
-        )
+        mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="usage: git diff")
         with pytest.raises(BaselineResolutionError) as caught:
             cached_diff("HEAD", [Path(".")], tmp_path)
         assert "exit 2" in str(caught.value)
@@ -428,11 +422,15 @@ class TestGitDiff:
         f.write_text("print('v2')\n")
         subprocess.run(
             ["git", "add", "tracked.py"],
-            cwd=git_repo, capture_output=True, check=True,
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "v2"],
-            cwd=git_repo, capture_output=True, check=True,
+            cwd=git_repo,
+            capture_output=True,
+            check=True,
         )
         diff = git_diff("HEAD~1", "HEAD", [Path(".")], git_repo)
         assert "v2" in diff
@@ -465,9 +463,7 @@ class TestGitDiff:
 
     @patch("code_forge.git.subprocess.run")
     def test_exit_two_is_an_error(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(
-            returncode=2, stdout="", stderr="usage: git diff"
-        )
+        mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="usage: git diff")
         with pytest.raises(BaselineResolutionError) as caught:
             git_diff("HEAD", "HEAD", [Path(".")], tmp_path)
         assert "exit 2" in str(caught.value)

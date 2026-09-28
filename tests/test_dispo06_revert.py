@@ -225,9 +225,6 @@ class TestExceptionOutcome:
         machine.run()
 
         # infra_errors should record the exception
-        assert any(
-            "autofixer exception" in e
-            for e in machine._state.infra_errors
-        )
+        assert any("autofixer exception" in e for e in machine._state.infra_errors)
         # fix_attempts incremented
         assert machine._state.fix_attempts.get("fp-rev-1", 0) >= 1

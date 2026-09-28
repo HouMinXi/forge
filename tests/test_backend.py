@@ -10,6 +10,7 @@ Tests cover:
   - Probe caching with TTL
   - Real-API opt-in
 """
+
 from __future__ import annotations
 
 import inspect
@@ -133,9 +134,7 @@ class TestBackendConfigParse:
             api_key_env="ANTHROPIC_API_KEY",
             model="claude-sonnet-4-20250514",
         )
-        cfgs = load_backend_configs(
-            {"backends": {"claude-api": entry}}
-        )
+        cfgs = load_backend_configs({"backends": {"claude-api": entry}})
         cfg = cfgs[0]
         assert cfg.type == "api"
         assert cfg.format == "anthropic"
@@ -214,9 +213,7 @@ class TestBackendConfigParse:
     def test_backendconfig_expanduser_credentials_path(self):
         """~/creds.json is expanded at parse time."""
         entry = _vertex_entry(credentials_path="~/creds.json")
-        cfgs = load_backend_configs(
-            {"backends": {"vtx": entry}}
-        )
+        cfgs = load_backend_configs({"backends": {"vtx": entry}})
         assert "~" not in cfgs[0].credentials_path
 
     def test_backendconfig_unknown_type_raises(self):
@@ -361,7 +358,8 @@ class TestResolveBackend:
     def test_resolve_backend_env_override_wins(self):
         cfgs = load_backend_configs(_as_api_backends())
         result = resolve_backend(
-            env={"FORGE_BACKEND": "deepseek"}, configs=cfgs,
+            env={"FORGE_BACKEND": "deepseek"},
+            configs=cfgs,
         )
         assert result.name == "deepseek"
 
@@ -369,7 +367,8 @@ class TestResolveBackend:
         cfgs = load_backend_configs(_as_api_backends())
         with pytest.raises(CliError, match="ghost"):
             resolve_backend(
-                env={"FORGE_BACKEND": "ghost"}, configs=cfgs,
+                env={"FORGE_BACKEND": "ghost"},
+                configs=cfgs,
             )
 
     def test_resolve_backend_config_default_when_no_env(self):
@@ -389,20 +388,23 @@ class TestResolveBackend:
         sig = inspect.signature(resolve_backend)
         param_names = set(sig.parameters.keys())
         forbidden = {
-            "diff", "complexity", "size", "change_size",
-            "code", "lines", "changesize",
+            "diff",
+            "complexity",
+            "size",
+            "change_size",
+            "code",
+            "lines",
+            "changesize",
         }
         overlap = param_names & forbidden
-        assert overlap == set(), (
-            "resolve_backend MUST NOT take diff-related params: %s"
-            % overlap
-        )
+        assert overlap == set(), "resolve_backend MUST NOT take diff-related params: %s" % overlap
 
     def test_resolve_backend_env_empty_falls_through(self):
         """FORGE_BACKEND="" -> falls through to config/session default."""
         cfgs = load_backend_configs(_as_api_backends())
         result = resolve_backend(
-            env={"FORGE_BACKEND": ""}, configs=cfgs,
+            env={"FORGE_BACKEND": ""},
+            configs=cfgs,
         )
         assert result.name == "deepseek"
 
@@ -434,20 +436,26 @@ class TestTimeoutResolution:
         assert resolve_auth_timeout(cli_value=None, env={}) == 20
 
     def test_resolve_timeout_env_override(self):
-        assert resolve_auth_timeout(
-            cli_value=None, env={"FORGE_AUTH_TIMEOUT": "30"},
-        ) == 30
+        assert (
+            resolve_auth_timeout(
+                cli_value=None,
+                env={"FORGE_AUTH_TIMEOUT": "30"},
+            )
+            == 30
+        )
 
     def test_resolve_timeout_invalid_string(self):
         with pytest.raises(CliError, match="FORGE_AUTH_TIMEOUT"):
             resolve_auth_timeout(
-                cli_value=None, env={"FORGE_AUTH_TIMEOUT": "abc"},
+                cli_value=None,
+                env={"FORGE_AUTH_TIMEOUT": "abc"},
             )
 
     def test_resolve_timeout_too_low(self):
         with pytest.raises(CliError):
             resolve_auth_timeout(
-                cli_value=None, env={"FORGE_AUTH_TIMEOUT": "0"},
+                cli_value=None,
+                env={"FORGE_AUTH_TIMEOUT": "0"},
             )
 
 
@@ -466,7 +474,8 @@ class TestProbeCli:
         def mock_run(cmd, **kw):
             called_with["cmd"] = cmd
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true, "authMethod": "subscription"}',
                 stderr="",
             )
@@ -485,7 +494,8 @@ class TestProbeCli:
     def test_probe_cli_claude_not_logged_in(self, tmp_path):
         def mock_run(cmd, **kw):
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": false}',
                 stderr="",
             )
@@ -499,8 +509,7 @@ class TestProbeCli:
             time_fn=lambda: 1000.0,
         )
         assert result.ok is False
-        assert "not logged in" in result.error.lower() or \
-            "login" in result.error.lower()
+        assert "not logged in" in result.error.lower() or "login" in result.error.lower()
 
     def test_probe_cli_binary_not_found(self, tmp_path):
         result = probe_backend(
@@ -516,9 +525,11 @@ class TestProbeCli:
 
     def test_probe_cli_nonzero_exit(self, tmp_path):
         """Non-zero exit with stderr=None must not crash (None-safe)."""
+
         def mock_run(cmd, **kw):
             return subprocess.CompletedProcess(
-                args=cmd, returncode=1,
+                args=cmd,
+                returncode=1,
                 stdout="",
                 stderr=None,
             )
@@ -536,9 +547,11 @@ class TestProbeCli:
 
     def test_probe_cli_malformed_json(self, tmp_path):
         """returncode=0 but non-JSON stdout -> ok=False."""
+
         def mock_run(cmd, **kw):
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout="not json at all",
                 stderr="",
             )
@@ -571,6 +584,7 @@ class TestProbeCli:
 
     def test_probe_cli_oserror_returns_fail(self, tmp_path):
         """OSError from run_cmd -> ProbeResult(ok=False), not crash."""
+
         def mock_run(cmd, **kw):
             raise PermissionError("mocked permission denied")
 
@@ -587,6 +601,7 @@ class TestProbeCli:
 
     def test_probe_cli_filenotfounderror_returns_fail(self, tmp_path):
         """FileNotFoundError (TOCTOU after which()) -> ok=False."""
+
         def mock_run(cmd, **kw):
             raise FileNotFoundError("No such file: 'claude'")
 
@@ -617,14 +632,19 @@ class TestProbeOsErrorFailClosed:
         def oserror_probe() -> ProbeResult:
             return ProbeResult(
                 ok=False,
-                error="claude reachability probe failed to start: "
-                "[Errno 13] Permission denied",
+                error="claude reachability probe failed to start: [Errno 13] Permission denied",
             )
 
         dummy_cfg = BackendConfig(
-            name="test-cli", type="cli", model="",
-            format="", base_url="", api_key_env="",
-            command="", default=False, max_tokens=0,
+            name="test-cli",
+            type="cli",
+            model="",
+            format="",
+            base_url="",
+            api_key_env="",
+            command="",
+            default=False,
+            max_tokens=0,
         )
         with pytest.raises(CliError, match="Configure a review backend"):
             resolve_outlet(
@@ -741,13 +761,15 @@ class TestProbeVertex:
         sa = tmp_path / "sa.json"
         sa.write_text("{}")
         cfg = load_backend_configs(
-            _as_api_backends(
-                _vertex_entry(credentials_path=str(sa)), name="vertex-claude"
-            )
+            _as_api_backends(_vertex_entry(credentials_path=str(sa)), name="vertex-claude")
         )[0]
         result = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
-            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
         )
         assert result.ok is True
 
@@ -761,21 +783,26 @@ class TestProbeVertex:
             )
         )[0]
         result = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
-            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
         )
         assert result.ok is False
         assert "nope.json" in result.error
 
     def test_probe_vertex_adc_env(self, tmp_path):
         """No credentials_path; GOOGLE_APPLICATION_CREDENTIALS set -> ok=True."""
-        cfg = load_backend_configs(
-            _as_api_backends(_vertex_entry(), name="vertex-claude")
-        )[0]
+        cfg = load_backend_configs(_as_api_backends(_vertex_entry(), name="vertex-claude"))[0]
         result = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
             env={"GOOGLE_APPLICATION_CREDENTIALS": "/tmp/adc.json"},
-            cache_dir=tmp_path, time_fn=lambda: 1000.0,
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
         )
         assert result.ok is True
 
@@ -786,24 +813,28 @@ class TestProbeVertex:
         gcloud_dir.mkdir(parents=True)
         (gcloud_dir / "application_default_credentials.json").write_text("{}")
         monkeypatch.setattr(Path, "home", lambda: fake_home)
-        cfg = load_backend_configs(
-            _as_api_backends(_vertex_entry(), name="vertex-claude")
-        )[0]
+        cfg = load_backend_configs(_as_api_backends(_vertex_entry(), name="vertex-claude"))[0]
         result = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
-            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
         )
         assert result.ok is True
 
     def test_probe_vertex_no_credentials(self, tmp_path, monkeypatch):
         """No path, no env, no gcloud file -> ok=False, error names GCP creds."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "empty-home")
-        cfg = load_backend_configs(
-            _as_api_backends(_vertex_entry(), name="vertex-claude")
-        )[0]
+        cfg = load_backend_configs(_as_api_backends(_vertex_entry(), name="vertex-claude"))[0]
         result = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
-            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
         )
         assert result.ok is False
         assert "GCP credentials" in result.error
@@ -813,18 +844,24 @@ class TestProbeVertex:
         sa = tmp_path / "sa.json"
         sa.write_text("{}")
         cfg = load_backend_configs(
-            _as_api_backends(
-                _vertex_entry(credentials_path=str(sa)), name="vertex-claude"
-            )
+            _as_api_backends(_vertex_entry(credentials_path=str(sa)), name="vertex-claude")
         )[0]
         first = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
-            env={}, cache_dir=tmp_path, time_fn=lambda: 1000.0,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
         )
         sa.unlink()  # an uncached re-probe would now return ok=False
         second = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
-            env={}, cache_dir=tmp_path, time_fn=lambda: 1100.0,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
+            env={},
+            cache_dir=tmp_path,
+            time_fn=lambda: 1100.0,
         )
         assert first.ok is True
         assert second.ok is True  # proves the cached ok result was reused
@@ -832,14 +869,15 @@ class TestProbeVertex:
     def test_probe_vertex_empty_credentials_path_falls_through(self, tmp_path):
         """credentials_path='' is falsy -> falls through to ADC, matching invoke."""
         cfg = load_backend_configs(
-            _as_api_backends(
-                _vertex_entry(credentials_path=""), name="vertex-claude"
-            )
+            _as_api_backends(_vertex_entry(credentials_path=""), name="vertex-claude")
         )[0]
         result = probe_backend(
-            cfg, which_fn=_noop_which, run_cmd=_noop_run,
+            cfg,
+            which_fn=_noop_which,
+            run_cmd=_noop_run,
             env={"GOOGLE_APPLICATION_CREDENTIALS": "/tmp/adc.json"},
-            cache_dir=tmp_path, time_fn=lambda: 1000.0,
+            cache_dir=tmp_path,
+            time_fn=lambda: 1000.0,
         )
         assert result.ok is True
 
@@ -859,7 +897,8 @@ class TestProbeCache:
         def mock_run(cmd, **kw):
             call_count[0] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -887,7 +926,8 @@ class TestProbeCache:
         def mock_run(cmd, **kw):
             call_count[0] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -915,7 +955,8 @@ class TestProbeCache:
         def mock_run(cmd, **kw):
             call_count[0] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": false}',
                 stderr="",
             )
@@ -941,7 +982,8 @@ class TestProbeCache:
         def mock_run(cmd, **kw):
             call_count[0] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -966,7 +1008,8 @@ class TestProbeCache:
         def mock_run(cmd, **kw):
             call_count[0] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -991,7 +1034,8 @@ class TestProbeCache:
         def mock_run(cmd, **kw):
             call_count[0] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -1016,7 +1060,8 @@ class TestProbeCache:
         def mock_run(cmd, **kw):
             call_count[0] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -1044,7 +1089,8 @@ class TestProbeCache:
         def mock_run_a(cmd, **kw):
             call_count["a"] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -1052,7 +1098,8 @@ class TestProbeCache:
         def mock_run_b(cmd, **kw):
             call_count["b"] += 1
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -1133,7 +1180,8 @@ class TestProbeBypass:
         def mock_run(cmd, **kw):
             called[0] = True
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
+                args=cmd,
+                returncode=0,
                 stdout='{"loggedIn": true}',
                 stderr="",
             )
@@ -1236,8 +1284,11 @@ class TestVertexBackendParsing:
 
     def _entry(self, **kwargs):
         base = {
-            "name": "vtx", "type": "api", "format": "vertex",
-            "model": "claude-sonnet-4-6", "project_id": "my-project",
+            "name": "vtx",
+            "type": "api",
+            "format": "vertex",
+            "model": "claude-sonnet-4-6",
+            "project_id": "my-project",
         }
         base.update(kwargs)
         return base
@@ -1260,7 +1311,9 @@ class TestVertexBackendParsing:
 
     def test_vertex_missing_project_id_raises(self):
         entry = {
-            "name": "vtx", "type": "api", "format": "vertex",
+            "name": "vtx",
+            "type": "api",
+            "format": "vertex",
             "model": "claude-sonnet-4-6",
         }
         with pytest.raises(CliError, match="missing required field 'project_id'"):
@@ -1279,8 +1332,11 @@ class TestVertexBackendParsing:
     def test_openai_still_requires_base_url(self):
         """Regression: openai format still requires base_url after vertex branch."""
         entry = {
-            "name": "bad", "type": "api", "format": "openai",
-            "model": "gpt-4", "api_key_env": "OPENAI_KEY",
+            "name": "bad",
+            "type": "api",
+            "format": "openai",
+            "model": "gpt-4",
+            "api_key_env": "OPENAI_KEY",
         }
         with pytest.raises(CliError, match="missing required field 'base_url'"):
             _parse_backend_entry(entry)
@@ -1294,8 +1350,12 @@ class TestBackendConfigProviderFields:
 
     def _minimal_api(self, **kw):
         return BackendConfig(
-            name="test", type="api", model="m",
-            format="openai", base_url="http://x", api_key_env="K",
+            name="test",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="http://x",
+            api_key_env="K",
             **kw,
         )
 
@@ -1369,9 +1429,15 @@ class TestBackendConfigProviderFields:
 VALID_THINKING_TYPES = {"enabled", "adaptive", "disabled"}
 
 PROTECTED_KEYS = {
-    "model", "messages", "stream", "anthropic_version",
-    "temperature", "thinking", "reasoning_effort",
-    "max_completion_tokens", "max_tokens",
+    "model",
+    "messages",
+    "stream",
+    "anthropic_version",
+    "temperature",
+    "thinking",
+    "reasoning_effort",
+    "max_completion_tokens",
+    "max_tokens",
 }
 
 
@@ -1380,8 +1446,11 @@ class TestParseProviderFields:
 
     def _api_entry(self, **kw):
         base = {
-            "name": "ds", "type": "api", "format": "openai",
-            "model": "deepseek-r1", "base_url": "http://x",
+            "name": "ds",
+            "type": "api",
+            "format": "openai",
+            "model": "deepseek-r1",
+            "base_url": "http://x",
             "api_key_env": "K",
         }
         base.update(kw)
@@ -1389,8 +1458,11 @@ class TestParseProviderFields:
 
     def _vertex_entry(self, **kw):
         base = {
-            "name": "v", "type": "api", "format": "vertex",
-            "model": "claude-4", "project_id": "proj-1",
+            "name": "v",
+            "type": "api",
+            "format": "vertex",
+            "model": "claude-4",
+            "project_id": "proj-1",
         }
         base.update(kw)
         return base
@@ -1406,33 +1478,23 @@ class TestParseProviderFields:
         assert cfg.temperature == -1.0
 
     def test_max_completion_tokens_stored(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(max_completion_tokens=32768)
-        )
+        cfg = _parse_backend_entry(self._api_entry(max_completion_tokens=32768))
         assert cfg.max_completion_tokens == 32768
 
     def test_thinking_type_stored(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(thinking_type="enabled")
-        )
+        cfg = _parse_backend_entry(self._api_entry(thinking_type="enabled"))
         assert cfg.thinking_type == "enabled"
 
     def test_thinking_type_invalid_rejected(self):
         with pytest.raises(CliError, match="thinking_type"):
-            _parse_backend_entry(
-                self._api_entry(thinking_type="bogus")
-            )
+            _parse_backend_entry(self._api_entry(thinking_type="bogus"))
 
     def test_thinking_budget_stored(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(thinking_budget=16000)
-        )
+        cfg = _parse_backend_entry(self._api_entry(thinking_budget=16000))
         assert cfg.thinking_budget == 16000
 
     def test_reasoning_effort_stored(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(reasoning_effort="high")
-        )
+        cfg = _parse_backend_entry(self._api_entry(reasoning_effort="high"))
         assert cfg.reasoning_effort == "high"
 
     def test_stream_stored(self):
@@ -1446,15 +1508,11 @@ class TestParseProviderFields:
     # -- outcap_key validation --
 
     def test_outcap_key_max_tokens(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(outcap_key="max_tokens")
-        )
+        cfg = _parse_backend_entry(self._api_entry(outcap_key="max_tokens"))
         assert cfg.outcap_key == "max_tokens"
 
     def test_outcap_key_max_completion_tokens(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(outcap_key="max_completion_tokens")
-        )
+        cfg = _parse_backend_entry(self._api_entry(outcap_key="max_completion_tokens"))
         assert cfg.outcap_key == "max_completion_tokens"
 
     def test_outcap_key_empty_uses_default(self):
@@ -1465,27 +1523,38 @@ class TestParseProviderFields:
         cfg = _parse_backend_entry(self._api_entry(outcap_key=None))
         assert cfg.outcap_key == ""
 
-    @pytest.mark.parametrize("field", [
-        "temperature", "max_completion_tokens", "thinking_type",
-        "thinking_budget", "reasoning_effort", "stream",
-        "outcap_key", "output_ceiling", "params", "headers",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "temperature",
+            "max_completion_tokens",
+            "thinking_type",
+            "thinking_budget",
+            "reasoning_effort",
+            "stream",
+            "outcap_key",
+            "output_ceiling",
+            "params",
+            "headers",
+        ],
+    )
     def test_null_means_absent_for_every_api_only_field(self, field):
         """One rule for null across _API_ONLY_FIELDS: a null-valued
         field parses exactly like an absent one. Nothing stores None
         into a typed attribute and nothing crashes."""
         absent = _parse_backend_entry(self._api_entry())
         nulled = _parse_backend_entry(self._api_entry(**{field: None}))
-        assert getattr(absent, field) == getattr(nulled, field), (
-            "field %s: absent=%r null=%r" % (
-                field, getattr(absent, field), getattr(nulled, field),
-            )
+        assert getattr(absent, field) == getattr(nulled, field), "field %s: absent=%r null=%r" % (
+            field,
+            getattr(absent, field),
+            getattr(nulled, field),
         )
 
     def test_null_cli_side_is_not_a_rejection(self):
         """A null-valued api-only key on a cli backend parses as absent
         instead of tripping the key-presence rejection."""
         from code_forge.backend import load_backend_configs
+
         entry = _cli_entry()
         entry["headers"] = None
         cfgs = load_backend_configs({"backends": {"c": entry}})
@@ -1493,9 +1562,7 @@ class TestParseProviderFields:
 
     def test_outcap_key_invalid_rejected(self):
         with pytest.raises(CliError, match="outcap_key"):
-            _parse_backend_entry(
-                self._api_entry(outcap_key="bad_key")
-            )
+            _parse_backend_entry(self._api_entry(outcap_key="bad_key"))
 
     # -- cap validation --
 
@@ -1503,37 +1570,30 @@ class TestParseProviderFields:
         with pytest.raises(CliError, match="output token cap"):
             _parse_backend_entry(
                 self._api_entry(
-                    max_completion_tokens=0, max_tokens=0,
+                    max_completion_tokens=0,
+                    max_tokens=0,
                 )
             )
 
     def test_cap_one_positive_accepted(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(max_completion_tokens=0, max_tokens=8192)
-        )
+        cfg = _parse_backend_entry(self._api_entry(max_completion_tokens=0, max_tokens=8192))
         assert cfg.max_tokens == 8192
 
     # -- params: protected key rejection --
 
     def test_params_benign_key_stored(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(params={"top_p": 0.9})
-        )
+        cfg = _parse_backend_entry(self._api_entry(params={"top_p": 0.9}))
         assert cfg.params == {"top_p": 0.9}
 
     def test_params_nested_stored_verbatim(self):
         rf = {"type": "json_object"}
-        cfg = _parse_backend_entry(
-            self._api_entry(params={"response_format": rf})
-        )
+        cfg = _parse_backend_entry(self._api_entry(params={"response_format": rf}))
         assert cfg.params["response_format"] == rf
 
     def test_params_protected_key_rejected(self):
         for key in PROTECTED_KEYS:
             with pytest.raises(CliError, match=key):
-                _parse_backend_entry(
-                    self._api_entry(params={key: "x"})
-                )
+                _parse_backend_entry(self._api_entry(params={key: "x"}))
 
     def test_two_protected_params_always_name_the_same_one(self):
         """The message must not depend on the interpreter's hash seed.
@@ -1567,30 +1627,25 @@ class TestParseProviderFields:
         # checkout than the one under test, and a subprocess that picked
         # its own would be measuring the wrong tree while looking fine.
         env = dict(os.environ)
-        env["PYTHONPATH"] = str(
-            pathlib.Path(code_forge.__file__).parent.parent
-        )
+        env["PYTHONPATH"] = str(pathlib.Path(code_forge.__file__).parent.parent)
         seen = set()
         for _ in range(8):
             done = subprocess.run(
                 [sys.executable, "-c", prog],
-                capture_output=True, text=True, check=True, env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
             )
             seen.add(done.stdout.strip())
 
-        assert len(seen) == 1, (
-            "the reported key varies between runs: %s" % sorted(seen)
-        )
-        assert "max_tokens" in seen.pop(), (
-            "expected the alphabetically first protected key present"
-        )
+        assert len(seen) == 1, "the reported key varies between runs: %s" % sorted(seen)
+        assert "max_tokens" in seen.pop(), "expected the alphabetically first protected key present"
 
     # -- headers: grammar --
 
     def test_headers_benign_name_stored(self):
-        cfg = _parse_backend_entry(
-            self._api_entry(headers={"x-omniroute-compression": "off"})
-        )
+        cfg = _parse_backend_entry(self._api_entry(headers={"x-omniroute-compression": "off"}))
         assert cfg.headers == {"x-omniroute-compression": "off"}
 
     def test_headers_value_may_hold_inner_blanks(self):
@@ -1599,9 +1654,7 @@ class TestParseProviderFields:
         The grammar refuses blanks only at the ends, and a rule written
         as "no whitespace" would take a perfectly ordinary value with it.
         """
-        cfg = _parse_backend_entry(
-            self._api_entry(headers={"x-note": "two words"})
-        )
+        cfg = _parse_backend_entry(self._api_entry(headers={"x-note": "two words"}))
         assert cfg.headers == {"x-note": "two words"}
 
     def test_headers_malformed_name_rejected(self):
@@ -1624,12 +1677,19 @@ class TestParseProviderFields:
         its own business, and two hops need not agree. For those three
         this check is not an earlier error, it is the only one.
         """
-        for spelling in ("", "   ", " x-foo", "x-foo ", "x foo", "x\tfoo",
-                         "x-foo\r\nX-Evil", "x:foo", "x-foo\xe9"):
+        for spelling in (
+            "",
+            "   ",
+            " x-foo",
+            "x-foo ",
+            "x foo",
+            "x\tfoo",
+            "x-foo\r\nX-Evil",
+            "x:foo",
+            "x-foo\xe9",
+        ):
             with pytest.raises(CliError, match="not a valid HTTP field name"):
-                _parse_backend_entry(
-                    self._api_entry(headers={spelling: "v"})
-                )
+                _parse_backend_entry(self._api_entry(headers={spelling: "v"}))
 
     def test_headers_malformed_value_rejected(self):
         """CR and LF need no rule of their own; the grammar has them.
@@ -1649,13 +1709,17 @@ class TestParseProviderFields:
         # value and this deliberately does not -- these carry gateway
         # options, which are ASCII. Spelled as an escape so the source
         # stays ASCII while the value under test does not.
-        for value in ("a\r\nX-Evil: 1", "a\nb", "a\r", " leading",
-                      "trailing ", "nul\x00byte", "caf\xe9"):
-            with pytest.raises(CliError,
-                               match="not a valid HTTP field value"):
-                _parse_backend_entry(
-                    self._api_entry(headers={"x-foo": value})
-                )
+        for value in (
+            "a\r\nX-Evil: 1",
+            "a\nb",
+            "a\r",
+            " leading",
+            "trailing ",
+            "nul\x00byte",
+            "caf\xe9",
+        ):
+            with pytest.raises(CliError, match="not a valid HTTP field value"):
+                _parse_backend_entry(self._api_entry(headers={"x-foo": value}))
 
     def test_headers_non_string_value_rejected(self):
         """yaml types a bare number, and urllib cannot send one.
@@ -1664,9 +1728,7 @@ class TestParseProviderFields:
         error naming neither the backend nor the header.
         """
         with pytest.raises(CliError, match="string"):
-            _parse_backend_entry(
-                self._api_entry(headers={"x-retries": 3})
-            )
+            _parse_backend_entry(self._api_entry(headers={"x-retries": 3}))
 
     def test_headers_non_string_name_rejected(self):
         """The key side of the same yaml problem, and its own branch.
@@ -1677,9 +1739,7 @@ class TestParseProviderFields:
         anything an operator can act on.
         """
         with pytest.raises(CliError, match="string"):
-            _parse_backend_entry(
-                self._api_entry(headers={42: "v"})
-            )
+            _parse_backend_entry(self._api_entry(headers={42: "v"}))
 
     def test_headers_empty_is_not_an_error(self):
         """Absent and empty are different, and neither is a failure.
@@ -1700,25 +1760,19 @@ class TestParseProviderFields:
         deliberately accepts, next to a name where it deliberately does
         not.
         """
-        cfg = _parse_backend_entry(
-            self._api_entry(headers={"x-debug": ""})
-        )
+        cfg = _parse_backend_entry(self._api_entry(headers={"x-debug": ""}))
         assert cfg.headers == {"x-debug": ""}
 
     def test_headers_not_a_mapping_rejected(self):
         with pytest.raises(CliError, match="mapping"):
-            _parse_backend_entry(
-                self._api_entry(headers=["x-foo: bar"])
-            )
+            _parse_backend_entry(self._api_entry(headers=["x-foo: bar"]))
 
     # -- headers: permission --
 
     def test_headers_protected_name_rejected(self):
         for name in PROTECTED_HEADER_KEYS:
             with pytest.raises(CliError, match="forge controls"):
-                _parse_backend_entry(
-                    self._api_entry(headers={name: "x"})
-                )
+                _parse_backend_entry(self._api_entry(headers={name: "x"}))
 
     def test_headers_protected_name_rejected_whatever_the_case(self):
         """HTTP does not distinguish these spellings and a dict does.
@@ -1728,13 +1782,18 @@ class TestParseProviderFields:
         header rather than replacing it -- two Authorization lines on the
         wire, with the far side choosing which to honour.
         """
-        for spelling in ("Authorization", "AUTHORIZATION", "AuThOrIzAtIoN",
-                         "X-API-Key", "Content-Type", "Host",
-                         "Content-Length", "Transfer-Encoding"):
+        for spelling in (
+            "Authorization",
+            "AUTHORIZATION",
+            "AuThOrIzAtIoN",
+            "X-API-Key",
+            "Content-Type",
+            "Host",
+            "Content-Length",
+            "Transfer-Encoding",
+        ):
             with pytest.raises(CliError, match="forge controls"):
-                _parse_backend_entry(
-                    self._api_entry(headers={spelling: "x"})
-                )
+                _parse_backend_entry(self._api_entry(headers={spelling: "x"}))
 
     def test_the_forbidden_list_did_not_quietly_shrink(self):
         """The check above iterates this set, so it cannot see a deletion.
@@ -1757,27 +1816,44 @@ class TestParseProviderFields:
         or a Cookie on forge's own outbound requests.
         """
         whatwg = {
-            "accept-charset", "accept-encoding",
+            "accept-charset",
+            "accept-encoding",
             "access-control-request-headers",
-            "access-control-request-method", "connection", "content-length",
-            "cookie", "cookie2", "date", "dnt", "expect", "host",
-            "keep-alive", "origin", "referer", "set-cookie", "te",
-            "trailer", "transfer-encoding", "upgrade", "via",
-            "x-http-method", "x-http-method-override", "x-method-override",
+            "access-control-request-method",
+            "connection",
+            "content-length",
+            "cookie",
+            "cookie2",
+            "date",
+            "dnt",
+            "expect",
+            "host",
+            "keep-alive",
+            "origin",
+            "referer",
+            "set-cookie",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "via",
+            "x-http-method",
+            "x-http-method-override",
+            "x-method-override",
         }
         missing = sorted(whatwg - set(PROTECTED_HEADER_KEYS))
-        assert not missing, (
-            "no longer refused at config load: %s" % ", ".join(missing)
-        )
+        assert not missing, "no longer refused at config load: %s" % ", ".join(missing)
 
     def test_headers_protected_prefixes_rejected(self):
         """Proxy- carries a credential and Sec- is reserved for new ones."""
-        for name in ("proxy-authorization", "Proxy-Connection",
-                     "sec-fetch-mode", "Sec-Anything-Minted-Later"):
+        for name in (
+            "proxy-authorization",
+            "Proxy-Connection",
+            "sec-fetch-mode",
+            "Sec-Anything-Minted-Later",
+        ):
             with pytest.raises(CliError, match="forge controls"):
-                _parse_backend_entry(
-                    self._api_entry(headers={name: "x"})
-                )
+                _parse_backend_entry(self._api_entry(headers={name: "x"}))
 
     def test_headers_framing_names_are_a_smuggling_primitive(self):
         """Why the framing names are on the list, stated as a test.
@@ -1793,9 +1869,7 @@ class TestParseProviderFields:
         """
         for name in ("content-length", "transfer-encoding", "host"):
             with pytest.raises(CliError, match="forge controls"):
-                _parse_backend_entry(
-                    self._api_entry(headers={name: "3"})
-                )
+                _parse_backend_entry(self._api_entry(headers={name: "3"}))
 
     def test_a_protected_name_wearing_a_blank_is_still_refused(self):
         """The permission check does no stripping, and need not.
@@ -1813,9 +1887,7 @@ class TestParseProviderFields:
         assumed.
         """
         with pytest.raises(CliError, match="not a valid HTTP field name"):
-            _parse_backend_entry(
-                self._api_entry(headers={"authorization ": "x"})
-            )
+            _parse_backend_entry(self._api_entry(headers={"authorization ": "x"}))
 
     def test_two_spellings_of_one_name_are_refused(self):
         """Both pass every other check, and collide on the wire anyway.
@@ -1830,12 +1902,9 @@ class TestParseProviderFields:
         'X-Note: one'. A config that says two things and sends one of
         them, chosen by line order, is worth a parse error.
         """
-        for pair in (("x-note", "X-Note"), ("X-Note", "x-note"),
-                     ("x-trace-id", "X-Trace-Id")):
+        for pair in (("x-note", "X-Note"), ("X-Note", "x-note"), ("x-trace-id", "X-Trace-Id")):
             with pytest.raises(CliError, match="HTTP treats as one header"):
-                _parse_backend_entry(
-                    self._api_entry(headers={pair[0]: "one", pair[1]: "two"})
-                )
+                _parse_backend_entry(self._api_entry(headers={pair[0]: "one", pair[1]: "two"}))
 
     def test_one_spelling_used_twice_is_not_a_collision(self):
         """yaml gives us a dict, so the duplicate is already gone.
@@ -1851,35 +1920,29 @@ class TestParseProviderFields:
 
     def test_env_on_api_rejected(self):
         with pytest.raises(CliError, match="env"):
-            _parse_backend_entry(
-                self._api_entry(env={"unset": ["FOO"]})
-            )
+            _parse_backend_entry(self._api_entry(env={"unset": ["FOO"]}))
 
     def test_env_on_vertex_rejected(self):
         with pytest.raises(CliError, match="env"):
-            _parse_backend_entry(
-                self._vertex_entry(env={"unset": ["FOO"]})
-            )
+            _parse_backend_entry(self._vertex_entry(env={"unset": ["FOO"]}))
 
     def test_env_unset_toplevel_on_api_rejected(self):
         with pytest.raises(CliError, match="env_unset"):
-            _parse_backend_entry(
-                self._api_entry(env_unset=["FOO"])
-            )
+            _parse_backend_entry(self._api_entry(env_unset=["FOO"]))
 
     def test_env_set_toplevel_on_vertex_rejected(self):
         with pytest.raises(CliError, match="env_set"):
-            _parse_backend_entry(
-                self._vertex_entry(env_set={"X": "1"})
-            )
+            _parse_backend_entry(self._vertex_entry(env_set={"X": "1"}))
 
     # -- vertex also gets typed fields --
 
     def test_vertex_typed_fields(self):
         cfg = _parse_backend_entry(
             self._vertex_entry(
-                temperature=0.5, thinking_type="adaptive",
-                reasoning_effort="high", timeout_s=600,
+                temperature=0.5,
+                thinking_type="adaptive",
+                reasoning_effort="high",
+                timeout_s=600,
             )
         )
         assert cfg.temperature == 0.5
@@ -1893,7 +1956,9 @@ class TestParseCliEnvFields:
 
     def _cli_entry(self, **kw):
         base = {
-            "name": "local", "type": "cli", "model": "m",
+            "name": "local",
+            "type": "cli",
+            "model": "m",
             "command": "claude",
         }
         base.update(kw)
@@ -1914,11 +1979,16 @@ class TestParseCliEnvFields:
         from code_forge.backend import _API_ONLY_FIELDS
 
         sample = {
-            "temperature": 0.5, "max_completion_tokens": 1000,
-            "thinking_type": "enabled", "thinking_budget": 1000,
-            "reasoning_effort": "high", "stream": True,
-            "outcap_key": "max_tokens", "output_ceiling": 65536,
-            "params": {"a": 1}, "headers": {"x-note": "v"},
+            "temperature": 0.5,
+            "max_completion_tokens": 1000,
+            "thinking_type": "enabled",
+            "thinking_budget": 1000,
+            "reasoning_effort": "high",
+            "stream": True,
+            "outcap_key": "max_tokens",
+            "output_ceiling": 65536,
+            "params": {"a": 1},
+            "headers": {"x-note": "v"},
         }
         missing = [f for f in _API_ONLY_FIELDS if f not in sample]
         assert not missing, (
@@ -1928,9 +1998,7 @@ class TestParseCliEnvFields:
 
         for field_name in _API_ONLY_FIELDS:
             with pytest.raises(CliError, match=field_name):
-                _parse_backend_entry(
-                    self._cli_entry(**{field_name: sample[field_name]})
-                )
+                _parse_backend_entry(self._cli_entry(**{field_name: sample[field_name]}))
 
     def test_headers_on_a_cli_backend_rejected(self):
         """Named on purpose, because the loop above cannot cover this.
@@ -1943,9 +2011,7 @@ class TestParseCliEnvFields:
         the-wire failure this whole field exists to avoid.
         """
         with pytest.raises(CliError, match="headers"):
-            _parse_backend_entry(
-                self._cli_entry(headers={"x-note": "v"})
-            )
+            _parse_backend_entry(self._cli_entry(headers={"x-note": "v"}))
 
     # -- env parsing --
 
@@ -1955,29 +2021,19 @@ class TestParseCliEnvFields:
         assert cfg.env_set == ()
 
     def test_env_unset_parsed(self):
-        cfg = _parse_backend_entry(
-            self._cli_entry(env={"unset": ["A", "B"]})
-        )
+        cfg = _parse_backend_entry(self._cli_entry(env={"unset": ["A", "B"]}))
         assert cfg.env_unset == ("A", "B")
 
     def test_env_set_parsed(self):
-        cfg = _parse_backend_entry(
-            self._cli_entry(env={"set": {"X": "1"}})
-        )
+        cfg = _parse_backend_entry(self._cli_entry(env={"set": {"X": "1"}}))
         assert cfg.env_set == (("X", "1"),)
 
     def test_env_set_value_coerced_to_str(self):
-        cfg = _parse_backend_entry(
-            self._cli_entry(env={"set": {"PORT": 8080}})
-        )
+        cfg = _parse_backend_entry(self._cli_entry(env={"set": {"PORT": 8080}}))
         assert cfg.env_set == (("PORT", "8080"),)
 
     def test_env_both_populated(self):
-        cfg = _parse_backend_entry(
-            self._cli_entry(
-                env={"unset": ["OLD"], "set": {"NEW": "val"}}
-            )
-        )
+        cfg = _parse_backend_entry(self._cli_entry(env={"unset": ["OLD"], "set": {"NEW": "val"}}))
         assert cfg.env_unset == ("OLD",)
         assert cfg.env_set == (("NEW", "val"),)
 
@@ -1987,9 +2043,7 @@ class TestParseCliEnvFields:
 
     def test_env_unknown_key_rejected(self):
         with pytest.raises(CliError, match="unknown"):
-            _parse_backend_entry(
-                self._cli_entry(env={"unset": [], "bogus": 1})
-            )
+            _parse_backend_entry(self._cli_entry(env={"unset": [], "bogus": 1}))
 
 
 class TestProbeBackendLive:
@@ -2001,10 +2055,15 @@ class TestProbeBackendLive:
 
     def _cfg(self, **kw):
         from code_forge.backend import BackendConfig
+
         base = dict(
-            name="live-test", type="api", model="m",
-            format="openai", base_url="https://example.com",
-            api_key_env="LIVE_TEST_KEY", timeout_s=1800,
+            name="live-test",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="https://example.com",
+            api_key_env="LIVE_TEST_KEY",
+            timeout_s=1800,
             max_tokens=8192,
         )
         base.update(kw)
@@ -2013,6 +2072,7 @@ class TestProbeBackendLive:
     def _invoke(self, error=None, result=None):
         """Capture (prompt, kwargs) at the llm_invoke call site."""
         from unittest.mock import MagicMock
+
         m = MagicMock()
         if error is not None:
             m.side_effect = error
@@ -2022,6 +2082,7 @@ class TestProbeBackendLive:
 
     def test_success_returns_ok(self):
         from code_forge.backend import probe_backend_live
+
         m = self._invoke(result="unused")
         with patch("code_forge.llm_invoke.llm_invoke", m):
             r = probe_backend_live(self._cfg())
@@ -2029,6 +2090,7 @@ class TestProbeBackendLive:
 
     def test_probe_config_overrides(self):
         from code_forge.backend import probe_backend_live
+
         m = self._invoke(result="unused")
         with patch("code_forge.llm_invoke.llm_invoke", m):
             probe_backend_live(self._cfg())
@@ -2042,13 +2104,13 @@ class TestProbeBackendLive:
         assert cfg.reasoning_effort == ""
         # identity preserved: the source config object is untouched
         src = self._cfg()
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   self._invoke(result="unused")):
+        with patch("code_forge.llm_invoke.llm_invoke", self._invoke(result="unused")):
             probe_backend_live(src)
         assert src.timeout_s == 1800
 
     def test_one_attempt_and_json_demand(self):
         from code_forge.backend import probe_backend_live
+
         m = self._invoke(result="unused")
         with patch("code_forge.llm_invoke.llm_invoke", m):
             probe_backend_live(self._cfg())
@@ -2072,16 +2134,20 @@ class TestProbeBackendLive:
         from code_forge.backend import probe_backend_live
 
         resp = MagicMock()
-        resp.read.return_value = _json.dumps({
-            "content": [{"type": "thinking", "thinking": "budget spent"}],
-            "usage": {"input_tokens": 7, "output_tokens": 32},
-            "stop_reason": "max_tokens",
-        }).encode("utf-8")
+        resp.read.return_value = _json.dumps(
+            {
+                "content": [{"type": "thinking", "thinking": "budget spent"}],
+                "usage": {"input_tokens": 7, "output_tokens": 32},
+                "stop_reason": "max_tokens",
+            }
+        ).encode("utf-8")
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("urllib.request.urlopen", return_value=resp), \
-                patch.dict(_os.environ, {"LIVE_TEST_KEY": "k"}):
+        with (
+            patch("urllib.request.urlopen", return_value=resp),
+            patch.dict(_os.environ, {"LIVE_TEST_KEY": "k"}),
+        ):
             r = probe_backend_live(self._cfg(format="anthropic"))
         assert r.ok is False
         assert r.error_class == "truncated-output"
@@ -2089,75 +2155,83 @@ class TestProbeBackendLive:
 
     def _classify(self, error):
         from code_forge.backend import probe_backend_live
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   self._invoke(error=error)):
+
+        with patch("code_forge.llm_invoke.llm_invoke", self._invoke(error=error)):
             return probe_backend_live(self._cfg())
 
     def test_timeout_class(self):
         from code_forge.llm_invoke import LLMInvokeError
+
         r = self._classify(LLMInvokeError("timed out", is_timeout=True))
         assert r.error_class == "timeout"
         assert r.suggestion
 
     def test_credential_class_via_kind(self):
         from code_forge.llm_invoke import LLMInvokeError
-        r = self._classify(LLMInvokeError("env not set",
-                                          kind="credentials"))
+
+        r = self._classify(LLMInvokeError("env not set", kind="credentials"))
         assert r.error_class == "credential-rejected"
 
     def test_credential_class_via_http_code(self):
         from code_forge.llm_invoke import LLMInvokeError
+
         r = self._classify(LLMInvokeError("401", exit_code=401))
         assert r.error_class == "credential-rejected"
 
     def test_connect_timeout_classifies_as_timeout(self):
         from code_forge.llm_invoke import LLMInvokeError
-        r = self._classify(LLMInvokeError(
-            "URLError from live-test backend: timed out",
-            is_timeout=True, kind="conn"))
+
+        r = self._classify(
+            LLMInvokeError("URLError from live-test backend: timed out", is_timeout=True, kind="conn")
+        )
         assert r.error_class == "timeout"
 
     def test_conn_class(self):
         from code_forge.llm_invoke import LLMInvokeError
+
         r = self._classify(LLMInvokeError("refused", kind="conn"))
         assert r.error_class == "connection-refused"
 
     def test_sse_class(self):
         from code_forge.llm_invoke import LLMInvokeError
+
         r = self._classify(LLMInvokeError("SSE body", kind="sse_body"))
         assert r.error_class == "SSE-mixed"
 
     def test_bad_body_class(self):
         from code_forge.llm_invoke import LLMInvokeError
+
         r = self._classify(LLMInvokeError("non-JSON", kind="bad_body"))
         assert r.error_class == "JSON-malformed"
 
     def test_truncated_class(self):
         from code_forge.llm_invoke import LLMInvokeError
-        r = self._classify(LLMInvokeError("truncation breaker",
-                                          kind="truncated"))
+
+        r = self._classify(LLMInvokeError("truncation breaker", kind="truncated"))
         assert r.error_class == "truncated-output"
 
     def test_http_error_class_no_kind(self):
         from code_forge.llm_invoke import LLMInvokeError
+
         r = self._classify(LLMInvokeError("404", exit_code=404))
         assert r.error_class == "http-error"
 
     def test_unclassified_fallback(self):
         from code_forge.llm_invoke import LLMInvokeError
-        r = self._classify(LLMInvokeError("something novel",
-                                          kind="no_json"))
+
+        r = self._classify(LLMInvokeError("something novel", kind="no_json"))
         assert r.error_class == "unclassified"
 
     def test_detail_is_single_line(self):
         from code_forge.llm_invoke import LLMInvokeError
-        r = self._classify(LLMInvokeError(
-            "body:\nline two\nline three", kind="bad_body"))
+
+        r = self._classify(LLMInvokeError("body:\nline two\nline three", kind="bad_body"))
         assert "\n" not in r.detail
 
 
 def test_omniroute_url_without_bypass_is_a_warning():
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="review-default",
         type="api",
@@ -2174,6 +2248,7 @@ def test_omniroute_url_without_bypass_is_a_warning():
 
 def test_omniroute_url_with_bypass_is_silent():
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="review-default",
         type="api",
@@ -2191,6 +2266,7 @@ def test_omniroute_url_with_bypass_is_silent():
 
 def test_non_omniroute_backend_is_silent():
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="openai",
         type="api",
@@ -2205,6 +2281,7 @@ def test_non_omniroute_backend_is_silent():
 def test_gitea_on_same_host_is_silent():
     """X500 also serves Gitea on :3300; that is not the review cache."""
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="gitea",
         type="api",
@@ -2216,10 +2293,10 @@ def test_gitea_on_same_host_is_silent():
     assert caching_gateway_without_bypass(cfg) is None
 
 
-
 def test_substring_host_is_not_omniroute():
     """A name that merely contains the marker is some other service."""
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="lookalike",
         type="api",
@@ -2233,6 +2310,7 @@ def test_substring_host_is_not_omniroute():
 
 def test_omniroute_dns_label_is_a_warning():
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="combo",
         type="api",
@@ -2244,10 +2322,10 @@ def test_omniroute_dns_label_is_a_warning():
     assert caching_gateway_without_bypass(cfg) is not None
 
 
-
 def test_malformed_port_does_not_raise():
     """A junk port is not OmniRoute; the warning path must not crash."""
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="junk",
         type="api",
@@ -2259,10 +2337,10 @@ def test_malformed_port_does_not_raise():
     assert caching_gateway_without_bypass(cfg) is None
 
 
-
 def test_non_dict_headers_do_not_raise():
     """A code-built BackendConfig may carry a non-dict headers value."""
     from code_forge.backend import BackendConfig, caching_gateway_without_bypass
+
     cfg = BackendConfig(
         name="review-default",
         type="api",

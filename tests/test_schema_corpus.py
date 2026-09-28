@@ -11,6 +11,7 @@ the schema and tested against the loader in labelled test functions.
 This test is the anti-drift gate that prevents gate.schema.json from
 diverging from the actual loader behaviour as new fields are added.
 """
+
 from __future__ import annotations
 
 import ast
@@ -35,9 +36,7 @@ from code_forge.outlet_resolver import resolve_outlet
 # ---------------------------------------------------------------------------
 
 _SCHEMA_TEXT = (
-    importlib.resources.files("code_forge")
-    .joinpath("gate.schema.json")
-    .read_text(encoding="utf-8")
+    importlib.resources.files("code_forge").joinpath("gate.schema.json").read_text(encoding="utf-8")
 )
 SCHEMA = json.loads(_SCHEMA_TEXT)
 
@@ -211,10 +210,7 @@ def test_valid_non_ascii_strict() -> None:
 def test_valid_graph_triage_enabled() -> None:
     """graph_triage with enabled: true is valid."""
     _schema_validate({"graph_triage": {"enabled": True}})
-    assert (
-        _loader_accepts(VALID_YAML_WITH_TEST + "\ngraph_triage:\n  enabled: true\n")
-        is True
-    )
+    assert _loader_accepts(VALID_YAML_WITH_TEST + "\ngraph_triage:\n  enabled: true\n") is True
 
 
 def test_valid_daemon_state_with_conflicts() -> None:
@@ -261,8 +257,7 @@ def test_valid_presubmit_diff() -> None:
         }
     )
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\npresubmit:\n"
+        VALID_YAML_WITH_TEST + "\npresubmit:\n"
         "  - command: [ruff, check, --diff]\n"
         "    applies_to: '*.py'\n"
         "    on: diff\n"
@@ -289,8 +284,7 @@ def test_valid_extra_field_tolerated() -> None:
         }
     )
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\npresubmit:\n"
+        VALID_YAML_WITH_TEST + "\npresubmit:\n"
         "  - command: [pytest]\n"
         "    applies_to: '*.py'\n"
         "    on: diff\n"
@@ -312,9 +306,7 @@ def test_schema_covers_every_parser_field() -> None:
     accepted set is recovered exactly by walking the AST rather than
     maintaining a second hand-written list that drifts the same way.
     """
-    source = pathlib.Path(backend_module.__file__).read_text(
-        encoding="utf-8"
-    )
+    source = pathlib.Path(backend_module.__file__).read_text(encoding="utf-8")
     read_fields = set()
     for node in ast.walk(ast.parse(source)):
         if (
@@ -334,8 +326,7 @@ def test_schema_covers_every_parser_field() -> None:
     assert len(read_fields) > 15, (
         "AST extraction found only %d entry.get() fields -- the parser "
         "no longer reads config with literal keys, so this test can no "
-        "longer see what it accepts and must be rewritten"
-        % len(read_fields)
+        "longer see what it accepts and must be rewritten" % len(read_fields)
     )
 
     # 'name' is injected by load_backend_configs before dispatching to
@@ -493,16 +484,11 @@ def test_invalid_non_ascii_bad_value() -> None:
 
 def test_invalid_presubmit_on_message() -> None:
     """presubmit on: message is rejected by BOTH schema (enum) and loader."""
-    bad_doc = {
-        "presubmit": [
-            {"command": ["ruff"], "applies_to": "*.py", "on": "message"}
-        ]
-    }
+    bad_doc = {"presubmit": [{"command": ["ruff"], "applies_to": "*.py", "on": "message"}]}
     with pytest.raises(jsonschema.ValidationError):
         _schema_validate(bad_doc)
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\npresubmit:\n"
+        VALID_YAML_WITH_TEST + "\npresubmit:\n"
         "  - command: [ruff, check]\n"
         "    applies_to: '*.py'\n"
         "    on: message\n"
@@ -534,9 +520,7 @@ def test_invalid_backend_missing_type() -> None:
         ({"command": ["pytest"], "applies_to": "*.py"}, "on"),
     ],
 )
-def test_invalid_presubmit_missing_required(
-    entry: dict, _missing_field: str
-) -> None:
+def test_invalid_presubmit_missing_required(entry: dict, _missing_field: str) -> None:
     """presubmit items with a missing required field are rejected by schema."""
     with pytest.raises(jsonschema.ValidationError):
         _schema_validate({"presubmit": [entry]})
@@ -572,9 +556,15 @@ def test_loader_only_outlet_cli_alias() -> None:
     from code_forge.backend import BackendConfig
 
     dummy_cfg = BackendConfig(
-        name="stub", type="cli", model="", format="",
-        base_url="", api_key_env="", command="",
-        default=False, max_tokens=0,
+        name="stub",
+        type="cli",
+        model="",
+        format="",
+        base_url="",
+        api_key_env="",
+        command="",
+        default=False,
+        max_tokens=0,
     )
     result = resolve_outlet(env={}, cli_value="cli", configs=[dummy_cfg])
     assert result == "subprocess"
@@ -589,32 +579,18 @@ def test_loader_only_outlet_cli_alias() -> None:
 
 def test_valid_siblings_minimal() -> None:
     """Minimal siblings: one entry with repo + ref only, no label."""
-    doc = {
-        "siblings": [
-            {"repo": "../sibling", "ref": "main..feature"}
-        ]
-    }
+    doc = {"siblings": [{"repo": "../sibling", "ref": "main..feature"}]}
     _schema_validate(doc)
-    yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
-        "  - repo: ../sibling\n"
-        "    ref: main..feature\n"
-    )
+    yaml_text = VALID_YAML_WITH_TEST + "\nsiblings:\n  - repo: ../sibling\n    ref: main..feature\n"
     assert _loader_accepts(yaml_text) is True
 
 
 def test_valid_siblings_with_label() -> None:
     """Siblings entry with explicit label passes both schema and loader."""
-    doc = {
-        "siblings": [
-            {"repo": "../plugin", "ref": "main..feature-x", "label": "plugin"}
-        ]
-    }
+    doc = {"siblings": [{"repo": "../plugin", "ref": "main..feature-x", "label": "plugin"}]}
     _schema_validate(doc)
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
+        VALID_YAML_WITH_TEST + "\nsiblings:\n"
         "  - repo: ../plugin\n"
         "    ref: main..feature-x\n"
         "    label: plugin\n"
@@ -632,8 +608,7 @@ def test_valid_siblings_multiple() -> None:
     }
     _schema_validate(doc)
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
+        VALID_YAML_WITH_TEST + "\nsiblings:\n"
         "  - repo: ../alpha\n"
         "    ref: main..feat-a\n"
         "    label: alpha\n"
@@ -647,8 +622,7 @@ def test_valid_siblings_multiple() -> None:
 def test_invalid_siblings_duplicate_label() -> None:
     """Two siblings defaulting to the same label (same repo basename) rejected."""
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
+        VALID_YAML_WITH_TEST + "\nsiblings:\n"
         "  - repo: ../sibling\n"
         "    ref: main..feat-a\n"
         "  - repo: ../../sibling\n"
@@ -660,8 +634,7 @@ def test_invalid_siblings_duplicate_label() -> None:
 def test_invalid_siblings_reserved_primary_label() -> None:
     """Explicit label 'primary' is reserved and rejected."""
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
+        VALID_YAML_WITH_TEST + "\nsiblings:\n"
         "  - repo: ../sibling\n"
         "    ref: main..feature\n"
         "    label: primary\n"
@@ -672,10 +645,7 @@ def test_invalid_siblings_reserved_primary_label() -> None:
 def test_invalid_siblings_remote_https() -> None:
     """Remote repo URL (https) rejected in v1 (local paths only)."""
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
-        "  - repo: https://github.com/x/y\n"
-        "    ref: main..feature\n"
+        VALID_YAML_WITH_TEST + "\nsiblings:\n  - repo: https://github.com/x/y\n    ref: main..feature\n"
     )
     assert _loader_accepts(yaml_text) is False
 
@@ -683,51 +653,33 @@ def test_invalid_siblings_remote_https() -> None:
 def test_invalid_siblings_remote_git_at() -> None:
     """Remote repo URL (git@) rejected in v1."""
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
-        "  - repo: 'git@github.com:x/y'\n"
-        "    ref: main..feature\n"
+        VALID_YAML_WITH_TEST + "\nsiblings:\n  - repo: 'git@github.com:x/y'\n    ref: main..feature\n"
     )
     assert _loader_accepts(yaml_text) is False
 
 
 def test_invalid_siblings_missing_ref() -> None:
     """Sibling entry without ref: is rejected."""
-    yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
-        "  - repo: ../sibling\n"
-    )
+    yaml_text = VALID_YAML_WITH_TEST + "\nsiblings:\n  - repo: ../sibling\n"
     assert _loader_accepts(yaml_text) is False
 
 
 def test_invalid_siblings_bad_ref_format() -> None:
     """ref with three dots (main...feature) is rejected."""
-    yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
-        "  - repo: ../sibling\n"
-        "    ref: main...feature\n"
-    )
+    yaml_text = VALID_YAML_WITH_TEST + "\nsiblings:\n  - repo: ../sibling\n    ref: main...feature\n"
     assert _loader_accepts(yaml_text) is False
 
 
 def test_invalid_siblings_not_a_list() -> None:
     """siblings: as a dict (not a list) is rejected."""
-    yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
-        "  repo: ../sibling\n"
-        "  ref: main..feature\n"
-    )
+    yaml_text = VALID_YAML_WITH_TEST + "\nsiblings:\n  repo: ../sibling\n  ref: main..feature\n"
     assert _loader_accepts(yaml_text) is False
 
 
 def test_invalid_siblings_label_special_chars() -> None:
     """Label with spaces or slashes is rejected."""
     yaml_text = (
-        VALID_YAML_WITH_TEST
-        + "\nsiblings:\n"
+        VALID_YAML_WITH_TEST + "\nsiblings:\n"
         "  - repo: ../sibling\n"
         "    ref: main..feature\n"
         "    label: 'bad label/here'\n"
@@ -860,8 +812,6 @@ class TestBaseUrlDescription:
     """
 
     def test_base_url_description_names_both_shapes(self):
-        desc = SCHEMA["$defs"]["backendEntry"]["properties"]["base_url"][
-            "description"
-        ]
+        desc = SCHEMA["$defs"]["backendEntry"]["properties"]["base_url"]["description"]
         assert "/v1" in desc
         assert "/chat/completions" in desc

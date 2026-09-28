@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Mutation tool failures must retain diagnostics and never look successful."""
+
 import json
 import subprocess
 import sys
@@ -13,25 +14,32 @@ from code_forge.state import StateFinding
 
 
 @pytest.mark.parametrize("phase", ["run", "results"])
-@pytest.mark.parametrize("stdout,stderr", [
-    ("FileNotFoundError: missing source_paths", ""),
-    ("", "cannot open cache"),
-    ("x" * 5000 + "stdout cause", "y" * 5000 + "stderr cause"),
-    ("", ""),
-])
+@pytest.mark.parametrize(
+    "stdout,stderr",
+    [
+        ("FileNotFoundError: missing source_paths", ""),
+        ("", "cannot open cache"),
+        ("x" * 5000 + "stdout cause", "y" * 5000 + "stderr cause"),
+        ("", ""),
+    ],
+)
 def test_process_failure_keeps_both_stream_tails(tmp_path, phase, stdout, stderr):
     def command(args, **kwargs):
         # The mutmut subcommand is a token of the argv, not the last
         # element: run_mutation appends "--max-children <n>" after "run".
         failed = phase in args
         return subprocess.CompletedProcess(
-            args, 7 if failed else 0,
-            stdout=stdout if failed else "", stderr=stderr if failed else "",
+            args,
+            7 if failed else 0,
+            stdout=stdout if failed else "",
+            stderr=stderr if failed else "",
         )
 
-    with patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"), \
-         patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]), \
-         patch("code_forge.mutation.subprocess.run", side_effect=command):
+    with (
+        patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"),
+        patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
+        patch("code_forge.mutation.subprocess.run", side_effect=command),
+    ):
         findings, errors = run_mutation(["source.py"], ["pytest"], cwd=tmp_path)
     assert len(findings) == 1
     assert findings[0].id == "MUTATION_ERROR"
@@ -58,14 +66,24 @@ def test_detached_script_preserves_outcome(tmp_path, outcome, run_detached_paylo
 
     result_path = tmp_path / "result.json"
     with patch("code_forge.mutation.subprocess.Popen", side_effect=spawn):
-        assert launch_detached_mutation(
-            ["source.py"], ["pytest"], tmp_path, result_path,
-        ) is True
+        assert (
+            launch_detached_mutation(
+                ["source.py"],
+                ["pytest"],
+                tmp_path,
+                result_path,
+            )
+            is True
+        )
     # Execute the generated production script, replacing only the external run.
     finding = StateFinding(
         id="MUTATION_ERROR" if outcome == "error" else "mutant-example",
-        fingerprint="test", source="MUTANT", disposition=Disposition.CONFIRMED,
-        file="", line_range=[], description="tool failed on stdout",
+        fingerprint="test",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="",
+        line_range=[],
+        description="tool failed on stdout",
     )
     runner = "code_forge.mutation.run_mutation"
     with patch(runner) as run:
@@ -99,12 +117,19 @@ def test_multiple_paths_are_read_by_real_mutmut(tmp_path):
         target.write_text("def value():\n    return 1\n")
     (tmp_path / "setup.cfg").write_text(_build_mutmut_config(paths, ["pytest"]))
     result = subprocess.run(
-        [sys.executable, "-c", (
-            "import json; import mutmut.configuration as module; "
-            "c=module.config() if hasattr(module, 'config') else module.Config.get(); "
-            "print(json.dumps([list(map(str,c.source_paths)), c.only_mutate]))"
-        )],
-        cwd=tmp_path, capture_output=True, text=True, check=True,
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; import mutmut.configuration as module; "
+                "c=module.config() if hasattr(module, 'config') else module.Config.get(); "
+                "print(json.dumps([list(map(str,c.source_paths)), c.only_mutate]))"
+            ),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert json.loads(result.stdout) == [["lib", "src"], paths]
 
@@ -115,9 +140,7 @@ def test_real_mutmut_checks_both_changed_files(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     for name in ("first", "second"):
-        (tmp_path / "src" / f"{name}.py").write_text(
-            "def value(x):\n    return x + 1\n"
-        )
+        (tmp_path / "src" / f"{name}.py").write_text("def value(x):\n    return x + 1\n")
     # Deliberately weak assertions leave a survivor in each real source file.
     (tmp_path / "tests" / "test_values.py").write_text(
         "from first import value as a\nfrom second import value as b\n"
@@ -125,7 +148,9 @@ def test_real_mutmut_checks_both_changed_files(tmp_path):
     )
     findings, errors = run_mutation(
         ["src/first.py", "src/second.py"],
-        [sys.executable, "-m", "pytest", "-q", "tests"], cwd=tmp_path, timeout=60,
+        [sys.executable, "-m", "pytest", "-q", "tests"],
+        cwd=tmp_path,
+        timeout=60,
     )
     assert not errors
     assert {f.id.split(".")[0] for f in findings} == {"mutant-first", "mutant-second"}
@@ -149,13 +174,19 @@ def test_real_mutmut_stdout_failure_is_visible(tmp_path):
         "    assert p.returncode == 0, p.stderr\n"
     )
     findings, errors = run_mutation(
-        ["src/probe.py"], [sys.executable, "-m", "pytest", "-q", "tests"],
-        cwd=tmp_path, timeout=60,
+        ["src/probe.py"],
+        [sys.executable, "-m", "pytest", "-q", "tests"],
+        cwd=tmp_path,
+        timeout=60,
     )
     assert findings[0].id == "MUTATION_ERROR"
-    assert any(cause in findings[0].description for cause in (
-        "source_paths", "could not find any test case for any mutant",
-    ))
+    assert any(
+        cause in findings[0].description
+        for cause in (
+            "source_paths",
+            "could not find any test case for any mutant",
+        )
+    )
     assert "stdout" in findings[0].description
     assert errors
     assert not (tmp_path / "setup.cfg").exists()

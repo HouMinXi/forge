@@ -54,9 +54,7 @@ class TestNoJsonRetryableContract:
             ("TOOL_USE", False),
         ],
     )
-    def test_finish_reason_retryable_classification(
-        self, reason: Any, expected: bool
-    ) -> None:
+    def test_finish_reason_retryable_classification(self, reason: Any, expected: bool) -> None:
         assert _no_json_retryable(reason) is expected
 
     def test_finish_reason_underscore_stripping(self) -> None:
@@ -80,10 +78,7 @@ class TestNoJsonDiagnosticContract:
         lines = diag.splitlines()
         assert len(lines) == 3
         assert lines[0].startswith("JSONDecodeError: ")
-        assert (
-            lines[1]
-            == f"finish_reason='stop' content_len={len(content)} pos={exc.pos}"
-        )
+        assert lines[1] == f"finish_reason='stop' content_len={len(content)} pos={exc.pos}"
         assert lines[2].startswith("around_pos: ")
 
     def test_window_at_start_of_content(self) -> None:
@@ -161,9 +156,7 @@ class TestNoJsonDiagnosticContract:
         payload_file = tmp_path / "model_response.json"
         # Place the malformed token beyond the beginning of the document
         raw_text = (
-            '{"findings": [{"file": "test.py", "reason": "'
-            + ("W" * 200)
-            + '"}], BROKEN_TOKEN: true}'
+            '{"findings": [{"file": "test.py", "reason": "' + ("W" * 200) + '"}], BROKEN_TOKEN: true}'
         )
         payload_file.write_text(raw_text, encoding="utf-8")
 
@@ -174,9 +167,7 @@ class TestNoJsonDiagnosticContract:
         with pytest.raises(json.JSONDecodeError) as exc_info:
             json.loads(disk_content)
 
-        diag = _no_json_diagnostic(
-            exc_info.value, disk_content, finish_reason="stop"
-        )
+        diag = _no_json_diagnostic(exc_info.value, disk_content, finish_reason="stop")
         assert "BROKEN_TOKEN" in diag
         assert f"content_len={len(disk_content)}" in diag
         assert "finish_reason='stop'" in diag

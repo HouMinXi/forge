@@ -7,6 +7,7 @@ match the copies embedded in code-forge/SKILL.md. Any divergence between
 the two copies is caught immediately -- preventing inline-outlet users from
 asking a different question than the CLI outlet uses.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,9 +24,7 @@ def _skill_md_path() -> Path:
 def test_daemon_state_q1_in_skill_md() -> None:
     """DAEMON_STATE_Q1 appears verbatim in code-forge/SKILL.md."""
     skill_md = _skill_md_path()
-    assert skill_md.exists(), (
-        "code-forge/SKILL.md not found at %s" % skill_md
-    )
+    assert skill_md.exists(), "code-forge/SKILL.md not found at %s" % skill_md
     content = skill_md.read_text(encoding="utf-8")
     assert DAEMON_STATE_Q1 in content, (
         "DAEMON_STATE_Q1 not found verbatim in %s\n"
@@ -39,9 +38,7 @@ def test_daemon_state_q1_in_skill_md() -> None:
 def test_daemon_state_q2q3_in_skill_md() -> None:
     """DAEMON_STATE_Q2Q3 appears verbatim in code-forge/SKILL.md."""
     skill_md = _skill_md_path()
-    assert skill_md.exists(), (
-        "code-forge/SKILL.md not found at %s" % skill_md
-    )
+    assert skill_md.exists(), "code-forge/SKILL.md not found at %s" % skill_md
     content = skill_md.read_text(encoding="utf-8")
     assert DAEMON_STATE_Q2Q3 in content, (
         "DAEMON_STATE_Q2Q3 not found verbatim in %s\n"

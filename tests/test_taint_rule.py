@@ -9,6 +9,7 @@ Annotation functions use example_* prefix (NOT test_*) to prevent pytest
 from collecting and executing them -- they contain undefined variables
 like `f` and would crash if run as tests.
 """
+
 from __future__ import annotations
 
 import json
@@ -97,8 +98,7 @@ def example_hardcoded_url():
 # -------------------------------------------------------------------
 
 _RULES_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "src" / "code_forge" / "rules" / "forge-taint.yaml"
+    Path(__file__).resolve().parent.parent / "src" / "code_forge" / "rules" / "forge-taint.yaml"
 )
 
 
@@ -130,8 +130,9 @@ def test_forge_taint_yaml_mode():
     """Each rule uses mode: taint."""
     data = _load_rules()
     for rule in data["rules"]:
-        assert rule["mode"] == "taint", (
-            "Rule %s has mode=%s, expected taint" % (rule["id"], rule["mode"])
+        assert rule["mode"] == "taint", "Rule %s has mode=%s, expected taint" % (
+            rule["id"],
+            rule["mode"],
         )
 
 
@@ -166,9 +167,9 @@ def test_forge_taint_focus_metavariable():
     data = _load_rules()
     for rule in data["rules"]:
         for sink in rule.get("pattern-sinks", []):
-            assert "focus-metavariable" in sink, (
-                "Sink '%s' in rule %s missing focus-metavariable"
-                % (sink.get("pattern", "?"), rule["id"])
+            assert "focus-metavariable" in sink, "Sink '%s' in rule %s missing focus-metavariable" % (
+                sink.get("pattern", "?"),
+                rule["id"],
             )
 
 
@@ -186,9 +187,7 @@ def test_semgrep_validate():
         text=True,
         timeout=120,
     )
-    assert result.returncode == 0, (
-        "semgrep --validate failed: %s" % result.stderr
-    )
+    assert result.returncode == 0, "semgrep --validate failed: %s" % result.stderr
 
 
 @pytest.mark.skipif(
@@ -199,14 +198,14 @@ def test_semgrep_test_annotations():
     """semgrep --test passes with ruleid/ok annotations in this file."""
     result = subprocess.run(
         [
-            "semgrep", "--test",
-            "--config", str(_RULES_PATH),
+            "semgrep",
+            "--test",
+            "--config",
+            str(_RULES_PATH),
             str(Path(__file__).resolve()),
         ],
         capture_output=True,
         text=True,
         timeout=60,
     )
-    assert result.returncode == 0, (
-        "semgrep --test failed: %s\n%s" % (result.stderr, result.stdout)
-    )
+    assert result.returncode == 0, "semgrep --test failed: %s\n%s" % (result.stderr, result.stdout)

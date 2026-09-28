@@ -1,4 +1,5 @@
 """Sampling rejects enabled kernel context without changing capability priority."""
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -24,8 +25,13 @@ def workspace(tmp_path, monkeypatch):
 
 
 def context(sampling=True):
-    return SimpleNamespace(session=SimpleNamespace(client_params=SimpleNamespace(
-        capabilities=SimpleNamespace(sampling=object() if sampling else None))))
+    return SimpleNamespace(
+        session=SimpleNamespace(
+            client_params=SimpleNamespace(
+                capabilities=SimpleNamespace(sampling=object() if sampling else None)
+            )
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -35,7 +41,10 @@ async def test_sampling_enabled_rejected(workspace, monkeypatch, name):
     monkeypatch.setattr(mcp_server, "_dispatch_sampling", dispatch)
     with pytest.raises(ToolError) as caught:
         await getattr(mcp_server, name)(ctx=context())
-    assert str(caught.value) == "kernel-context: MCP sampling path is not supported; run the CLI subprocess path"
+    assert (
+        str(caught.value)
+        == "kernel-context: MCP sampling path is not supported; run the CLI subprocess path"
+    )
     dispatch.assert_not_called()
 
 
@@ -62,6 +71,7 @@ async def test_untrusted_kernel_section_filtered(workspace, monkeypatch, name):
 async def test_loader_error_preserves_remediation(workspace, monkeypatch, name, remediation):
     def fail(*args):
         raise CliError("parse failed", remediation=remediation)
+
     monkeypatch.setattr(cli, "_load_gate_backends", fail)
     with pytest.raises(ToolError) as caught:
         await getattr(mcp_server, name)(ctx=context())

@@ -128,23 +128,27 @@ class TestDogfood:
         # Step 3: gate.yaml with test command as a list
         _write_file(
             tmp_path / ".code-forge" / "gate.yaml",
-            json.dumps({
-                "test": {
-                    "command": ["python3", "-m", "pytest", "-q"],
-                    "source_patterns": ["*.py"],
-                },
-            }),
+            json.dumps(
+                {
+                    "test": {
+                        "command": ["python3", "-m", "pytest", "-q"],
+                        "source_patterns": ["*.py"],
+                    },
+                }
+            ),
         )
 
         # Step 4: test_baseline.json with the correct schema
         _write_file(
             tmp_path / ".code-forge" / "test_baseline.json",
-            json.dumps({
-                "schema_version": "1.0",
-                "test_results": {
-                    "tests/test_sample.py::test_pass": "passed",
-                },
-            }),
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "test_results": {
+                        "tests/test_sample.py::test_pass": "passed",
+                    },
+                }
+            ),
         )
 
         # Step 5: write a pre-commit hook that runs gate-check directly.
@@ -169,9 +173,9 @@ class TestDogfood:
         # Initial commit with all files (should pass)
         _git(["add", "."], tmp_path)
         result = _git(["commit", "-m", "initial: passing tests"], tmp_path)
-        assert result.returncode == 0, (
-            "Initial commit should pass.\nstdout: %s\nstderr: %s"
-            % (result.stdout, result.stderr)
+        assert result.returncode == 0, "Initial commit should pass.\nstdout: %s\nstderr: %s" % (
+            result.stdout,
+            result.stderr,
         )
 
         # Step 7: inject a failing test
@@ -216,9 +220,7 @@ class TestDogfood:
             % (result.stdout, result.stderr)
         )
 
-    def test_planning_leak_guard_blocks_staging(
-        self, tmp_path, monkeypatch
-    ):
+    def test_planning_leak_guard_blocks_staging(self, tmp_path, monkeypatch):
         """Planning-leak guard blocks commits that stage .planning/ or CLAUDE.md.
 
         Exercises the runtime blocking behavior of _build_planning_leak_guard()
@@ -238,11 +240,7 @@ class TestDogfood:
 
         # Install a minimal hook with only the planning-leak guard.
         # Attestation and gate-check are omitted to isolate guard behavior.
-        hook_script = (
-            "#!/bin/sh\n"
-            + _build_planning_leak_guard()
-            + "exit 0\n"
-        )
+        hook_script = "#!/bin/sh\n" + _build_planning_leak_guard() + "exit 0\n"
         hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
         hook_path.parent.mkdir(parents=True, exist_ok=True)
         hook_path.write_text(hook_script, encoding="utf-8")
@@ -256,9 +254,7 @@ class TestDogfood:
             "Commit staging .planning/ should be blocked.\n"
             "stdout: %s\nstderr: %s" % (result.stdout, result.stderr)
         )
-        assert "BLOCKED" in result.stderr, (
-            "Error should mention BLOCKED.\nstderr: %s" % result.stderr
-        )
+        assert "BLOCKED" in result.stderr, "Error should mention BLOCKED.\nstderr: %s" % result.stderr
         assert ".planning/STATE.md" in result.stderr, (
             "Error should list the offending path.\nstderr: %s" % result.stderr
         )
@@ -272,23 +268,19 @@ class TestDogfood:
             "Commit staging CLAUDE.md should be blocked.\n"
             "stdout: %s\nstderr: %s" % (result.stdout, result.stderr)
         )
-        assert "CLAUDE.md" in result.stderr, (
-            "Error should list CLAUDE.md.\nstderr: %s" % result.stderr
-        )
+        assert "CLAUDE.md" in result.stderr, "Error should list CLAUDE.md.\nstderr: %s" % result.stderr
         _git(["reset", "HEAD", "CLAUDE.md"], tmp_path)
 
         # A normal file should pass through the guard
         _write_file(tmp_path / "normal.txt", "safe\n")
         _git(["add", "normal.txt"], tmp_path)
         result = _git(["commit", "-m", "safe commit"], tmp_path)
-        assert result.returncode == 0, (
-            "Normal commit should pass.\n"
-            "stdout: %s\nstderr: %s" % (result.stdout, result.stderr)
+        assert result.returncode == 0, "Normal commit should pass.\nstdout: %s\nstderr: %s" % (
+            result.stdout,
+            result.stderr,
         )
 
-    def test_forge_detection_enables_planning_leak_guard(
-        self, tmp_path, monkeypatch
-    ):
+    def test_forge_detection_enables_planning_leak_guard(self, tmp_path, monkeypatch):
         """run_install_hooks auto-detects forge repos via marker file.
 
         Verifies the DETECTION logic: when src/code_forge/__init__.py
@@ -319,6 +311,7 @@ class TestDogfood:
 
         # Run install-hooks with cwd pointing at the scratch repo
         import io
+
         out = io.StringIO()
         err = io.StringIO()
         rc = run_install_hooks(
@@ -326,9 +319,9 @@ class TestDogfood:
             stdout=out,
             stderr=err,
         )
-        assert rc == 0, (
-            "install-hooks should succeed.\nstdout: %s\nstderr: %s"
-            % (out.getvalue(), err.getvalue())
+        assert rc == 0, "install-hooks should succeed.\nstdout: %s\nstderr: %s" % (
+            out.getvalue(),
+            err.getvalue(),
         )
 
         # Read the installed hook and verify it contains the planning-leak guard
@@ -336,16 +329,13 @@ class TestDogfood:
         assert hook_path.exists(), "pre-commit hook should be installed"
         hook_text = hook_path.read_text(encoding="utf-8")
         assert "planning-leak guard" in hook_text, (
-            "Hook should contain planning-leak guard for forge repos.\n"
-            "Hook content:\n%s" % hook_text
+            "Hook should contain planning-leak guard for forge repos.\nHook content:\n%s" % hook_text
         )
         assert "_LEAK=$(git diff --cached --name-only" in hook_text, (
             "Hook should contain the leak detection logic"
         )
 
-    def test_no_planning_leak_guard_for_non_forge_repos(
-        self, tmp_path, monkeypatch
-    ):
+    def test_no_planning_leak_guard_for_non_forge_repos(self, tmp_path, monkeypatch):
         """run_install_hooks does NOT enable the leak guard for non-forge repos."""
         monkeypatch.setenv(
             "GIT_CEILING_DIRECTORIES",
@@ -360,6 +350,7 @@ class TestDogfood:
         _git(["commit", "-m", "initial"], tmp_path)
 
         import io
+
         out = io.StringIO()
         err = io.StringIO()
         rc = run_install_hooks(
@@ -367,9 +358,9 @@ class TestDogfood:
             stdout=out,
             stderr=err,
         )
-        assert rc == 0, (
-            "install-hooks should succeed.\nstdout: %s\nstderr: %s"
-            % (out.getvalue(), err.getvalue())
+        assert rc == 0, "install-hooks should succeed.\nstdout: %s\nstderr: %s" % (
+            out.getvalue(),
+            err.getvalue(),
         )
 
         hook_path = tmp_path / ".git" / "hooks" / "pre-commit"

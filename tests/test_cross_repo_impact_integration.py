@@ -16,6 +16,7 @@ Schema matches the live code-review-graph schema:
   nodes(id, kind, name, qualified_name, file_path, line_start, line_end)
   edges(kind, source_qualified, target_qualified)
 """
+
 from __future__ import annotations
 
 import json
@@ -46,13 +47,7 @@ _NODES_DDL = (
     "  line_end INTEGER"
     ")"
 )
-_EDGES_DDL = (
-    "CREATE TABLE edges ("
-    "  kind TEXT,"
-    "  source_qualified TEXT,"
-    "  target_qualified TEXT"
-    ")"
-)
+_EDGES_DDL = "CREATE TABLE edges (  kind TEXT,  source_qualified TEXT,  target_qualified TEXT)"
 
 
 def _make_db(path: Path, nodes: list[tuple], edges: list[tuple]) -> Path:
@@ -61,10 +56,12 @@ def _make_db(path: Path, nodes: list[tuple], edges: list[tuple]) -> Path:
     conn.execute(_NODES_DDL)
     conn.execute(_EDGES_DDL)
     conn.executemany(
-        "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)", nodes,
+        "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)",
+        nodes,
     )
     conn.executemany(
-        "INSERT INTO edges VALUES (?, ?, ?)", edges,
+        "INSERT INTO edges VALUES (?, ?, ?)",
+        edges,
     )
     conn.commit()
     conn.close()
@@ -84,18 +81,14 @@ def _make_registry(registry_path: Path, repos: list[dict]) -> Path:
 def _sample_diff(file_path: str = "a_pkg/api.py") -> str:
     """Return a minimal unified diff touching *file_path*."""
     return (
-        "diff --git a/{f} b/{f}\n"
-        "--- a/{f}\n"
-        "+++ b/{f}\n"
-        "@@ -10,3 +10,4 @@\n"
-        " existing line\n"
-        "+new line\n"
+        "diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -10,3 +10,4 @@\n existing line\n+new line\n"
     ).format(f=file_path)
 
 
 # ---------------------------------------------------------------------------
 # Two-repo fixture builder
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def two_repo_fixture(
@@ -115,12 +108,8 @@ def two_repo_fixture(
     _make_db(
         crg_a / "graph.db",
         nodes=[
-            (1, "function", "shared_api",
-             "api::shared_api",
-             "a_pkg/api.py", 10, 20),
-            (2, "function", "internal_fn",
-             "api::internal_fn",
-             "a_pkg/api.py", 25, 35),
+            (1, "function", "shared_api", "api::shared_api", "a_pkg/api.py", 10, 20),
+            (2, "function", "internal_fn", "api::internal_fn", "a_pkg/api.py", 25, 35),
         ],
         edges=[],
     )
@@ -133,9 +122,7 @@ def two_repo_fixture(
     _make_db(
         crg_b / "graph.db",
         nodes=[
-            (1, "function", "use_shared",
-             "consumer::use_shared",
-             "b_pkg/consumer.py", 5, 15),
+            (1, "function", "use_shared", "consumer::use_shared", "b_pkg/consumer.py", 5, 15),
         ],
         edges=[
             # B calls shared_api from A
@@ -147,10 +134,13 @@ def two_repo_fixture(
 
     # Registry pointing at both repos
     reg_path = tmp_path / "registry" / "registry.json"
-    _make_registry(reg_path, [
-        {"path": str(repo_a.resolve()), "alias": "repoa"},
-        {"path": str(repo_b.resolve()), "alias": "repob"},
-    ])
+    _make_registry(
+        reg_path,
+        [
+            {"path": str(repo_a.resolve()), "alias": "repoa"},
+            {"path": str(repo_b.resolve()), "alias": "repob"},
+        ],
+    )
     monkeypatch.setenv("CRG_REGISTRY_PATH", str(reg_path))
 
     return {
@@ -163,6 +153,7 @@ def two_repo_fixture(
 # ---------------------------------------------------------------------------
 # SC-1: Wiring test -- runner surfaces findings through wired path
 # ---------------------------------------------------------------------------
+
 
 class TestSC1Wiring:
     """CrossRepoImpactRunner wired into advisory_runners produces findings."""
@@ -180,10 +171,9 @@ class TestSC1Wiring:
         # (import-level wiring proof).
         import code_forge.cross_repo as cross_repo_mod
         import inspect
+
         source = inspect.getsource(cross_repo_mod)
-        assert "CrossRepoImpactRunner" in source, (
-            "CrossRepoImpactRunner not imported in cross_repo.py"
-        )
+        assert "CrossRepoImpactRunner" in source, "CrossRepoImpactRunner not imported in cross_repo.py"
 
         # Now run the runner directly against the fixture to prove
         # it produces correct findings with the two-repo topology.
@@ -192,9 +182,7 @@ class TestSC1Wiring:
         repo_a = two_repo_fixture["repo_a"]
         findings = runner.run(diff, repo_a)
 
-        assert len(findings) >= 1, (
-            "Expected at least one cross-repo finding; got none"
-        )
+        assert len(findings) >= 1, "Expected at least one cross-repo finding; got none"
 
         f = findings[0]
         assert isinstance(f, AdvisoryFinding)
@@ -213,6 +201,7 @@ class TestSC1Wiring:
         """
         import inspect
         import code_forge.cross_repo as cross_repo_mod
+
         source = inspect.getsource(cross_repo_mod)
         # The runner must appear in the advisory_runners list construction
         # inside the is_primary branch
@@ -225,6 +214,7 @@ class TestSC1Wiring:
 # SC-3: Advisory contract -- never blocks, never resets cycle
 # ---------------------------------------------------------------------------
 
+
 class TestSC3AdvisoryContract:
     """Advisory finding never blocks verdict, never suppresses other findings."""
 
@@ -234,6 +224,7 @@ class TestSC3AdvisoryContract:
     ) -> None:
         """An advisory cross-repo finding must not block the verdict."""
         from code_forge.cross_repo_impact import CrossRepoImpactRunner
+
         runner = CrossRepoImpactRunner()
         assert runner.is_advisory is True
 
@@ -243,9 +234,7 @@ class TestSC3AdvisoryContract:
 
         # All findings must be AdvisoryFinding (structurally cannot block)
         for f in findings:
-            assert isinstance(f, AdvisoryFinding), (
-                "Finding %s is not AdvisoryFinding" % f.id
-            )
+            assert isinstance(f, AdvisoryFinding), "Finding %s is not AdvisoryFinding" % f.id
 
     def test_advisory_findings_are_advisory_type(
         self,
@@ -263,14 +252,14 @@ class TestSC3AdvisoryContract:
         for f in findings:
             assert isinstance(f, AdvisoryFinding)
             assert not isinstance(f, StateFinding), (
-                "Finding must not be StateFinding (would participate "
-                "in convergence)"
+                "Finding must not be StateFinding (would participate in convergence)"
             )
 
 
 # ---------------------------------------------------------------------------
 # SC-2: Missing registry -> SKIP, review completes
 # ---------------------------------------------------------------------------
+
 
 class TestSC2RegistryAbsent:
     """With no registry / CRG_REGISTRY_PATH pointing nowhere, runner emits
@@ -299,9 +288,7 @@ class TestSC2RegistryAbsent:
         _make_db(
             crg / "graph.db",
             nodes=[
-                (1, "function", "some_fn",
-                 "mod::some_fn",
-                 "src/mod.py", 1, 10),
+                (1, "function", "some_fn", "mod::some_fn", "src/mod.py", 1, 10),
             ],
             edges=[],
         )
@@ -338,9 +325,7 @@ class TestSC2RegistryAbsent:
             _make_db(
                 crg / "graph.db",
                 nodes=[
-                    (1, "function", "fn",
-                     "m::fn",
-                     "src/m.py", 1, 5),
+                    (1, "function", "fn", "m::fn", "src/m.py", 1, 5),
                 ],
                 edges=[],
             )
@@ -356,6 +341,7 @@ class TestSC2RegistryAbsent:
 # Wiring assertion: present in primary, absent from sibling
 # ---------------------------------------------------------------------------
 
+
 class TestWiringAssertion:
     """CrossRepoImpactRunner is in primary advisory_runners, NOT in sibling."""
 
@@ -363,6 +349,7 @@ class TestWiringAssertion:
         """Verify CrossRepoImpactRunner appears in the is_primary branch."""
         import inspect
         import code_forge.cross_repo as mod
+
         source = inspect.getsource(mod)
 
         # Find the is_primary branch and verify the runner is listed
@@ -380,13 +367,14 @@ class TestWiringAssertion:
         """Verify CrossRepoImpactRunner does NOT appear in the sibling branch."""
         import inspect
         import code_forge.cross_repo as mod
+
         source = inspect.getsource(mod)
 
         # The else branch (sibling) should have advisory_runners = []
         sibling_idx = source.find("# Siblings: no L1 cost, no advisory runners")
         assert sibling_idx != -1
         # Grab a window after the sibling comment
-        sibling_block = source[sibling_idx:sibling_idx + 200]
+        sibling_block = source[sibling_idx : sibling_idx + 200]
         assert "CrossRepoImpactRunner" not in sibling_block, (
             "CrossRepoImpactRunner must NOT be in the sibling branch"
         )
@@ -395,6 +383,7 @@ class TestWiringAssertion:
 # ---------------------------------------------------------------------------
 # Absolute-path regression: tool-built graph.db stores absolute file_path
 # ---------------------------------------------------------------------------
+
 
 class TestAbsolutePathStrip:
     """Verify the relpath strip handles tool-built absolute file_path.
@@ -420,9 +409,7 @@ class TestAbsolutePathStrip:
         _make_db(
             crg_a / "graph.db",
             nodes=[
-                (1, "function", "shared_api",
-                 abs_a + "::shared_api",
-                 abs_a, 10, 20),
+                (1, "function", "shared_api", abs_a + "::shared_api", abs_a, 10, 20),
             ],
             edges=[],
         )
@@ -436,9 +423,7 @@ class TestAbsolutePathStrip:
         _make_db(
             crg_b / "graph.db",
             nodes=[
-                (1, "function", "use_shared",
-                 abs_b + "::use_shared",
-                 abs_b, 5, 15),
+                (1, "function", "use_shared", abs_b + "::use_shared", abs_b, 5, 15),
             ],
             edges=[
                 ("CALLS", abs_b + "::use_shared", "shared_api"),
@@ -447,31 +432,27 @@ class TestAbsolutePathStrip:
         )
 
         reg_path = tmp_path / "registry" / "registry.json"
-        _make_registry(reg_path, [
-            {"path": str(repo_a.resolve()), "alias": "repoa"},
-            {"path": str(repo_b.resolve()), "alias": "repob"},
-        ])
+        _make_registry(
+            reg_path,
+            [
+                {"path": str(repo_a.resolve()), "alias": "repoa"},
+                {"path": str(repo_b.resolve()), "alias": "repob"},
+            ],
+        )
         monkeypatch.setenv("CRG_REGISTRY_PATH", str(reg_path))
 
         runner = CrossRepoImpactRunner()
         diff = _sample_diff("a_pkg/api.py")
         findings = runner.run(diff, repo_a)
 
-        assert len(findings) >= 1, (
-            "Expected cross-repo finding from absolute-path fixture"
-        )
+        assert len(findings) >= 1, "Expected cross-repo finding from absolute-path fixture"
         f = findings[0]
 
         # The file field must be repo-relative, not absolute
-        assert f.file == "repob:client_b/consumer.py", (
-            "Expected repo-relative path, got: %s" % f.file
-        )
-        assert "/tmp" not in f.file, (
-            "Absolute path leaked into finding.file: %s" % f.file
-        )
-        assert f.line_range == (5, 5), (
-            "line_range should come from sibling node, got: %s"
-            % (f.line_range,)
+        assert f.file == "repob:client_b/consumer.py", "Expected repo-relative path, got: %s" % f.file
+        assert "/tmp" not in f.file, "Absolute path leaked into finding.file: %s" % f.file
+        assert f.line_range == (5, 5), "line_range should come from sibling node, got: %s" % (
+            f.line_range,
         )
 
         # Proximity should use relative paths (no inflated Jaccard
@@ -514,9 +495,7 @@ class TestAbsolutePathStrip:
         _make_db(
             crg_a / "graph.db",
             nodes=[
-                (1, "function", "target_fn",
-                 symlink_a_file + "::target_fn",
-                 symlink_a_file, 10, 20),
+                (1, "function", "target_fn", symlink_a_file + "::target_fn", symlink_a_file, 10, 20),
             ],
             edges=[],
         )
@@ -525,9 +504,7 @@ class TestAbsolutePathStrip:
         _make_db(
             crg_b / "graph.db",
             nodes=[
-                (1, "function", "call_target",
-                 symlink_b_file + "::call_target",
-                 symlink_b_file, 7, 12),
+                (1, "function", "call_target", symlink_b_file + "::call_target", symlink_b_file, 7, 12),
             ],
             edges=[
                 ("CALLS", symlink_b_file + "::call_target", "target_fn"),
@@ -541,28 +518,25 @@ class TestAbsolutePathStrip:
         # -> first startswith FAILS (real != symlink)
         # -> fallback resolves link_b -> real_b, then matches
         reg_path = tmp_path / "registry" / "registry.json"
-        _make_registry(reg_path, [
-            {"path": str(real_a), "alias": "repoa"},
-            {"path": str(real_b), "alias": "repob"},
-        ])
+        _make_registry(
+            reg_path,
+            [
+                {"path": str(real_a), "alias": "repoa"},
+                {"path": str(real_b), "alias": "repob"},
+            ],
+        )
         monkeypatch.setenv("CRG_REGISTRY_PATH", str(reg_path))
 
         runner = CrossRepoImpactRunner()
         diff = _sample_diff("pkg/api.py")
         findings = runner.run(diff, real_a)
 
-        assert len(findings) >= 1, (
-            "Symlink-registered repo must still produce findings"
-        )
+        assert len(findings) >= 1, "Symlink-registered repo must still produce findings"
         f = findings[0]
 
         # Must be repo-relative despite symlink mismatch
-        assert f.file == "repob:client/use.py", (
-            "Expected repo-relative path, got: %s" % f.file
-        )
-        assert "/tmp" not in f.file, (
-            "Absolute path leaked through symlink: %s" % f.file
-        )
+        assert f.file == "repob:client/use.py", "Expected repo-relative path, got: %s" % f.file
+        assert "/tmp" not in f.file, "Absolute path leaked through symlink: %s" % f.file
         assert f.line_range == (7, 7)
         assert "target_fn" in f.description
         assert len(runner.infra_errors) == 0

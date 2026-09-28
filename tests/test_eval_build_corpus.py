@@ -22,10 +22,7 @@ def _fake_dataset(rows):
     return mod
 
 
-_PATCH = (
-    "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-    "@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n tail\n"
-)
+_PATCH = "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n tail\n"
 
 
 def _row(iid, repo="o/r"):
@@ -39,9 +36,7 @@ def _row(iid, repo="o/r"):
 
 class TestGenerator:
     def test_it_builds_a_corpus_without_network(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setitem(
-            sys.modules, "datasets", _fake_dataset([_row("a-1"), _row("a-2")])
-        )
+        monkeypatch.setitem(sys.modules, "datasets", _fake_dataset([_row("a-1"), _row("a-2")]))
         out = tmp_path / "corpus"
         rc = gen.main(["--out", str(out), "--cap", "8", "--seed", "1"])
         assert rc == 0
@@ -132,9 +127,7 @@ class TestSelectionIsPinned:
         from code_forge.eval.swebench import select_instances
 
         pool = [
-            {"instance_id": "r%d-%d" % (r, i), "repo": "o/r%d" % r}
-            for r in range(5)
-            for i in range(20)
+            {"instance_id": "r%d-%d" % (r, i), "repo": "o/r%d" % r} for r in range(5) for i in range(20)
         ]
         first = [x["instance_id"] for x in select_instances(pool, cap=8)]
         second = [x["instance_id"] for x in select_instances(pool, cap=8)]
@@ -146,9 +139,7 @@ class TestSelectionIsPinned:
         from code_forge.eval.swebench import select_instances
 
         pool = [
-            {"instance_id": "r%d-%d" % (r, i), "repo": "o/r%d" % r}
-            for r in range(5)
-            for i in range(20)
+            {"instance_id": "r%d-%d" % (r, i), "repo": "o/r%d" % r} for r in range(5) for i in range(20)
         ]
         shuffled = list(pool)
         random.Random(99).shuffle(shuffled)
@@ -164,9 +155,7 @@ class TestSelectionIsPinned:
         import yaml
 
         root = pathlib.Path(__file__).parent / "eval" / "swebench"
-        entries = yaml.safe_load(
-            (root / "corpus.yaml").read_text(encoding="utf-8")
-        )["entries"]
+        entries = yaml.safe_load((root / "corpus.yaml").read_text(encoding="utf-8"))["entries"]
         names = {e["name"] for e in entries}
         # Every committed diff is claimed by an entry, and every entry has
         # its diff. A regeneration that dropped or orphaned files fails here.

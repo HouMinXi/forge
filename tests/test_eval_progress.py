@@ -8,6 +8,7 @@ Without the arm label, three interleaved streams of "[7/150]" on one terminal
 cannot be told apart. Without the estimate, a wedged pool is indistinguishable
 from a slow one until the per-entry timeout fires hours later.
 """
+
 import textwrap
 import time
 from types import SimpleNamespace
@@ -33,13 +34,9 @@ def _progress_from_cli(arm_depth, arm_engine, t_start):
 
     src = Path(cli_mod.__file__).read_text().splitlines()
 
-    start = next(
-        i for i, ln in enumerate(src)
-        if ln.strip().startswith("_run_label = ")
-    )
+    start = next(i for i, ln in enumerate(src) if ln.strip().startswith("_run_label = "))
     end = next(
-        i for i, ln in enumerate(src[start:], start)
-        if ln.strip().startswith("pool_results = run_pool(")
+        i for i, ln in enumerate(src[start:], start) if ln.strip().startswith("pool_results = run_pool(")
     )
     block = textwrap.dedent("\n".join(src[start:end]))
 

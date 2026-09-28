@@ -5,6 +5,7 @@
 Covers: resolve_sources (4 sources), extract_conventions (multi-language),
 get_cross_repo_digest (caching), and get_digest integration (M-03).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,6 +29,7 @@ from code_forge.conventions import get_digest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_proc(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
 
@@ -44,8 +46,8 @@ def _mock_git(stdout: str = "abc123\n", returncode: int = 0):
 # TestSourceResolver
 # ---------------------------------------------------------------------------
 
-class TestSourceResolver:
 
+class TestSourceResolver:
     def test_custom_mapping_highest_priority(self, tmp_path):
         sibling1 = tmp_path / "sibling1"
         sibling1.mkdir()
@@ -67,9 +69,7 @@ class TestSourceResolver:
         """Source 1 must reject paths outside cwd.parent (M-R2-02)."""
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: /etc/passwd\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: /etc/passwd\n")
         result = resolve_sources(tmp_path)
         assert not any(str(s.repo_path) == "/etc/passwd" for s in result)
 
@@ -79,39 +79,28 @@ class TestSourceResolver:
         sibling.mkdir()
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         result = resolve_sources(tmp_path)
         assert len(result) >= 1
         assert result[0].target == "public names"
         assert result[0].recipe == "default"
-        assert result[0].priority == 1          # L-R5-05
+        assert result[0].priority == 1  # L-R5-05
         assert result[0].source_type == "custom"  # L-R5-05
 
     def test_agents_md_yaml_frontmatter(self, tmp_path):
         sibling2 = tmp_path / "sibling2"
         sibling2.mkdir()
         (tmp_path / "AGENTS.md").write_text(
-            "---\n"
-            "related_repos:\n"
-            "  - " + str(sibling2) + "\n"
-            "---\n"
-            "# Agent docs\n"
+            "---\nrelated_repos:\n  - " + str(sibling2) + "\n---\n# Agent docs\n"
         )
         result = resolve_sources(tmp_path)
-        assert any(
-            s.source_type == "agents_md" and s.repo_path == sibling2
-            for s in result
-        )
+        assert any(s.source_type == "agents_md" and s.repo_path == sibling2 for s in result)
 
     def test_agents_md_no_frontmatter_fallback(self, tmp_path):
         """AGENTS.md without '---\\n' header must fall back to regex (L-02)."""
         sibling3 = tmp_path / "sibling3"
         sibling3.mkdir()
-        (tmp_path / "AGENTS.md").write_text(
-            "# My Agents\nRelated repos:\n- `" + str(sibling3) + "`\n"
-        )
+        (tmp_path / "AGENTS.md").write_text("# My Agents\nRelated repos:\n- `" + str(sibling3) + "`\n")
         result = resolve_sources(tmp_path)
         assert any(s.source_type == "agents_md" for s in result)
 
@@ -125,9 +114,7 @@ class TestSourceResolver:
         """CLAUDE.md with absolute path must yield agent_context source (H-04)."""
         sibling4 = tmp_path / "sibling4"
         sibling4.mkdir()
-        (tmp_path / "CLAUDE.md").write_text(
-            "# Config\nSee " + str(sibling4) + " for details.\n"
-        )
+        (tmp_path / "CLAUDE.md").write_text("# Config\nSee " + str(sibling4) + " for details.\n")
         result = resolve_sources(tmp_path)
         assert any(s.source_type == "agent_context" for s in result)
 
@@ -135,9 +122,7 @@ class TestSourceResolver:
         """CLAUDE.md with ../ relative path must resolve to sibling (H-04)."""
         sibling5_rel = tmp_path.parent / "sibling5_rel"
         sibling5_rel.mkdir(exist_ok=True)
-        (tmp_path / "CLAUDE.md").write_text(
-            "See ../sibling5_rel for details.\n"
-        )
+        (tmp_path / "CLAUDE.md").write_text("See ../sibling5_rel for details.\n")
         result = resolve_sources(tmp_path)
         resolved_paths = [s.repo_path for s in result if s.source_type == "agent_context"]
         assert any(str(p).endswith("sibling5_rel") for p in resolved_paths)
@@ -146,9 +131,7 @@ class TestSourceResolver:
         """_PATH_RE must match paths containing + (L-R2-01 expanded char class)."""
         lib_plus = tmp_path / "lib+extra"
         lib_plus.mkdir()
-        (tmp_path / "CLAUDE.md").write_text(
-            "See " + str(lib_plus) + " for more.\n"
-        )
+        (tmp_path / "CLAUDE.md").write_text("See " + str(lib_plus) + " for more.\n")
         result = resolve_sources(tmp_path)
         assert any("lib+extra" in str(s.repo_path) for s in result)
 
@@ -156,9 +139,7 @@ class TestSourceResolver:
         lib_dir = tmp_path / "lib"
         lib_dir.mkdir()
         (tmp_path / ".gitmodules").write_text(
-            '[submodule "lib"]\n'
-            "    path = lib\n"
-            "    url = https://example.com/lib.git\n"
+            '[submodule "lib"]\n    path = lib\n    url = https://example.com/lib.git\n'
         )
         result = resolve_sources(tmp_path)
         assert any(s.source_type == "dependency" for s in result)
@@ -176,14 +157,9 @@ class TestSourceResolver:
         """pyproject.toml path= regex must find local path deps (M-R2-05)."""
         pylib = tmp_path / "pylib"
         pylib.mkdir()
-        (tmp_path / "pyproject.toml").write_text(
-            "[tool.setuptools]\npath = \"" + str(pylib) + "\"\n"
-        )
+        (tmp_path / "pyproject.toml").write_text('[tool.setuptools]\npath = "' + str(pylib) + '"\n')
         result = resolve_sources(tmp_path)
-        assert any(
-            s.source_type == "dependency" and "pylib" in str(s.repo_path)
-            for s in result
-        )
+        assert any(s.source_type == "dependency" and "pylib" in str(s.repo_path) for s in result)
 
     def test_deduplication_keeps_highest_priority(self, tmp_path):
         """Same sibling in both custom yaml and AGENTS.md -> only 1 entry, priority=1."""
@@ -191,12 +167,8 @@ class TestSourceResolver:
         sibling.mkdir()
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
-        (tmp_path / "AGENTS.md").write_text(
-            "---\nrelated_repos:\n  - " + str(sibling) + "\n---\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
+        (tmp_path / "AGENTS.md").write_text("---\nrelated_repos:\n  - " + str(sibling) + "\n---\n")
         result = resolve_sources(tmp_path)
         matching = [s for s in result if s.repo_path == sibling]
         assert len(matching) == 1
@@ -208,12 +180,8 @@ class TestSourceResolver:
         shared_sibling.mkdir()
         cursor_rules = tmp_path / ".cursor" / "rules"
         cursor_rules.mkdir(parents=True)
-        (cursor_rules / "a.mdc").write_text(
-            "See " + str(shared_sibling) + " for rules.\n"
-        )
-        (cursor_rules / "b.mdc").write_text(
-            "Also check " + str(shared_sibling) + " always.\n"
-        )
+        (cursor_rules / "a.mdc").write_text("See " + str(shared_sibling) + " for rules.\n")
+        (cursor_rules / "b.mdc").write_text("Also check " + str(shared_sibling) + " always.\n")
         result = resolve_sources(tmp_path)
         matching = [s for s in result if s.repo_path == shared_sibling]
         assert len(matching) == 1
@@ -251,25 +219,26 @@ class TestSourceResolver:
 # TestExtraction
 # ---------------------------------------------------------------------------
 
-class TestExtraction:
 
+class TestExtraction:
     def test_python_public_names_via_shared_helper(self, tmp_path):
         """extract_conventions delegates to _extract_python_public_names (B-02)."""
         src = tmp_path / "src"
         src.mkdir()
         (src / "module.py").write_text("def serve(): pass\nclass Handler: pass\n")
         source = ResolvedSource(
-            repo_path=tmp_path, priority=1, source_type="custom",
-            target="public names", recipe="default",
+            repo_path=tmp_path,
+            priority=1,
+            source_type="custom",
+            target="public names",
+            recipe="default",
         )
         result = extract_conventions(source)
         assert "serve" in result
         assert "Handler" in result
 
     def test_js_ts_named_exports(self, tmp_path):
-        (tmp_path / "index.ts").write_text(
-            "export function fetchData() {}\nexport class ApiClient {}\n"
-        )
+        (tmp_path / "index.ts").write_text("export function fetchData() {}\nexport class ApiClient {}\n")
         source = ResolvedSource(repo_path=tmp_path, priority=1, source_type="custom")
         result = extract_conventions(source)
         assert "fetchData" in result
@@ -283,18 +252,14 @@ class TestExtraction:
         assert "Router" in result
 
     def test_go_extraction(self, tmp_path):
-        (tmp_path / "main.go").write_text(
-            "func ServeHTTP() {}\ntype Handler struct{}\n"
-        )
+        (tmp_path / "main.go").write_text("func ServeHTTP() {}\ntype Handler struct{}\n")
         source = ResolvedSource(repo_path=tmp_path, priority=1, source_type="custom")
         result = extract_conventions(source)
         assert "ServeHTTP" in result
         assert "Handler" in result
 
     def test_rust_extraction(self, tmp_path):
-        (tmp_path / "lib.rs").write_text(
-            "pub fn process() {}\npub struct Config {}\n"
-        )
+        (tmp_path / "lib.rs").write_text("pub fn process() {}\npub struct Config {}\n")
         source = ResolvedSource(repo_path=tmp_path, priority=1, source_type="custom")
         result = extract_conventions(source)
         assert "process" in result
@@ -303,7 +268,10 @@ class TestExtraction:
     def test_empty_repo(self, tmp_path):
         """Empty dir must return empty string."""
         source = ResolvedSource(
-            repo_path=tmp_path, priority=1, source_type="custom", recipe="default",
+            repo_path=tmp_path,
+            priority=1,
+            source_type="custom",
+            recipe="default",
         )
         result = extract_conventions(source)
         assert result == ""
@@ -311,7 +279,9 @@ class TestExtraction:
     def test_nonexistent_path(self, tmp_path):
         """Nonexistent path must return empty string without exception."""
         source = ResolvedSource(
-            repo_path=Path("/nonexistent/path"), priority=1, source_type="custom",
+            repo_path=Path("/nonexistent/path"),
+            priority=1,
+            source_type="custom",
         )
         result = extract_conventions(source)
         assert result == ""
@@ -322,8 +292,11 @@ class TestExtraction:
         src.mkdir()
         (src / "module.py").write_text("def set_flow(): pass\nclass OvsCmd: pass\n")
         source = ResolvedSource(
-            repo_path=tmp_path, priority=1, source_type="custom",
-            target="command names", recipe="ovs_commands",
+            repo_path=tmp_path,
+            priority=1,
+            source_type="custom",
+            target="command names",
+            recipe="ovs_commands",
         )
         result = extract_conventions(source)
         assert "recipe: ovs_commands" in result
@@ -357,17 +330,15 @@ class TestExtraction:
 # TestCaching
 # ---------------------------------------------------------------------------
 
-class TestCaching:
 
+class TestCaching:
     def test_cache_written_on_first_call(self, tmp_path):
         sibling = tmp_path / "sibling"
         sibling.mkdir()
         (sibling / "api.py").write_text("def helper(): pass\n")
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with _mock_git("abc123\n"):
             get_cross_repo_digest(tmp_path)
         cache_dir = tmp_path / ".code-forge" / "conventions-cache"
@@ -381,15 +352,11 @@ class TestCaching:
         (sibling / "api.py").write_text("def helper(): pass\n")
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with _mock_git("abc123\n"):
             get_cross_repo_digest(tmp_path)
         cache_dir = tmp_path / ".code-forge" / "conventions-cache"
-        expected_hash = hashlib.sha256(
-            str(sibling.resolve()).encode()
-        ).hexdigest()[:12]
+        expected_hash = hashlib.sha256(str(sibling.resolve()).encode()).hexdigest()[:12]
         cache_files = list(cache_dir.glob("*.json"))
         assert any(f.stem.startswith(expected_hash) for f in cache_files)
 
@@ -400,9 +367,7 @@ class TestCaching:
         (sibling / "api.py").write_text("def helper(): pass\n")
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with _mock_git("abc123\n"):
             with patch(
                 "code_forge.conventions_resolver.extract_conventions",
@@ -420,9 +385,7 @@ class TestCaching:
         (sibling / "api.py").write_text("def helper(): pass\n")
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with _mock_git("abc123\n"):
             get_cross_repo_digest(tmp_path)
         cache_dir = tmp_path / ".code-forge" / "conventions-cache"
@@ -444,12 +407,8 @@ class TestCaching:
         cache_dir = cfg / "conventions-cache"
         cache_dir.mkdir()
         stale_file = cache_dir / "deadbeef1234_oldcommit.json"
-        stale_file.write_text(
-            json.dumps({"digest": "old", "repo": "/old", "commit": "old"})
-        )
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        stale_file.write_text(json.dumps({"digest": "old", "repo": "/old", "commit": "old"}))
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with _mock_git("abc123\n"):
             get_cross_repo_digest(tmp_path)
         assert not stale_file.exists()
@@ -461,9 +420,7 @@ class TestCaching:
         sibling.mkdir()
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with patch(
             "code_forge.conventions_resolver.subprocess.run",
             side_effect=FileNotFoundError("git not found"),
@@ -481,9 +438,7 @@ class TestCaching:
         sibling.mkdir()
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with patch(
             "code_forge.conventions_resolver.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd=[], timeout=5),
@@ -505,9 +460,7 @@ class TestCaching:
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
         (cfg / "conventions.yaml").write_text(
-            "siblings:\n"
-            "  - repo: " + str(sibling_code) + "\n"
-            "  - repo: " + str(sibling_empty) + "\n"
+            "siblings:\n  - repo: " + str(sibling_code) + "\n  - repo: " + str(sibling_empty) + "\n"
         )
         with _mock_git("abc123\n"):
             result = get_cross_repo_digest(tmp_path)
@@ -540,8 +493,8 @@ def test_bad_utf8_cache_is_a_miss(tmp_path):
 # TestIntegration
 # ---------------------------------------------------------------------------
 
-class TestIntegration:
 
+class TestIntegration:
     def test_get_digest_includes_cross_repo(self, tmp_path):
         """get_digest must include both same-repo and cross-repo naming (M-03)."""
         src = tmp_path / "src"
@@ -554,9 +507,7 @@ class TestIntegration:
         (sibling_src / "remote.py").write_text("def remote_fn(): pass\n")
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with _mock_git("abc123\n"):
             result = get_digest(tmp_path)
         assert "local_fn" in result
@@ -572,9 +523,7 @@ class TestIntegration:
         (sibling_src / "api.py").write_text("def only_remote(): pass\n")
         cfg = tmp_path / ".code-forge"
         cfg.mkdir()
-        (cfg / "conventions.yaml").write_text(
-            "siblings:\n  - repo: " + str(sibling) + "\n"
-        )
+        (cfg / "conventions.yaml").write_text("siblings:\n  - repo: " + str(sibling) + "\n")
         with _mock_git("abc123\n"):
             result = get_digest(tmp_path)
         assert "only_remote" in result

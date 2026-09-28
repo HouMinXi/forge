@@ -57,9 +57,7 @@ def _keyed(name="keyed"):
         diff_file="%s.diff" % name,
         expected_verdict="HOLD",
         axis_tags=["SEC"],
-        expected_findings=[
-            ExpectedFinding(file="a.py", description="defect here", line_range=(1, 5))
-        ],
+        expected_findings=[ExpectedFinding(file="a.py", description="defect here", line_range=(1, 5))],
     )
 
 

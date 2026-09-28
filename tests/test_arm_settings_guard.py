@@ -13,6 +13,7 @@ and 3 silently ran at arm 1's depth.
 
 The guard turns that into a refusal before the first review is spent.
 """
+
 import pytest
 
 from code_forge.eval.runner import _ARM_KNOBS, _missing_arm_settings
@@ -48,8 +49,7 @@ class TestClaimedSettingsAreEnforced:
 
     def test_several_claims_report_every_missing_one(self):
         env = {
-            "FORGE_ARM_REQUIRES":
-                "FORGE_CLEAN_ROUND_THRESHOLD,FORGE_MAX_TOTAL_ROUNDS",
+            "FORGE_ARM_REQUIRES": "FORGE_CLEAN_ROUND_THRESHOLD,FORGE_MAX_TOTAL_ROUNDS",
             "FORGE_CLEAN_ROUND_THRESHOLD": "3",
         }
         assert _missing_arm_settings(env) == ["FORGE_MAX_TOTAL_ROUNDS"]
@@ -80,8 +80,7 @@ class TestClaimedSettingsAreEnforced:
 
     def test_claim_parsing_tolerates_spacing(self):
         env = {
-            "FORGE_ARM_REQUIRES":
-                " FORGE_CLEAN_ROUND_THRESHOLD , FORGE_MAX_TOTAL_ROUNDS ",
+            "FORGE_ARM_REQUIRES": " FORGE_CLEAN_ROUND_THRESHOLD , FORGE_MAX_TOTAL_ROUNDS ",
             "FORGE_CLEAN_ROUND_THRESHOLD": "1",
             "FORGE_MAX_TOTAL_ROUNDS": "8",
         }
@@ -113,7 +112,7 @@ class TestWiring:
         from code_forge.eval import runner as runner_mod
 
         src = inspect.getsource(runner_mod)
-        assert 'infra: arm settings absent' in src
+        assert "infra: arm settings absent" in src
 
     def test_cli_claims_the_depth_knob(self):
         # Behavioural rather than textual: the arm builder must claim the

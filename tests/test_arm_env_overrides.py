@@ -10,6 +10,7 @@ The cap and the engine only mean anything if they reach the review. This
 covers the CLI end: what the arm carries to its workers, and what it claims
 so the runner can refuse a review that lost one.
 """
+
 import pytest
 
 from code_forge.cli import _arm_env_overrides
@@ -107,9 +108,15 @@ class TestUnsetKnobsAreNotClaimed:
 class TestGuardAcceptsWhatTheArmProduces:
     """The two halves have to agree, or the guard rejects valid arms."""
 
-    @pytest.mark.parametrize("engine,cap", [
-        (None, None), ("stub", "3"), ("auto", "3"), ("stub", None),
-    ])
+    @pytest.mark.parametrize(
+        "engine,cap",
+        [
+            (None, None),
+            ("stub", "3"),
+            ("auto", "3"),
+            ("stub", None),
+        ],
+    )
     def test_runner_accepts_every_arm_shape(self, engine, cap, monkeypatch):
         from code_forge.eval.runner import _missing_arm_settings
 
@@ -126,6 +133,5 @@ class TestGuardAcceptsWhatTheArmProduces:
         # The environment the review subprocess would receive.
         env = dict(overrides)
         assert _missing_arm_settings(env) == [], (
-            "the guard rejects an arm the CLI just built; the claim and the "
-            "check disagree"
+            "the guard rejects an arm the CLI just built; the claim and the check disagree"
         )

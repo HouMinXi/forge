@@ -146,9 +146,7 @@ def test_cli_manual_mark_stays_literal():
     import code_forge.cli as cli_mod
 
     src = inspect.getsource(cli_mod)
-    assert 'axis_claim="manual"' in src, (
-        "cli.py manual mark must use literal 'manual', not derived"
-    )
+    assert 'axis_claim="manual"' in src, "cli.py manual mark must use literal 'manual', not derived"
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +195,7 @@ def test_machine_py_wiring_derive_claim_type():
     src = inspect.getsource(machine_mod)
 
     # (a) import exists
-    assert "derive_claim_type" in src, (
-        "machine.py must import derive_claim_type"
-    )
+    assert "derive_claim_type" in src, "machine.py must import derive_claim_type"
 
     # (b) hardcoded "review" gone from _write_ledger_rows
     # Read the function body specifically
@@ -221,6 +217,4 @@ def test_machine_py_wiring_derive_claim_type():
     )
 
     # (c) version_sensitive IS present in the function
-    assert "version_sensitive" in func_body, (
-        "_write_ledger_rows must write version_sensitive"
-    )
+    assert "version_sensitive" in func_body, "_write_ledger_rows must write version_sensitive"

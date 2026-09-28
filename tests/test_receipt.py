@@ -52,9 +52,7 @@ class TestWriteReceipts:
         findings = [_finding("qodo", "fp1")]
         diff_sha = hashlib.sha256(b"diff").hexdigest()
         (tmp_path / "src").mkdir(parents=True)
-        (tmp_path / "src" / "foo.py").write_text(
-            "line1\nline2\ndef bar():\n    pass\n"
-        )
+        (tmp_path / "src" / "foo.py").write_text("line1\nline2\ndef bar():\n    pass\n")
         write_receipts(
             receipts_dir=tmp_path / ".code-forge" / "receipts",
             round_index=0,
@@ -63,9 +61,7 @@ class TestWriteReceipts:
             source_files=[Path("src/foo.py")],
             cwd=tmp_path,
         )
-        r = json.loads(
-            (tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text()
-        )
+        r = json.loads((tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text())
         assert r["cycle"] == 1
         assert r["pass"] == 1
         assert r["skill"] == "qodo-review"
@@ -121,9 +117,7 @@ class TestWriteReceipts:
             cwd=tmp_path,
         )
         assert "manifest" in calls
-        written = json.loads(
-            (tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text()
-        )
+        written = json.loads((tmp_path / ".code-forge" / "receipts" / "receipt-c1p1.json").read_text())
         assert written["findings"][0]["basis"]["authority"] == "llm-docs-pinned"
 
     def test_empty_l1_still_writes_3_receipts(self, tmp_path):
@@ -141,9 +135,7 @@ class TestWriteReceipts:
         r = json.loads(sorted(files)[0].read_text())
         assert r["findings_count"] == 0
 
-    def test_timestamps_stay_ordered_across_back_to_back_rounds(
-        self, tmp_path, monkeypatch
-    ):
+    def test_timestamps_stay_ordered_across_back_to_back_rounds(self, tmp_path, monkeypatch):
         """Rounds that finish faster than a pass offset must not invert.
 
         run_verify reads receipt-*.json in sorted filename order and fails
@@ -158,9 +150,7 @@ class TestWriteReceipts:
         happen to land seconds apart.
         """
         base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
-        round_starts = iter(
-            [base + datetime.timedelta(milliseconds=50 * i) for i in range(3)]
-        )
+        round_starts = iter([base + datetime.timedelta(milliseconds=50 * i) for i in range(3)])
 
         class _Clock:
             @staticmethod
@@ -191,9 +181,7 @@ class TestWriteReceipts:
 
         # Verify file side effects: all 9 receipt files landed on disk.
         files_on_disk = sorted(rd.glob("receipt-*.json"))
-        assert len(files_on_disk) == 9, (
-            "expected 9 receipt files, got %d" % len(files_on_disk)
-        )
+        assert len(files_on_disk) == 9, "expected 9 receipt files, got %d" % len(files_on_disk)
         for f in files_on_disk:
             obj = json.loads(f.read_text())
             assert "timestamp" in obj, "missing timestamp in %s" % f.name
@@ -202,27 +190,25 @@ class TestWriteReceipts:
 
         names = [f.name for f in files_on_disk]
         assert names == [
-            "receipt-c1p1.json", "receipt-c1p2.json", "receipt-c1p3.json",
-            "receipt-c2p1.json", "receipt-c2p2.json", "receipt-c2p3.json",
-            "receipt-c3p1.json", "receipt-c3p2.json", "receipt-c3p3.json",
+            "receipt-c1p1.json",
+            "receipt-c1p2.json",
+            "receipt-c1p3.json",
+            "receipt-c2p1.json",
+            "receipt-c2p2.json",
+            "receipt-c2p3.json",
+            "receipt-c3p1.json",
+            "receipt-c3p2.json",
+            "receipt-c3p3.json",
         ]
-        stamps = [
-            json.loads(f.read_text())["timestamp"]
-            for f in sorted(rd.glob("receipt-*.json"))
-        ]
-        assert stamps == sorted(stamps), (
-            "timestamps invert between rounds: %s" % stamps
-        )
+        stamps = [json.loads(f.read_text())["timestamp"] for f in sorted(rd.glob("receipt-*.json"))]
+        assert stamps == sorted(stamps), "timestamps invert between rounds: %s" % stamps
         for start in range(0, 9, 3):
-            round_stamps = stamps[start:start + 3]
+            round_stamps = stamps[start : start + 3]
             assert len(set(round_stamps)) == 1, (
-                "passes in one round should share the round's write time, "
-                "got %s" % round_stamps
+                "passes in one round should share the round's write time, got %s" % round_stamps
             )
 
-    def test_run_verify_accepts_a_full_set_this_writer_produced(
-        self, tmp_path, monkeypatch
-    ):
+    def test_run_verify_accepts_a_full_set_this_writer_produced(self, tmp_path, monkeypatch):
         """The consumer, not just the files, has to accept what we write.
 
         The test above reads the timestamps back off disk itself. That
@@ -236,9 +222,7 @@ class TestWriteReceipts:
         the condition that inverts a per-pass offset.
         """
         base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
-        round_starts = iter(
-            [base + datetime.timedelta(milliseconds=50 * i) for i in range(3)]
-        )
+        round_starts = iter([base + datetime.timedelta(milliseconds=50 * i) for i in range(3)])
 
         class _Clock:
             @staticmethod
@@ -280,8 +264,7 @@ class TestWriteReceipts:
             % (result.checks_run, result.reason)
         )
         assert result.checks_passed >= 4, (
-            "the timestamp gate rejected a receipt set this very writer "
-            "produced: %s" % result.reason
+            "the timestamp gate rejected a receipt set this very writer produced: %s" % result.reason
         )
 
 
@@ -293,10 +276,16 @@ class TestBuildExcerpts:
     def test_list_of_lines_joined_into_string(self):
         from code_forge.receipt import _build_excerpts
 
-        out = _build_excerpts([{
-            "file": "src/foo.py", "start_line": 1, "end_line": 2,
-            "content": ["line one", "line two"],
-        }])
+        out = _build_excerpts(
+            [
+                {
+                    "file": "src/foo.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "content": ["line one", "line two"],
+                }
+            ]
+        )
         assert out[0]["content"] == "line one\nline two"
 
     def test_list_with_non_string_lines_left_unconverted(self):
@@ -306,19 +295,31 @@ class TestBuildExcerpts:
         the scalar case avoids."""
         from code_forge.receipt import _build_excerpts
 
-        out = _build_excerpts([{
-            "file": "src/foo.py", "start_line": 1, "end_line": 1,
-            "content": [1, None, "x"],
-        }])
+        out = _build_excerpts(
+            [
+                {
+                    "file": "src/foo.py",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content": [1, None, "x"],
+                }
+            ]
+        )
         assert out[0]["content"] == [1, None, "x"]
 
     def test_string_content_left_unchanged(self):
         from code_forge.receipt import _build_excerpts
 
-        out = _build_excerpts([{
-            "file": "src/foo.py", "start_line": 1, "end_line": 1,
-            "content": "def foo():\n    pass",
-        }])
+        out = _build_excerpts(
+            [
+                {
+                    "file": "src/foo.py",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content": "def foo():\n    pass",
+                }
+            ]
+        )
         assert out[0]["content"] == "def foo():\n    pass"
 
     def test_null_content_not_stringified_into_the_word_none(self):
@@ -328,10 +329,16 @@ class TestBuildExcerpts:
         fabricated excerpt nobody wrote."""
         from code_forge.receipt import _build_excerpts
 
-        out = _build_excerpts([{
-            "file": "src/foo.py", "start_line": 1, "end_line": 1,
-            "content": None,
-        }])
+        out = _build_excerpts(
+            [
+                {
+                    "file": "src/foo.py",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content": None,
+                }
+            ]
+        )
         assert out[0]["content"] is None
         assert out[0]["content"] != "None"
 
@@ -345,6 +352,7 @@ class TestBuildExcerpts:
         receipts_dir = Path("dummy")
 
         import tempfile
+
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
             receipts_dir = tdp / ".code-forge" / "receipts"
@@ -356,11 +364,15 @@ class TestBuildExcerpts:
                 source_files=[Path("src/foo.py")],
                 cwd=tdp,
                 diff_files={"src/foo.py": [1]},
-                reviewer_excerpts=[{
-                    "file": "src/foo.py", "start_line": 1, "end_line": 1,
-                    "content": None,
-                    "pass_name": "qodo",
-                }],
+                reviewer_excerpts=[
+                    {
+                        "file": "src/foo.py",
+                        "start_line": 1,
+                        "end_line": 1,
+                        "content": None,
+                        "pass_name": "qodo",
+                    }
+                ],
             )
             try:
                 _load_receipts(receipts_dir)
@@ -394,9 +406,7 @@ class TestBuildExcerpts:
             manifest_tier=ManifestTier.DECLARED,
         )
 
-        r = json.loads(
-            (tmp_path / ".code-forge" / "receipts" / "receipt-c3p1.json").read_text()
-        )
+        r = json.loads((tmp_path / ".code-forge" / "receipts" / "receipt-c3p1.json").read_text())
         assert len(r["findings"]) == 2
 
         finding_conf = r["findings"][0]
@@ -440,7 +450,9 @@ class TestExcerptPreflight:
     )
 
     def test_warns_when_an_excerpt_covers_a_line_the_diff_never_made(
-        self, tmp_path, caplog,
+        self,
+        tmp_path,
+        caplog,
     ):
         # Post-image holds lines 1-3; the excerpt claims up to 99.
         with caplog.at_level(logging.WARNING):
@@ -452,13 +464,15 @@ class TestExcerptPreflight:
                 source_files=[Path("src/foo.py")],
                 cwd=tmp_path,
                 diff_text=self._DIFF,
-                reviewer_excerpts=[{
-                    "file": "src/foo.py",
-                    "start_line": 1,
-                    "end_line": 99,
-                    "content": "line1\nadded\nline2\n",
-                    "pass_name": "qodo",
-                }],
+                reviewer_excerpts=[
+                    {
+                        "file": "src/foo.py",
+                        "start_line": 1,
+                        "end_line": 99,
+                        "content": "line1\nadded\nline2\n",
+                        "pass_name": "qodo",
+                    }
+                ],
             )
         assert "pre-flight" in caplog.text
         assert "not in diff post-image" in caplog.text
@@ -473,18 +487,22 @@ class TestExcerptPreflight:
                 source_files=[Path("src/foo.py")],
                 cwd=tmp_path,
                 diff_text=self._DIFF,
-                reviewer_excerpts=[{
-                    "file": "src/foo.py",
-                    "start_line": 1,
-                    "end_line": 3,
-                    "content": "line1\nadded\nline2\n",
-                    "pass_name": "qodo",
-                }],
+                reviewer_excerpts=[
+                    {
+                        "file": "src/foo.py",
+                        "start_line": 1,
+                        "end_line": 3,
+                        "content": "line1\nadded\nline2\n",
+                        "pass_name": "qodo",
+                    }
+                ],
             )
         assert "pre-flight" not in caplog.text
 
     def test_warns_when_the_file_is_absent_from_the_diff(
-        self, tmp_path, caplog,
+        self,
+        tmp_path,
+        caplog,
     ):
         with caplog.at_level(logging.WARNING):
             write_receipts(
@@ -495,13 +513,15 @@ class TestExcerptPreflight:
                 source_files=[Path("src/foo.py")],
                 cwd=tmp_path,
                 diff_text=self._DIFF,
-                reviewer_excerpts=[{
-                    "file": "src/never_touched.py",
-                    "start_line": 1,
-                    "end_line": 2,
-                    "content": "whatever\n",
-                    "pass_name": "qodo",
-                }],
+                reviewer_excerpts=[
+                    {
+                        "file": "src/never_touched.py",
+                        "start_line": 1,
+                        "end_line": 2,
+                        "content": "whatever\n",
+                        "pass_name": "qodo",
+                    }
+                ],
             )
         assert "not in the diff" in caplog.text
 
@@ -526,13 +546,15 @@ class TestExcerptPreflight:
                 source_files=[Path("logo.png")],
                 cwd=tmp_path,
                 diff_text=binary_diff,
-                reviewer_excerpts=[{
-                    "file": "logo.png",
-                    "start_line": 1,
-                    "end_line": 50,
-                    "content": "binary\n",
-                    "pass_name": "qodo",
-                }],
+                reviewer_excerpts=[
+                    {
+                        "file": "logo.png",
+                        "start_line": 1,
+                        "end_line": 50,
+                        "content": "binary\n",
+                        "pass_name": "qodo",
+                    }
+                ],
             )
         assert "pre-flight" not in caplog.text
 
@@ -546,13 +568,15 @@ class TestExcerptPreflight:
             source_files=[Path("src/foo.py")],
             cwd=tmp_path,
             diff_text=self._DIFF,
-            reviewer_excerpts=[{
-                "file": "src/foo.py",
-                "start_line": 1,
-                "end_line": 99,
-                "content": "x\n",
-                "pass_name": "qodo",
-            }],
+            reviewer_excerpts=[
+                {
+                    "file": "src/foo.py",
+                    "start_line": 1,
+                    "end_line": 99,
+                    "content": "x\n",
+                    "pass_name": "qodo",
+                }
+            ],
         )
         files = list((tmp_path / ".code-forge" / "receipts").glob("*.json"))
         assert len(files) == 3

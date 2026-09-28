@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Do not abort the deterministic promotion after an exhausted fix budget."""
+
 from pathlib import Path
 
 from code_forge.autofix import NoChangeAutoFixer
@@ -12,28 +13,47 @@ from code_forge.state import Mode, StateFinding, Verdict
 
 def test_exhausted_fix_budget_promotes_before_stall(tmp_path):
     def findings(registry, files):
-        return ([
-            StateFinding(
-                id="defect", fingerprint="defect", source="L0",
-                disposition=Disposition.CONFIRMED, file="sample.py",
-                line_range=[1], description="Unfixed defect",
-            ),
-            StateFinding(
-                id="uncertain", fingerprint="uncertain", source="L1",
-                disposition=Disposition.UNCERTAIN, file="sample.py",
-                line_range=[2], description="Needs human disposition",
-            ),
-        ], [])
+        return (
+            [
+                StateFinding(
+                    id="defect",
+                    fingerprint="defect",
+                    source="L0",
+                    disposition=Disposition.CONFIRMED,
+                    file="sample.py",
+                    line_range=[1],
+                    description="Unfixed defect",
+                ),
+                StateFinding(
+                    id="uncertain",
+                    fingerprint="uncertain",
+                    source="L1",
+                    disposition=Disposition.UNCERTAIN,
+                    file="sample.py",
+                    line_range=[2],
+                    description="Needs human disposition",
+                ),
+            ],
+            [],
+        )
 
     machine = StateMachine(
-        mode=Mode.LOCAL, falsifier=StubFalsifier(),
-        autofixer=NoChangeAutoFixer(), revert_fn=lambda finding: None,
+        mode=Mode.LOCAL,
+        falsifier=StubFalsifier(),
+        autofixer=NoChangeAutoFixer(),
+        revert_fn=lambda finding: None,
         resolved_review=ResolvedReview(
-            source_files=[Path("sample.py")], baseline_content=None,
-            git_diff=None, mode_hint="file",
+            source_files=[Path("sample.py")],
+            baseline_content=None,
+            git_diff=None,
+            mode_hint="file",
         ),
-        source_hash="fixture", baseline_spec_repr="fixture", cwd=tmp_path,
-        registry={}, l0_runner=findings, max_fix_attempts=3,
+        source_hash="fixture",
+        baseline_spec_repr="fixture",
+        cwd=tmp_path,
+        registry={},
+        l0_runner=findings,
+        max_fix_attempts=3,
         max_total_rounds=8,
     )
     assert machine.run() == Verdict.PENDING

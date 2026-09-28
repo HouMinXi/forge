@@ -72,6 +72,7 @@ def _coverage_findings(machine):
 # CI mode: coverage gap -> FAIL
 # ---------------------------------------------------------------------------
 
+
 def test_ci_uncovered_file_fails(tmp_path):
     machine = _machine(
         tmp_path,
@@ -183,6 +184,7 @@ def test_ci_coverage_gap_with_confirmed_still_fails(tmp_path):
 # ---------------------------------------------------------------------------
 # LOCAL mode: coverage gap -> PENDING (HOLD)
 # ---------------------------------------------------------------------------
+
 
 def test_local_uncovered_file_holds(tmp_path):
     machine = _machine(

@@ -19,7 +19,13 @@ from code_forge.mutation_engines.schemas import (
 )
 
 from code_forge.mutation_engines.hostconfig import HostUnavailable
-from code_forge.mutation_engines.reconcile import decide, exit_code, undeclared_decision, undeclared_target, _fails
+from code_forge.mutation_engines.reconcile import (
+    decide,
+    exit_code,
+    undeclared_decision,
+    undeclared_target,
+    _fails,
+)
 
 
 def _result(statuses, baseline=BaselineState.PASSED, state=RunState.COMPLETE):
@@ -39,10 +45,17 @@ def _result(statuses, baseline=BaselineState.PASSED, state=RunState.COMPLETE):
     )
     return TargetResult(
         identity=RunIdentity(
-            run_id="run1", reviewed_source_id="rev", input_manifest_digest="m" * 64,
-            selection_digest="s" * 64, config_digest="c" * 64,
-            execution_policy_digest="e" * 64, toolchain_fingerprint="py",
-            target_id="py", adapter_id="python-mutmut", adapter_version="1", tool_version="3.8.0",
+            run_id="run1",
+            reviewed_source_id="rev",
+            input_manifest_digest="m" * 64,
+            selection_digest="s" * 64,
+            config_digest="c" * 64,
+            execution_policy_digest="e" * 64,
+            toolchain_fingerprint="py",
+            target_id="py",
+            adapter_id="python-mutmut",
+            adapter_version="1",
+            tool_version="3.8.0",
         ),
         target_id="py",
         adapter_id="python-mutmut",
@@ -53,24 +66,39 @@ def _result(statuses, baseline=BaselineState.PASSED, state=RunState.COMPLETE):
         baseline=BaselineRecord(state=baseline, test_count=1, command_receipt=None, native_evidence=()),
         generation=Generation(
             inventory_artifact=ArtifactReference(relative_run_path="inv.json", digest="a" * 64, bytes=1),
-            completion_evidence=ArtifactReference(relative_run_path="done.json", digest="b" * 64, bytes=1),
+            completion_evidence=ArtifactReference(
+                relative_run_path="done.json", digest="b" * 64, bytes=1
+            ),
             extractor_version="1",
         ),
-        inventory=Inventory(generated=len(outcomes), selected=len(outcomes), excluded=0, completed=len(outcomes), manifest=()),
+        inventory=Inventory(
+            generated=len(outcomes),
+            selected=len(outcomes),
+            excluded=0,
+            completed=len(outcomes),
+            manifest=(),
+        ),
         outcomes=outcomes,
         native_artifacts=(),
         command_receipts=(),
         infrastructure_errors=(),
-        cleanup=Cleanup(state=CleanupState.COMPLETE, owned_group_empty=True, owned_mounts_removed=True, errors=()),
+        cleanup=Cleanup(
+            state=CleanupState.COMPLETE, owned_group_empty=True, owned_mounts_removed=True, errors=()
+        ),
     )
 
 
 def test_all_killed_is_pass():
-    assert decide((_result([NormalizedStatus.KILLED, NormalizedStatus.KILLED]),)) is AggregateDecision.PASS
+    assert (
+        decide((_result([NormalizedStatus.KILLED, NormalizedStatus.KILLED]),)) is AggregateDecision.PASS
+    )
 
 
 def test_a_survivor_is_fail():
-    assert decide((_result([NormalizedStatus.KILLED, NormalizedStatus.SURVIVED]),)) is AggregateDecision.FAIL
+    assert (
+        decide((_result([NormalizedStatus.KILLED, NormalizedStatus.SURVIVED]),))
+        is AggregateDecision.FAIL
+    )
 
 
 def test_a_baseline_that_did_not_pass_is_hold():
@@ -124,8 +152,6 @@ def test_exit_code_rejects_an_unknown_decision():
         exit_code("maybe")
 
 
-
-
 def test_an_undeclared_project_holds():
     """No approval record means no measurement, which is a hold."""
     decision = undeclared_decision(HostUnavailable("execution_not_authorized", "no record"))
@@ -144,4 +170,7 @@ def test_a_timeout_holds():
 
 def test_a_nonviable_mutant_does_not_fail():
     """A mutant that could not compile is excluded, not a survivor."""
-    assert decide((_result([NormalizedStatus.KILLED, NormalizedStatus.NONVIABLE]),)) is AggregateDecision.PASS
+    assert (
+        decide((_result([NormalizedStatus.KILLED, NormalizedStatus.NONVIABLE]),))
+        is AggregateDecision.PASS
+    )

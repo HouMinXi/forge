@@ -1,4 +1,5 @@
 """Exercise actual entry ordering before any backend/model side effect."""
+
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -36,11 +37,15 @@ def test_siblings_reject_before_outlet_or_model(setup, monkeypatch, siblings):
     data["siblings"] = siblings
     gate.write_text(yaml.safe_dump(data))
     from code_forge import outlet_resolver
+
     resolve = Mock(side_effect=AssertionError("outlet must not run"))
     monkeypatch.setattr(outlet_resolver, "resolve_outlet", resolve)
     error = cli.CliError
-    expected = ("kernel-context: siblings are not supported while kernel_context is enabled"
-                if isinstance(siblings, list) else "siblings: must be a list")
+    expected = (
+        "kernel-context: siblings are not supported while kernel_context is enabled"
+        if isinstance(siblings, list)
+        else "siblings: must be a list"
+    )
     with pytest.raises(error) as caught:
         cli._run(args, {}, root)
     assert str(caught.value) == expected
@@ -62,6 +67,7 @@ def test_supported_path_guard_after_authorization(setup, monkeypatch, outlet):
     root, gate, data, args = setup
     trust.record_kernel_context_trust(gate, root, validate_kernel_context(data["kernel_context"]))
     from code_forge import outlet_resolver
+
     monkeypatch.setattr(outlet_resolver, "resolve_outlet", lambda *a, **kw: outlet)
     dispatch = Mock(side_effect=AssertionError("dispatch must not run"))
     monkeypatch.setattr(cli, "_dispatch_inline_canary", dispatch)
@@ -78,13 +84,15 @@ def test_gate_check_validates_raw_section(setup, section):
     from io import StringIO
 
     from code_forge.gate_check import run_gate_check
+
     root, gate, data, _ = setup
     data.update(test={"command": ["pytest"]}, kernel_context=section)
     gate.write_text(yaml.safe_dump(data))
     trust.revoke_trust(gate)
     err = StringIO()
-    result = run_gate_check(SimpleNamespace(quiet=False), env={"FORGE_SKIP_TESTS": "1"},
-                            cwd=root, stderr=err)
+    result = run_gate_check(
+        SimpleNamespace(quiet=False), env={"FORGE_SKIP_TESTS": "1"}, cwd=root, stderr=err
+    )
     if section["enabled"] == "true":
         assert result == 1
         assert "kernel_context.enabled" in err.getvalue()
@@ -93,10 +101,13 @@ def test_gate_check_validates_raw_section(setup, section):
         assert "kernel-context: file access is not authorized" in err.getvalue()
 
 
-@pytest.mark.parametrize("section,siblings", [(None, None), ({"enabled": "true"}, None),
-    ({"enabled": True, "defconfig": "defconfig"}, False)])
+@pytest.mark.parametrize(
+    "section,siblings",
+    [(None, None), ({"enabled": "true"}, None), ({"enabled": True, "defconfig": "defconfig"}, False)],
+)
 def test_invalid_review_configuration_is_cli_error(setup, monkeypatch, capsys, section, siblings):
     import sys
+
     root, gate, data, _ = setup
     data["kernel_context"] = section
     if siblings is not None:
@@ -113,6 +124,7 @@ def test_invalid_review_configuration_is_cli_error(setup, monkeypatch, capsys, s
 @pytest.mark.parametrize("section", [None, {"enabled": "true"}])
 def test_trust_invalid_configuration_has_no_traceback(setup, monkeypatch, capsys, section):
     import sys
+
     root, gate, data, _ = setup
     data["kernel_context"] = section
     gate.write_text(yaml.safe_dump(data))

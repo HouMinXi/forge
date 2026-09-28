@@ -22,20 +22,20 @@ def _subagent_block() -> str:
     makes, however much sits between them. A fixed character window
     broke the moment a context gather was added ahead of the call."""
     src = _SRC.read_text()
-    start = src.index('def _dispatch_subagent(')
-    call = src.index('run_outlet_c(', start)
+    start = src.index("def _dispatch_subagent(")
+    call = src.index("run_outlet_c(", start)
     # the call's closing paren: first ')' at depth 0 after the open
-    depth, i = 0, call + len('run_outlet_c')
+    depth, i = 0, call + len("run_outlet_c")
     while True:
         ch = src[i]
-        if ch == '(':
+        if ch == "(":
             depth += 1
-        elif ch == ')':
+        elif ch == ")":
             depth -= 1
             if depth == 0:
                 break
         i += 1
-    return src[start: i + 1]
+    return src[start : i + 1]
 
 
 class TestSubagentDispatchLegs:
@@ -52,9 +52,7 @@ class TestSubagentDispatchLegs:
         block = _subagent_block()
         assert "advisory_runners=" in block
         for name in ["_c_taint", "_c_runtime", "_c_graph", "_c_daemon", "_c_legacy"]:
-            assert name in block, (
-                "runner %s must be constructed in subagent block" % name
-            )
+            assert name in block, "runner %s must be constructed in subagent block" % name
 
     def test_subagent_dispatch_passes_engine(self):
         """Subagent block passes engine=engine_choice to run_outlet_c."""
@@ -63,8 +61,7 @@ class TestSubagentDispatchLegs:
     def test_subagent_block_no_pre_graph_findings(self):
         """_pre_graph_findings must NOT appear in subagent block (not in scope)."""
         assert "_pre_graph_findings" not in _subagent_block(), (
-            "_pre_graph_findings is defined after subagent early-return; "
-            "using it here causes NameError"
+            "_pre_graph_findings is defined after subagent early-return; using it here causes NameError"
         )
 
 
@@ -101,20 +98,14 @@ class TestInlineCanaryEnvPassthrough:
         env = {"TEST_KEY": "1"}
 
         # Real Python diff so run_inline_canary doesn't skip.
-        _PYTHON_DIFF = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
-            "@@ -1 +1,2 @@\n"
-            " pass\n"
-            "+x = 1\n"
-        )
+        _PYTHON_DIFF = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n pass\n+x = 1\n"
 
         # llm_invoke returns valid mutation JSON for canary_provider,
         # and a PASS verdict for review_provider.
         mutation_json = '{"mutations": [{"file": "x.py", "line": 1, "original": "pass", "code": "assert False", "description": "injected crash"}]}'
         review_json = '{"verdict": "PASS", "findings": []}'
         call_count = {"n": 0}
+
         def fake_llm(prompt, backend=None, **kw):
             call_count["n"] += 1
             if call_count["n"] <= 1:
@@ -122,42 +113,41 @@ class TestInlineCanaryEnvPassthrough:
             return MagicMock(content=review_json)
 
         fake_diff_result = MagicMock(returncode=0, stdout=_PYTHON_DIFF)
-        with patch(
-            "code_forge.cli._load_canary_config",
-            return_value=gate_data["canary"],
-        ), patch(
-            "code_forge.backend.resolve_backend",
-            return_value=fake_backend,
-        ) as mock_resolve, patch(
-            "code_forge.llm_invoke.llm_invoke",
-            side_effect=fake_llm,
-        ) as mock_llm, patch(
-            "subprocess.run",
-            return_value=fake_diff_result,
+        with (
+            patch(
+                "code_forge.cli._load_canary_config",
+                return_value=gate_data["canary"],
+            ),
+            patch(
+                "code_forge.backend.resolve_backend",
+                return_value=fake_backend,
+            ) as mock_resolve,
+            patch(
+                "code_forge.llm_invoke.llm_invoke",
+                side_effect=fake_llm,
+            ) as mock_llm,
+            patch(
+                "subprocess.run",
+                return_value=fake_diff_result,
+            ),
         ):
-            result = _dispatch_inline_canary(
-                "inline", args, env, {}, gate_data, tmp_path)
+            result = _dispatch_inline_canary("inline", args, env, {}, gate_data, tmp_path)
 
             # resolve_backend was called with env.
-            assert mock_resolve.called, (
-                "resolve_backend was never called -- canary path is dead"
-            )
-            assert mock_resolve.call_args[0][0] is env, (
-                "resolve_backend received wrong env"
-            )
+            assert mock_resolve.called, "resolve_backend was never called -- canary path is dead"
+            assert mock_resolve.call_args[0][0] is env, "resolve_backend received wrong env"
             # llm_invoke was called at least once (canary generation).
             # With n=1 the generator may not produce enough verified
             # canaries to reach the review call -- that is correct
             # behavior, not a bug.  call_count >= 1 proves the path
             # is alive (backend=None would yield 0 calls).
-            assert mock_llm.call_count >= 1, (
-                "llm_invoke was never called -- canary is silently dead"
-            )
+            assert mock_llm.call_count >= 1, "llm_invoke was never called -- canary is silently dead"
             # None is a legal return here -- it means "not my outlet, go
             # run the subprocess path".  For inline that answer is wrong,
             # and wrong quietly: the caller would fall through and review
             # the diff a second time.
             from code_forge.state import Verdict
+
             assert isinstance(result, Verdict), (
                 "inline returned %s, so the caller falls through to the "
                 "subprocess path" % type(result).__name__
@@ -167,6 +157,7 @@ class TestInlineCanaryEnvPassthrough:
         """outlet='sampling' must raise CliError."""
         from unittest.mock import MagicMock
         from code_forge.cli import _dispatch_inline_canary, CliError
+
         args = MagicMock()
         try:
             _dispatch_inline_canary("sampling", args, {}, {}, {}, tmp_path)
@@ -178,6 +169,7 @@ class TestInlineCanaryEnvPassthrough:
         """outlet='subprocess' must return None (fall through)."""
         from unittest.mock import MagicMock
         from code_forge.cli import _dispatch_inline_canary
+
         args = MagicMock()
         result = _dispatch_inline_canary("subprocess", args, {}, {}, {}, tmp_path)
         assert result is None
@@ -187,6 +179,7 @@ class TestInlineCanaryEnvPassthrough:
         from unittest.mock import patch, MagicMock
         from code_forge.cli import _dispatch_inline_canary
         from code_forge.state import Verdict
+
         args = MagicMock()
         args.backend = None
         with patch("code_forge.cli._load_canary_config", return_value=None):
@@ -200,21 +193,41 @@ class TestDispatchCrossRepo:
     def test_returns_none_when_no_siblings(self, tmp_path):
         from unittest.mock import patch
         from code_forge.cli import _dispatch_cross_repo
+
         with patch("code_forge.cli._cross_repo_verdict_or_none", return_value=None):
             result = _dispatch_cross_repo(
-                tmp_path / "gate.yaml", tmp_path,
-                None, None, None, None, None, None, None, None, lambda m: None,
+                tmp_path / "gate.yaml",
+                tmp_path,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                lambda m: None,
             )
         assert result is None
 
     def test_returns_verdict_when_siblings_exist(self, tmp_path):
         from unittest.mock import patch, MagicMock
         from code_forge.cli import _dispatch_cross_repo
+
         sentinel = MagicMock()
         with patch("code_forge.cli._cross_repo_verdict_or_none", return_value=sentinel):
             result = _dispatch_cross_repo(
-                tmp_path / "gate.yaml", tmp_path,
-                None, None, None, None, None, None, None, None, lambda m: None,
+                tmp_path / "gate.yaml",
+                tmp_path,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                lambda m: None,
             )
         assert result is sentinel
 
@@ -225,11 +238,20 @@ class TestDispatchSubagent:
     def test_returns_none_for_non_subagent(self, tmp_path):
         from unittest.mock import MagicMock
         from code_forge.cli import _dispatch_subagent
+
         resolved = MagicMock()
         resolved.git_diff = None
         result = _dispatch_subagent(
-            "subprocess", lambda m: None, "", MagicMock(),
-            resolved, "hash", {}, "stub", 3, tmp_path,
+            "subprocess",
+            lambda m: None,
+            "",
+            MagicMock(),
+            resolved,
+            "hash",
+            {},
+            "stub",
+            3,
+            tmp_path,
         )
         assert result is None
 
@@ -255,22 +277,35 @@ class TestContractsYamlGuard:
         fake_backend = MagicMock()
         fake_backend.name = "test"
 
-        with patch(
-            "code_forge.contract_loader.load_contract_digest",
-            side_effect=RuntimeError("simulated failure"),
-        ), patch(
-            "code_forge.cli._merge_contract_spec",
-            return_value="",
-        ) as mock_merge, patch(
-            "code_forge.cli._assemble_post_image",
-            return_value=("", ""),
-        ), patch(
-            "code_forge.outlet_c.run_outlet_c",
-            return_value=MagicMock(verdict="PASS"),
+        with (
+            patch(
+                "code_forge.contract_loader.load_contract_digest",
+                side_effect=RuntimeError("simulated failure"),
+            ),
+            patch(
+                "code_forge.cli._merge_contract_spec",
+                return_value="",
+            ) as mock_merge,
+            patch(
+                "code_forge.cli._assemble_post_image",
+                return_value=("", ""),
+            ),
+            patch(
+                "code_forge.outlet_c.run_outlet_c",
+                return_value=MagicMock(verdict="PASS"),
+            ),
         ):
             _dispatch_subagent(
-                "subagent", lambda m: None, "", fake_backend,
-                resolved, "hash", {}, "stub", 3, tmp_path,
+                "subagent",
+                lambda m: None,
+                "",
+                fake_backend,
+                resolved,
+                "hash",
+                {},
+                "stub",
+                3,
+                tmp_path,
             )
 
         # stderr should contain the error message
@@ -343,46 +378,61 @@ class TestContractsYamlGuard:
 
         # resolve_mode and resolve_outlet are imported INSIDE _run
         # with `from .X import Y` -- must patch at source module.
-        with patch(
-            "code_forge.cli._load_gate_backends",
-            return_value=({}, {}),
-        ), patch(
-            "code_forge.cli.resolve_mode",
-        ) as mock_rm, patch(
-            "code_forge.outlet_resolver.resolve_outlet",
-            return_value="subprocess",
-        ), patch(
-            "code_forge.backend.resolve_backend",
-            return_value=fake_backend,
-        ), patch(
-            "code_forge.cli.load_registry",
-            return_value={"ruff": {"type": "linter"}},
-        ), patch(
-            "code_forge.cli._build_baseline_specs",
-            return_value=("baseline_spec", "head_spec"),
-        ), patch(
-            "code_forge.cli.resolve_baseline",
-            return_value=fake_resolved,
-        ), patch(
-            "code_forge.cli.serialize_baseline_spec",
-            return_value="fake-baseline",
-        ), patch(
-            "code_forge.cli._assemble_post_image",
-            return_value=("", ""),
-        ), patch(
-            "code_forge.cli._dispatch_inline_canary",
-            return_value=None,
-        ), patch(
-            "code_forge.cli._dispatch_subagent",
-            return_value=None,
-        ), patch(
-            "code_forge.cli._merge_contract_spec",
-            return_value="",
-        ) as mock_merge, patch(
-            "code_forge.contract_loader.load_contract_digest",
-            side_effect=RuntimeError("simulated failure"),
+        with (
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=({}, {}),
+            ),
+            patch(
+                "code_forge.cli.resolve_mode",
+            ) as mock_rm,
+            patch(
+                "code_forge.outlet_resolver.resolve_outlet",
+                return_value="subprocess",
+            ),
+            patch(
+                "code_forge.backend.resolve_backend",
+                return_value=fake_backend,
+            ),
+            patch(
+                "code_forge.cli.load_registry",
+                return_value={"ruff": {"type": "linter"}},
+            ),
+            patch(
+                "code_forge.cli._build_baseline_specs",
+                return_value=("baseline_spec", "head_spec"),
+            ),
+            patch(
+                "code_forge.cli.resolve_baseline",
+                return_value=fake_resolved,
+            ),
+            patch(
+                "code_forge.cli.serialize_baseline_spec",
+                return_value="fake-baseline",
+            ),
+            patch(
+                "code_forge.cli._assemble_post_image",
+                return_value=("", ""),
+            ),
+            patch(
+                "code_forge.cli._dispatch_inline_canary",
+                return_value=None,
+            ),
+            patch(
+                "code_forge.cli._dispatch_subagent",
+                return_value=None,
+            ),
+            patch(
+                "code_forge.cli._merge_contract_spec",
+                return_value="",
+            ) as mock_merge,
+            patch(
+                "code_forge.contract_loader.load_contract_digest",
+                side_effect=RuntimeError("simulated failure"),
+            ),
         ):
             from code_forge.mode_resolver import Mode
+
             mock_rm.return_value = Mode.LOCAL
             # _run will eventually raise (downstream code needs real
             # objects for JSON serialization), but the contracts guard
@@ -395,23 +445,20 @@ class TestContractsYamlGuard:
 
         # Guard side-effects: stderr message + empty digest fallback
         captured = capsys.readouterr()
-        assert "contracts.yaml load failed" in captured.err, (
-            "guard did not log to stderr"
-        )
-        assert "simulated failure" in captured.err, (
-            "exception message missing from stderr"
-        )
+        assert "contracts.yaml load failed" in captured.err, "guard did not log to stderr"
+        assert "simulated failure" in captured.err, "exception message missing from stderr"
 
         # _merge_contract_spec received empty digest (not exception)
-        assert mock_merge.called, (
-            "_merge_contract_spec was never called"
-        )
+        assert mock_merge.called, "_merge_contract_spec was never called"
         assert mock_merge.call_args[0][0] == "", (
             "expected empty digest, got %r" % mock_merge.call_args[0][0]
         )
 
     def test_helper_catches_import_failure(
-        self, tmp_path, capsys, monkeypatch,
+        self,
+        tmp_path,
+        capsys,
+        monkeypatch,
     ):
         """Import-time failure degrades to empty digest.
 
@@ -449,14 +496,14 @@ class TestContractsYamlGuard:
         # Pass a backend like both live call sites do, rather than relying
         # on the default, so a broken backend hand-off is still caught here.
         digest = _safe_load_contract_digest(
-            contracts_yaml, tmp_path, backend=MagicMock(name="backend"),
+            contracts_yaml,
+            tmp_path,
+            backend=MagicMock(name="backend"),
         )
 
         assert digest == "", "import failure should degrade to empty digest"
         captured = capsys.readouterr()
-        assert "contracts.yaml load failed" in captured.err, (
-            "import failure should be logged to stderr"
-        )
+        assert "contracts.yaml load failed" in captured.err, "import failure should be logged to stderr"
 
     def test_helper_lets_memoryerror_through(self, tmp_path):
         """Memory exhaustion aborts instead of degrading to empty digest.

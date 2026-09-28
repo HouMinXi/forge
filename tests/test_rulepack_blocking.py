@@ -11,6 +11,7 @@ Non-promoted rules stay advisory-only.
 The semgrep execution path is covered by test_rulepack_runner.py; here
 RulepackRunner.run is stubbed so the bridge logic is the unit under test.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -67,8 +68,10 @@ def _make_sm(tmp_path, *, advisories, blocking_ids):
 
     fake_runner = _FakeRunner(advisories)
 
-    with patch("code_forge.gate_check.load_gate_config", _fake_gate_config), \
-         patch("code_forge.rulepack.RulepackRunner", lambda: fake_runner):
+    with (
+        patch("code_forge.gate_check.load_gate_config", _fake_gate_config),
+        patch("code_forge.rulepack.RulepackRunner", lambda: fake_runner),
+    ):
         sm = StateMachine(
             mode=Mode.LOCAL,
             falsifier=StubFalsifier(),
@@ -88,8 +91,7 @@ def _make_sm(tmp_path, *, advisories, blocking_ids):
 class TestBlockingBridge:
     def test_promoted_rule_becomes_blocking_state_finding(self, tmp_path):
         advisories = [_advisory("rule-a", line=7)]
-        findings, _ = _make_sm(tmp_path, advisories=advisories,
-                               blocking_ids=["rule-a"])
+        findings, _ = _make_sm(tmp_path, advisories=advisories, blocking_ids=["rule-a"])
         assert len(findings) == 1
         f = findings[0]
         assert f.source == "RULEPACK"
@@ -99,10 +101,8 @@ class TestBlockingBridge:
 
     def test_promoted_fingerprint_is_deterministic_and_hashed_desc(self, tmp_path):
         advisories = [_advisory("rule-a", line=7)]
-        f1, _ = _make_sm(tmp_path, advisories=advisories,
-                         blocking_ids=["rule-a"])
-        f2, _ = _make_sm(tmp_path, advisories=advisories,
-                         blocking_ids=["rule-a"])
+        f1, _ = _make_sm(tmp_path, advisories=advisories, blocking_ids=["rule-a"])
+        f2, _ = _make_sm(tmp_path, advisories=advisories, blocking_ids=["rule-a"])
         assert f1[0].fingerprint == f2[0].fingerprint
         assert f1[0].fingerprint.startswith("rulepack:testpack:rule-a:app.py:7:")
         # Trailing segment must be a 12-char sha256 digest of the description.
@@ -111,8 +111,7 @@ class TestBlockingBridge:
 
     def test_non_promoted_rule_stays_advisory_only(self, tmp_path):
         advisories = [_advisory("rule-a"), _advisory("rule-b")]
-        findings, _ = _make_sm(tmp_path, advisories=advisories,
-                               blocking_ids=["rule-a"])
+        findings, _ = _make_sm(tmp_path, advisories=advisories, blocking_ids=["rule-a"])
         # Only rule-a is promoted; rule-b is not converted.
         assert len(findings) == 1
         assert findings[0].fingerprint.split(":")[2] == "rule-a"
@@ -125,8 +124,7 @@ class TestBlockingBridge:
     def test_unrelated_rule_id_not_promoted(self, tmp_path):
         # blocking list names a rule that produced no advisory -> no finding.
         advisories = [_advisory("rule-a")]
-        findings, _ = _make_sm(tmp_path, advisories=advisories,
-                               blocking_ids=["rule-b"])
+        findings, _ = _make_sm(tmp_path, advisories=advisories, blocking_ids=["rule-b"])
         assert findings == []
 
     def test_malformed_advisory_id_skipped(self, tmp_path):
@@ -138,6 +136,5 @@ class TestBlockingBridge:
             description="x",
             attribution="semgrep-ce/rulepack",
         )
-        findings, _ = _make_sm(tmp_path, advisories=[bad],
-                               blocking_ids=["rule-a"])
+        findings, _ = _make_sm(tmp_path, advisories=[bad], blocking_ids=["rule-a"])
         assert findings == []

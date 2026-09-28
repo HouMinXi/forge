@@ -127,9 +127,7 @@ class TestHalfSkippedCorpus:
     """The plan's stated done-condition for this task."""
 
     def test_recall_halves_when_half_the_corpus_skips(self):
-        all_scored = compute_summary(
-            [_scored(2, hits=2, name=f"s{i}") for i in range(4)]
-        )
+        all_scored = compute_summary([_scored(2, hits=2, name=f"s{i}") for i in range(4)])
         half_skipped = compute_summary(
             [_scored(2, hits=2, name=f"s{i}") for i in range(2)]
             + [_skipped(2, name=f"k{i}") for i in range(2)]
@@ -146,9 +144,7 @@ class TestSkipCountIsVisible:
     """
 
     def test_counts_both_exclusion_paths(self):
-        s = compute_summary(
-            [_scored(1, hits=1), _skipped(1), _evidenceless(1)]
-        )
+        s = compute_summary([_scored(1, hits=1), _skipped(1), _evidenceless(1)])
         assert s.findings_skipped_entries == 2
 
     def test_zero_when_everything_scored(self):

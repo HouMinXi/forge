@@ -57,10 +57,12 @@ def test_assembles_content_model_finish_and_usage(monkeypatch):
     )
     assert result == {
         "model": "m1",
-        "choices": [{
-            "message": {"role": "assistant", "content": "hello"},
-            "finish_reason": "stop",
-        }],
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "hello"},
+                "finish_reason": "stop",
+            }
+        ],
         "usage": {"total_tokens": 3},
     }
     assert messages == ["backend agnes: first token"]

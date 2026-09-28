@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """JSON cut detection for stop-finished truncated replies."""
+
 import itertools
 import json
 from pathlib import Path
@@ -53,9 +54,7 @@ def test_backslash_consumes_the_next_byte():
 
 
 def test_string_scanner_has_no_escape_flag():
-    src = Path(__file__).resolve().parents[1].joinpath(
-        "src/code_forge/json_cut.py"
-    ).read_text()
+    src = Path(__file__).resolve().parents[1].joinpath("src/code_forge/json_cut.py").read_text()
     _, body = src.split("def json_cut_inside_string", 1)
     body = body.split("\ndef ", 1)[0]
     assert "escaped" not in body

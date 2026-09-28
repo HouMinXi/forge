@@ -1,4 +1,5 @@
 """Tests for the shared finding helpers."""
+
 from __future__ import annotations
 
 from code_forge.findings import finding_line

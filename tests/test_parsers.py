@@ -31,6 +31,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 # -- shellcheck -------------------------------------------------------
 
+
 class TestParseShellcheck:
     """Tests for parse_shellcheck()."""
 
@@ -73,6 +74,7 @@ class TestParseShellcheck:
 
 # -- ruff (SARIF) -----------------------------------------------------
 
+
 class TestParseRuff:
     """Tests for parse_ruff()."""
 
@@ -106,6 +108,7 @@ class TestParseRuff:
 
 # -- semgrep (SARIF) --------------------------------------------------
 
+
 class TestParseSemgrep:
     """Tests for parse_semgrep()."""
 
@@ -115,9 +118,7 @@ class TestParseSemgrep:
         assert len(findings) == 1
         f0 = findings[0]
         assert isinstance(f0, Finding)
-        assert f0.rule_id == (
-            "python.lang.security.audit.subprocess-shell-true"
-        )
+        assert f0.rule_id == ("python.lang.security.audit.subprocess-shell-true")
         assert f0.level == "warning"
         assert f0.file == "src/runner.py"
         assert f0.line == 15
@@ -136,6 +137,7 @@ class TestParseSemgrep:
 
 
 # -- clippy ------------------------------------------------------------
+
 
 class TestParseClippy:
     """Tests for parse_clippy()."""
@@ -162,34 +164,40 @@ class TestParseClippy:
 
     def test_empty_spans_skipped(self):
         """Diagnostic with empty spans array is skipped."""
-        line = json.dumps({
-            "reason": "compiler-message",
-            "message": {
-                "level": "warning",
-                "message": "something",
-                "code": {"code": "clippy::test", "explanation": None},
-                "spans": [],
-            },
-        })
+        line = json.dumps(
+            {
+                "reason": "compiler-message",
+                "message": {
+                    "level": "warning",
+                    "message": "something",
+                    "code": {"code": "clippy::test", "explanation": None},
+                    "spans": [],
+                },
+            }
+        )
         findings = parse_clippy(line)
         assert findings == []
 
     def test_code_none_fallback(self):
         """Diagnostic with code=None uses 'unknown' rule_id."""
-        line = json.dumps({
-            "reason": "compiler-message",
-            "message": {
-                "level": "warning",
-                "message": "aborting",
-                "code": None,
-                "spans": [{
-                    "file_name": "src/x.rs",
-                    "line_start": 1,
-                    "line_end": 1,
-                    "column_start": 1,
-                }],
-            },
-        })
+        line = json.dumps(
+            {
+                "reason": "compiler-message",
+                "message": {
+                    "level": "warning",
+                    "message": "aborting",
+                    "code": None,
+                    "spans": [
+                        {
+                            "file_name": "src/x.rs",
+                            "line_start": 1,
+                            "line_end": 1,
+                            "column_start": 1,
+                        }
+                    ],
+                },
+            }
+        )
         findings = parse_clippy(line)
         assert len(findings) == 1
         assert findings[0].rule_id == "unknown"
@@ -205,6 +213,7 @@ class TestParseClippy:
 
 
 # -- checkpatch --------------------------------------------------------
+
 
 class TestParseCheckpatch:
     """Tests for parse_checkpatch()."""
@@ -243,13 +252,12 @@ class TestParseCheckpatch:
 
     def test_summary_only_not_error(self):
         """Output with only a summary line is not malformed."""
-        result = parse_checkpatch(
-            "total: 0 errors, 0 warnings, 10 lines checked\n"
-        )
+        result = parse_checkpatch("total: 0 errors, 0 warnings, 10 lines checked\n")
         assert result == []
 
 
 # -- non_ascii ---------------------------------------------------------
+
 
 class TestParseNonAscii:
     """Tests for parse_non_ascii()."""
@@ -291,6 +299,7 @@ class TestParseNonAscii:
 
 
 # -- dispatch ----------------------------------------------------------
+
 
 class TestParserDispatch:
     """Tests for PARSER_DISPATCH and parse_output()."""
@@ -343,17 +352,21 @@ class TestParserDispatch:
         assert findings[0].tool_name == "flake8"
 
     def test_dispatch_pylint(self):
-        raw = json.dumps([{
-            "type": "warning",
-            "path": "a.py",
-            "line": 1,
-            "column": 0,
-            "endLine": 1,
-            "endColumn": 2,
-            "symbol": "x",
-            "message": "m",
-            "message-id": "W0001",
-        }])
+        raw = json.dumps(
+            [
+                {
+                    "type": "warning",
+                    "path": "a.py",
+                    "line": 1,
+                    "column": 0,
+                    "endLine": 1,
+                    "endColumn": 2,
+                    "symbol": "x",
+                    "message": "m",
+                    "message-id": "W0001",
+                }
+            ]
+        )
         findings = parse_output(raw, "pylint_json", "pylint")
         assert len(findings) == 1
         assert isinstance(findings[0], Finding)
@@ -368,14 +381,12 @@ class TestParserDispatch:
 
 # -- flake8 ---------------------------------------------------------------
 
+
 class TestParseFlake8:
     """Tests for parse_flake8()."""
 
     def test_valid_output(self):
-        raw = (
-            "src/foo.py:10:1: E501 line too long\n"
-            "src/bar.py:3:5: F401 'os' imported but unused\n"
-        )
+        raw = "src/foo.py:10:1: E501 line too long\nsrc/bar.py:3:5: F401 'os' imported but unused\n"
         findings = parse_flake8(raw)
         assert len(findings) == 2
         f0 = findings[0]
@@ -409,20 +420,14 @@ class TestParseFlake8:
         assert result[0].exit_code == 5
 
     def test_multiple_findings_same_file(self):
-        raw = (
-            "src/x.py:1:1: E302 expected 2 blank lines\n"
-            "src/x.py:5:3: W291 trailing whitespace\n"
-        )
+        raw = "src/x.py:1:1: E302 expected 2 blank lines\nsrc/x.py:5:3: W291 trailing whitespace\n"
         findings = parse_flake8(raw)
         assert len(findings) == 2
         assert findings[0].line == 1
         assert findings[1].line == 5
 
     def test_message_with_colon(self):
-        raw = (
-            "src/x.py:7:2: E712 comparison to True should be "
-            "'if cond is True:' or 'if cond:'\n"
-        )
+        raw = "src/x.py:7:2: E712 comparison to True should be 'if cond is True:' or 'if cond:'\n"
         findings = parse_flake8(raw)
         assert len(findings) == 1
         assert ":" in findings[0].message
@@ -430,6 +435,7 @@ class TestParseFlake8:
 
 
 # -- pylint ----------------------------------------------------------------
+
 
 class TestParsePylint:
     """Tests for parse_pylint()."""
@@ -504,12 +510,11 @@ class TestParsePylint:
                 },
             ]
             findings = parse_pylint(json.dumps(data))
-            assert len(findings) == 1, (
-                "type=%s should produce 1 finding" % pylint_type
-            )
-            assert findings[0].level == expected_level, (
-                "type=%s should map to level=%s, got %s"
-                % (pylint_type, expected_level, findings[0].level)
+            assert len(findings) == 1, "type=%s should produce 1 finding" % pylint_type
+            assert findings[0].level == expected_level, "type=%s should map to level=%s, got %s" % (
+                pylint_type,
+                expected_level,
+                findings[0].level,
             )
 
     def test_endline_null_fallback(self):

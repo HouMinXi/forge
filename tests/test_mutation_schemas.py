@@ -6,6 +6,7 @@ Covers: schema round-trip, normalized status enumeration, target
 declaration validation, worker config validation, budget validation,
 and rejection of malformed, duplicate and oversized declarations.
 """
+
 from __future__ import annotations
 
 
@@ -27,6 +28,7 @@ from code_forge.mutation_engines.schemas import (
 
 
 # -- Identifier validation ---------------------------------------------------
+
 
 class TestIdentifierValidation:
     def test_valid_simple(self):
@@ -63,6 +65,7 @@ class TestIdentifierValidation:
 
 # -- NormalizedStatus ---------------------------------------------------------
 
+
 class TestNormalizedStatus:
     def test_nine_members(self):
         members = list(NormalizedStatus)
@@ -70,8 +73,15 @@ class TestNormalizedStatus:
 
     def test_values_lowercase(self):
         expected = {
-            "killed", "survived", "no_coverage", "nonviable",
-            "timed_out", "runtime_error", "ignored", "pending", "unknown",
+            "killed",
+            "survived",
+            "no_coverage",
+            "nonviable",
+            "timed_out",
+            "runtime_error",
+            "ignored",
+            "pending",
+            "unknown",
         }
         assert {s.value for s in NormalizedStatus} == expected
 
@@ -81,6 +91,7 @@ class TestNormalizedStatus:
 
 
 # -- Budget -------------------------------------------------------------------
+
 
 def _valid_budget_dict():
     return {
@@ -155,6 +166,7 @@ class TestBudget:
 
 
 # -- TargetDeclaration --------------------------------------------------------
+
 
 def _valid_target_dict(**overrides):
     d = {
@@ -302,6 +314,7 @@ class TestTargetDeclaration:
 
 # -- WorkerConfig ------------------------------------------------------------
 
+
 def _valid_worker_dict(**overrides):
     d = {
         "schema_version": 1,
@@ -384,6 +397,7 @@ class TestWorkerConfig:
 
 # -- WorkerConfig admission --------------------------------------------------
 
+
 class TestWorkerAdmission:
     def _worker(self, **kw):
         return WorkerConfig.from_dict(_valid_worker_dict(**kw))
@@ -392,8 +406,7 @@ class TestWorkerAdmission:
         return TargetDeclaration.from_dict(_valid_target_dict(**kw))
 
     def test_admission_passes(self):
-        w = self._worker(memory_mb=8192, pids=512,
-                         supervisor_memory_mb=256, supervisor_pids=32)
+        w = self._worker(memory_mb=8192, pids=512, supervisor_memory_mb=256, supervisor_pids=32)
         t = self._target()  # budget.memory_mb=4096, budget.processes=128
         w.check_admission([t])  # 4096+256 <= 8192, 128+32 <= 512
 
@@ -416,6 +429,7 @@ class TestWorkerAdmission:
 
 # -- ArtifactReference / InfrastructureError ---------------------------------
 
+
 class TestArtifactReference:
     def test_round_trip(self):
         ar = ArtifactReference(
@@ -430,15 +444,12 @@ class TestArtifactReference:
 
     def test_reject_negative_bytes(self):
         with pytest.raises(ValueError, match="nonnegative"):
-            ArtifactReference(
-                relative_run_path="x", digest="d", bytes=-1
-            )
+            ArtifactReference(relative_run_path="x", digest="d", bytes=-1)
 
 
 class TestInfrastructureError:
     def test_valid_phases(self):
-        for phase in ("resolve", "snapshot", "probe", "baseline",
-                      "mutation", "parse", "cleanup"):
+        for phase in ("resolve", "snapshot", "probe", "baseline", "mutation", "parse", "cleanup"):
             ie = InfrastructureError(
                 code="test_err",
                 phase=phase,
@@ -452,50 +463,72 @@ class TestInfrastructureError:
     def test_reject_invalid_phase(self):
         with pytest.raises(ValueError, match="phase must be one of"):
             InfrastructureError(
-                code="e", phase="invalid", target_id=None,
-                message="m", retryable=False, evidence_refs=(),
+                code="e",
+                phase="invalid",
+                target_id=None,
+                message="m",
+                retryable=False,
+                evidence_refs=(),
             )
 
     def test_reject_empty_code(self):
         with pytest.raises(ValueError, match="code must be nonempty"):
             InfrastructureError(
-                code="", phase="resolve", target_id=None,
-                message="m", retryable=False, evidence_refs=(),
+                code="",
+                phase="resolve",
+                target_id=None,
+                message="m",
+                retryable=False,
+                evidence_refs=(),
             )
 
     def test_reject_oversized_message(self):
         with pytest.raises(ValueError, match="exceeds 4096"):
             InfrastructureError(
-                code="e", phase="resolve", target_id=None,
-                message="x" * 4097, retryable=False, evidence_refs=(),
+                code="e",
+                phase="resolve",
+                target_id=None,
+                message="x" * 4097,
+                retryable=False,
+                evidence_refs=(),
             )
 
 
 # -- Enum checks --------------------------------------------------------------
 
+
 class TestEnums:
     def test_run_state_values(self):
         assert set(RunState) == {
-            RunState.COMPLETE, RunState.INCOMPLETE, RunState.UNAVAILABLE,
-            RunState.CANCELLED, RunState.ERROR, RunState.INAPPLICABLE,
+            RunState.COMPLETE,
+            RunState.INCOMPLETE,
+            RunState.UNAVAILABLE,
+            RunState.CANCELLED,
+            RunState.ERROR,
+            RunState.INAPPLICABLE,
         }
 
     def test_aggregate_decision_values(self):
         assert set(AggregateDecision) == {
-            AggregateDecision.PASS, AggregateDecision.FAIL,
-            AggregateDecision.HOLD, AggregateDecision.NOT_APPLICABLE,
+            AggregateDecision.PASS,
+            AggregateDecision.FAIL,
+            AggregateDecision.HOLD,
+            AggregateDecision.NOT_APPLICABLE,
         }
 
     def test_baseline_state_values(self):
         assert set(BaselineState) == {
-            BaselineState.PASSED, BaselineState.FAILED,
-            BaselineState.EMPTY, BaselineState.UNSTABLE,
+            BaselineState.PASSED,
+            BaselineState.FAILED,
+            BaselineState.EMPTY,
+            BaselineState.UNSTABLE,
             BaselineState.UNKNOWN,
         }
 
     def test_cleanup_state_values(self):
         assert set(CleanupState) == {
-            CleanupState.COMPLETE, CleanupState.INCOMPLETE,
+            CleanupState.COMPLETE,
+            CleanupState.INCOMPLETE,
             CleanupState.PENDING,
         }
 

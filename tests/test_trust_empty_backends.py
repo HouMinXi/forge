@@ -23,16 +23,12 @@ def _make_env(tmp_path):
 @pytest.fixture
 def repo_with_gate(tmp_path):
     """Git repo with .code-forge/gate.yaml."""
-    subprocess.run(["git", "init"], cwd=tmp_path,
-                   capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
     for k, v in [("user.email", "t@t"), ("user.name", "t")]:
-        subprocess.run(["git", "config", k, v], cwd=tmp_path,
-                       capture_output=True, check=True)
+        subprocess.run(["git", "config", k, v], cwd=tmp_path, capture_output=True, check=True)
     (tmp_path / "a.py").write_text("x = 1\n")
-    subprocess.run(["git", "add", "a.py"], cwd=tmp_path,
-                   capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path,
-                   capture_output=True, check=True)
+    subprocess.run(["git", "add", "a.py"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
     (tmp_path / ".code-forge").mkdir()
     from tests.conftest import plant_mutmut_cfg
 
@@ -52,8 +48,11 @@ class TestTrustEmptyBackends:
         gate.write_text("backends: {}\n")
         result = subprocess.run(
             [sys.executable, "-m", "code_forge.cli", "trust"],
-            cwd=repo_with_gate, env=_make_env(repo_with_gate),
-            capture_output=True, text=True, timeout=10,
+            cwd=repo_with_gate,
+            env=_make_env(repo_with_gate),
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 2
         assert "No backends or review_focus configured in this gate.yaml" in result.stderr
@@ -65,8 +64,11 @@ class TestTrustEmptyBackends:
         gate.write_text("backends:\n  dummy:\n")  # value is None
         result = subprocess.run(
             [sys.executable, "-m", "code_forge.cli", "trust"],
-            cwd=repo_with_gate, env=_make_env(repo_with_gate),
-            capture_output=True, text=True, timeout=10,
+            cwd=repo_with_gate,
+            env=_make_env(repo_with_gate),
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 2
         assert "No backends or review_focus configured" in result.stderr
@@ -85,8 +87,11 @@ class TestTrustEmptyBackends:
         )
         result = subprocess.run(
             [sys.executable, "-m", "code_forge.cli", "trust"],
-            cwd=repo_with_gate, env=_make_env(repo_with_gate),
-            capture_output=True, text=True, timeout=10,
+            cwd=repo_with_gate,
+            env=_make_env(repo_with_gate),
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         assert "Trusted:" in result.stderr

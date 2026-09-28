@@ -19,12 +19,8 @@ def test_status_mapping():
 
 
 def test_killed_needs_recorded_test_failure():
-    assert killed_has_failure(
-        {"argv": ["test"], "returncode": 1, "stdout": "--- FAIL: TestBoundary\n"}
-    )
-    assert not killed_has_failure(
-        {"argv": ["test"], "returncode": 1, "stdout": "build failed\n"}
-    )
+    assert killed_has_failure({"argv": ["test"], "returncode": 1, "stdout": "--- FAIL: TestBoundary\n"})
+    assert not killed_has_failure({"argv": ["test"], "returncode": 1, "stdout": "build failed\n"})
     assert not killed_has_failure(
         {"argv": ["test"], "returncode": 0, "stdout": "--- FAIL: TestBoundary\n"}
     )
@@ -32,11 +28,13 @@ def test_killed_needs_recorded_test_failure():
 
 
 def test_go_json_baseline():
-    passed = '\n'.join([
-        '{"Action":"run","Test":"TestBoundary"}',
-        '{"Action":"pass","Test":"TestBoundary"}',
-        '{"Action":"pass"}',
-    ])
+    passed = "\n".join(
+        [
+            '{"Action":"run","Test":"TestBoundary"}',
+            '{"Action":"pass","Test":"TestBoundary"}',
+            '{"Action":"pass"}',
+        ]
+    )
     state, count = baseline_from_go_json(passed)
     assert state is BaselineState.PASSED
     assert count == 1
@@ -47,12 +45,34 @@ def test_go_json_baseline():
 
 
 def test_inventory_identifier_missing_is_hold():
-    inventory = {"files": [{"file_name": "probe.go", "mutations": [{"type": "A", "line": 3, "column": 10}, {"type": "B", "line": 3, "column": 20}]}]}
-    outcomes = {"files": [{"file_name": "probe.go", "mutations": [{"type": "A", "line": 3, "column": 10}]}]}
+    inventory = {
+        "files": [
+            {
+                "file_name": "probe.go",
+                "mutations": [
+                    {"type": "A", "line": 3, "column": 10},
+                    {"type": "B", "line": 3, "column": 20},
+                ],
+            }
+        ]
+    }
+    outcomes = {
+        "files": [{"file_name": "probe.go", "mutations": [{"type": "A", "line": 3, "column": 10}]}]
+    }
     ok, reason = reconcile(inventory, outcomes)
     assert not ok
     assert "missing" in reason
-    complete = {"files": [{"file_name": "probe.go", "mutations": [{"type": "A", "line": 3, "column": 10}, {"type": "B", "line": 3, "column": 20}]}]}
+    complete = {
+        "files": [
+            {
+                "file_name": "probe.go",
+                "mutations": [
+                    {"type": "A", "line": 3, "column": 10},
+                    {"type": "B", "line": 3, "column": 20},
+                ],
+            }
+        ]
+    }
     assert reconcile(inventory, complete)[0] is True
     assert reconcile(None, complete)[0] is False
 

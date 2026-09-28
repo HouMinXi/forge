@@ -16,17 +16,15 @@ from code_forge.llm_invoke import (
 
 class TestStripFencesContract:
     def test_strip_fences_requires_fence_at_start_after_whitespace(self):
-        text_with_whitespace = "\n  \t```json\n{\"findings\": []}\n```\n  \t"
+        text_with_whitespace = '\n  \t```json\n{"findings": []}\n```\n  \t'
         assert _strip_fences(text_with_whitespace) == '{"findings": []}'
 
-        text_with_leading_prose = (
-            "Here is the envelope:\n```json\n{\"findings\": []}\n```"
-        )
+        text_with_leading_prose = 'Here is the envelope:\n```json\n{"findings": []}\n```'
         assert _strip_fences(text_with_leading_prose) == (
-            "Here is the envelope:\n```json\n{\"findings\": []}\n```"
+            'Here is the envelope:\n```json\n{"findings": []}\n```'
         )
 
-        plain_text = "   {\"findings\": []}   "
+        plain_text = '   {"findings": []}   '
         assert _strip_fences(plain_text) == '{"findings": []}'
 
     def test_strip_fences_stops_at_first_closing_fence_ignoring_subsequent_text(self):
@@ -58,9 +56,7 @@ class TestExtractJsonFromTextContract:
 
     def test_extract_json_returns_first_matching_dict(self):
         text = (
-            'preamble {"unrelated": 1} '
-            '{"findings": [{"id": "first"}]} '
-            '{"findings": [{"id": "second"}]}'
+            'preamble {"unrelated": 1} {"findings": [{"id": "first"}]} {"findings": [{"id": "second"}]}'
         )
         got = _extract_json_from_text(text)
         assert got == {"findings": [{"id": "first"}]}
@@ -114,17 +110,11 @@ class TestExtractJsonFromTextContract:
         array_with_matching_object = '[{"findings": ["item1"]}]'
         assert _extract_json_from_text(array_with_matching_object) == {"findings": ["item1"]}
 
-        array_with_irrelevant_then_matching = (
-            '[{"irrelevant": 1}, {"findings": ["item2"]}]'
-        )
-        assert _extract_json_from_text(array_with_irrelevant_then_matching) == {
-            "findings": ["item2"]
-        }
+        array_with_irrelevant_then_matching = '[{"irrelevant": 1}, {"findings": ["item2"]}]'
+        assert _extract_json_from_text(array_with_irrelevant_then_matching) == {"findings": ["item2"]}
 
     def test_extract_json_review_envelope_does_not_salvage_truncation(self):
-        truncated_review = (
-            '{"findings": [], "code_excerpts": {"file.py": "pass"}, "tail": "cut'
-        )
+        truncated_review = '{"findings": [], "code_excerpts": {"file.py": "pass"}, "tail": "cut'
         assert _extract_json_from_text(truncated_review) is None
         assert (
             _extract_json_from_text(

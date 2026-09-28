@@ -9,6 +9,7 @@ objectively detectable instead of self-reported.
 The gate validates reviewer ATTENTION, not model capability. A miss means the
 round's findings are unreliable; it never feeds back into outlet selection.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -24,9 +25,7 @@ from code_forge.canary import (
 def _canary(cid: str, file: str, line: int, desc: str = "") -> Canary:
     # sha256 is the manifest key for provenance stripping, not used by the
     # gate logic; a placeholder keeps these tests focused on coverage.
-    return Canary(
-        canary_id=cid, file=file, line=line, sha256="a" * 64, description=desc
-    )
+    return Canary(canary_id=cid, file=file, line=line, sha256="a" * 64, description=desc)
 
 
 def _finding(file: str, line: int) -> dict:
@@ -123,9 +122,7 @@ def test_path_normalization_matches_equivalent_paths() -> None:
 
 def test_empty_manifest_fails_closed() -> None:
     # A gate with no canaries cannot probe laziness -> never a free pass.
-    result = evaluate_canary_coverage(
-        [_finding("src/a.py", 1)], [], threshold=1
-    )
+    result = evaluate_canary_coverage([_finding("src/a.py", 1)], [], threshold=1)
 
     assert result.total == 0
     assert result.passed is False

@@ -12,8 +12,7 @@ from code_forge.gate_check import run_gate_check
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True,
-                   capture_output=True)
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
 
 
 def _make_repo(root, marker):
@@ -40,31 +39,36 @@ def test_test_gate_imports_the_repo_under_check(tmp_path, monkeypatch):
 
     repo = tmp_path / "repo"
     _src, tests = _make_repo(repo, "fresh")
-    (tests / "test_marker.py").write_text(textwrap.dedent("""
+    (tests / "test_marker.py").write_text(
+        textwrap.dedent("""
         from demo.core import MARKER
 
         def test_marker():
             assert MARKER == "fresh"
-    """))
+    """)
+    )
 
     forge_dir = repo / ".code-forge"
     forge_dir.mkdir()
-    (forge_dir / "gate.yaml").write_text(yaml.safe_dump({
-        "test": {
-            "command": ["python3", "-m", "pytest", "tests/", "-q"],
-            "source_patterns": ["src/**/*.py"],
-            "timeout_seconds": 120,
-        },
-    }))
-
-    # A real baseline with no recorded failures: any failure counts as new.
-    (forge_dir / "test_baseline.json").write_text(
-        '{"schema_version": 1, "test_results": {}}'
+    (forge_dir / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": ["python3", "-m", "pytest", "tests/", "-q"],
+                    "source_patterns": ["src/**/*.py"],
+                    "timeout_seconds": 120,
+                },
+            }
+        )
     )
 
+    # A real baseline with no recorded failures: any failure counts as new.
+    (forge_dir / "test_baseline.json").write_text('{"schema_version": 1, "test_results": {}}')
+
     _git(repo, "init", "-q")
-    _git(repo, "-c", "user.email=t@e", "-c", "user.name=t",
-         "commit", "-q", "--allow-empty", "-m", "base")
+    _git(
+        repo, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"
+    )
     _git(repo, "add", "-A")
 
     # The stale copy wins on PYTHONPATH unless the gate pins its own.
@@ -73,8 +77,7 @@ def test_test_gate_imports_the_repo_under_check(tmp_path, monkeypatch):
     env["PYTHONPATH"] = str(stale / "src")
     env["FORGE_ALLOW_MAIN"] = "1"
 
-    rc = run_gate_check(args=None, env=env, cwd=repo,
-                        stdout=StringIO(), stderr=StringIO())
+    rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
     assert rc == EXIT_PASS
 
 
@@ -88,26 +91,27 @@ def test_staged_files_come_from_the_repo_under_check(tmp_path, monkeypatch):
     """
     repo = tmp_path / "repo"
     _src, tests = _make_repo(repo, "fresh")
-    (tests / "test_marker.py").write_text(
-        "def test_marker():\n    assert True\n"
-    )
+    (tests / "test_marker.py").write_text("def test_marker():\n    assert True\n")
 
     forge_dir = repo / ".code-forge"
     forge_dir.mkdir()
-    (forge_dir / "gate.yaml").write_text(yaml.safe_dump({
-        "test": {
-            "command": ["python3", "-m", "pytest", "tests/", "-q"],
-            "source_patterns": ["src/**/*.py"],
-            "timeout_seconds": 120,
-        },
-    }))
-    (forge_dir / "test_baseline.json").write_text(
-        '{"schema_version": 1, "test_results": {}}'
+    (forge_dir / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": ["python3", "-m", "pytest", "tests/", "-q"],
+                    "source_patterns": ["src/**/*.py"],
+                    "timeout_seconds": 120,
+                },
+            }
+        )
     )
+    (forge_dir / "test_baseline.json").write_text('{"schema_version": 1, "test_results": {}}')
 
     _git(repo, "init", "-q")
-    _git(repo, "-c", "user.email=t@e", "-c", "user.name=t",
-         "commit", "-q", "--allow-empty", "-m", "base")
+    _git(
+        repo, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"
+    )
     _git(repo, "add", "-A")
 
     # A second repository with nothing staged. Running from here must
@@ -133,14 +137,12 @@ def test_staged_files_come_from_the_repo_under_check(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gate_check_module.subprocess, "run", record)
 
-    rc = run_gate_check(args=None, env=env, cwd=repo,
-                        stdout=StringIO(), stderr=StringIO())
+    rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
     assert rc == EXIT_PASS
     assert seen, "gate reported PASS without running the test command"
 
 
-def test_existing_pythonpath_is_kept_behind_the_repo_source(tmp_path,
-                                                            monkeypatch):
+def test_existing_pythonpath_is_kept_behind_the_repo_source(tmp_path, monkeypatch):
     """A caller's PYTHONPATH still applies, but cannot win over the repo.
 
     Projects put real dependencies on PYTHONPATH, so dropping it breaks
@@ -154,31 +156,36 @@ def test_existing_pythonpath_is_kept_behind_the_repo_source(tmp_path,
     extra.mkdir()
     (extra / "sidecar.py").write_text("VALUE = 'from-pythonpath'\n")
 
-    (tests / "test_marker.py").write_text(textwrap.dedent("""
+    (tests / "test_marker.py").write_text(
+        textwrap.dedent("""
         from demo.core import MARKER
         from sidecar import VALUE
 
         def test_marker():
             assert MARKER == "fresh"
             assert VALUE == "from-pythonpath"
-    """))
+    """)
+    )
 
     forge_dir = repo / ".code-forge"
     forge_dir.mkdir()
-    (forge_dir / "gate.yaml").write_text(yaml.safe_dump({
-        "test": {
-            "command": ["python3", "-m", "pytest", "tests/", "-q"],
-            "source_patterns": ["src/**/*.py"],
-            "timeout_seconds": 120,
-        },
-    }))
-    (forge_dir / "test_baseline.json").write_text(
-        '{"schema_version": 1, "test_results": {}}'
+    (forge_dir / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": ["python3", "-m", "pytest", "tests/", "-q"],
+                    "source_patterns": ["src/**/*.py"],
+                    "timeout_seconds": 120,
+                },
+            }
+        )
     )
+    (forge_dir / "test_baseline.json").write_text('{"schema_version": 1, "test_results": {}}')
 
     _git(repo, "init", "-q")
-    _git(repo, "-c", "user.email=t@e", "-c", "user.name=t",
-         "commit", "-q", "--allow-empty", "-m", "base")
+    _git(
+        repo, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"
+    )
     _git(repo, "add", "-A")
     monkeypatch.chdir(repo)
 
@@ -192,13 +199,11 @@ def test_existing_pythonpath_is_kept_behind_the_repo_source(tmp_path,
     env["PYTHONPATH"] = os.pathsep.join([str(extra), str(stale / "src")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
-    rc = run_gate_check(args=None, env=env, cwd=repo,
-                        stdout=StringIO(), stderr=StringIO())
+    rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
     assert rc == EXIT_PASS
 
 
-def test_collection_errors_are_not_treated_as_an_interrupt(tmp_path,
-                                                           monkeypatch):
+def test_collection_errors_are_not_treated_as_an_interrupt(tmp_path, monkeypatch):
     """pytest exit code 2 also covers a failed collection, not just Ctrl-C.
 
     Treating every 2 as an interrupt lets a suite that never ran pass
@@ -207,28 +212,28 @@ def test_collection_errors_are_not_treated_as_an_interrupt(tmp_path,
     repo = tmp_path / "repo"
     _src, tests = _make_repo(repo, "fresh")
     (tests / "test_marker.py").write_text(
-        "import a_module_that_does_not_exist  # noqa: F401\n"
-        "\n"
-        "def test_marker():\n"
-        "    assert True\n"
+        "import a_module_that_does_not_exist  # noqa: F401\n\ndef test_marker():\n    assert True\n"
     )
 
     forge_dir = repo / ".code-forge"
     forge_dir.mkdir()
-    (forge_dir / "gate.yaml").write_text(yaml.safe_dump({
-        "test": {
-            "command": ["python3", "-m", "pytest", "tests/", "-q"],
-            "source_patterns": ["src/**/*.py"],
-            "timeout_seconds": 120,
-        },
-    }))
-    (forge_dir / "test_baseline.json").write_text(
-        '{"schema_version": 1, "test_results": {}}'
+    (forge_dir / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": ["python3", "-m", "pytest", "tests/", "-q"],
+                    "source_patterns": ["src/**/*.py"],
+                    "timeout_seconds": 120,
+                },
+            }
+        )
     )
+    (forge_dir / "test_baseline.json").write_text('{"schema_version": 1, "test_results": {}}')
 
     _git(repo, "init", "-q")
-    _git(repo, "-c", "user.email=t@e", "-c", "user.name=t",
-         "commit", "-q", "--allow-empty", "-m", "base")
+    _git(
+        repo, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"
+    )
     _git(repo, "add", "-A")
     monkeypatch.chdir(repo)
 
@@ -236,8 +241,7 @@ def test_collection_errors_are_not_treated_as_an_interrupt(tmp_path,
     env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
-    rc = run_gate_check(args=None, env=env, cwd=repo,
-                        stdout=StringIO(), stderr=StringIO())
+    rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
     assert rc != EXIT_PASS
 
 
@@ -249,26 +253,27 @@ def test_a_real_interrupt_is_still_waved_through(tmp_path, monkeypatch):
     """
     repo = tmp_path / "repo"
     _src, tests = _make_repo(repo, "fresh")
-    (tests / "test_marker.py").write_text(
-        "def test_marker():\n    raise KeyboardInterrupt\n"
-    )
+    (tests / "test_marker.py").write_text("def test_marker():\n    raise KeyboardInterrupt\n")
 
     forge_dir = repo / ".code-forge"
     forge_dir.mkdir()
-    (forge_dir / "gate.yaml").write_text(yaml.safe_dump({
-        "test": {
-            "command": ["python3", "-m", "pytest", "tests/", "-q"],
-            "source_patterns": ["src/**/*.py"],
-            "timeout_seconds": 120,
-        },
-    }))
-    (forge_dir / "test_baseline.json").write_text(
-        '{"schema_version": 1, "test_results": {}}'
+    (forge_dir / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": ["python3", "-m", "pytest", "tests/", "-q"],
+                    "source_patterns": ["src/**/*.py"],
+                    "timeout_seconds": 120,
+                },
+            }
+        )
     )
+    (forge_dir / "test_baseline.json").write_text('{"schema_version": 1, "test_results": {}}')
 
     _git(repo, "init", "-q")
-    _git(repo, "-c", "user.email=t@e", "-c", "user.name=t",
-         "commit", "-q", "--allow-empty", "-m", "base")
+    _git(
+        repo, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"
+    )
     _git(repo, "add", "-A")
     monkeypatch.chdir(repo)
 
@@ -276,14 +281,11 @@ def test_a_real_interrupt_is_still_waved_through(tmp_path, monkeypatch):
     env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
-    rc = run_gate_check(args=None, env=env, cwd=repo,
-                        stdout=StringIO(), stderr=StringIO())
+    rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
     assert rc == EXIT_PASS
 
 
-def test_the_word_alone_does_not_wave_a_failed_collection_through(
-    tmp_path, monkeypatch
-):
+def test_the_word_alone_does_not_wave_a_failed_collection_through(tmp_path, monkeypatch):
     """Mentioning the exception is not the same as being interrupted.
 
     An import error naming a KeyboardInterrupt helper also exits 2 and
@@ -293,28 +295,28 @@ def test_the_word_alone_does_not_wave_a_failed_collection_through(
     repo = tmp_path / "repo"
     _src, tests = _make_repo(repo, "fresh")
     (tests / "test_marker.py").write_text(
-        "import KeyboardInterrupt_helper  # noqa: F401\n"
-        "\n"
-        "def test_marker():\n"
-        "    assert True\n"
+        "import KeyboardInterrupt_helper  # noqa: F401\n\ndef test_marker():\n    assert True\n"
     )
 
     forge_dir = repo / ".code-forge"
     forge_dir.mkdir()
-    (forge_dir / "gate.yaml").write_text(yaml.safe_dump({
-        "test": {
-            "command": ["python3", "-m", "pytest", "tests/", "-q"],
-            "source_patterns": ["src/**/*.py"],
-            "timeout_seconds": 120,
-        },
-    }))
-    (forge_dir / "test_baseline.json").write_text(
-        '{"schema_version": 1, "test_results": {}}'
+    (forge_dir / "gate.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "test": {
+                    "command": ["python3", "-m", "pytest", "tests/", "-q"],
+                    "source_patterns": ["src/**/*.py"],
+                    "timeout_seconds": 120,
+                },
+            }
+        )
     )
+    (forge_dir / "test_baseline.json").write_text('{"schema_version": 1, "test_results": {}}')
 
     _git(repo, "init", "-q")
-    _git(repo, "-c", "user.email=t@e", "-c", "user.name=t",
-         "commit", "-q", "--allow-empty", "-m", "base")
+    _git(
+        repo, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"
+    )
     _git(repo, "add", "-A")
     monkeypatch.chdir(repo)
 
@@ -322,6 +324,5 @@ def test_the_word_alone_does_not_wave_a_failed_collection_through(
     env["PATH"] = os.pathsep.join([os.path.dirname(sys.executable), env.get("PATH", "")])
     env["FORGE_ALLOW_MAIN"] = "1"
 
-    rc = run_gate_check(args=None, env=env, cwd=repo,
-                        stdout=StringIO(), stderr=StringIO())
+    rc = run_gate_check(args=None, env=env, cwd=repo, stdout=StringIO(), stderr=StringIO())
     assert rc != EXIT_PASS

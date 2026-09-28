@@ -18,8 +18,7 @@ from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding
 
 
-def _make_finding(fp="fp-r-1", disp=Disposition.CONFIRMED, source="L0",
-                  excerpt=None):
+def _make_finding(fp="fp-r-1", disp=Disposition.CONFIRMED, source="L0", excerpt=None):
     return StateFinding(
         id=fp,
         fingerprint=fp,
@@ -41,8 +40,7 @@ def _make_resolved():
     )
 
 
-def _make_ci_machine(tmp_path, l0_runner, l1_provider=None,
-                     falsifier=None):
+def _make_ci_machine(tmp_path, l0_runner, l1_provider=None, falsifier=None):
     """Build a CI machine to test single round behavior."""
     return StateMachine(
         mode=Mode.CI,
@@ -73,16 +71,12 @@ class TestL0AutoConfirmed:
         )
         machine.run()
         assert len(machine._state.findings) == 1
-        assert machine._state.findings[0].disposition == (
-            Disposition.CONFIRMED
-        )
+        assert machine._state.findings[0].disposition == (Disposition.CONFIRMED)
 
     def test_interim_fingerprint_format(self, tmp_path):
         """R1 B4: sha256(tool:file:line:rule_id)[:16]."""
         fp_raw = "ruff:test.py:10:E001"
-        expected = hashlib.sha256(
-            fp_raw.encode("utf-8")
-        ).hexdigest()[:16]
+        expected = hashlib.sha256(fp_raw.encode("utf-8")).hexdigest()[:16]
         finding = StateFinding(
             id=expected,
             fingerprint=expected,
@@ -106,8 +100,7 @@ class TestL1Falsified:
 
     def test_l1_dispositioned(self, tmp_path):
         def l1_provider():
-            return ([_make_finding(fp="fp-l1", source="L1", excerpt="value = 1\n")],
-                    [], Usage(), 0.0)
+            return ([_make_finding(fp="fp-l1", source="L1", excerpt="value = 1\n")], [], Usage(), 0.0)
 
         # StubFalsifier default = CONFIRMED
         machine = _make_ci_machine(
@@ -116,10 +109,7 @@ class TestL1Falsified:
             l1_provider=l1_provider,
         )
         machine.run()
-        found = [
-            f for f in machine._state.findings
-            if f.fingerprint == "fp-l1"
-        ]
+        found = [f for f in machine._state.findings if f.fingerprint == "fp-l1"]
         assert len(found) == 1
         assert found[0].disposition == Disposition.CONFIRMED
 
@@ -141,10 +131,7 @@ class TestFP04Precedence:
             l1_provider=lambda: ([l1_f], [], Usage(), 0.0),
         )
         machine.run()
-        shared = [
-            f for f in machine._state.findings
-            if f.fingerprint == "fp-shared"
-        ]
+        shared = [f for f in machine._state.findings if f.fingerprint == "fp-shared"]
         assert len(shared) == 1
         # L0 CONFIRMED wins over L1 DISMISSED
         assert shared[0].source == "L0"
@@ -156,6 +143,7 @@ class TestFalsifierErrorCatch:
     def test_runtime_error_caught(self, tmp_path):
         # Build StubFalsifier with error key
         import json
+
         config = {
             "default": "CONFIRMED",
             "errors": {"fp-err": "timeout"},
@@ -167,25 +155,17 @@ class TestFalsifierErrorCatch:
         machine = _make_ci_machine(
             tmp_path,
             l0_runner=lambda r, f: ([], []),
-            l1_provider=lambda: ([_make_finding(
-                fp="fp-err", source="L1"
-            )], [], Usage(), 0.0),
+            l1_provider=lambda: ([_make_finding(fp="fp-err", source="L1")], [], Usage(), 0.0),
             falsifier=falsifier,
         )
         machine.run()
 
-        found = [
-            f for f in machine._state.findings
-            if f.fingerprint == "fp-err"
-        ]
+        found = [f for f in machine._state.findings if f.fingerprint == "fp-err"]
         assert len(found) == 1
         assert found[0].disposition == Disposition.UNCERTAIN
         assert "falsify() raised:" in found[0].error
         # infra_errors also records
-        assert any(
-            "falsify exception on fp-err" in e
-            for e in machine._state.infra_errors
-        )
+        assert any("falsify exception on fp-err" in e for e in machine._state.infra_errors)
 
 
 class TestToolErrorToInfraErrors:
@@ -204,10 +184,7 @@ class TestToolErrorToInfraErrors:
         )
         machine.run()
         assert len(machine._state.findings) == 0
-        assert any(
-            "L0 ToolError" in e
-            for e in machine._state.infra_errors
-        )
+        assert any("L0 ToolError" in e for e in machine._state.infra_errors)
 
 
 class TestL0RunnerException:
@@ -219,10 +196,7 @@ class TestL0RunnerException:
 
         machine = _make_ci_machine(tmp_path, l0_runner=bad_l0)
         machine.run()
-        assert any(
-            "L0 runner failed:" in e
-            for e in machine._state.infra_errors
-        )
+        assert any("L0 runner failed:" in e for e in machine._state.infra_errors)
 
 
 class TestSaveStatePerRound:

@@ -24,7 +24,10 @@ def suite_guard():
 def _git(root, *args):
     return subprocess.run(
         ["git", "-C", str(root), *args],
-        check=True, capture_output=True, text=True, timeout=10,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
     ).stdout.strip()
 
 
@@ -41,8 +44,20 @@ def repository(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     root.mkdir()
     _git(root, "init", "--quiet")
-    _git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-         "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "fixture")
+    _git(
+        root,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "fixture",
+    )
     return root
 
 
@@ -139,7 +154,11 @@ def test_sessionstart_rejects_broken_git_marker(tmp_path, monkeypatch, suite_gua
 
 @pytest.mark.parametrize("change", ["new", "removed", "content changed"])
 def test_sessionfinish_rejects_shared_hook_drift(
-    repository, monkeypatch, capsys, suite_guard, change,
+    repository,
+    monkeypatch,
+    capsys,
+    suite_guard,
+    change,
 ):
     root = repository.parent / "linked"
     _git(repository, "worktree", "add", "--quiet", "--detach", str(root))

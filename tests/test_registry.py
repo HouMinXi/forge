@@ -103,11 +103,7 @@ class TestLoadRegistry:
         """Missing required 'command' key raises ValueError."""
         yaml_file = tmp_path / "tools.yaml"
         yaml_file.write_text(
-            "tools:\n"
-            "  broken:\n"
-            "    args: []\n"
-            "    output_format: x\n"
-            "    file_patterns: ['*']\n"
+            "tools:\n  broken:\n    args: []\n    output_format: x\n    file_patterns: ['*']\n"
         )
         with pytest.raises(ValueError, match="command"):
             load_registry(str(yaml_file))
@@ -116,11 +112,7 @@ class TestLoadRegistry:
         """Missing required 'output_format' key raises ValueError."""
         yaml_file = tmp_path / "tools.yaml"
         yaml_file.write_text(
-            "tools:\n"
-            "  broken:\n"
-            "    command: x\n"
-            "    args: []\n"
-            "    file_patterns: ['*']\n"
+            "tools:\n  broken:\n    command: x\n    args: []\n    file_patterns: ['*']\n"
         )
         with pytest.raises(ValueError, match="output_format"):
             load_registry(str(yaml_file))
@@ -169,8 +161,7 @@ class TestLoadRegistry:
 
     def test_stale_format_name_rejected(self, tmp_path):
         """Stale format names that have no parser are rejected."""
-        for stale in ("ruff_json", "semgrep_json", "golangci_json",
-                       "checkpatch"):
+        for stale in ("ruff_json", "semgrep_json", "golangci_json", "checkpatch"):
             yaml_file = tmp_path / "tools.yaml"
             yaml_file.write_text(
                 "tools:\n"
@@ -186,6 +177,7 @@ class TestLoadRegistry:
     def test_all_dispatch_keys_accepted(self, tmp_path):
         """Every real dispatch key loads without error."""
         from code_forge.parsers import PARSER_DISPATCH
+
         for fmt in sorted(PARSER_DISPATCH):
             yaml_file = tmp_path / "tools.yaml"
             yaml_file.write_text(
@@ -203,6 +195,7 @@ class TestLoadRegistry:
         """Invariant: _KNOWN_FORMATS == set(PARSER_DISPATCH)."""
         from code_forge.registry import _KNOWN_FORMATS
         from code_forge.parsers import PARSER_DISPATCH
+
         assert set(_KNOWN_FORMATS) == set(PARSER_DISPATCH)
 
 

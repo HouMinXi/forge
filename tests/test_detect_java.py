@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for Java language detection (PMD)."""
+
 from pathlib import Path
 
 from code_forge.detect import (
@@ -32,7 +33,8 @@ class TestJavaDetection:
         """pom.xml triggers Java detection."""
         (tmp_path / "pom.xml").write_text("<project></project>\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("pmd"),
+            tmp_path,
+            which_fn=_make_which_fn("pmd"),
         )
         assert "pmd" in result.detected
 
@@ -40,7 +42,8 @@ class TestJavaDetection:
         """build.gradle triggers Java detection."""
         (tmp_path / "build.gradle").write_text("apply plugin: 'java'\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("pmd"),
+            tmp_path,
+            which_fn=_make_which_fn("pmd"),
         )
         assert "pmd" in result.detected
 
@@ -48,7 +51,8 @@ class TestJavaDetection:
         """*.java files trigger Java detection."""
         (tmp_path / "Main.java").write_text("public class Main {}\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("pmd"),
+            tmp_path,
+            which_fn=_make_which_fn("pmd"),
         )
         assert "pmd" in result.detected
 
@@ -56,7 +60,8 @@ class TestJavaDetection:
         """pmd not on PATH -> missing list."""
         (tmp_path / "pom.xml").write_text("<project></project>\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
+            tmp_path,
+            which_fn=_make_which_fn(),  # nothing on PATH
         )
         assert "pmd" in result.missing
         assert result.language == "java"
@@ -65,7 +70,8 @@ class TestJavaDetection:
         """pmd tools.yaml entry round-trips."""
         (tmp_path / "pom.xml").write_text("<project></project>\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("pmd"),
+            tmp_path,
+            which_fn=_make_which_fn("pmd"),
         )
         assert "pmd" in result.detected
 

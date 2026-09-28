@@ -7,6 +7,7 @@ UNCERTAIN, so a dead backend reset the counter every round until
 max_total_rounds at 30-180s per call. Measured 2026-08-27: three hours
 of a review that could not converge.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -125,8 +126,7 @@ class TestFalsifyInfraDoesNotSilentlyReset:
         message = str(exc.value)
         assert "could not reach its backend" in message
         assert "cannot converge" in message, (
-            "the operator needs to be told the run is unconvergeable, "
-            "not just that a call failed"
+            "the operator needs to be told the run is unconvergeable, not just that a call failed"
         )
 
     def test_two_rounds_alone_do_not_stop_the_run(self, tmp_path):
@@ -274,11 +274,7 @@ class TestRealFalsifierPropagatesBackendFailure:
         class _Result:
             content = {"verdict": "UNCERTAIN", "reasoning": "cannot tell"}
 
-        monkeypatch.setattr(
-            falsify_real, "llm_invoke", lambda *a, **k: _Result()
-        )
+        monkeypatch.setattr(falsify_real, "llm_invoke", lambda *a, **k: _Result())
 
         falsifier = falsify_real.RealFalsifier()
-        assert falsifier.falsify(_candidate("fp-real")) == (
-            Disposition.UNCERTAIN
-        )
+        assert falsifier.falsify(_candidate("fp-real")) == (Disposition.UNCERTAIN)

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for cli.py __main__ guard -- subprocess only."""
+
 from __future__ import annotations
 
 import os
@@ -21,7 +22,10 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": _SRC + os.pathsep + existing if existing else _SRC}
     return subprocess.run(
         [sys.executable, "-m", "code_forge.cli", *args],
-        capture_output=True, text=True, env=env, timeout=15,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
     )
 
 
@@ -29,16 +33,13 @@ def test_version_output():
     """T1: -m code_forge.cli --version prints version and exits 0."""
     r = _run_cli("--version")
     assert r.returncode == 0
-    assert code_forge.__version__ in r.stdout, (
-        "expected version %s in stdout, got: %r"
-        % (code_forge.__version__, r.stdout)
+    assert code_forge.__version__ in r.stdout, "expected version %s in stdout, got: %r" % (
+        code_forge.__version__,
+        r.stdout,
     )
 
 
 def test_exit_code_forwarded():
     """T2: main() return code is forwarded via sys.exit, not swallowed."""
     r = _run_cli("e2e-check", "--diff", "/nonexistent/x.diff")
-    assert r.returncode == 2, (
-        "expected EXIT_CLI_ERROR=2 for missing diff file, got %d"
-        % r.returncode
-    )
+    assert r.returncode == 2, "expected EXIT_CLI_ERROR=2 for missing diff file, got %d" % r.returncode

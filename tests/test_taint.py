@@ -21,6 +21,7 @@ from code_forge.parsers.base import Finding
 # danger_score_from_diff tests
 # ---------------------------------------------------------------------------
 
+
 def test_danger_score_detects_base_url_in_gate_yaml():
     """Diff adds base_url to gate.yaml -> 1 StateFinding."""
     diff = (
@@ -252,6 +253,7 @@ def test_danger_score_consecutive_plus_lines_distinct_line_numbers():
 # Shared SARIF fixture for TaintRunner tests
 # ---------------------------------------------------------------------------
 
+
 def _make_sarif(
     rule_id: str = "forge-taint-config-to-subprocess",
     message: str = "Tainted data from config flows to subprocess (intraprocedural only)",
@@ -263,23 +265,29 @@ def _make_sarif(
     sarif = {
         "version": "2.1.0",
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
-        "runs": [{
-            "tool": {"driver": {"name": "semgrep"}},
-            "results": [{
-                "ruleId": rule_id,
-                "level": "warning",
-                "message": {"text": message},
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": {"uri": uri},
-                        "region": {
-                            "startLine": start_line,
-                            "endLine": end_line,
-                        },
-                    },
-                }],
-            }],
-        }],
+        "runs": [
+            {
+                "tool": {"driver": {"name": "semgrep"}},
+                "results": [
+                    {
+                        "ruleId": rule_id,
+                        "level": "warning",
+                        "message": {"text": message},
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": uri},
+                                    "region": {
+                                        "startLine": start_line,
+                                        "endLine": end_line,
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
     }
     return json.dumps(sarif)
 
@@ -287,6 +295,7 @@ def _make_sarif(
 # ---------------------------------------------------------------------------
 # TaintRunner tests
 # ---------------------------------------------------------------------------
+
 
 def test_taint_runner_protocol_conformance():
     """TaintRunner satisfies AxisRunner (is_advisory=True)."""
@@ -311,12 +320,12 @@ def test_taint_runner_returns_advisory_findings():
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py")]
     sarif_out = _make_sarif()
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout=sarif_out, stderr=""
-    )
-    with patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"), \
-         patch("code_forge.taint.subprocess.run", return_value=completed), \
-         patch("pathlib.Path.exists", return_value=True):
+    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout=sarif_out, stderr="")
+    with (
+        patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"),
+        patch("code_forge.taint.subprocess.run", return_value=completed),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         result = runner.run("some diff", Path("/fake/repo"))
     assert len(result) == 1
     assert isinstance(result[0], AdvisoryFinding)
@@ -327,12 +336,12 @@ def test_taint_runner_advisory_finding_id_format():
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py")]
     sarif_out = _make_sarif()
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout=sarif_out, stderr=""
-    )
-    with patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"), \
-         patch("code_forge.taint.subprocess.run", return_value=completed), \
-         patch("pathlib.Path.exists", return_value=True):
+    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout=sarif_out, stderr="")
+    with (
+        patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"),
+        patch("code_forge.taint.subprocess.run", return_value=completed),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         result = runner.run("some diff", Path("/fake/repo"))
     assert len(result) == 1
     assert result[0].id == "taint:src/app.py:10:forge-taint-config-to-subprocess"
@@ -343,12 +352,12 @@ def test_taint_runner_intraprocedural_caveat():
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py")]
     sarif_out = _make_sarif()
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout=sarif_out, stderr=""
-    )
-    with patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"), \
-         patch("code_forge.taint.subprocess.run", return_value=completed), \
-         patch("pathlib.Path.exists", return_value=True):
+    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout=sarif_out, stderr="")
+    with (
+        patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"),
+        patch("code_forge.taint.subprocess.run", return_value=completed),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         result = runner.run("some diff", Path("/fake/repo"))
     assert "intraprocedural only" in result[0].description.lower()
 
@@ -358,12 +367,12 @@ def test_taint_runner_attribution():
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py")]
     sarif_out = _make_sarif()
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout=sarif_out, stderr=""
-    )
-    with patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"), \
-         patch("code_forge.taint.subprocess.run", return_value=completed), \
-         patch("pathlib.Path.exists", return_value=True):
+    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout=sarif_out, stderr="")
+    with (
+        patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"),
+        patch("code_forge.taint.subprocess.run", return_value=completed),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         result = runner.run("some diff", Path("/fake/repo"))
     assert result[0].attribution == "semgrep-ce/intraprocedural"
 
@@ -380,12 +389,12 @@ def test_taint_runner_semgrep_error_exit():
     """Semgrep exits with returncode=2 -> infra_errors has message, returns []."""
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py")]
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=2, stdout="", stderr="config error"
-    )
-    with patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"), \
-         patch("code_forge.taint.subprocess.run", return_value=completed), \
-         patch("pathlib.Path.exists", return_value=True):
+    completed = subprocess.CompletedProcess(args=[], returncode=2, stdout="", stderr="config error")
+    with (
+        patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"),
+        patch("code_forge.taint.subprocess.run", return_value=completed),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         result = runner.run("some diff", Path("/fake/repo"))
     assert result == []
     assert len(runner.infra_errors) == 1
@@ -428,18 +437,18 @@ def test_taint_runner_filters_non_python():
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py"), Path("README.md")]
     sarif_out = _make_sarif()
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=sarif_out, stderr=""
-    )
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=sarif_out, stderr="")
     captured_cmd = []
 
     def mock_run(cmd, **kwargs):
         captured_cmd.extend(cmd)
         return completed
 
-    with patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"), \
-         patch("code_forge.taint.subprocess.run", side_effect=mock_run), \
-         patch("pathlib.Path.exists", return_value=True):
+    with (
+        patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"),
+        patch("code_forge.taint.subprocess.run", side_effect=mock_run),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         runner.run("some diff", Path("/fake/repo"))
     # .md file should NOT appear in the command
     assert "README.md" not in captured_cmd
@@ -451,10 +460,14 @@ def test_taint_runner_semgrep_timeout():
     """subprocess.run raises TimeoutExpired -> infra_error contains 'timed out', returns []."""
     runner = TaintRunner()
     runner.source_files = [Path("src/app.py")]
-    with patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"), \
-         patch("code_forge.taint.subprocess.run",
-               side_effect=subprocess.TimeoutExpired(cmd="semgrep", timeout=120)), \
-         patch("pathlib.Path.exists", return_value=True):
+    with (
+        patch("code_forge.taint.shutil.which", return_value="/fake/semgrep"),
+        patch(
+            "code_forge.taint.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="semgrep", timeout=120),
+        ),
+        patch("pathlib.Path.exists", return_value=True),
+    ):
         result = runner.run("some diff", Path("/fake/repo"))
     assert result == []
     assert len(runner.infra_errors) == 1

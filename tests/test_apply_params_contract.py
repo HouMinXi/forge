@@ -5,6 +5,7 @@ positive value as configured. Zero is unset. One is configured. A mutant
 that moves the comparison from "> 0" to "> 1" keeps every existing case
 that uses a large number, and drops the one-token request.
 """
+
 import pytest
 
 from code_forge.backend import BackendConfig
@@ -98,8 +99,13 @@ class TestApplyParamsBoundaries:
 
     def test_param_check_names_the_backend(self):
         backend = BackendConfig(
-            name="gw", type="api", model="m", format="openai",
-            base_url="https://x/v1", api_key_env="K", max_tokens=100,
+            name="gw",
+            type="api",
+            model="m",
+            format="openai",
+            base_url="https://x/v1",
+            api_key_env="K",
+            max_tokens=100,
             params=[("a", "b")],  # type: ignore[arg-type]
         )
         with pytest.raises(LLMInvokeError) as exc:

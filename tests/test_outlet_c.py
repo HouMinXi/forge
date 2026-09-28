@@ -5,6 +5,7 @@
 Cases A (malformed JSON), B (cycle counting), receipts, H3 (excerpt flow).
 SC1-SC3: reviewer independence tests (Phase 15).
 """
+
 import hashlib
 import json
 from pathlib import Path
@@ -44,16 +45,20 @@ def _valid_reviewer_json(findings=None, code_excerpts=None):
     if findings is None:
         findings = []
     if code_excerpts is None:
-        code_excerpts = [{
-            "file": "test.py",
-            "start_line": 1,
-            "end_line": 4,
-            "content": _POST_IMAGE_CONTENT,
-        }]
-    return json.dumps({
-        "findings": findings,
-        "code_excerpts": code_excerpts,
-    })
+        code_excerpts = [
+            {
+                "file": "test.py",
+                "start_line": 1,
+                "end_line": 4,
+                "content": _POST_IMAGE_CONTENT,
+            }
+        ]
+    return json.dumps(
+        {
+            "findings": findings,
+            "code_excerpts": code_excerpts,
+        }
+    )
 
 
 def _source_hash():
@@ -90,10 +95,12 @@ class TestMalformedJsonFailClosed:
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
             cwd=tmp_path,
-            spawn_fn=lambda pn, dt: json.dumps({
-                "findings": [],
-                "no_excerpts": True,
-            }),
+            spawn_fn=lambda pn, dt: json.dumps(
+                {
+                    "findings": [],
+                    "no_excerpts": True,
+                }
+            ),
             falsifier=StubFalsifier(),
             max_total_rounds=1,
         )
@@ -105,10 +112,12 @@ class TestMalformedJsonFailClosed:
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
             cwd=tmp_path,
-            spawn_fn=lambda pn, dt: json.dumps({
-                "findings": [],
-                "code_excerpts": [],
-            }),
+            spawn_fn=lambda pn, dt: json.dumps(
+                {
+                    "findings": [],
+                    "code_excerpts": [],
+                }
+            ),
             falsifier=StubFalsifier(),
             max_total_rounds=1,
         )
@@ -124,21 +133,27 @@ class TestCycleCountingViaStateMachine:
         def _spawn(pass_name, diff_text):
             calls["n"] += 1
             if calls["n"] <= 6:
-                return json.dumps({
-                    "findings": [{
-                        "file": "test.py",
-                        "line": 2,
-                        "severity": "P1",
-                        "description": "bug-%d" % calls["n"],
-                        "excerpt": _POST_IMAGE_CONTENT.splitlines(keepends=True)[1],
-                    }],
-                    "code_excerpts": [{
-                        "file": "test.py",
-                        "start_line": 1,
-                        "end_line": 4,
-                        "content": _POST_IMAGE_CONTENT,
-                    }],
-                })
+                return json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "file": "test.py",
+                                "line": 2,
+                                "severity": "P1",
+                                "description": "bug-%d" % calls["n"],
+                                "excerpt": _POST_IMAGE_CONTENT.splitlines(keepends=True)[1],
+                            }
+                        ],
+                        "code_excerpts": [
+                            {
+                                "file": "test.py",
+                                "start_line": 1,
+                                "end_line": 4,
+                                "content": _POST_IMAGE_CONTENT,
+                            }
+                        ],
+                    }
+                )
             return _valid_reviewer_json()
 
         result = run_outlet_c(
@@ -183,7 +198,13 @@ class TestExcerptFlowIntegration:
         (tmp_path / "test.py").write_text(_POST_IMAGE_CONTENT)
 
         base = datetime.datetime(
-            2026, 5, 28, 10, 0, 0, tzinfo=datetime.UTC,
+            2026,
+            5,
+            28,
+            10,
+            0,
+            0,
+            tzinfo=datetime.UTC,
         )
         counter = {"n": 0}
 
@@ -236,17 +257,22 @@ class TestExcerptFlowIntegration:
 # SC1-SC3: Reviewer independence tests (Phase 15)
 # ---------------------------------------------------------------------------
 
+
 def _make_valid_json():
     """Minimal reviewer JSON with excerpt covering the test hunk."""
-    return json.dumps({
-        "findings": [],
-        "code_excerpts": [{
-            "file": "test.py",
-            "start_line": 1,
-            "end_line": 4,
-            "content": "def f():\n    x = 1\n    y = 2\n    return 1\n",
-        }],
-    })
+    return json.dumps(
+        {
+            "findings": [],
+            "code_excerpts": [
+                {
+                    "file": "test.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "def f():\n    x = 1\n    y = 2\n    return 1\n",
+                }
+            ],
+        }
+    )
 
 
 def _make_llm_result(content=None):
@@ -269,6 +295,7 @@ class TestIndependence:
 
             def _spawn(pass_name, diff_text):
                 from code_forge.llm_invoke import llm_invoke
+
                 result = llm_invoke("prompt", backend=None)
                 return result.content
 
@@ -298,10 +325,9 @@ class TestIndependence:
 
             def _spawn(pass_name, diff_text):
                 from code_forge.cli import _make_subagent_spawn
+
                 # build a real spawn closure and call llm_invoke with it
-                spawn = _make_subagent_spawn(
-                    backend=None, conv_digest="", post_image=""
-                )
+                spawn = _make_subagent_spawn(backend=None, conv_digest="", post_image="")
                 raw = spawn(pass_name, diff_text)
                 return raw
 
@@ -326,14 +352,13 @@ class TestIndependence:
             prompt_n = calls[i][0][0]
             prompt_n1 = calls[i + 1][0][0]
             # Identify role in call N
-            role_n = next(
-                (r for r in _ROLES if r in prompt_n), None
-            )
+            role_n = next((r for r in _ROLES if r in prompt_n), None)
             if role_n is not None:
                 # Role from call N must not bleed into call N+1
-                assert role_n not in prompt_n1, (
-                    "Role '%s' from call %d leaked into call %d prompt"
-                    % (role_n, i, i + 1)
+                assert role_n not in prompt_n1, "Role '%s' from call %d leaked into call %d prompt" % (
+                    role_n,
+                    i,
+                    i + 1,
                 )
 
 
@@ -346,9 +371,8 @@ class TestCriteriaPayload:
             mock_llm.return_value = _make_llm_result()
 
             from code_forge.cli import _make_subagent_spawn
-            spawn = _make_subagent_spawn(
-                backend=None, conv_digest="", post_image=""
-            )
+
+            spawn = _make_subagent_spawn(backend=None, conv_digest="", post_image="")
 
             _ROLES = [
                 "structural code reviewer",
@@ -382,9 +406,8 @@ class TestCriteriaPayload:
             mock_llm.return_value = _make_llm_result()
 
             from code_forge.cli import _make_subagent_spawn
-            spawn = _make_subagent_spawn(
-                backend=None, conv_digest="", post_image=""
-            )
+
+            spawn = _make_subagent_spawn(backend=None, conv_digest="", post_image="")
 
             run_outlet_c(
                 resolved_review=_resolved_with_diff(),
@@ -396,8 +419,12 @@ class TestCriteriaPayload:
             )
 
         _FORBIDDEN = [
-            "Human:", "Assistant:", "previous message",
-            "I think", "let me", "conversation",
+            "Human:",
+            "Assistant:",
+            "previous message",
+            "I think",
+            "let me",
+            "conversation",
         ]
         for call in mock_llm.call_args_list:
             prompt = call[0][0]
@@ -420,29 +447,34 @@ class TestContextIsolation:
             call_index["n"] += 1
             # Return a different unique finding per call
             bug = _UNIQUE_BUGS[idx % len(_UNIQUE_BUGS)]
-            content = json.dumps({
-                "findings": [{
-                    "file": "test.py",
-                    "line": 2,
-                    "severity": "P3",
-                    "description": bug,
-                }],
-                "code_excerpts": [{
-                    "file": "test.py",
-                    "start_line": 1,
-                    "end_line": 4,
-                    "content": "def f():\n    x = 1\n    y = 2\n    return 1\n",
-                }],
-            })
+            content = json.dumps(
+                {
+                    "findings": [
+                        {
+                            "file": "test.py",
+                            "line": 2,
+                            "severity": "P3",
+                            "description": bug,
+                        }
+                    ],
+                    "code_excerpts": [
+                        {
+                            "file": "test.py",
+                            "start_line": 1,
+                            "end_line": 4,
+                            "content": "def f():\n    x = 1\n    y = 2\n    return 1\n",
+                        }
+                    ],
+                }
+            )
             return LLMResult(content=content, usage=Usage(), duration_s=0.1)
 
         with patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
             mock_llm.side_effect = _side_effect
 
             from code_forge.cli import _make_subagent_spawn
-            spawn = _make_subagent_spawn(
-                backend=None, conv_digest="", post_image=""
-            )
+
+            spawn = _make_subagent_spawn(backend=None, conv_digest="", post_image="")
 
             run_outlet_c(
                 resolved_review=_resolved_with_diff(),
@@ -458,9 +490,10 @@ class TestContextIsolation:
         for i in range(1, len(calls)):
             prompt = calls[i][0][0]
             prev_bug = _UNIQUE_BUGS[(i - 1) % len(_UNIQUE_BUGS)]
-            assert prev_bug not in prompt, (
-                "Bug from call %d ('%s') leaked into call %d prompt"
-                % (i - 1, prev_bug, i)
+            assert prev_bug not in prompt, "Bug from call %d ('%s') leaked into call %d prompt" % (
+                i - 1,
+                prev_bug,
+                i,
             )
 
 
@@ -489,6 +522,7 @@ class TestOutletCInfraSourceTagging:
 
     def test_outlet_c_spawn_fail_tagged_infra(self, tmp_path):
         """spawn-fail finding has source=INFRA and disposition=CONFIRMED."""
+
         def _raise_spawn(pn, dt):
             raise RuntimeError("spawn exploded")
 
@@ -524,29 +558,30 @@ class TestOutletCInfraSourceTagging:
             assert f.disposition.value == "CONFIRMED"
             assert "schema-fail" in f.fingerprint
 
-
     def test_outlet_c_excerpt_line_count_is_not_confirmed_infra(self, tmp_path):
         """Line-count drift must not masquerade as a dead backend."""
         # A non-empty findings list so the downgrade has something to carry:
         # an empty one satisfies the INFRA assertion vacuously.
-        payload = json.dumps({
-            "findings": [
-                {
-                    "file": "test.py",
-                    "line": 2,
-                    "severity": "P2",
-                    "description": "candidate worth auditing",
-                }
-            ],
-            "code_excerpts": [
-                {
-                    "file": "test.py",
-                    "start_line": 1,
-                    "end_line": 70,
-                    "content": "\n".join(["x"] * 85),
-                }
-            ],
-        })
+        payload = json.dumps(
+            {
+                "findings": [
+                    {
+                        "file": "test.py",
+                        "line": 2,
+                        "severity": "P2",
+                        "description": "candidate worth auditing",
+                    }
+                ],
+                "code_excerpts": [
+                    {
+                        "file": "test.py",
+                        "start_line": 1,
+                        "end_line": 70,
+                        "content": "\n".join(["x"] * 85),
+                    }
+                ],
+            }
+        )
         _result = run_outlet_c(
             resolved_review=_resolved_with_diff(),
             source_hash=_source_hash(),
@@ -557,8 +592,10 @@ class TestOutletCInfraSourceTagging:
         )
         state = load_state(tmp_path / ".code-forge" / "state.json")
         confirmed_infra = [
-            f for f in state.findings
-            if f.source == "INFRA" and f.disposition.value == "CONFIRMED"
+            f
+            for f in state.findings
+            if f.source == "INFRA"
+            and f.disposition.value == "CONFIRMED"
             and "schema-fail" in f.fingerprint
         ]
         assert not confirmed_infra, (
@@ -566,14 +603,13 @@ class TestOutletCInfraSourceTagging:
             "failure: %s" % [f.description for f in confirmed_infra]
         )
         untrusted = [f for f in state.findings if f.source == "UNTRUSTED"]
-        assert untrusted, (
-            "the candidate must survive as audit data, not disappear"
-        )
+        assert untrusted, "the candidate must survive as audit data, not disappear"
 
 
 # ---------------------------------------------------------------------------
 # Phase 24.1-02: real legs wiring tests
 # ---------------------------------------------------------------------------
+
 
 class TestRealLegsWiring:
     """registry, backend, advisory_runners, engine params passed correctly."""
@@ -613,8 +649,10 @@ class TestRealLegsWiring:
     def test_outlet_c_falsifier_gets_backend(self, tmp_path):
         """When falsifier=None, build_falsifier is called with backend=backend."""
         mock_backend = object()
-        with patch("code_forge.outlet_c.StateMachine") as mock_sm, \
-             patch("code_forge.factories.build_falsifier") as mock_bf:
+        with (
+            patch("code_forge.outlet_c.StateMachine") as mock_sm,
+            patch("code_forge.factories.build_falsifier") as mock_bf,
+        ):
             mock_sm.return_value.run.return_value = Verdict.PASS
             mock_bf.return_value = StubFalsifier()
             run_outlet_c(
@@ -670,10 +708,7 @@ _THREE_FILE_DIFF = (
     "+o = 3\n"
 )
 
-_BINARY_DIFF = (
-    "diff --git a/image.png b/image.png\n"
-    "Binary files /dev/null and b/image.png differ\n"
-)
+_BINARY_DIFF = "diff --git a/image.png b/image.png\nBinary files /dev/null and b/image.png differ\n"
 
 
 def _attempted_spawn_factory(marker_prefix):
@@ -682,20 +717,23 @@ def _attempted_spawn_factory(marker_prefix):
     Each payload also carries a payload-provided pass_name lie that the
     loop must override with its own pass name.
     """
+
     def _spawn(pass_name, diff_text):
         chunk_tag = "unknown-chunk"
-        for fname in ("file1.py", "file2.py", "file3.py",
-                      "test.py", "image.png"):
+        for fname in ("file1.py", "file2.py", "file3.py", "test.py", "image.png"):
             if fname in diff_text:
                 chunk_tag = fname
                 break
-        return json.dumps({
-            "findings": "not-a-list",
-            "code_excerpts": [],
-            "pass_name": "payload-lie",
-            "marker": f"{marker_prefix}-{pass_name}",
-            "chunk_tag": chunk_tag,
-        })
+        return json.dumps(
+            {
+                "findings": "not-a-list",
+                "code_excerpts": [],
+                "pass_name": "payload-lie",
+                "marker": f"{marker_prefix}-{pass_name}",
+                "chunk_tag": chunk_tag,
+            }
+        )
+
     return _spawn
 
 
@@ -714,7 +752,8 @@ class TestAttemptedForwardingUnderThreshold:
 
     def test_attempted_reaches_receipts(self, tmp_path, monkeypatch):
         monkeypatch.delenv(
-            "FORGE_DIFF_CHUNK_THRESHOLD_KB", raising=False,
+            "FORGE_DIFF_CHUNK_THRESHOLD_KB",
+            raising=False,
         )
         result = run_outlet_c(
             resolved_review=_resolved_with_diff(),
@@ -737,7 +776,9 @@ class TestAttemptedForwardingSplitFallback:
     """Split-fallback route (binary-only diff over threshold)."""
 
     def test_binary_diff_attempted_reaches_receipts(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "0")
         resolved = ResolvedReview(
@@ -766,12 +807,16 @@ class TestAttemptedForwardingPerFileChunks:
     """Per-file chunk loop: every chunk's attempts land in one list."""
 
     def test_all_chunks_attempted_collected(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         monkeypatch.setenv("FORGE_DIFF_CHUNK_THRESHOLD_KB", "0")
         resolved = ResolvedReview(
             source_files=[
-                Path("file1.py"), Path("file2.py"), Path("file3.py"),
+                Path("file1.py"),
+                Path("file2.py"),
+                Path("file3.py"),
             ],
             baseline_content=None,
             git_diff=_THREE_FILE_DIFF,
@@ -792,7 +837,9 @@ class TestAttemptedForwardingPerFileChunks:
             # 3 chunks x 1 pass entry each.
             assert len(payloads) == 3
             assert {p["chunk_tag"] for p in payloads} == {
-                "file1.py", "file2.py", "file3.py",
+                "file1.py",
+                "file2.py",
+                "file3.py",
             }
             for p in payloads:
                 assert p["marker"] == f"chunks-{pname}"
@@ -803,10 +850,13 @@ class TestAttemptedNoRetentionAcrossInvocations:
     """A new provider invocation starts with a fresh attempted list."""
 
     def test_second_run_has_no_first_run_attempts(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         monkeypatch.delenv(
-            "FORGE_DIFF_CHUNK_THRESHOLD_KB", raising=False,
+            "FORGE_DIFF_CHUNK_THRESHOLD_KB",
+            raising=False,
         )
         run1 = tmp_path / "run1"
         run1.mkdir()
@@ -835,9 +885,6 @@ class TestAttemptedNoRetentionAcrossInvocations:
             assert len(payloads) == 1
             assert payloads[0]["marker"] == f"run2-{pname}"
         texts = [
-            fp.read_text()
-            for fp in (
-                run2 / ".code-forge" / "receipts" / "attempted"
-            ).glob("*.json")
+            fp.read_text() for fp in (run2 / ".code-forge" / "receipts" / "attempted").glob("*.json")
         ]
         assert all("run1" not in t for t in texts)

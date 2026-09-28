@@ -1,5 +1,6 @@
 """Tests for canary_gen: generation, non-equivalence, validation, injection,
 dispatch, and run_inline_canary orchestration."""
+
 from __future__ import annotations
 
 import json
@@ -86,8 +87,12 @@ def test_validate_canary_findings_immutable():
 
 
 _GENERIC_FILENAMES = {
-    "helpers.py", "utils.py", "config.py",
-    "service.py", "handler.py", "parser.py",
+    "helpers.py",
+    "utils.py",
+    "config.py",
+    "service.py",
+    "handler.py",
+    "parser.py",
 }
 
 _DIFF_WITH_PY = (
@@ -118,9 +123,7 @@ def test_template_uses_generic_filenames():
     result = generate_canaries(_DIFF_WITH_PY, 6)
     assert not isinstance(result, CanarySkip)
     for mut in result:
-        assert mut["file"] in _GENERIC_FILENAMES, (
-            "unexpected filename %r" % mut["file"]
-        )
+        assert mut["file"] in _GENERIC_FILENAMES, "unexpected filename %r" % mut["file"]
 
 
 # -- provider seam & fallback -----------------------------------------------
@@ -232,11 +235,13 @@ def test_dispatch_provider():
 
     def stub_review(prompt: str) -> str:
         calls.append(prompt)
-        return json.dumps({
-            "findings": [
-                {"file": "a.py", "line": 1, "severity": "high", "description": "bug"},
-            ]
-        })
+        return json.dumps(
+            {
+                "findings": [
+                    {"file": "a.py", "line": 1, "severity": "high", "description": "bug"},
+                ]
+            }
+        )
 
     result = dispatch_canary_review("some diff text", provider=stub_review)
     assert len(calls) == 1
@@ -248,12 +253,15 @@ def test_dispatch_provider():
 def test_dispatch_validates_with_canary_validator():
     """dispatch uses validate_canary_findings, not validate_reviewer_json;
     a finding missing 'severity' is dropped."""
+
     def stub_review(prompt: str) -> str:
-        return json.dumps({
-            "findings": [
-                {"file": "a.py", "line": 1, "description": "no severity"},
-            ]
-        })
+        return json.dumps(
+            {
+                "findings": [
+                    {"file": "a.py", "line": 1, "description": "no severity"},
+                ]
+            }
+        )
 
     result = dispatch_canary_review("diff", provider=stub_review)
     assert result == []
@@ -271,16 +279,20 @@ def _source_lookup(path: str):
 
 def _make_review_provider_hitting_canaries(manifest_ref):
     """Return a ReviewProvider that produces findings matching all canaries."""
+
     def provider(prompt: str) -> str:
         findings = []
         for c in manifest_ref:
-            findings.append({
-                "file": c.file,
-                "line": c.line,
-                "severity": "high",
-                "description": "found bug at %s:%d" % (c.file, c.line),
-            })
+            findings.append(
+                {
+                    "file": c.file,
+                    "line": c.line,
+                    "severity": "high",
+                    "description": "found bug at %s:%d" % (c.file, c.line),
+                }
+            )
         return json.dumps({"findings": findings})
+
     return provider
 
 
@@ -294,6 +306,7 @@ def test_cite_reverify_on_real_only():
     # to extract canary filenames and lines from the appended hunks.
     def provider(prompt: str) -> str:
         import re
+
         findings = []
         # Match appended canary hunk headers: +++ b/<file> followed by @@ ...
         # run_inline_canary always builds its prompt from the annotated
@@ -302,21 +315,29 @@ def test_cite_reverify_on_real_only():
         # hunks that can never be canary snippets and would drift from
         # the format the implementation actually generates.
         for m in re.finditer(
-            r'\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@\n'
-            r'((?:\[\+\s*\d+\] \+.*\n?)+)',
+            r"\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@\n"
+            r"((?:\[\+\s*\d+\] \+.*\n?)+)",
             prompt,
         ):
             fname = m.group(1)
             # Each canary snippet starts at line 1; cite line 1 to catch it.
-            findings.append({
-                "file": fname, "line": 1,
-                "severity": "high", "description": "canary finding",
-            })
+            findings.append(
+                {
+                    "file": fname,
+                    "line": 1,
+                    "severity": "high",
+                    "description": "canary finding",
+                }
+            )
         # Add a real finding on a file from the original diff.
-        findings.append({
-            "file": "foo.py", "line": 2,
-            "severity": "medium", "description": "real finding",
-        })
+        findings.append(
+            {
+                "file": "foo.py",
+                "line": 2,
+                "severity": "medium",
+                "description": "real finding",
+            }
+        )
         return json.dumps({"findings": findings})
 
     verdict, real = run_inline_canary(
@@ -341,18 +362,26 @@ def test_gate_pass():
         findings = []
         # Parse appended canary hunks from the prompt to hit all canaries.
         for m in re.finditer(
-            r'\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@',
+            r"\+\+\+ b/(\S+\.py)\n@@ -0,0 \+1,(\d+) @@",
             prompt,
         ):
-            findings.append({
-                "file": m.group(1), "line": 1,
-                "severity": "high", "description": "caught canary",
-            })
+            findings.append(
+                {
+                    "file": m.group(1),
+                    "line": 1,
+                    "severity": "high",
+                    "description": "caught canary",
+                }
+            )
         # Add a real finding too.
-        findings.append({
-            "file": "foo.py", "line": 2,
-            "severity": "low", "description": "real issue",
-        })
+        findings.append(
+            {
+                "file": "foo.py",
+                "line": 2,
+                "severity": "low",
+                "description": "real issue",
+            }
+        )
         return json.dumps({"findings": findings})
 
     verdict, real = run_inline_canary(
@@ -369,6 +398,7 @@ def test_gate_pass():
 
 def test_gate_miss():
     """Empty findings (rubber-stamp) returns UNRELIABLE."""
+
     def empty_reviewer(prompt: str) -> str:
         return json.dumps({"findings": []})
 
@@ -408,6 +438,7 @@ def test_gate_skip_on_insufficient():
 
 def test_dispatch_error_graceful():
     """ReviewProvider raising an exception degrades to DELEGATED, not crash."""
+
     def exploding_reviewer(prompt: str) -> str:
         raise RuntimeError("LLM timeout")
 
@@ -423,6 +454,7 @@ def test_dispatch_error_graceful():
 
 def test_threshold_ratio_zero_clamped():
     """threshold_ratio=0.0 clamps to threshold=1, does not crash."""
+
     def empty_reviewer(prompt: str) -> str:
         return json.dumps({"findings": []})
 
@@ -453,6 +485,7 @@ def test_no_tree_mutation():
 
     builtins.open = tracked_open
     try:
+
         def empty_reviewer(prompt: str) -> str:
             return json.dumps({"findings": []})
 
@@ -476,8 +509,7 @@ def test_injected_canary_is_catchable_at_recorded_line():
 
     # Build findings that cite exact canary locations.
     findings = [
-        {"file": c.file, "line": c.line, "severity": "high", "description": "bug"}
-        for c in manifest
+        {"file": c.file, "line": c.line, "severity": "high", "description": "bug"} for c in manifest
     ]
 
     gate = evaluate_canary_coverage(findings, manifest, threshold=len(manifest))
@@ -500,8 +532,7 @@ def test_bug_inject_shifted_hunk_breaks_invariant():
     # small values like 1-3) but the reviewer cites line = canary.line + 5
     # (as if +start were 6 instead of 1, shifting all code lines by +5).
     shifted_findings = [
-        {"file": c.file, "line": c.line + 5, "severity": "high", "description": "bug"}
-        for c in manifest
+        {"file": c.file, "line": c.line + 5, "severity": "high", "description": "bug"} for c in manifest
     ]
 
     gate = evaluate_canary_coverage(shifted_findings, manifest, threshold=1)

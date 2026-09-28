@@ -66,7 +66,9 @@ class TestDetectSubcommand:
             return_value=fake_result,
         ) as mock_dai:
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "detect"],
+                sys,
+                "argv",
+                ["code-forge", "detect"],
             )
             exit_code = main()
 
@@ -85,7 +87,9 @@ class TestDetectSubcommand:
             return_value=fake_result,
         ) as mock_dai:
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "detect", "--force"],
+                sys,
+                "argv",
+                ["code-forge", "detect", "--force"],
             )
             exit_code = main()
 
@@ -96,13 +100,12 @@ class TestDetectSubcommand:
         """detect in empty project -> exits 2 (CliError)."""
         with patch(
             "code_forge.detect.detect_and_init",
-            side_effect=CliError(
-                "No toolchain detected. L0 has no static "
-                "analysis tools."
-            ),
+            side_effect=CliError("No toolchain detected. L0 has no static analysis tools."),
         ):
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "detect"],
+                sys,
+                "argv",
+                ["code-forge", "detect"],
             )
             exit_code = main()
 
@@ -144,7 +147,9 @@ class TestResolveOutletSubcommand:
             return_value="subprocess",
         ):
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "resolve-outlet"],
+                sys,
+                "argv",
+                ["code-forge", "resolve-outlet"],
             )
             exit_code = main()
 
@@ -159,7 +164,9 @@ class TestResolveOutletSubcommand:
             return_value="inline",
         ):
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "resolve-outlet"],
+                sys,
+                "argv",
+                ["code-forge", "resolve-outlet"],
             )
             exit_code = main()
 
@@ -168,18 +175,21 @@ class TestResolveOutletSubcommand:
         assert captured.out.strip() == "inline"
 
     def test_resolve_outlet_backend_unreachable_exits_1(
-        self, monkeypatch, capsys,
+        self,
+        monkeypatch,
+        capsys,
     ):
         """Backend unreachable -> stderr diagnostic, exits 1."""
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
             side_effect=CliError(
-                "Configure a review backend or set "
-                "FORGE_OUTLET=inline. Reachability: mock"
+                "Configure a review backend or set FORGE_OUTLET=inline. Reachability: mock"
             ),
         ):
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "resolve-outlet"],
+                sys,
+                "argv",
+                ["code-forge", "resolve-outlet"],
             )
             exit_code = main()
 
@@ -188,18 +198,21 @@ class TestResolveOutletSubcommand:
         assert "Configure a review backend" in captured.err
 
     def test_resolve_outlet_invalid_value_exits_2(
-        self, monkeypatch, capsys,
+        self,
+        monkeypatch,
+        capsys,
     ):
         """Invalid FORGE_OUTLET value -> exits 2 (ValueError)."""
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
             side_effect=ValueError(
-                "invalid outlet 'bogus' from FORGE_OUTLET env "
-                "(expected: cli|inline)"
+                "invalid outlet 'bogus' from FORGE_OUTLET env (expected: cli|inline)"
             ),
         ):
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "resolve-outlet"],
+                sys,
+                "argv",
+                ["code-forge", "resolve-outlet"],
             )
             exit_code = main()
 
@@ -220,7 +233,9 @@ class TestResolveOutletSubcommand:
             return_value="subprocess",
         ):
             monkeypatch.setattr(
-                sys, "argv", ["code-forge", "resolve-outlet"],
+                sys,
+                "argv",
+                ["code-forge", "resolve-outlet"],
             )
             main()
 

@@ -1,4 +1,5 @@
 """Validate surrounding context against immutable Git blobs, not live files."""
+
 import json
 import subprocess
 
@@ -35,8 +36,13 @@ def candidate(tmp_path):
     file.write_text("\n".join(lines) + "\n")
     git(tmp_path, "add", "CHANGELOG.md")
     diff = git(tmp_path, "diff", "--cached", "--full-index")
-    excerpt = {"file": "CHANGELOG.md", "start_line": 37, "end_line": 44,
-               "content": "\n".join(lines[35:43]), "rationale": "context"}
+    excerpt = {
+        "file": "CHANGELOG.md",
+        "start_line": 37,
+        "end_line": 44,
+        "content": "\n".join(lines[35:43]),
+        "rationale": "context",
+    }
     return tmp_path, diff, excerpt
 
 
@@ -57,15 +63,21 @@ def unstaged_gap(tmp_path):
     path.write_text("\n".join(after) + "\n")
     diff = git(tmp_path, "diff", "-U3", "HEAD", "--", "changed.py")
     excerpt = {
-        "file": "changed.py", "start_line": 5, "end_line": 10,
+        "file": "changed.py",
+        "start_line": 5,
+        "end_line": 10,
         "content": "\n".join(after[4:10]),
     }
     other = {
-        "file": "changed.py", "start_line": 20, "end_line": 20,
+        "file": "changed.py",
+        "start_line": 20,
+        "end_line": 20,
         "content": after[19],
     }
     full = {
-        "file": "changed.py", "start_line": 1, "end_line": 26,
+        "file": "changed.py",
+        "start_line": 1,
+        "end_line": 26,
         "content": "\n".join(after[:26]),
     }
     return tmp_path, diff, excerpt, other, full
@@ -73,19 +85,19 @@ def unstaged_gap(tmp_path):
 
 def test_unstaged_zero_context_insert_reconstructs_without_shifting_base():
     base = "base 1\nbase 2\nbase 3\n"
-    first = (
-        "a/f b/f\nindex 0000000..1111111 100644\n--- a/f\n+++ b/f\n"
-        "@@ -0,0 +1,1 @@\n+new start\n"
-    )
-    middle = (
-        "a/f b/f\nindex 0000000..1111111 100644\n--- a/f\n+++ b/f\n"
-        "@@ -2,0 +3,1 @@\n+new middle\n"
-    )
+    first = "a/f b/f\nindex 0000000..1111111 100644\n--- a/f\n+++ b/f\n@@ -0,0 +1,1 @@\n+new start\n"
+    middle = "a/f b/f\nindex 0000000..1111111 100644\n--- a/f\n+++ b/f\n@@ -2,0 +3,1 @@\n+new middle\n"
     assert _reconstruct_post_image(base, first) == [
-        "new start", "base 1", "base 2", "base 3",
+        "new start",
+        "base 1",
+        "base 2",
+        "base 3",
     ]
     assert _reconstruct_post_image(base, middle) == [
-        "base 1", "base 2", "new middle", "base 3",
+        "base 1",
+        "base 2",
+        "new middle",
+        "base 3",
     ]
 
 
@@ -122,11 +134,12 @@ def test_unstaged_gap_with_crlf_file_keeps_context(tmp_path, staged):
     if staged:
         git(tmp_path, "add", "changed.py")
     args = ["--cached"] if staged else []
-    diff = subprocess.check_output(["git", "diff", *args, "HEAD", "--", "changed.py"], cwd=tmp_path).decode()
+    diff = subprocess.check_output(
+        ["git", "diff", *args, "HEAD", "--", "changed.py"], cwd=tmp_path
+    ).decode()
     assert " line 2\r\n" in diff
     assert path.read_bytes().count(b"\r\n") == len(after)
-    excerpt = {"file": "changed.py", "start_line": 5, "end_line": 10,
-               "content": "\n".join(after[4:10])}
+    excerpt = {"file": "changed.py", "start_line": 5, "end_line": 10, "content": "\n".join(after[4:10])}
     post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
     assert post["changed.py"][10] == "line 10"
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
@@ -154,12 +167,12 @@ def test_unstaged_gap_preserves_embedded_carriage_return(tmp_path, special_line)
     assert (special in diff) == (special_line == 6)
     post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
     assert post["changed.py"][special_line] == special
-    excerpt = {"file": "changed.py", "start_line": 5, "end_line": 10,
-               "content": "\n".join(after[4:10])}
+    excerpt = {"file": "changed.py", "start_line": 5, "end_line": 10, "content": "\n".join(after[4:10])}
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
     git(tmp_path, "add", "changed.py")
     staged = subprocess.check_output(
-        ["git", "diff", "--cached", "HEAD", "--", "changed.py"], cwd=tmp_path,
+        ["git", "diff", "--cached", "HEAD", "--", "changed.py"],
+        cwd=tmp_path,
     ).decode()
     staged_post, _, _ = _diff_validation_context(staged, cwd=tmp_path)
     assert staged_post["changed.py"][special_line] == special
@@ -182,7 +195,9 @@ def test_final_bare_cr_is_preserved(tmp_path, staged, eol):
     path = tmp_path / "changed.py"
     path.write_bytes(eol.join(before).encode())
     git(tmp_path, "add", "changed.py")
-    git(tmp_path, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-qm", "base")
+    git(
+        tmp_path, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-qm", "base"
+    )
     after = before.copy()
     after[4] = "changed five"
     after[27] = "changed twenty-eight"
@@ -218,7 +233,9 @@ def test_unstaged_no_final_newline_keeps_immutable_gap(tmp_path):
     diff = git(tmp_path, "diff", "-U3", "HEAD", "--", "changed.py")
     assert "\\ No newline at end of file" in diff
     excerpt = {
-        "file": "changed.py", "start_line": 5, "end_line": 10,
+        "file": "changed.py",
+        "start_line": 5,
+        "end_line": 10,
         "content": "\n".join(after[4:10]),
     }
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
@@ -229,16 +246,26 @@ def _verify_receipt_gap(root, diff, excerpts):
 
     receipts_dir = root / ".code-forge" / "receipts"
     files = write_receipts(
-        receipts_dir, 0, [], compute_source_hash(git_diff=diff),
-        [root / "changed.py"], root, diff_text=diff,
+        receipts_dir,
+        0,
+        [],
+        compute_source_hash(git_diff=diff),
+        [root / "changed.py"],
+        root,
+        diff_text=diff,
         diff_files=parse_diff_files(diff),
-        reviewer_excerpts=[dict(exc, pass_name=name)
-                           for name in ("qodo", "expert", "adversarial")
-                           for exc in excerpts],
+        reviewer_excerpts=[
+            dict(exc, pass_name=name) for name in ("qodo", "expert", "adversarial") for exc in excerpts
+        ],
     )
-    result = run_verify(root, compute_source_hash(git_diff=diff),
-                        parse_diff_files(diff), diff_text=diff,
-                        required_cycles=1, respect_floor=False)
+    result = run_verify(
+        root,
+        compute_source_hash(git_diff=diff),
+        parse_diff_files(diff),
+        diff_text=diff,
+        required_cycles=1,
+        respect_floor=False,
+    )
     return result, [json.loads(path.read_text()) for path in files]
 
 
@@ -264,13 +291,18 @@ def test_unstaged_gap_refuses_fabricated_or_unproven_content(unstaged_gap):
     excerpt["content"] = excerpt["content"].replace("forged line", "line 10")
     # An unresolvable base object is not evidence for an omitted line.
     import re
+
     broken = re.sub(r"(?<=index )[0-9a-f]+", "f" * 40, diff)
     errors = validate_excerpts_against_diff(broken, [excerpt], cwd=root)
-    assert errors == ["excerpt changed.py:5-10 claims line 9 outside the diff post-image; it cannot be verified"]
+    assert errors == [
+        "excerpt changed.py:5-10 claims line 9 outside the diff post-image; it cannot be verified"
+    ]
     # The base blob must also agree with every old-side hunk line.
     forged = diff.replace("-line 5", "-invented")
     errors = validate_excerpts_against_diff(forged, [excerpt], cwd=root)
-    assert errors == ["excerpt changed.py:5-10 claims line 9 outside the diff post-image; it cannot be verified"]
+    assert errors == [
+        "excerpt changed.py:5-10 claims line 9 outside the diff post-image; it cannot be verified"
+    ]
 
 
 def test_unstaged_gap_receipt_preflight_matches_gate(unstaged_gap, caplog):
@@ -281,6 +313,7 @@ def test_unstaged_gap_receipt_preflight_matches_gate(unstaged_gap, caplog):
     assert "pre-flight" not in caplog.text
     # Missing immutable objects cannot be silently treated as verified gaps.
     import re
+
     broken = re.sub(r"(?<=index )[0-9a-f]+", "f" * 40, diff)
     _warn_on_fabricated_excerpts(broken, [excerpt], cwd=root)
     assert "references lines 9, 10 not in diff post-image" in caplog.text
@@ -329,8 +362,13 @@ def test_whitespace_path_boundary_context(tmp_path):
     file.write_text("\n".join(lines) + "\n")
     git(tmp_path, "add", "spaced name.py")
     diff = git(tmp_path, "diff", "--cached", "--full-index")
-    excerpt = {"file": "spaced name.py", "start_line": 37, "end_line": 44,
-               "content": "\n".join(lines[36:44]), "rationale": "context"}
+    excerpt = {
+        "file": "spaced name.py",
+        "start_line": 37,
+        "end_line": 44,
+        "content": "\n".join(lines[36:44]),
+        "rationale": "context",
+    }
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
     post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
     assert "spaced name.py" in post
@@ -345,16 +383,19 @@ def test_whitespace_path_boundary_context(tmp_path):
     receipts.mkdir(parents=True)
     sha = compute_source_hash(git_diff=diff)
     for cycle in range(1, 4):
-        for pass_n, skill in enumerate(
-            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
-        ):
+        for pass_n, skill in enumerate(["qodo-review", "code-review-expert", "adversarial-qe"], 1):
             receipt = {
-                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "cycle": cycle,
+                "pass": pass_n,
+                "skill": skill,
                 "diff_sha256": sha,
                 "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
-                "pass_status": "completed", "findings_count": 0,
-                "findings": [], "anchors": [{"file": "spaced name.py", "line": 40}],
-                "code_excerpts": [excerpt], "covered_line_ranges": [],
+                "pass_status": "completed",
+                "findings_count": 0,
+                "findings": [],
+                "anchors": [{"file": "spaced name.py", "line": 40}],
+                "code_excerpts": [excerpt],
+                "covered_line_ranges": [],
             }
             p = receipts / f"receipt-c{cycle}p{pass_n}.json"
             p.write_text(json.dumps(receipt))
@@ -381,8 +422,11 @@ def test_quoted_non_ascii_path_attests_through_run_verify(tmp_path):
     diff = git(tmp_path, "diff", "--cached", "--full-index")
     assert '+++ "b/' in diff
     excerpt = {
-        "file": name, "start_line": 8, "end_line": 12,
-        "content": "\n".join(lines[7:12]), "rationale": "context",
+        "file": name,
+        "start_line": 8,
+        "end_line": 12,
+        "content": "\n".join(lines[7:12]),
+        "rationale": "context",
     }
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
     diff_files = parse_diff_files(diff)
@@ -395,20 +439,21 @@ def test_quoted_non_ascii_path_attests_through_run_verify(tmp_path):
     receipts.mkdir(parents=True)
     sha = compute_source_hash(git_diff=diff)
     for cycle in range(1, 4):
-        for pass_n, skill in enumerate(
-            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
-        ):
+        for pass_n, skill in enumerate(["qodo-review", "code-review-expert", "adversarial-qe"], 1):
             receipt = {
-                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "cycle": cycle,
+                "pass": pass_n,
+                "skill": skill,
                 "diff_sha256": sha,
                 "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
-                "pass_status": "completed", "findings_count": 0,
-                "findings": [], "anchors": [{"file": name, "line": 10}],
-                "code_excerpts": [excerpt], "covered_line_ranges": [],
+                "pass_status": "completed",
+                "findings_count": 0,
+                "findings": [],
+                "anchors": [{"file": name, "line": 10}],
+                "code_excerpts": [excerpt],
+                "covered_line_ranges": [],
             }
-            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(
-                json.dumps(receipt)
-            )
+            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(json.dumps(receipt))
     gate = tmp_path / ".code-forge" / "gate.yaml"
     gate.write_text("verify:\n  required_cycles: 3\n")
     res = run_verify(tmp_path, sha, diff_files, diff_text=diff)
@@ -517,31 +562,33 @@ def test_quoted_path_under_dir_a_keeps_prefix(tmp_path):
     assert keys["changed"] == [rel]
     assert keys["dvc"] == [rel]
     excerpt = {
-        "file": rel, "start_line": 8, "end_line": 12,
-        "content": "\n".join(lines[7:12]), "rationale": "context",
+        "file": rel,
+        "start_line": 8,
+        "end_line": 12,
+        "content": "\n".join(lines[7:12]),
+        "rationale": "context",
     }
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
     receipts = tmp_path / ".code-forge" / "receipts"
     receipts.mkdir(parents=True)
     sha = compute_source_hash(git_diff=diff)
     for cycle in range(1, 4):
-        for pass_n, skill in enumerate(
-            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
-        ):
+        for pass_n, skill in enumerate(["qodo-review", "code-review-expert", "adversarial-qe"], 1):
             receipt = {
-                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "cycle": cycle,
+                "pass": pass_n,
+                "skill": skill,
                 "diff_sha256": sha,
                 "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
-                "pass_status": "completed", "findings_count": 0,
-                "findings": [], "anchors": [{"file": rel, "line": 10}],
-                "code_excerpts": [excerpt], "covered_line_ranges": [],
+                "pass_status": "completed",
+                "findings_count": 0,
+                "findings": [],
+                "anchors": [{"file": rel, "line": 10}],
+                "code_excerpts": [excerpt],
+                "covered_line_ranges": [],
             }
-            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(
-                json.dumps(receipt)
-            )
-    (tmp_path / ".code-forge" / "gate.yaml").write_text(
-        "verify:\n  required_cycles: 3\n"
-    )
+            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(json.dumps(receipt))
+    (tmp_path / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
     res = run_verify(tmp_path, sha, parse_diff_files(diff), diff_text=diff)
     assert res.passed, res.reason
 
@@ -595,31 +642,33 @@ def test_unquoted_path_with_b_slash_directory(tmp_path):
     assert list(extract_changed_lines(diff)) == [rel]
     assert list(_diff_validation_context(diff)[0]) == [rel]
     excerpt = {
-        "file": rel, "start_line": 8, "end_line": 12,
-        "content": "\n".join(lines[7:12]), "rationale": "context",
+        "file": rel,
+        "start_line": 8,
+        "end_line": 12,
+        "content": "\n".join(lines[7:12]),
+        "rationale": "context",
     }
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
     receipts = tmp_path / ".code-forge" / "receipts"
     receipts.mkdir(parents=True)
     sha = compute_source_hash(git_diff=diff)
     for cycle in range(1, 4):
-        for pass_n, skill in enumerate(
-            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
-        ):
+        for pass_n, skill in enumerate(["qodo-review", "code-review-expert", "adversarial-qe"], 1):
             receipt = {
-                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "cycle": cycle,
+                "pass": pass_n,
+                "skill": skill,
                 "diff_sha256": sha,
                 "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
-                "pass_status": "completed", "findings_count": 0,
-                "findings": [], "anchors": [{"file": rel, "line": 10}],
-                "code_excerpts": [excerpt], "covered_line_ranges": [],
+                "pass_status": "completed",
+                "findings_count": 0,
+                "findings": [],
+                "anchors": [{"file": rel, "line": 10}],
+                "code_excerpts": [excerpt],
+                "covered_line_ranges": [],
             }
-            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(
-                json.dumps(receipt)
-            )
-    (tmp_path / ".code-forge" / "gate.yaml").write_text(
-        "verify:\n  required_cycles: 3\n"
-    )
+            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(json.dumps(receipt))
+    (tmp_path / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
     res = run_verify(tmp_path, sha, parse_diff_files(diff), diff_text=diff)
     assert res.passed, res.reason
 
@@ -645,31 +694,33 @@ def test_unquoted_b_slash_path_rejects_fabricated_excerpt(tmp_path):
     assert rel in hunks
     assert rel not in exempt
     fake = {
-        "file": rel, "start_line": 8, "end_line": 12,
-        "content": "TOTALLY FAKE\n" * 5, "rationale": "probe",
+        "file": rel,
+        "start_line": 8,
+        "end_line": 12,
+        "content": "TOTALLY FAKE\n" * 5,
+        "rationale": "probe",
     }
     assert validate_excerpts_against_diff(diff, [fake], cwd=tmp_path)
     receipts = tmp_path / ".code-forge" / "receipts"
     receipts.mkdir(parents=True)
     sha = compute_source_hash(git_diff=diff)
     for cycle in range(1, 4):
-        for pass_n, skill in enumerate(
-            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
-        ):
+        for pass_n, skill in enumerate(["qodo-review", "code-review-expert", "adversarial-qe"], 1):
             receipt = {
-                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "cycle": cycle,
+                "pass": pass_n,
+                "skill": skill,
                 "diff_sha256": sha,
                 "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
-                "pass_status": "completed", "findings_count": 0,
-                "findings": [], "anchors": [{"file": rel, "line": 10}],
-                "code_excerpts": [fake], "covered_line_ranges": [],
+                "pass_status": "completed",
+                "findings_count": 0,
+                "findings": [],
+                "anchors": [{"file": rel, "line": 10}],
+                "code_excerpts": [fake],
+                "covered_line_ranges": [],
             }
-            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(
-                json.dumps(receipt)
-            )
-    (tmp_path / ".code-forge" / "gate.yaml").write_text(
-        "verify:\n  required_cycles: 3\n"
-    )
+            (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(json.dumps(receipt))
+    (tmp_path / ".code-forge" / "gate.yaml").write_text("verify:\n  required_cycles: 3\n")
     res = run_verify(tmp_path, sha, parse_diff_files(diff), diff_text=diff)
     assert not res.passed
     assert "mismatch" in res.reason or "excerpt" in res.reason
@@ -690,8 +741,11 @@ def test_added_line_starting_with_plus_stays_in_post_image(tmp_path):
     git(tmp_path, "add", "u.py")
     diff = git(tmp_path, "diff", "--cached", "--full-index")
     excerpt = {
-        "file": "u.py", "start_line": 5, "end_line": 8,
-        "content": "\n".join(lines[4:8]), "rationale": "context",
+        "file": "u.py",
+        "start_line": 5,
+        "end_line": 8,
+        "content": "\n".join(lines[4:8]),
+        "rationale": "context",
     }
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
     post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
@@ -728,15 +782,18 @@ def test_terminal_gate_uses_same_frozen_context(candidate):
     receipts.mkdir(parents=True)
     sha = compute_source_hash(git_diff=diff)
     for cycle in range(1, 4):
-        for pass_n, skill in enumerate(
-            ["qodo-review", "code-review-expert", "adversarial-qe"], 1
-        ):
+        for pass_n, skill in enumerate(["qodo-review", "code-review-expert", "adversarial-qe"], 1):
             receipt = {
-                "cycle": cycle, "pass": pass_n, "skill": skill,
+                "cycle": cycle,
+                "pass": pass_n,
+                "skill": skill,
                 "diff_sha256": sha,
                 "timestamp": f"2026-09-16T10:{cycle * 3 + pass_n:02d}:00Z",
-                "pass_status": "completed", "findings_count": 0,
-                "findings": [], "anchors": [], "code_excerpts": [excerpt],
+                "pass_status": "completed",
+                "findings_count": 0,
+                "findings": [],
+                "anchors": [],
+                "code_excerpts": [excerpt],
                 "covered_line_ranges": [],
             }
             (receipts / f"receipt-c{cycle}p{pass_n}.json").write_text(json.dumps(receipt))
@@ -749,11 +806,14 @@ def test_receipt_producer_accepts_frozen_context(candidate):
 
     root, diff, excerpt = candidate
     files = write_receipts(
-        root / ".code-forge" / "receipts", 0, [],
-        compute_source_hash(git_diff=diff), [], root,
+        root / ".code-forge" / "receipts",
+        0,
+        [],
+        compute_source_hash(git_diff=diff),
+        [],
+        root,
         diff_text=diff,
-        reviewer_excerpts=[dict(excerpt, pass_name=p)
-                           for p in ("qodo", "expert", "adversarial")],
+        reviewer_excerpts=[dict(excerpt, pass_name=p) for p in ("qodo", "expert", "adversarial")],
     )
     assert len(files) == 3
     assert all(json.loads(f.read_text())["pass_status"] == "completed" for f in files)
@@ -821,15 +881,17 @@ def test_blob_selector_rejects_non_object_syntax(candidate, oid):
 
 
 @pytest.mark.parametrize(
-    "content", [b"binary\x00payload", b"\xff", b"a" * 2_000_001],
+    "content",
+    [b"binary\x00payload", b"\xff", b"a" * 2_000_001],
     ids=["binary", "invalid-utf8", "oversized"],
 )
 def test_blob_reader_rejects_non_text_or_oversized(candidate, content):
     from code_forge.git import read_diff_blob
 
     root, _diff, _excerpt = candidate
-    result = subprocess.run(["git", "hash-object", "-w", "--stdin"],
-                            cwd=root, input=content, capture_output=True, check=True)
+    result = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=root, input=content, capture_output=True, check=True
+    )
     assert read_diff_blob(result.stdout.decode().strip(), root) is None
 
 

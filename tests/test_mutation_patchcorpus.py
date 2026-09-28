@@ -32,23 +32,18 @@ from code_forge.mutation_engines.schemas import (
 )
 from code_forge.mutation_engines.targets import TargetSelection
 
-FIXTURE = (
-    Path(__file__).resolve().parent
-    / "fixtures"
-    / "mutation_contract"
-    / "bash_required_ref"
-)
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mutation_contract" / "bash_required_ref"
 CGROUP_ROOT = "/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service" % (
     os.getuid(),
     os.getuid(),
 )
 
 SCRIPT = "scripts/check-ref.sh"
-GUARD = '''if [ -z "$ref" ]; then
+GUARD = """if [ -z "$ref" ]; then
     echo "empty ref" >&2
     exit 2
 fi
-'''
+"""
 
 
 def _budget() -> Budget:
@@ -94,9 +89,7 @@ def _context(tmp_path: Path) -> ExecutionContext:
         pids=64,
         workspace_mb=64,
         process_headroom_mb=32,
-        extra_python_paths=(
-            "/home/houminxi/.local/lib/python3.12/site-packages",
-        ),
+        extra_python_paths=("/home/houminxi/.local/lib/python3.12/site-packages",),
     )
 
 
@@ -183,9 +176,7 @@ def test_real_corpus_kills_guard_removal(tmp_path):
     # that source, so both are in selection. Add a third file-scoped run
     # that excludes the second by selecting a path neither uses? Both share
     # SCRIPT. Outside-selection is covered by a second selection below.
-    result = PatchCorpusAdapter().run(
-        _target(), selection, _snapshot(root), _context(tmp_path)
-    )
+    result = PatchCorpusAdapter().run(_target(), selection, _snapshot(root), _context(tmp_path))
     assert result.run_state is RunState.COMPLETE, result.reason_code
     assert result.baseline.state is BaselineState.PASSED
     assert result.reason_code == "corpus-limited"
@@ -200,9 +191,7 @@ def test_real_corpus_lists_entries_outside_selection(tmp_path):
     root = tmp_path / "proj"
     import shutil
 
-    shutil.copytree(
-        FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
-    )
+    shutil.copytree(FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     _write_corpus(root)
     selection = TargetSelection(
         target_id="shell-config",
@@ -211,12 +200,11 @@ def test_real_corpus_lists_entries_outside_selection(tmp_path):
         line_ranges={},
         reasons=("unrelated",),
     )
-    result = PatchCorpusAdapter().run(
-        _target(), selection, _snapshot(root), _context(tmp_path)
-    )
+    result = PatchCorpusAdapter().run(_target(), selection, _snapshot(root), _context(tmp_path))
     assert result.outcomes == ()
     coverage = [
-        item for item in result.native_artifacts
+        item
+        for item in result.native_artifacts
         if item.relative_run_path.endswith("corpus-coverage.json")
     ]
     assert coverage, "coverage statement missing"

@@ -5,6 +5,7 @@ config loading, env var expansion, spec file reading, stat-first size
 gate, binary detection, LLM summarization with caching, containment
 check, per-spec error isolation, digest assembly.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -47,9 +48,11 @@ def test_trust_record_and_check(trust_dir, contracts_yaml):
     """record_trust_contracts then is_trusted_contracts returns True."""
     from code_forge.trust import is_trusted_contracts, record_trust_contracts
 
-    contents = _make_resolved_contents([
-        ("/repo/spec.yaml", "field: value\n"),
-    ])
+    contents = _make_resolved_contents(
+        [
+            ("/repo/spec.yaml", "field: value\n"),
+        ]
+    )
     record_trust_contracts(contracts_yaml, contents, config_dir=trust_dir)
     assert is_trusted_contracts(contracts_yaml, contents) is True
 
@@ -58,9 +61,11 @@ def test_untrusted_contracts_returns_false(trust_dir, contracts_yaml):
     """No record -> is_trusted_contracts returns False."""
     from code_forge.trust import is_trusted_contracts
 
-    contents = _make_resolved_contents([
-        ("/repo/spec.yaml", "field: value\n"),
-    ])
+    contents = _make_resolved_contents(
+        [
+            ("/repo/spec.yaml", "field: value\n"),
+        ]
+    )
     # Point XDG to our trust dir so _load_trust_store finds our (empty) store
     assert is_trusted_contracts(contracts_yaml, contents) is False
 
@@ -69,14 +74,18 @@ def test_trust_hash_changes_on_spec_content_change(trust_dir, contracts_yaml):
     """Modify spec content after record -> is_trusted_contracts returns False."""
     from code_forge.trust import is_trusted_contracts, record_trust_contracts
 
-    original = _make_resolved_contents([
-        ("/repo/spec.yaml", "field: original\n"),
-    ])
+    original = _make_resolved_contents(
+        [
+            ("/repo/spec.yaml", "field: original\n"),
+        ]
+    )
     record_trust_contracts(contracts_yaml, original, config_dir=trust_dir)
 
-    modified = _make_resolved_contents([
-        ("/repo/spec.yaml", "field: MODIFIED\n"),
-    ])
+    modified = _make_resolved_contents(
+        [
+            ("/repo/spec.yaml", "field: MODIFIED\n"),
+        ]
+    )
     assert is_trusted_contracts(contracts_yaml, modified) is False
 
 
@@ -98,9 +107,11 @@ def test_revoke_trust_contracts(trust_dir, contracts_yaml):
         revoke_trust_contracts,
     )
 
-    contents = _make_resolved_contents([
-        ("/repo/spec.yaml", "field: value\n"),
-    ])
+    contents = _make_resolved_contents(
+        [
+            ("/repo/spec.yaml", "field: value\n"),
+        ]
+    )
     record_trust_contracts(contracts_yaml, contents, config_dir=trust_dir)
     assert is_trusted_contracts(contracts_yaml, contents) is True
 
@@ -116,9 +127,11 @@ def test_trust_status_contracts(trust_dir, contracts_yaml):
         trust_status_contracts,
     )
 
-    contents = _make_resolved_contents([
-        ("/repo/spec.yaml", "field: value\n"),
-    ])
+    contents = _make_resolved_contents(
+        [
+            ("/repo/spec.yaml", "field: value\n"),
+        ]
+    )
     record_trust_contracts(contracts_yaml, contents, config_dir=trust_dir)
 
     status = trust_status_contracts(contracts_yaml, contents)
@@ -155,9 +168,7 @@ def _setup_repo_with_specs(tmp_path, repo_name, specs):
     for rel_path, content in specs:
         spec_file = repo_dir / rel_path
         spec_file.parent.mkdir(parents=True, exist_ok=True)
-        spec_file.write_bytes(
-            content.encode("utf-8") if isinstance(content, str) else content
-        )
+        spec_file.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
     return repo_dir
 
 
@@ -168,15 +179,22 @@ def test_load_valid_contracts_yaml(tmp_path):
     """Valid YAML parsed into ContractsConfig."""
     from code_forge.contract_loader import ContractsConfig, load_contracts_config
 
-    repo_dir = _setup_repo_with_specs(tmp_path, "kernel", [
-        ("net/ovs/spec.yaml", "name: ovs_flow\n"),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "kernel": {
-            "path": str(repo_dir),
-            "specs": [{"path": "net/ovs/spec.yaml"}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "kernel",
+        [
+            ("net/ovs/spec.yaml", "name: ovs_flow\n"),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "kernel": {
+                "path": str(repo_dir),
+                "specs": [{"path": "net/ovs/spec.yaml"}],
+            },
         },
-    })
+    )
 
     config = load_contracts_config(cfg_path)
     assert isinstance(config, ContractsConfig)
@@ -220,14 +238,18 @@ def test_missing_env_var_graceful_skip(tmp_path, trust_dir, monkeypatch, capsys)
     """Unset env var produces empty digest with warning."""
     from code_forge.contract_loader import load_contract_digest
 
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "kernel": {
-            "path": "$UNDEFINED_REPO_VAR_XYZ",
-            "specs": [{"path": "spec.yaml"}],
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "kernel": {
+                "path": "$UNDEFINED_REPO_VAR_XYZ",
+                "specs": [{"path": "spec.yaml"}],
+            },
         },
-    })
+    )
     # Trust the empty resolved contents so the trust check passes
     from code_forge.trust import record_trust_contracts
+
     record_trust_contracts(cfg_path, [], config_dir=trust_dir)
 
     result = load_contract_digest(cfg_path, tmp_path)
@@ -241,14 +263,18 @@ def test_spec_file_not_found_graceful(tmp_path, trust_dir):
 
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "nonexistent.yaml"}],
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "nonexistent.yaml"}],
+            },
         },
-    })
+    )
     # Trust check would get empty contents
     from code_forge.trust import record_trust_contracts
+
     record_trust_contracts(cfg_path, [], config_dir=trust_dir)
 
     result = load_contract_digest(cfg_path, tmp_path)
@@ -271,15 +297,22 @@ def test_small_spec_raw_injection(tmp_path, trust_dir):
     from code_forge.contract_loader import load_contract_digest
     from code_forge.trust import record_trust_contracts
 
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("spec.yaml", "name: small_spec\nops:\n  - get\n"),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "spec.yaml"}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("spec.yaml", "name: small_spec\nops:\n  - get\n"),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "spec.yaml"}],
+            },
         },
-    })
+    )
     # Build trust contents matching what resolve_contract_specs returns
     spec_file = repo_dir / "spec.yaml"
     content = spec_file.read_bytes()
@@ -297,25 +330,36 @@ def test_large_spec_summarized(tmp_path, trust_dir, monkeypatch):
     from code_forge.trust import record_trust_contracts
 
     large_content = "field: " + "x" * 40000 + "\n"
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("big.yaml", large_content),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "big.yaml", "max_raw_size": 100}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("big.yaml", large_content),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "big.yaml", "max_raw_size": 100}],
+            },
         },
-    })
+    )
     spec_file = repo_dir / "big.yaml"
     content = spec_file.read_bytes()
     trust_contents = [(str(spec_file.resolve()), content)]
     record_trust_contracts(cfg_path, trust_contents, config_dir=trust_dir)
 
-    mock_result_obj = type("LLMResult", (), {
-        "content": {"summary": "A summary of big spec"},
-        "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
-        "duration_s": 0.1,
-    })()
+    mock_result_obj = type(
+        "LLMResult",
+        (),
+        {
+            "content": {"summary": "A summary of big spec"},
+            "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
+            "duration_s": 0.1,
+        },
+    )()
 
     with patch("code_forge.contract_loader.llm_invoke", return_value=mock_result_obj) as mock_llm:
         result = load_contract_digest(cfg_path, tmp_path)
@@ -334,15 +378,22 @@ def test_summary_cache_hit(tmp_path, trust_dir, monkeypatch):
     from code_forge.trust import record_trust_contracts
 
     large_content = "y" * 40000
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("cached.yaml", large_content),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "cached.yaml", "max_raw_size": 100}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("cached.yaml", large_content),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "cached.yaml", "max_raw_size": 100}],
+            },
         },
-    })
+    )
     spec_file = repo_dir / "cached.yaml"
     content = spec_file.read_bytes()
     trust_contents = [(str(spec_file.resolve()), content)]
@@ -366,25 +417,36 @@ def test_summary_cache_miss(tmp_path, trust_dir, monkeypatch):
     from code_forge.trust import record_trust_contracts
 
     large_content = "z" * 40000
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("miss.yaml", large_content),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "miss.yaml", "max_raw_size": 100}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("miss.yaml", large_content),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "miss.yaml", "max_raw_size": 100}],
+            },
         },
-    })
+    )
     spec_file = repo_dir / "miss.yaml"
     content = spec_file.read_bytes()
     trust_contents = [(str(spec_file.resolve()), content)]
     record_trust_contracts(cfg_path, trust_contents, config_dir=trust_dir)
 
-    mock_result_obj = type("LLMResult", (), {
-        "content": {"summary": "summarized miss"},
-        "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
-        "duration_s": 0.1,
-    })()
+    mock_result_obj = type(
+        "LLMResult",
+        (),
+        {
+            "content": {"summary": "summarized miss"},
+            "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
+            "duration_s": 0.1,
+        },
+    )()
 
     with patch("code_forge.contract_loader.llm_invoke", return_value=mock_result_obj):
         result = load_contract_digest(cfg_path, tmp_path)
@@ -448,15 +510,22 @@ def test_summarization_failure_graceful(tmp_path, trust_dir, monkeypatch):
     from code_forge.trust import record_trust_contracts
 
     large_content = "w" * 40000
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("fail.yaml", large_content),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "fail.yaml", "max_raw_size": 100}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("fail.yaml", large_content),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "fail.yaml", "max_raw_size": 100}],
+            },
         },
-    })
+    )
     spec_file = repo_dir / "fail.yaml"
     content = spec_file.read_bytes()
     trust_contents = [(str(spec_file.resolve()), content)]
@@ -506,15 +575,22 @@ def test_untrusted_contracts_returns_empty(tmp_path, trust_dir):
     """Trust check fails, digest is empty."""
     from code_forge.contract_loader import load_contract_digest
 
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("spec.yaml", "name: test\n"),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "spec.yaml"}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("spec.yaml", "name: test\n"),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "spec.yaml"}],
+            },
         },
-    })
+    )
     # Do NOT record trust -- should fail trust check
     result = load_contract_digest(cfg_path, tmp_path)
     assert result == ""
@@ -525,19 +601,26 @@ def test_digest_assembly_format(tmp_path, trust_dir):
     from code_forge.contract_loader import load_contract_digest
     from code_forge.trust import record_trust_contracts
 
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("a.yaml", "name: alpha\n"),
-        ("b.yaml", "name: beta\n"),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [
-                {"path": "a.yaml"},
-                {"path": "b.yaml"},
-            ],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("a.yaml", "name: alpha\n"),
+            ("b.yaml", "name: beta\n"),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [
+                    {"path": "a.yaml"},
+                    {"path": "b.yaml"},
+                ],
+            },
         },
-    })
+    )
     # Build trust
     specs = [
         (str((repo_dir / "a.yaml").resolve()), (repo_dir / "a.yaml").read_bytes()),
@@ -565,22 +648,33 @@ def test_multiple_repos_multiple_specs(tmp_path, trust_dir):
     from code_forge.contract_loader import load_contract_digest
     from code_forge.trust import record_trust_contracts
 
-    repo_a = _setup_repo_with_specs(tmp_path, "repoA", [
-        ("s1.yaml", "name: s1\n"),
-    ])
-    repo_b = _setup_repo_with_specs(tmp_path, "repoB", [
-        ("s2.yaml", "name: s2\n"),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repoA": {
-            "path": str(repo_a),
-            "specs": [{"path": "s1.yaml"}],
+    repo_a = _setup_repo_with_specs(
+        tmp_path,
+        "repoA",
+        [
+            ("s1.yaml", "name: s1\n"),
+        ],
+    )
+    repo_b = _setup_repo_with_specs(
+        tmp_path,
+        "repoB",
+        [
+            ("s2.yaml", "name: s2\n"),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repoA": {
+                "path": str(repo_a),
+                "specs": [{"path": "s1.yaml"}],
+            },
+            "repoB": {
+                "path": str(repo_b),
+                "specs": [{"path": "s2.yaml"}],
+            },
         },
-        "repoB": {
-            "path": str(repo_b),
-            "specs": [{"path": "s2.yaml"}],
-        },
-    })
+    )
     specs = [
         (str((repo_a / "s1.yaml").resolve()), (repo_a / "s1.yaml").read_bytes()),
         (str((repo_b / "s2.yaml").resolve()), (repo_b / "s2.yaml").read_bytes()),
@@ -596,20 +690,27 @@ def test_per_spec_oserror_isolated(tmp_path, trust_dir):
     """One unreadable spec does not abort the loop (CF-2)."""
     from code_forge.contract_loader import resolve_contract_specs
 
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("good.yaml", "name: good\n"),
-        # bad.yaml will be made unreadable
-        ("bad.yaml", "name: bad\n"),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [
-                {"path": "good.yaml"},
-                {"path": "bad.yaml"},
-            ],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("good.yaml", "name: good\n"),
+            # bad.yaml will be made unreadable
+            ("bad.yaml", "name: bad\n"),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [
+                    {"path": "good.yaml"},
+                    {"path": "bad.yaml"},
+                ],
+            },
         },
-    })
+    )
 
     bad_file = repo_dir / "bad.yaml"
     bad_file.chmod(0o000)
@@ -641,25 +742,36 @@ def test_summarize_uses_summary_expected_keys(tmp_path, trust_dir, monkeypatch):
     from code_forge.trust import record_trust_contracts
 
     large_content = "k" * 40000
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("ek.yaml", large_content),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "ek.yaml", "max_raw_size": 100}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("ek.yaml", large_content),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "ek.yaml", "max_raw_size": 100}],
+            },
         },
-    })
+    )
     spec_file = repo_dir / "ek.yaml"
     content = spec_file.read_bytes()
     trust_contents = [(str(spec_file.resolve()), content)]
     record_trust_contracts(cfg_path, trust_contents, config_dir=trust_dir)
 
-    mock_result_obj = type("LLMResult", (), {
-        "content": {"summary": "ek summary"},
-        "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
-        "duration_s": 0.1,
-    })()
+    mock_result_obj = type(
+        "LLMResult",
+        (),
+        {
+            "content": {"summary": "ek summary"},
+            "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
+            "duration_s": 0.1,
+        },
+    )()
 
     with patch("code_forge.contract_loader.llm_invoke", return_value=mock_result_obj) as mock_llm:
         load_contract_digest(cfg_path, tmp_path)
@@ -674,25 +786,36 @@ def test_bytes_decoded_before_summarization(tmp_path, trust_dir, monkeypatch):
 
     # Use content with a UTF-8 multibyte char to prove decoding
     large_content = "field: value\n" + "x" * 40000
-    repo_dir = _setup_repo_with_specs(tmp_path, "repo", [
-        ("utf.yaml", large_content),
-    ])
-    cfg_path = _write_contracts_yaml(tmp_path, {
-        "repo": {
-            "path": str(repo_dir),
-            "specs": [{"path": "utf.yaml", "max_raw_size": 100}],
+    repo_dir = _setup_repo_with_specs(
+        tmp_path,
+        "repo",
+        [
+            ("utf.yaml", large_content),
+        ],
+    )
+    cfg_path = _write_contracts_yaml(
+        tmp_path,
+        {
+            "repo": {
+                "path": str(repo_dir),
+                "specs": [{"path": "utf.yaml", "max_raw_size": 100}],
+            },
         },
-    })
+    )
     spec_file = repo_dir / "utf.yaml"
     content = spec_file.read_bytes()
     trust_contents = [(str(spec_file.resolve()), content)]
     record_trust_contracts(cfg_path, trust_contents, config_dir=trust_dir)
 
-    mock_result_obj = type("LLMResult", (), {
-        "content": {"summary": "decoded summary"},
-        "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
-        "duration_s": 0.1,
-    })()
+    mock_result_obj = type(
+        "LLMResult",
+        (),
+        {
+            "content": {"summary": "decoded summary"},
+            "usage": type("Usage", (), {"input_tokens": 0, "output_tokens": 0})(),
+            "duration_s": 0.1,
+        },
+    )()
 
     with patch("code_forge.contract_loader.llm_invoke", return_value=mock_result_obj) as mock_llm:
         load_contract_digest(cfg_path, tmp_path)
@@ -705,6 +828,7 @@ def test_bytes_decoded_before_summarization(tmp_path, trust_dir, monkeypatch):
 # ====================================================================
 # Memory exhaustion must abort, not degrade to an empty digest
 # ====================================================================
+
 
 def test_memoryerror_in_spec_resolution_propagates(tmp_path):
     """MemoryError while resolving specs aborts instead of returning "".
@@ -738,12 +862,15 @@ def test_memoryerror_in_digest_assembly_propagates(tmp_path):
     cfg_path = tmp_path / "contracts.yaml"
     cfg_path.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
 
-    with patch(
-        "code_forge.contract_loader.resolve_contract_specs",
-        return_value=[],
-    ), patch(
-        "code_forge.contract_loader.is_trusted_contracts",
-        side_effect=MemoryError("out of memory"),
+    with (
+        patch(
+            "code_forge.contract_loader.resolve_contract_specs",
+            return_value=[],
+        ),
+        patch(
+            "code_forge.contract_loader.is_trusted_contracts",
+            side_effect=MemoryError("out of memory"),
+        ),
     ):
         with pytest.raises(MemoryError):
             load_contract_digest(cfg_path, tmp_path)
@@ -752,6 +879,7 @@ def test_memoryerror_in_digest_assembly_propagates(tmp_path):
 # ====================================================================
 # A loader bug is not a bad contract
 # ====================================================================
+
 
 def test_loader_bug_during_resolution_is_not_swallowed(tmp_path):
     """RuntimeError from the resolver aborts; it is not a bad contract.
@@ -780,12 +908,15 @@ def test_loader_bug_during_assembly_is_not_swallowed(tmp_path):
     cfg_path = tmp_path / "contracts.yaml"
     cfg_path.write_text("repos:\n  t:\n    path: .\n    specs: []\n")
 
-    with patch(
-        "code_forge.contract_loader.resolve_contract_specs",
-        return_value=[],
-    ), patch(
-        "code_forge.contract_loader.is_trusted_contracts",
-        side_effect=RuntimeError("trust bug"),
+    with (
+        patch(
+            "code_forge.contract_loader.resolve_contract_specs",
+            return_value=[],
+        ),
+        patch(
+            "code_forge.contract_loader.is_trusted_contracts",
+            side_effect=RuntimeError("trust bug"),
+        ),
     ):
         with pytest.raises(RuntimeError, match="trust bug"):
             load_contract_digest(cfg_path, tmp_path)

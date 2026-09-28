@@ -262,9 +262,7 @@ def _rewrite_approval(config_dir, **changes):
 
 
 def test_stale_worker_digest_is_not_authorized(config_dir):
-    _rewrite_approval(
-        config_dir, worker={"id": "worker-1", "digest": "0" * 64}
-    )
+    _rewrite_approval(config_dir, worker={"id": "worker-1", "digest": "0" * 64})
     assert _load(config_dir).reason == "execution_not_authorized"
 
 
@@ -282,9 +280,7 @@ def test_approval_for_other_repository_is_not_authorized(config_dir):
 
 
 def test_approval_wrong_worker_id_is_not_authorized(config_dir):
-    _rewrite_approval(
-        config_dir, worker={"id": "worker-2", "digest": "0" * 64}
-    )
+    _rewrite_approval(config_dir, worker={"id": "worker-2", "digest": "0" * 64})
     assert _load(config_dir).reason == "execution_not_authorized"
 
 

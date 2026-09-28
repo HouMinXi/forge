@@ -11,6 +11,7 @@ Validates that:
   - DISMISSED/STYLE dispositions stick across rounds when the same
     location is re-reported.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -39,6 +40,7 @@ from code_forge.state import StateFinding
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_sm(tmp_path, git_diff=None):
     """Create a minimal StateMachine for unit tests."""
     resolved = ResolvedReview(
@@ -62,13 +64,15 @@ def _make_sm(tmp_path, git_diff=None):
     )
 
 
-def _sf(fp, desc, disp=Disposition.CONFIRMED, source="L1",
-        file="test.py", line=1):
+def _sf(fp, desc, disp=Disposition.CONFIRMED, source="L1", file="test.py", line=1):
     """Shorthand StateFinding constructor."""
     return StateFinding(
-        id=fp, fingerprint=fp, source=source,
+        id=fp,
+        fingerprint=fp,
+        source=source,
         disposition=disp,
-        file=file, line_range=[line, line],
+        file=file,
+        line_range=[line, line],
         description=desc,
     )
 
@@ -76,6 +80,7 @@ def _sf(fp, desc, disp=Disposition.CONFIRMED, source="L1",
 # ===========================================================================
 # Fix 1: Location-stable fingerprints (reviewer_json.py)
 # ===========================================================================
+
 
 class TestLocationFingerprint:
     """_location_fingerprint produces stable hashes keyed by location."""
@@ -91,16 +96,28 @@ class TestLocationFingerprint:
         what description the model wrote (description is not an input)."""
         # _location_fingerprint does not take description at all --
         # verify by constructing findings with different descriptions.
-        data1 = {"findings": [
-            {"file": "chat.ts", "line": 982, "severity": "P2",
-             "description": "hasForcedConnection is dead code"},
-        ], "code_excerpts": [{"file": "chat.ts", "start_line": 980,
-                              "end_line": 985, "content": "x"}]}
-        data2 = {"findings": [
-            {"file": "chat.ts", "line": 982, "severity": "P2",
-             "description": "The property hasForcedConnection is never read"},
-        ], "code_excerpts": [{"file": "chat.ts", "start_line": 980,
-                              "end_line": 985, "content": "x"}]}
+        data1 = {
+            "findings": [
+                {
+                    "file": "chat.ts",
+                    "line": 982,
+                    "severity": "P2",
+                    "description": "hasForcedConnection is dead code",
+                },
+            ],
+            "code_excerpts": [{"file": "chat.ts", "start_line": 980, "end_line": 985, "content": "x"}],
+        }
+        data2 = {
+            "findings": [
+                {
+                    "file": "chat.ts",
+                    "line": 982,
+                    "severity": "P2",
+                    "description": "The property hasForcedConnection is never read",
+                },
+            ],
+            "code_excerpts": [{"file": "chat.ts", "start_line": 980, "end_line": 985, "content": "x"}],
+        }
         findings1 = _json_to_state_findings(data1, "qodo")
         findings2 = _json_to_state_findings(data2, "qodo")
         assert findings1[0].fingerprint == findings2[0].fingerprint
@@ -109,8 +126,7 @@ class TestLocationFingerprint:
         """Lines 979, 981, 982 (all in the same 10-line bucket) produce
         the same fingerprint.  This is the specific jitter pattern from
         the field report."""
-        fps = {_location_fingerprint("chat.ts", line, "qodo")
-               for line in [979, 981, 982, 983]}
+        fps = {_location_fingerprint("chat.ts", line, "qodo") for line in [979, 981, 982, 983]}
         assert len(fps) == 1, "lines within one bucket must share fp"
 
     def test_different_bucket_different_fp(self):
@@ -146,6 +162,7 @@ class TestLocationFingerprint:
 # Bucket collision: two different defects at nearby lines, same pass
 # ===========================================================================
 
+
 class TestBucketCollision:
     """Pin the behaviour when two genuinely different defects at nearby
     lines from the same pass collide into one fingerprint.
@@ -161,9 +178,7 @@ class TestBucketCollision:
         collapse to one fingerprint."""
         fp1 = _location_fingerprint("chat.ts", 979, "qodo")
         fp2 = _location_fingerprint("chat.ts", 982, "qodo")
-        assert fp1 == fp2, (
-            "same-bucket collision is the intended trade-off"
-        )
+        assert fp1 == fp2, "same-bucket collision is the intended trade-off"
 
     def test_first_in_wins_dedup(self):
         """When two genuine defects share a fingerprint, the REAL L1 fold
@@ -193,20 +208,34 @@ class TestBucketCollision:
             ),
             mode_hint="git",
         )
-        payload = json.dumps({
-            "findings": [
-                {"file": "chat.ts", "line": 979, "severity": "P3",
-                 "description": "minor style issue"},
-                {"file": "chat.ts", "line": 982, "severity": "P1",
-                 "description": "critical logic error"},
-            ],
-            "code_excerpts": [{
-                "file": "chat.ts", "start_line": 975, "end_line": 985,
-                # 11 claimed lines (975..985 inclusive); carries all 11 so
-                # the shared line-count parity check stays satisfied.
-                "content": "\n".join("line %d" % n for n in range(975, 986)),
-            }],
-        })
+        payload = json.dumps(
+            {
+                "findings": [
+                    {
+                        "file": "chat.ts",
+                        "line": 979,
+                        "severity": "P3",
+                        "description": "minor style issue",
+                    },
+                    {
+                        "file": "chat.ts",
+                        "line": 982,
+                        "severity": "P1",
+                        "description": "critical logic error",
+                    },
+                ],
+                "code_excerpts": [
+                    {
+                        "file": "chat.ts",
+                        "start_line": 975,
+                        "end_line": 985,
+                        # 11 claimed lines (975..985 inclusive); carries all 11 so
+                        # the shared line-count parity check stays satisfied.
+                        "content": "\n".join("line %d" % n for n in range(975, 986)),
+                    }
+                ],
+            }
+        )
         with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
             mock_invoke.return_value = LLMResult(
                 content=payload,
@@ -221,38 +250,37 @@ class TestBucketCollision:
         assert mock_invoke.call_count >= 1
         # Every survivor is the first-in-wins member of its pass pair.
         l1 = [f for f in findings if f.source == "L1"]
-        assert len(l1) == 3, (
-            "one survivor per pass, got %d: %s"
-            % (len(l1), [f.description for f in l1])
-        )
+        assert len(l1) == 3, "one survivor per pass, got %d: %s" % (len(l1), [f.description for f in l1])
         for f in l1:
             assert "minor style" in f.description, (
-                "first-in-wins by insertion order, not severity: %s"
-                % f.description
+                "first-in-wins by insertion order, not severity: %s" % f.description
             )
             assert "critical logic error" not in f.description
 
     def test_different_passes_same_bucket_survive(self):
         """Even if two findings are at the same bucket, different passes
         produce different fps -- no collision."""
-        data1 = {"findings": [
-            {"file": "chat.ts", "line": 979, "severity": "P2",
-             "description": "null deref"},
-        ], "code_excerpts": []}
-        data2 = {"findings": [
-            {"file": "chat.ts", "line": 982, "severity": "P1",
-             "description": "buffer overflow"},
-        ], "code_excerpts": []}
+        data1 = {
+            "findings": [
+                {"file": "chat.ts", "line": 979, "severity": "P2", "description": "null deref"},
+            ],
+            "code_excerpts": [],
+        }
+        data2 = {
+            "findings": [
+                {"file": "chat.ts", "line": 982, "severity": "P1", "description": "buffer overflow"},
+            ],
+            "code_excerpts": [],
+        }
         f1 = _json_to_state_findings(data1, "qodo")
         f2 = _json_to_state_findings(data2, "expert")
-        assert f1[0].fingerprint != f2[0].fingerprint, (
-            "different passes at same bucket must not collide"
-        )
+        assert f1[0].fingerprint != f2[0].fingerprint, "different passes at same bucket must not collide"
 
 
 # ===========================================================================
 # Fix 2: Clause (a) does not reset on reworded findings
 # ===========================================================================
+
 
 class TestFixpointRewordedFinding:
     """A reworded finding at the same location no longer triggers RESET."""
@@ -292,6 +320,7 @@ class TestFixpointRewordedFinding:
 # ===========================================================================
 # Fix 3: Disposition stickiness (DISMISSED carries forward)
 # ===========================================================================
+
 
 class TestDismissedStickiness:
     """DISMISSED/STYLE dispositions stick when the same fp reappears."""
@@ -358,6 +387,7 @@ class TestDismissedStickiness:
 # Integration: full non-convergence scenario from field report
 # ===========================================================================
 
+
 class TestNonConvergenceScenario:
     """End-to-end scenario: 7 reworded findings at the same location
     that previously caused non-convergence now produce the same fp."""
@@ -379,17 +409,19 @@ class TestNonConvergenceScenario:
 
         fps = set()
         for desc, line in zip(descriptions, lines):
-            data = {"findings": [
-                {"file": "chat.ts", "line": line, "severity": "P2",
-                 "description": desc},
-            ], "code_excerpts": [{"file": "chat.ts", "start_line": 975,
-                                  "end_line": 985, "content": "x"}]}
+            data = {
+                "findings": [
+                    {"file": "chat.ts", "line": line, "severity": "P2", "description": desc},
+                ],
+                "code_excerpts": [
+                    {"file": "chat.ts", "start_line": 975, "end_line": 985, "content": "x"}
+                ],
+            }
             findings = _json_to_state_findings(data, "qodo")
             fps.add(findings[0].fingerprint)
 
         assert len(fps) == 1, (
-            "all 7 rewordings at lines 979-982 must share one fingerprint, "
-            "got %d: %s" % (len(fps), fps)
+            "all 7 rewordings at lines 979-982 must share one fingerprint, got %d: %s" % (len(fps), fps)
         )
 
     def test_dismissed_finding_does_not_block_convergence(self, tmp_path):
@@ -429,6 +461,7 @@ class TestNonConvergenceScenario:
 # GAP 1: dismissal survives a gap round (finding absent for one round)
 # ===========================================================================
 
+
 class TestGapRoundDismissalStickiness:
     """A model may not restate every finding every round.  If a finding
     is DISMISSED in round 1, absent in round 2, and restated in round 3,
@@ -448,14 +481,13 @@ class TestGapRoundDismissalStickiness:
         # this fp at all (gap round).
         sm._state.round_history = [
             {"dispositions": {fp: "DISMISSED"}},  # round 1
-            {"dispositions": {}},                  # round 2: absent
+            {"dispositions": {}},  # round 2: absent
         ]
         # Round 3: model restates the finding as UNCERTAIN
         findings = [_sf(fp, "[qodo] dead code", disp=Disposition.UNCERTAIN)]
         result = sm._apply_dismissed_stickiness(findings)
         assert result[0].disposition == Disposition.DISMISSED, (
-            "DISMISSED must survive a gap round, got %s"
-            % result[0].disposition
+            "DISMISSED must survive a gap round, got %s" % result[0].disposition
         )
 
     def test_dismissed_survives_multiple_gap_rounds(self, tmp_path):
@@ -464,10 +496,10 @@ class TestGapRoundDismissalStickiness:
         sm = _make_sm(tmp_path)
         fp = _location_fingerprint("combo.ts", 128, "expert")
         sm._state.round_history = [
-            {"dispositions": {fp: "DISMISSED"}},   # round 1
-            {"dispositions": {}},                   # round 2: absent
-            {"dispositions": {}},                   # round 3: absent
-            {"dispositions": {}},                   # round 4: absent
+            {"dispositions": {fp: "DISMISSED"}},  # round 1
+            {"dispositions": {}},  # round 2: absent
+            {"dispositions": {}},  # round 3: absent
+            {"dispositions": {}},  # round 4: absent
         ]
         findings = [_sf(fp, "unused import", disp=Disposition.UNCERTAIN)]
         result = sm._apply_dismissed_stickiness(findings)
@@ -479,8 +511,8 @@ class TestGapRoundDismissalStickiness:
         sm = _make_sm(tmp_path)
         fp = _location_fingerprint("chat.ts", 982, "qodo")
         sm._state.round_history = [
-            {"dispositions": {fp: "DISMISSED"}},    # round 1: dismissed
-            {"dispositions": {fp: "CONFIRMED"}},    # round 2: re-confirmed
+            {"dispositions": {fp: "DISMISSED"}},  # round 1: dismissed
+            {"dispositions": {fp: "CONFIRMED"}},  # round 2: re-confirmed
         ]
         # Round 3: re-reported as UNCERTAIN
         findings = [_sf(fp, "dead code", disp=Disposition.UNCERTAIN)]
@@ -497,9 +529,9 @@ class TestGapRoundDismissalStickiness:
         sm = _make_sm(tmp_path)
         fp = _location_fingerprint("chat.ts", 982, "qodo")
         sm._state.round_history = [
-            {"dispositions": {fp: "DISMISSED"}},   # round 1
-            {"dispositions": {}},                   # round 2: gap
-            {"dispositions": {fp: "DISMISSED"}},   # round 3 (after stickiness)
+            {"dispositions": {fp: "DISMISSED"}},  # round 1
+            {"dispositions": {}},  # round 2: gap
+            {"dispositions": {fp: "DISMISSED"}},  # round 3 (after stickiness)
         ]
         # Apply stickiness to the current finding
         finding = _sf(fp, "[qodo] dead code", disp=Disposition.UNCERTAIN)
@@ -515,6 +547,7 @@ class TestGapRoundDismissalStickiness:
 # ===========================================================================
 # GAP 2: HOLD path writes dismissed findings to ledger
 # ===========================================================================
+
 
 class TestHoldLedgerPersistence:
     """When LOCAL enters HOLD, DISMISSED findings must be written to the
@@ -537,17 +570,21 @@ class TestHoldLedgerPersistence:
         from code_forge.llm_invoke import Usage
 
         # Initialise git so resolve_ledger_root works
-        subprocess.run(["git", "init"], cwd=str(tmp_path),
-                       capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"],
-                       cwd=str(tmp_path), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "Test"],
-                       cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=str(tmp_path),
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=str(tmp_path), capture_output=True, check=True
+        )
         (tmp_path / "test.py").write_text("pass\n")
-        subprocess.run(["git", "add", "."], cwd=str(tmp_path),
-                       capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "init"],
-                       cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True, check=True
+        )
 
         resolved = ResolvedReview(
             source_files=[Path("test.py")],
@@ -569,10 +606,8 @@ class TestHoldLedgerPersistence:
         fp_uncertain = _location_fingerprint("test.py", 50, "expert")
 
         candidates = [
-            _sf(fp_dismissed, "dead code", disp=Disposition.CONFIRMED,
-                file="test.py", line=2),
-            _sf(fp_uncertain, "magic number", disp=Disposition.CONFIRMED,
-                file="test.py", line=50),
+            _sf(fp_dismissed, "dead code", disp=Disposition.CONFIRMED, file="test.py", line=2),
+            _sf(fp_uncertain, "magic number", disp=Disposition.CONFIRMED, file="test.py", line=50),
         ]
 
         class _CustomFalsifier(StubFalsifier):
@@ -601,11 +636,9 @@ class TestHoldLedgerPersistence:
 
         # Verify DISMISSED -> DISPROVED row written
         ledger_rows = list(iter_rows(tmp_path))
-        disproved = [r for r in ledger_rows
-                     if r.terminal_state == TerminalState.DISPROVED]
-        assert len(disproved) == 1, (
-            "expected 1 DISPROVED row in ledger from HOLD path, got %d"
-            % len(disproved)
+        disproved = [r for r in ledger_rows if r.terminal_state == TerminalState.DISPROVED]
+        assert len(disproved) == 1, "expected 1 DISPROVED row in ledger from HOLD path, got %d" % len(
+            disproved
         )
         assert disproved[0].fingerprint == fp_dismissed
 
@@ -613,14 +646,15 @@ class TestHoldLedgerPersistence:
         """After HOLD writes a DISPROVED row, known_terminal_fingerprints
         should return that fingerprint for suppression."""
         from code_forge.ledger import (
-            known_terminal_fingerprints, append_row,
-            TerminalState, LedgerRow,
+            known_terminal_fingerprints,
+            append_row,
+            TerminalState,
+            LedgerRow,
         )
         import subprocess
         from datetime import datetime, timezone
 
-        subprocess.run(["git", "init"], cwd=str(tmp_path),
-                       capture_output=True, check=True)
+        subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, check=True)
         fp = _location_fingerprint("test.py", 2, "qodo")
         row = LedgerRow(
             fingerprint=fp,
@@ -637,6 +671,4 @@ class TestHoldLedgerPersistence:
         )
         append_row(tmp_path, row)
         known = known_terminal_fingerprints(tmp_path)
-        assert fp in known, (
-            "DISPROVED fingerprint must appear in known_terminal_fingerprints"
-        )
+        assert fp in known, "DISPROVED fingerprint must appear in known_terminal_fingerprints"

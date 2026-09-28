@@ -95,7 +95,10 @@ class TestAbstentionNotZero:
             expected_findings=[],
         )
         result = EvalResult(
-            entry=entry, actual_verdict="PASS", runs=1, caught_count=0,
+            entry=entry,
+            actual_verdict="PASS",
+            runs=1,
+            caught_count=0,
             skipped_reason="",
         )
         assert compute_summary([result]).recall is None
@@ -130,9 +133,7 @@ class TestSignalToNoise:
         # Infinitely good is not a number. Say so rather than printing inf.
         s = _summary(expected=10, hits=6, fps=0)
         assert s.signal_to_noise is None
-        assert not (
-            isinstance(s.signal_to_noise, float) and math.isinf(s.signal_to_noise)
-        )
+        assert not (isinstance(s.signal_to_noise, float) and math.isinf(s.signal_to_noise))
 
 
 class TestFormatTableSurvivesNone:
@@ -301,9 +302,7 @@ class TestFractionalCountsSurviveTheTable:
         import re
 
         table = self._table(hits=4 / 3, fps=0.0, expected=2)
-        m = re.search(
-            r"hit ([\d.]+)/(\d+) \(missed ([\d.]+)\)", table
-        )
+        m = re.search(r"hit ([\d.]+)/(\d+) \(missed ([\d.]+)\)", table)
         assert m, table
         hit, total, missed = float(m[1]), int(m[2]), float(m[3])
         assert hit + missed == pytest.approx(total)

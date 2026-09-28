@@ -22,8 +22,15 @@ class TestExitCodeConstants:
 
     def test_all_constants_distinct(self):
         """SC-4: all 7 EXIT_* constants are int 0-6 distinct."""
-        values = [EXIT_PASS, EXIT_FAIL, EXIT_CLI_ERROR, EXIT_BUSY,
-                  EXIT_ESCALATED, EXIT_DELEGATED, EXIT_TIMEOUT]
+        values = [
+            EXIT_PASS,
+            EXIT_FAIL,
+            EXIT_CLI_ERROR,
+            EXIT_BUSY,
+            EXIT_ESCALATED,
+            EXIT_DELEGATED,
+            EXIT_TIMEOUT,
+        ]
         assert all(isinstance(v, int) for v in values)
         assert len(set(values)) == 7
         assert set(values) == {0, 1, 2, 3, 4, 5, 6}
@@ -104,6 +111,7 @@ class TestInitReExport:
             EXIT_PASS as EC_PASS,
             EXIT_TIMEOUT as EC_TIMEOUT,
         )
+
         assert EXIT_PASS == EC_PASS
         assert EXIT_FAIL == EC_FAIL
         assert EXIT_CLI_ERROR == EC_CLI

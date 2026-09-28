@@ -50,9 +50,7 @@ class TestReConfirmedPromoted:
     def test_re_confirmed_is_true(self):
         state = State()
         state.findings = [_make_finding()]
-        state.fix_attempts = {
-            "fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-        }
+        state.fix_attempts = {"fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT}
         state.promoted_fingerprints = {"fp-ef-1"}
         state.hold_reason = None
         assert check_escalated_frozen(state) is True
@@ -61,9 +59,7 @@ class TestReConfirmedPromoted:
         """H4 guard: hold_reason not None -> False even if all else matches."""
         state = State()
         state.findings = [_make_finding()]
-        state.fix_attempts = {
-            "fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-        }
+        state.fix_attempts = {"fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT}
         state.promoted_fingerprints = {"fp-ef-1"}
         state.hold_reason = "1 UNCERTAIN finding(s) awaiting human disposition"
         assert check_escalated_frozen(state) is False
@@ -74,12 +70,8 @@ class TestUncertainNotReConfirmed:
 
     def test_uncertain_returns_false(self):
         state = State()
-        state.findings = [
-            _make_finding(disp=Disposition.UNCERTAIN)
-        ]
-        state.fix_attempts = {
-            "fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-        }
+        state.findings = [_make_finding(disp=Disposition.UNCERTAIN)]
+        state.fix_attempts = {"fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT}
         state.promoted_fingerprints = {"fp-ef-1"}
         assert check_escalated_frozen(state) is False
 
@@ -90,9 +82,7 @@ class TestFirstTimeAtMax:
     def test_first_time_max_returns_false(self):
         state = State()
         state.findings = [_make_finding()]
-        state.fix_attempts = {
-            "fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT
-        }
+        state.fix_attempts = {"fp-ef-1": MAX_FIX_ATTEMPTS_PER_FINGERPRINT}
         state.promoted_fingerprints = set()
         assert check_escalated_frozen(state) is False
 
@@ -102,6 +92,7 @@ class TestIntegrationHoldResumeCycle:
 
     def test_full_cycle(self, tmp_path):
         """Promote finding -> HOLD -> human re-CONFIRM -> ESCALATED."""
+
         def mock_l0(registry, files):
             return ([_make_finding()], [])
 
@@ -136,7 +127,8 @@ class TestIntegrationHoldResumeCycle:
         state_path = tmp_path / ".code-forge" / "state.json"
         inputs = iter(["c"])
         run_hold_ui(
-            machine._state, state_path,
+            machine._state,
+            state_path,
             input_fn=lambda prompt: next(inputs),
             output_fn=lambda msg: None,
         )
@@ -147,7 +139,4 @@ class TestIntegrationHoldResumeCycle:
         # Reset round count for re-run
         verdict2 = machine.run()
         assert verdict2 == Verdict.ESCALATED
-        assert any(
-            "ESCALATED frozen (DISPO-05)" in e
-            for e in machine._state.infra_errors
-        )
+        assert any("ESCALATED frozen (DISPO-05)" in e for e in machine._state.infra_errors)

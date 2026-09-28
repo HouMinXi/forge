@@ -7,6 +7,7 @@ semgrep binary is required. The matrix statuses (VIOLATION / CLEAN /
 NOT_APPLICABLE / NOT_RUN) and AdvisoryFinding conversion are the contract
 under test.
 """
+
 from __future__ import annotations
 
 import json
@@ -122,9 +123,7 @@ class TestRulepackRunner:
         """semgrep absent -> every rule NOT_RUN + infra_errors populated."""
         _install_repo_local_pack(tmp_path)
         monkeypatch.setattr("code_forge.rulepack.shutil.which", lambda _: None)
-        monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda p: dict(GATE)
-        )
+        monkeypatch.setattr("code_forge.gate_check.load_gate_config", lambda p: dict(GATE))
 
         runner = RulepackRunner()
         runner.source_files = [Path("app.py")]
@@ -132,11 +131,7 @@ class TestRulepackRunner:
 
         assert advisories == []
         assert any("requires semgrep" in e for e in runner.infra_errors)
-        statuses = {
-            r["id"]: r["status"]
-            for pack in runner.matrix.packs
-            for r in pack["rules"]
-        }
+        statuses = {r["id"]: r["status"] for pack in runner.matrix.packs for r in pack["rules"]}
         assert set(statuses) == {"rule-a", "rule-b", "ghost-rule"}
         assert all(v == "NOT_RUN" for v in statuses.values())
 
@@ -144,9 +139,7 @@ class TestRulepackRunner:
         """rule-a violation, rule-b clean, ghost-rule (missing) NOT_RUN."""
         _install_repo_local_pack(tmp_path)
         monkeypatch.setattr("code_forge.rulepack.shutil.which", lambda _: "/bin/semgrep")
-        monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda p: dict(GATE)
-        )
+        monkeypatch.setattr("code_forge.gate_check.load_gate_config", lambda p: dict(GATE))
         monkeypatch.setattr(
             "code_forge.rulepack.subprocess.run",
             lambda *a, **k: _FakeProcess(stdout=_sarif(rule_id="rule-a", line=1)),
@@ -156,11 +149,7 @@ class TestRulepackRunner:
         runner.source_files = [Path("app.py"), Path("readme.md")]
         advisories = runner.run("diff --git a/app.py b/app.py\n", tmp_path)
 
-        statuses = {
-            r["id"]: r["status"]
-            for pack in runner.matrix.packs
-            for r in pack["rules"]
-        }
+        statuses = {r["id"]: r["status"] for pack in runner.matrix.packs for r in pack["rules"]}
         assert statuses["rule-a"] == "VIOLATION"
         assert statuses["rule-b"] == "CLEAN"
         # AC-2: missing rule is accounted, not silently dropped.
@@ -177,9 +166,7 @@ class TestRulepackRunner:
         """Only readme.md present -> python rules are NOT_APPLICABLE."""
         _install_repo_local_pack(tmp_path)
         monkeypatch.setattr("code_forge.rulepack.shutil.which", lambda _: "/bin/semgrep")
-        monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda p: dict(GATE)
-        )
+        monkeypatch.setattr("code_forge.gate_check.load_gate_config", lambda p: dict(GATE))
         # subprocess.run should NOT be reached (no eligible files).
         monkeypatch.setattr(
             "code_forge.rulepack.subprocess.run",
@@ -190,11 +177,7 @@ class TestRulepackRunner:
         runner.source_files = [Path("readme.md")]
         advisories = runner.run("diff --git a/readme.md b/readme.md\n", tmp_path)
 
-        statuses = {
-            r["id"]: r["status"]
-            for pack in runner.matrix.packs
-            for r in pack["rules"]
-        }
+        statuses = {r["id"]: r["status"] for pack in runner.matrix.packs for r in pack["rules"]}
         assert statuses["rule-a"] == "NOT_APPLICABLE"
         assert statuses["rule-b"] == "NOT_APPLICABLE"
         assert statuses["ghost-rule"] == "NOT_RUN"
@@ -204,9 +187,7 @@ class TestRulepackRunner:
         """subprocess timeout -> non-missing rules become NOT_RUN."""
         _install_repo_local_pack(tmp_path)
         monkeypatch.setattr("code_forge.rulepack.shutil.which", lambda _: "/bin/semgrep")
-        monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda p: dict(GATE)
-        )
+        monkeypatch.setattr("code_forge.gate_check.load_gate_config", lambda p: dict(GATE))
 
         def _timeout(*a, **k):
             raise subprocess.TimeoutExpired(cmd="semgrep", timeout=120)
@@ -219,19 +200,13 @@ class TestRulepackRunner:
 
         assert advisories == []
         assert any("timed out" in e for e in runner.infra_errors)
-        statuses = {
-            r["id"]: r["status"]
-            for pack in runner.matrix.packs
-            for r in pack["rules"]
-        }
+        statuses = {r["id"]: r["status"] for pack in runner.matrix.packs for r in pack["rules"]}
         assert statuses["rule-a"] == "NOT_RUN"
         assert statuses["ghost-rule"] == "NOT_RUN"
 
     def test_no_configured_packs_returns_empty(self, tmp_path, monkeypatch):
         """gate.yaml without rulepacks -> no packs, no matrix rules."""
-        monkeypatch.setattr(
-            "code_forge.gate_check.load_gate_config", lambda p: {"rulepacks": []}
-        )
+        monkeypatch.setattr("code_forge.gate_check.load_gate_config", lambda p: {"rulepacks": []})
         runner = RulepackRunner()
         runner.source_files = [Path("app.py")]
         advisories = runner.run("diff --git a/app.py b/app.py\n", tmp_path)

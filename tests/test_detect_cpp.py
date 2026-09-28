@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for C++ language detection (cppcheck)."""
+
 from pathlib import Path
 
 from code_forge.detect import (
@@ -32,7 +33,8 @@ class TestCppDetection:
         """CMakeLists.txt triggers C/C++ detection."""
         (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("cppcheck"),
+            tmp_path,
+            which_fn=_make_which_fn("cppcheck"),
         )
         assert "cppcheck" in result.detected
 
@@ -40,7 +42,8 @@ class TestCppDetection:
         """*.cpp files trigger C/C++ detection."""
         (tmp_path / "main.cpp").write_text("#include <iostream>\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("cppcheck"),
+            tmp_path,
+            which_fn=_make_which_fn("cppcheck"),
         )
         assert "cppcheck" in result.detected
 
@@ -48,7 +51,8 @@ class TestCppDetection:
         """cppcheck not on PATH -> missing list."""
         (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
+            tmp_path,
+            which_fn=_make_which_fn(),  # nothing on PATH
         )
         assert "cppcheck" in result.missing
         assert result.language == "c_cpp"
@@ -57,7 +61,8 @@ class TestCppDetection:
         """cppcheck tools.yaml entry round-trips."""
         (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("cppcheck"),
+            tmp_path,
+            which_fn=_make_which_fn("cppcheck"),
         )
         assert "cppcheck" in result.detected
 

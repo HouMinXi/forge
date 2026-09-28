@@ -115,9 +115,7 @@ class TestDescription:
         assert found[0].description == "Parser drops the final row"
 
     def test_strips_markdown_heading_marks(self):
-        found = expected_findings_for(
-            _patch("@@ -1,2 +1,2 @@\n c\n-b\n"), "### Bug: rows vanish\nbody"
-        )
+        found = expected_findings_for(_patch("@@ -1,2 +1,2 @@\n c\n-b\n"), "### Bug: rows vanish\nbody")
         assert found[0].description == "Bug: rows vanish"
 
     def test_every_hunk_shares_the_one_description(self):
@@ -136,9 +134,7 @@ class TestRejectsUnusableInput:
 
     def test_patch_without_hunks_is_refused(self):
         with pytest.raises(ValueError):
-            expected_findings_for(
-                "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n", "title"
-            )
+            expected_findings_for("diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n", "title")
 
 
 class TestLoadsThroughTheRealLoader:
@@ -165,10 +161,7 @@ class TestLoadsThroughTheRealLoader:
                     "diff_file": "e.diff",
                     "expected_verdict": "HOLD",
                     "axis_tags": ["RUNTIME"],
-                    "expected_findings": [
-                        {"file": f.file, "description": f.description}
-                        for f in found
-                    ],
+                    "expected_findings": [{"file": f.file, "description": f.description} for f in found],
                 }
             ]
         }

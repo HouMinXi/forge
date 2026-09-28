@@ -1,4 +1,5 @@
 """Independent authorization must not inherit automatic backend re-signing."""
+
 import hashlib
 import json
 
@@ -13,10 +14,14 @@ def config(**kw):
 
 
 def test_hash_canonical_binds_root(tmp_path):
-    canonical = json.dumps({"defconfig": "a/defconfig", "enabled": True,
-                            "workspace_root": tmp_path.resolve().as_posix()},
-                           sort_keys=True, separators=(",", ":"))
-    assert trust.hash_kernel_context(tmp_path, config()) == hashlib.sha256(canonical.encode()).hexdigest()
+    canonical = json.dumps(
+        {"defconfig": "a/defconfig", "enabled": True, "workspace_root": tmp_path.resolve().as_posix()},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert (
+        trust.hash_kernel_context(tmp_path, config()) == hashlib.sha256(canonical.encode()).hexdigest()
+    )
 
 
 def test_backend_resign_never_grants_kernel_trust(tmp_path, monkeypatch):
@@ -40,7 +45,13 @@ def test_each_authorization_dimension_invalidates(tmp_path, monkeypatch, change)
     gate = tmp_path / "gate.yaml"
     trust.record_kernel_context_trust(gate, tmp_path, config())
     root = tmp_path / "second" if change == "root" else tmp_path
-    cfg = config(defconfig="other") if change == "path" else config(enabled=False) if change == "enabled" else config()
+    cfg = (
+        config(defconfig="other")
+        if change == "path"
+        else config(enabled=False)
+        if change == "enabled"
+        else config()
+    )
     assert not trust.is_trusted_kernel_context(gate, root, cfg)
 
 

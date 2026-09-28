@@ -10,6 +10,7 @@ The assertion is on what the CLI passes rather than on a mutation result,
 because invoking the captured runner here would start mutmut against the
 whole repo.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -69,10 +70,7 @@ class TestCliL2Wiring:
             "l2_runner was passed, but it is the machine's own no-op "
             "default rather than a runner that can measure anything."
         )
-        assert "e2e_runner" in captured, (
-            "the CLI built its StateMachine without e2e_runner"
-        )
+        assert "e2e_runner" in captured, "the CLI built its StateMachine without e2e_runner"
         assert captured["e2e_runner"] is not _DEFAULT_E2E, (
-            "e2e_runner was passed, but it is the default no-op "
-            "rather than build_e2e_checker."
+            "e2e_runner was passed, but it is the default no-op rather than build_e2e_checker."
         )

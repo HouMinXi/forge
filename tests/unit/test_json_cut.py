@@ -22,17 +22,21 @@ class TestCutPrefixes:
         return [i for i in range(1, len(doc)) if not is_truncated(doc[:i])]
 
     def test_findings_array(self):
-        doc = ('[{"id":"f1","sev":"P2","file":"hw/x.c","line":42,'
-               '"desc":"quote ' + BS + '" and slash ' + BS + BS + ' inside"}]')
+        doc = (
+            '[{"id":"f1","sev":"P2","file":"hw/x.c","line":42,'
+            '"desc":"quote ' + BS + '" and slash ' + BS + BS + ' inside"}]'
+        )
         assert self._all_prefixes_continue(doc) == []
 
     def test_envelope_numbers_and_nulls(self):
-        doc = ('{"findings":[{"id":"a","score":0.5,"seen":null,"ok":true}],'
-               '"code_excerpts":[{"file":"z.c","start":1,"end":2}]}')
+        doc = (
+            '{"findings":[{"id":"a","score":0.5,"seen":null,"ok":true}],'
+            '"code_excerpts":[{"file":"z.c","start":1,"end":2}]}'
+        )
         assert self._all_prefixes_continue(doc) == []
 
     def test_unicode_escapes(self):
-        doc = '[{"cn":"' + BS + 'u4e2d' + BS + 'u6587","n":1}]'
+        doc = '[{"cn":"' + BS + "u4e2d" + BS + 'u6587","n":1}]'
         assert self._all_prefixes_continue(doc) == []
 
     def test_numbers(self):
@@ -51,7 +55,7 @@ class TestCutPrefixes:
         assert is_truncated('"' + BS) is True
 
     def test_partial_unicode_escape_is_a_cut(self):
-        assert is_truncated('"' + BS + 'u12') is True
+        assert is_truncated('"' + BS + "u12") is True
 
 
 class TestFinishedOutput:
@@ -95,10 +99,10 @@ class TestFinishedOutput:
         assert is_truncated("{a:1") is False
 
     def test_bad_unicode_escape(self):
-        assert is_truncated('"' + BS + 'uZZ') is False
+        assert is_truncated('"' + BS + "uZZ") is False
 
     def test_bad_escape_char(self):
-        assert is_truncated('"' + BS + 'q') is False
+        assert is_truncated('"' + BS + "q") is False
 
     def test_raw_newline_keeps_the_string_open(self):
         """RFC 8259 bars a raw newline, forge's own loader allows it.

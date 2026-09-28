@@ -10,6 +10,7 @@ them. A test that writes a torn line by hand proves the parser handles a
 string; it does not prove the writer produces recoverable files under an
 actual kill, which is the property being claimed.
 """
+
 from __future__ import annotations
 
 import os
@@ -34,10 +35,8 @@ from code_forge.eval.ledger_jsonl import (
 )
 
 
-def _key(entry_id: str, depth: int = 1, engine: str = "real",
-         backend: str = "b") -> ResumeKey:
-    return ResumeKey(entry_id=entry_id, depth=depth, engine=engine,
-                     backend=backend)
+def _key(entry_id: str, depth: int = 1, engine: str = "real", backend: str = "b") -> ResumeKey:
+    return ResumeKey(entry_id=entry_id, depth=depth, engine=engine, backend=backend)
 
 
 class TestAppendAndRead:
@@ -154,8 +153,7 @@ class TestResumeSemantics:
     def test_skipped_is_retried(self, tmp_path):
         p = tmp_path / "l.jsonl"
         k = _key("e1")
-        append_record(p, make_record(k, "SKIPPED",
-                                     skipped_reason="backend down"))
+        append_record(p, make_record(k, "SKIPPED", skipped_reason="backend down"))
         assert pending_keys([k], p) == [k], "a SKIPPED entry must be retried"
 
     def test_skipped_stops_being_retried_at_the_cap(self, tmp_path):
@@ -214,10 +212,7 @@ class TestConcurrentWriters:
             """
             % str(src)
         )
-        procs = [
-            subprocess.Popen([sys.executable, "-c", prog, str(p), str(w)])
-            for w in range(6)
-        ]
+        procs = [subprocess.Popen([sys.executable, "-c", prog, str(p), str(w)]) for w in range(6)]
         for proc in procs:
             assert proc.wait(timeout=120) == 0
 
@@ -227,7 +222,9 @@ class TestConcurrentWriters:
         assert len({r["entry_id"] for r in recs}) == 6 * 40
 
     def test_record_reaches_the_file_in_exactly_one_write(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """The atomicity argument rests on one write per record.
 
@@ -251,9 +248,9 @@ class TestConcurrentWriters:
         monkeypatch.setattr(os, "write", counting_write)
         append_record(p, make_record(_key("e1"), "PASS", runs=1))
 
-        assert len(writes) == 1, (
-            "record must reach the file in one write, saw %d: %r"
-            % (len(writes), writes)
+        assert len(writes) == 1, "record must reach the file in one write, saw %d: %r" % (
+            len(writes),
+            writes,
         )
         assert p.read_bytes().endswith(b"\n")
 
@@ -285,9 +282,7 @@ class TestKilledRunResumes:
 
         # Uninterrupted reference run.
         ref = tmp_path / "ref.jsonl"
-        assert subprocess.run(
-            [sys.executable, "-c", prog, str(ref)], timeout=120
-        ).returncode == 0
+        assert subprocess.run([sys.executable, "-c", prog, str(ref)], timeout=120).returncode == 0
         ref_recs, _ = read_records(ref)
         assert len(ref_recs) == 12
 
@@ -299,18 +294,12 @@ class TestKilledRunResumes:
         proc.wait(timeout=30)
 
         partial, _ = read_records(live)
-        assert 0 < len(partial) < 12, (
-            "kill landed outside the run: %d records" % len(partial)
-        )
+        assert 0 < len(partial) < 12, "kill landed outside the run: %d records" % len(partial)
 
         # Resume.
-        assert subprocess.run(
-            [sys.executable, "-c", prog, str(live)], timeout=120
-        ).returncode == 0
+        assert subprocess.run([sys.executable, "-c", prog, str(live)], timeout=120).returncode == 0
 
         resumed, truncated = read_records(live)
         ids = [r["entry_id"] for r in resumed]
         assert len(ids) == len(set(ids)), "duplicates after resume: %s" % ids
-        assert set(ids) == {r["entry_id"] for r in ref_recs}, (
-            "resumed set differs from a clean run"
-        )
+        assert set(ids) == {r["entry_id"] for r in ref_recs}, "resumed set differs from a clean run"

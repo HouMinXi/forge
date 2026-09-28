@@ -33,8 +33,9 @@ from code_forge.machine import StateMachine
 from code_forge.state import Mode, StateFinding, Verdict
 
 
-def _make_finding(fp, disp=Disposition.CONFIRMED, source="L0", file="a.py",
-                  line=1, error=None, description=None):
+def _make_finding(
+    fp, disp=Disposition.CONFIRMED, source="L0", file="a.py", line=1, error=None, description=None
+):
     return StateFinding(
         id=fp,
         fingerprint=fp,
@@ -101,8 +102,7 @@ def test_real_run_with_fixed_finding_writes_row(tmp_path):
     """Real run: L0 returns CONFIRMED; autofix promotes to FIXED; ledger row."""
     _prep_local_state(tmp_path)
     finding = _make_finding("fp-fixed-1", disp=Disposition.CONFIRMED)
-    machine = _build_machine(tmp_path, _resolved_with_shas(),
-                             l0_findings=[finding])
+    machine = _build_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
     verdict = machine.run()
     assert verdict == Verdict.PASS
 
@@ -125,8 +125,7 @@ def test_real_run_with_no_user_findings_still_emits_fixval_skip_row(tmp_path):
     leaves at least one ledger row.
     """
     _prep_local_state(tmp_path)
-    machine = _build_machine(tmp_path, _resolved_with_shas(),
-                             l0_findings=[])
+    machine = _build_machine(tmp_path, _resolved_with_shas(), l0_findings=[])
     verdict = machine.run()
     assert verdict == Verdict.PASS
     rows = list(iter_rows(tmp_path))
@@ -139,8 +138,7 @@ def test_real_run_with_no_user_findings_still_emits_fixval_skip_row(tmp_path):
 def test_non_git_mode_writes_zero_rows(tmp_path):
     _prep_local_state(tmp_path)
     finding = _make_finding("fp-fixed-1", disp=Disposition.CONFIRMED)
-    machine = _build_machine(tmp_path, _resolved_no_shas(),
-                             l0_findings=[finding])
+    machine = _build_machine(tmp_path, _resolved_no_shas(), l0_findings=[finding])
     verdict = machine.run()
     assert verdict == Verdict.PASS
     assert list(iter_rows(tmp_path)) == []
@@ -156,8 +154,7 @@ def test_unit_dismissed_finding_writes_disproved_with_error(tmp_path):
     _prep_local_state(tmp_path)
     machine = _build_machine(tmp_path, _resolved_with_shas())
     machine._state.findings.append(
-        _make_finding("fp-d-1", disp=Disposition.DISMISSED,
-                      error="out-of-scope-rule")
+        _make_finding("fp-d-1", disp=Disposition.DISMISSED, error="out-of-scope-rule")
     )
     n = machine._write_ledger_rows()
     assert n == 1
@@ -171,12 +168,8 @@ def test_unit_dismissed_finding_writes_disproved_with_error(tmp_path):
 def test_unit_skips_open_confirmed_and_uncertain(tmp_path):
     _prep_local_state(tmp_path)
     machine = _build_machine(tmp_path, _resolved_with_shas())
-    machine._state.findings.append(
-        _make_finding("fp-open", disp=Disposition.CONFIRMED)
-    )
-    machine._state.findings.append(
-        _make_finding("fp-unc", disp=Disposition.UNCERTAIN)
-    )
+    machine._state.findings.append(_make_finding("fp-open", disp=Disposition.CONFIRMED))
+    machine._state.findings.append(_make_finding("fp-unc", disp=Disposition.UNCERTAIN))
     n = machine._write_ledger_rows()
     assert n == 0
     assert list(iter_rows(tmp_path)) == []
@@ -186,9 +179,7 @@ def test_unit_skips_style_findings(tmp_path):
     """STYLE findings in local mode are non-terminal and not written as DISPROVED or FIXED."""
     _prep_local_state(tmp_path)
     machine = _build_machine(tmp_path, _resolved_with_shas())
-    machine._state.findings.append(
-        _make_finding("fp-style", disp=Disposition.STYLE)
-    )
+    machine._state.findings.append(_make_finding("fp-style", disp=Disposition.STYLE))
     n = machine._write_ledger_rows()
     assert n == 0
     assert list(iter_rows(tmp_path)) == []
@@ -197,9 +188,7 @@ def test_unit_skips_style_findings(tmp_path):
 def test_unit_skips_when_no_shas(tmp_path):
     _prep_local_state(tmp_path)
     machine = _build_machine(tmp_path, _resolved_no_shas())
-    machine._state.findings.append(
-        _make_finding("fp-fixed", disp=Disposition.FIXED)
-    )
+    machine._state.findings.append(_make_finding("fp-fixed", disp=Disposition.FIXED))
     n = machine._write_ledger_rows()
     assert n == 0
     assert list(iter_rows(tmp_path)) == []
@@ -210,12 +199,10 @@ def test_unit_skips_when_no_shas(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_bug_inject_hook_failure_propagates_and_writes_nothing(tmp_path,
-                                                               monkeypatch):
+def test_bug_inject_hook_failure_propagates_and_writes_nothing(tmp_path, monkeypatch):
     _prep_local_state(tmp_path)
     finding = _make_finding("fp-fixed-1", disp=Disposition.CONFIRMED)
-    machine = _build_machine(tmp_path, _resolved_with_shas(),
-                             l0_findings=[finding])
+    machine = _build_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
 
     from code_forge import machine as machine_mod
 
@@ -233,8 +220,7 @@ def test_after_fix_rows_write_correctly(tmp_path, monkeypatch):
     """After restoring append_row, rows persist."""
     _prep_local_state(tmp_path)
     finding = _make_finding("fp-fixed-1", disp=Disposition.CONFIRMED)
-    machine = _build_machine(tmp_path, _resolved_with_shas(),
-                             l0_findings=[finding])
+    machine = _build_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
 
     from code_forge import machine as machine_mod
 
@@ -247,8 +233,7 @@ def test_after_fix_rows_write_correctly(tmp_path, monkeypatch):
     assert list(iter_rows(tmp_path)) == []
 
     monkeypatch.undo()
-    machine2 = _build_machine(tmp_path, _resolved_with_shas(),
-                              l0_findings=[finding])
+    machine2 = _build_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
     machine2.run()
     rows = list(iter_rows(tmp_path))
     fps = {r.fingerprint for r in rows}
@@ -259,9 +244,7 @@ def test_unit_dedup_skips_already_recorded_pair(tmp_path):
     """Same (fingerprint, terminal_state) is not appended twice."""
     _prep_local_state(tmp_path)
     machine = _build_machine(tmp_path, _resolved_with_shas())
-    machine._state.findings.append(
-        _make_finding("fp-dup", disp=Disposition.FIXED)
-    )
+    machine._state.findings.append(_make_finding("fp-dup", disp=Disposition.FIXED))
     assert machine._write_ledger_rows() == 1
     # Second pass: same finding, same SHAs -> 0 new rows.
     assert machine._write_ledger_rows() == 0
@@ -274,9 +257,7 @@ def test_unit_dedup_does_not_block_different_state(tmp_path):
     """A new terminal_state for the same fingerprint DOES write a new row."""
     _prep_local_state(tmp_path)
     machine = _build_machine(tmp_path, _resolved_with_shas())
-    machine._state.findings.append(
-        _make_finding("fp-state", disp=Disposition.FIXED)
-    )
+    machine._state.findings.append(_make_finding("fp-state", disp=Disposition.FIXED))
     assert machine._write_ledger_rows() == 1
     machine._state.findings[0].disposition = Disposition.DISMISSED
     machine._state.findings[0].error = "reopened-and-dismissed"
@@ -386,6 +367,7 @@ def test_ci_style_downgraded_finding_appends_unadjudicated_row_and_passes(tmp_pa
 def test_ci_clean_pass_appends_clean_row_with_diff_scoped_fingerprint(tmp_path):
     """Test (b): CI run with zero CONFIRMED findings appends diff-scoped clean row."""
     import hashlib
+
     _prep_local_state(tmp_path)
     base = "1" * 40
     head = "2" * 40
@@ -779,7 +761,8 @@ def test_ci_style_downgrade_keywords(tmp_path):
         encoding="utf-8",
     )
     finding = _make_finding(
-        "fp-style-kw", disp=Disposition.CONFIRMED,
+        "fp-style-kw",
+        disp=Disposition.CONFIRMED,
         description="trailing indentation is not standard",
     )
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
@@ -797,7 +780,9 @@ def test_ci_style_downgrade_does_not_affect_non_matching(tmp_path):
         encoding="utf-8",
     )
     finding = _make_finding(
-        "fp-no-style", disp=Disposition.CONFIRMED, source="SECURITY",
+        "fp-no-style",
+        disp=Disposition.CONFIRMED,
+        source="SECURITY",
         description="this is a real security issue",
     )
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[finding])
@@ -826,7 +811,8 @@ def test_bug_inject_remove_suppression_makes_ci_fail_again(tmp_path, monkeypatch
     finding_a = _make_finding("fp-bug", disp=Disposition.CONFIRMED, file="a.py")
     finding_b = _make_finding("fp-bug-pinned", disp=Disposition.CONFIRMED, file="vendor/x.py")
     machine = _build_ci_machine(
-        tmp_path, _resolved_with_shas(),
+        tmp_path,
+        _resolved_with_shas(),
         l0_findings=[finding_a, finding_b],
     )
 
@@ -847,17 +833,16 @@ def test_ci_pinned_paths_suppresses_coverage_gap(tmp_path):
     gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text("pinned_paths:\n  - 'vendor/*.py'\n", encoding="utf-8")
     cov = _make_finding(
-        "coverage:vendor/foo.py", disp=Disposition.UNCERTAIN,
-        source="COVERAGE", file="vendor/foo.py",
+        "coverage:vendor/foo.py",
+        disp=Disposition.UNCERTAIN,
+        source="COVERAGE",
+        file="vendor/foo.py",
     )
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[cov])
     verdict = machine.run()
     assert verdict == Verdict.PASS
     assert cov.disposition == Disposition.DISMISSED
-    assert any(
-        "pinned_paths: suppressed coverage gap" in err
-        for err in machine._state.infra_errors
-    )
+    assert any("pinned_paths: suppressed coverage gap" in err for err in machine._state.infra_errors)
 
 
 def test_ci_pinned_paths_does_not_suppress_unpinned_coverage_gap(tmp_path):
@@ -866,8 +851,10 @@ def test_ci_pinned_paths_does_not_suppress_unpinned_coverage_gap(tmp_path):
     gate_file = tmp_path / ".code-forge" / "gate.yaml"
     gate_file.write_text("pinned_paths:\n  - 'vendor/*.py'\n", encoding="utf-8")
     cov = _make_finding(
-        "coverage:src/main.py", disp=Disposition.UNCERTAIN,
-        source="COVERAGE", file="src/main.py",
+        "coverage:src/main.py",
+        disp=Disposition.UNCERTAIN,
+        source="COVERAGE",
+        file="src/main.py",
     )
     machine = _build_ci_machine(tmp_path, _resolved_with_shas(), l0_findings=[cov])
     verdict = machine.run()

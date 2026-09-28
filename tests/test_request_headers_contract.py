@@ -5,6 +5,7 @@ PROTECTED_HEADER_KEYS appear somewhere in the message. That still lets a
 mutant rewrite either sentence, swap the two header lists, or drop the
 backend name from the earlier grammar check. These cases close that gap.
 """
+
 import pytest
 
 from code_forge.backend import BackendConfig
@@ -31,10 +32,12 @@ class TestRequestHeaderMessages:
         assert str(exc.value).startswith("backend 'deepseek': header name")
 
     def test_collision_message_is_exact(self):
-        backend = _backend(**{
-            "x-tenant-id": "acme",
-            "x-omniroute-compression": "off",
-        })
+        backend = _backend(
+            **{
+                "x-tenant-id": "acme",
+                "x-omniroute-compression": "off",
+            }
+        )
         base = {
             "Authorization": "Bearer sk-real",
             "x-tenant-id": "forge",

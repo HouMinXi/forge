@@ -17,9 +17,7 @@ from code_forge.llm_invoke import (
 )
 
 _PARSED = {"findings": [{"file": "a.py", "line_range": [3, 5]}]}
-_EXCERPTS = [
-    {"file": "a.py", "start_line": 3, "end_line": 5, "content": "x = 1"}
-]
+_EXCERPTS = [{"file": "a.py", "start_line": 3, "end_line": 5, "content": "x = 1"}]
 
 
 def _backend(kind):
@@ -47,26 +45,20 @@ def _capture_progress(monkeypatch):
 
 def test_cli_backend_gets_repair_prompt_and_keeps_findings(monkeypatch):
     usage = Usage(input_tokens=4, output_tokens=2)
-    follow = LLMResult(
-        content={"code_excerpts": _EXCERPTS}, usage=usage, duration_s=2.5
-    )
+    follow = LLMResult(content={"code_excerpts": _EXCERPTS}, usage=usage, duration_s=2.5)
     cli_calls = _record(monkeypatch, "_invoke_cli", result=follow)
     api_calls = _record(monkeypatch, "_invoke_api", result=follow)
     messages = _capture_progress(monkeypatch)
     backend = _backend("cli")
 
-    repaired, got_usage, got_duration = _repair_missing_excerpts(
-        _PARSED, "review a.py", backend, 90
-    )
+    repaired, got_usage, got_duration = _repair_missing_excerpts(_PARSED, "review a.py", backend, 90)
 
     assert api_calls == []
     assert len(cli_calls) == 1
     args, kwargs = cli_calls[0]
     assert len(args) == 3
     repair_prompt, got_backend, got_timeout = args
-    assert repair_prompt == invoke._excerpt_repair_prompt(
-        _PARSED, "review a.py"
-    )
+    assert repair_prompt == invoke._excerpt_repair_prompt(_PARSED, "review a.py")
     assert got_backend is backend
     assert got_timeout == 90
     assert kwargs == {}
@@ -84,9 +76,7 @@ def test_api_backend_asks_once_without_expected_keys(monkeypatch):
     cli_calls = _record(monkeypatch, "_invoke_cli", result=follow)
     backend = _backend("api")
 
-    repaired, _, _ = _repair_missing_excerpts(
-        _PARSED, "review a.py", backend, 45
-    )
+    repaired, _, _ = _repair_missing_excerpts(_PARSED, "review a.py", backend, 45)
 
     assert cli_calls == []
     assert len(api_calls) == 1
@@ -104,9 +94,7 @@ def test_api_backend_asks_once_without_expected_keys(monkeypatch):
 def test_llm_error_returns_original_with_zero_usage_and_duration(
     monkeypatch,
 ):
-    _record(
-        monkeypatch, "_invoke_api", error=LLMInvokeError("backend down")
-    )
+    _record(monkeypatch, "_invoke_api", error=LLMInvokeError("backend down"))
     _capture_progress(monkeypatch)
 
     repaired, got_usage, got_duration = _repair_missing_excerpts(

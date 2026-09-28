@@ -8,6 +8,7 @@ person re-pointing a review -- both land on that one file. Findings,
 dispositions and the clean-round counter carried across meant one diff's
 verdict was assembled partly from another diff's evidence.
 """
+
 from code_forge.machine import Mode, StateMachine
 from code_forge.state import Disposition, State, StateFinding, save_state
 from tests.test_machine_ci import StubAutoFixer, StubFalsifier, _make_resolved
@@ -70,9 +71,7 @@ def test_the_same_diff_still_resumes_where_it_left_off(tmp_path):
     machine = _local_machine(tmp_path, source_hash="diff-one")
     machine._maybe_load_prior_state()
 
-    assert [f.id for f in machine._state.findings] == [
-        "l1-expert-from-another-diff"
-    ]
+    assert [f.id for f in machine._state.findings] == ["l1-expert-from-another-diff"]
     assert machine._state.consecutive_clean_rounds == 2
 
 

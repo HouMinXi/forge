@@ -15,9 +15,7 @@ class TestCategoryA:
 
     def test_oscillation_from_fixture(self):
         data = json.loads((FIXTURES / "oscillation_A.json").read_text())
-        result = diagnose_non_convergence(
-            data["rounds"], data["infra_errors"]
-        )
+        result = diagnose_non_convergence(data["rounds"], data["infra_errors"])
         assert result == "A"
 
     def test_toggle_detected(self):
@@ -34,20 +32,20 @@ class TestCategoryB:
 
     def test_regression_from_fixture(self):
         data = json.loads((FIXTURES / "regression_B.json").read_text())
-        result = diagnose_non_convergence(
-            data["rounds"], data["infra_errors"]
-        )
+        result = diagnose_non_convergence(data["rounds"], data["infra_errors"])
         assert result == "B"
 
     def test_monotonic_confirmed_count(self):
         history = [
             {"dispositions": {"fp-1": "CONFIRMED"}},
             {"dispositions": {"fp-1": "CONFIRMED", "fp-2": "CONFIRMED"}},
-            {"dispositions": {
-                "fp-1": "CONFIRMED",
-                "fp-2": "CONFIRMED",
-                "fp-3": "CONFIRMED",
-            }},
+            {
+                "dispositions": {
+                    "fp-1": "CONFIRMED",
+                    "fp-2": "CONFIRMED",
+                    "fp-3": "CONFIRMED",
+                }
+            },
         ]
         assert diagnose_non_convergence(history, []) == "B"
 
@@ -73,26 +71,26 @@ class TestCategoryC:
     """UNCERTAIN count grows monotonically over >= 3 rounds -> C."""
 
     def test_accumulation_from_fixture(self):
-        data = json.loads(
-            (FIXTURES / "accumulation_C.json").read_text()
-        )
-        result = diagnose_non_convergence(
-            data["rounds"], data["infra_errors"]
-        )
+        data = json.loads((FIXTURES / "accumulation_C.json").read_text())
+        result = diagnose_non_convergence(data["rounds"], data["infra_errors"])
         assert result == "C"
 
     def test_uncertain_growth(self):
         history = [
             {"dispositions": {"fp-u1": "UNCERTAIN"}},
-            {"dispositions": {
-                "fp-u1": "UNCERTAIN",
-                "fp-u2": "UNCERTAIN",
-            }},
-            {"dispositions": {
-                "fp-u1": "UNCERTAIN",
-                "fp-u2": "UNCERTAIN",
-                "fp-u3": "UNCERTAIN",
-            }},
+            {
+                "dispositions": {
+                    "fp-u1": "UNCERTAIN",
+                    "fp-u2": "UNCERTAIN",
+                }
+            },
+            {
+                "dispositions": {
+                    "fp-u1": "UNCERTAIN",
+                    "fp-u2": "UNCERTAIN",
+                    "fp-u3": "UNCERTAIN",
+                }
+            },
         ]
         assert diagnose_non_convergence(history, []) == "C"
 
@@ -101,18 +99,12 @@ class TestCategoryD:
     """ANY infra_errors entry -> D (binary trigger per R3 MED2)."""
 
     def test_infra_failure_from_fixture(self):
-        data = json.loads(
-            (FIXTURES / "infra_failure_D.json").read_text()
-        )
-        result = diagnose_non_convergence(
-            data["rounds"], data["infra_errors"]
-        )
+        data = json.loads((FIXTURES / "infra_failure_D.json").read_text())
+        result = diagnose_non_convergence(data["rounds"], data["infra_errors"])
         assert result == "D"
 
     def test_single_error_is_d(self):
-        assert diagnose_non_convergence(
-            [], ["L0 ToolError tool=ruff msg=not found"]
-        ) == "D"
+        assert diagnose_non_convergence([], ["L0 ToolError tool=ruff msg=not found"]) == "D"
 
 
 class TestTieBreaker:
@@ -125,45 +117,49 @@ class TestTieBreaker:
             {"dispositions": {"fp-1": "FIXED"}},
             {"dispositions": {"fp-1": "CONFIRMED"}},
         ]
-        result = diagnose_non_convergence(
-            history, ["infra error present"]
-        )
+        result = diagnose_non_convergence(history, ["infra error present"])
         assert result == "D"
 
     def test_d_dominates_b(self):
         history = [
             {"dispositions": {"fp-1": "CONFIRMED"}},
             {"dispositions": {"fp-1": "CONFIRMED", "fp-2": "CONFIRMED"}},
-            {"dispositions": {
-                "fp-1": "CONFIRMED",
-                "fp-2": "CONFIRMED",
-                "fp-3": "CONFIRMED",
-            }},
+            {
+                "dispositions": {
+                    "fp-1": "CONFIRMED",
+                    "fp-2": "CONFIRMED",
+                    "fp-3": "CONFIRMED",
+                }
+            },
         ]
-        result = diagnose_non_convergence(
-            history, ["infra error"]
-        )
+        result = diagnose_non_convergence(history, ["infra error"])
         assert result == "D"
 
     def test_a_over_b(self):
         """A (oscillation) wins over B (non-decreasing)."""
         # Both A and B signals present, no infra errors
         history = [
-            {"dispositions": {
-                "fp-1": "CONFIRMED",
-                "fp-x": "CONFIRMED",
-            }},
-            {"dispositions": {
-                "fp-1": "FIXED",
-                "fp-x": "CONFIRMED",
-                "fp-y": "CONFIRMED",
-            }},
-            {"dispositions": {
-                "fp-1": "CONFIRMED",
-                "fp-x": "CONFIRMED",
-                "fp-y": "CONFIRMED",
-                "fp-z": "CONFIRMED",
-            }},
+            {
+                "dispositions": {
+                    "fp-1": "CONFIRMED",
+                    "fp-x": "CONFIRMED",
+                }
+            },
+            {
+                "dispositions": {
+                    "fp-1": "FIXED",
+                    "fp-x": "CONFIRMED",
+                    "fp-y": "CONFIRMED",
+                }
+            },
+            {
+                "dispositions": {
+                    "fp-1": "CONFIRMED",
+                    "fp-x": "CONFIRMED",
+                    "fp-y": "CONFIRMED",
+                    "fp-z": "CONFIRMED",
+                }
+            },
         ]
         result = diagnose_non_convergence(history, [])
         assert result == "A"

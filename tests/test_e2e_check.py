@@ -35,12 +35,7 @@ _DIFF_PY_DEF = (
 
 # Single file, adds a plain assignment -- no signature.
 _DIFF_NO_SIG = (
-    "diff --git a/a/x.py b/a/x.py\n"
-    "--- a/a/x.py\n"
-    "+++ b/a/x.py\n"
-    "@@ -1,1 +1,2 @@\n"
-    " x = 1\n"
-    "+y = 2\n"
+    "diff --git a/a/x.py b/a/x.py\n--- a/a/x.py\n+++ b/a/x.py\n@@ -1,1 +1,2 @@\n x = 1\n+y = 2\n"
 )
 
 # Deleted file.
@@ -138,6 +133,7 @@ def _make_components_yaml(tmp_path, content):
 # Group A -- detect_signature_changes
 # ===========================================================================
 
+
 class TestDetectSignatureChanges:
     """detect_signature_changes: two-arm detection (added-line + section_header)."""
 
@@ -193,14 +189,14 @@ class TestDetectSignatureChanges:
         for patched_file in patchset:
             for hunk in patched_file:
                 assert hasattr(hunk, "section_header"), (
-                    "unidiff Hunk missing .section_header; "
-                    "check library version pin in pyproject.toml"
+                    "unidiff Hunk missing .section_header; check library version pin in pyproject.toml"
                 )
 
 
 # ===========================================================================
 # Group B -- group_source_files
 # ===========================================================================
+
 
 class TestGroupSourceFiles:
     """group_source_files: segment-based grouping with component override."""
@@ -230,9 +226,7 @@ class TestGroupSourceFiles:
         assert set(result.keys()) == {"foo"}
 
     def test_exclude_test_dirs_false_keeps_tests(self):
-        result = group_source_files(
-            ["a/x.py", "tests/test_a.py"], exclude_test_dirs=False
-        )
+        result = group_source_files(["a/x.py", "tests/test_a.py"], exclude_test_dirs=False)
         assert "tests" in result
         assert "a" in result
 
@@ -241,94 +235,90 @@ class TestGroupSourceFiles:
 # Group C -- load_components_yaml
 # ===========================================================================
 
+
 class TestLoadComponentsYaml:
     """load_components_yaml: absence + all schema validation branches."""
 
     def test_absent_file_returns_none(self, tmp_path):
         assert load_components_yaml(tmp_path) is None
 
-    def test_valid_minimal_yaml_returns_dict_with_default_patterns(
-        self, tmp_path
-    ):
-        _make_components_yaml(tmp_path, (
-            "version: 1\n"
-            "components:\n"
-            "  alpha:\n"
-            "    paths: [alpha/**]\n"
-        ))
+    def test_valid_minimal_yaml_returns_dict_with_default_patterns(self, tmp_path):
+        _make_components_yaml(tmp_path, ("version: 1\ncomponents:\n  alpha:\n    paths: [alpha/**]\n"))
         result = load_components_yaml(tmp_path)
         assert isinstance(result, dict)
         assert "e2e_patterns" in result
 
     def test_wrong_version_raises_with_keyword(self, tmp_path):
-        _make_components_yaml(tmp_path, (
-            "version: 2\n"
-            "components:\n"
-            "  alpha:\n"
-            "    paths: [alpha/**]\n"
-        ))
+        _make_components_yaml(tmp_path, ("version: 2\ncomponents:\n  alpha:\n    paths: [alpha/**]\n"))
         with pytest.raises(ComponentsConfigError, match="version"):
             load_components_yaml(tmp_path)
 
     def test_undefined_depends_on_raises_naming_typo(self, tmp_path):
-        _make_components_yaml(tmp_path, (
-            "version: 1\n"
-            "components:\n"
-            "  alpha:\n"
-            "    paths: [alpha/**]\n"
-            "    depends_on: [missing_comp]\n"
-        ))
+        _make_components_yaml(
+            tmp_path,
+            (
+                "version: 1\n"
+                "components:\n"
+                "  alpha:\n"
+                "    paths: [alpha/**]\n"
+                "    depends_on: [missing_comp]\n"
+            ),
+        )
         with pytest.raises(ComponentsConfigError, match="missing_comp"):
             load_components_yaml(tmp_path)
 
     def test_self_reference_raises_with_keyword(self, tmp_path):
-        _make_components_yaml(tmp_path, (
-            "version: 1\n"
-            "components:\n"
-            "  alpha:\n"
-            "    paths: [alpha/**]\n"
-            "    depends_on: [alpha]\n"
-        ))
+        _make_components_yaml(
+            tmp_path,
+            ("version: 1\ncomponents:\n  alpha:\n    paths: [alpha/**]\n    depends_on: [alpha]\n"),
+        )
         with pytest.raises(ComponentsConfigError, match="self"):
             load_components_yaml(tmp_path)
 
     def test_cycle_raises_with_keyword(self, tmp_path):
-        _make_components_yaml(tmp_path, (
-            "version: 1\n"
-            "components:\n"
-            "  alpha:\n"
-            "    paths: [alpha/**]\n"
-            "    depends_on: [beta]\n"
-            "  beta:\n"
-            "    paths: [beta/**]\n"
-            "    depends_on: [alpha]\n"
-        ))
+        _make_components_yaml(
+            tmp_path,
+            (
+                "version: 1\n"
+                "components:\n"
+                "  alpha:\n"
+                "    paths: [alpha/**]\n"
+                "    depends_on: [beta]\n"
+                "  beta:\n"
+                "    paths: [beta/**]\n"
+                "    depends_on: [alpha]\n"
+            ),
+        )
         with pytest.raises(ComponentsConfigError, match="cycle"):
             load_components_yaml(tmp_path)
 
     def test_e2e_absent_ok_unknown_component_raises(self, tmp_path):
-        _make_components_yaml(tmp_path, (
-            "version: 1\n"
-            "components:\n"
-            "  alpha:\n"
-            "    paths: [alpha/**]\n"
-            "e2e_absent_ok:\n"
-            "  - component: nonexistent\n"
-        ))
+        _make_components_yaml(
+            tmp_path,
+            (
+                "version: 1\n"
+                "components:\n"
+                "  alpha:\n"
+                "    paths: [alpha/**]\n"
+                "e2e_absent_ok:\n"
+                "  - component: nonexistent\n"
+            ),
+        )
         with pytest.raises(ComponentsConfigError, match="undefined"):
             load_components_yaml(tmp_path)
 
-    def test_data_paths_unknown_component_raises_naming_component(
-        self, tmp_path
-    ):
-        _make_components_yaml(tmp_path, (
-            "version: 1\n"
-            "components:\n"
-            "  alpha:\n"
-            "    paths: [alpha/**]\n"
-            "data_paths:\n"
-            "  - [alpha, ghost]\n"
-        ))
+    def test_data_paths_unknown_component_raises_naming_component(self, tmp_path):
+        _make_components_yaml(
+            tmp_path,
+            (
+                "version: 1\n"
+                "components:\n"
+                "  alpha:\n"
+                "    paths: [alpha/**]\n"
+                "data_paths:\n"
+                "  - [alpha, ghost]\n"
+            ),
+        )
         with pytest.raises(ComponentsConfigError, match="ghost"):
             load_components_yaml(tmp_path)
 
@@ -339,24 +329,26 @@ class TestLoadComponentsYaml:
 
     def test_load_components_yaml_data_paths_not_list_raises(self, tmp_path):
         """data_paths declared as a non-list raises ComponentsConfigError."""
-        _make_components_yaml(tmp_path, (
-            "version: 1\n"
-            "components:\n"
-            "  a:\n"
-            "    paths: [a/**]\n"
-            "  b:\n"
-            "    paths: [b/**]\n"
-            "data_paths: \"not_a_list\"\n"
-        ))
-        with pytest.raises(
-            ComponentsConfigError, match="data_paths.*must be a list"
-        ):
+        _make_components_yaml(
+            tmp_path,
+            (
+                "version: 1\n"
+                "components:\n"
+                "  a:\n"
+                "    paths: [a/**]\n"
+                "  b:\n"
+                "    paths: [b/**]\n"
+                'data_paths: "not_a_list"\n'
+            ),
+        )
+        with pytest.raises(ComponentsConfigError, match="data_paths.*must be a list"):
             load_components_yaml(tmp_path)
 
 
 # ===========================================================================
 # Group D -- find_e2e_artifacts
 # ===========================================================================
+
 
 class TestFindE2eArtifacts:
     """find_e2e_artifacts: recursive ** glob and middle-segment wildcard."""
@@ -397,9 +389,7 @@ class TestFindE2eArtifacts:
             assert "\x00" not in path, "result must not contain paths from bad pattern"
 
         # The valid pattern still finds the real file (loop continued).
-        assert "real_file.py" in result, (
-            "valid pattern after the bad one must still be evaluated"
-        )
+        assert "real_file.py" in result, "valid pattern after the bad one must still be evaluated"
 
     def test_symlink_escaping_repo_root_is_excluded(self, tmp_path):
         """A symlinked directory pointing outside repo_root is not followed.
@@ -422,14 +412,14 @@ class TestFindE2eArtifacts:
         result = find_e2e_artifacts(tmp_path, ["tests/e2e/**"])
         assert "tests/e2e/real.py" in result
         assert not any("linked" in path for path in result), (
-            "a match reached only through a symlink leaving repo_root "
-            "must be excluded"
+            "a match reached only through a symlink leaving repo_root must be excluded"
         )
 
 
 # ===========================================================================
 # Group E -- check_layer_1
 # ===========================================================================
+
 
 class TestCheckLayer1:
     """check_layer_1: heuristic nudge for cross-group changes with signatures."""
@@ -495,22 +485,16 @@ class TestCheckLayer2:
         result = check_layer_2(_DIFF_MULTIGROUP_NO_SIG, tmp_path, components=None)
         assert result == []
 
-    def test_hub_and_dependent_both_touched_no_artifact_produces_p2(
-        self, tmp_path
-    ):
+    def test_hub_and_dependent_both_touched_no_artifact_produces_p2(self, tmp_path):
         _make_components_yaml(tmp_path, _COMMON_BONDING_YAML)
-        result = check_layer_2(
-            _DIFF_COMMON_BONDING, tmp_path, load_components_yaml(tmp_path)
-        )
+        result = check_layer_2(_DIFF_COMMON_BONDING, tmp_path, load_components_yaml(tmp_path))
         assert len(result) == 1
         f = result[0]
         assert f.source == "E2E_CHECK"
         assert f.disposition == Disposition.UNCERTAIN
         assert f.fingerprint.startswith("e2e-l2")
 
-    def test_hub_only_touched_produces_no_p2_and_no_dependent_mention(
-        self, tmp_path
-    ):
+    def test_hub_only_touched_produces_no_p2_and_no_dependent_mention(self, tmp_path):
         """Hub-only diff must not fire P2 for any declared dependent.
 
         Two dependents D1 and D2 are defined. Only hub H is in the diff.
@@ -558,9 +542,7 @@ class TestCheckLayer2:
         e2e_dir = tmp_path / "bonding" / "tests" / "e2e"
         e2e_dir.mkdir(parents=True)
         (e2e_dir / "test_bond.py").write_text("pass")
-        result = check_layer_2(
-            _DIFF_COMMON_BONDING, tmp_path, load_components_yaml(tmp_path)
-        )
+        result = check_layer_2(_DIFF_COMMON_BONDING, tmp_path, load_components_yaml(tmp_path))
         assert result == []
 
     def test_e2e_absent_ok_suppresses_p2(self, tmp_path):
@@ -576,9 +558,7 @@ class TestCheckLayer2:
             "  - component: bonding\n"
         )
         _make_components_yaml(tmp_path, content)
-        result = check_layer_2(
-            _DIFF_COMMON_BONDING, tmp_path, load_components_yaml(tmp_path)
-        )
+        result = check_layer_2(_DIFF_COMMON_BONDING, tmp_path, load_components_yaml(tmp_path))
         assert result == []
 
     def test_peer_one_side_touched_no_p2(self, tmp_path):
@@ -633,9 +613,7 @@ class TestCheckLayer2:
         result = check_layer_2(diff, tmp_path, load_components_yaml(tmp_path))
         assert len(result) == 1
 
-    def test_same_pair_depends_on_and_data_paths_dedup_to_one_finding(
-        self, tmp_path
-    ):
+    def test_same_pair_depends_on_and_data_paths_dedup_to_one_finding(self, tmp_path):
         """Both depends_on and data_paths express the same A-B pair.
 
         sorted_pair_hash must collapse both expressions into one fingerprint,
@@ -711,6 +689,7 @@ class TestCheckLayer2:
 # Group G -- run_e2e_check orchestrator
 # ===========================================================================
 
+
 class TestRunE2eCheck:
     """run_e2e_check: orchestration, dedup, and config-error surfacing."""
 
@@ -723,9 +702,7 @@ class TestRunE2eCheck:
         # version: 2 triggers ComponentsConfigError; Layer 1 still runs.
         _make_components_yaml(tmp_path, "version: 2\ncomponents: {}")
         findings, _ = run_e2e_check(_DIFF_MULTIGROUP_SIG, tmp_path)
-        config_findings = [
-            f for f in findings if f.fingerprint == "e2e-config-error"
-        ]
+        config_findings = [f for f in findings if f.fingerprint == "e2e-config-error"]
         assert len(config_findings) == 1
         assert config_findings[0].disposition == Disposition.UNCERTAIN
 
@@ -747,6 +724,7 @@ class TestRunE2eCheck:
 # ===========================================================================
 # Bug-inject teeth tests
 # ===========================================================================
+
 
 class TestBugInjectTeeth:
     """Each test proves BOTH sides: firing and clearing on state change."""
@@ -822,9 +800,7 @@ class TestBugInjectTeeth:
         )
         assert check_layer_1(diff) == []
 
-    def test_t4_depends_on_typo_surfaces_as_config_error_finding(
-        self, tmp_path
-    ):
+    def test_t4_depends_on_typo_surfaces_as_config_error_finding(self, tmp_path):
         """A typo in depends_on must produce an UNCERTAIN config-error finding.
 
         The description must name the undefined reference so the author can
@@ -841,9 +817,7 @@ class TestBugInjectTeeth:
         )
         _make_components_yaml(tmp_path, content)
         findings, _ = run_e2e_check(_DIFF_MULTIGROUP_SIG, tmp_path)
-        config_findings = [
-            f for f in findings if f.fingerprint == "e2e-config-error"
-        ]
+        config_findings = [f for f in findings if f.fingerprint == "e2e-config-error"]
         assert len(config_findings) == 1
         f = config_findings[0]
         assert f.disposition == Disposition.UNCERTAIN

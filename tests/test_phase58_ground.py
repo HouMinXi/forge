@@ -33,6 +33,7 @@ from code_forge.state import StateFinding
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_finding(fp: str = "test-fp") -> StateFinding:
     """Minimal StateFinding for StubFalsifier tests."""
     return StateFinding(
@@ -63,11 +64,11 @@ class TestFact1TierThresholdEnvOverride:
 
     # Sizes that span every tier bracket: 0, 30, 120, 300, 2000
     TIER_SIZES_AND_DEFAULTS = [
-        (0, 3),      # empty/error: default 3
-        (30, 2),     # small: 2
-        (120, 3),    # medium: 3
-        (300, 4),    # large: 4
-        (2000, 4),   # very large: 4
+        (0, 3),  # empty/error: default 3
+        (30, 2),  # small: 2
+        (120, 3),  # medium: 3
+        (300, 4),  # large: 4
+        (2000, 4),  # very large: 4
     ]
 
     @pytest.mark.parametrize("line_count,default", TIER_SIZES_AND_DEFAULTS)
@@ -81,9 +82,7 @@ class TestFact1TierThresholdEnvOverride:
         """Without override, the tier curve returns its designed values."""
         for line_count, expected in self.TIER_SIZES_AND_DEFAULTS:
             actual = tier_threshold(line_count)
-            assert actual == expected, (
-                f"tier_threshold({line_count}) = {actual}, expected {expected}"
-            )
+            assert actual == expected, f"tier_threshold({line_count}) = {actual}, expected {expected}"
 
     @pytest.mark.parametrize("override", [0, -1, -100])
     def test_override_clamps_to_1(self, override):
@@ -128,6 +127,7 @@ class TestFact2StubFalsifierDefaultConfirmed:
     def test_factory_stub_engine_no_fixture(self):
         """build_falsifier('stub') returns a StubFalsifier that CONFIRMs."""
         from code_forge.factories import build_falsifier
+
         falsifier = build_falsifier("stub")
         assert isinstance(falsifier, StubFalsifier)
         assert falsifier.falsify(_make_finding()) == Disposition.CONFIRMED
@@ -149,6 +149,7 @@ class TestFact3RequiredCyclesVerifyOnly:
 
     def test_verify_parser_has_required_cycles(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         # 'verify' subcommand should accept --required-cycles
         args = parser.parse_args(["verify", "--required-cycles", "5"])
@@ -156,6 +157,7 @@ class TestFact3RequiredCyclesVerifyOnly:
 
     def test_review_parser_does_not_have_required_cycles(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         # 'review' subcommand must NOT accept --required-cycles
         with pytest.raises(SystemExit):
@@ -175,15 +177,11 @@ class TestFact4FalsificationEnginePrecedence:
     """
 
     def test_cli_value_wins_over_env(self):
-        result = resolve_falsification_engine(
-            "real", {"FORGE_FALSIFICATION_ENGINE": "stub"}
-        )
+        result = resolve_falsification_engine("real", {"FORGE_FALSIFICATION_ENGINE": "stub"})
         assert result == "real"
 
     def test_env_used_when_cli_is_none(self):
-        result = resolve_falsification_engine(
-            None, {"FORGE_FALSIFICATION_ENGINE": "stub"}
-        )
+        result = resolve_falsification_engine(None, {"FORGE_FALSIFICATION_ENGINE": "stub"})
         assert result == "stub"
 
     def test_default_is_auto(self):
@@ -191,19 +189,13 @@ class TestFact4FalsificationEnginePrecedence:
         assert result == "auto"
 
     def test_env_case_insensitive(self):
-        result = resolve_falsification_engine(
-            None, {"FORGE_FALSIFICATION_ENGINE": "STUB"}
-        )
+        result = resolve_falsification_engine(None, {"FORGE_FALSIFICATION_ENGINE": "STUB"})
         assert result == "stub"
 
     def test_invalid_env_raises(self):
         with pytest.raises(CliError):
-            resolve_falsification_engine(
-                None, {"FORGE_FALSIFICATION_ENGINE": "bogus"}
-            )
+            resolve_falsification_engine(None, {"FORGE_FALSIFICATION_ENGINE": "bogus"})
 
     def test_empty_env_falls_to_auto(self):
-        result = resolve_falsification_engine(
-            None, {"FORGE_FALSIFICATION_ENGINE": ""}
-        )
+        result = resolve_falsification_engine(None, {"FORGE_FALSIFICATION_ENGINE": ""})
         assert result == "auto"
