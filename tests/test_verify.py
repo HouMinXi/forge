@@ -3816,3 +3816,25 @@ def test_a_mostly_rewritten_quote_stays_invalid():
            "content": "a\nX\nc\nY"}
     result = assess_excerpt_evidence(exc, hunks, post)
     assert result.status is ExcerptStatus.INVALID
+
+
+def test_a_line_between_hunks_in_a_long_quote_is_named_not_fatal():
+    """One unchanged line between two hunks does not kill a long quote."""
+    from code_forge.diff import _extract_post_image_lines, parse_diff_hunks
+    from code_forge.verify import assess_excerpt_evidence, ExcerptStatus
+    lines = ["line%d" % n for n in range(1, 13)]
+    head = "\n".join(" " + ln for ln in lines[:5])
+    tail = "\n".join(" " + ln for ln in lines[6:])
+    diff = (
+        "diff --git a/src/f.py b/src/f.py\n--- a/src/f.py\n+++ b/src/f.py\n"
+        "@@ -1,5 +1,5 @@\n" + head + "\n"
+        "@@ -7,6 +7,6 @@\n" + tail + "\n"
+    )
+    post = _extract_post_image_lines(diff)
+    hunks, _ = parse_diff_hunks(diff)
+    exc = {"file": "src/f.py", "start_line": 1, "end_line": 12,
+           "content": "\n".join(lines)}
+    result = assess_excerpt_evidence(exc, hunks, post)
+    assert result.status is not ExcerptStatus.INVALID, result.diagnostic
+
+
