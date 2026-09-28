@@ -48,7 +48,9 @@ def resolve_ledger_root(cwd: Path) -> Path:
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             cwd=str(cwd),
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if res.returncode == 0:
@@ -132,9 +134,13 @@ def append_row(cwd: Path, row: LedgerRow) -> None:
         fh.write(line)
 
 
-_SUPPRESSIBLE_TERMINAL_STATES: Final[frozenset[str]] = frozenset({
-    "FIXED", "DISPROVED", "DUPLICATE",
-})
+_SUPPRESSIBLE_TERMINAL_STATES: Final[frozenset[str]] = frozenset(
+    {
+        "FIXED",
+        "DISPROVED",
+        "DUPLICATE",
+    }
+)
 """Terminal states whose fingerprint suppresses a re-appearing CONFIRMED finding (D-23)."""
 
 
@@ -148,10 +154,7 @@ def known_terminal_fingerprints(root: Path) -> set[str]:
     latest: dict[str, tuple[str, str]] = {}  # fp -> (terminal_state, _)
     for r in iter_rows(root):
         latest[r.fingerprint] = (r.terminal_state.value, r.ts)
-    return {
-        fp for fp, (state, _) in latest.items()
-        if state in _SUPPRESSIBLE_TERMINAL_STATES
-    }
+    return {fp for fp, (state, _) in latest.items() if state in _SUPPRESSIBLE_TERMINAL_STATES}
 
 
 def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
@@ -173,8 +176,7 @@ def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
                 data = json.loads(line)
             except json.JSONDecodeError as exc:
                 print(
-                    "ledger: skipping malformed line %d: %s"
-                    % (lineno, exc),
+                    "ledger: skipping malformed line %d: %s" % (lineno, exc),
                     file=sys.stderr,
                 )
                 continue
@@ -203,8 +205,7 @@ def iter_rows(cwd: Path) -> Iterator[LedgerRow]:
                 )
             except (KeyError, ValueError, TypeError) as exc:
                 print(
-                    "ledger: skipping schema-invalid line %d: %s"
-                    % (lineno, exc),
+                    "ledger: skipping schema-invalid line %d: %s" % (lineno, exc),
                     file=sys.stderr,
                 )
                 continue

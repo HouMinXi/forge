@@ -62,6 +62,7 @@ except (ImportError, OSError):  # missing pack, or a native build failure
 # LiveCaller frozen dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class LiveCaller:
     """A caller confirmed as not inside dead code."""
@@ -165,10 +166,7 @@ def _is_dead_python(file_path: str, line: int) -> bool:
             is_dead_cond = False
             if cond_text in _DEAD_CONDITIONS:
                 is_dead_cond = True
-            elif (
-                b"sys.version_info" in cond_text
-                and _verinfo_is_dead(cond_text)
-            ):
+            elif b"sys.version_info" in cond_text and _verinfo_is_dead(cond_text):
                 is_dead_cond = True
 
             if is_dead_cond and _in_consequence(node, target_line):
@@ -309,8 +307,7 @@ def _live_callers(
     result: list[LiveCaller] = []
     for (caller_qualified,) in callers:
         cursor.execute(
-            "SELECT file_path, line_start FROM nodes "
-            "WHERE qualified_name = ?",
+            "SELECT file_path, line_start FROM nodes WHERE qualified_name = ?",
             (caller_qualified,),
         )
         row = cursor.fetchone()
@@ -320,9 +317,11 @@ def _live_callers(
         if _is_dead_call_site(caller_file, caller_line):
             continue
 
-        result.append(LiveCaller(
-            qualified=caller_qualified,
-            file=caller_file or "<unknown>",
-            line=caller_line,
-        ))
+        result.append(
+            LiveCaller(
+                qualified=caller_qualified,
+                file=caller_file or "<unknown>",
+                line=caller_line,
+            )
+        )
     return result

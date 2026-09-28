@@ -567,10 +567,10 @@ When recording a finding for dim 13 or 14, check config for promotion status bef
 ```python
 # Shadow dimension finding -- logged but NOT shown to user
 # N4 fix: check promoted_dimensions in config before hardcoding shadow
-SHADOW_DIMENSIONS = {'doc_completeness', 'change_scope'}
-promoted = set(config.get('promoted_dimensions', []))
+SHADOW_DIMENSIONS = {"doc_completeness", "change_scope"}
+promoted = set(config.get("promoted_dimensions", []))
 if dimension in SHADOW_DIMENSIONS and dimension not in promoted:
-    finding['shadow'] = True
+    finding["shadow"] = True
 ```
 
 **DIM-01 Documentation Completeness (dim 13):**

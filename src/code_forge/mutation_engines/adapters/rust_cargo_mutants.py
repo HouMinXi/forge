@@ -174,9 +174,7 @@ class CargoMutantsAdapter:
 
     id = ADAPTER_ID
 
-    def probe(
-        self, target: TargetDeclaration, context: ExecutionContext
-    ) -> CapabilityReport:
+    def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport:
         errors: list[InfrastructureError] = []
         tool = context.extra_node_paths[0] if context.extra_node_paths else ""
         if not tool or not os.path.isfile(tool):
@@ -253,10 +251,19 @@ class CargoMutantsAdapter:
         binds = self._runtime_binds(context)
 
         baseline_out = workspace / "baseline.txt"
-        baseline_argv = ("/bin/sh", "-c", "/opt/cargo/cargo test --offline > /workspace/baseline.txt 2>&1")
+        baseline_argv = (
+            "/bin/sh",
+            "-c",
+            "/opt/cargo/cargo test --offline > /workspace/baseline.txt 2>&1",
+        )
         code, timed_out, baseline_receipt = runner._run_sandboxed(
-            context, baseline_argv, target.budget.baseline_seconds, workspace,
-            "cargo-" + context.run_id, target.id, extra_binds=binds,
+            context,
+            baseline_argv,
+            target.budget.baseline_seconds,
+            workspace,
+            "cargo-" + context.run_id,
+            target.id,
+            extra_binds=binds,
         )
         output = baseline_out.read_text(encoding="utf-8") if baseline_out.is_file() else ""
         baseline_state, test_count = baseline_from_cargo(output or None, code)
@@ -271,17 +278,40 @@ class CargoMutantsAdapter:
         )
         if baseline_state is not BaselineState.PASSED:
             return self._result(
-                identity, target, baseline, (), (baseline_ref,), (baseline_receipt,), (),
-                "baseline-not-passed", RunState.COMPLETE, directory,
+                identity,
+                target,
+                baseline,
+                (),
+                (baseline_ref,),
+                (baseline_receipt,),
+                (),
+                "baseline-not-passed",
+                RunState.COMPLETE,
+                directory,
             )
 
         mutants_argv = (
-            "/opt/cargo-mutants/cargo-mutants", "mutants", "--no-config", "--jobs", "1",
-            "--timeout", "20", "--build-timeout", "30", "--all-logs", "--output", "results",
+            "/opt/cargo-mutants/cargo-mutants",
+            "mutants",
+            "--no-config",
+            "--jobs",
+            "1",
+            "--timeout",
+            "20",
+            "--build-timeout",
+            "30",
+            "--all-logs",
+            "--output",
+            "results",
         )
         _code, mutants_timed_out, mutants_receipt = runner._run_sandboxed(
-            context, mutants_argv, target.budget.mutant_seconds, workspace,
-            "mutants-" + context.run_id, target.id, extra_binds=binds,
+            context,
+            mutants_argv,
+            target.budget.mutant_seconds,
+            workspace,
+            "mutants-" + context.run_id,
+            target.id,
+            extra_binds=binds,
         )
         owned = workspace / "results" / "mutants.out"
         mutants = _read_json(owned / "mutants.json")
@@ -291,8 +321,16 @@ class CargoMutantsAdapter:
             outcomes_doc if isinstance(outcomes_doc, dict) else None,
         )
         artifacts = (
-            _artifact(directory, "mutants.json", (owned / "mutants.json").read_bytes() if (owned / "mutants.json").is_file() else b"{}"),
-            _artifact(directory, "outcomes.json", (owned / "outcomes.json").read_bytes() if (owned / "outcomes.json").is_file() else b"{}"),
+            _artifact(
+                directory,
+                "mutants.json",
+                (owned / "mutants.json").read_bytes() if (owned / "mutants.json").is_file() else b"{}",
+            ),
+            _artifact(
+                directory,
+                "outcomes.json",
+                (owned / "outcomes.json").read_bytes() if (owned / "outcomes.json").is_file() else b"{}",
+            ),
         )
         if mutants_timed_out or not matched:
             message = "cargo-mutants timed out" if mutants_timed_out else reason
@@ -305,15 +343,25 @@ class CargoMutantsAdapter:
                 evidence_refs=artifacts,
             )
             return self._result(
-                identity, target, baseline, (), artifacts,
-                (baseline_receipt, mutants_receipt), (error,),
-                "incomplete-evidence", RunState.INCOMPLETE, directory,
+                identity,
+                target,
+                baseline,
+                (),
+                artifacts,
+                (baseline_receipt, mutants_receipt),
+                (error,),
+                "incomplete-evidence",
+                RunState.INCOMPLETE,
+                directory,
             )
 
         assert isinstance(outcomes_doc, dict)
         built = self._outcomes(directory, owned, outcomes_doc, artifacts[1])
         inventory = Inventory(
-            generated=len(built), selected=len(built), excluded=0, completed=len(built),
+            generated=len(built),
+            selected=len(built),
+            excluded=0,
+            completed=len(built),
             manifest=tuple(
                 InventoryManifestEntry(
                     mutant_id=item.mutant_id,
@@ -327,9 +375,17 @@ class CargoMutantsAdapter:
             ),
         )
         return self._result(
-            identity, target, baseline, tuple(built), artifacts,
-            (baseline_receipt, mutants_receipt), (), "complete", RunState.COMPLETE,
-            directory, inventory,
+            identity,
+            target,
+            baseline,
+            tuple(built),
+            artifacts,
+            (baseline_receipt, mutants_receipt),
+            (),
+            "complete",
+            RunState.COMPLETE,
+            directory,
+            inventory,
         )
 
     def _outcomes(
@@ -358,7 +414,8 @@ class CargoMutantsAdapter:
                     mutant_id=_mutant_key(body),
                     source_path=source,
                     source_digest=_sha256_file(source_file) if source_file is not None else "",
-                    location="%s:%s" % (
+                    location="%s:%s"
+                    % (
                         (body.get("span") or {}).get("start", {}).get("line", ""),
                         (body.get("span") or {}).get("start", {}).get("column", ""),
                     ),
@@ -371,7 +428,9 @@ class CargoMutantsAdapter:
                             "log-%s.txt" % _mutant_key(body).replace("/", "_").replace(":", "-"),
                             log_text.encode(),
                         ),
-                    ) if log_text else (),
+                    )
+                    if log_text
+                    else (),
                     native_evidence=(outcomes_ref,),
                 )
             )
@@ -380,10 +439,15 @@ class CargoMutantsAdapter:
     def _version(self, tool: str, context: ExecutionContext) -> str | None:
         del context
         import subprocess
+
         try:
             out = subprocess.run(
                 [tool, "mutants", "--version"],
-                capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=20,
+                check=False,
             )
         except (OSError, subprocess.SubprocessError):
             return None

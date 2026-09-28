@@ -62,24 +62,28 @@ def parse_clippy(
             rule_id = "unknown"
 
         line_start = span.get("line_start", 0)
-        findings.append(Finding(
-            file=span.get("file_name", ""),
-            line=line_start,
-            end_line=(span.get("line_end") or line_start),
-            column=(span.get("column_start") or 0),
-            rule_id=rule_id,
-            level=level,
-            message=msg.get("message", ""),
-            tool_name=tool_name,
-        ))
+        findings.append(
+            Finding(
+                file=span.get("file_name", ""),
+                line=line_start,
+                end_line=(span.get("line_end") or line_start),
+                column=(span.get("column_start") or 0),
+                rule_id=rule_id,
+                level=level,
+                message=msg.get("message", ""),
+                tool_name=tool_name,
+            )
+        )
 
     # If all lines failed JSON parse, output is corrupt
     if total_lines > 0 and parse_failures == total_lines:
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message=f"Failed to parse {tool_name} output: no valid JSON",
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message=f"Failed to parse {tool_name} output: no valid JSON",
+            )
+        ]
 
     return findings

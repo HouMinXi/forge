@@ -11,6 +11,7 @@ Specification contract (spec lines 373-396):
   - Identifier and selector lengths are bounded
   - Duplicate or unknown fields are errors
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -33,10 +34,17 @@ MAX_OLD_NEW_BYTES = 1024 * 1024  # 1 MiB per old/new field
 MAX_DIGEST_LEN = 128
 
 # All required keys per entry, in order
-_ENTRY_REQUIRED_KEYS = frozenset({
-    "id", "source", "source_digest", "old", "new",
-    "operator", "test_selector",
-})
+_ENTRY_REQUIRED_KEYS = frozenset(
+    {
+        "id",
+        "source",
+        "source_digest",
+        "old",
+        "new",
+        "operator",
+        "test_selector",
+    }
+)
 
 
 class CorpusError(Exception):
@@ -46,6 +54,7 @@ class CorpusError(Exception):
 @dataclass(frozen=True)
 class CorpusEntry:
     """A single corpus entry from the corpus JSON file."""
+
     id: str
     source: str
     source_digest: str
@@ -69,6 +78,7 @@ class CorpusEntry:
 @dataclass(frozen=True)
 class Corpus:
     """A parsed and validated corpus file."""
+
     schema_version: int
     target_id: str
     entries: tuple[CorpusEntry, ...]
@@ -86,119 +96,75 @@ def _utf8_len(value: str, field: str, idx: int) -> int:
     try:
         return len(value.encode("utf-8"))
     except UnicodeEncodeError:
-        raise CorpusError(
-            "entry[%d]: %s is not valid UTF-8" % (idx, field)
-        ) from None
+        raise CorpusError("entry[%d]: %s is not valid UTF-8" % (idx, field)) from None
 
 
 def _validate_entry(idx: int, raw: dict[str, Any]) -> CorpusEntry:
     """Validate and construct a single CorpusEntry from a raw dict."""
     if not isinstance(raw, dict):
-        raise CorpusError(
-            "entry[%d]: must be a mapping, got %s" % (idx, type(raw).__name__)
-        )
+        raise CorpusError("entry[%d]: must be a mapping, got %s" % (idx, type(raw).__name__))
 
     # Check for missing / unknown keys
     missing = _ENTRY_REQUIRED_KEYS - raw.keys()
     if missing:
-        raise CorpusError(
-            "entry[%d]: missing required keys: %s"
-            % (idx, ", ".join(sorted(missing)))
-        )
+        raise CorpusError("entry[%d]: missing required keys: %s" % (idx, ", ".join(sorted(missing))))
     extra = set(raw.keys()) - _ENTRY_REQUIRED_KEYS
     if extra:
-        raise CorpusError(
-            "entry[%d]: unknown keys: %s" % (idx, ", ".join(sorted(extra)))
-        )
+        raise CorpusError("entry[%d]: unknown keys: %s" % (idx, ", ".join(sorted(extra))))
 
     # Type and length checks
     eid = raw["id"]
     if not isinstance(eid, str):
-        raise CorpusError(
-            "entry[%d]: id must be a string, got %s"
-            % (idx, type(eid).__name__)
-        )
+        raise CorpusError("entry[%d]: id must be a string, got %s" % (idx, type(eid).__name__))
     if not valid_identifier(eid):
-        raise CorpusError(
-            "entry[%d]: id must match [a-z][a-z0-9_-]{0,63}, got %r"
-            % (idx, eid)
-        )
+        raise CorpusError("entry[%d]: id must match [a-z][a-z0-9_-]{0,63}, got %r" % (idx, eid))
 
     source = raw["source"]
     if not isinstance(source, str) or not source:
         raise CorpusError("entry[%d]: source must be a nonempty string" % idx)
     if len(source) > MAX_SOURCE_PATH_LEN:
-        raise CorpusError(
-            "entry[%d]: source path exceeds %d chars" % (idx, MAX_SOURCE_PATH_LEN)
-        )
+        raise CorpusError("entry[%d]: source path exceeds %d chars" % (idx, MAX_SOURCE_PATH_LEN))
     # Validate as a relative path (no absolute, no traversal, no backslash)
     if source.startswith("/"):
         raise CorpusError("entry[%d]: source must be relative, got %r" % (idx, source))
     if "\\" in source:
-        raise CorpusError(
-            "entry[%d]: source must not contain backslash, got %r" % (idx, source)
-        )
+        raise CorpusError("entry[%d]: source must not contain backslash, got %r" % (idx, source))
     if len(source) >= 2 and source[0].isalpha() and source[1] == ":":
-        raise CorpusError(
-            "entry[%d]: source must not contain drive-letter, got %r" % (idx, source)
-        )
+        raise CorpusError("entry[%d]: source must not contain drive-letter, got %r" % (idx, source))
     if ".." in source.split("/"):
-        raise CorpusError(
-            "entry[%d]: source must not contain traversal (..), got %r"
-            % (idx, source)
-        )
+        raise CorpusError("entry[%d]: source must not contain traversal (..), got %r" % (idx, source))
 
     source_digest = raw["source_digest"]
     if not isinstance(source_digest, str) or not source_digest:
-        raise CorpusError(
-            "entry[%d]: source_digest must be a nonempty string" % idx
-        )
+        raise CorpusError("entry[%d]: source_digest must be a nonempty string" % idx)
     if len(source_digest) > MAX_DIGEST_LEN:
-        raise CorpusError(
-            "entry[%d]: source_digest exceeds %d chars" % (idx, MAX_DIGEST_LEN)
-        )
+        raise CorpusError("entry[%d]: source_digest exceeds %d chars" % (idx, MAX_DIGEST_LEN))
 
     old = raw["old"]
     if not isinstance(old, str):
-        raise CorpusError(
-            "entry[%d]: old must be a string, got %s" % (idx, type(old).__name__)
-        )
+        raise CorpusError("entry[%d]: old must be a string, got %s" % (idx, type(old).__name__))
     if not old:
         raise CorpusError("entry[%d]: old must be nonempty" % idx)
     if _utf8_len(old, "old", idx) > MAX_OLD_NEW_BYTES:
-        raise CorpusError(
-            "entry[%d]: old exceeds %d bytes" % (idx, MAX_OLD_NEW_BYTES)
-        )
+        raise CorpusError("entry[%d]: old exceeds %d bytes" % (idx, MAX_OLD_NEW_BYTES))
 
     new = raw["new"]
     if not isinstance(new, str):
-        raise CorpusError(
-            "entry[%d]: new must be a string, got %s" % (idx, type(new).__name__)
-        )
+        raise CorpusError("entry[%d]: new must be a string, got %s" % (idx, type(new).__name__))
     if _utf8_len(new, "new", idx) > MAX_OLD_NEW_BYTES:
-        raise CorpusError(
-            "entry[%d]: new exceeds %d bytes" % (idx, MAX_OLD_NEW_BYTES)
-        )
+        raise CorpusError("entry[%d]: new exceeds %d bytes" % (idx, MAX_OLD_NEW_BYTES))
 
     operator = raw["operator"]
     if not isinstance(operator, str) or not operator:
-        raise CorpusError(
-            "entry[%d]: operator must be a nonempty string" % idx
-        )
+        raise CorpusError("entry[%d]: operator must be a nonempty string" % idx)
     if len(operator) > MAX_OPERATOR_LEN:
-        raise CorpusError(
-            "entry[%d]: operator exceeds %d chars" % (idx, MAX_OPERATOR_LEN)
-        )
+        raise CorpusError("entry[%d]: operator exceeds %d chars" % (idx, MAX_OPERATOR_LEN))
 
     test_selector = raw["test_selector"]
     if not isinstance(test_selector, str) or not test_selector:
-        raise CorpusError(
-            "entry[%d]: test_selector must be a nonempty string" % idx
-        )
+        raise CorpusError("entry[%d]: test_selector must be a nonempty string" % idx)
     if len(test_selector) > MAX_SELECTOR_LEN:
-        raise CorpusError(
-            "entry[%d]: test_selector exceeds %d chars" % (idx, MAX_SELECTOR_LEN)
-        )
+        raise CorpusError("entry[%d]: test_selector exceeds %d chars" % (idx, MAX_SELECTOR_LEN))
 
     return CorpusEntry(
         id=eid,
@@ -232,22 +198,16 @@ def load_corpus(data: str | bytes) -> Corpus:
         raise CorpusError("corpus file is not valid JSON: %s" % exc) from exc
 
     if not isinstance(obj, dict):
-        raise CorpusError(
-            "corpus root must be a mapping, got %s" % type(obj).__name__
-        )
+        raise CorpusError("corpus root must be a mapping, got %s" % type(obj).__name__)
 
     # Validate top-level keys
     allowed_top = {"schema_version", "target_id", "entries"}
     missing = allowed_top - obj.keys()
     if missing:
-        raise CorpusError(
-            "corpus missing required keys: %s" % ", ".join(sorted(missing))
-        )
+        raise CorpusError("corpus missing required keys: %s" % ", ".join(sorted(missing)))
     extra = set(obj.keys()) - allowed_top
     if extra:
-        raise CorpusError(
-            "corpus has unknown keys: %s" % ", ".join(sorted(extra))
-        )
+        raise CorpusError("corpus has unknown keys: %s" % ", ".join(sorted(extra)))
 
     sv = obj["schema_version"]
     if sv != 1:
@@ -255,26 +215,16 @@ def load_corpus(data: str | bytes) -> Corpus:
 
     target_id = obj["target_id"]
     if not isinstance(target_id, str):
-        raise CorpusError(
-            "corpus target_id must be a string, got %s"
-            % type(target_id).__name__
-        )
+        raise CorpusError("corpus target_id must be a string, got %s" % type(target_id).__name__)
     if not valid_identifier(target_id):
-        raise CorpusError(
-            "corpus target_id must match [a-z][a-z0-9_-]{0,63}, got %r"
-            % target_id
-        )
+        raise CorpusError("corpus target_id must match [a-z][a-z0-9_-]{0,63}, got %r" % target_id)
 
     raw_entries = obj["entries"]
     if not isinstance(raw_entries, list):
-        raise CorpusError(
-            "corpus entries must be a list, got %s"
-            % type(raw_entries).__name__
-        )
+        raise CorpusError("corpus entries must be a list, got %s" % type(raw_entries).__name__)
     if len(raw_entries) > MAX_CORPUS_ENTRIES:
         raise CorpusError(
-            "corpus has %d entries, exceeding maximum %d"
-            % (len(raw_entries), MAX_CORPUS_ENTRIES)
+            "corpus has %d entries, exceeding maximum %d" % (len(raw_entries), MAX_CORPUS_ENTRIES)
         )
 
     entries: list[CorpusEntry] = []
@@ -326,9 +276,7 @@ def validate_corpus_against_sources(
     for entry in corpus.entries:
         content = source_reader.get(entry.source)
         if content is None:
-            errors.append(
-                "entry %r: source %r not found" % (entry.id, entry.source)
-            )
+            errors.append("entry %r: source %r not found" % (entry.id, entry.source))
             continue
 
         actual_digest = compute_source_digest(content)
@@ -342,9 +290,7 @@ def validate_corpus_against_sources(
 
         count = check_old_byte_occurrence(content, entry)
         if count == 0:
-            errors.append(
-                "entry %r: old text not found in %r" % (entry.id, entry.source)
-            )
+            errors.append("entry %r: old text not found in %r" % (entry.id, entry.source))
         elif count > 1:
             errors.append(
                 "entry %r: old text found %d times in %r (must be exactly 1)"

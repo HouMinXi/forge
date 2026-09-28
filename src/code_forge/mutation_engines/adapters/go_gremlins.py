@@ -144,7 +144,12 @@ def _mutation_ids(report: dict) -> list[str]:
             if isinstance(mutation, dict):
                 ids.append(
                     "%s:%s:%s:%s"
-                    % (name, mutation.get("type", ""), mutation.get("line", 0), mutation.get("column", 0))
+                    % (
+                        name,
+                        mutation.get("type", ""),
+                        mutation.get("line", 0),
+                        mutation.get("column", 0),
+                    )
                 )
     return ids
 
@@ -176,7 +181,7 @@ def _read_json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-_RECORDER = '''#!/usr/bin/python3
+_RECORDER = """#!/usr/bin/python3
 import json
 import os
 import subprocess
@@ -203,7 +208,7 @@ if journal:
 sys.stdout.buffer.write(result.stdout)
 sys.stderr.buffer.write(result.stderr)
 sys.exit(result.returncode)
-'''
+"""
 
 
 def _load_journal(path: Path) -> list[dict]:
@@ -245,9 +250,7 @@ def _single_edit(original: str, mutated: str) -> str | None:
     return changed[0]
 
 
-def _failure_for_mutant(
-    records: list[dict], original: str, line: int, column: int
-) -> dict | None:
+def _failure_for_mutant(records: list[dict], original: str, line: int, column: int) -> dict | None:
     """The failed `go test` whose recorded source has this mutant's one-line edit.
 
     gremlins copies the module and edits the copy. The recorder stores that
@@ -278,9 +281,7 @@ class GremlinsAdapter:
 
     id = ADAPTER_ID
 
-    def probe(
-        self, target: TargetDeclaration, context: ExecutionContext
-    ) -> CapabilityReport:
+    def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport:
         binary = context.approved_node
         if not binary or not os.path.isfile(binary):
             return CapabilityReport(
@@ -366,7 +367,8 @@ class GremlinsAdapter:
         binds = self._runtime_binds(context, recorder)
 
         baseline_argv = (
-            "/bin/sh", "-c",
+            "/bin/sh",
+            "-c",
             "/opt/recorder/go test -count=1 -json ./... > baseline.json",
         )
         code, timed_out, baseline_receipt = runner._run_sandboxed(
@@ -394,34 +396,67 @@ class GremlinsAdapter:
         )
         if baseline_state is not BaselineState.PASSED:
             return self._result(
-                identity, target, baseline, (), (baseline_ref,), (baseline_receipt,), (),
-                "baseline-not-passed", RunState.COMPLETE, directory,
+                identity,
+                target,
+                baseline,
+                (),
+                (baseline_ref,),
+                (baseline_receipt,),
+                (),
+                "baseline-not-passed",
+                RunState.COMPLETE,
+                directory,
             )
 
         gremlins = "/opt/gremlins/gremlins"
-        inventory_argv = (gremlins, "unleash", "--workers", "1", "--dry-run", "--output", "inventory.json")
+        inventory_argv = (
+            gremlins,
+            "unleash",
+            "--workers",
+            "1",
+            "--dry-run",
+            "--output",
+            "inventory.json",
+        )
         _code, inv_timed_out, inv_receipt = runner._run_sandboxed(
-            context, inventory_argv, target.budget.baseline_seconds, workspace,
-            "inventory-" + context.run_id, target.id, extra_binds=binds,
+            context,
+            inventory_argv,
+            target.budget.baseline_seconds,
+            workspace,
+            "inventory-" + context.run_id,
+            target.id,
+            extra_binds=binds,
         )
         outcome_argv = (gremlins, "unleash", "--workers", "1", "--output", "outcomes.json")
         _code, out_timed_out, out_receipt = runner._run_sandboxed(
-            context, outcome_argv, target.budget.mutant_seconds, workspace,
-            "outcomes-" + context.run_id, target.id, extra_binds=binds,
+            context,
+            outcome_argv,
+            target.budget.mutant_seconds,
+            workspace,
+            "outcomes-" + context.run_id,
+            target.id,
+            extra_binds=binds,
         )
         inventory = _read_json(workspace / "inventory.json")
         outcomes = _read_json(workspace / "outcomes.json")
         matched, reason = reconcile(inventory, outcomes)
         inventory_ref = _artifact(
-            directory, "inventory.json",
-            (workspace / "inventory.json").read_bytes() if (workspace / "inventory.json").is_file() else b"{}",
+            directory,
+            "inventory.json",
+            (workspace / "inventory.json").read_bytes()
+            if (workspace / "inventory.json").is_file()
+            else b"{}",
         )
         outcomes_ref = _artifact(
-            directory, "outcomes.json",
-            (workspace / "outcomes.json").read_bytes() if (workspace / "outcomes.json").is_file() else b"{}",
+            directory,
+            "outcomes.json",
+            (workspace / "outcomes.json").read_bytes()
+            if (workspace / "outcomes.json").is_file()
+            else b"{}",
         )
         journal_ref = _artifact(
-            directory, "go-journal.jsonl",
+            directory,
+            "go-journal.jsonl",
             journal.read_bytes() if journal.is_file() else b"",
         )
         receipts = (baseline_receipt, inv_receipt, out_receipt)
@@ -437,8 +472,16 @@ class GremlinsAdapter:
                 evidence_refs=artifacts,
             )
             return self._result(
-                identity, target, baseline, (), artifacts, receipts, (error,),
-                "incomplete-evidence", RunState.INCOMPLETE, directory,
+                identity,
+                target,
+                baseline,
+                (),
+                artifacts,
+                receipts,
+                (error,),
+                "incomplete-evidence",
+                RunState.INCOMPLETE,
+                directory,
             )
 
         records = _load_journal(journal)
@@ -448,9 +491,16 @@ class GremlinsAdapter:
             native = str(mutation.get("status", ""))
             normalized = map_gremlins_status(native)
             mutant_id = "%s:%s:%s:%s" % (
-                name, mutation.get("type", ""), mutation.get("line", 0), mutation.get("column", 0)
+                name,
+                mutation.get("type", ""),
+                mutation.get("line", 0),
+                mutation.get("column", 0),
             )
-            original = (workspace / name).read_text(encoding="utf-8") if name and (workspace / name).is_file() else ""
+            original = (
+                (workspace / name).read_text(encoding="utf-8")
+                if name and (workspace / name).is_file()
+                else ""
+            )
             failure = _failure_for_mutant(
                 records, original, int(mutation.get("line") or 0), int(mutation.get("column") or 0)
             )
@@ -488,8 +538,17 @@ class GremlinsAdapter:
             manifest=tuple(manifest),
         )
         return self._result(
-            identity, target, baseline, tuple(built), artifacts, receipts, (),
-            "complete", RunState.COMPLETE, directory, inventory_obj,
+            identity,
+            target,
+            baseline,
+            tuple(built),
+            artifacts,
+            receipts,
+            (),
+            "complete",
+            RunState.COMPLETE,
+            directory,
+            inventory_obj,
         )
 
     def _install_recorder(self, workspace: Path) -> Path:
@@ -500,9 +559,7 @@ class GremlinsAdapter:
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return recorder
 
-    def _runtime_binds(
-        self, context: ExecutionContext, recorder: Path
-    ) -> tuple[tuple[str, str], ...]:
+    def _runtime_binds(self, context: ExecutionContext, recorder: Path) -> tuple[tuple[str, str], ...]:
         binds = [(str(recorder), "/opt/recorder")]
         go_bin = shutil.which("go") or "/usr/bin/go"
         binds.append((str(Path(go_bin).resolve().parent), "/opt/realgo"))

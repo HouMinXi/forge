@@ -5,6 +5,7 @@
 Phase 1 cli.py had EXIT_PASS / EXIT_FAIL inline. 02-05 promotes them
 to a dedicated module and adds CLI_ERROR / BUSY / ESCALATED / DELEGATED.
 """
+
 from __future__ import annotations
 
 from .state import Verdict

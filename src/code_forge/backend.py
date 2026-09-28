@@ -19,6 +19,7 @@ NON-GOAL: resolve_backend NEVER inspects diff, complexity,
 or change size.  The user configures the model; forge follows the session
 model by default.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,17 +49,26 @@ VALID_OUTCAP_KEYS = {"max_tokens", "max_completion_tokens"}
 
 # Keys managed by typed BackendConfig fields or protocol structure.
 # Users must not override these through the generic params dict.
-PROTECTED_PARAM_KEYS = frozenset({
-    "model", "messages", "stream", "anthropic_version",
-    "temperature", "thinking", "reasoning_effort",
-    "max_completion_tokens", "max_tokens", "output_ceiling",
-    # The wire key reasoning_effort takes on the formats that nest it:
-    # _apply_params writes body["output_config"]["effort"], and the
-    # generic params copy that follows replaces the whole dict. Without
-    # this, a config could set the very field the typed one above it
-    # just wrote, and the typed field would appear to be ignored.
-    "output_config",
-})
+PROTECTED_PARAM_KEYS = frozenset(
+    {
+        "model",
+        "messages",
+        "stream",
+        "anthropic_version",
+        "temperature",
+        "thinking",
+        "reasoning_effort",
+        "max_completion_tokens",
+        "max_tokens",
+        "output_ceiling",
+        # The wire key reasoning_effort takes on the formats that nest it:
+        # _apply_params writes body["output_config"]["effort"], and the
+        # generic params copy that follows replaces the whole dict. Without
+        # this, a config could set the very field the typed one above it
+        # just wrote, and the typed field would appear to be ignored.
+        "output_config",
+    }
+)
 
 # A configured header is checked for two different things, and keeping them
 # apart is what makes either one checkable for completeness. Whether the
@@ -101,18 +111,41 @@ _HEADER_VALUE_RE = re.compile(r"(?:[\x21-\x7e]+(?:[ \t]+[\x21-\x7e]+)*)?")
 #
 # Compared case-folded because HTTP header names are case-insensitive
 # while a dict is not.
-PROTECTED_HEADER_KEYS = frozenset({
-    # forge's own credential and framing
-    "authorization", "x-api-key", "content-type", "anthropic-version",
-    # WHATWG Fetch forbidden request-header names
-    "accept-charset", "accept-encoding", "access-control-request-headers",
-    "access-control-request-method", "connection", "content-length",
-    "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
-    "origin", "referer", "set-cookie", "te", "trailer",
-    "transfer-encoding", "upgrade", "via",
-    # method override, same list
-    "x-http-method", "x-http-method-override", "x-method-override",
-})
+PROTECTED_HEADER_KEYS = frozenset(
+    {
+        # forge's own credential and framing
+        "authorization",
+        "x-api-key",
+        "content-type",
+        "anthropic-version",
+        # WHATWG Fetch forbidden request-header names
+        "accept-charset",
+        "accept-encoding",
+        "access-control-request-headers",
+        "access-control-request-method",
+        "connection",
+        "content-length",
+        "cookie",
+        "cookie2",
+        "date",
+        "dnt",
+        "expect",
+        "host",
+        "keep-alive",
+        "origin",
+        "referer",
+        "set-cookie",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "via",
+        # method override, same list
+        "x-http-method",
+        "x-http-method-override",
+        "x-method-override",
+    }
+)
 
 # Also from that list. Proxy-Authorization is a credential and Sec- is
 # reserved so new headers can be minted that config cannot reach.
@@ -122,15 +155,22 @@ PROTECTED_HEADER_PREFIXES = ("proxy-", "sec-")
 # backend, which spawns a subprocess and sends none. Configured on one,
 # they would be silently ignored, so they are refused instead.
 _API_ONLY_FIELDS = (
-    "temperature", "max_completion_tokens", "thinking_type",
-    "thinking_budget", "reasoning_effort", "stream",
-    "outcap_key", "output_ceiling", "params", "headers",
+    "temperature",
+    "max_completion_tokens",
+    "thinking_type",
+    "thinking_budget",
+    "reasoning_effort",
+    "stream",
+    "outcap_key",
+    "output_ceiling",
+    "params",
+    "headers",
 )
 
-DEFAULT_AUTH_TIMEOUT = 20          # generous cap
+DEFAULT_AUTH_TIMEOUT = 20  # generous cap
 MAX_REASONABLE_AUTH_TIMEOUT = 120  # sanity bound
 
-CACHE_TTL_SECONDS = 300            # 5-minute TTL
+CACHE_TTL_SECONDS = 300  # 5-minute TTL
 CACHE_FILENAME = "backend_probe_cache.json"
 
 
@@ -154,35 +194,31 @@ class BackendConfig:
     """
 
     name: str
-    type: str               # "api" | "cli"
-    model: str              # may be "" for the session-default cli
-    format: Optional[str] = None       # "openai" | "anthropic"
-    base_url: Optional[str] = None     # only for api
+    type: str  # "api" | "cli"
+    model: str  # may be "" for the session-default cli
+    format: Optional[str] = None  # "openai" | "anthropic"
+    base_url: Optional[str] = None  # only for api
     api_key_env: Optional[str] = None  # env var NAME only
     api_key_file: Optional[str] = None  # path to file containing the key
-    command: str = ""                  # cli binary name or path
-    default: bool = False              # config default marker
-    max_tokens: int = 16384            # output token cap for api calls
-    output_ceiling: int = 0            # 0 = use max_tokens; >0 = override cap
+    command: str = ""  # cli binary name or path
+    default: bool = False  # config default marker
+    max_tokens: int = 16384  # output token cap for api calls
+    output_ceiling: int = 0  # 0 = use max_tokens; >0 = override cap
     project_id: Optional[str] = None  # vertex: GCP project ID
-    region: Optional[str] = None      # vertex: GCP region (default: global)
+    region: Optional[str] = None  # vertex: GCP region (default: global)
     credentials_path: Optional[str] = None  # vertex: service account JSON path
 
     # Per-provider sampling and reasoning parameters
-    temperature: float = -1.0              # -1 = omit; >=0 = send
-    max_completion_tokens: int = 0         # 0 = fallback to existing max_tokens
-    thinking_type: str = ""                # "enabled"|"adaptive"|"disabled"; ""=omit
-    thinking_budget: int = 0              # >0 = add thinking.budget_tokens
-    reasoning_effort: str = ""             # ""=omit; non-empty = send
-    stream: bool = False                   # true = SSE, reassembled to one response
-    timeout_s: int = 0                     # 0 = use default timeout chain
-    outcap_key: str = ""                   # "" = format default cap key name
-    params: Optional[dict] = field(
-        default=None, compare=False, repr=False
-    )
-    headers: Optional[dict] = field(
-        default=None, compare=False, repr=False
-    )
+    temperature: float = -1.0  # -1 = omit; >=0 = send
+    max_completion_tokens: int = 0  # 0 = fallback to existing max_tokens
+    thinking_type: str = ""  # "enabled"|"adaptive"|"disabled"; ""=omit
+    thinking_budget: int = 0  # >0 = add thinking.budget_tokens
+    reasoning_effort: str = ""  # ""=omit; non-empty = send
+    stream: bool = False  # true = SSE, reassembled to one response
+    timeout_s: int = 0  # 0 = use default timeout chain
+    outcap_key: str = ""  # "" = format default cap key name
+    params: Optional[dict] = field(default=None, compare=False, repr=False)
+    headers: Optional[dict] = field(default=None, compare=False, repr=False)
     # extra request body params, and extra request headers for gateways
     # that take per-request options there rather than in the body.
     #
@@ -201,7 +237,7 @@ class BackendConfig:
     # alternative is a class that cannot go in a set.
 
     # CLI backend child-process env overrides
-    env_unset: Tuple[str, ...] = ()        # var names to remove from child env
+    env_unset: Tuple[str, ...] = ()  # var names to remove from child env
     env_set: Tuple[Tuple[str, str], ...] = ()  # (name, value) pairs to set
 
 
@@ -232,8 +268,7 @@ def is_protected_header(name: str) -> bool:
     looking at.
     """
     folded = name.lower()
-    return (folded in PROTECTED_HEADER_KEYS
-            or folded.startswith(PROTECTED_HEADER_PREFIXES))
+    return folded in PROTECTED_HEADER_KEYS or folded.startswith(PROTECTED_HEADER_PREFIXES)
 
 
 # OmniRoute's semantic cache keys on temperature=0, which is forge's
@@ -241,9 +276,7 @@ def is_protected_header(name: str) -> bool:
 # The gateway honours x-omniroute-no-cache: true as a per-request
 # bypass; without it, LOCAL cannot converge or HOLD.
 _CACHING_GATEWAY_DNS_LABEL = "omniroute"
-_CACHING_GATEWAY_HOST_SUFFIXES = (
-    "omni.minxihou.site",
-)
+_CACHING_GATEWAY_HOST_SUFFIXES = ("omni.minxihou.site",)
 _CACHING_GATEWAY_PORTS = {20128}
 _NO_CACHE_HEADER = "x-omniroute-no-cache"
 
@@ -277,10 +310,7 @@ def caching_gateway_without_bypass(backend: BackendConfig) -> str | None:
         port = None
     if parsed.scheme in ("http", "https") and port is None:
         port = 443 if parsed.scheme == "https" else 80
-    looks_like = (
-        _host_looks_like_caching_gateway(host)
-        or port in _CACHING_GATEWAY_PORTS
-    )
+    looks_like = _host_looks_like_caching_gateway(host) or port in _CACHING_GATEWAY_PORTS
     if not looks_like:
         return None
     headers = backend.headers
@@ -328,10 +358,7 @@ def check_headers(headers: dict, name: str, fail) -> None:
     seen: dict = {}
     for hk, hv in headers.items():
         if not isinstance(hk, str) or not isinstance(hv, str):
-            raise fail(
-                "backend %r: header %r must have a string name and a "
-                "string value" % (name, hk)
-            )
+            raise fail("backend %r: header %r must have a string name and a string value" % (name, hk))
         if not _HEADER_NAME_RE.fullmatch(hk):
             raise fail(
                 "backend %r: header name %r is not a valid HTTP field "
@@ -364,8 +391,7 @@ def check_headers(headers: dict, name: str, fail) -> None:
             raise fail(
                 "backend %r: headers set %r and %r, which HTTP treats as "
                 "one header -- only one of the two values would be sent, "
-                "and which one depends on the order they appear in"
-                % (name, seen[folded], hk)
+                "and which one depends on the order they appear in" % (name, seen[folded], hk)
             )
         seen[folded] = hk
 
@@ -403,8 +429,7 @@ def check_params(params: dict, name: str, fail) -> None:
     for pk in sorted(k for k in params if k in PROTECTED_PARAM_KEYS):
         raise fail(
             "backend %r: params must not contain protected "
-            "key %r (use the dedicated config field instead)"
-            % (name, pk)
+            "key %r (use the dedicated config field instead)" % (name, pk)
         )
 
 
@@ -456,8 +481,7 @@ def _parse_provider_fields(entry: dict, name: str) -> dict:
     if mct <= 0 and max_tokens <= 0:
         raise CliError(
             "backend %r: output token cap must be positive "
-            "(max_completion_tokens and max_tokens are both zero)"
-            % name
+            "(max_completion_tokens and max_tokens are both zero)" % name
         )
 
     # params: reject protected keys
@@ -470,10 +494,7 @@ def _parse_provider_fields(entry: dict, name: str) -> dict:
 
     # Reject cli-only env fields on api/vertex
     if "env" in entry:
-        raise CliError(
-            "backend %r: 'env' field is only valid on cli backends"
-            % name
-        )
+        raise CliError("backend %r: 'env' field is only valid on cli backends" % name)
     if "env_unset" in entry:
         raise CliError(
             "backend %r: 'env_unset' is an internal field name, "
@@ -498,27 +519,19 @@ def _parse_cli_env(entry: dict, name: str) -> dict:
         return {"env_unset": (), "env_set": ()}
 
     if not isinstance(env, dict):
-        raise CliError(
-            "backend %r: 'env' must be a dict, got %s"
-            % (name, type(env).__name__)
-        )
+        raise CliError("backend %r: 'env' must be a dict, got %s" % (name, type(env).__name__))
 
     allowed = {"unset", "set"}
     unknown = set(env.keys()) - allowed
     if unknown:
-        raise CliError(
-            "backend %r: unknown key(s) in env: %s"
-            % (name, ", ".join(sorted(unknown)))
-        )
+        raise CliError("backend %r: unknown key(s) in env: %s" % (name, ", ".join(sorted(unknown))))
 
     unset_list = env.get("unset") or []
     set_dict = env.get("set") or {}
 
     return {
         "env_unset": tuple(unset_list),
-        "env_set": tuple(sorted(
-            (k, str(v)) for k, v in set_dict.items()
-        )),
+        "env_set": tuple(sorted((k, str(v)) for k, v in set_dict.items())),
     }
 
 
@@ -535,8 +548,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
     # Reject inline secrets (never allow raw keys in config)
     if "api_key" in entry:
         raise CliError(
-            "backend %r: store the env-var NAME in api_key_env, "
-            "never an inline api_key" % name
+            "backend %r: store the env-var NAME in api_key_env, never an inline api_key" % name
         )
 
     btype = entry.get("type", "")
@@ -556,8 +568,7 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
         if not fmt:
             raise CliError(
                 "backend %r (api): missing required field 'format' "
-                "(expected: %s)"
-                % (name, "|".join(sorted(VALID_API_FORMATS)))
+                "(expected: %s)" % (name, "|".join(sorted(VALID_API_FORMATS)))
             )
         if fmt not in VALID_API_FORMATS:
             raise CliError(
@@ -571,50 +582,53 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
         if fmt == "vertex":
             project_id = entry.get("project_id")
             if not project_id:
-                raise CliError(
-                    "backend %r (api/vertex): missing required field "
-                    "'project_id'" % name
-                )
+                raise CliError("backend %r (api/vertex): missing required field 'project_id'" % name)
             region = entry.get("region", "global")
             credentials_path = entry.get("credentials_path")
             if credentials_path:
                 credentials_path = os.path.expanduser(credentials_path)
             return BackendConfig(
-                name=name, type=btype, model=model, format=fmt,
-                base_url=None, api_key_env=None, command="",
-                default=is_default, max_tokens=max_tokens,
+                name=name,
+                type=btype,
+                model=model,
+                format=fmt,
+                base_url=None,
+                api_key_env=None,
+                command="",
+                default=is_default,
+                max_tokens=max_tokens,
                 output_ceiling=output_ceiling,
-                project_id=project_id, region=region,
+                project_id=project_id,
+                region=region,
                 credentials_path=credentials_path,
                 **pf,
             )
 
         base_url = entry.get("base_url")
         if not base_url:
-            raise CliError(
-                "backend %r (api): missing required field 'base_url'"
-                % name
-            )
+            raise CliError("backend %r (api): missing required field 'base_url'" % name)
         api_key_env = entry.get("api_key_env")
         api_key_file = entry.get("api_key_file")
         if api_key_env and api_key_file:
-            raise CliError(
-                "backend %r (api): set api_key_env or api_key_file, "
-                "not both" % name
-            )
+            raise CliError("backend %r (api): set api_key_env or api_key_file, not both" % name)
         if not api_key_env and not api_key_file:
             raise CliError(
                 "backend %r (api): missing credential field -- set "
-                "api_key_env (env var name) or api_key_file (path)"
-                % name
+                "api_key_env (env var name) or api_key_file (path)" % name
             )
         if api_key_file:
             api_key_file = os.path.expanduser(api_key_file)
         return BackendConfig(
-            name=name, type=btype, model=model, format=fmt,
-            base_url=base_url, api_key_env=api_key_env,
-            api_key_file=api_key_file, command="",
-            default=is_default, max_tokens=max_tokens,
+            name=name,
+            type=btype,
+            model=model,
+            format=fmt,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            api_key_file=api_key_file,
+            command="",
+            default=is_default,
+            max_tokens=max_tokens,
             output_ceiling=output_ceiling,
             **pf,
         )
@@ -623,18 +637,21 @@ def _parse_backend_entry(entry: dict) -> BackendConfig:
     # Reject api-only fields
     for af in _API_ONLY_FIELDS:
         if af in entry:
-            raise CliError(
-                "backend %r (cli): field %r is only valid on "
-                "api backends" % (name, af)
-            )
+            raise CliError("backend %r (cli): field %r is only valid on api backends" % (name, af))
 
     env_kw = _parse_cli_env(entry, name)
 
     command = entry.get("command", "")
     return BackendConfig(
-        name=name, type=btype, model=model,
-        format=None, base_url=None, api_key_env=None,
-        command=command, default=is_default, max_tokens=max_tokens,
+        name=name,
+        type=btype,
+        model=model,
+        format=None,
+        base_url=None,
+        api_key_env=None,
+        command=command,
+        default=is_default,
+        max_tokens=max_tokens,
         **env_kw,
     )
 
@@ -659,16 +676,11 @@ def load_backend_configs(
     if not backends:
         return []
     if not isinstance(backends, dict):
-        raise CliError(
-            "backends must be a dict with backend names as keys"
-        )
+        raise CliError("backends must be a dict with backend names as keys")
     configs = []
     for name, entry in backends.items():
         if not isinstance(entry, dict):
-            raise CliError(
-                "backend %r: entry must be a dict, got %s"
-                % (name, type(entry).__name__)
-            )
+            raise CliError("backend %r: entry must be a dict, got %s" % (name, type(entry).__name__))
         # Null handling and caller-dict isolation live in
         # _parse_backend_entry; the name is injected on a copy so the
         # caller's entry dict is never mutated.
@@ -707,22 +719,17 @@ def _parse_env_timeout(raw: str) -> int:
     try:
         value = int(raw.strip())
     except ValueError as exc:
-        raise CliError(
-            "invalid FORGE_AUTH_TIMEOUT: %r (expected int)" % raw
-        ) from exc
+        raise CliError("invalid FORGE_AUTH_TIMEOUT: %r (expected int)" % raw) from exc
     return _validate_timeout(value, "FORGE_AUTH_TIMEOUT")
 
 
 def _validate_timeout(value: int, name: str) -> int:
     """Validate timeout >= 1 and <= cap."""
     if value < 1:
-        raise CliError(
-            "invalid %s: %d (must be >= 1)" % (name, value)
-        )
+        raise CliError("invalid %s: %d (must be >= 1)" % (name, value))
     if value > MAX_REASONABLE_AUTH_TIMEOUT:
         raise CliError(
-            "invalid %s: %d (exceeds sanity cap %d)"
-            % (name, value, MAX_REASONABLE_AUTH_TIMEOUT)
+            "invalid %s: %d (exceeds sanity cap %d)" % (name, value, MAX_REASONABLE_AUTH_TIMEOUT)
         )
     return value
 
@@ -752,17 +759,12 @@ def resolve_backend(
     if override is not None and override != "":
         key = override.strip()
         if key == "":
-            raise CliError(
-                "invalid FORGE_BACKEND: whitespace-only value %r"
-                % override
-            )
+            raise CliError("invalid FORGE_BACKEND: whitespace-only value %r" % override)
         for cfg in configs:
             if cfg.name == key:
                 return cfg
         configured = ", ".join(c.name for c in configs) or "none"
-        raise CliError(
-            "unknown backend %r (configured: %s)" % (key, configured)
-        )
+        raise CliError("unknown backend %r (configured: %s)" % (key, configured))
 
     # Step 2: empty-string override falls through
     # Step 3: config default
@@ -781,9 +783,7 @@ def resolve_backend(
 
 def _default_cache_dir() -> Path:
     """Return the default cache directory for forge."""
-    base = os.environ.get(
-        "XDG_CACHE_HOME", str(Path.home() / ".cache")
-    )
+    base = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
     return Path(base) / "code-forge"
 
 
@@ -820,11 +820,16 @@ def _write_cache(
     """Write a successful probe result to cache."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / CACHE_FILENAME
-    cache_path.write_text(json.dumps({
-        "ok": True,
-        "backend": backend_name,
-        "timestamp": time_fn(),
-    }), encoding="utf-8")
+    cache_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "backend": backend_name,
+                "timestamp": time_fn(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def invalidate_probe_cache(
@@ -909,9 +914,9 @@ def credential_error(
     if backend.format == "vertex":
         if backend.credentials_path:
             if not Path(backend.credentials_path).is_file():
-                return (
-                    "backend %r (vertex): credentials_path %r not found"
-                    % (backend.name, backend.credentials_path)
+                return "backend %r (vertex): credentials_path %r not found" % (
+                    backend.name,
+                    backend.credentials_path,
                 )
         return None
 
@@ -919,44 +924,33 @@ def credential_error(
     if backend.api_key_file:
         p = Path(backend.api_key_file)
         if not p.is_file():
-            return (
-                "backend %r: api_key_file not found: %s"
-                % (backend.name, backend.api_key_file)
-            )
+            return "backend %r: api_key_file not found: %s" % (backend.name, backend.api_key_file)
         try:
             content = p.read_text(encoding="utf-8").strip()
         except OSError as exc:
-            return (
-                "backend %r: api_key_file unreadable: %s: %s"
-                % (backend.name, backend.api_key_file, exc)
+            return "backend %r: api_key_file unreadable: %s: %s" % (
+                backend.name,
+                backend.api_key_file,
+                exc,
             )
         if not content:
-            return (
-                "backend %r: api_key_file empty: %s"
-                % (backend.name, backend.api_key_file)
-            )
+            return "backend %r: api_key_file empty: %s" % (backend.name, backend.api_key_file)
         mode = p.stat().st_mode
         if mode & 0o077:
-            return (
-                "backend %r: api_key_file %s is group/world "
-                "readable (mode %o). chmod 600 it."
-                % (backend.name, backend.api_key_file, mode & 0o777)
+            return "backend %r: api_key_file %s is group/world readable (mode %o). chmod 600 it." % (
+                backend.name,
+                backend.api_key_file,
+                mode & 0o777,
             )
         return None
 
     # Env-var credential
     key_name = backend.api_key_env
     if not key_name:
-        return (
-            "backend %r: no api_key_env or api_key_file configured"
-            % backend.name
-        )
+        return "backend %r: no api_key_env or api_key_file configured" % backend.name
     if env.get(key_name):
         return None
-    return (
-        "%s not set. Export the API key for backend %r."
-        % (key_name, backend.name)
-    )
+    return "%s not set. Export the API key for backend %r." % (key_name, backend.name)
 
 
 def _probe_api(
@@ -1008,9 +1002,7 @@ class LiveProbeResult:
     suggestion: Optional[str] = None
 
 
-def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[
-    str, str
-]:
+def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[str, str]:
     """Map one invoke failure to a (error_class, suggestion) pair.
 
     The labels are pinned by tests -- doctor rows render through them,
@@ -1019,8 +1011,7 @@ def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[
     if exc.is_timeout:
         return (
             "timeout",
-            "Check network reachability to the endpoint, or raise "
-            "timeout_s on the backend.",
+            "Check network reachability to the endpoint, or raise timeout_s on the backend.",
         )
     if exc.exit_code in (401, 403) or exc.kind == "credentials":
         return (
@@ -1031,8 +1022,7 @@ def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[
     if exc.kind == "conn":
         return (
             "connection-refused",
-            "Verify the host and port in base_url are reachable from "
-            "this machine.",
+            "Verify the host and port in base_url are reachable from this machine.",
         )
     if exc.kind == "sse_body":
         return (
@@ -1044,14 +1034,12 @@ def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[
     if exc.kind == "bad_body":
         return (
             "JSON-malformed",
-            "The endpoint returned a non-JSON body; verify base_url "
-            "points at the API, not a web page.",
+            "The endpoint returned a non-JSON body; verify base_url points at the API, not a web page.",
         )
     if exc.kind == "truncated":
         return (
             "truncated-output",
-            "The backend could not finish even a 32-token reply; "
-            "check its output limits.",
+            "The backend could not finish even a 32-token reply; check its output limits.",
         )
     if exc.exit_code >= 400 and not exc.kind:
         return (
@@ -1062,8 +1050,7 @@ def _classify_live_failure(exc: "LLMInvokeError") -> Tuple[
         )
     return (
         "unclassified",
-        "Inspect the detail; if reproducible, report the backend "
-        "response to the forge maintainers.",
+        "Inspect the detail; if reproducible, report the backend response to the forge maintainers.",
     )
 
 
@@ -1139,7 +1126,9 @@ def _probe_cli(
         result = run_cmd(
             ["claude", "auth", "status", "--json"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
@@ -1147,27 +1136,20 @@ def _probe_cli(
             ok=False,
             error=(
                 "reachability probe timed out after %ds. "
-                "Increase FORGE_AUTH_TIMEOUT or check the CLI."
-                % timeout
+                "Increase FORGE_AUTH_TIMEOUT or check the CLI." % timeout
             ),
         )
     except OSError as exc:
         return ProbeResult(
             ok=False,
-            error=(
-                "claude reachability probe failed to start: %s"
-                % exc
-            ),
+            error=("claude reachability probe failed to start: %s" % exc),
         )
 
     if result.returncode != 0:
         stderr_text = (result.stderr or "")[:100]
         return ProbeResult(
             ok=False,
-            error=(
-                "claude reachability check failed (exit %d): %s"
-                % (result.returncode, stderr_text)
-            ),
+            error=("claude reachability check failed (exit %d): %s" % (result.returncode, stderr_text)),
         )
 
     # Parse the JSON output
@@ -1184,8 +1166,5 @@ def _probe_cli(
 
     return ProbeResult(
         ok=False,
-        error=(
-            "claude not logged in. "
-            "Run `claude auth login` or set ANTHROPIC_API_KEY."
-        ),
+        error=("claude not logged in. Run `claude auth login` or set ANTHROPIC_API_KEY."),
     )

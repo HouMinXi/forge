@@ -37,9 +37,7 @@ RENAMED = "renamed"
 MOVED = "moved"
 REORDERED = "reordered"
 MODIFIED = "modified"
-KNOWN_CHANGE_TYPES = frozenset(
-    {ADDED, DELETED, RENAMED, MOVED, REORDERED, MODIFIED}
-)
+KNOWN_CHANGE_TYPES = frozenset({ADDED, DELETED, RENAMED, MOVED, REORDERED, MODIFIED})
 
 # Churn at or above this many entities makes a file the substance of the
 # change rather than a registration point. Counted across every direction:
@@ -66,9 +64,9 @@ def _check_thresholds(engine_churn: int, integration_churn: int) -> None:
     if integration_churn >= engine_churn:
         raise ValueError(
             "integration_churn (%d) must be below engine_churn (%d); "
-            "overlapping ranges leave the boundary ambiguous"
-            % (integration_churn, engine_churn)
+            "overlapping ranges leave the boundary ambiguous" % (integration_churn, engine_churn)
         )
+
 
 # Every reviewable group gets the full three passes. Measured across 30
 # receipts in this repo: qodo found 12 distinct findings, expert 15,
@@ -124,9 +122,7 @@ def churn_profile(entities: list[dict]) -> dict[str, int]:
             unknown.add(ct)
         counts[ct] += 1
     if unknown:
-        raise ValueError(
-            "unknown sem changeType(s): %s" % sorted(unknown)
-        )
+        raise ValueError("unknown sem changeType(s): %s" % sorted(unknown))
     return {
         "total": sum(counts.values()),
         "added": counts[ADDED],
@@ -149,16 +145,17 @@ def thresholds_from_gate_config(config: dict) -> tuple[int, int]:
     if section is None:
         return _ENGINE_CHURN, _INTEGRATION_CHURN
     if not isinstance(section, dict):
-        raise ValueError(
-            "gate.yaml 'grouping' section must be a mapping, got %r" % (section,)
-        )
-    unknown = sorted(set(section) - {
-        "engine_churn", "integration_churn", "max_prompt_tokens",
-    })
+        raise ValueError("gate.yaml 'grouping' section must be a mapping, got %r" % (section,))
+    unknown = sorted(
+        set(section)
+        - {
+            "engine_churn",
+            "integration_churn",
+            "max_prompt_tokens",
+        }
+    )
     if unknown:
-        raise ValueError(
-            "gate.yaml 'grouping' has unknown keys: %s" % ", ".join(unknown)
-        )
+        raise ValueError("gate.yaml 'grouping' has unknown keys: %s" % ", ".join(unknown))
     engine = section.get("engine_churn", _ENGINE_CHURN)
     integration = section.get("integration_churn", _INTEGRATION_CHURN)
     try:
@@ -179,18 +176,12 @@ def max_prompt_tokens_from_gate_config(config: dict) -> int:
     """
     section = config.get("grouping") or {}
     if not isinstance(section, dict):
-        raise ValueError(
-            "gate.yaml 'grouping' section must be a mapping, got %r" % (section,)
-        )
+        raise ValueError("gate.yaml 'grouping' section must be a mapping, got %r" % (section,))
     value = section.get("max_prompt_tokens", _MAX_PROMPT_TOKENS)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(
-            "max_prompt_tokens must be an int, got %r" % (value,)
-        )
+        raise ValueError("max_prompt_tokens must be an int, got %r" % (value,))
     if value < 8192:
-        raise ValueError(
-            "max_prompt_tokens must be >= 8192, got %d" % value
-        )
+        raise ValueError("max_prompt_tokens must be >= 8192, got %d" % value)
     return value
 
 
@@ -282,7 +273,8 @@ def extract_names(path: Path) -> tuple[set[str], set[str]]:
 
 
 def build_edges(
-    by_file: dict[str, list[dict]], repo_root: Path,
+    by_file: dict[str, list[dict]],
+    repo_root: Path,
 ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
     """Direct def-use edges between changed files.
 
@@ -309,10 +301,7 @@ def build_edges(
 
 def _attach_tests(by_file, roles, file_defined, file_used):
     """Map each test to the subject it shares the most symbols with."""
-    subjects = [
-        f for f in by_file
-        if roles[f][0] not in ("test", "config", "docs", "other")
-    ]
+    subjects = [f for f in by_file if roles[f][0] not in ("test", "config", "docs", "other")]
     attached: dict[str, list[str]] = defaultdict(list)
     orphans: list[str] = []
     for f in sorted(by_file):
@@ -344,26 +333,26 @@ def build_groups(
     otherwise. Sorted iteration throughout, so the output is byte-identical
     run to run.
     """
-    roles = {
-        f: classify_file(f, by_file, engine_churn, integration_churn)
-        for f in by_file
-    }
+    roles = {f: classify_file(f, by_file, engine_churn, integration_churn) for f in by_file}
     attached, orphans = _attach_tests(by_file, roles, file_defined, file_used)
 
     groups: list[Group] = []
     placed: set[str] = set()
 
     def _emit(name, role, members):
-        groups.append(Group(
-            name=name, role=role, members=sorted(members),
-            passes=0 if role in _NO_LLM_ROLES else _PASSES_PER_GROUP,
-        ))
+        groups.append(
+            Group(
+                name=name,
+                role=role,
+                members=sorted(members),
+                passes=0 if role in _NO_LLM_ROLES else _PASSES_PER_GROUP,
+            )
+        )
         placed.update(members)
 
     for f in sorted(by_file):
         if roles[f][0] == "engine":
-            _emit("engine:%s" % Path(f).name, "engine",
-                  [f] + attached.get(f, []))
+            _emit("engine:%s" % Path(f).name, "engine", [f] + attached.get(f, []))
 
     for f in sorted(by_file):
         if f in placed or roles[f][0] in ("test", "config", "docs", "other"):
@@ -372,25 +361,16 @@ def build_groups(
         if tests:
             _emit("covered:%s" % Path(f).name, "covered", [f] + tests)
 
-    rest = [
-        f for f in sorted(by_file)
-        if f not in placed and roles[f][0] in ("integration", "source")
-    ]
+    rest = [f for f in sorted(by_file) if f not in placed and roles[f][0] in ("integration", "source")]
     if rest:
         _emit("integration", "integration", rest)
 
-    leftover_tests = [
-        f for f in sorted(by_file)
-        if f not in placed and roles[f][0] == "test"
-    ]
+    leftover_tests = [f for f in sorted(by_file) if f not in placed and roles[f][0] == "test"]
     if leftover_tests:
         _emit("tests:unattached", "test", leftover_tests)
 
     for role in ("config", "docs", "other"):
-        members = [
-            f for f in sorted(by_file)
-            if f not in placed and roles[f][0] == role
-        ]
+        members = [f for f in sorted(by_file) if f not in placed and roles[f][0] == role]
         if members:
             _emit(role, role, members)
 
@@ -418,15 +398,15 @@ def cross_group_edges(
         for dst in sorted(edges[src]):
             if owner.get(src) == owner.get(dst):
                 continue
-            out.append({
-                "from": src,
-                "to": dst,
-                "from_group": owner.get(src),
-                "to_group": owner.get(dst),
-                "symbols": sorted(
-                    file_used.get(src, set()) & file_defined.get(dst, set())
-                ),
-            })
+            out.append(
+                {
+                    "from": src,
+                    "to": dst,
+                    "from_group": owner.get(src),
+                    "to_group": owner.get(dst),
+                    "symbols": sorted(file_used.get(src, set()) & file_defined.get(dst, set())),
+                }
+            )
     return out
 
 
@@ -451,19 +431,12 @@ def group_diff(
         return GroupingResult()
 
     edges, file_defined, file_used = build_edges(by_file, repo_root)
-    groups, orphans = build_groups(
-        by_file, file_defined, file_used, engine_churn, integration_churn
-    )
-    roles = {
-        f: classify_file(f, by_file, engine_churn, integration_churn)
-        for f in by_file
-    }
+    groups, orphans = build_groups(by_file, file_defined, file_used, engine_churn, integration_churn)
+    roles = {f: classify_file(f, by_file, engine_churn, integration_churn) for f in by_file}
 
     return GroupingResult(
         groups=groups,
         roles=roles,
-        cross_group_edges=cross_group_edges(
-            groups, edges, file_defined, file_used
-        ),
+        cross_group_edges=cross_group_edges(groups, edges, file_defined, file_used),
         orphan_tests=orphans,
     )

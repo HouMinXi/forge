@@ -9,6 +9,7 @@ run_gate_check returns ONLY 0 or 1, NEVER 2 (EXIT_CLI_ERROR).
 If it returned 2, the pre-commit hook's exit-code translation would
 treat 2 as "allow+warn", causing FAIL-OPEN on config errors.
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -27,9 +28,15 @@ from .exit_codes import EXIT_FAIL, EXIT_PASS
 
 # Known test runners for command safety validation
 KNOWN_RUNNERS = {
-    "python3", "python", "pytest",
-    "cargo", "go", "make",
-    "npm", "npx", "node",
+    "python3",
+    "python",
+    "pytest",
+    "cargo",
+    "go",
+    "make",
+    "npm",
+    "npx",
+    "node",
 }
 
 # Shell metacharacters that must not appear in command args
@@ -109,61 +116,45 @@ def load_gate_config(
 
     if "also_copy" in test:
         entries = test["also_copy"]
-        if not isinstance(entries, list) or not all(
-            isinstance(e, str) for e in entries
-        ):
+        if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
             raise ValueError("'test.also_copy' must be a list of strings")
 
     if "mutation_skip_globs" in test:
         entries = test["mutation_skip_globs"]
-        if not isinstance(entries, list) or not all(
-            isinstance(e, str) for e in entries
-        ):
+        if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
             raise ValueError("'test.mutation_skip_globs' must be a list of strings")
 
     if "mutation_include_globs" in test:
         entries = test["mutation_include_globs"]
-        if not isinstance(entries, list) or not all(
-            isinstance(e, str) for e in entries
-        ):
+        if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
             raise ValueError("'test.mutation_include_globs' must be a list of strings")
 
     if "mutation_max_children" in test:
         children = test["mutation_max_children"]
         if not isinstance(children, int) or isinstance(children, bool) or children < 1:
-            raise ValueError(
-                "'test.mutation_max_children' must be a positive integer"
-            )
+            raise ValueError("'test.mutation_max_children' must be a positive integer")
 
     if "mutation_memory_limit_mb" in test:
         mem_mb = test["mutation_memory_limit_mb"]
         if not isinstance(mem_mb, int) or isinstance(mem_mb, bool) or mem_mb < 1:
-            raise ValueError(
-                "'test.mutation_memory_limit_mb' must be a positive integer (MiB)"
-            )
+            raise ValueError("'test.mutation_memory_limit_mb' must be a positive integer (MiB)")
 
     # Validate optional non_ascii field (top-level)
     if "non_ascii" in data:
         if data["non_ascii"] not in ("ai-smell", "strict"):
-            raise ValueError(
-                "non_ascii must be 'ai-smell' or 'strict', got: %r"
-                % data["non_ascii"]
-            )
+            raise ValueError("non_ascii must be 'ai-smell' or 'strict', got: %r" % data["non_ascii"])
 
     # Validate optional presubmit section
     if "presubmit" in data:
         if not isinstance(data["presubmit"], list):
             raise ValueError(
-                "gate.yaml 'presubmit' must be a list, got: %s"
-                % type(data["presubmit"]).__name__
+                "gate.yaml 'presubmit' must be a list, got: %s" % type(data["presubmit"]).__name__
             )
         for idx, entry in enumerate(data["presubmit"]):
             try:
                 validate_presubmit_entry(entry)
             except ValueError as e:
-                raise ValueError(
-                    "presubmit[%d]: %s" % (idx, e)
-                ) from e
+                raise ValueError("presubmit[%d]: %s" % (idx, e)) from e
 
     # Validate optional graph_triage section
     if "graph_triage" in data:
@@ -220,27 +211,19 @@ def validate_exec_falsify_config(section: object) -> None:
     """
     if not isinstance(section, dict):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "gate.yaml 'exec_falsify' must be a mapping, got: %s"
-            % type(section).__name__
+            "gate.yaml 'exec_falsify' must be a mapping, got: %s" % type(section).__name__
         )
     for key in section:
         if key != "timeout_seconds":
             raise ValueError(
-                "gate.yaml 'exec_falsify' unknown key: %r "
-                "(only timeout_seconds is supported)" % key
+                "gate.yaml 'exec_falsify' unknown key: %r (only timeout_seconds is supported)" % key
             )
     if "timeout_seconds" in section:
         ts = section["timeout_seconds"]
         if not isinstance(ts, int) or isinstance(ts, bool):
-            raise ValueError(
-                "exec_falsify.timeout_seconds must be an integer, got: %r"
-                % (ts,)
-            )
+            raise ValueError("exec_falsify.timeout_seconds must be an integer, got: %r" % (ts,))
         if not (10 <= ts <= 1800):
-            raise ValueError(
-                "exec_falsify.timeout_seconds must be within [10, 1800], "
-                "got: %d" % ts
-            )
+            raise ValueError("exec_falsify.timeout_seconds must be within [10, 1800], got: %d" % ts)
 
 
 def validate_pinned_paths(section: object) -> None:
@@ -254,14 +237,12 @@ def validate_pinned_paths(section: object) -> None:
     """
     if not isinstance(section, list):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "gate.yaml 'pinned_paths' must be a list, got: %s"
-            % type(section).__name__
+            "gate.yaml 'pinned_paths' must be a list, got: %s" % type(section).__name__
         )
     for idx, item in enumerate(section):
         if not isinstance(item, str):
             raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-                "gate.yaml 'pinned_paths[%d]' must be a string, got: %s"
-                % (idx, type(item).__name__)
+                "gate.yaml 'pinned_paths[%d]' must be a string, got: %s" % (idx, type(item).__name__)
             )
 
 
@@ -277,15 +258,13 @@ def validate_style_downgrade_config(section: object) -> None:
     """
     if not isinstance(section, dict):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "gate.yaml 'style_downgrade' must be a mapping, got: %s"
-            % type(section).__name__
+            "gate.yaml 'style_downgrade' must be a mapping, got: %s" % type(section).__name__
         )
     for key in ("pass_names", "keywords"):
         val = section.get(key, [])
         if not isinstance(val, list):
             raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-                "gate.yaml 'style_downgrade.%s' must be a list, got: %s"
-                % (key, type(val).__name__)
+                "gate.yaml 'style_downgrade.%s' must be a list, got: %s" % (key, type(val).__name__)
             )
         for idx, item in enumerate(val):
             if not isinstance(item, str):
@@ -319,20 +298,17 @@ def validate_graph_triage(section: dict) -> None:
     """
     if not isinstance(section, dict):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "gate.yaml 'graph_triage' must be a mapping, got: %s"
-            % type(section).__name__
+            "gate.yaml 'graph_triage' must be a mapping, got: %s" % type(section).__name__
         )
     if "enabled" in section:
         if not isinstance(section["enabled"], bool):
             raise ValueError(
-                "gate.yaml 'graph_triage.enabled' must be a bool, got: %r"
-                % section["enabled"]
+                "gate.yaml 'graph_triage.enabled' must be a bool, got: %r" % section["enabled"]
             )
     if "db_path" in section:
         if not isinstance(section["db_path"], str):
             raise ValueError(
-                "gate.yaml 'graph_triage.db_path' must be a string, got: %r"
-                % section["db_path"]
+                "gate.yaml 'graph_triage.db_path' must be a string, got: %r" % section["db_path"]
             )
 
 
@@ -356,14 +332,12 @@ def validate_daemon_state(section: object) -> None:
     """
     if not isinstance(section, dict):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "gate.yaml 'daemon_state' must be a mapping, got: %s"
-            % type(section).__name__
+            "gate.yaml 'daemon_state' must be a mapping, got: %s" % type(section).__name__
         )
     if "enabled" in section:
         if not isinstance(section["enabled"], bool):
             raise ValueError(
-                "gate.yaml 'daemon_state.enabled' must be a bool, got: %r"
-                % section["enabled"]
+                "gate.yaml 'daemon_state.enabled' must be a bool, got: %r" % section["enabled"]
             )
     if "subsystems" in section:
         if not isinstance(section["subsystems"], list):
@@ -395,14 +369,10 @@ def validate_daemon_state(section: object) -> None:
                 )
             for req_key in ("subsystem", "mutates", "interferes_with"):
                 if req_key not in c:
-                    raise ValueError(
-                        "daemon_state.conflicts[%d] missing required '%s'"
-                        % (idx, req_key)
-                    )
+                    raise ValueError("daemon_state.conflicts[%d] missing required '%s'" % (idx, req_key))
                 if not isinstance(c[req_key], str):
                     raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-                        "daemon_state.conflicts[%d].%s must be a string"
-                        % (idx, req_key)
+                        "daemon_state.conflicts[%d].%s must be a string" % (idx, req_key)
                     )
     if "conflicts_file" in section:
         if not isinstance(section["conflicts_file"], str):
@@ -429,33 +399,20 @@ def validate_canary_config(section: object) -> None:
     """
     if not isinstance(section, dict):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "gate.yaml 'canary' must be a mapping, got: %s"
-            % type(section).__name__
+            "gate.yaml 'canary' must be a mapping, got: %s" % type(section).__name__
         )
     if "enabled" in section:
         if not isinstance(section["enabled"], bool):
-            raise ValueError(
-                "gate.yaml 'canary.enabled' must be a bool, got: %r"
-                % section["enabled"]
-            )
+            raise ValueError("gate.yaml 'canary.enabled' must be a bool, got: %r" % section["enabled"])
     if "n" in section:
         if not isinstance(section["n"], int) or isinstance(section["n"], bool):
-            raise ValueError(
-                "gate.yaml 'canary.n' must be an int, got: %r"
-                % section["n"]
-            )
+            raise ValueError("gate.yaml 'canary.n' must be an int, got: %r" % section["n"])
         if section["n"] < 3 or section["n"] > 5:
-            raise ValueError(
-                "gate.yaml 'canary.n' must be in range 3..5, got: %d"
-                % section["n"]
-            )
+            raise ValueError("gate.yaml 'canary.n' must be in range 3..5, got: %d" % section["n"])
     if "threshold_ratio" in section:
         val = section["threshold_ratio"]
         if not isinstance(val, (int, float)) or isinstance(val, bool):
-            raise ValueError(
-                "gate.yaml 'canary.threshold_ratio' must be a number, "
-                "got: %r" % val
-            )
+            raise ValueError("gate.yaml 'canary.threshold_ratio' must be a number, got: %r" % val)
         if val <= 0.0 or val > 1.0:
             raise ValueError(
                 "gate.yaml 'canary.threshold_ratio' must be > 0.0 and "
@@ -481,51 +438,31 @@ def validate_retry_config(section: object) -> None:
     """
     if not isinstance(section, dict):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "gate.yaml 'retry' must be a mapping, got: %s"
-            % type(section).__name__
+            "gate.yaml 'retry' must be a mapping, got: %s" % type(section).__name__
         )
     if "max_attempts" in section:
         val = section["max_attempts"]
         if not isinstance(val, int) or isinstance(val, bool):
-            raise ValueError(
-                "gate.yaml 'retry.max_attempts' must be an int, got: %r"
-                % val
-            )
+            raise ValueError("gate.yaml 'retry.max_attempts' must be an int, got: %r" % val)
         if val < 1 or val > 10:
-            raise ValueError(
-                "gate.yaml 'retry.max_attempts' must be in range 1..10, "
-                "got: %d" % val
-            )
+            raise ValueError("gate.yaml 'retry.max_attempts' must be in range 1..10, got: %d" % val)
     if "initial_delay_s" in section:
         val = section["initial_delay_s"]
         if not isinstance(val, (int, float)) or isinstance(val, bool):
-            raise ValueError(
-                "gate.yaml 'retry.initial_delay_s' must be a number, "
-                "got: %r" % val
-            )
+            raise ValueError("gate.yaml 'retry.initial_delay_s' must be a number, got: %r" % val)
         if val < 0.1 or val > 30:
-            raise ValueError(
-                "gate.yaml 'retry.initial_delay_s' must be in range "
-                "0.1..30, got: %s" % val
-            )
+            raise ValueError("gate.yaml 'retry.initial_delay_s' must be in range 0.1..30, got: %s" % val)
     if "retry_timeout" in section:
         val = section["retry_timeout"]
         if not isinstance(val, bool):
-            raise ValueError(
-                "gate.yaml 'retry.retry_timeout' must be a bool, "
-                "got: %r" % val
-            )
+            raise ValueError("gate.yaml 'retry.retry_timeout' must be a bool, got: %r" % val)
     if "l1_pass_stagger_s" in section:
         val = section["l1_pass_stagger_s"]
         if not isinstance(val, (int, float)) or isinstance(val, bool):
-            raise ValueError(
-                "gate.yaml 'retry.l1_pass_stagger_s' must be a number, "
-                "got: %r" % val
-            )
+            raise ValueError("gate.yaml 'retry.l1_pass_stagger_s' must be a number, got: %r" % val)
         if val < 0 or val > 120:
             raise ValueError(
-                "gate.yaml 'retry.l1_pass_stagger_s' must be in range "
-                "0..120, got: %s" % val
+                "gate.yaml 'retry.l1_pass_stagger_s' must be in range 0..120, got: %s" % val
             )
 
 
@@ -547,13 +484,9 @@ def _validate_ref_part(part_name: str, part_val: str, context: str) -> None:
         ValueError: on invalid characters or leading dash/dot.
     """
     if part_val.startswith("-") or part_val.startswith("."):
-        raise ValueError(
-            "%s ref %s must not start with '-' or '.'" % (context, part_name)
-        )
+        raise ValueError("%s ref %s must not start with '-' or '.'" % (context, part_name))
     if not _REF_COMPONENT_RE.match(part_val):
-        raise ValueError(
-            "%s ref %s contains invalid characters" % (context, part_name)
-        )
+        raise ValueError("%s ref %s contains invalid characters" % (context, part_name))
 
 
 def validate_siblings(
@@ -601,16 +534,10 @@ def validate_siblings(
         ref = ref_val
         # ref must contain exactly one ".." separator (not "...")
         if ".." not in ref or "..." in ref:
-            raise ValueError(
-                "siblings[%d]: ref must be 'baseline..head', got %r"
-                % (idx, ref)
-            )
+            raise ValueError("siblings[%d]: ref must be 'baseline..head', got %r" % (idx, ref))
         base_part, head_part = ref.split("..", 1)
         if not base_part or not head_part:
-            raise ValueError(
-                "siblings[%d]: ref must be 'baseline..head', got %r"
-                % (idx, ref)
-            )
+            raise ValueError("siblings[%d]: ref must be 'baseline..head', got %r" % (idx, ref))
         _validate_ref_part("baseline", base_part, "siblings[%d]:" % idx)
         _validate_ref_part("head", head_part, "siblings[%d]:" % idx)
 
@@ -618,10 +545,7 @@ def validate_siblings(
 
         # Reject remote URLs (v1 supports local paths only)
         if repo_str.startswith("https://") or repo_str.startswith("git@"):
-            raise ValueError(
-                "siblings[%d]: remote URLs not supported in v1; "
-                "use a local path" % idx
-            )
+            raise ValueError("siblings[%d]: remote URLs not supported in v1; use a local path" % idx)
 
         # Symlink guard: resolve relative to project root
         raw_path = Path(repo_str)
@@ -630,33 +554,22 @@ def validate_siblings(
         else:
             resolved = (gate_root / repo_str).resolve()
         if not _symlink_guard_passes(resolved, gate_root):
-            raise ValueError(
-                "siblings[%d]: repo path traverses outside project" % idx
-            )
+            raise ValueError("siblings[%d]: repo path traverses outside project" % idx)
 
         # Label: explicit or defaulted from repo basename
-        label = entry.get("label") or os.path.basename(
-            repo_str.rstrip("/")
-        )
+        label = entry.get("label") or os.path.basename(repo_str.rstrip("/"))
 
         # Label character validation
         if not re.fullmatch(r"[A-Za-z0-9_-]+", label):
-            raise ValueError(
-                "siblings[%d]: label must be alphanumeric/hyphen/"
-                "underscore only" % idx
-            )
+            raise ValueError("siblings[%d]: label must be alphanumeric/hyphen/underscore only" % idx)
 
         # Reserved label
         if label == "primary":
-            raise ValueError(
-                "siblings: label 'primary' is reserved"
-            )
+            raise ValueError("siblings: label 'primary' is reserved")
 
         # Uniqueness
         if label in seen_labels:
-            raise ValueError(
-                "siblings: duplicate label '%s'" % label
-            )
+            raise ValueError("siblings: duplicate label '%s'" % label)
         seen_labels.add(label)
 
         # Same-stack language check (skipped when primary_language is None)
@@ -667,8 +580,7 @@ def validate_siblings(
             if result.language != primary_language:
                 raise ValueError(
                     "siblings[%d]: sibling detected as '%s' but "
-                    "primary is '%s'; same-stack only for v1"
-                    % (idx, result.language, primary_language)
+                    "primary is '%s'; same-stack only for v1" % (idx, result.language, primary_language)
                 )
 
 
@@ -727,10 +639,7 @@ def validate_presubmit_command(command: list[str]) -> None:
             raise ValueError("presubmit command elements must be strings")  # noqa: TRY004  # callers and tests catch ValueError for config shape
         for char in SHELL_METACHARACTERS:
             if char in arg:
-                raise ValueError(
-                    "Shell metacharacter %r not allowed in presubmit command"
-                    % char
-                )
+                raise ValueError("Shell metacharacter %r not allowed in presubmit command" % char)
         if "%" in arg:
             raise ValueError(
                 "Percent sign not allowed in presubmit command elements"
@@ -765,33 +674,24 @@ def validate_presubmit_entry(entry: dict) -> None:
 
     # command: required, list, no shell metacharacters
     if "command" not in entry:
-        raise ValueError(
-            "presubmit entry missing required field 'command'"
-        )
+        raise ValueError("presubmit entry missing required field 'command'")
     if not isinstance(entry["command"], list):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
-            "presubmit entry 'command' must be a list, got: %s"
-            % type(entry["command"]).__name__
+            "presubmit entry 'command' must be a list, got: %s" % type(entry["command"]).__name__
         )
     validate_presubmit_command(entry["command"])
 
     # applies_to: required, string, no quotes (breaks generated shell quoting)
     if "applies_to" not in entry:
-        raise ValueError(
-            "presubmit entry missing required field 'applies_to'"
-        )
+        raise ValueError("presubmit entry missing required field 'applies_to'")
     if not isinstance(entry["applies_to"], str):
         raise ValueError(  # noqa: TRY004  # callers and tests catch ValueError for config shape
             "presubmit entry 'applies_to' must be a string"
         )
     if "'" in entry["applies_to"]:
-        raise ValueError(
-            "presubmit entry 'applies_to' must not contain single-quote"
-        )
+        raise ValueError("presubmit entry 'applies_to' must not contain single-quote")
     if '"' in entry["applies_to"]:
-        raise ValueError(
-            "presubmit entry 'applies_to' must not contain double-quote"
-        )
+        raise ValueError("presubmit entry 'applies_to' must not contain double-quote")
     if "%" in entry["applies_to"]:
         raise ValueError(
             "presubmit entry 'applies_to' must not contain percent sign"
@@ -805,9 +705,7 @@ def validate_presubmit_entry(entry: dict) -> None:
     # "on" so users can write `on: diff` without quoting the key.
     on_key = "on" if "on" in entry else (True if True in entry else None)
     if on_key is None:
-        raise ValueError(
-            "presubmit entry missing required field 'on'"
-        )
+        raise ValueError("presubmit entry missing required field 'on'")
     on_value = entry[on_key]
     # Normalize: store as string key for callers
     if on_key is True:
@@ -819,26 +717,17 @@ def validate_presubmit_entry(entry: dict) -> None:
             "silently never execute; use diff or patch"
         )
     if on_value not in ("diff", "patch"):
-        raise ValueError(
-            "presubmit entry 'on' must be 'diff' or 'patch', got: %r"
-            % on_value
-        )
+        raise ValueError("presubmit entry 'on' must be 'diff' or 'patch', got: %r" % on_value)
 
     # when_exists: optional, string, no quotes
     if "when_exists" in entry:
         we = entry["when_exists"]
         if not isinstance(we, str):
-            raise ValueError(
-                "presubmit entry 'when_exists' must be a string"
-            )
+            raise ValueError("presubmit entry 'when_exists' must be a string")
         if "'" in we:
-            raise ValueError(
-                "presubmit entry 'when_exists' must not contain single-quote"
-            )
+            raise ValueError("presubmit entry 'when_exists' must not contain single-quote")
         if '"' in we:
-            raise ValueError(
-                "presubmit entry 'when_exists' must not contain double-quote"
-            )
+            raise ValueError("presubmit entry 'when_exists' must not contain double-quote")
         if "%" in we:
             raise ValueError(
                 "presubmit entry 'when_exists' must not contain percent sign"
@@ -873,10 +762,7 @@ def validate_command_safety(command: list[str]) -> None:
             raise ValueError("command elements must be strings")  # noqa: TRY004  # callers and tests catch ValueError for config shape
         for char in SHELL_METACHARACTERS:
             if char in arg:
-                raise ValueError(
-                    "Shell metacharacter %r not allowed in command args"
-                    % char
-                )
+                raise ValueError("Shell metacharacter %r not allowed in command args" % char)
 
 
 def is_ci_mode(env: Mapping[str, str]) -> bool:
@@ -1037,8 +923,7 @@ def translate_exit_code(test_returncode: int) -> int:
     """
     if test_returncode < 0:
         print(
-            "forge: test runner killed by signal %d (e.g. segfault)"
-            % abs(test_returncode),
+            "forge: test runner killed by signal %d (e.g. segfault)" % abs(test_returncode),
             file=sys.stderr,
         )
         return 1  # Block -- process was killed
@@ -1098,9 +983,12 @@ def run_gate_check(
         from .kernel_context import validate_kernel_context
         from .trust import is_trusted_kernel_context
         from .workspace import resolve_workspace
+
         kernel_cfg = validate_kernel_context(config.get("kernel_context", {}))
         if kernel_cfg.enabled and not is_trusted_kernel_context(
-            config_path, resolve_workspace(cwd, env), kernel_cfg,
+            config_path,
+            resolve_workspace(cwd, env),
+            kernel_cfg,
         ):
             warn("kernel-context: file access is not authorized; run code-forge trust")
         test_config = config["test"]
@@ -1129,24 +1017,18 @@ def run_gate_check(
         result = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             cwd=str(cwd),
             timeout=5,
         )
         if result.returncode != 0:
-            print(
-                "forge: error: git diff --cached failed: %s"
-                % result.stderr.strip(),
-                file=stderr
-            )
+            print("forge: error: git diff --cached failed: %s" % result.stderr.strip(), file=stderr)
             return EXIT_FAIL  # BLOCK on git error
 
-        staged_files = [
-            line.strip()
-            for line in result.stdout.strip().split("\n")
-            if line.strip()
-        ]
+        staged_files = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
     except subprocess.TimeoutExpired:
         print("forge: error: git diff --cached timed out", file=stderr)
         return EXIT_FAIL
@@ -1182,7 +1064,9 @@ def run_gate_check(
         test_result = subprocess.run(
             command,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             env=test_env,
             cwd=str(test_cwd),
             timeout=timeout,
@@ -1191,16 +1075,10 @@ def run_gate_check(
         test_returncode = test_result.returncode
         test_stdout = test_result.stdout
     except subprocess.TimeoutExpired:
-        print(
-            "forge: error: tests timed out after %d seconds" % timeout,
-            file=stderr
-        )
+        print("forge: error: tests timed out after %d seconds" % timeout, file=stderr)
         return EXIT_FAIL  # BLOCK on timeout
     except FileNotFoundError:
-        print(
-            "forge: error: test runner not found: %s" % command[0],
-            file=stderr
-        )
+        print("forge: error: test runner not found: %s" % command[0], file=stderr)
         return EXIT_FAIL
 
     # Translate exit code
@@ -1220,35 +1098,24 @@ def run_gate_check(
         combined = f"{test_stdout or ''}\n{test_result.stderr or ''}"
         if not _INTERRUPT_BANNER.search(combined):
             print(
-                "forge: error: tests exited with code 2 without an "
-                "interrupt; blocking commit",
-                file=stderr
+                "forge: error: tests exited with code 2 without an interrupt; blocking commit",
+                file=stderr,
             )
             return EXIT_FAIL
-        warn(
-            "forge: warning: tests exited with code 2 "
-            "(keyboard interrupt); allowing commit"
-        )
+        warn("forge: warning: tests exited with code 2 (keyboard interrupt); allowing commit")
     elif test_returncode == 3:
-        warn(
-            "forge: warning: tests exited with code 3 "
-            "(internal error); allowing commit"
-        )
+        warn("forge: warning: tests exited with code 3 (internal error); allowing commit")
 
     # Baseline delta applies ONLY to real test failures (exit 1).
     # Exit 4 (usage error), exit 5 (no tests collected), and timeout BLOCK
     # directly -- vacuous delta would otherwise downgrade them to PASS.
     if translated == EXIT_FAIL and test_returncode == 1:
         # Real test failure -> check baseline delta
-        should_block, new_failures = compute_baseline_delta(
-            test_stdout, baseline
-        )
+        should_block, new_failures = compute_baseline_delta(test_stdout, baseline)
         if not should_block:
             if baseline is None:
                 if env.get("FORGE_ALLOW_NO_BASELINE") == "1":
-                    warn(
-                        "forge: warning: no baseline; allowing (opt-in)"
-                    )
+                    warn("forge: warning: no baseline; allowing (opt-in)")
                 else:
                     print(
                         "forge: no baseline established; blocking commit. "
@@ -1258,17 +1125,11 @@ def run_gate_check(
                     )
                     return EXIT_FAIL
             else:
-                warn(
-                    "forge: all failures are known (in baseline); "
-                    "allowing commit"
-                )
+                warn("forge: all failures are known (in baseline); allowing commit")
             return EXIT_PASS  # Downgrade to allow
         else:
             # NEW failures detected
-            print(
-                "forge: NEW test failures detected (not in baseline):",
-                file=stderr
-            )
+            print("forge: NEW test failures detected (not in baseline):", file=stderr)
             for test_name in new_failures:
                 print("  - %s" % test_name, file=stderr)
             return EXIT_FAIL  # BLOCK

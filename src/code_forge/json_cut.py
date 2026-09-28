@@ -74,7 +74,7 @@ def is_truncated(text):
             was_key = want == _WANT_KEY
             closed = False
             for sch in chars:
-                if sch == '\\':
+                if sch == "\\":
                     nxt = next(chars, None)
                     if nxt is None:
                         return True
@@ -84,8 +84,7 @@ def is_truncated(text):
                         hexes = [next(chars, None) for _ in range(4)]
                         # a bad digit is a broken escape even when the
                         # run also ended early: check it before the cut
-                        if any(h is not None and h not in _HEX
-                               for h in hexes):
+                        if any(h is not None and h not in _HEX for h in hexes):
                             return False
                         if any(h is None for h in hexes):
                             return True
@@ -114,7 +113,7 @@ def is_truncated(text):
                 return False
             number = ""
 
-        if ch in ' \t\n\r':
+        if ch in " \t\n\r":
             continue
         if ch in "{[":
             if want != _WANT_VALUE:

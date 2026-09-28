@@ -53,14 +53,16 @@ def verify_isolation_support(cgroup_root: str) -> None:
     try:
         fs_type = subprocess.run(
             ["stat", "-fc", "%T", cgroup_root],
-            capture_output=True, text=True, encoding="utf-8", timeout=10,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         raise IsolationUnavailable("cannot stat cgroup root: %s" % exc) from exc
     if fs_type != _CGROUP2_MAGIC:
         raise IsolationUnavailable(
-            "cgroup root %r is not on a cgroup2 mount (got %r)"
-            % (cgroup_root, fs_type)
+            "cgroup root %r is not on a cgroup2 mount (got %r)" % (cgroup_root, fs_type)
         )
     if not os.path.isdir(cgroup_root):
         raise IsolationUnavailable("cgroup root %r is not a directory" % cgroup_root)
@@ -75,8 +77,7 @@ def verify_isolation_support(cgroup_root: str) -> None:
         for fname in ("memory.max", "pids.max", "memory.swap.max", "cgroup.procs"):
             if not os.path.exists(os.path.join(probe, fname)):
                 raise IsolationUnavailable(
-                    "delegated cgroup lacks %s (controllers memory+pids required)"
-                    % fname
+                    "delegated cgroup lacks %s (controllers memory+pids required)" % fname
                 )
     finally:
         try:
@@ -110,9 +111,7 @@ class SandboxSpec:
             raise ValueError("sandbox limits must be positive")
         for host, inner in self.extra_ro_binds + self.extra_rw_binds:
             if not host.startswith("/") or not inner.startswith("/"):
-                raise ValueError(
-                    "extra bind paths must be absolute, got %r -> %r" % (host, inner)
-                )
+                raise ValueError("extra bind paths must be absolute, got %r -> %r" % (host, inner))
 
 
 def _write(path: str, value: str) -> None:
@@ -125,9 +124,7 @@ def _read(path: str) -> str:
         with open(path, encoding="utf-8") as fh:
             return fh.read().strip()
     except UnicodeDecodeError as exc:
-        raise IsolationUnavailable(
-            "cgroup file %r is not UTF-8 decodable: %s" % (path, exc)
-        ) from exc
+        raise IsolationUnavailable("cgroup file %r is not UTF-8 decodable: %s" % (path, exc)) from exc
 
 
 class _ChildProcess:
@@ -190,9 +187,14 @@ class Supervisor:
     def _bwrap_argv(self) -> list[str]:
         spec = self.spec
         argv = [
-            "bwrap", "--die-with-parent", "--new-session",
-            "--unshare-user", "--unshare-pid", "--unshare-net",
-            "--unshare-uts", "--unshare-ipc",
+            "bwrap",
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-user",
+            "--unshare-pid",
+            "--unshare-net",
+            "--unshare-uts",
+            "--unshare-ipc",
             "--clearenv",
         ]
         if spec.runtime_root:
@@ -241,16 +243,13 @@ class Supervisor:
                 got = _read(os.path.join(self.cgroup_path, fname))
                 if got != expected:
                     raise IsolationUnavailable(
-                        "limit readback mismatch for %s: wrote %s read %s"
-                        % (fname, expected, got)
+                        "limit readback mismatch for %s: wrote %s read %s" % (fname, expected, got)
                     )
             self.limits_readback = dict(limits)
 
             gate_r, gate_w = os.pipe()
             status_r, status_w = os.pipe()
-            procs_fd = os.open(
-                os.path.join(self.cgroup_path, "cgroup.procs"), os.O_WRONLY
-            )
+            procs_fd = os.open(os.path.join(self.cgroup_path, "cgroup.procs"), os.O_WRONLY)
             argv = self._bwrap_argv()
             env = {"PATH": "/usr/bin:/bin"}
 
@@ -298,9 +297,7 @@ class Supervisor:
                     break
                 time.sleep(0.02)
             if not placed:
-                raise IsolationError(
-                    "payload process was not placed in the run cgroup"
-                )
+                raise IsolationError("payload process was not placed in the run cgroup")
 
             self.gate_opened_monotonic_ns = time.monotonic_ns()
             os.write(gate_w, b"1")

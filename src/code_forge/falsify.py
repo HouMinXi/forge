@@ -58,17 +58,12 @@ class StubFalsifier(Falsifier):
             data = json.loads(fixture_path.read_text(encoding="utf-8"))
             self._default = Disposition(data.get("default", "CONFIRMED"))
             if self._default == Disposition.FIXED:
-                raise ValueError(
-                    "FIXED is not a valid falsifier output (default)"
-                )
+                raise ValueError("FIXED is not a valid falsifier output (default)")
             self._dispositions = {}
             for fp, d in data.get("dispositions", {}).items():
                 disp = Disposition(d)
                 if disp == Disposition.FIXED:
-                    raise ValueError(
-                        "FIXED is not a valid falsifier output "
-                        "(fingerprint %s)" % fp
-                    )
+                    raise ValueError("FIXED is not a valid falsifier output (fingerprint %s)" % fp)
                 self._dispositions[fp] = disp
             self._errors = dict(data.get("errors", {}))
 
@@ -76,8 +71,7 @@ class StubFalsifier(Falsifier):
         """Return configured disposition or raise on error key."""
         if finding.fingerprint in self._errors:
             raise RuntimeError(
-                "stub-simulated falsification error: %s"
-                % self._errors[finding.fingerprint]
+                "stub-simulated falsification error: %s" % self._errors[finding.fingerprint]
             )
         disp = self._dispositions.get(finding.fingerprint, self._default)
         if disp == Disposition.FIXED:

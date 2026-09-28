@@ -8,6 +8,7 @@ Two sub-capabilities:
   (b) TaintRunner -- advisory axis: semgrep intraprocedural taint detection
       on source files via AdvisoryAxisRunner Protocol.
 """
+
 from __future__ import annotations
 
 import re
@@ -32,14 +33,10 @@ _DANGER_PATTERN: re.Pattern[str] = re.compile(
 
 # Regex to extract the file path from a diff --git header.
 # Captures only the part after 'b/' (stripping the b/ prefix).
-_DIFF_HEADER_RE: re.Pattern[str] = re.compile(
-    r"^diff --git a/(?:.*?) b/(.+)$", re.MULTILINE
-)
+_DIFF_HEADER_RE: re.Pattern[str] = re.compile(r"^diff --git a/(?:.*?) b/(.+)$", re.MULTILINE)
 
 # Regex to extract the new-file start line from a hunk header.
-_HUNK_HEADER_RE: re.Pattern[str] = re.compile(
-    r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@"
-)
+_HUNK_HEADER_RE: re.Pattern[str] = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 # Config file paths that danger-score scans: gate.yaml and .code-forge/* only.
 _CONFIG_FILE = "gate.yaml"
@@ -124,21 +121,18 @@ def danger_score_from_diff(
                 match = _DANGER_PATTERN.match(content)
                 if match:
                     field_name = match.group(1)
-                    fingerprint = (
-                        f"danger-score:{file_path}:{field_name}:{line_number}"
+                    fingerprint = f"danger-score:{file_path}:{field_name}:{line_number}"
+                    results.append(
+                        StateFinding(
+                            id=fingerprint,
+                            fingerprint=fingerprint,
+                            source="L0",
+                            disposition=Disposition.CONFIRMED,
+                            file=file_path,
+                            line_range=[line_number, line_number],
+                            description=(f"Dangerous config field '{field_name}' added to {file_path}"),
+                        )
                     )
-                    results.append(StateFinding(
-                        id=fingerprint,
-                        fingerprint=fingerprint,
-                        source="L0",
-                        disposition=Disposition.CONFIRMED,
-                        file=file_path,
-                        line_range=[line_number, line_number],
-                        description=(
-                            f"Dangerous config field '{field_name}' "
-                            f"added to {file_path}"
-                        ),
-                    ))
                 line_number += 1
                 continue
 
@@ -168,14 +162,16 @@ def _findings_to_advisories(
     """
     advisories: list[AdvisoryFinding] = []
     for f in findings:
-        advisories.append(AdvisoryFinding(
-            id=f"taint:{f.file}:{f.line}:{f.rule_id}",
-            axis="taint",
-            file=f.file,
-            line_range=(f.line, f.end_line),
-            description=f.message,
-            attribution="semgrep-ce/intraprocedural",
-        ))
+        advisories.append(
+            AdvisoryFinding(
+                id=f"taint:{f.file}:{f.line}:{f.rule_id}",
+                axis="taint",
+                file=f.file,
+                line_range=(f.line, f.end_line),
+                description=f.message,
+                attribution="semgrep-ce/intraprocedural",
+            )
+        )
     return advisories
 
 
@@ -226,9 +222,7 @@ class TaintRunner:
             return []
 
         # Filter to Python files only (semgrep taint rules target Python).
-        py_files = [
-            f for f in self.source_files if str(f).endswith(".py")
-        ]
+        py_files = [f for f in self.source_files if str(f).endswith(".py")]
         if not py_files:
             return []
 
@@ -240,8 +234,10 @@ class TaintRunner:
         # Build semgrep command.
         rules_path = Path(__file__).parent / "rules" / "forge-taint.yaml"
         cmd = [
-            "semgrep", "scan",
-            "--config", str(rules_path),
+            "semgrep",
+            "scan",
+            "--config",
+            str(rules_path),
             "--sarif",
             "--dataflow-traces",
         ] + [str(f) for f in py_files]
@@ -251,7 +247,9 @@ class TaintRunner:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
                 cwd=str(repo_root),
             )
@@ -262,10 +260,7 @@ class TaintRunner:
 
         # Exit code >= 2 means semgrep error (not findings).
         if result.returncode >= 2:
-            msg = (
-                f"semgrep taint scan error (exit {result.returncode}): "
-                f"{result.stderr[:200]}"
-            )
+            msg = f"semgrep taint scan error (exit {result.returncode}): {result.stderr[:200]}"
             self.infra_errors.append(msg)
             return []
 

@@ -13,6 +13,7 @@ The template fallback uses appended hunks in the diff copy -- a degraded-quality
 path compared to the LLM provider's true in-place mutation of existing hunks.
 This is explicitly documented and acceptable as a fallback.
 """
+
 from __future__ import annotations
 
 import ast
@@ -46,15 +47,13 @@ from .state import Verdict
 class CanaryProvider(Protocol):
     """Injected callable that produces semantic mutations from a diff."""
 
-    def __call__(self, diff_text: str) -> list[dict]:
-        ...
+    def __call__(self, diff_text: str) -> list[dict]: ...
 
 
 class ReviewProvider(Protocol):
     """Injected callable that dispatches a fresh-context review."""
 
-    def __call__(self, prompt: str) -> str:
-        ...
+    def __call__(self, prompt: str) -> str: ...
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +109,7 @@ def validate_canary_findings(findings: list[dict]) -> list[dict]:
         missing = _REQUIRED_FINDING_KEYS - set(finding.keys())
         if missing:
             print(
-                "code-forge: canary: dropping finding missing keys %s: %r"
-                % (sorted(missing), finding),
+                "code-forge: canary: dropping finding missing keys %s: %r" % (sorted(missing), finding),
                 file=sys.stderr,
             )
             continue
@@ -130,8 +128,12 @@ def validate_canary_findings(findings: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _GENERIC_FILENAMES = [
-    "helpers.py", "utils.py", "config.py",
-    "service.py", "handler.py", "parser.py",
+    "helpers.py",
+    "utils.py",
+    "config.py",
+    "service.py",
+    "handler.py",
+    "parser.py",
 ]
 
 
@@ -212,7 +214,7 @@ _TEMPLATE_LIBRARY = [
 
 def _has_python_hunks(diff_text: str) -> bool:
     """Return True if the diff contains at least one Python file hunk."""
-    return bool(re.search(r'^\+\+\+ b/.*\.py$', diff_text, re.MULTILINE))
+    return bool(re.search(r"^\+\+\+ b/.*\.py$", diff_text, re.MULTILINE))
 
 
 # ---------------------------------------------------------------------------
@@ -292,18 +294,12 @@ def inject_canaries_into_diff(
         k = len(code_lines)
         if k > 5:
             raise ValueError(
-                "canary snippet exceeds 5-line limit (K=%d); "
-                "LINE-MATCH invariant requires K <= 5" % k
+                "canary snippet exceeds 5-line limit (K=%d); LINE-MATCH invariant requires K <= 5" % k
             )
 
         hunk_header = "@@ -0,0 +1,%d @@" % k
         plus_lines = "\n".join("+" + line for line in code_lines)
-        hunk = (
-            "--- a/%s\n"
-            "+++ b/%s\n"
-            "%s\n"
-            "%s\n"
-        ) % (mut["file"], mut["file"], hunk_header, plus_lines)
+        hunk = ("--- a/%s\n+++ b/%s\n%s\n%s\n") % (mut["file"], mut["file"], hunk_header, plus_lines)
         parts.append(hunk)
 
         # +start is 1, so snippet-line == new-file-line by construction.
@@ -341,11 +337,11 @@ def dispatch_canary_review(
 
     prompt_diff = annotated_diff_prompt_block(modified_diff)
     if prompt_diff.startswith("\nDiff:\n"):
-        prompt_diff = prompt_diff[len("\nDiff:\n"):]
+        prompt_diff = prompt_diff[len("\nDiff:\n") :]
     prompt = (
         "You are a code reviewer. Review this diff for bugs, security "
         "issues, and code quality problems.\n"
-        "Return JSON: {\"findings\": [...]}\n"
+        'Return JSON: {"findings": [...]}\n'
         "Each finding needs: file, line, severity, description.\n\n"
         "Diff:\n" + prompt_diff
     )
@@ -389,14 +385,10 @@ def run_inline_canary(
     modified_diff, manifest = inject_canaries_into_diff(diff_text, result)
 
     try:
-        raw_findings = dispatch_canary_review(
-            modified_diff, provider=review_provider
-        )
+        raw_findings = dispatch_canary_review(modified_diff, provider=review_provider)
 
         threshold = max(1, ceil(threshold_ratio * len(manifest)))
-        gate_result = evaluate_canary_coverage(
-            raw_findings, manifest, threshold=threshold
-        )
+        gate_result = evaluate_canary_coverage(raw_findings, manifest, threshold=threshold)
 
         if not gate_result.passed:
             missed_ids = ", ".join(gate_result.missed)
@@ -407,9 +399,7 @@ def run_inline_canary(
             return Verdict.UNRELIABLE, []
 
         partition = partition_canary_findings(raw_findings, manifest)
-        cite_result = reverify_finding_cites(
-            list(partition.real), source_lookup
-        )
+        cite_result = reverify_finding_cites(list(partition.real), source_lookup)
         return Verdict.DELEGATED, list(cite_result.verified)
 
     except Exception as exc:

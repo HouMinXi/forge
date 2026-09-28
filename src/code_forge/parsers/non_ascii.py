@@ -33,15 +33,17 @@ def parse_non_ascii(
         m = _GREP_LINE_RE.match(stripped)
         if m:
             content = m.group(3).strip()
-            findings.append(Finding(
-                file=m.group(1),
-                line=int(m.group(2)),
-                end_line=int(m.group(2)),
-                column=0,
-                rule_id="NON_ASCII",
-                level="error",
-                message=f"non-ASCII character found: {content}",
-                tool_name=tool_name,
-            ))
+            findings.append(
+                Finding(
+                    file=m.group(1),
+                    line=int(m.group(2)),
+                    end_line=int(m.group(2)),
+                    column=0,
+                    rule_id="NON_ASCII",
+                    level="error",
+                    message=f"non-ASCII character found: {content}",
+                    tool_name=tool_name,
+                )
+            )
 
     return findings

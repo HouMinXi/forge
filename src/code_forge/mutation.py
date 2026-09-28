@@ -39,8 +39,9 @@ _CODE_FORGE_CFG_MARKER = "# managed-by-code-forge-mutation"
 @dataclass
 class Survivor:
     """A mutant that survived (no test killed it)."""
+
     mutant_name: str  # mutmut 3.x identifier e.g. "code_forge.mutation.x_run__mutmut_1"
-    file: str         # source file (empty; mutmut 3.x results omit file paths)
+    file: str  # source file (empty; mutmut 3.x results omit file paths)
 
 
 _DEFAULT_MUTATION_SKIP_GLOBS = [
@@ -190,9 +191,7 @@ def _globs_from_gate_yaml(
         return (None, None)
     skip = test_cfg.get("mutation_skip_globs")
     include = test_cfg.get("mutation_include_globs")
-    if skip is not None and (
-        not isinstance(skip, list) or not all(isinstance(e, str) for e in skip)
-    ):
+    if skip is not None and (not isinstance(skip, list) or not all(isinstance(e, str) for e in skip)):
         skip = None
     if include is not None and (
         not isinstance(include, list) or not all(isinstance(e, str) for e in include)
@@ -262,9 +261,7 @@ def _limit_address_space(memory_limit_bytes: int) -> None:
     _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     if hard != resource.RLIM_INFINITY:
         memory_limit_bytes = min(memory_limit_bytes, hard)
-    resource.setrlimit(
-        resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes)
-    )
+    resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
 
 
 _MUTATION_STAGE_EXCLUSION = "not integration and not source_scan"
@@ -339,7 +336,7 @@ def _baseline_test_selection(baseline_cmd: list[str]) -> list[str]:
     """
     for i, tok in enumerate(baseline_cmd):
         if _is_pytest_token(tok):
-            return list(baseline_cmd[i + 1:])
+            return list(baseline_cmd[i + 1 :])
     return []
 
 
@@ -370,13 +367,13 @@ def _build_mutmut_config(
     """
     roots = _source_roots(py_files, skip_globs=skip_globs, include_globs=include_globs, cwd=cwd)
     mutate = [
-        f for f in py_files
+        f
+        for f in py_files
         if not _is_test_path(f, skip_globs=skip_globs, include_globs=include_globs, cwd=cwd)
     ]
     if not mutate:
         raise ValueError(
-            "no production files to mutate; tests-only diffs must skip "
-            "before writing setup.cfg"
+            "no production files to mutate; tests-only diffs must skip before writing setup.cfg"
         )
     lines = [
         _CODE_FORGE_CFG_MARKER,
@@ -427,7 +424,7 @@ def _resolve_mutmut_invocation(baseline_cmd: list[str]) -> list[str] | None:
         posix = runner.replace("\\", "/")
         name = posix.rsplit("/", 1)[-1]
         # Trailing separator: the path is already a directory.
-        dirpart = runner[:-len(name)] if name else runner
+        dirpart = runner[: -len(name)] if name else runner
         stem, ext = os.path.splitext(name)
         if stem.lower().startswith("python"):
             python = runner
@@ -497,7 +494,6 @@ def parse_mutmut_results(stdout: str) -> tuple[list[Survivor], list[str]]:
             survivors.append(Survivor(mutant_name=mutant_name, file=""))
 
     return survivors, warnings
-
 
 
 def _mutation_command_error(phase: str, result: subprocess.CompletedProcess) -> StateFinding:
@@ -660,8 +656,7 @@ def run_mutation(
                 file="",
                 line_range=[],
                 description=(
-                    "mutmut import probe timed out in baseline "
-                    "test env; not the same as mutmut missing"
+                    "mutmut import probe timed out in baseline test env; not the same as mutmut missing"
                 ),
             )
         )
@@ -763,16 +758,14 @@ def run_mutation(
         # original src entry after it has built the mirror.
         children = _effective_max_children(max_children)
         address_space = _memory_limit_bytes(memory_limit_bytes)
-        preexec = (
-            (lambda: _limit_address_space(address_space))
-            if os.name == "posix"
-            else None
-        )
+        preexec = (lambda: _limit_address_space(address_space)) if os.name == "posix" else None
         try:
             result = subprocess.run(
                 invocation + ["run", "--max-children", str(children)],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 check=False,
                 env=run_env,
@@ -804,7 +797,9 @@ def run_mutation(
             results_proc = subprocess.run(
                 invocation + ["results"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
                 check=False,
                 cwd=repo_root,
@@ -839,9 +834,7 @@ def run_mutation(
                     disposition=Disposition.CONFIRMED,
                     file=survivor.file,
                     line_range=[0, 0],  # mutmut 3.x results omit line numbers
-                    description=(
-                        f"mutant survived: {survivor.mutant_name}"
-                    ),
+                    description=(f"mutant survived: {survivor.mutant_name}"),
                 )
             )
 
@@ -856,6 +849,7 @@ def run_mutation(
         shutil.rmtree(mutants_dir, ignore_errors=True)
 
     return (findings, infra_errors)
+
 
 def launch_detached_mutation(
     diff_files: list[str],
@@ -987,9 +981,7 @@ except Exception as e:
     # lived middle process is the one waited for here.
     detaches_itself = hasattr(os, "fork")
     launch_script = (
-        ("import os\nif os.fork():\n    os._exit(0)\n" + script)
-        if detaches_itself
-        else script
+        ("import os\nif os.fork():\n    os._exit(0)\n" + script) if detaches_itself else script
     )
     try:
         p = subprocess.Popen(

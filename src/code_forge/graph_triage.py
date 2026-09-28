@@ -10,6 +10,7 @@ Dual backend:
   - graph.db (fallback): IMPORTS_FROM disambiguation, degraded quality.
   - Both absent: SKIP + loud-fail warning via infra_errors.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,14 +50,13 @@ _UNNAMED_PREFIX: str = "lines "
 """Entity names starting with this prefix are unnamed (skip)."""
 
 # Regex to extract file paths from unified diff "+++ b/..." lines.
-_DIFF_FILE_RE: re.Pattern[str] = re.compile(
-    r"^\+\+\+ b/(.+)$", re.MULTILINE
-)
+_DIFF_FILE_RE: re.Pattern[str] = re.compile(r"^\+\+\+ b/(.+)$", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
 # Diff parsing
 # ---------------------------------------------------------------------------
+
 
 def _parse_diff_files(diff_text: str) -> list[str]:
     """Extract file paths from unified diff '+++ b/...' lines.
@@ -101,7 +101,9 @@ def _sem_has_index(repo_root: Path) -> bool:
         r = subprocess.run(
             ["sem", "--version"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=2,
             check=False,
         )
@@ -110,11 +112,11 @@ def _sem_has_index(repo_root: Path) -> bool:
             # expecting "sem 0.21.0" or similar
             parts = version_str.split()
             if len(parts) >= 2:
-                v = parts[1].lstrip('v')
-                major_minor = v.split('.')[:2]
+                v = parts[1].lstrip("v")
+                major_minor = v.split(".")[:2]
                 if len(major_minor) >= 2:
                     try:
-                        major, minor = int(major_minor[0]), int(major_minor[1].split('-')[0])
+                        major, minor = int(major_minor[0]), int(major_minor[1].split("-")[0])
                         if major > 0 or minor >= 21:
                             return True
                     except ValueError:
@@ -181,6 +183,7 @@ def _detect_backend(
 # sem CLI helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_unnamed(entity_name: str) -> bool:
     """Return True if entity name is unnamed (skip for impact)."""
     if entity_name in _UNNAMED_ENTITIES:
@@ -216,7 +219,9 @@ def _run_sem(diff_text: str, repo_root: Path) -> list[dict]:
                 ["sem", "diff", "--patch", "--format", "json"],
                 stdin=stdin_f,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 cwd=str(repo_root),
                 timeout=_SEM_DIFF_TIMEOUT_S,
             )
@@ -256,7 +261,9 @@ def _get_sem_impact(
         result = subprocess.run(
             ["sem", "impact", entity_name, "--file", file_path, "--json"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(repo_root),
             timeout=_SEM_TIMEOUT_S,
         )
@@ -274,6 +281,7 @@ def _get_sem_impact(
 # ---------------------------------------------------------------------------
 # graph.db helpers
 # ---------------------------------------------------------------------------
+
 
 def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
     """Query graph.db for changed entities and their dependents.
@@ -316,15 +324,17 @@ def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
                 live = _live_callers(cursor, name, module_name)
                 dep_names = [lc.qualified for lc in live[:5]]
 
-                results.append({
-                    "name": name,
-                    "file": file_path,
-                    "qualified_name": qualified_name,
-                    "dependent_count": len(live),
-                    "top_dependents": dep_names,
-                    "start_line": start,
-                    "end_line": end,
-                })
+                results.append(
+                    {
+                        "name": name,
+                        "file": file_path,
+                        "qualified_name": qualified_name,
+                        "dependent_count": len(live),
+                        "top_dependents": dep_names,
+                        "start_line": start,
+                        "end_line": end,
+                    }
+                )
     except (sqlite3.Error, OSError) as exc:
         logger.warning("graph.db read error: %s", exc)
     finally:
@@ -337,6 +347,7 @@ def _run_graphdb(db_path: str, diff_files: list[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Finding construction
 # ---------------------------------------------------------------------------
+
 
 def _build_findings(
     ranked_entities: list[dict],
@@ -363,24 +374,22 @@ def _build_findings(
         end = entity.get("end_line", 0)
 
         dep_names = ", ".join(
-            str(
-                d.get("entityName", d.get("name", d))
-                if isinstance(d, dict) else d
-            )
-            for d in deps[:3]
+            str(d.get("entityName", d.get("name", d)) if isinstance(d, dict) else d) for d in deps[:3]
         )
         desc = "%s (impact: %d downstream)" % (name, total)
         if dep_names:
             desc = "%s -- top dependents: %s" % (desc, dep_names)
 
-        findings.append(AdvisoryFinding(
-            id="graph-triage-%d" % (idx + 1),
-            axis="GRAPH-TRIAGE",
-            file=file_path,
-            line_range=[start or 0, end or 0],
-            description=desc,
-            attribution=attribution,
-        ))
+        findings.append(
+            AdvisoryFinding(
+                id="graph-triage-%d" % (idx + 1),
+                axis="GRAPH-TRIAGE",
+                file=file_path,
+                line_range=[start or 0, end or 0],
+                description=desc,
+                attribution=attribution,
+            )
+        )
 
     return findings
 
@@ -388,6 +397,7 @@ def _build_findings(
 # ---------------------------------------------------------------------------
 # Public utility
 # ---------------------------------------------------------------------------
+
 
 def find_entity_dependents(
     entity_name: str,
@@ -411,10 +421,7 @@ def find_entity_dependents(
     sem_path = shutil.which("sem")
     if sem_path is not None:
         impact = _get_sem_impact(entity_name, file_path, repo_root)
-        return [
-            d.get("entityId", str(d))
-            for d in impact.get("dependents", [])
-        ]
+        return [d.get("entityId", str(d)) for d in impact.get("dependents", [])]
 
     # Try graphdb.
     default_db = repo_root / ".code-review-graph" / "graph.db"
@@ -430,7 +437,8 @@ def find_entity_dependents(
         conn = None
         try:
             conn = sqlite3.connect(
-                "file:%s?mode=ro" % db_path, uri=True,
+                "file:%s?mode=ro" % db_path,
+                uri=True,
             )
             cursor = conn.cursor()
             module_name = Path(file_path).stem
@@ -448,6 +456,7 @@ def find_entity_dependents(
 # ---------------------------------------------------------------------------
 # GraphTriageRunner
 # ---------------------------------------------------------------------------
+
 
 class GraphTriageRunner:
     """Advisory axis: system-level blast-radius ranking.
@@ -501,6 +510,7 @@ class GraphTriageRunner:
         gate_path = repo_root / ".code-forge" / "gate.yaml"
         try:
             from .gate_check import load_gate_config
+
             gate_config = load_gate_config(gate_path)
         except FileNotFoundError:
             gate_config = {}
@@ -512,8 +522,7 @@ class GraphTriageRunner:
 
         if backend is None:
             gt_section = gate_config.get("graph_triage", {})
-            if isinstance(gt_section, dict) and \
-                    gt_section.get("enabled") is False:
+            if isinstance(gt_section, dict) and gt_section.get("enabled") is False:
                 # Explicit disable: silent return.
                 return []
             # Both absent: loud-fail.
@@ -533,7 +542,8 @@ class GraphTriageRunner:
 
         if backend_name == "graphdb":
             return self._run_with_graphdb(
-                diff_text, backend_path,
+                diff_text,
+                backend_path,
             )
 
         return []
@@ -565,8 +575,7 @@ class GraphTriageRunner:
             if impact.get("_timed_out"):
                 print(
                     "GraphTriageRunner: sem impact timed out for %r "
-                    "-- disabling for this run (repo may not be indexed)"
-                    % name,
+                    "-- disabling for this run (repo may not be indexed)" % name,
                     file=sys.stderr,
                 )
                 self._cached_findings = []
@@ -577,14 +586,16 @@ class GraphTriageRunner:
                 continue
 
             dep_list = impact.get("dependents", [])
-            ranked.append({
-                "name": name,
-                "file": file_path,
-                "total": total,
-                "top_dependents": dep_list[:5],
-                "start_line": entity.get("startLine", 0),
-                "end_line": entity.get("endLine", 0),
-            })
+            ranked.append(
+                {
+                    "name": name,
+                    "file": file_path,
+                    "total": total,
+                    "top_dependents": dep_list[:5],
+                    "start_line": entity.get("startLine", 0),
+                    "end_line": entity.get("endLine", 0),
+                }
+            )
 
         # Sort descending by impact total.
         ranked.sort(key=lambda e: e.get("total", 0), reverse=True)
@@ -608,7 +619,8 @@ class GraphTriageRunner:
 
         # Sort descending by dependent count.
         entities.sort(
-            key=lambda e: e.get("dependent_count", 0), reverse=True,
+            key=lambda e: e.get("dependent_count", 0),
+            reverse=True,
         )
         findings = _build_findings(entities, "graphdb")
         self._cached_findings = findings

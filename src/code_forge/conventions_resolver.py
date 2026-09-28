@@ -10,6 +10,7 @@ Exported symbols:
   extract_conventions    -- Stage 2: extract naming patterns from a repo
   get_cross_repo_digest  -- Orchestrate Stage 1+2 with caching
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -29,14 +30,14 @@ from .conventions import _SKIP_DIRS, _extract_python_public_names
 # _PATH_RE: extracts absolute paths (/...) and relative paths (../) from text
 #
 # Character class [\w./+~@%-] includes +, ~, @, % for broader path coverage
-#.
+# .
 #
 # Known limitations:
 #   1. Paths with spaces or other special characters are not matched.
 #   2. v1 Unix-only -- Windows backslash paths are not matched.
 # ---------------------------------------------------------------------------
 _PATH_RE = re.compile(
-    r'(?:^|\s|`)((?:/[\w./+~@%-]+)|(?:\.\.(?:/[\w./+~@%-]+)+))(?:\s|`|$)',
+    r"(?:^|\s|`)((?:/[\w./+~@%-]+)|(?:\.\.(?:/[\w./+~@%-]+)+))(?:\s|`|$)",
     re.MULTILINE,
 )
 
@@ -48,6 +49,7 @@ class ResolvedSource:
     Field order: fields without defaults before fields with defaults.
     Python dataclass raises TypeError at class definition otherwise.
     """
+
     repo_path: Path
     priority: int
     source_type: str
@@ -58,6 +60,7 @@ class ResolvedSource:
 # ---------------------------------------------------------------------------
 # Symlink guard helper
 # ---------------------------------------------------------------------------
+
 
 def _symlink_guard_passes(resolved_path: Path, cwd: Path) -> bool:
     """Return True if resolved_path is within cwd.parent (safe sibling).
@@ -82,6 +85,7 @@ def _symlink_guard_passes(resolved_path: Path, cwd: Path) -> bool:
 # ---------------------------------------------------------------------------
 # Stage 1: Source resolver
 # ---------------------------------------------------------------------------
+
 
 def resolve_sources(cwd: Path) -> list[ResolvedSource]:
     """Discover sibling repos from 4 prioritized sources.
@@ -194,13 +198,15 @@ def _resolve_source_custom(cwd: Path) -> list[ResolvedSource]:
         if not _symlink_guard_passes(resolved, cwd):
             continue
 
-        results.append(ResolvedSource(
-            repo_path=resolved,
-            priority=1,
-            source_type="custom",
-            target=target,
-            recipe=recipe,
-        ))
+        results.append(
+            ResolvedSource(
+                repo_path=resolved,
+                priority=1,
+                source_type="custom",
+                target=target,
+                recipe=recipe,
+            )
+        )
 
     return results
 
@@ -266,8 +272,7 @@ def _resolve_source_agents_md(cwd: Path) -> list[ResolvedSource]:
             seen_raw.add(key)
             unique_paths.append(p)
 
-    return _resolve_paths_as_sources(unique_paths, cwd, priority=2,
-                                     source_type="agents_md")
+    return _resolve_paths_as_sources(unique_paths, cwd, priority=2, source_type="agents_md")
 
 
 def _resolve_source_agent_context(cwd: Path) -> list[ResolvedSource]:
@@ -314,8 +319,7 @@ def _resolve_source_agent_context(cwd: Path) -> list[ResolvedSource]:
         for match in _PATH_RE.finditer(content):
             repo_paths.append(Path(match.group(1)))
 
-        for src in _resolve_paths_as_sources(repo_paths, cwd, priority=3,
-                                              source_type="agent_context"):
+        for src in _resolve_paths_as_sources(repo_paths, cwd, priority=3, source_type="agent_context"):
             key = str(src.repo_path.resolve())
             if key not in seen_in_src3:
                 seen_in_src3[key] = src
@@ -344,7 +348,7 @@ def _resolve_source_dependency(cwd: Path) -> list[ResolvedSource]:
             for line in content.splitlines():
                 stripped = line.strip()
                 if stripped.startswith("path = "):
-                    rel = stripped[len("path = "):].strip()
+                    rel = stripped[len("path = ") :].strip()
                     repo_paths.append(cwd / rel)
         except OSError:
             pass
@@ -360,7 +364,7 @@ def _resolve_source_dependency(cwd: Path) -> list[ResolvedSource]:
                     for val in deps.values():
                         if isinstance(val, str):
                             if val.startswith("file:"):
-                                rel = val[len("file:"):]
+                                rel = val[len("file:") :]
                                 repo_paths.append((cwd / rel).resolve())
                             elif val.startswith("../"):
                                 repo_paths.append((cwd / val).resolve())
@@ -373,9 +377,7 @@ def _resolve_source_dependency(cwd: Path) -> list[ResolvedSource]:
     if pyproject.is_file():
         try:
             content = pyproject.read_text(encoding="utf-8", errors="replace")
-            _PYPROJECT_PATH_RE = re.compile(
-                r'path\s*=\s*["\x27]([^"\x27]+)["\x27]'
-            )
+            _PYPROJECT_PATH_RE = re.compile(r'path\s*=\s*["\x27]([^"\x27]+)["\x27]')
             for match in _PYPROJECT_PATH_RE.finditer(content):
                 raw = match.group(1)
                 raw_path = Path(raw)
@@ -391,7 +393,7 @@ def _resolve_source_dependency(cwd: Path) -> list[ResolvedSource]:
     if go_mod.is_file():
         try:
             content = go_mod.read_text(encoding="utf-8", errors="replace")
-            _GOMOD_RE = re.compile(r'=>\s+(\.\.?/\S+)')
+            _GOMOD_RE = re.compile(r"=>\s+(\.\.?/\S+)")
             for match in _GOMOD_RE.finditer(content):
                 rel = match.group(1)
                 repo_paths.append((cwd / rel).resolve())
@@ -403,9 +405,7 @@ def _resolve_source_dependency(cwd: Path) -> list[ResolvedSource]:
     if cargo_toml.is_file():
         try:
             content = cargo_toml.read_text(encoding="utf-8", errors="replace")
-            _CARGO_PATH_RE = re.compile(
-                r'path\s*=\s*["\x27]([^"\x27]+)["\x27]'
-            )
+            _CARGO_PATH_RE = re.compile(r'path\s*=\s*["\x27]([^"\x27]+)["\x27]')
             for match in _CARGO_PATH_RE.finditer(content):
                 raw = match.group(1)
                 raw_path = Path(raw)
@@ -416,8 +416,7 @@ def _resolve_source_dependency(cwd: Path) -> list[ResolvedSource]:
         except OSError:
             pass
 
-    return _resolve_paths_as_sources(repo_paths, cwd, priority=4,
-                                     source_type="dependency")
+    return _resolve_paths_as_sources(repo_paths, cwd, priority=4, source_type="dependency")
 
 
 def _resolve_paths_as_sources(
@@ -452,11 +451,13 @@ def _resolve_paths_as_sources(
         if not _symlink_guard_passes(resolved, cwd):
             continue
 
-        results.append(ResolvedSource(
-            repo_path=resolved,
-            priority=priority,
-            source_type=source_type,
-        ))
+        results.append(
+            ResolvedSource(
+                repo_path=resolved,
+                priority=priority,
+                source_type=source_type,
+            )
+        )
 
     return results
 
@@ -464,6 +465,7 @@ def _resolve_paths_as_sources(
 # ---------------------------------------------------------------------------
 # Stage 2: Convention / vocabulary extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_conventions(source: ResolvedSource) -> str:
     """Extract naming conventions from a resolved sibling repo.
@@ -512,9 +514,7 @@ def extract_conventions(source: ResolvedSource) -> str:
     # Build output header.
     repo_name = source.repo_path.name
     if source.recipe != "default":
-        header = (
-            "## " + repo_name + " conventions (recipe: " + source.recipe + ")"
-        )
+        header = "## " + repo_name + " conventions (recipe: " + source.recipe + ")"
     else:
         header = "## " + repo_name + " conventions"
 
@@ -594,12 +594,8 @@ def _extract_js_ts_names(root: Path, scan_root: Path) -> list[str]:
 
     Cap at 50 names.
     """
-    _NAMED_EXPORT_RE = re.compile(
-        r'export\s+(?:function|class|const|let|var|type|interface)\s+(\w+)'
-    )
-    _DEFAULT_EXPORT_RE = re.compile(
-        r'export\s+default\s+(?:function|class)\s+(\w+)'
-    )
+    _NAMED_EXPORT_RE = re.compile(r"export\s+(?:function|class|const|let|var|type|interface)\s+(\w+)")
+    _DEFAULT_EXPORT_RE = re.compile(r"export\s+default\s+(?:function|class)\s+(\w+)")
 
     names: list[str] = []
     files = _iter_files(root, scan_root, (".js", ".ts"), (".d.ts",))
@@ -625,7 +621,7 @@ def _extract_go_names(root: Path, scan_root: Path) -> list[str]:
     Matches: func/type starting with a capital letter (exported in Go).
     Cap at 50 names.
     """
-    _GO_EXPORT_RE = re.compile(r'^(?:func|type)\s+([A-Z]\w+)', re.MULTILINE)
+    _GO_EXPORT_RE = re.compile(r"^(?:func|type)\s+([A-Z]\w+)", re.MULTILINE)
 
     names: list[str] = []
     files = _iter_files(root, scan_root, (".go",))
@@ -647,9 +643,7 @@ def _extract_rust_names(root: Path, scan_root: Path) -> list[str]:
     Matches: pub fn/struct/enum/trait/type declarations.
     Cap at 50 names.
     """
-    _RUST_PUB_RE = re.compile(
-        r'pub\s+(?:fn|struct|enum|trait|type)\s+(\w+)'
-    )
+    _RUST_PUB_RE = re.compile(r"pub\s+(?:fn|struct|enum|trait|type)\s+(\w+)")
 
     names: list[str] = []
     files = _iter_files(root, scan_root, (".rs",))
@@ -668,6 +662,7 @@ def _extract_rust_names(root: Path, scan_root: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # Stage 1+2 orchestration with caching
 # ---------------------------------------------------------------------------
+
 
 def get_cross_repo_digest(cwd: Path) -> str:
     """Orchestrate Stage 1 + Stage 2 with commit-hash caching.
@@ -702,10 +697,7 @@ def get_cross_repo_digest(cwd: Path) -> str:
     # Orphaned cache cleanup: delete cache files whose
     # path_hash prefix is not in the current source list.
     # ------------------------------------------------------------------
-    current_path_hashes = {
-        hashlib.sha256(str(s.repo_path).encode()).hexdigest()[:12]
-        for s in sources
-    }
+    current_path_hashes = {hashlib.sha256(str(s.repo_path).encode()).hexdigest()[:12] for s in sources}
     if cache_dir.is_dir():
         try:
             for cache_file in cache_dir.glob("*.json"):
@@ -734,8 +726,7 @@ def get_cross_repo_digest(cwd: Path) -> str:
         if digest is None:
             # Cache miss: extract and write.
             digest = extract_conventions(source)
-            _write_cache(cache_dir, cache_file, path_hash, digest, source,
-                         commit_hash)
+            _write_cache(cache_dir, cache_file, path_hash, digest, source, commit_hash)
 
         if digest:
             digests.append(digest)
@@ -754,7 +745,9 @@ def _get_git_commit(repo_path: Path) -> str:
         proc = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )

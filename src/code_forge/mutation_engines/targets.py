@@ -9,6 +9,7 @@ Implements the target-declaration contract from the admitted specification:
   - selection accounting: which targets are selected by changed paths
     (both old and new paths for rename/delete cases)
 """
+
 from __future__ import annotations
 
 import re
@@ -24,6 +25,7 @@ from .schemas import (
 # ---------------------------------------------------------------------------
 # Configuration loading
 # ---------------------------------------------------------------------------
+
 
 class DeclarationError(Exception):
     """Raised when target declarations are invalid."""
@@ -46,36 +48,26 @@ def load_targets(config: dict[str, Any]) -> list[TargetDeclaration]:
     if mutation is None:
         raise DeclarationError("configuration has no 'mutation' block")
     if not isinstance(mutation, dict):
-        raise DeclarationError(
-            "'mutation' must be a mapping, got %s" % type(mutation).__name__
-        )
+        raise DeclarationError("'mutation' must be a mapping, got %s" % type(mutation).__name__)
 
     sv = mutation.get("schema_version")
     if sv != 1:
-        raise DeclarationError(
-            "mutation.schema_version must be 1, got %r" % sv
-        )
+        raise DeclarationError("mutation.schema_version must be 1, got %r" % sv)
 
     allowed_keys = {"schema_version", "targets"}
     extra = set(mutation.keys()) - allowed_keys
     if extra:
-        raise DeclarationError(
-            "mutation block has unknown keys: %s" % ", ".join(sorted(extra))
-        )
+        raise DeclarationError("mutation block has unknown keys: %s" % ", ".join(sorted(extra)))
 
     raw_targets = mutation.get("targets")
     if raw_targets is None:
         raise DeclarationError("mutation block has no 'targets' list")
     if not isinstance(raw_targets, list):
-        raise DeclarationError(
-            "'mutation.targets' must be a list, got %s"
-            % type(raw_targets).__name__
-        )
+        raise DeclarationError("'mutation.targets' must be a list, got %s" % type(raw_targets).__name__)
 
     if len(raw_targets) > MAX_TARGETS:
         raise DeclarationError(
-            "too many targets: %d exceeds maximum %d"
-            % (len(raw_targets), MAX_TARGETS)
+            "too many targets: %d exceeds maximum %d" % (len(raw_targets), MAX_TARGETS)
         )
 
     targets: list[TargetDeclaration] = []
@@ -84,14 +76,10 @@ def load_targets(config: dict[str, Any]) -> list[TargetDeclaration]:
         try:
             td = TargetDeclaration.from_dict(raw)
         except (TypeError, ValueError) as exc:
-            raise DeclarationError(
-                "target[%d]: %s" % (i, exc)
-            ) from exc
+            raise DeclarationError("target[%d]: %s" % (i, exc)) from exc
 
         if td.id in seen_ids:
-            raise DeclarationError(
-                "duplicate target id: %r" % td.id
-            )
+            raise DeclarationError("duplicate target id: %r" % td.id)
         seen_ids.add(td.id)
         targets.append(td)
 
@@ -102,6 +90,7 @@ def load_targets(config: dict[str, Any]) -> list[TargetDeclaration]:
 # Selection accounting
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ChangedPath:
     """A file path changed between two revisions.
@@ -109,6 +98,7 @@ class ChangedPath:
     *old_path* is the path before the change (None for additions).
     *new_path* is the path after the change (None for deletions).
     """
+
     old_path: str | None
     new_path: str | None
 
@@ -123,6 +113,7 @@ class TargetSelection:
 
     Matches the specification's TargetSelection type.
     """
+
     target_id: str
     granularity: str  # "full" | "file" | "line"
     files: tuple[str, ...]
@@ -136,6 +127,7 @@ class SelectionResult:
 
     Matches the specification's Selection type.
     """
+
     targets: tuple[TargetSelection, ...]
     unmatched_paths: tuple[str, ...]
 
@@ -273,33 +265,23 @@ def select_targets(
             for map_label, tmap in target_maps:
                 for tid, tgt in tmap.items():
                     if _path_matches_patterns(path, tgt.sources):
-                        reason = "%s path %s matches sources (%s)" % (
-                            side, path, map_label
-                        )
+                        reason = "%s path %s matches sources (%s)" % (side, path, map_label)
                         selected.setdefault(tid, []).append(reason)
                         matched_paths.add(path)
                     if _path_matches_patterns(path, tgt.tests):
-                        reason = "%s path %s matches tests (%s)" % (
-                            side, path, map_label
-                        )
+                        reason = "%s path %s matches tests (%s)" % (side, path, map_label)
                         selected.setdefault(tid, []).append(reason)
                         matched_paths.add(path)
                     if _path_matches_exact(path, tgt.inputs):
-                        reason = "%s path %s matches inputs (%s)" % (
-                            side, path, map_label
-                        )
+                        reason = "%s path %s matches inputs (%s)" % (side, path, map_label)
                         selected.setdefault(tid, []).append(reason)
                         matched_paths.add(path)
                     if tgt.corpus is not None and path == tgt.corpus:
-                        reason = "%s path %s matches corpus (%s)" % (
-                            side, path, map_label
-                        )
+                        reason = "%s path %s matches corpus (%s)" % (side, path, map_label)
                         selected.setdefault(tid, []).append(reason)
                         matched_paths.add(path)
                     if tgt.engine_config is not None and path == tgt.engine_config:
-                        reason = "%s path %s matches engine_config (%s)" % (
-                            side, path, map_label
-                        )
+                        reason = "%s path %s matches engine_config (%s)" % (side, path, map_label)
                         selected.setdefault(tid, []).append(reason)
                         matched_paths.add(path)
 
@@ -330,9 +312,7 @@ def select_targets(
                         target_files.append(p)
 
         # Determine granularity
-        has_source = any(
-            "matches sources" in r for r in reasons
-        )
+        has_source = any("matches sources" in r for r in reasons)
         has_other = any(
             "matches tests" in r
             or "matches inputs" in r
@@ -351,13 +331,15 @@ def select_targets(
 
         # Deduplicate reasons
         unique_reasons = tuple(dict.fromkeys(reasons))
-        target_selections.append(TargetSelection(
-            target_id=tid,
-            granularity=granularity,
-            files=tuple(target_files),
-            line_ranges={},
-            reasons=unique_reasons,
-        ))
+        target_selections.append(
+            TargetSelection(
+                target_id=tid,
+                granularity=granularity,
+                files=tuple(target_files),
+                line_ranges={},
+                reasons=unique_reasons,
+            )
+        )
 
     # Determine unmatched paths
     all_changed_paths: set[str] = set()

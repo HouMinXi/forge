@@ -8,9 +8,7 @@ from code_forge.parsers.base import Finding, ToolError
 
 # checkpatch --emacs --show-types output format:
 # file.c:42: WARNING:LONG_LINE: line length 82 exceeds 80 columns
-_CHECKPATCH_RE = re.compile(
-    r"^(.+):(\d+):\s+(WARNING|ERROR|CHECK):(\S+):\s+(.+)$"
-)
+_CHECKPATCH_RE = re.compile(r"^(.+):(\d+):\s+(WARNING|ERROR|CHECK):(\S+):\s+(.+)$")
 
 _SUMMARY_RE = re.compile(r"^total:\s+", re.IGNORECASE)
 
@@ -43,24 +41,28 @@ def parse_checkpatch(
             continue
         m = _CHECKPATCH_RE.match(stripped)
         if m:
-            findings.append(Finding(
-                file=m.group(1),
-                line=int(m.group(2)),
-                end_line=int(m.group(2)),
-                column=0,
-                rule_id=m.group(4),
-                level=m.group(3).lower(),
-                message=m.group(5),
-                tool_name=tool_name,
-            ))
+            findings.append(
+                Finding(
+                    file=m.group(1),
+                    line=int(m.group(2)),
+                    end_line=int(m.group(2)),
+                    column=0,
+                    rule_id=m.group(4),
+                    level=m.group(3).lower(),
+                    message=m.group(5),
+                    tool_name=tool_name,
+                )
+            )
 
     # Non-empty input, zero matches, no summary -> corrupt
     if not findings and not has_summary:
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message=f"Failed to parse {tool_name} output: no matches",
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message=f"Failed to parse {tool_name} output: no matches",
+            )
+        ]
 
     return findings

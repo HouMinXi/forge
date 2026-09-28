@@ -16,6 +16,7 @@ Advisory axis scoring:
 SKIPPED entries are excluded from the caught+missed denominator.
 Output uses raw counts ("Caught: 7/9"), never ratios (carry-forward 2).
 """
+
 from __future__ import annotations
 
 import json
@@ -73,24 +74,17 @@ def finding_hit(actual: dict, expected: ExpectedFinding) -> bool:
     if actual.get("file") != expected.file:
         return False
     actual_range = actual.get("line_range")
-    if (
-        valid_line_range(expected.line_range)
-        and valid_line_range(actual_range)
-    ):
+    if valid_line_range(expected.line_range) and valid_line_range(actual_range):
         exp_lo, exp_hi = expected.line_range
         act_lo, act_hi = actual_range[0], actual_range[1]
         return max(exp_lo, act_lo) <= min(exp_hi, act_hi)
 
     def _tokens(text: str) -> set[str]:
-        return {
-            t for t in re.findall(r"[a-z0-9_]+", (text or "").lower())
-            if len(t) >= 4
-        }
+        return {t for t in re.findall(r"[a-z0-9_]+", (text or "").lower()) if len(t) >= 4}
 
     actual_description = actual.get("description")
     actual_text = (
-        actual_description if isinstance(actual_description, str)
-        else str(actual_description or "")
+        actual_description if isinstance(actual_description, str) else str(actual_description or "")
     )
     expected_tokens = _tokens(expected.description)
     actual_tokens = _tokens(actual_text)
@@ -101,9 +95,8 @@ def finding_hit(actual: dict, expected: ExpectedFinding) -> bool:
         # so a valid key is never permanently un-hittable.
         def _any_tokens(text: str) -> set[str]:
             return set(re.findall(r"[a-z0-9_]+", (text or "").lower()))
-        return bool(
-            _any_tokens(expected.description) & _any_tokens(actual_text)
-        )
+
+        return bool(_any_tokens(expected.description) & _any_tokens(actual_text))
     if len(expected_tokens) < 2:
         # A concise answer key (one significant token) can only ever
         # demand one shared token; requiring two would make it
@@ -112,10 +105,7 @@ def finding_hit(actual: dict, expected: ExpectedFinding) -> bool:
     return shared >= 2
 
 
-
-def score_findings(
-    entry: CorpusEntry, confirmed: list[dict]
-) -> tuple[int, int, int]:
+def score_findings(entry: CorpusEntry, confirmed: list[dict]) -> tuple[int, int, int]:
     """(hits, misses, fps) for one run against the entry's answer key.
 
     Maximum bipartite matching (Kuhn's augmenting paths): each actual
@@ -150,10 +140,7 @@ def score_findings(
             if used[ai] or not finding_hit(a, expected[ei]):
                 continue
             used[ai] = True
-            if (
-                match_actual[ai] == -1
-                or _try_match(match_actual[ai])
-            ):
+            if match_actual[ai] == -1 or _try_match(match_actual[ai]):
                 match_actual[ai] = ei
                 return True
         return False
@@ -370,10 +357,7 @@ def _is_pure_runtime_advisory(result: EvalResult) -> bool:
     Advisory scoring for dual-axis entries is reported separately in
     advisory_caught_count but does NOT gate the caught/missed classification.
     """
-    return (
-        result.entry.expected_verdict == "PASS"
-        and bool(result.entry.expected_advisory)
-    )
+    return result.entry.expected_verdict == "PASS" and bool(result.entry.expected_advisory)
 
 
 def compute_summary(results: list[EvalResult]) -> EvalSummary:
@@ -540,9 +524,7 @@ def format_table(summary: EvalSummary) -> str:
         elif _is_pure_runtime_advisory(r):
             runs = r.runs if r.runs > 0 else 1
             threshold = math.ceil(runs / 2) if runs > 1 else 1
-            status = (
-                "ADV-CAUGHT" if r.advisory_caught_count >= threshold else "ADV-MISSED"
-            )
+            status = "ADV-CAUGHT" if r.advisory_caught_count >= threshold else "ADV-MISSED"
         elif r.entry.expected_verdict == "HOLD" and r.caught_count > 0:
             status = "CAUGHT"
         elif r.entry.expected_verdict == "HOLD" and r.caught_count == 0:
@@ -575,9 +557,7 @@ def format_table(summary: EvalSummary) -> str:
         summary_parts.append(f"Over-block: {summary.false_positive}")
     advisory_total = summary.advisory_caught + summary.advisory_missed
     if advisory_total > 0:
-        summary_parts.append(
-            f"Advisory caught: {summary.advisory_caught}/{advisory_total}"
-        )
+        summary_parts.append(f"Advisory caught: {summary.advisory_caught}/{advisory_total}")
 
     lines.append(" | ".join(summary_parts))
 
@@ -618,8 +598,7 @@ def format_table(summary: EvalSummary) -> str:
         else:
             lines.append(
                 "Precision/Recall/F1: n/a (n=%d, need %d -- a ratio over a "
-                "corpus this small is false precision)"
-                % (summary.total, _RATIO_DISPLAY_MIN_ENTRIES)
+                "corpus this small is false precision)" % (summary.total, _RATIO_DISPLAY_MIN_ENTRIES)
             )
 
     return "\n".join(lines)
@@ -674,11 +653,7 @@ def write_json_report(summary: EvalSummary, output_path: Path) -> None:
                         {
                             "file": f.file,
                             "description": f.description,
-                            "line_range": (
-                                list(f.line_range)
-                                if f.line_range is not None
-                                else None
-                            ),
+                            "line_range": (list(f.line_range) if f.line_range is not None else None),
                         }
                         for f in r.entry.expected_findings
                     ],
@@ -702,6 +677,4 @@ def write_json_report(summary: EvalSummary, output_path: Path) -> None:
             for r in summary.results
         ],
     }
-    output_path.write_text(
-        json.dumps(data, indent=2), encoding="utf-8"
-    )
+    output_path.write_text(json.dumps(data, indent=2), encoding="utf-8")

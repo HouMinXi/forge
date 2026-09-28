@@ -18,6 +18,7 @@ triage; later: an MCP server) behind a fixed contract:
 The blast-radius block at cli.py:3722-3761 is the prototype this
 generalises. Its output format is kept verbatim in render_blast_radius.
 """
+
 from __future__ import annotations
 
 import re
@@ -52,8 +53,17 @@ class FactRow:
     _snippets: tuple = field(default=(), repr=False)
     _enclosing: tuple = field(default=(), repr=False)
 
-    def __init__(self, entity, file, downstream, dependents, source,
-                 origin_line=None, snippets=None, enclosing=None):
+    def __init__(
+        self,
+        entity,
+        file,
+        downstream,
+        dependents,
+        source,
+        origin_line=None,
+        snippets=None,
+        enclosing=None,
+    ):
         object.__setattr__(self, "entity", entity)
         object.__setattr__(self, "file", file)
         object.__setattr__(self, "downstream", downstream)
@@ -88,8 +98,7 @@ class ContextSource(Protocol):
         snapshot (computes facts from the working tree on demand)."""
         ...
 
-    def facts(self, changed_files: list[str], diff_text: str) -> list[FactRow]:
-        ...
+    def facts(self, changed_files: list[str], diff_text: str) -> list[FactRow]: ...
 
 
 @dataclass
@@ -109,6 +118,7 @@ class GraphTriageSource:
 
     def snapshot_sha(self) -> Optional[str]:
         from .graph_triage import _detect_backend
+
         backend = _detect_backend(self.repo_root, _gate_cfg(self.repo_root))
         if backend is None or backend[0] != "graphdb":
             return None
@@ -116,6 +126,7 @@ class GraphTriageSource:
 
     def facts(self, changed_files: list[str], diff_text: str) -> list[FactRow]:
         from .graph_triage import GraphTriageRunner
+
         runner = GraphTriageRunner()
         findings = runner.run(diff_text, self.repo_root)
         if runner.infra_errors:
@@ -132,6 +143,7 @@ def _gate_cfg(repo_root: Path) -> dict:
     so gather() records it under this source's name.
     """
     from .gate_check import load_gate_config
+
     try:
         return load_gate_config(repo_root / ".code-forge" / "gate.yaml")
     except FileNotFoundError:
@@ -142,9 +154,7 @@ def _graphdb_head_sha(db: Path) -> Optional[str]:
     try:
         con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
         try:
-            row = con.execute(
-                "select value from metadata where key='git_head_sha'"
-            ).fetchone()
+            row = con.execute("select value from metadata where key='git_head_sha'").fetchone()
         finally:
             con.close()
     except sqlite3.Error:
@@ -173,8 +183,12 @@ def _adapt_advisory(f: "AdvisoryFinding", source: str) -> FactRow:
     if lr and len(lr) >= 1 and isinstance(lr[0], int) and lr[0] > 0:
         origin = lr[0]
     return FactRow(
-        entity=ename, file=f.file, downstream=downstream,
-        dependents=deps, source=source, origin_line=origin,
+        entity=ename,
+        file=f.file,
+        downstream=downstream,
+        dependents=deps,
+        source=source,
+        origin_line=origin,
     )
 
 
@@ -188,14 +202,14 @@ _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{3,}")
 # A parameter name sits at the start of the signature, or right after a
 # comma, possibly followed by an annotation, then `=`, `,`, `)` or `:`.
 # A name that follows `=` is a default VALUE, not a parameter.
-_PARAM = re.compile(
-    r"(?:^|[(,])\s*\*{0,2}([A-Za-z_][A-Za-z0-9_]{3,})\s*(?:[:][^=,)]*)?(?=[=,):]|$)"
-)
-_COMMON = frozenset("""
+_PARAM = re.compile(r"(?:^|[(,])\s*\*{0,2}([A-Za-z_][A-Za-z0-9_]{3,})\s*(?:[:][^=,)]*)?(?=[=,):]|$)")
+_COMMON = frozenset(
+    """
 self None True False return import from class pass elif else with
 while break continue lambda yield raise except finally assert global
 async await print range list dict tuple type super object
-""".split())
+""".split()
+)
 
 
 @dataclass
@@ -262,22 +276,26 @@ class RemovedSymbolReaders:
                 # passes the argument, a caller in another module) so the
                 # judge sees both the self.<name> reads and who else
                 # touches the name.
-                others = [r for r in self._readers(name)
-                          if not r.startswith(file + ":")]
+                others = [r for r in self._readers(name) if not r.startswith(file + ":")]
                 deps = "parameter removed from signature; self.%s still read at %s" % (
-                    name, ", ".join(reads[: self.max_readers_per_symbol]))
+                    name,
+                    ", ".join(reads[: self.max_readers_per_symbol]),
+                )
                 if others:
-                    deps += "; also referenced at %s" % ", ".join(
-                        others[: self.max_readers_per_symbol])
-                locs = (reads[: self.max_readers_per_symbol]
-                        + others[: self.max_readers_per_symbol])
+                    deps += "; also referenced at %s" % ", ".join(others[: self.max_readers_per_symbol])
+                locs = reads[: self.max_readers_per_symbol] + others[: self.max_readers_per_symbol]
                 snip, encl = self._lines_at(locs)
-                rows.append(FactRow(
-                    entity=name, file=file,
-                    downstream=str(len(reads) + len(others)),
-                    dependents=deps, source=self.name,
-                    snippets=snip, enclosing=encl,
-                ))
+                rows.append(
+                    FactRow(
+                        entity=name,
+                        file=file,
+                        downstream=str(len(reads) + len(others)),
+                        dependents=deps,
+                        source=self.name,
+                        snippets=snip,
+                        enclosing=encl,
+                    )
+                )
         already = {(r.file, r.entity) for r in rows}
         # Rule 1: identifier gone from the file entirely, still read elsewhere.
         removed = _removed_identifiers_by_file(diff_text, parsed_lines=parsed)
@@ -297,11 +315,17 @@ class RemovedSymbolReaders:
                 more = n - len(shown)
                 deps = ", ".join(shown) + (" (+%d more)" % more if more else "")
                 snip, encl = self._lines_at(shown)
-                rows.append(FactRow(
-                    entity=ident, file=file, downstream=str(n),
-                    dependents=deps, source=self.name,
-                    snippets=snip, enclosing=encl,
-                ))
+                rows.append(
+                    FactRow(
+                        entity=ident,
+                        file=file,
+                        downstream=str(n),
+                        dependents=deps,
+                        source=self.name,
+                        snippets=snip,
+                        enclosing=encl,
+                    )
+                )
         return rows
 
     def _lines_at(self, locations: list[str]) -> tuple[dict, dict]:
@@ -323,8 +347,11 @@ class RemovedSymbolReaders:
             lines = cache.get(path)
             if lines is None:
                 try:
-                    lines = (self.repo_root / path).read_text(
-                        encoding="utf-8", errors="replace").splitlines()
+                    lines = (
+                        (self.repo_root / path)
+                        .read_text(encoding="utf-8", errors="replace")
+                        .splitlines()
+                    )
                 except OSError:
                     lines = []
                 cache[path] = lines
@@ -351,14 +378,19 @@ class RemovedSymbolReaders:
         """Lines in `file` (post-image) that read self.<name>, excluding
         the assignment `self.<name> =` that a constructor would make."""
         proc = subprocess.run(
-            ["git", "grep", "-n", "-E", "--",
-             r"self\.%s\b" % re.escape(name), "--", file],
-            cwd=self.repo_root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=30, check=False,
+            ["git", "grep", "-n", "-E", "--", r"self\.%s\b" % re.escape(name), "--", file],
+            cwd=self.repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
         )
         if proc.returncode not in (0, 1):
-            raise RuntimeError("git grep failed (rc=%d): %s"
-                               % (proc.returncode, proc.stderr.strip()[:200]))
+            raise RuntimeError(
+                "git grep failed (rc=%d): %s" % (proc.returncode, proc.stderr.strip()[:200])
+            )
         out = proc.stdout
         reads = []
         write = re.compile(r"self\.%s\s*=[^=]" % re.escape(name))
@@ -386,12 +418,18 @@ class RemovedSymbolReaders:
         # fabricate (module contract, lines 13-14).
         proc = subprocess.run(
             ["git", "grep", "-n", "-w", "-I", "--", ident, "--", "*.py"],
-            cwd=self.repo_root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=30, check=False,
+            cwd=self.repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
         )
         if proc.returncode not in (0, 1):
-            raise RuntimeError("git grep failed (rc=%d): %s"
-                               % (proc.returncode, proc.stderr.strip()[:200]))
+            raise RuntimeError(
+                "git grep failed (rc=%d): %s" % (proc.returncode, proc.stderr.strip()[:200])
+            )
         out = proc.stdout
         found: list[str] = []
         assign = re.compile(r"(self\.)?%s\s*=[^=]" % re.escape(ident))
@@ -412,8 +450,11 @@ class RemovedSymbolReaders:
 
 def _is_test_path(path: str) -> bool:
     parts = path.split("/")
-    return any(p in ("tests", "test", "testing") for p in parts[:-1]) \
-        or parts[-1].startswith("test_") or parts[-1].endswith("_test.py")
+    return (
+        any(p in ("tests", "test", "testing") for p in parts[:-1])
+        or parts[-1].startswith("test_")
+        or parts[-1].endswith("_test.py")
+    )
 
 
 # string literals and bracketed groups, for heuristics that must judge
@@ -451,8 +492,7 @@ def _looks_like_code(text: str) -> bool:
     if not t or t.startswith(("#", '"', "'")):
         return False
     head, _, tail = t.partition(" ")
-    if head in ("return", "yield", "raise", "del", "await",
-                "assert", "global", "nonlocal"):
+    if head in ("return", "yield", "raise", "del", "await", "assert", "global", "nonlocal"):
         # statement keyword + a bare name is code with no punctuation
         # (`return value`); keyword + a sentence is a docstring line
         # (`return the computed value`). One or two tokens after the
@@ -498,8 +538,9 @@ def _diff_body_lines(diff_text: str, *, include_hunks: bool = False):
         yield line, current
 
 
-def _removal_scope(diff_text: str, changed_files: list[str], *,
-                   parsed_lines: Optional[list[tuple[str, str]]] = None) -> Optional[set[str]]:
+def _removal_scope(
+    diff_text: str, changed_files: list[str], *, parsed_lines: Optional[list[tuple[str, str]]] = None
+) -> Optional[set[str]]:
     """Files whose removed identifiers this source may report.
 
     get_changed_files is additions-only. Callers that pass that list
@@ -548,8 +589,7 @@ def _removed_identifiers_by_file(
             added.setdefault(current, set()).update(_IDENT.findall(line[1:]))
     out: dict[str, set[str]] = {}
     for file, idents in removed.items():
-        keep = {i for i in idents - added.get(file, set())
-                if i not in _COMMON}
+        keep = {i for i in idents - added.get(file, set()) if i not in _COMMON}
         if keep:
             out[file] = keep
     return out
@@ -568,6 +608,7 @@ def _dropped_parameters_by_file(
     empty list stays empty. The parse must keep hunk labels, as this
     reader does on a standalone call.
     """
+
     def _sig_name(text: str) -> Optional[str]:
         m = re.match(r"\s*(async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)", text)
         return m.group(2) if m else None
@@ -614,8 +655,7 @@ def _dropped_parameters_by_file(
                 in_triple = None
                 # Missing ancestors stay unknown. A shared replacement can
                 # align them locally, but cannot identify a moved method.
-                key = (tuple(scopes), indent, name,
-                       None if complete_scope else location)
+                key = (tuple(scopes), indent, name, None if complete_scope else location)
                 names = set()
                 records.append((key, names))
                 scopes.append((indent, "def " + name))
@@ -641,8 +681,8 @@ def _dropped_parameters_by_file(
                         else:
                             i = idx + 1
                 else:
-                    if text[i:i + 3] in ('"""', "'''"):
-                        q = text[i:i + 3]
+                    if text[i : i + 3] in ('"""', "'''"):
+                        q = text[i : i + 3]
                         idx = text.find(q, i + 3)
                         while idx != -1:
                             bs = 0
@@ -687,8 +727,7 @@ def _dropped_parameters_by_file(
     plus: dict[str, list[tuple[int, str]]] = {}
     current: Optional[str] = None
     change_start: Optional[int] = None
-    lines = (_diff_body_lines(diff_text, include_hunks=True)
-             if parsed_lines is None else parsed_lines)
+    lines = _diff_body_lines(diff_text, include_hunks=True) if parsed_lines is None else parsed_lines
     for location, (line, current) in enumerate(lines):
         if line.startswith("@@"):
             change_start = None
@@ -777,13 +816,11 @@ def render_blast_radius(rows: list[FactRow]) -> str:
     if not rows:
         return ""
     body = "\n".join(
-        "| %s | %s | %s | %s |" % (r.entity, r.file, r.downstream, r.dependents)
-        for r in rows
+        "| %s | %s | %s | %s |" % (r.entity, r.file, r.downstream, r.dependents) for r in rows
     )
     return (
         "| Entity | File | Downstream | Top Dependents |\n"
-        "|--------|------|------------|----------------|\n"
-        + body
+        "|--------|------|------------|----------------|\n" + body
     )
 
 
@@ -798,8 +835,7 @@ def render_context_sources(result: GatherResult) -> str:
     # Reader rows (RemovedSymbolReaders) are falsifier evidence, handed
     # to it directly via build_falsifier(context_rows=); they are not
     # L1 context and must not change the L1 prompt (oracle 24ed2e0).
-    extra = [r for r in result.rows
-             if r.source not in ("graph_triage", "removed-symbol-readers")]
+    extra = [r for r in result.rows if r.source not in ("graph_triage", "removed-symbol-readers")]
     if not extra:
         return ""
     lines = [
@@ -809,8 +845,12 @@ def render_context_sources(result: GatherResult) -> str:
     for r in extra:
         lines.append(
             "| %s | %s | %s | %s | %s |"
-            % (r.source, r.entity, r.file,
-               r.origin_line if r.origin_line is not None else "",
-               r.dependents)
+            % (
+                r.source,
+                r.entity,
+                r.file,
+                r.origin_line if r.origin_line is not None else "",
+                r.dependents,
+            )
         )
     return "\n".join(lines)

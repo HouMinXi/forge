@@ -5,6 +5,7 @@
 Provides diff acquisition, joint context assembly, and per-repo
 isolation utilities.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -59,14 +60,10 @@ def get_sibling_diff(repo_path: Path, ref_spec: str) -> str:
             Never caught here -- caller sees it directly (fail-closed).
     """
     if ".." not in ref_spec or "..." in ref_spec:
-        raise ValueError(
-            "ref_spec must be 'baseline..head', got: %r" % ref_spec
-        )
+        raise ValueError("ref_spec must be 'baseline..head', got: %r" % ref_spec)
     baseline_ref, head_ref = ref_spec.split("..", 1)
     if not baseline_ref or not head_ref:
-        raise ValueError(
-            "ref_spec must be 'baseline..head', got: %r" % ref_spec
-        )
+        raise ValueError("ref_spec must be 'baseline..head', got: %r" % ref_spec)
     from .gate_check import _validate_ref_part
 
     _validate_ref_part("baseline", baseline_ref, "ref_spec")
@@ -92,9 +89,7 @@ def build_cross_repo_context(
         return ""
 
     # Summary header
-    header = "Cross-repo review: " + " + ".join(
-        "%s (%s)" % (r["label"], r["ref"]) for r in repos
-    )
+    header = "Cross-repo review: " + " + ".join("%s (%s)" % (r["label"], r["ref"]) for r in repos)
 
     # Per-repo stats and blocks
     stats_lines = []
@@ -106,17 +101,9 @@ def build_cross_repo_context(
 
         if diff:
             lines = diff.splitlines()
-            files_changed = sum(
-                1 for line in lines if line.startswith("diff --git ")
-            )
-            added = sum(
-                1 for line in lines
-                if line.startswith("+") and not line.startswith("+++")
-            )
-            removed = sum(
-                1 for line in lines
-                if line.startswith("-") and not line.startswith("---")
-            )
+            files_changed = sum(1 for line in lines if line.startswith("diff --git "))
+            added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+            removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
             stats_lines.append(
                 "%s: %d file%s changed, +%d/-%d"
                 % (
@@ -127,20 +114,12 @@ def build_cross_repo_context(
                     removed,
                 )
             )
-            blocks.append(
-                "## Repo: [%s] (%s)\n%s\n" % (label, ref, diff)
-            )
+            blocks.append("## Repo: [%s] (%s)\n%s\n" % (label, ref, diff))
         else:
             stats_lines.append("%s: no changes" % label)
-            blocks.append(
-                "## Repo: [%s] (%s)\n(no changes)\n" % (label, ref)
-            )
+            blocks.append("## Repo: [%s] (%s)\n(no changes)\n" % (label, ref))
 
-    return (
-        header + "\n"
-        + "\n".join(stats_lines) + "\n"
-        + "\n".join(blocks)
-    )
+    return header + "\n" + "\n".join(stats_lines) + "\n" + "\n".join(blocks)
 
 
 def make_per_repo_cwd(
@@ -163,8 +142,7 @@ def make_per_repo_cwd(
     code_forge_dir.mkdir()
     if gate_config is not None:
         (code_forge_dir / "gate.yaml").write_text(
-            yaml.safe_dump(gate_config, default_flow_style=False),
-            encoding="utf-8"
+            yaml.safe_dump(gate_config, default_flow_style=False), encoding="utf-8"
         )
     return tmp_dir
 
@@ -243,25 +221,27 @@ def run_cross_repo(
     # -- Step 2: acquire diffs (fail-closed on bad ref) --
     repo_entries = []
     primary_diff = get_sibling_diff(primary_path, primary_ref)
-    repo_entries.append({
-        "label": primary_label,
-        "repo_path": primary_path,
-        "ref": primary_ref,
-        "diff": primary_diff,
-    })
+    repo_entries.append(
+        {
+            "label": primary_label,
+            "repo_path": primary_path,
+            "ref": primary_ref,
+            "diff": primary_diff,
+        }
+    )
     for sib in siblings:
         sib_path = Path(sib["repo"]).resolve()
         sib_ref = sib["ref"]
-        sib_label = sib.get("label") or os.path.basename(
-            sib["repo"].rstrip("/")
-        )
+        sib_label = sib.get("label") or os.path.basename(sib["repo"].rstrip("/"))
         sib_diff = get_sibling_diff(sib_path, sib_ref)
-        repo_entries.append({
-            "label": sib_label,
-            "repo_path": sib_path,
-            "ref": sib_ref,
-            "diff": sib_diff,
-        })
+        repo_entries.append(
+            {
+                "label": sib_label,
+                "repo_path": sib_path,
+                "ref": sib_ref,
+                "diff": sib_diff,
+            }
+        )
 
     # -- Step 3: assemble joint context --
     from .receipt_scope import repository_scope
@@ -272,11 +252,12 @@ def run_cross_repo(
         raise ValueError("INFRA: ambiguous reviewed repository identity")
     reviewed_repositories = {e["label"]: e["diff"] for e in repo_entries}
     _, repository_manifest = repository_scope(reviewed_repositories)
-    joint_diff = build_cross_repo_context([
-        {"label": e["label"], "ref": e["ref"],
-         "diff": repository_scope({e["label"]: e["diff"]})[0]}
-        for e in repo_entries
-    ]) + (
+    joint_diff = build_cross_repo_context(
+        [
+            {"label": e["label"], "ref": e["ref"], "diff": repository_scope({e["label"]: e["diff"]})[0]}
+            for e in repo_entries
+        ]
+    ) + (
         "Cross-repo evidence: use exact qualified file paths in the diff "
         "in BOTH findings and code_excerpts. Each path pins repository and "
         "reviewed source version. Never strip the label@hash/ prefix.\n"
@@ -287,8 +268,11 @@ def run_cross_repo(
     _contracts_yaml = primary_path / ".code-forge" / "contracts.yaml"
     if _contracts_yaml.is_file():
         from .contract_loader import load_contract_digest
+
         _contract_spec = load_contract_digest(
-            _contracts_yaml, primary_path, backend=backend,
+            _contracts_yaml,
+            primary_path,
+            backend=backend,
         )
 
     # -- Step 4: build per-repo cwds (cleanup via ExitStack) --
@@ -313,9 +297,15 @@ def run_cross_repo(
                 gate_config=gate_config if is_primary else None,
             )
             stack.callback(shutil.rmtree, cwd, True)
-            thread_args.append((
-                label, entry["repo_path"], entry["diff"], cwd, is_primary,
-            ))
+            thread_args.append(
+                (
+                    label,
+                    entry["repo_path"],
+                    entry["diff"],
+                    cwd,
+                    is_primary,
+                )
+            )
 
         def _thread_fn(label, repo_path, diff_text, per_cwd, is_primary):
             try:
@@ -339,13 +329,16 @@ def run_cross_repo(
                         mode_hint="git",
                     )
                     from .machine import TimeoutCircuitBreaker
+
                     breaker = TimeoutCircuitBreaker(threshold=5)
 
                     l1_provider = build_l1_provider(
-                        engine_choice, resolved_for_l1, backend=backend,
+                        engine_choice,
+                        resolved_for_l1,
+                        backend=backend,
                         breaker=breaker,
                         contract_spec=_contract_spec,
-                    reviewed_repositories=reviewed_repositories,
+                        reviewed_repositories=reviewed_repositories,
                         focus_spec=focus_spec,
                     )
                     from .cross_repo_impact import CrossRepoImpactRunner
@@ -372,9 +365,7 @@ def run_cross_repo(
 
                 # Only the primary runs L1; siblings have no coverage obligation.
                 coverage_l1_active = bool(
-                    is_primary
-                    and any(e["diff"] for e in repo_entries)
-                    and engine_choice != "stub"
+                    is_primary and any(e["diff"] for e in repo_entries) and engine_choice != "stub"
                 )
 
                 # Each falsifier judges its own repository, not the joint L1 diff.
@@ -384,8 +375,9 @@ def run_cross_repo(
                     falsifier = RepositoryFalsifier(
                         falsifier,
                         {
-                            "%s@%s" % (e["label"], repository_manifest[e["label"]]):
-                            repo_falsifiers[e["label"]]
+                            "%s@%s" % (e["label"], repository_manifest[e["label"]]): repo_falsifiers[
+                                e["label"]
+                            ]
                             for e in repo_entries
                         },
                     )
@@ -417,7 +409,9 @@ def run_cross_repo(
 
         threads = [
             threading.Thread(
-                target=_thread_fn, args=args, daemon=True,
+                target=_thread_fn,
+                args=args,
+                daemon=True,
             )
             for args in thread_args
         ]
@@ -434,10 +428,7 @@ def run_cross_repo(
             # a hard abort.  Sibling failures are advisory (primary
             # is authoritative for the joint verdict).
             results[label] = Verdict.FAIL
-            output_fn(
-                "[cross-repo] WARNING: sibling %r crashed: %s"
-                % (label, exc)
-            )
+            output_fn("[cross-repo] WARNING: sibling %r crashed: %s" % (label, exc))
 
         # -- Step 7: verdict merge + PENDING guard --
         primary_verdict = results[primary_label]
@@ -450,9 +441,9 @@ def run_cross_repo(
             primary_verdict = Verdict.FAIL
 
         sibling_fails = [
-            label for label, v in results.items()
-            if label != primary_label
-            and v in (Verdict.FAIL, Verdict.ESCALATED)
+            label
+            for label, v in results.items()
+            if label != primary_label and v in (Verdict.FAIL, Verdict.ESCALATED)
         ]
         if sibling_fails:
             output_fn(
@@ -479,17 +470,13 @@ def run_cross_repo(
 
     # -- Step 9: grouped output (after receipts are fully collected) --
     ordered_labels = [primary_label] + [
-        s.get("label") or os.path.basename(s["repo"].rstrip("/"))
-        for s in siblings
+        s.get("label") or os.path.basename(s["repo"].rstrip("/")) for s in siblings
     ]
-    scoped_labels = {
-        '%s@%s' % (label, version): label
-        for label, version in repository_manifest.items()
-    }
+    scoped_labels = {"%s@%s" % (label, version): label for label, version in repository_manifest.items()}
     grouped_findings = {label: [] for label in ordered_labels}
     for origin, findings in per_repo_findings.items():
         for finding in findings:
-            identity = finding['file'].partition('/')[0]
+            identity = finding["file"].partition("/")[0]
             label = scoped_labels.get(identity, origin)
             grouped_findings[label].append(finding)
     format_cross_repo_output(grouped_findings, ordered_labels, output_fn)

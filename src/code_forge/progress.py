@@ -19,6 +19,7 @@ which is exactly the log-file case where a stuck stage hides its own
 trace; without the flush the events pile up in the buffer and the
 stream stays silent.
 """
+
 from __future__ import annotations
 
 import sys

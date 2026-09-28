@@ -14,6 +14,7 @@ Exported symbols:
   resolve_contract_specs -- resolve config to (name, path, abs, content, max_size) tuples
   load_contract_digest -- orchestrate loading, trust, caching, digest assembly
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -102,33 +103,23 @@ def load_contracts_config(config_path: Path) -> ContractsConfig:
         data = yaml.safe_load(fh)
 
     if not isinstance(data, dict) or "repos" not in data:
-        raise CliError(
-            "contracts.yaml must have a top-level 'repos' dict"
-        )
+        raise CliError("contracts.yaml must have a top-level 'repos' dict")
 
     raw_repos = data["repos"]
     if not isinstance(raw_repos, dict):
-        raise CliError(
-            "contracts.yaml 'repos' must be a dict, got %s" % type(raw_repos).__name__
-        )
+        raise CliError("contracts.yaml 'repos' must be a dict, got %s" % type(raw_repos).__name__)
 
     repos: dict[str, ContractRepo] = {}
     for repo_name, repo_data in raw_repos.items():
         if not isinstance(repo_data, dict):
-            raise CliError(
-                "contracts.yaml repo '%s' must be a dict" % repo_name
-            )
+            raise CliError("contracts.yaml repo '%s' must be a dict" % repo_name)
         repo_path = repo_data.get("path", "")
         if not isinstance(repo_path, str) or not repo_path:
-            raise CliError(
-                "contracts.yaml repo '%s' must have a 'path' string" % repo_name
-            )
+            raise CliError("contracts.yaml repo '%s' must have a 'path' string" % repo_name)
 
         raw_specs = repo_data.get("specs", [])
         if not isinstance(raw_specs, list):
-            raise CliError(
-                "contracts.yaml repo '%s' specs must be a list" % repo_name
-            )
+            raise CliError("contracts.yaml repo '%s' specs must be a list" % repo_name)
 
         specs: list[ContractSpec] = []
         for spec_entry in raw_specs:
@@ -137,9 +128,7 @@ def load_contracts_config(config_path: Path) -> ContractsConfig:
             elif isinstance(spec_entry, dict):
                 spec_path = spec_entry.get("path", "")
                 if not isinstance(spec_path, str) or not spec_path:
-                    raise CliError(
-                        "contracts.yaml spec in '%s' must have a 'path' string" % repo_name
-                    )
+                    raise CliError("contracts.yaml spec in '%s' must have a 'path' string" % repo_name)
                 max_raw = spec_entry.get("max_raw_size", 32768)
                 try:
                     max_raw = int(max_raw)
@@ -150,9 +139,7 @@ def load_contracts_config(config_path: Path) -> ContractsConfig:
                     ) from exc
                 specs.append(ContractSpec(path=spec_path, max_raw_size=max_raw))
             else:
-                raise CliError(
-                    "contracts.yaml spec in '%s' must be a string or dict" % repo_name
-                )
+                raise CliError("contracts.yaml spec in '%s' must be a string or dict" % repo_name)
 
         repos[repo_name] = ContractRepo(path=repo_path, specs=specs)
 
@@ -164,9 +151,7 @@ def load_contracts_config(config_path: Path) -> ContractsConfig:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_repo_path(
-    raw_path: str, cwd: Path
-) -> tuple[Optional[Path], Optional[str]]:
+def _resolve_repo_path(raw_path: str, cwd: Path) -> tuple[Optional[Path], Optional[str]]:
     """Expand env vars in a repo path and resolve it.
 
     Returns (resolved_path, None) on success or (None, error_message) on
@@ -227,9 +212,7 @@ def _content_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def _spec_cache_path(
-    cache_dir: Path, repo_name: str, spec_path_str: str, content_hash: str
-) -> Path:
+def _spec_cache_path(cache_dir: Path, repo_name: str, spec_path_str: str, content_hash: str) -> Path:
     """Build cache file path: {repo}_{pathHash12}_{contentHash}.json (SF-3)."""
     path_hash = hashlib.sha256(spec_path_str.encode()).hexdigest()[:12]
     return cache_dir / ("%s_%s_%s.json" % (repo_name, path_hash, content_hash))
@@ -246,9 +229,7 @@ def _read_spec_cache(cache_path: Path) -> Optional[str]:
         return None
 
 
-def _write_spec_cache(
-    cache_path: Path, summary: str, source: str, content_hash: str
-) -> None:
+def _write_spec_cache(cache_path: Path, summary: str, source: str, content_hash: str) -> None:
     """Write summary to cache file. OSError is non-fatal."""
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -257,9 +238,7 @@ def _write_spec_cache(
             "source": source,
             "content_hash": content_hash,
         }
-        cache_path.write_text(
-            json.dumps(payload, ensure_ascii=True), encoding="utf-8"
-        )
+        cache_path.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
     except OSError:
         pass
 
@@ -298,9 +277,7 @@ def _summarize_spec(content_str: str, spec_name: str, backend) -> str:
 # ---------------------------------------------------------------------------
 
 
-def resolve_contract_specs(
-    config_path: Path, cwd: Path
-) -> list[tuple[str, str, str, bytes, int]]:
+def resolve_contract_specs(config_path: Path, cwd: Path) -> list[tuple[str, str, str, bytes, int]]:
     """Resolve contract specs to 5-tuples.
 
     Returns list of (repo_name, spec_path, abs_path_str, content_bytes,
@@ -323,23 +300,22 @@ def resolve_contract_specs(
 
                 # Containment check against the EXTERNAL repo root (CF-1)
                 if not _is_within_repo(resolved, repo_path):
-                    _warn(
-                        "spec outside repo root: %s (root: %s)"
-                        % (resolved, repo_path)
-                    )
+                    _warn("spec outside repo root: %s (root: %s)" % (resolved, repo_path))
                     continue
 
                 content = _read_spec_content(resolved)
                 if content is None:
                     continue
 
-                results.append((
-                    repo_name,
-                    spec.path,
-                    str(resolved),
-                    content,
-                    spec.max_raw_size,
-                ))
+                results.append(
+                    (
+                        repo_name,
+                        spec.path,
+                        str(resolved),
+                        content,
+                        spec.max_raw_size,
+                    )
+                )
             except OSError as exc:
                 _warn("spec error: %s/%s (%s)" % (repo_name, spec.path, exc))
                 continue
@@ -377,10 +353,7 @@ def load_contract_digest(
 
     try:
         # Build trust contents: (abs_path, content) pairs
-        trust_contents = [
-            (abs_path, content)
-            for _, _, abs_path, content, _ in resolved_specs
-        ]
+        trust_contents = [(abs_path, content) for _, _, abs_path, content, _ in resolved_specs]
 
         if not is_trusted_contracts(config_path, trust_contents):
             _warn("contracts not trusted: %s" % config_path)
@@ -403,9 +376,7 @@ def load_contract_digest(
                 c_hash = _content_hash(content_bytes)
                 content_str = content_bytes.decode("utf-8", errors="replace")
 
-                cache_path = _spec_cache_path(
-                    cache_dir, repo_name, spec_path, c_hash
-                )
+                cache_path = _spec_cache_path(cache_dir, repo_name, spec_path, c_hash)
                 cached = _read_spec_cache(cache_path)
                 if cached is not None:
                     digest_text = cached
@@ -417,20 +388,13 @@ def load_contract_digest(
                             backend,
                         )
                         if summary:
-                            _write_spec_cache(
-                                cache_path, summary, spec_path, c_hash
-                            )
+                            _write_spec_cache(cache_path, summary, spec_path, c_hash)
                         digest_text = summary
                     except LLMInvokeError as exc:
-                        _warn(
-                            "summarization failed for %s/%s: %s"
-                            % (repo_name, spec_path, exc)
-                        )
+                        _warn("summarization failed for %s/%s: %s" % (repo_name, spec_path, exc))
 
             if digest_text:
-                sections.append(
-                    "## Contract: %s/%s\n%s" % (repo_name, spec_path, digest_text)
-                )
+                sections.append("## Contract: %s/%s\n%s" % (repo_name, spec_path, digest_text))
 
         return "\n\n".join(sections) if sections else ""
 

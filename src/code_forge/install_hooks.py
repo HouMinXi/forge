@@ -6,6 +6,7 @@ Resolves the hooks directory (worktree-safe), backs up and chains any
 existing hook, embeds an absolute code-forge path, and aborts when
 core.hooksPath is set. Idempotent on re-install.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,20 +42,18 @@ def resolve_hooks_dir(
         result = run_cmd(
             ["git", "rev-parse", "--git-path", "hooks"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=5,
             cwd=str(cwd),
         )
         hooks_path = result.stdout.strip()
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            "Not in a git repository or git command failed: %s" % e
-        ) from e
+        raise RuntimeError("Not in a git repository or git command failed: %s" % e) from e
     except subprocess.TimeoutExpired as e:
-        raise RuntimeError(
-            "git rev-parse timed out: %s" % e
-        ) from e
+        raise RuntimeError("git rev-parse timed out: %s" % e) from e
 
     # If relative, resolve against repo root
     hooks_path_obj = Path(hooks_path)
@@ -64,7 +63,9 @@ def resolve_hooks_dir(
             root_result = run_cmd(
                 ["git", "rev-parse", "--show-toplevel"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=True,
                 timeout=5,
                 cwd=str(cwd),
@@ -72,9 +73,7 @@ def resolve_hooks_dir(
             repo_root = Path(root_result.stdout.strip())
             hooks_path_obj = repo_root / hooks_path_obj
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                "git rev-parse --show-toplevel failed: %s" % e
-            ) from e
+            raise RuntimeError("git rev-parse --show-toplevel failed: %s" % e) from e
 
     return hooks_path_obj.resolve()
 
@@ -96,7 +95,9 @@ def check_hooks_path_override(
         result = run_cmd(
             ["git", "config", "--get", "core.hooksPath"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=5,
             cwd=str(cwd),
@@ -131,31 +132,27 @@ def resolve_forge_path() -> str:
             result = subprocess.run(
                 [forge_exe, "--version"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=1,
                 check=False,
             )
-            if (
-                result.returncode == 0
-                and result.stdout.strip().startswith("code-forge ")
-            ):
+            if result.returncode == 0 and result.stdout.strip().startswith("code-forge "):
                 return "%s gate-check" % shlex.quote(forge_exe)
             else:
                 logger.warning(
-                    "code-forge at %s failed --version check; "
-                    "falling back to sys.executable",
+                    "code-forge at %s failed --version check; falling back to sys.executable",
                     forge_exe,
                 )
         except subprocess.TimeoutExpired:
             logger.warning(
-                "code-forge at %s --version timed out; "
-                "falling back to sys.executable",
+                "code-forge at %s --version timed out; falling back to sys.executable",
                 forge_exe,
             )
         except (OSError, subprocess.SubprocessError) as e:
             logger.warning(
-                "code-forge at %s --version raised %s; "
-                "falling back to sys.executable",
+                "code-forge at %s --version raised %s; falling back to sys.executable",
                 forge_exe,
                 e,
             )
@@ -165,8 +162,7 @@ def resolve_forge_path() -> str:
         return "%s -m code_forge gate-check" % shlex.quote(sys.executable)
 
     raise RuntimeError(
-        "Cannot resolve code-forge path: 'code-forge' not on PATH and "
-        "sys.executable is not valid"
+        "Cannot resolve code-forge path: 'code-forge' not on PATH and sys.executable is not valid"
     )
 
 
@@ -192,9 +188,7 @@ _NON_ASCII_PATTERN_STRICT = r"[^\t\x0A\x0D\x20-\x7E]"
 # positives in technical code (e.g. "robust", "ensure", "leverage" appear in
 # legitimate API docs and release notes). The 6-word subset catches the
 # clearest AI-smell markers with very low false-positive rate.
-_AI_VOCAB_PATTERN = (
-    "delve|tapestry|testament|moreover|furthermore|it is worth noting"
-)
+_AI_VOCAB_PATTERN = "delve|tapestry|testament|moreover|furthermore|it is worth noting"
 
 
 def _build_non_ascii_pattern(non_ascii_mode: str) -> str:
@@ -216,9 +210,8 @@ def _build_d12_precommit_block(non_ascii_mode: str) -> str:
         "# ai-smell mode blocks confusable typographic chars;"
         " strict mode blocks all non-ASCII\n"
         "_NON_ASCII=$(git diff --cached -U0 | grep '^+' | grep -v '^+++' | \\\n"
-        "    perl -ne 'print if /%s/' | head -5)\n" % pattern
-        + "if [ -n \"$_NON_ASCII\" ]; then\n"
-        "    echo \"code-forge: non-ASCII characters in staged diff:\" >&2\n"
+        "    perl -ne 'print if /%s/' | head -5)\n" % pattern + 'if [ -n "$_NON_ASCII" ]; then\n'
+        '    echo "code-forge: non-ASCII characters in staged diff:" >&2\n'
         "    printf '%%s\\n' \"$_NON_ASCII\" >&2\n"
         "    exit 1\n"
         "fi\n"
@@ -226,9 +219,8 @@ def _build_d12_precommit_block(non_ascii_mode: str) -> str:
         "# 6-word high-signal subset (narrower than SKILL.md's 19-word list"
         " to reduce false positives)\n"
         "_AI_VOCAB=$(git diff --cached -U0 | grep '^+' | grep -v '^+++' | grep -iE \\\n"
-        "    '%s' | head -5)\n" % _AI_VOCAB_PATTERN
-        + "if [ -n \"$_AI_VOCAB\" ]; then\n"
-        "    echo \"code-forge: AI vocabulary detected in staged diff:\" >&2\n"
+        "    '%s' | head -5)\n" % _AI_VOCAB_PATTERN + 'if [ -n "$_AI_VOCAB" ]; then\n'
+        '    echo "code-forge: AI vocabulary detected in staged diff:" >&2\n'
         "    printf '%s\\n' \"$_AI_VOCAB\" >&2\n"
         "    exit 1\n"
         "fi\n"
@@ -263,10 +255,7 @@ def _build_presubmit_block(entries: list[dict]) -> str:
     for entry in entries:
         on_value = entry.get("on", "")
         if on_value not in ("diff", "patch"):
-            raise ValueError(
-                "presubmit entry 'on' must be 'diff' or 'patch', got: %r"
-                % on_value
-            )
+            raise ValueError("presubmit entry 'on' must be 'diff' or 'patch', got: %r" % on_value)
 
         cmd = entry["command"]
         # shlex.quote each element for safe shell embedding (F3 constraint)
@@ -283,26 +272,18 @@ def _build_presubmit_block(entries: list[dict]) -> str:
         # Binary existence check: handles PATH executables (command -v)
         # AND relative/absolute paths like scripts/my-linter.sh ([ -x ]).
         lines.append(
-            "%scommand -v %s >/dev/null 2>&1 || [ -x %s ] || {"
-            % (indent, cmd0_quoted, cmd0_quoted)
+            "%scommand -v %s >/dev/null 2>&1 || [ -x %s ] || {" % (indent, cmd0_quoted, cmd0_quoted)
         )
         lines.append(
-            '%s    echo "code-forge: presubmit FAILED: %s not found" >&2; exit 1; }'
-            % (indent, cmd[0])
+            '%s    echo "code-forge: presubmit FAILED: %s not found" >&2; exit 1; }' % (indent, cmd[0])
         )
 
         # Filter staged files matching applies_to_grep
-        lines.append(
-            "%s_MATCH=$(printf '%%s\\n' \"$STAGED\" | grep -E '%s')"
-            % (indent, grep_pattern)
-        )
-        lines.append("%sif [ -n \"$_MATCH\" ]; then" % indent)
+        lines.append("%s_MATCH=$(printf '%%s\\n' \"$STAGED\" | grep -E '%s')" % (indent, grep_pattern))
+        lines.append('%sif [ -n "$_MATCH" ]; then' % indent)
 
         # Run command: pipe git diff --cached -- $_MATCH to the linter
-        lines.append(
-            "%s    git diff --cached -- $_MATCH | %s || {"
-            % (indent, cmd_str)
-        )
+        lines.append("%s    git diff --cached -- $_MATCH | %s || {" % (indent, cmd_str))
         lines.append(
             '%s        echo "code-forge: presubmit FAILED: %s returned non-zero" >&2;'
             " exit 1; }" % (indent, cmd[0])
@@ -331,10 +312,10 @@ def _build_planning_leak_guard() -> str:
         'if [ -n "$_LEAK" ]; then\n'
         '    echo "code-forge: BLOCKED: staged paths must never '
         'enter history:" >&2\n'
-        '    printf \'%s\\n\' "$_LEAK" | sed \'s/^/  /\' >&2\n'
-        '    exit 1\n'
-        'fi\n'
-        '\n'
+        "    printf '%s\\n' \"$_LEAK\" | sed 's/^/  /' >&2\n"
+        "    exit 1\n"
+        "fi\n"
+        "\n"
     )
 
 
@@ -371,18 +352,10 @@ def _build_review_block(forge_invocation: str) -> str:
     if is_python_module:
         # Python-module: PATH lookup on interpreter, then
         # add module args. Unquoted for word splitting.
-        mod_args = " ".join(
-            shlex.quote(t) for t in tokens[2:]
-        )
-        invoke = (
-            '    FORGE_SKIP_WORKTREE_CHECK=1 '
-            '"$_FORGE" -m %s review \\\n' % mod_args
-        )
+        mod_args = " ".join(shlex.quote(t) for t in tokens[2:])
+        invoke = '    FORGE_SKIP_WORKTREE_CHECK=1 "$_FORGE" -m %s review \\\n' % mod_args
     else:
-        invoke = (
-            '    FORGE_SKIP_WORKTREE_CHECK=1 '
-            '"$_FORGE" review \\\n'
-        )
+        invoke = '    FORGE_SKIP_WORKTREE_CHECK=1 "$_FORGE" review \\\n'
     # Fallback: absolute path for off-PATH installs.
     abs_path = shlex.quote(tokens[0])
     result = (
@@ -476,21 +449,21 @@ def generate_hook_content(
         leak_guard_block = _build_planning_leak_guard()
 
     carveout_block = (
-        '# non-code carve-out: skip verify+gate-check for non-code commits\n'
+        "# non-code carve-out: skip verify+gate-check for non-code commits\n"
         "NON_CODE="
         r"'\.md$|\.txt$|\.yaml$|\.yml$|\.json$|\.toml$|\.cfg$|\.ini$"
         r"|\.conf$|(^|/)\.gitignore$|(^|/)\.editorconfig$|(^|/)\.env\.example$"
         r"|(^|/)LICENSE$|(^|/)README$|(^|/)CHANGELOG$"
         r"|(^|/)Makefile$|(^|/)Dockerfile$|(^|/)\.dockerignore$'"
         "\n"
-        'STAGED=$(git diff --cached --name-only)\n'
+        "STAGED=$(git diff --cached --name-only)\n"
         'if [ -z "$STAGED" ]; then exit 0; fi\n'
         'NON_MATCH=$(printf \'%s\\n\' "$STAGED" | grep -vE "$NON_CODE")\n'
         'if [ -z "$NON_MATCH" ]; then\n'
         '    echo "code-forge: skipping verify (non-code commit)" >&2\n'
-        '    exit 0\n'
-        'fi\n'
-        '\n'
+        "    exit 0\n"
+        "fi\n"
+        "\n"
     )
     declared_class_block = (
         "# declared-class carve-out: a docs/config/chore/wip change inside a code\n"
@@ -539,7 +512,8 @@ def generate_hook_content(
             "#!/bin/sh\n"
             "# code-forge pre-commit gate-check"
             " (installed by code-forge install-hooks)\n"
-            "# Chained existing hook: %s\n" % chain_path
+            "# Chained existing hook: %s\n"
+            % chain_path
             + git_check_block
             + leak_guard_block
             + carveout_block
@@ -597,22 +571,20 @@ def generate_commit_msg_hook_content(
     return (
         "#!/bin/sh\n"
         "# code-forge commit-msg non-ASCII + AI-vocab check (installed by code-forge install-hooks)\n"
-        "_MSG_FILE=\"$1\"\n"
-        "_NON_ASCII=$(perl -ne 'print if /%s/' \"$_MSG_FILE\" | head -5)\n" % pattern
-        + "if [ -n \"$_NON_ASCII\" ]; then\n"
-        "    echo \"code-forge: non-ASCII in commit message:\" >&2\n"
+        '_MSG_FILE="$1"\n'
+        "_NON_ASCII=$(perl -ne 'print if /%s/' \"$_MSG_FILE\" | head -5)\n"
+        % pattern
+        + 'if [ -n "$_NON_ASCII" ]; then\n'
+        '    echo "code-forge: non-ASCII in commit message:" >&2\n'
         "    printf '%%s\\n' \"$_NON_ASCII\" >&2\n"
         "    exit 1\n"
         "fi\n"
-        "_AI_VOCAB=$(grep -iE '%s' \\\n" % _AI_VOCAB_PATTERN
-        + "    \"$_MSG_FILE\" | head -5)\n"
-        "if [ -n \"$_AI_VOCAB\" ]; then\n"
-        "    echo \"code-forge: AI vocabulary in commit message:\" >&2\n"
+        "_AI_VOCAB=$(grep -iE '%s' \\\n" % _AI_VOCAB_PATTERN + '    "$_MSG_FILE" | head -5)\n'
+        'if [ -n "$_AI_VOCAB" ]; then\n'
+        '    echo "code-forge: AI vocabulary in commit message:" >&2\n'
         "    printf '%s\\n' \"$_AI_VOCAB\" >&2\n"
         "    exit 1\n"
-        "fi\n"
-        + chain_call
-        + "exit 0\n"
+        "fi\n" + chain_call + "exit 0\n"
     )
 
 
@@ -701,18 +673,18 @@ def ensure_claude_worktree_hook(cwd: Path) -> None:
         settings["hooks"]["PreToolUse"].insert(0, edit_write_entry)
 
     # Idempotency: skip if already registered
-    if any(
-        h.get("command") == check_wt_path
-        for h in edit_write_entry.get("hooks", [])
-    ):
+    if any(h.get("command") == check_wt_path for h in edit_write_entry.get("hooks", [])):
         return
 
     # Prepend so it runs before the review-tracker hook
-    edit_write_entry["hooks"].insert(0, {
-        "type": "command",
-        "command": check_wt_path,
-        "timeout": 10,
-    })
+    edit_write_entry["hooks"].insert(
+        0,
+        {
+            "type": "command",
+            "command": check_wt_path,
+            "timeout": 10,
+        },
+    )
 
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=settings_path.parent, suffix=".json.tmp")
@@ -824,9 +796,7 @@ def run_install_hooks(
 
             if is_forge_hook:
                 # Idempotent re-install: skip backup, overwrite
-                info(
-                    "code-forge: re-installing hook (existing is code-forge-generated)"
-                )
+                info("code-forge: re-installing hook (existing is code-forge-generated)")
             else:
                 # Backup existing non-code-forge hook
                 if backup_path.exists():
@@ -834,8 +804,7 @@ def run_install_hooks(
                         "code-forge: error: pre-commit.code-forge-backup already "
                         "exists at %s and a non-code-forge hook is at %s. "
                         "Remove the existing backup, then re-run "
-                        "code-forge install-hooks."
-                        % (backup_path, hook_path),
+                        "code-forge install-hooks." % (backup_path, hook_path),
                         file=stderr,
                     )
                     print(
@@ -846,15 +815,13 @@ def run_install_hooks(
                 else:
                     # Move existing hook to backup
                     shutil.move(str(hook_path), str(backup_path))
-                    info(
-                        "code-forge: existing hook backed up to %s"
-                        % backup_path
-                    )
+                    info("code-forge: existing hook backed up to %s" % backup_path)
                 chain_path = backup_path
 
         # Step f: generate pre-commit hook content
         hook_content = generate_hook_content(
-            hook_inputs.forge_invocation, chain_path,
+            hook_inputs.forge_invocation,
+            chain_path,
             presubmit_entries=hook_inputs.presubmit_entries,
             non_ascii_mode=non_ascii_mode,
             planning_leak_guard=hook_inputs.planning_leak_guard,
@@ -886,10 +853,7 @@ def run_install_hooks(
                 is_forge_cm = False
 
             if is_forge_cm:
-                info(
-                    "code-forge: re-installing commit-msg hook"
-                    " (existing is code-forge-generated)"
-                )
+                info("code-forge: re-installing commit-msg hook (existing is code-forge-generated)")
             else:
                 if commit_msg_backup.exists():
                     print(
@@ -901,10 +865,7 @@ def run_install_hooks(
                     )
                     return EXIT_FAIL
                 shutil.move(str(commit_msg_path), str(commit_msg_backup))
-                info(
-                    "code-forge: existing commit-msg hook backed up to %s"
-                    % commit_msg_backup
-                )
+                info("code-forge: existing commit-msg hook backed up to %s" % commit_msg_backup)
                 commit_msg_chain = commit_msg_backup
 
         commit_msg_content = generate_commit_msg_hook_content(
@@ -926,10 +887,7 @@ def run_install_hooks(
         # hook is not installed in the local Claude config yet -- don't abort.
         try:
             ensure_claude_worktree_hook(cwd)
-            info(
-                "code-forge: check_worktree.sh registered in "
-                ".claude/settings.local.json"
-            )
+            info("code-forge: check_worktree.sh registered in .claude/settings.local.json")
         except Exception as wt_err:
             print(
                 "code-forge: warning: could not register check_worktree.sh "

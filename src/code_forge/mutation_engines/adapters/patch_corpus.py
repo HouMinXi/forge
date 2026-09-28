@@ -74,9 +74,7 @@ class PatchCorpusAdapter:
 
     id = ADAPTER_ID
 
-    def probe(
-        self, target: TargetDeclaration, context: ExecutionContext
-    ) -> CapabilityReport:
+    def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport:
         if target.adapter != ADAPTER_ID:
             return CapabilityReport(
                 state=CapabilityState.UNAVAILABLE_ISOLATION,
@@ -146,9 +144,7 @@ class PatchCorpusAdapter:
             )
             receipts.append(baseline_receipt)
             baseline_count = 0
-            if baseline_event is not None and _event_identity_ok(
-                baseline_event, context.run_id, None
-            ):
+            if baseline_event is not None and _event_identity_ok(baseline_event, context.run_id, None):
                 baseline_count = int(baseline_event.get("executed", 0))
             baseline = BaselineRecord(
                 state=baseline_state,
@@ -158,7 +154,11 @@ class PatchCorpusAdapter:
             )
             if baseline_state is not BaselineState.PASSED:
                 return self._short(
-                    target, context, baseline, corpus_artifact, receipts,
+                    target,
+                    context,
+                    baseline,
+                    corpus_artifact,
+                    receipts,
                     "baseline-not-passed",
                 )
             if not selected:
@@ -168,7 +168,11 @@ class PatchCorpusAdapter:
                     _coverage_payload([], outside),
                 )
                 return self._short(
-                    target, context, baseline, coverage, receipts,
+                    target,
+                    context,
+                    baseline,
+                    coverage,
+                    receipts,
                     "corpus-limited",
                     extra_artifacts=(corpus_artifact, coverage),
                 )
@@ -291,8 +295,7 @@ class PatchCorpusAdapter:
             raise AdapterError("corpus rejected: %s" % exc) from exc
         if corpus.target_id != target.id:
             raise AdapterError(
-                "corpus target_id %r does not match target %r"
-                % (corpus.target_id, target.id)
+                "corpus target_id %r does not match target %r" % (corpus.target_id, target.id)
             )
         return corpus, _artifact(run_directory, "corpus.json", raw)
 
@@ -355,11 +358,7 @@ class PatchCorpusAdapter:
         runner = MutmutAdapter()
         # Baseline and one corpus entry do not share a budget. A mutant
         # that runs for the whole baseline allowance hides a hang.
-        timeout = (
-            target.budget.baseline_seconds
-            if entry is None
-            else target.budget.mutant_seconds
-        )
+        timeout = target.budget.baseline_seconds if entry is None else target.budget.mutant_seconds
         code, timed_out, receipt = runner._run_sandboxed(
             context,
             argv,
@@ -401,10 +400,7 @@ def _command_grammar_error(command: tuple[str, ...], approved_python: str) -> st
     if len(command) < 3 or command[1] != "-m" or command[2] != "pytest":
         return "patch-corpus command must be <python> -m pytest [flags], got %r" % (command,)
     if os.path.basename(command[0]) != os.path.basename(approved_python):
-        return (
-            "patch-corpus command python %r is not the approved %r"
-            % (command[0], approved_python)
-        )
+        return "patch-corpus command python %r is not the approved %r" % (command[0], approved_python)
     for flag in command[3:]:
         if flag not in _ALLOWED_FLAGS and not flag.startswith("--tb="):
             return "patch-corpus command flag %r is not documented" % (flag,)
@@ -439,22 +435,16 @@ def _entries_for_selection(corpus: Corpus, selection: TargetSelection) -> list[C
 
 def _apply_entry(original: bytes, entry: CorpusEntry) -> bytes:
     if compute_source_digest(original) != entry.source_digest:
-        raise AdapterError(
-            "entry %r digest does not match source %r" % (entry.id, entry.source)
-        )
+        raise AdapterError("entry %r digest does not match source %r" % (entry.id, entry.source))
     count = check_old_byte_occurrence(original, entry)
     if count != 1:
-        raise AdapterError(
-            "entry %r old text occurs %d times in %r" % (entry.id, count, entry.source)
-        )
+        raise AdapterError("entry %r old text occurs %d times in %r" % (entry.id, count, entry.source))
     old = entry.old.encode("utf-8")
     new = entry.new.encode("utf-8")
     return original.replace(old, new, 1)
 
 
-def _status_for(
-    state: BaselineState, event: dict | None, run_id: str, mutant: str
-) -> NormalizedStatus:
+def _status_for(state: BaselineState, event: dict | None, run_id: str, mutant: str) -> NormalizedStatus:
     if state is BaselineState.FAILED and _event_proves_killed(event, run_id, mutant):
         return NormalizedStatus.KILLED
     if state is BaselineState.PASSED and _event_proves_survived(event, run_id, mutant):

@@ -80,15 +80,34 @@ class ExecEvidence:
         }
 
 
-_SAFE_ENV_VARS = frozenset({
-    "PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE",
-    "TMPDIR", "TEMP", "TMP", "PYTHONPATH", "VIRTUAL_ENV", "TERM",
-    "SAFE_TOOLCHAIN_VAR",
-})
+_SAFE_ENV_VARS = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "PYTHONPATH",
+        "VIRTUAL_ENV",
+        "TERM",
+        "SAFE_TOOLCHAIN_VAR",
+    }
+)
 
 _SENSITIVE_PREFIXES = (
-    "ANTHROPIC_", "OPENAI_", "MIMO_", "HERMES_", "CUSTOM_SECRET",
-    "FORGE_API_KEY", "DEEPSEEK_", "AWS_", "GITHUB_TOKEN",
+    "ANTHROPIC_",
+    "OPENAI_",
+    "MIMO_",
+    "HERMES_",
+    "CUSTOM_SECRET",
+    "FORGE_API_KEY",
+    "DEEPSEEK_",
+    "AWS_",
+    "GITHUB_TOKEN",
 )
 
 
@@ -270,11 +289,13 @@ class ExecFalsifier:
                     [probe_target, "--version"],
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
-                    text=True, encoding="utf-8", errors="replace",
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=5.0,
                     env=_clean_subprocess_env(),
                 )
-                raw_version = (probe_res.stdout.strip() or probe_res.stderr.strip())
+                raw_version = probe_res.stdout.strip() or probe_res.stderr.strip()
             except (OSError, ValueError, subprocess.SubprocessError):
                 pass
 
@@ -331,7 +352,10 @@ class ExecFalsifier:
 
             child_env = _clean_subprocess_env()
 
-            with tempfile.TemporaryFile(mode="w+b") as stdout_f, tempfile.TemporaryFile(mode="w+b") as stderr_f:
+            with (
+                tempfile.TemporaryFile(mode="w+b") as stdout_f,
+                tempfile.TemporaryFile(mode="w+b") as stderr_f,
+            ):
                 try:
                     p = subprocess.Popen(
                         adjusted_cmd,
@@ -411,9 +435,7 @@ class ExecFalsifier:
                     environment=environment,
                 )
 
-    def _resolve_command(
-        self, runtime_name: str, runtime_bin: str
-    ) -> Optional[list[str]]:
+    def _resolve_command(self, runtime_name: str, runtime_bin: str) -> Optional[list[str]]:
         """Resolve command: explicit > gate.yaml test.command > runtime default."""
         if self._explicit_command:
             return list(self._explicit_command)

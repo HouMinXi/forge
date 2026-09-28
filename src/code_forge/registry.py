@@ -30,13 +30,13 @@ class ToolConfig:
     name: str
     command: str
     args: list[str]
-    output_format: str          # parser dispatch key
-    file_patterns: list[str]    # glob patterns (e.g. ["*.sh", "*.bash"])
+    output_format: str  # parser dispatch key
+    file_patterns: list[str]  # glob patterns (e.g. ["*.sh", "*.bash"])
     required: bool = False
     timeout: int = 30
     exclude_patterns: list[str] = field(default_factory=list)
     working_dir: Optional[str] = None  # e.g. "cargo_root"
-    enabled: bool = True        # Round 3 C-4: allows disabling tools
+    enabled: bool = True  # Round 3 C-4: allows disabling tools
     output_stream: str = "stdout"  # "stdout" or "stderr"
 
 
@@ -63,44 +63,32 @@ def load_registry(yaml_path: str) -> dict[str, ToolConfig]:
         return {}
 
     if not isinstance(tools, dict):
-        raise ValueError(
-            f"{yaml_path}: 'tools' must be a mapping, got {type(tools).__name__}"
-        )
+        raise ValueError(f"{yaml_path}: 'tools' must be a mapping, got {type(tools).__name__}")
 
     registry = {}
     for name, entry in tools.items():
         if not isinstance(entry, dict):
-            raise ValueError(
-                "Tool '%s': entry must be a mapping, got %s"
-                % (name, type(entry).__name__)
-            )
+            raise ValueError("Tool '%s': entry must be a mapping, got %s" % (name, type(entry).__name__))
 
         # Validate required fields
         for req in _REQUIRED_FIELDS:
             if req not in entry:
-                raise ValueError(
-                    "Tool '%s': missing required field '%s'" % (name, req)
-                )
+                raise ValueError("Tool '%s': missing required field '%s'" % (name, req))
 
         for list_field in ("args", "file_patterns", "exclude_patterns"):
             val = entry.get(list_field)
             if val is None and list_field in _REQUIRED_FIELDS:
-                raise ValueError(
-                    "Tool '%s': required field '%s' cannot be null"
-                    % (name, list_field)
-                )
+                raise ValueError("Tool '%s': required field '%s' cannot be null" % (name, list_field))
             if val is not None and not isinstance(val, list):
                 raise ValueError(
-                    "Tool '%s': '%s' must be a list, got %s"
-                    % (name, list_field, type(val).__name__)
+                    "Tool '%s': '%s' must be a list, got %s" % (name, list_field, type(val).__name__)
                 )
 
         fmt = entry["output_format"]
         if fmt not in _KNOWN_FORMATS:
             raise ValueError(
                 "Tool '%s': unknown output_format '%s' "
-                "(valid: %s)"
-                % (name, fmt, ", ".join(sorted(_KNOWN_FORMATS)))
+                "(valid: %s)" % (name, fmt, ", ".join(sorted(_KNOWN_FORMATS)))
             )
 
         tc = ToolConfig(

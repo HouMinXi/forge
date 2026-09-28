@@ -11,6 +11,7 @@ Purely deterministic (SQLite only): no LLM call, no new pip dependency.
 Mirrors graph_triage.py patterns for diff parsing, unnamed filtering,
 CALLS+IMPORTS_FROM disambiguation, and infra_errors SKIP signaling.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ _TOP_N: int = 10
 # Registry path seam
 # ---------------------------------------------------------------------------
 
+
 def _registry_path() -> str | None:
     """Return CRG_REGISTRY_PATH env var if set, else None (default).
 
@@ -52,6 +54,7 @@ def _registry_path() -> str | None:
 # ---------------------------------------------------------------------------
 # Symbol resolution from primary graph.db
 # ---------------------------------------------------------------------------
+
 
 def resolve_changed_symbols(
     diff_text: str,
@@ -80,19 +83,20 @@ def resolve_changed_symbols(
         cursor = conn.cursor()
         for file_path in diff_files:
             cursor.execute(
-                "SELECT name, qualified_name, file_path "
-                "FROM nodes WHERE file_path LIKE ?",
+                "SELECT name, qualified_name, file_path FROM nodes WHERE file_path LIKE ?",
                 ("%%%s" % file_path,),
             )
             for name, qualified_name, node_file in cursor.fetchall():
                 if _is_unnamed(name):
                     continue
-                results.append({
-                    "name": name,
-                    "qualified_name": qualified_name,
-                    "file_path": node_file,
-                    "module": Path(file_path).stem,
-                })
+                results.append(
+                    {
+                        "name": name,
+                        "qualified_name": qualified_name,
+                        "file_path": node_file,
+                        "module": Path(file_path).stem,
+                    }
+                )
     finally:
         conn.close()
 
@@ -102,6 +106,7 @@ def resolve_changed_symbols(
 # ---------------------------------------------------------------------------
 # Cross-repo caller discovery
 # ---------------------------------------------------------------------------
+
 
 def find_cross_repo_callers(
     sibling_db: str,
@@ -134,12 +139,14 @@ def find_cross_repo_callers(
 
             live = _live_callers(cursor, name, module_name)
             for lc in live:
-                results.append({
-                    "symbol": name,
-                    "caller_qualified": lc.qualified,
-                    "caller_file": lc.file,
-                    "caller_line": lc.line,
-                })
+                results.append(
+                    {
+                        "symbol": name,
+                        "caller_qualified": lc.qualified,
+                        "caller_file": lc.file,
+                        "caller_line": lc.line,
+                    }
+                )
     finally:
         conn.close()
 
@@ -149,6 +156,7 @@ def find_cross_repo_callers(
 # ---------------------------------------------------------------------------
 # Subsystem proximity
 # ---------------------------------------------------------------------------
+
 
 def _subsystem_proximity(caller_file: str, changed_file: str) -> float:
     """Compute token-set overlap between two file paths.
@@ -172,6 +180,7 @@ def _subsystem_proximity(caller_file: str, changed_file: str) -> float:
 # ---------------------------------------------------------------------------
 # CrossRepoImpactRunner
 # ---------------------------------------------------------------------------
+
 
 class CrossRepoImpactRunner:
     """Advisory axis: cross-repo direct-caller impact (R0).
@@ -216,11 +225,11 @@ class CrossRepoImpactRunner:
 
         # Locate primary graph.db via canonical get_db_path.
         from code_review_graph.incremental import get_db_path
+
         primary_db = get_db_path(repo_root)
         if not primary_db.is_file():
             self.infra_errors.append(
-                "cross-repo-impact: primary graph.db not found; "
-                "build code-review-graph"
+                "cross-repo-impact: primary graph.db not found; build code-review-graph"
             )
             return []
 
@@ -228,30 +237,25 @@ class CrossRepoImpactRunner:
         try:
             changed = resolve_changed_symbols(diff_text, str(primary_db))
         except (sqlite3.Error, OSError) as exc:
-            self.infra_errors.append(
-                "cross-repo-impact: primary graph.db unreadable: %s" % exc
-            )
+            self.infra_errors.append("cross-repo-impact: primary graph.db unreadable: %s" % exc)
             return []
         if not changed:
             return []
 
         # Enumerate sibling repos via Registry.
         from code_review_graph.registry import Registry
+
         reg_path_str = _registry_path()
         reg_path_arg = Path(reg_path_str) if reg_path_str else None
         registry = Registry(path=reg_path_arg)
         repos = registry.list_repos()
 
         resolved_root = repo_root.resolve()
-        siblings = [
-            r for r in repos
-            if Path(r["path"]).resolve() != resolved_root
-        ]
+        siblings = [r for r in repos if Path(r["path"]).resolve() != resolved_root]
 
         if not siblings:
             self.infra_errors.append(
-                "cross-repo-impact: no sibling repos registered; "
-                "use code-review-graph register"
+                "cross-repo-impact: no sibling repos registered; use code-review-graph register"
             )
             return []
 
@@ -269,18 +273,14 @@ class CrossRepoImpactRunner:
             sib_db = get_db_path(Path(sib["path"]))
 
             if not sib_db.is_file():
-                self.infra_errors.append(
-                    "cross-repo-impact: sibling '%s' graph.db missing"
-                    % alias
-                )
+                self.infra_errors.append("cross-repo-impact: sibling '%s' graph.db missing" % alias)
                 continue
 
             try:
                 callers = find_cross_repo_callers(str(sib_db), changed)
             except (sqlite3.Error, OSError) as exc:
                 self.infra_errors.append(
-                    "cross-repo-impact: sibling '%s' graph.db "
-                    "unreadable: %s" % (alias, exc)
+                    "cross-repo-impact: sibling '%s' graph.db unreadable: %s" % (alias, exc)
                 )
                 continue
 
@@ -288,33 +288,34 @@ class CrossRepoImpactRunner:
             for sym in changed:
                 cfp = sym["file_path"]
                 if cfp.startswith(primary_prefix):
-                    cfp = cfp[len(primary_prefix):]
+                    cfp = cfp[len(primary_prefix) :]
                 elif os.path.isabs(cfp):
                     resolved = str(Path(cfp).resolve())
                     if resolved.startswith(primary_prefix):
-                        cfp = resolved[len(primary_prefix):]
-                sym_callers = [
-                    c for c in callers if c["symbol"] == sym["name"]
-                ]
+                        cfp = resolved[len(primary_prefix) :]
+                sym_callers = [c for c in callers if c["symbol"] == sym["name"]]
                 for c in sym_callers:
                     cf = c["caller_file"]
                     if cf.startswith(sib_prefix):
-                        cf = cf[len(sib_prefix):]
+                        cf = cf[len(sib_prefix) :]
                     elif os.path.isabs(cf):
                         resolved = str(Path(cf).resolve())
                         if resolved.startswith(sib_prefix):
-                            cf = resolved[len(sib_prefix):]
-                    hits.append({
-                        **c,
-                        "caller_file": cf,
-                        "alias": alias,
-                        "changed_file_path": cfp,
-                    })
+                            cf = resolved[len(sib_prefix) :]
+                    hits.append(
+                        {
+                            **c,
+                            "caller_file": cf,
+                            "alias": alias,
+                            "changed_file_path": cfp,
+                        }
+                    )
 
         # Rank by subsystem proximity (closer = higher rank).
         hits.sort(
             key=lambda h: _subsystem_proximity(
-                h["caller_file"], h["changed_file_path"],
+                h["caller_file"],
+                h["changed_file_path"],
             ),
             reverse=True,
         )
@@ -327,16 +328,22 @@ class CrossRepoImpactRunner:
             caller_line = hit.get("caller_line") or 0
             symbol = hit["symbol"]
 
-            findings.append(AdvisoryFinding(
-                id="cross-repo-impact-%d" % (i + 1),
-                axis=_AXIS,
-                file="%s:%s" % (alias, caller_file),
-                line_range=(caller_line, caller_line),
-                description="%s used by %s at %s:%d" % (
-                    symbol, alias, caller_file, caller_line,
-                ),
-                attribution="cross-repo graph.db",
-            ))
+            findings.append(
+                AdvisoryFinding(
+                    id="cross-repo-impact-%d" % (i + 1),
+                    axis=_AXIS,
+                    file="%s:%s" % (alias, caller_file),
+                    line_range=(caller_line, caller_line),
+                    description="%s used by %s at %s:%d"
+                    % (
+                        symbol,
+                        alias,
+                        caller_file,
+                        caller_line,
+                    ),
+                    attribution="cross-repo graph.db",
+                )
+            )
 
         self._cached = findings
         return findings

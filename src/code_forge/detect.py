@@ -425,14 +425,14 @@ def detect_toolchain(
     has_shell = False
     sh_files = list(project_root.glob("*.sh")) + list(project_root.glob("*.bash"))
     if not sh_files:
-        sh_files = (
-            list(project_root.glob("*/*.sh"))
-            + list(project_root.glob("*/*.bash"))
-        )
+        sh_files = list(project_root.glob("*/*.sh")) + list(project_root.glob("*/*.bash"))
     if sh_files:
         has_shell = True
         _scan_path_for_tools(
-            which_fn, detected, missing, registry=SHELL_TOOL_REGISTRY,
+            which_fn,
+            detected,
+            missing,
+            registry=SHELL_TOOL_REGISTRY,
         )
 
     # Generic detection loop for new languages (Go, JS, C#, Java, etc.).
@@ -447,13 +447,15 @@ def detect_toolchain(
         extensions = REGISTRY_EXTENSIONS.get(lang, [])
         has_marker = any((project_root / m).exists() for m in markers)
         has_files = any(
-            list(project_root.glob(f"*{ext}"))
-            or list(project_root.glob(f"*/*{ext}"))
+            list(project_root.glob(f"*{ext}")) or list(project_root.glob(f"*/*{ext}"))
             for ext in extensions
         )
         if has_marker or has_files:
             _scan_path_for_tools(
-                which_fn, detected, missing, registry=registry,
+                which_fn,
+                detected,
+                missing,
+                registry=registry,
             )
             if primary_lang is None:
                 primary_lang = lang
@@ -565,8 +567,7 @@ def _merge_and_write(result: DetectionResult, output_path: Path) -> None:
     # Merge: keep only user-added entries (not in any registry),
     # then layer detected entries on top.
     all_registry_names = set().union(*(set(r) for r in ALL_REGISTRIES))
-    merged = {k: v for k, v in existing_tools.items()
-              if k not in all_registry_names}
+    merged = {k: v for k, v in existing_tools.items() if k not in all_registry_names}
     merged.update(detected_tools)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -644,9 +645,6 @@ def detect_and_init(
         generate_tools_yaml(result, tools_yaml_path)
 
     if not quiet:
-        print(
-            "Detected: %s / Missing: %s"
-            % (", ".join(result.detected), ", ".join(result.missing))
-        )
+        print("Detected: %s / Missing: %s" % (", ".join(result.detected), ", ".join(result.missing)))
 
     return result

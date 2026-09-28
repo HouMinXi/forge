@@ -5,6 +5,7 @@
 Owned by 02-03. 02-05 CLI parser emits BaselineSpec from string args;
 this module dispatches to the right resolution path.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -86,20 +87,16 @@ def resolve_baseline(
         if head_spec is not None:
             raise BaselineResolutionError(
                 "SnapshotBaseline does not accept head_spec "
-                "(got: %r); snapshot is its own implicit head"
-                % (head_spec,)
+                "(got: %r); snapshot is its own implicit head" % (head_spec,)
             )
         return _resolve_snapshot(baseline_spec, paths, cwd)
     if isinstance(baseline_spec, EmptyBaseline):
         if head_spec is not None and not is_git_repo(cwd):
             raise BaselineResolutionError(
-                "EmptyBaseline + head_spec is only valid in a git repo; "
-                "cwd=%s" % cwd
+                "EmptyBaseline + head_spec is only valid in a git repo; cwd=%s" % cwd
             )
         return _resolve_empty(head_spec, paths, cwd)
-    raise BaselineResolutionError(
-        "unknown baseline spec type: %s" % type(baseline_spec)
-    )
+    raise BaselineResolutionError("unknown baseline spec type: %s" % type(baseline_spec))
 
 
 def _resolve_git(
@@ -118,13 +115,10 @@ def _resolve_git(
     6. Return ResolvedReview with diff, mode_hint="git".
     """
     if not is_git_repo(cwd):
-        raise BaselineResolutionError(
-            "GitRefBaseline used outside git repo (cwd=%s)" % cwd
-        )
+        raise BaselineResolutionError("GitRefBaseline used outside git repo (cwd=%s)" % cwd)
     if is_pseudo_ref(baseline_spec.ref):
         raise BaselineResolutionError(
-            "baseline cannot be a pseudo-ref (%s); "
-            "pseudo-refs are head-only" % baseline_spec.ref
+            "baseline cannot be a pseudo-ref (%s); pseudo-refs are head-only" % baseline_spec.ref
         )
     base_sha = resolve_git_ref(baseline_spec.ref, cwd)  # raises if ref unknown
 
@@ -226,6 +220,4 @@ def serialize_baseline_spec(spec: BaselineSpec) -> str:
         return "snapshot:%s" % spec.path.as_posix()
     if isinstance(spec, EmptyBaseline):
         return "empty"
-    raise BaselineResolutionError(
-        "cannot serialize unknown spec type: %s" % type(spec)
-    )
+    raise BaselineResolutionError("cannot serialize unknown spec type: %s" % type(spec))

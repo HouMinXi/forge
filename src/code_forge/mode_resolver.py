@@ -4,6 +4,7 @@
 
 Pure precedence function: CLI flag > FORGE_MODE env > TTY default.
 """
+
 from __future__ import annotations
 
 from typing import Mapping, Optional
@@ -54,7 +55,5 @@ def _parse_mode_string(value: str, source: str) -> Mode:
     """Lower + lookup; raise with source attribution on miss."""
     key = value.strip().lower()
     if key not in VALID_MODE_STRINGS:
-        raise ValueError(
-            "invalid mode %r from %s (expected: local|ci)" % (value, source)
-        )
+        raise ValueError("invalid mode %r from %s (expected: local|ci)" % (value, source))
     return VALID_MODE_STRINGS[key]

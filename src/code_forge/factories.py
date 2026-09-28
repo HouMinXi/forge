@@ -5,6 +5,7 @@
 Centralizes "which impl do we instantiate" decisions so cli.py stays
 declarative and Phase 4 can swap impls without touching the CLI.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,13 +54,17 @@ def _pass_token_line(backend_name: str, pass_name: str, usage) -> str:
     """
     if usage.cached_input_tokens > 0:
         return "[%s:%s] %d in / %d out tokens (%d cached)\n" % (
-            backend_name, pass_name,
-            usage.input_tokens, usage.output_tokens,
+            backend_name,
+            pass_name,
+            usage.input_tokens,
+            usage.output_tokens,
             usage.cached_input_tokens,
         )
     return "[%s:%s] %d in / %d out tokens\n" % (
-        backend_name, pass_name,
-        usage.input_tokens, usage.output_tokens,
+        backend_name,
+        pass_name,
+        usage.input_tokens,
+        usage.output_tokens,
     )
 
 
@@ -82,24 +87,22 @@ def build_falsifier(
     if engine == "auto":
         try:
             from .falsify_real import RealFalsifier  # noqa: F401
-            return RealFalsifier(backend=backend, diff_text=diff_text,
-                             context_rows=context_rows)
+
+            return RealFalsifier(backend=backend, diff_text=diff_text, context_rows=context_rows)
         except ImportError:
             return StubFalsifier()
     if engine == "real":
         try:
             from .falsify_real import RealFalsifier
-            return RealFalsifier(backend=backend, diff_text=diff_text,
-                             context_rows=context_rows)
+
+            return RealFalsifier(backend=backend, diff_text=diff_text, context_rows=context_rows)
         except ImportError:
             raise NotImplementedError(
                 "--falsification-engine=real requires falsify_real.py "
                 "(import failed). Use "
                 "--falsification-engine=auto or =stub."
             )
-    raise ValueError(
-        "unknown engine: %r (expected auto|stub|real)" % engine
-    )
+    raise ValueError("unknown engine: %r (expected auto|stub|real)" % engine)
 
 
 def build_autofixer(resolved: ResolvedReview) -> AutoFixer:
@@ -138,9 +141,7 @@ class _NonGitSafeAutoFixer(AutoFixer):
         return outcome
 
 
-def build_revert_fn(
-    resolved: ResolvedReview, cwd: Path
-) -> Callable[[StateFinding], None]:
+def build_revert_fn(resolved: ResolvedReview, cwd: Path) -> Callable[[StateFinding], None]:
     """Build revert_fn for StateMachine constructor.
 
     Dispatches on resolved.mode_hint:
@@ -158,22 +159,24 @@ def _make_git_restore(
     cwd: Path,
 ) -> Callable[[StateFinding], None]:
     """Git mode revert: restore file to index version."""
+
     def _revert(finding: StateFinding) -> None:
         subprocess.run(
             ["git", "restore", "--", finding.file],
-            cwd=str(cwd), check=True,
+            cwd=str(cwd),
+            check=True,
         )
+
     return _revert
 
 
-def _make_snapshot_restore(
-    cwd: Path, resolved: ResolvedReview
-) -> Callable[[StateFinding], None]:
+def _make_snapshot_restore(cwd: Path, resolved: ResolvedReview) -> Callable[[StateFinding], None]:
     """B1: non-git revert NOT supported in v2.0.
 
     02-03 Snapshot stores content_hash only, not raw content.
     revert_fn raises NotImplementedError unconditionally.
     """
+
     def _revert(finding: StateFinding) -> None:
         raise NotImplementedError(
             "non-git autofix revert is not supported in v2.0 "
@@ -182,6 +185,7 @@ def _make_snapshot_restore(
             "avoid PARSE_FAIL outcomes in non-git mode. "
             "Tracked as v2.x candidate."
         )
+
     return _revert
 
 
@@ -219,6 +223,7 @@ def build_l2_runner() -> Callable:
             ]
             infra_errors = ["mutmut not found on PATH"]
             return (findings, infra_errors)
+
         return _no_mutation
 
     # mutmut is available, delegate to run_mutation
@@ -279,6 +284,7 @@ def build_l1_provider(
     from .llm_invoke import Usage
 
     if engine == "stub":
+
         def _stub_provider() -> tuple:
             return ([], [], Usage(), 0.0)
 
@@ -324,56 +330,38 @@ def build_l1_provider(
         # emitting the role first broke that prefix at character zero and made
         # each pass pay full price for the same diff and post-image.
         from .diff import annotated_diff_prompt_block
+
         annotated_diff = annotated_diff_prompt_block(diff_text)
 
         shared = REVIEW_JSON_CONTRACT
         if manifest_spec:
-            shared += (
-                "\n" + manifest_spec.strip() + "\n"
-            )
+            shared += "\n" + manifest_spec.strip() + "\n"
         if post_image:
-            shared += (
-                "\n## Post-Image (current file content)\n"
-                + post_image + "\n"
-            )
+            shared += "\n## Post-Image (current file content)\n" + post_image + "\n"
         if conventions_digest:
-            shared += (
-                "\n## Conventions Digest\n"
-                + conventions_digest + "\n"
-            )
+            shared += "\n## Conventions Digest\n" + conventions_digest + "\n"
         if graph_impact_context:
-            shared += (
-                "\n## Blast Radius Context\n"
-                + graph_impact_context + "\n"
-            )
+            shared += "\n## Blast Radius Context\n" + graph_impact_context + "\n"
         if context_sources_text:
             # Phase 59-B2: facts from context_sources.gather (MCP servers
             # and the like). Empty text adds nothing, so every prompt
             # built before this parameter existed is byte-identical.
-            shared += (
-                "\n## Context Sources\n"
-                + context_sources_text + "\n"
-            )
+            shared += "\n## Context Sources\n" + context_sources_text + "\n"
         if contract_spec:
-            shared += (
-                "\n## Design Intent\n"
-                + contract_spec + "\n"
-            )
+            shared += "\n## Design Intent\n" + contract_spec + "\n"
         if focus_spec:
             shared += (
-                "\n## Review Focus\n" + focus_spec
+                "\n## Review Focus\n"
+                + focus_spec
                 + "\nPrioritize findings in these areas; in your response, "
                 + "state whether each area was checked.\n"
             )
         if split_context:
-            shared += (
-                "\n## Split Review Context\n" + split_context + "\n"
-            )
+            shared += "\n## Split Review Context\n" + split_context + "\n"
         shared += annotated_diff
 
         prompts = [
-            shared + "\nYou are a " + role + ". Review this diff.\n"
-            for _pn, role in pass_configs
+            shared + "\nYou are a " + role + ". Review this diff.\n" for _pn, role in pass_configs
         ]
 
         # -- Execute passes ---------------------------------------------
@@ -389,20 +377,16 @@ def build_l1_provider(
                 if delay > 0:
                     time.sleep(delay)
             pn = pass_configs[idx][0]
-            progress.emit(
-                "pass %s: calling %s"
-                % (pn, backend.name if backend else "unknown")
-            )
+            progress.emit("pass %s: calling %s" % (pn, backend.name if backend else "unknown"))
             r = llm_invoke(
-                prompts[idx], backend=backend,
+                prompts[idx],
+                backend=backend,
                 max_attempts=max_attempts,
                 initial_delay_s=initial_delay_s,
                 continuation_breaker=continuation_breaker,
                 retry_timeout=retry_timeout,
             )
-            if (r.usage.input_tokens > 0
-                    or r.usage.output_tokens > 0
-                    or r.usage.cached_input_tokens > 0):
+            if r.usage.input_tokens > 0 or r.usage.output_tokens > 0 or r.usage.cached_input_tokens > 0:
                 bname = backend.name if backend else "unknown"
                 sys.stderr.write(_pass_token_line(bname, pn, r.usage))
             return r
@@ -419,14 +403,12 @@ def build_l1_provider(
                     pass_results.append(exc)
         else:
             from concurrent.futures import ThreadPoolExecutor
+
             _t0 = time.monotonic()
             with ThreadPoolExecutor(
                 max_workers=len(pass_configs),
             ) as pool:
-                futures = [
-                    pool.submit(_run_pass, i)
-                    for i in range(len(pass_configs))
-                ]
+                futures = [pool.submit(_run_pass, i) for i in range(len(pass_configs))]
                 for f in futures:
                     try:
                         pass_results.append(f.result())
@@ -450,22 +432,25 @@ def build_l1_provider(
 
             if isinstance(pr, LLMInvokeError):
                 print(
-                    "code-forge: L1 pass '%s' failed: %s"
-                    % (pass_name, pr),
+                    "code-forge: L1 pass '%s' failed: %s" % (pass_name, pr),
                     file=sys.stderr,
                 )
                 from .disposition import Disposition
                 from .state import StateFinding
-                all_candidates.append(StateFinding(
-                    id="l1-%s-invoke-fail" % pass_name,
-                    fingerprint="invoke-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<llm-invoke>",
-                    line_range=[0, 0],
-                    description="L1 invoke failed: %s: %s" % (backend.name if backend else "unknown", pr),
-                    is_timeout=pr.is_timeout,
-                ))
+
+                all_candidates.append(
+                    StateFinding(
+                        id="l1-%s-invoke-fail" % pass_name,
+                        fingerprint="invoke-fail-%s" % pass_name,
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<llm-invoke>",
+                        line_range=[0, 0],
+                        description="L1 invoke failed: %s: %s"
+                        % (backend.name if backend else "unknown", pr),
+                        is_timeout=pr.is_timeout,
+                    )
+                )
                 if breaker is not None:
                     if pr.is_timeout:
                         breaker.record_timeout()
@@ -476,22 +461,24 @@ def build_l1_provider(
 
             if isinstance(pr, Exception):
                 print(
-                    "code-forge: L1 pass '%s' UNEXPECTED: %s: %s"
-                    % (pass_name, type(pr).__name__, pr),
+                    "code-forge: L1 pass '%s' UNEXPECTED: %s: %s" % (pass_name, type(pr).__name__, pr),
                     file=sys.stderr,
                 )
                 from .disposition import Disposition
                 from .state import StateFinding
-                all_candidates.append(StateFinding(
-                    id="l1-%s-invoke-fail" % pass_name,
-                    fingerprint="invoke-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<llm-invoke>",
-                    line_range=[0, 0],
-                    description="L1 invoke failed: %s: %s: %s"
-                    % (backend.name if backend else "unknown", type(pr).__name__, pr),
-                ))
+
+                all_candidates.append(
+                    StateFinding(
+                        id="l1-%s-invoke-fail" % pass_name,
+                        fingerprint="invoke-fail-%s" % pass_name,
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<llm-invoke>",
+                        line_range=[0, 0],
+                        description="L1 invoke failed: %s: %s: %s"
+                        % (backend.name if backend else "unknown", type(pr).__name__, pr),
+                    )
+                )
                 if breaker is not None:
                     breaker.record_other_error()
                 continue
@@ -507,10 +494,12 @@ def build_l1_provider(
                 validated = validate_reviewer_json(response)
                 if reviewed_repositories is not None:
                     from .receipt_scope import validate_scoped_paths
+
                     validate_scoped_paths(validated, reviewed_repositories)
             except ValueError as exc:
                 from .disposition import Disposition
                 from .state import StateFinding
+
                 # A response whose evidence failed to check out is not a
                 # dead backend. Raising CONFIRMED/INFRA zeroes the
                 # consecutive-clean-round counter every round the backend
@@ -518,15 +507,17 @@ def build_l1_provider(
                 # reaches the clean-round threshold however good the code is.
                 # Findings survive below as UNTRUSTED audit data.
                 if not isinstance(exc, ExcerptEvidenceError):
-                    all_candidates.append(StateFinding(
-                        id=f"l1-{pass_name}-schema-fail",
-                        fingerprint=f"schema-fail-{pass_name}",
-                        source="INFRA",
-                        disposition=Disposition.CONFIRMED,
-                        file="<schema-validation>",
-                        line_range=[0, 0],
-                        description=f"schema validation failed: {exc}",
-                    ))
+                    all_candidates.append(
+                        StateFinding(
+                            id=f"l1-{pass_name}-schema-fail",
+                            fingerprint=f"schema-fail-{pass_name}",
+                            source="INFRA",
+                            disposition=Disposition.CONFIRMED,
+                            file="<schema-validation>",
+                            line_range=[0, 0],
+                            description=f"schema validation failed: {exc}",
+                        )
+                    )
                 # Preserve the exact attempted payload as audit data with
                 # loop-owned pass attribution -- never as accepted
                 # evidence, never repaired. The writer stores it in a
@@ -544,16 +535,14 @@ def build_l1_provider(
                 # candidate may still point at a real defect, and dropping
                 # it would hide the attempt. It is not CONFIRMED and never
                 # reaches semantic falsification as a code defect.
-                if isinstance(raw_data, dict) and isinstance(
-                    raw_data.get("findings"), list
-                ):
+                if isinstance(raw_data, dict) and isinstance(raw_data.get("findings"), list):
                     for sf in _json_to_state_findings(
-                        raw_data, pass_name,
+                        raw_data,
+                        pass_name,
                         backend=backend.name if backend else None,
                     ):
                         sf.source = "UNTRUSTED"
-                        sf.id = "l1-%s-untrusted-%s" % (
-                            pass_name, sf.fingerprint)
+                        sf.id = "l1-%s-untrusted-%s" % (pass_name, sf.fingerprint)
                         all_candidates.append(sf)
                 if breaker is not None:
                     breaker.record_other_error()
@@ -575,11 +564,9 @@ def build_l1_provider(
             # and partial excerpts, producing a false-green verdict.
             if len(validated["findings"]) == 0 and diff_text:
                 from .verify import parse_diff_files
+
                 changed = set(parse_diff_files(diff_text).keys())
-                covered = {
-                    exc.get("file", "")
-                    for exc in validated.get("code_excerpts", [])
-                }
+                covered = {exc.get("file", "") for exc in validated.get("code_excerpts", [])}
                 covered.discard("")
 
                 def _normalize(p: str) -> str:
@@ -599,10 +586,7 @@ def build_l1_provider(
                         continue
                     # Basename fallback: match only when unambiguous
                     bn = os.path.basename(ncf)
-                    bn_matches = [
-                        c for c in norm_covered
-                        if os.path.basename(c) == bn
-                    ]
+                    bn_matches = [c for c in norm_covered if os.path.basename(c) == bn]
                     if len(bn_matches) == 1:
                         continue
                     # Suffix match: cross-repo absolute paths
@@ -618,40 +602,44 @@ def build_l1_provider(
                 if uncovered:
                     desc_files = ", ".join(uncovered[:3])
                     if len(uncovered) > 3:
-                        desc_files += " (and %d more)" % (
-                            len(uncovered) - 3
-                        )
+                        desc_files += " (and %d more)" % (len(uncovered) - 3)
                     from .disposition import Disposition
                     from .state import StateFinding
-                    all_candidates.append(StateFinding(
-                        id="l1-%s-incomplete-coverage" % pass_name,
-                        fingerprint=(
-                            "incomplete-coverage-%s" % pass_name
-                        ),
-                        source="INFRA",
-                        disposition=Disposition.CONFIRMED,
-                        file="<coverage-guard>",
-                        line_range=[0, 0],
-                        description=(
-                            "L1 pass '%s' returned 0 findings but "
-                            "excerpts do not cover: %s"
-                            % (pass_name, desc_files)
-                        ),
-                    ))
+
+                    all_candidates.append(
+                        StateFinding(
+                            id="l1-%s-incomplete-coverage" % pass_name,
+                            fingerprint=("incomplete-coverage-%s" % pass_name),
+                            source="INFRA",
+                            disposition=Disposition.CONFIRMED,
+                            file="<coverage-guard>",
+                            line_range=[0, 0],
+                            description=(
+                                "L1 pass '%s' returned 0 findings but "
+                                "excerpts do not cover: %s" % (pass_name, desc_files)
+                            ),
+                        )
+                    )
                     continue
 
-            all_candidates.extend(_dedup_by_fingerprint(
-                _json_to_state_findings(
-                    validated, pass_name,
-                    backend=backend.name if backend else None,
-                ),
-                seen,
-            ))
+            all_candidates.extend(
+                _dedup_by_fingerprint(
+                    _json_to_state_findings(
+                        validated,
+                        pass_name,
+                        backend=backend.name if backend else None,
+                    ),
+                    seen,
+                )
+            )
         if not is_cli:
             total_duration = _parallel_wall
-        return (all_candidates, all_excerpts,
-                Usage(total_input, total_output, total_cached),
-                total_duration)
+        return (
+            all_candidates,
+            all_excerpts,
+            Usage(total_input, total_output, total_cached),
+            total_duration,
+        )
 
     return _provider
 
@@ -709,16 +697,19 @@ def build_grouped_l1_provider(
             total_output += usage.output_tokens
             total_cached += usage.cached_input_tokens
             total_duration += duration
-        return (all_findings, all_excerpts,
-                Usage(total_input, total_output, total_cached),
-                total_duration)
+        return (
+            all_findings,
+            all_excerpts,
+            Usage(total_input, total_output, total_cached),
+            total_duration,
+        )
 
     return _composite
 
 
 def build_sampling_l1_provider(
-    session,                        # ServerSession (no type annotation)
-    loop,                           # asyncio event loop from get_running_loop()
+    session,  # ServerSession (no type annotation)
+    loop,  # asyncio event loop from get_running_loop()
     resolved: "ResolvedReview",
     conventions_digest: str = "",
     post_image: str = "",
@@ -778,13 +769,12 @@ def build_sampling_l1_provider(
         # subprocess provider above: a common leading prefix is what a
         # backend can cache across the three passes.
         from .diff import annotated_diff_prompt_block
+
         annotated_diff = annotated_diff_prompt_block(diff_text)
 
         shared = REVIEW_JSON_CONTRACT
         if manifest_spec:
-            shared += (
-                "\n" + manifest_spec.strip() + "\n"
-            )
+            shared += "\n" + manifest_spec.strip() + "\n"
         if post_image:
             shared += "\n## Post-Image (current file content)\n" + post_image + "\n"
         if conventions_digest:
@@ -797,15 +787,15 @@ def build_sampling_l1_provider(
             shared += "\n## Design Intent\n" + contract_spec + "\n"
         if focus_spec:
             shared += (
-                "\n## Review Focus\n" + focus_spec
+                "\n## Review Focus\n"
+                + focus_spec
                 + "\nPrioritize findings in these areas; in your response, "
                 + "state whether each area was checked.\n"
             )
         shared += annotated_diff
 
         prompts = [
-            shared + "\nYou are a " + role + ". Review this diff.\n"
-            for _pn, role in pass_configs
+            shared + "\nYou are a " + role + ". Review this diff.\n" for _pn, role in pass_configs
         ]
 
         # -- Execute passes concurrently via asyncio.gather -------------
@@ -819,8 +809,11 @@ def build_sampling_l1_provider(
             coros = [
                 _aio.wait_for(
                     invoke_sampling(
-                        session, prompts[i], max_tokens=16384,
-                        temperature=0.0, system_prompt=_system_prompt,
+                        session,
+                        prompts[i],
+                        max_tokens=16384,
+                        temperature=0.0,
+                        system_prompt=_system_prompt,
                         max_attempts=max_attempts,
                         initial_delay_s=initial_delay_s,
                     ),
@@ -859,16 +852,17 @@ def build_sampling_l1_provider(
                     "%s: %s" % (pass_name, type(pr).__name__, pr),
                     file=_sys.stderr,
                 )
-                all_candidates.append(StateFinding(
-                    id="l1-%s-invoke-fail" % pass_name,
-                    fingerprint="invoke-fail-%s" % pass_name,
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<llm-invoke>",
-                    line_range=[0, 0],
-                    description="L1 sampling invoke failed: %s: %s"
-                    % (type(pr).__name__, pr),
-                ))
+                all_candidates.append(
+                    StateFinding(
+                        id="l1-%s-invoke-fail" % pass_name,
+                        fingerprint="invoke-fail-%s" % pass_name,
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<llm-invoke>",
+                        line_range=[0, 0],
+                        description="L1 sampling invoke failed: %s: %s" % (type(pr).__name__, pr),
+                    )
+                )
                 continue
 
             if isinstance(pr, BaseException):
@@ -885,15 +879,17 @@ def build_sampling_l1_provider(
                 # an unusable backend and must not zero the clean-round
                 # counter. Findings survive below as UNTRUSTED.
                 if not isinstance(exc, ExcerptEvidenceError):
-                    all_candidates.append(StateFinding(
-                        id=f"l1-{pass_name}-schema-fail",
-                        fingerprint=f"schema-fail-{pass_name}",
-                        source="INFRA",
-                        disposition=Disposition.CONFIRMED,
-                        file="<schema-validation>",
-                        line_range=[0, 0],
-                        description=f"schema validation failed: {exc}",
-                    ))
+                    all_candidates.append(
+                        StateFinding(
+                            id=f"l1-{pass_name}-schema-fail",
+                            fingerprint=f"schema-fail-{pass_name}",
+                            source="INFRA",
+                            disposition=Disposition.CONFIRMED,
+                            file="<schema-validation>",
+                            line_range=[0, 0],
+                            description=f"schema validation failed: {exc}",
+                        )
+                    )
                 # Preserve the exact attempted payload (see the A-leg
                 # provider); the writer stores it as an audit artifact.
                 raw_data = _raw_response_data(response)
@@ -906,7 +902,9 @@ def build_sampling_l1_provider(
                     all_attempted.append(attempted)
                 if isinstance(raw_data, dict) and isinstance(raw_data.get("findings"), list):
                     for sf in _json_to_state_findings(
-                        raw_data, pass_name, backend="mcp-sampling",
+                        raw_data,
+                        pass_name,
+                        backend="mcp-sampling",
                     ):
                         sf.source = "UNTRUSTED"
                         sf.id = "l1-%s-untrusted-%s" % (pass_name, sf.fingerprint)
@@ -919,11 +917,9 @@ def build_sampling_l1_provider(
             if len(validated["findings"]) == 0 and diff_text:
                 import os
                 from .verify import parse_diff_files
+
                 changed = set(parse_diff_files(diff_text).keys())
-                covered = {
-                    exc_item.get("file", "")
-                    for exc_item in validated.get("code_excerpts", [])
-                }
+                covered = {exc_item.get("file", "") for exc_item in validated.get("code_excerpts", [])}
                 covered.discard("")
 
                 def _normalize(p):
@@ -945,8 +941,7 @@ def build_sampling_l1_provider(
                     if len(bn_matches) == 1:
                         continue
                     matched = any(
-                        nc.endswith("/" + ncf) or ncf.endswith("/" + nc)
-                        for nc in norm_covered
+                        nc.endswith("/" + ncf) or ncf.endswith("/" + nc) for nc in norm_covered
                     )
                     if matched:
                         continue
@@ -956,26 +951,32 @@ def build_sampling_l1_provider(
                     desc_files = ", ".join(uncovered[:3])
                     if len(uncovered) > 3:
                         desc_files += " (and %d more)" % (len(uncovered) - 3)
-                    all_candidates.append(StateFinding(
-                        id="l1-%s-incomplete-coverage" % pass_name,
-                        fingerprint="incomplete-coverage-%s" % pass_name,
-                        source="INFRA",
-                        disposition=Disposition.CONFIRMED,
-                        file="<coverage-guard>",
-                        line_range=[0, 0],
-                        description=(
-                            "L1 pass '%s' returned 0 findings but "
-                            "excerpts do not cover: %s" % (pass_name, desc_files)
-                        ),
-                    ))
+                    all_candidates.append(
+                        StateFinding(
+                            id="l1-%s-incomplete-coverage" % pass_name,
+                            fingerprint="incomplete-coverage-%s" % pass_name,
+                            source="INFRA",
+                            disposition=Disposition.CONFIRMED,
+                            file="<coverage-guard>",
+                            line_range=[0, 0],
+                            description=(
+                                "L1 pass '%s' returned 0 findings but "
+                                "excerpts do not cover: %s" % (pass_name, desc_files)
+                            ),
+                        )
+                    )
                     continue
 
-            all_candidates.extend(_dedup_by_fingerprint(
-                _json_to_state_findings(
-                    validated, pass_name, backend="mcp-sampling",
-                ),
-                seen,
-            ))
+            all_candidates.extend(
+                _dedup_by_fingerprint(
+                    _json_to_state_findings(
+                        validated,
+                        pass_name,
+                        backend="mcp-sampling",
+                    ),
+                    seen,
+                )
+            )
 
         total_duration = _parallel_wall
         return (all_candidates, all_excerpts, Usage(0, 0), total_duration)

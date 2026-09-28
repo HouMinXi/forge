@@ -163,9 +163,9 @@ def reverse_patch(patch: str) -> str:
         if line.startswith("@@"):
             out.append(_swap_hunk_header(line))
         elif line.startswith("new file mode "):
-            out.append("deleted file mode " + line[len("new file mode "):])
+            out.append("deleted file mode " + line[len("new file mode ") :])
         elif line.startswith("deleted file mode "):
-            out.append("new file mode " + line[len("deleted file mode "):])
+            out.append("new file mode " + line[len("deleted file mode ") :])
         elif line.startswith("+"):
             out.append("-" + line[1:])
         elif line.startswith("-"):
@@ -350,9 +350,7 @@ def qualifies(instance: dict):
     # measure nothing. A fix that ADDS a guard reverses into deleting one,
     # which is a different cognitive task but still a real review target,
     # and is kept.
-    body_removals = any(
-        ln.startswith("-") and not ln.startswith("---") for ln in patch.split("\n")
-    )
+    body_removals = any(ln.startswith("-") and not ln.startswith("---") for ln in patch.split("\n"))
     if not body_removals:
         return RejectReason.PURE_ADDITION
 
@@ -487,11 +485,7 @@ def build_corpus(
                     {
                         "file": f.file,
                         "description": f.description,
-                        **(
-                            {"line_range": list(f.line_range)}
-                            if f.line_range is not None
-                            else {}
-                        ),
+                        **({"line_range": list(f.line_range)} if f.line_range is not None else {}),
                     }
                     for f in found
                 ]
@@ -499,9 +493,7 @@ def build_corpus(
                 entry["asserts_no_findings"] = True
             entries.append(entry)
 
-    (out / "corpus.yaml").write_text(
-        yaml.safe_dump({"entries": entries}), encoding="utf-8"
-    )
+    (out / "corpus.yaml").write_text(yaml.safe_dump({"entries": entries}), encoding="utf-8")
 
     # Required rather than optional: an omitted list and a genuinely
     # empty one produce the same empty provenance map, and a corpus whose
@@ -525,15 +517,9 @@ def build_corpus(
         "rejections": counts,
         "limitations": _LIMITATIONS,
         "diff_sha256": {
-            e["diff_file"]: hashlib.sha256(
-                (out / e["diff_file"]).read_bytes()
-            ).hexdigest()
+            e["diff_file"]: hashlib.sha256((out / e["diff_file"]).read_bytes()).hexdigest()
             for e in entries
         },
-        "corpus_sha256": hashlib.sha256(
-            (out / "corpus.yaml").read_bytes()
-        ).hexdigest(),
+        "corpus_sha256": hashlib.sha256((out / "corpus.yaml").read_bytes()).hexdigest(),
     }
-    (out / "PROVENANCE.json").write_text(
-        json.dumps(provenance, indent=2) + "\n", encoding="utf-8"
-    )
+    (out / "PROVENANCE.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")

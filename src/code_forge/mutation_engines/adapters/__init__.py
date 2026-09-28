@@ -32,9 +32,7 @@ class UnavailableAdapter:
     def __init__(self, adapter_id: str) -> None:
         self.id = adapter_id
 
-    def probe(
-        self, target: TargetDeclaration, context: ExecutionContext
-    ) -> CapabilityReport:
+    def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport:
         return CapabilityReport(
             state=CapabilityState.MISSING_DEPENDENCY,
             resolved_tool_version=None,
@@ -43,9 +41,7 @@ class UnavailableAdapter:
         )
 
     def run(self, target, selection, snapshot, context) -> TargetResult:
-        raise NotImplementedError(
-            "adapter %r is registered but not implemented" % self.id
-        )
+        raise NotImplementedError("adapter %r is registered but not implemented" % self.id)
 
 
 _REGISTRY: dict[str, MutationAdapter] = {
