@@ -140,8 +140,18 @@ def _adjudicate(repo: Path, fp: str, state: str, *extra: str) -> int:
 
 def _mark_new(repo: Path, fp: str, state: str, claim: str, *extra: str) -> int:
     return _ledger_cli(
-        repo, "mark", fp, state, "--new",
-        "--file", "a.py", "--line", "1", "--axis-claim", claim, *extra,
+        repo,
+        "mark",
+        fp,
+        state,
+        "--new",
+        "--file",
+        "a.py",
+        "--line",
+        "1",
+        "--axis-claim",
+        claim,
+        *extra,
     )
 
 
@@ -155,10 +165,19 @@ def test_fixed_and_escaped_emit_hold_entries(tmp_path):
     repo, base, head = _make_repo(tmp_path)
     _ci_run(repo, base, head, [_make_finding("fp-fixed", line=1)])
     assert _adjudicate(repo, "fp-fixed", "FIXED") == EXIT_PASS
-    assert _mark_new(
-        repo, "fp-esc", "ESCAPED", "logic error",
-        "--base-sha", base, "--head-sha", head,
-    ) == EXIT_PASS
+    assert (
+        _mark_new(
+            repo,
+            "fp-esc",
+            "ESCAPED",
+            "logic error",
+            "--base-sha",
+            base,
+            "--head-sha",
+            head,
+        )
+        == EXIT_PASS
+    )
 
     out = tmp_path / "out"
     summary = export_eval(repo, out)
@@ -188,10 +207,19 @@ def test_disproved_emits_pass_entry(tmp_path):
 def test_duplicate_rows_excluded(tmp_path):
     """DUPLICATE rows are excluded under their own counter (deepseek H-1)."""
     repo, base, head = _make_repo(tmp_path)
-    assert _mark_new(
-        repo, "fp-dup", "DUPLICATE", "logic error",
-        "--base-sha", base, "--head-sha", head,
-    ) == EXIT_PASS
+    assert (
+        _mark_new(
+            repo,
+            "fp-dup",
+            "DUPLICATE",
+            "logic error",
+            "--base-sha",
+            base,
+            "--head-sha",
+            head,
+        )
+        == EXIT_PASS
+    )
 
     out = tmp_path / "out"
     summary = export_eval(repo, out)
@@ -216,10 +244,18 @@ def test_stale_sha_skipped_with_warning(tmp_path, capsys):
     """A row with unresolvable base/head is skipped: warn + count + no entry."""
     repo, base, head = _make_repo(tmp_path)
     _ci_run(repo, base, head, [_make_finding("fp-stale", line=1)])
-    assert _adjudicate(
-        repo, "fp-stale", "FIXED",
-        "--base-sha", "f" * 40, "--head-sha", "e" * 40,
-    ) == EXIT_PASS
+    assert (
+        _adjudicate(
+            repo,
+            "fp-stale",
+            "FIXED",
+            "--base-sha",
+            "f" * 40,
+            "--head-sha",
+            "e" * 40,
+        )
+        == EXIT_PASS
+    )
 
     out = tmp_path / "out"
     summary = export_eval(repo, out)
@@ -237,16 +273,34 @@ def test_counters_mutually_exclusive_and_sum_to_total(tmp_path):
     _ci_run(repo, "a" * 40, "b" * 40, [_make_finding("fp-both", line=1)])
 
     # Row 2: DUPLICATE *and* stale-SHA -> stale-sha wins over duplicate.
-    assert _mark_new(
-        repo, "fp-dupstale", "DUPLICATE", "logic error",
-        "--base-sha", "f" * 40, "--head-sha", "e" * 40,
-    ) == EXIT_PASS
+    assert (
+        _mark_new(
+            repo,
+            "fp-dupstale",
+            "DUPLICATE",
+            "logic error",
+            "--base-sha",
+            "f" * 40,
+            "--head-sha",
+            "e" * 40,
+        )
+        == EXIT_PASS
+    )
 
     # Row 3: pure DUPLICATE with valid SHAs -> duplicate_excluded itself.
-    assert _mark_new(
-        repo, "fp-puredup", "DUPLICATE", "logic error",
-        "--base-sha", base, "--head-sha", head,
-    ) == EXIT_PASS
+    assert (
+        _mark_new(
+            repo,
+            "fp-puredup",
+            "DUPLICATE",
+            "logic error",
+            "--base-sha",
+            base,
+            "--head-sha",
+            head,
+        )
+        == EXIT_PASS
+    )
 
     # Row 4: ESCAPED with base == head -> empty-diff.
     assert _mark_new(repo, "fp-empty", "ESCAPED", "logic error") == EXIT_PASS
@@ -284,7 +338,10 @@ def test_materialized_diff_applies_cleanly(tmp_path):
     (fresh / "a.py").write_text("x = 1\n", encoding="utf-8")
     res = subprocess.run(
         ["git", "apply", str(diff_path)],
-        cwd=str(fresh), capture_output=True, text=True, check=False,
+        cwd=str(fresh),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert res.returncode == 0, res.stderr
     assert (fresh / "a.py").read_text(encoding="utf-8") == "x = 2\ny = x + 1\n"
@@ -342,14 +399,32 @@ def test_pii_guard_no_absolute_paths(tmp_path):
 def test_axis_mapping_and_fallback(tmp_path, capsys):
     """D-14: known claim maps to axis_tags; unknown -> UNKNOWN + warning."""
     repo, base, head = _make_repo(tmp_path)
-    assert _mark_new(
-        repo, "fp-ax1", "ESCAPED", "logic error",
-        "--base-sha", base, "--head-sha", head,
-    ) == EXIT_PASS
-    assert _mark_new(
-        repo, "fp-ax2", "ESCAPED", "quantum flux capacitor",
-        "--base-sha", base, "--head-sha", head,
-    ) == EXIT_PASS
+    assert (
+        _mark_new(
+            repo,
+            "fp-ax1",
+            "ESCAPED",
+            "logic error",
+            "--base-sha",
+            base,
+            "--head-sha",
+            head,
+        )
+        == EXIT_PASS
+    )
+    assert (
+        _mark_new(
+            repo,
+            "fp-ax2",
+            "ESCAPED",
+            "quantum flux capacitor",
+            "--base-sha",
+            base,
+            "--head-sha",
+            head,
+        )
+        == EXIT_PASS
+    )
 
     out = tmp_path / "out"
     export_eval(repo, out)
@@ -381,7 +456,10 @@ def test_gate_yaml_stripped_and_replay_toolchain_free(tmp_path):
     (fresh / "a.py").write_text("x = 1\n", encoding="utf-8")
     res = subprocess.run(
         ["git", "apply", str(out / "diffs" / "lgr-fp-d17.diff")],
-        cwd=str(fresh), capture_output=True, text=True, check=False,
+        cwd=str(fresh),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert res.returncode == 0, res.stderr
     assert not (fresh / ".code-forge" / "gate.yaml").exists()
@@ -446,10 +524,19 @@ def test_cli_reexport_preserves_foreign_files(tmp_path):
     # without SHAs would default base==head and misroute to empty-diff):
     # the entry disappears on re-export via the duplicate counter.
     base, head = _shas(repo)
-    assert _ledger_cli(
-        repo, "mark", "fp-cli", "DUPLICATE",
-        "--base-sha", base, "--head-sha", head,
-    ) == EXIT_PASS
+    assert (
+        _ledger_cli(
+            repo,
+            "mark",
+            "fp-cli",
+            "DUPLICATE",
+            "--base-sha",
+            base,
+            "--head-sha",
+            head,
+        )
+        == EXIT_PASS
+    )
     assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
     assert foreign.read_text(encoding="utf-8") == "keep me\n"
     assert not managed.exists()
@@ -462,9 +549,7 @@ def test_cli_force_gate(tmp_path):
     out.mkdir()
     (out / "stray.txt").write_text("not ours\n", encoding="utf-8")
     assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_CLI_ERROR
-    assert _ledger_cli(
-        repo, "export-eval", "--out", str(out), "--force"
-    ) == EXIT_PASS
+    assert _ledger_cli(repo, "export-eval", "--out", str(out), "--force") == EXIT_PASS
     assert (out / "stray.txt").read_text(encoding="utf-8") == "not ours\n"
 
 
@@ -480,9 +565,7 @@ def test_cli_repo_root_override(tmp_path):
         ledger_src.read_text(encoding="utf-8"), encoding="utf-8"
     )
     out = tmp_path / "out"
-    rc = _ledger_cli(
-        other, "export-eval", "--out", str(out), "--repo-root", str(repo)
-    )
+    rc = _ledger_cli(other, "export-eval", "--out", str(out), "--repo-root", str(repo))
     assert rc == EXIT_PASS
     assert len(load_corpus(out / "manifest.yaml")) == 1
 
@@ -517,27 +600,29 @@ def test_export_eval_force_gate_raises():
 # ---------------------------------------------------------------------------
 
 
-def _append_raw_row(repo: Path, fp: str, base: str, head: str, claim,
-                    repo_root: Optional[Path] = None):
+def _append_raw_row(repo: Path, fp: str, base: str, head: str, claim, repo_root: Optional[Path] = None):
     """Append one FIXED row via the real ledger write path, with field
     values a crafted/foreign ledger could carry (None claim, non-SHA)."""
     from datetime import datetime, timezone
 
     from code_forge.ledger import LedgerRow, TerminalState, append_row
 
-    append_row(repo, LedgerRow(
-        fingerprint=fp,
-        repo_root=str((repo_root or repo).resolve()),
-        base_sha=base,
-        head_sha=head,
-        file="a.py",
-        line=1,
-        axis_claim=claim,
-        pass_provenance="manual",
-        terminal_state=TerminalState.FIXED,
-        evidence_class="t",
-        ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    ))
+    append_row(
+        repo,
+        LedgerRow(
+            fingerprint=fp,
+            repo_root=str((repo_root or repo).resolve()),
+            base_sha=base,
+            head_sha=head,
+            file="a.py",
+            line=1,
+            axis_claim=claim,
+            pass_provenance="manual",
+            terminal_state=TerminalState.FIXED,
+            evidence_class="t",
+            ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ),
+    )
 
 
 def test_none_axis_claim_does_not_crash(tmp_path, capsys):
@@ -599,15 +684,19 @@ def test_tampered_manifest_cannot_steal_foreign_file(tmp_path, capsys):
     victim.write_text("do not delete\n", encoding="utf-8")
     # Rewrite the manifest so the managed set points outside out/.
     (out / "manifest.yaml").write_text(
-        yaml.dump({
-            "provenance": "x",
-            "entries": [{
-                "name": "evil",
-                "diff_file": "../victim.diff",
-                "expected_verdict": "HOLD",
-                "axis_tags": [],
-            }],
-        }),
+        yaml.dump(
+            {
+                "provenance": "x",
+                "entries": [
+                    {
+                        "name": "evil",
+                        "diff_file": "../victim.diff",
+                        "expected_verdict": "HOLD",
+                        "axis_tags": [],
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
     assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
@@ -649,7 +738,7 @@ def test_gate_only_diff_counts_as_empty(tmp_path):
     (repo / "a.py").write_text("x = 1\n", encoding="utf-8")
     _git(repo, "add", "a.py")
     _git(repo, "commit", "-q", "-m", "base")
-    base, = (_git(repo, "rev-parse", "HEAD"),)
+    (base,) = (_git(repo, "rev-parse", "HEAD"),)
     gate_dir = repo / ".code-forge"
     gate_dir.mkdir()
     (gate_dir / "gate.yaml").write_text(
@@ -675,7 +764,8 @@ def test_malformed_yaml_manifest_reexport_graceful(tmp_path, capsys):
     out = tmp_path / "out"
     out.mkdir()
     (out / "manifest.yaml").write_text(
-        "entries:\n  - [unclosed\n\tbad indent: {\n", encoding="utf-8",
+        "entries:\n  - [unclosed\n\tbad indent: {\n",
+        encoding="utf-8",
     )
     foreign = out / "keep.txt"
     foreign.write_text("keep\n", encoding="utf-8")
@@ -735,9 +825,12 @@ def test_cli_repo_root_must_be_git_repo(tmp_path, capsys):
     not_git = tmp_path / "plain"
     not_git.mkdir()
     rc = _ledger_cli(
-        repo, "export-eval",
-        "--out", str(tmp_path / "out"),
-        "--repo-root", str(not_git),
+        repo,
+        "export-eval",
+        "--out",
+        str(tmp_path / "out"),
+        "--repo-root",
+        str(not_git),
     )
     assert rc == EXIT_CLI_ERROR
     assert "not a git repository" in capsys.readouterr().err
@@ -809,8 +902,7 @@ def test_row_with_missing_repo_root_counts_stale(tmp_path):
     FileNotFoundError traceback."""
     repo, base, head = _make_repo(tmp_path)
     gone = tmp_path / "moved-away"
-    _append_raw_row(repo, "fp-gone", base, head, "logic error",
-                    repo_root=gone)
+    _append_raw_row(repo, "fp-gone", base, head, "logic error", repo_root=gone)
     summary = export_eval(repo, tmp_path / "out")
     assert summary.stale_sha_skipped == 1
     assert summary.emitted == 0
@@ -831,9 +923,12 @@ def test_cli_repo_root_nonexistent_path(tmp_path, capsys):
     error, not an unhandled FileNotFoundError from the probe."""
     repo = _fixed_ledger_repo(tmp_path)
     rc = _ledger_cli(
-        repo, "export-eval",
-        "--out", str(tmp_path / "out"),
-        "--repo-root", str(tmp_path / "no-such-dir"),
+        repo,
+        "export-eval",
+        "--out",
+        str(tmp_path / "out"),
+        "--repo-root",
+        str(tmp_path / "no-such-dir"),
     )
     assert rc == EXIT_CLI_ERROR
     assert "not a git repository" in capsys.readouterr().err
@@ -865,7 +960,8 @@ def test_crash_mid_swap_dir_is_recognized(tmp_path):
     (out / "diffs").mkdir()
     (out / "diffs" / "lgr-stale.diff").write_text("stale\n")
     (out / "manifest.yaml.prev").write_text(
-        "provenance: repo\nentries: []\n", encoding="utf-8",
+        "provenance: repo\nentries: []\n",
+        encoding="utf-8",
     )
     # No --force: must succeed because .prev marks ownership.
     assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
@@ -900,7 +996,8 @@ def test_vanishing_prev_manifest_reexport_graceful(tmp_path, monkeypatch):
     out = tmp_path / "out"
     out.mkdir()
     (out / "manifest.yaml.prev").write_text(
-        "provenance: repo\nentries: []\n", encoding="utf-8",
+        "provenance: repo\nentries: []\n",
+        encoding="utf-8",
     )
 
     def vanish(path):
@@ -920,10 +1017,19 @@ def test_externally_deleted_managed_diff_skipped(tmp_path, monkeypatch):
     assert _ledger_cli(repo, "export-eval", "--out", str(out)) == EXIT_PASS
 
     row = list(iter_rows(repo))[0]
-    assert _ledger_cli(
-        repo, "mark", row.fingerprint, "DUPLICATE",
-        "--base-sha", row.base_sha, "--head-sha", row.head_sha,
-    ) == EXIT_PASS
+    assert (
+        _ledger_cli(
+            repo,
+            "mark",
+            row.fingerprint,
+            "DUPLICATE",
+            "--base-sha",
+            row.base_sha,
+            "--head-sha",
+            row.head_sha,
+        )
+        == EXIT_PASS
+    )
 
     real_unlink = Path.unlink
 
@@ -978,10 +1084,19 @@ def test_manifest_never_points_at_missing_diffs(tmp_path):
     # stale on the second export.
     row = list(iter_rows(repo))[0]
     base, head = row.base_sha, row.head_sha
-    assert _ledger_cli(
-        repo, "mark", row.fingerprint, "DUPLICATE",
-        "--base-sha", base, "--head-sha", head,
-    ) == EXIT_PASS
+    assert (
+        _ledger_cli(
+            repo,
+            "mark",
+            row.fingerprint,
+            "DUPLICATE",
+            "--base-sha",
+            base,
+            "--head-sha",
+            head,
+        )
+        == EXIT_PASS
+    )
 
     monkeypatch_t = pytest.MonkeyPatch()
     monkeypatch_t.setattr(Path, "unlink", spy_unlink)
@@ -991,9 +1106,7 @@ def test_manifest_never_points_at_missing_diffs(tmp_path):
     finally:
         monkeypatch_t.undo()
     diff_unlinks = [i for i, e in enumerate(events) if e[0] == "unlink"]
-    manifest_idx = next(
-        i for i, e in enumerate(events) if e[0] == "manifest-replace"
-    )
+    manifest_idx = next(i for i, e in enumerate(events) if e[0] == "manifest-replace")
     assert diff_unlinks, "second export must clean up the stale diff"
     assert all(i > manifest_idx for i in diff_unlinks)
 
@@ -1026,7 +1139,8 @@ def test_cat_file_timeout_counts_stale(tmp_path, monkeypatch):
     repo, base, head = _make_repo(tmp_path)
     _append_raw_row(repo, "fp-hang", base, head, "logic error")
     monkeypatch.setattr(
-        export_mod.subprocess, "run",
+        export_mod.subprocess,
+        "run",
         _timeout_for(["git", "cat-file"]),
     )
     summary = export_eval(repo, tmp_path / "out")
@@ -1041,7 +1155,8 @@ def test_git_diff_timeout_counts_stale(tmp_path, monkeypatch):
     repo, base, head = _make_repo(tmp_path)
     _append_raw_row(repo, "fp-diffhang", base, head, "logic error")
     monkeypatch.setattr(
-        export_mod.subprocess, "run",
+        export_mod.subprocess,
+        "run",
         _timeout_for(["git", "diff"]),
     )
     summary = export_eval(repo, tmp_path / "out")
@@ -1072,13 +1187,17 @@ def test_cli_repo_root_probe_timeout(tmp_path, monkeypatch, capsys):
     """A hanging --repo-root probe is a CLI error, not a traceback."""
     repo = _fixed_ledger_repo(tmp_path)
     monkeypatch.setattr(
-        subprocess, "run",
+        subprocess,
+        "run",
         _timeout_for(["git", "rev-parse", "--git-dir"]),
     )
     rc = _ledger_cli(
-        repo, "export-eval",
-        "--out", str(tmp_path / "out"),
-        "--repo-root", str(repo),
+        repo,
+        "export-eval",
+        "--out",
+        str(tmp_path / "out"),
+        "--repo-root",
+        str(repo),
     )
     assert rc == EXIT_CLI_ERROR
     assert "not a git repository" in capsys.readouterr().err

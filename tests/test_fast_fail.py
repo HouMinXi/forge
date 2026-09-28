@@ -17,6 +17,7 @@ from code_forge.errors import CliError
 
 # -- api_key_file tests --------------------------------------------------
 
+
 class TestApiKeyFileGuard:
     """api_key_file backends: missing or empty file raises CliError."""
 
@@ -108,6 +109,7 @@ class TestApiKeyFileGuard:
 
 # -- vertex credentials_path tests ---------------------------------------
 
+
 class TestVertexCredentialsPathGuard:
     """Vertex backends: missing credentials_path raises CliError."""
 
@@ -156,6 +158,7 @@ class TestVertexCredentialsPathGuard:
 
 # -- existing api_key_env guard (unchanged) -------------------------------
 
+
 class TestApiKeyEnvGuard:
     """Existing api_key_env guard still works."""
 
@@ -187,6 +190,7 @@ class TestApiKeyEnvGuard:
 
 # -- credential_error behavior table tests ---------------------------------
 
+
 class TestCredentialErrorTable:
     """Verify credential_error matches the agreed behavior table.
 
@@ -196,8 +200,9 @@ class TestCredentialErrorTable:
 
     def test_api_key_file_missing(self, tmp_path):
         err = credential_error(
-            BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_file=str(tmp_path / "nope")),
+            BackendConfig(
+                name="b", type="api", model="m", format="openai", api_key_file=str(tmp_path / "nope")
+            ),
             {},
         )
         assert err is not None and "not found" in err
@@ -208,8 +213,7 @@ class TestCredentialErrorTable:
         key.chmod(0o000)
         try:
             err = credential_error(
-                BackendConfig(name="b", type="api", model="m",
-                              format="openai", api_key_file=str(key)),
+                BackendConfig(name="b", type="api", model="m", format="openai", api_key_file=str(key)),
                 {},
             )
             assert err is not None and "unreadable" in err
@@ -220,8 +224,7 @@ class TestCredentialErrorTable:
         key = tmp_path / "empty.key"
         key.write_text("", encoding="utf-8")
         err = credential_error(
-            BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_file=str(key)),
+            BackendConfig(name="b", type="api", model="m", format="openai", api_key_file=str(key)),
             {},
         )
         assert err is not None and "empty" in err
@@ -232,8 +235,7 @@ class TestCredentialErrorTable:
         key.chmod(0o640)
         try:
             err = credential_error(
-                BackendConfig(name="b", type="api", model="m",
-                              format="openai", api_key_file=str(key)),
+                BackendConfig(name="b", type="api", model="m", format="openai", api_key_file=str(key)),
                 {},
             )
             assert err is not None and "chmod 600" in err
@@ -244,23 +246,26 @@ class TestCredentialErrorTable:
         key = tmp_path / "good.key"
         key.write_text("sk-abc\n", encoding="utf-8")
         key.chmod(0o600)
-        assert credential_error(
-            BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_file=str(key)),
-            {},
-        ) is None
+        assert (
+            credential_error(
+                BackendConfig(name="b", type="api", model="m", format="openai", api_key_file=str(key)),
+                {},
+            )
+            is None
+        )
 
     def test_api_key_env_set(self):
-        assert credential_error(
-            BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_env="MY_KEY"),
-            {"MY_KEY": "sk-abc"},
-        ) is None
+        assert (
+            credential_error(
+                BackendConfig(name="b", type="api", model="m", format="openai", api_key_env="MY_KEY"),
+                {"MY_KEY": "sk-abc"},
+            )
+            is None
+        )
 
     def test_api_key_env_missing(self):
         err = credential_error(
-            BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_env="MY_KEY"),
+            BackendConfig(name="b", type="api", model="m", format="openai", api_key_env="MY_KEY"),
             {},
         )
         assert err is not None and "not set" in err
@@ -268,22 +273,32 @@ class TestCredentialErrorTable:
     def test_vertex_credentials_path_ok(self, tmp_path):
         cred = tmp_path / "sa.json"
         cred.write_text("{}")
-        assert credential_error(
-            BackendConfig(name="b", type="api", model="m", format="vertex",
-                          credentials_path=str(cred)),
-            {},
-        ) is None
+        assert (
+            credential_error(
+                BackendConfig(
+                    name="b", type="api", model="m", format="vertex", credentials_path=str(cred)
+                ),
+                {},
+            )
+            is None
+        )
 
     def test_vertex_credentials_path_missing(self, tmp_path):
         err = credential_error(
-            BackendConfig(name="b", type="api", model="m", format="vertex",
-                          credentials_path=str(tmp_path / "nope.json")),
+            BackendConfig(
+                name="b",
+                type="api",
+                model="m",
+                format="vertex",
+                credentials_path=str(tmp_path / "nope.json"),
+            ),
             {},
         )
         assert err is not None and "not found" in err
 
 
 # -- wrapper union tests ---------------------------------------------------
+
 
 class TestWrapperUnion:
     """Drive BOTH wrappers over the same matrix and compare verdicts.
@@ -310,16 +325,16 @@ class TestWrapperUnion:
         return _probe_api(backend, env).ok
 
     def test_union_api_key_file_missing(self, tmp_path):
-        b = BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_file=str(tmp_path / "nope"))
+        b = BackendConfig(
+            name="b", type="api", model="m", format="openai", api_key_file=str(tmp_path / "nope")
+        )
         assert self._fast_fail_accepts(b, {}) is False
         assert self._probe_accepts(b, {}) is False
 
     def test_union_api_key_file_empty(self, tmp_path):
         key = tmp_path / "empty.key"
         key.write_text("", encoding="utf-8")
-        b = BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_file=str(key))
+        b = BackendConfig(name="b", type="api", model="m", format="openai", api_key_file=str(key))
         assert self._fast_fail_accepts(b, {}) is False
         assert self._probe_accepts(b, {}) is False
 
@@ -327,8 +342,7 @@ class TestWrapperUnion:
         key = tmp_path / "perms.key"
         key.write_text("sk-abc\n", encoding="utf-8")
         key.chmod(0o644)
-        b = BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_file=str(key))
+        b = BackendConfig(name="b", type="api", model="m", format="openai", api_key_file=str(key))
         try:
             assert self._fast_fail_accepts(b, {}) is False
             assert self._probe_accepts(b, {}) is False
@@ -339,35 +353,36 @@ class TestWrapperUnion:
         key = tmp_path / "good.key"
         key.write_text("sk-abc\n", encoding="utf-8")
         key.chmod(0o600)
-        b = BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_file=str(key))
+        b = BackendConfig(name="b", type="api", model="m", format="openai", api_key_file=str(key))
         assert self._fast_fail_accepts(b, {}) is True
         assert self._probe_accepts(b, {}) is True
 
     def test_union_api_key_env_present(self):
-        b = BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_env="MY_KEY")
+        b = BackendConfig(name="b", type="api", model="m", format="openai", api_key_env="MY_KEY")
         env = {"MY_KEY": "sk-abc"}
         assert self._fast_fail_accepts(b, env) is True
         assert self._probe_accepts(b, env) is True
 
     def test_union_api_key_env_missing(self):
-        b = BackendConfig(name="b", type="api", model="m", format="openai",
-                          api_key_env="MY_KEY")
+        b = BackendConfig(name="b", type="api", model="m", format="openai", api_key_env="MY_KEY")
         assert self._fast_fail_accepts(b, {}) is False
         assert self._probe_accepts(b, {}) is False
 
     def test_union_vertex_credentials_path_ok(self, tmp_path):
         cred = tmp_path / "sa.json"
         cred.write_text("{}")
-        b = BackendConfig(name="b", type="api", model="m", format="vertex",
-                          credentials_path=str(cred))
+        b = BackendConfig(name="b", type="api", model="m", format="vertex", credentials_path=str(cred))
         assert self._fast_fail_accepts(b, {}) is True
         assert self._probe_accepts(b, {}) is True
 
     def test_union_vertex_credentials_path_missing(self, tmp_path):
-        b = BackendConfig(name="b", type="api", model="m", format="vertex",
-                          credentials_path=str(tmp_path / "nope.json"))
+        b = BackendConfig(
+            name="b",
+            type="api",
+            model="m",
+            format="vertex",
+            credentials_path=str(tmp_path / "nope.json"),
+        )
         assert self._fast_fail_accepts(b, {}) is False
         assert self._probe_accepts(b, {}) is False
 

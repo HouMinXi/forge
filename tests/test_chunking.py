@@ -10,6 +10,7 @@ Validates:
 - All chunks succeed -> pass_status=COMPLETED
 - Dedup by fingerprint across chunks
 """
+
 from __future__ import annotations
 
 import json
@@ -137,7 +138,9 @@ class TestRunChunk:
             return_value='{"findings": [], "code_excerpts": [{"file": "foo.py", "start_line": 1, "end_line": 3, "content": "x = 1\\ny = 2\\nz = 3"}]}'
         )
         findings, excerpts, usage, dur = _run_chunk(
-            SMALL_DIFF, mock_spawn, ("qodo", "expert", "adversarial"),
+            SMALL_DIFF,
+            mock_spawn,
+            ("qodo", "expert", "adversarial"),
         )
         # spawn_fn called 3 times (once per pass).
         assert mock_spawn.call_count == 3
@@ -146,13 +149,16 @@ class TestRunChunk:
 
     def test_run_chunk_spawn_fail(self):
         """Spawn failure -> INFRA finding with correct ID."""
+
         def spawn_fn(pass_name, diff):
             if pass_name == "expert":
                 raise TimeoutError("timed out")
             return '{"findings": [], "code_excerpts": [{"file": "foo.py", "start_line": 1, "end_line": 3, "content": "x = 1\\ny = 2\\nz = 3"}]}'
 
         findings, _, _, _ = _run_chunk(
-            SMALL_DIFF, spawn_fn, ("qodo", "expert", "adversarial"),
+            SMALL_DIFF,
+            spawn_fn,
+            ("qodo", "expert", "adversarial"),
         )
         infra = [f for f in findings if f.source == "INFRA"]
         assert len(infra) == 1
@@ -168,6 +174,7 @@ class TestChunkingIntegration:
         os.environ["FORGE_DIFF_CHUNK_THRESHOLD_KB"] = "0"
         try:
             from code_forge.outlet_c import _read_chunk_threshold_kb
+
             threshold = _read_chunk_threshold_kb()
             assert threshold == 0
 
@@ -180,7 +187,8 @@ class TestChunkingIntegration:
                 assert "@@" in chunk  # has hunk headers
                 # Extract file name from diff header.
                 import re
-                m = re.search(r'diff --git a/(\S+)', chunk)
+
+                m = re.search(r"diff --git a/(\S+)", chunk)
                 assert m is not None
                 all_fingerprints.add(m.group(1))
             assert len(all_fingerprints) == 3
@@ -298,12 +306,14 @@ class TestRunChunkAttemptedCollector:
         if pass_name == "expert":
             # Parseable but schema-invalid; carries a payload-provided
             # pass_name that the loop must override with its own.
-            return json.dumps({
-                "findings": "not-a-list",
-                "code_excerpts": [],
-                "pass_name": "payload-lie",
-                "marker": "expert-m1",
-            })
+            return json.dumps(
+                {
+                    "findings": "not-a-list",
+                    "code_excerpts": [],
+                    "pass_name": "payload-lie",
+                    "marker": "expert-m1",
+                }
+            )
         if pass_name == "adversarial":
             return "NOT JSON AT ALL {{{"
         raise AssertionError("unexpected pass %r" % (pass_name,))
@@ -311,7 +321,9 @@ class TestRunChunkAttemptedCollector:
     def test_no_collector_mixed_inputs_no_crash(self):
         """attempted=None default: valid + schema-invalid + non-JSON."""
         findings, excerpts, _, _ = _run_chunk(
-            SMALL_DIFF, self._mixed_spawn, ("qodo", "expert", "adversarial"),
+            SMALL_DIFF,
+            self._mixed_spawn,
+            ("qodo", "expert", "adversarial"),
         )
         # Accepted excerpts only from the valid pass, loop pass_name.
         assert len(excerpts) == 1
@@ -319,16 +331,20 @@ class TestRunChunkAttemptedCollector:
         assert excerpts[0]["pass_name"] == "qodo"
         infra = [f for f in findings if f.source == "INFRA"]
         assert {f.id for f in infra} == {
-            "l1-expert-schema-fail", "l1-adversarial-schema-fail",
+            "l1-expert-schema-fail",
+            "l1-adversarial-schema-fail",
         }
 
     def test_no_collector_spawn_error_no_crash(self):
         """attempted=None default: spawn exception must not crash."""
+
         def _raise(pass_name, diff):
             raise RuntimeError("boom")
 
         findings, excerpts, _, _ = _run_chunk(
-            SMALL_DIFF, _raise, ("qodo",),
+            SMALL_DIFF,
+            _raise,
+            ("qodo",),
         )
         assert excerpts == []
         assert len(findings) == 1
@@ -338,8 +354,10 @@ class TestRunChunkAttemptedCollector:
         """Explicitly passed EMPTY list is populated with loop pass_name."""
         attempted: list[dict] = []
         findings, excerpts, _, _ = _run_chunk(
-            SMALL_DIFF, self._mixed_spawn,
-            ("qodo", "expert", "adversarial"), attempted=attempted,
+            SMALL_DIFF,
+            self._mixed_spawn,
+            ("qodo", "expert", "adversarial"),
+            attempted=attempted,
         )
         # The empty list was populated, not treated as absent.
         assert len(attempted) == 1
@@ -359,7 +377,10 @@ class TestRunChunkAttemptedCollector:
             raise RuntimeError("boom")
 
         findings, excerpts, _, _ = _run_chunk(
-            SMALL_DIFF, _raise, ("qodo",), attempted=attempted,
+            SMALL_DIFF,
+            _raise,
+            ("qodo",),
+            attempted=attempted,
         )
         assert attempted == []
         assert excerpts == []

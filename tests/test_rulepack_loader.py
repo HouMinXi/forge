@@ -5,6 +5,7 @@
 Covers AC-2 missing-rule detection, fail-soft error handling, built-in vs
 repo-local discovery precedence, and strict allowlist resolution.
 """
+
 from __future__ import annotations
 
 import pytest

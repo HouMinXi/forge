@@ -13,6 +13,7 @@ Cases:
   E  non-empty context_sources_text                  -> differs from A,
      and the section sits after Blast Radius, before Design Intent
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -24,14 +25,15 @@ from unittest.mock import patch
 from code_forge import factories
 from code_forge.baseline import ResolvedReview
 from code_forge.context_sources import (
-    FactRow, render_blast_radius,
+    FactRow,
+    render_blast_radius,
 )
 from code_forge.llm_invoke import LLMResult, Usage
 
 ROOT = Path(__file__).resolve().parent.parent
-ORACLE = json.loads(
-    (ROOT / "tests" / "fixtures" / "l1_prompt_digests_pre_p59.json").read_text()
-)["cases"]
+ORACLE = json.loads((ROOT / "tests" / "fixtures" / "l1_prompt_digests_pre_p59.json").read_text())[
+    "cases"
+]
 
 # Same inputs as scripts/capture_l1_digests.py, verbatim.
 DIFF = (
@@ -65,15 +67,24 @@ def _prompts(graph_ctx: str, context_sources_text: str = "") -> list[str]:
         return LLMResult(content={"findings": []}, usage=Usage())
 
     resolved = ResolvedReview(
-        source_files=[Path("f.py")], baseline_content=None,
-        git_diff=DIFF, mode_hint="git", base_sha="a" * 40, head_sha="b" * 40,
+        source_files=[Path("f.py")],
+        baseline_content=None,
+        git_diff=DIFF,
+        mode_hint="git",
+        base_sha="a" * 40,
+        head_sha="b" * 40,
     )
     with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake):
         factories.build_l1_provider(
-            "auto", resolved, backend=None,
-            conventions_digest=CONV, post_image=POST_IMAGE,
-            graph_impact_context=graph_ctx, contract_spec=CONTRACT,
-            focus_spec="", manifest_spec=MANIFEST,
+            "auto",
+            resolved,
+            backend=None,
+            conventions_digest=CONV,
+            post_image=POST_IMAGE,
+            graph_impact_context=graph_ctx,
+            contract_spec=CONTRACT,
+            focus_spec="",
+            manifest_spec=MANIFEST,
             context_sources_text=context_sources_text,
         )()
     assert len(out) == 3
@@ -81,9 +92,7 @@ def _prompts(graph_ctx: str, context_sources_text: str = "") -> list[str]:
 
 
 def _digests(prompts: list[str]) -> dict[str, str]:
-    return {
-        n: hashlib.sha256(p.encode()).hexdigest() for n, p in zip(PASSES, prompts)
-    }
+    return {n: hashlib.sha256(p.encode()).hexdigest() for n, p in zip(PASSES, prompts)}
 
 
 def test_case_a_two_rows_unchanged():
@@ -100,15 +109,16 @@ def test_case_c_exception_is_empty():
 
     class _Boom:
         name = "boom"
+
         def snapshot_sha(self):
             return None
+
         def facts(self, changed_files, diff_text):
             raise RuntimeError("down")
 
     res = gather([_Boom()], ["f.py"], DIFF, head_sha=None)
     assert res.errors and res.rows == []
-    assert _digests(_prompts(render_blast_radius(res.rows))) \
-        == ORACLE["C_exception_as_empty"]
+    assert _digests(_prompts(render_blast_radius(res.rows))) == ORACLE["C_exception_as_empty"]
 
 
 def test_case_d_rows_through_render_equal_a():
@@ -156,12 +166,17 @@ def test_sampling_variant_carries_the_section():
     t.start()
     try:
         resolved = ResolvedReview(
-            source_files=[Path("f.py")], baseline_content=None,
-            git_diff=DIFF, mode_hint="git",
+            source_files=[Path("f.py")],
+            baseline_content=None,
+            git_diff=DIFF,
+            mode_hint="git",
         )
         with patch("code_forge.llm_invoke.invoke_sampling", side_effect=fake_invoke_sampling):
             factories.build_sampling_l1_provider(
-                MagicMock(), loop, resolved, context_sources_text="CTX-MARK",
+                MagicMock(),
+                loop,
+                resolved,
+                context_sources_text="CTX-MARK",
             )()
     finally:
         loop.call_soon_threadsafe(loop.stop)
@@ -183,7 +198,8 @@ def test_cli_wires_every_provider_construction_site():
     src = inspect.getsource(cli._run)
     tree = ast.parse(src)
     calls = [
-        n for n in ast.walk(tree)
+        n
+        for n in ast.walk(tree)
         if isinstance(n, ast.Call)
         and isinstance(n.func, ast.Name)
         and n.func.id in ("build_l1_provider", "build_grouped_l1_provider")
@@ -213,4 +229,4 @@ def test_cli_context_block_degrades_not_aborts(tmp_path, monkeypatch):
     assert "get_changed_files(" in src[i_try:i_exc]
     assert "render_blast_radius(" in src[i_try:i_exc]
     assert "render_context_sources(" in src[i_try:i_exc]
-    assert 'warn("context sources unavailable' in src[i_exc:i_exc + 400]
+    assert 'warn("context sources unavailable' in src[i_exc : i_exc + 400]

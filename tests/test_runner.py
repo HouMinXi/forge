@@ -193,9 +193,7 @@ class TestRunTool:
         return_value="/usr/bin/shellcheck",
     )
     def test_never_uses_shell_true(self, _resolve, mock_run):
-        mock_run.return_value = MagicMock(
-            stdout="", returncode=0, stderr=""
-        )
+        mock_run.return_value = MagicMock(stdout="", returncode=0, stderr="")
         run_tool(_make_tool(), ["test.sh"])
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs.get("shell") is not True
@@ -207,9 +205,7 @@ class TestRunTool:
     )
     def test_command_is_list(self, _resolve, mock_run):
         """subprocess.run must receive a list, never a string."""
-        mock_run.return_value = MagicMock(
-            stdout="", returncode=0, stderr=""
-        )
+        mock_run.return_value = MagicMock(stdout="", returncode=0, stderr="")
         run_tool(_make_tool(), ["test.sh"])
         cmd_arg = mock_run.call_args[0][0]
         assert isinstance(cmd_arg, list)
@@ -220,9 +216,7 @@ class TestRunTool:
         return_value="/usr/bin/shellcheck",
     )
     def test_captures_stderr(self, _resolve, mock_run):
-        mock_run.return_value = MagicMock(
-            stdout="", returncode=2, stderr="parse error at line 5"
-        )
+        mock_run.return_value = MagicMock(stdout="", returncode=2, stderr="parse error at line 5")
         result = run_tool(_make_tool(), ["test.sh"])
         assert result is not None
         _, _, stderr = result
@@ -247,9 +241,7 @@ class TestRunTool:
     )
     def test_cargo_root_skips_file_args(self, _resolve, mock_run):
         """working_dir='cargo_root' should not append files to command."""
-        mock_run.return_value = MagicMock(
-            stdout="", returncode=0, stderr=""
-        )
+        mock_run.return_value = MagicMock(stdout="", returncode=0, stderr="")
         tool = _make_tool(
             name="clippy",
             command="cargo",
@@ -266,9 +258,7 @@ class TestRunTool:
         return_value="/usr/bin/shellcheck",
     )
     def test_respects_timeout(self, _resolve, mock_run):
-        mock_run.return_value = MagicMock(
-            stdout="", returncode=0, stderr=""
-        )
+        mock_run.return_value = MagicMock(stdout="", returncode=0, stderr="")
         tool = _make_tool(timeout=60)
         run_tool(tool, ["test.sh"])
         call_kwargs = mock_run.call_args[1]
@@ -316,9 +306,7 @@ class TestRunTools:
     @patch("code_forge.runner.capture_tool_version", return_value="shellcheck 0.10.0")
     @patch("code_forge.runner.run_tool", return_value=None)
     @patch("code_forge.runner.match_tools")
-    def test_run_tool_none_adds_to_skipped(
-        self, mock_match, mock_run_tool, mock_ver
-    ):
+    def test_run_tool_none_adds_to_skipped(self, mock_match, mock_run_tool, mock_ver):
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         registry = {"shellcheck": _make_tool()}
         _, _, skipped, infra = run_tools(registry, ["test.sh"])
@@ -328,9 +316,7 @@ class TestRunTools:
     @patch("code_forge.runner.capture_tool_version")
     @patch("code_forge.runner.run_tool")
     @patch("code_forge.runner.match_tools")
-    def test_sorted_iteration_order(
-        self, mock_match, mock_run_tool, mock_ver
-    ):
+    def test_sorted_iteration_order(self, mock_match, mock_run_tool, mock_ver):
         """GATE-02: iteration order must be deterministic (sorted)."""
         mock_match.return_value = {
             "zzz_tool": ["a.sh"],
@@ -346,17 +332,13 @@ class TestRunTools:
         }
         run_tools(registry, ["a.sh"])
         # Check that run_tool was called in sorted order
-        call_names = [
-            c[0][0].name for c in mock_run_tool.call_args_list
-        ]
+        call_names = [c[0][0].name for c in mock_run_tool.call_args_list]
         assert call_names == ["aaa_tool", "mmm_tool", "zzz_tool"]
 
     @patch("code_forge.runner.capture_tool_version", return_value="1.0")
     @patch("code_forge.runner.run_tool")
     @patch("code_forge.runner.match_tools")
-    def test_calls_match_tools_once(
-        self, mock_match, mock_run_tool, mock_ver
-    ):
+    def test_calls_match_tools_once(self, mock_match, mock_run_tool, mock_ver):
         """Mimo F-04: match_tools called once, not per tool."""
         mock_match.return_value = {
             "a": ["test.sh"],
@@ -373,9 +355,7 @@ class TestRunTools:
     @patch("code_forge.runner.capture_tool_version", return_value="1.0")
     @patch("code_forge.runner.run_tool")
     @patch("code_forge.runner.match_tools")
-    def test_results_keyed_by_tool_name(
-        self, mock_match, mock_run_tool, mock_ver
-    ):
+    def test_results_keyed_by_tool_name(self, mock_match, mock_run_tool, mock_ver):
         mock_match.return_value = {"shellcheck": ["test.sh"]}
         mock_run_tool.return_value = ("output", 1, "err")
         registry = {"shellcheck": _make_tool()}

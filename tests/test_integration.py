@@ -31,7 +31,7 @@ def _write_tools_yaml(repo_dir):
         f.write(
             "tools:\n"
             "  shellcheck:\n"
-            '    command: shellcheck\n'
+            "    command: shellcheck\n"
             '    args: ["-f", "json"]\n'
             "    output_format: shellcheck_json\n"
             '    file_patterns: ["*.sh"]\n'
@@ -87,9 +87,7 @@ class TestIntegrationFail:
     In CI mode a finding -> FAIL exit 1.
     """
 
-    def test_fail_on_shellcheck_violation(
-        self, tmp_path, monkeypatch
-    ):
+    def test_fail_on_shellcheck_violation(self, tmp_path, monkeypatch):
         """Modify tracked file with shellcheck violation -> FAIL."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -101,15 +99,12 @@ class TestIntegrationFail:
         script.write_text("#!/bin/bash\necho hello\n")
         _git_add_commit(repo_str, "initial")
 
-        script.write_text(
-            "#!/bin/bash\necho hello\necho $unquoted_var\n"
-        )
+        script.write_text("#!/bin/bash\necho hello\necho $unquoted_var\n")
 
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci",
-                          "--falsification-engine", "stub", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci", "--falsification-engine", "stub", "hello.sh"]
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -149,8 +144,7 @@ class TestIntegrationPass:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci",
-                          "--falsification-engine", "stub", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci", "--falsification-engine", "stub", "hello.sh"]
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -173,9 +167,7 @@ class TestIntegrationPass:
 class TestIntegrationBaseline:
     """Test: pre-existing violations in committed code not shown."""
 
-    def test_baseline_preexisting_not_shown(
-        self, tmp_path, monkeypatch
-    ):
+    def test_baseline_preexisting_not_shown(self, tmp_path, monkeypatch):
         """Pre-existing violations in committed file -> PASS.
 
         02-05: use --head INDEX instead of --staged.
@@ -202,10 +194,18 @@ class TestIntegrationBaseline:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "--mode", "ci",
-             "--falsification-engine", "stub",
-             "--head", "INDEX", "clean.sh"],
+            sys,
+            "argv",
+            [
+                "code-forge",
+                "--mode",
+                "ci",
+                "--falsification-engine",
+                "stub",
+                "--head",
+                "INDEX",
+                "clean.sh",
+            ],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -222,9 +222,7 @@ class TestIntegrationBaseline:
 class TestIntegrationState:
     """Test: state.json written with schema fields."""
 
-    def test_state_json_written_with_versions(
-        self, tmp_path, monkeypatch
-    ):
+    def test_state_json_written_with_versions(self, tmp_path, monkeypatch):
         """Verify .code-forge/state.json has Phase 2 typed fields."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -241,8 +239,7 @@ class TestIntegrationState:
         _write_tools_yaml(repo_str)
 
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--mode", "ci",
-                          "--falsification-engine", "stub", "hello.sh"]
+            sys, "argv", ["code-forge", "--mode", "ci", "--falsification-engine", "stub", "hello.sh"]
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",

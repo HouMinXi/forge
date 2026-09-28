@@ -247,9 +247,7 @@ class TestEverySourceStateAllowsHasABasis:
     """
 
     def test_untrusted_derives_a_basis(self):
-        finding = _make_finding(
-            source="UNTRUSTED", disposition=Disposition.CONFIRMED
-        )
+        finding = _make_finding(source="UNTRUSTED", disposition=Disposition.CONFIRMED)
         basis = derive_basis(finding)
         # Carried audit data, not an attested claim: same standing as INFRA.
         assert basis.authority == "infra-unavailable"
@@ -258,9 +256,7 @@ class TestEverySourceStateAllowsHasABasis:
     def test_no_declared_source_is_missing_from_the_table(self):
         import typing
 
-        sources = typing.get_args(
-            typing.get_type_hints(StateFinding)["source"]
-        )
+        sources = typing.get_args(typing.get_type_hints(StateFinding)["source"])
         assert sources, "StateFinding.source should be a Literal of names"
         for source in sources:
             derive_basis(_make_finding(source=source))

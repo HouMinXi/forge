@@ -75,9 +75,7 @@ class TestSaveLoadRoundTrip:
             "finding_dispositions": {},
         }
         path.write_text(json.dumps(data))
-        with pytest.raises(
-            SnapshotSchemaMismatchError, match="schema_version=999"
-        ):
+        with pytest.raises(SnapshotSchemaMismatchError, match="schema_version=999"):
             load_snapshot(path)
 
     def test_missing_source_hash_raises(self, tmp_path):
@@ -145,8 +143,7 @@ class TestValidateSnapshot:
         snap = Snapshot(
             source_hash="initial",
             files=[
-                SnapshotEntry(path=f.relative_to(root).as_posix(),
-                              content_hash=_hash_file(f))
+                SnapshotEntry(path=f.relative_to(root).as_posix(), content_hash=_hash_file(f))
                 for f in files
             ],
         )
@@ -188,8 +185,10 @@ class TestValidateSnapshot:
         snap, root = initial_snapshot
         (root / "d.py").write_text('print("d")\n')
         files = [
-            root / "a.py", root / "b.py",
-            root / "c.py", root / "d.py",
+            root / "a.py",
+            root / "b.py",
+            root / "c.py",
+            root / "d.py",
         ]
         result = validate_snapshot(snap, files, root)
         assert result.unchanged == ["a.py", "b.py", "c.py"]
@@ -202,9 +201,7 @@ class TestValidateSnapshot:
         snap, root = initial_snapshot
         outside_file = root.parent / "outside.py"
         outside_file.write_text("outside")
-        with pytest.raises(
-            BaselineResolutionError, match="outside snapshot root"
-        ):
+        with pytest.raises(BaselineResolutionError, match="outside snapshot root"):
             validate_snapshot(snap, [outside_file], root)
 
     def test_binary_hash_invalidation(self, tmp_path):

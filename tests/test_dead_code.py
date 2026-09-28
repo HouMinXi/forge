@@ -14,6 +14,7 @@ Covers:
   - Detector dispatch by extension
   - Real-path smoke (forge golden rule #3)
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -47,13 +48,7 @@ _NODES_DDL = (
     "  line_end INTEGER"
     ")"
 )
-_EDGES_DDL = (
-    "CREATE TABLE edges ("
-    "  kind TEXT,"
-    "  source_qualified TEXT,"
-    "  target_qualified TEXT"
-    ")"
-)
+_EDGES_DDL = "CREATE TABLE edges (  kind TEXT,  source_qualified TEXT,  target_qualified TEXT)"
 
 
 def _make_db(path: Path, nodes: list[tuple], edges: list[tuple]) -> Path:
@@ -62,10 +57,12 @@ def _make_db(path: Path, nodes: list[tuple], edges: list[tuple]) -> Path:
     conn.execute(_NODES_DDL)
     conn.execute(_EDGES_DDL)
     conn.executemany(
-        "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)", nodes,
+        "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)",
+        nodes,
     )
     conn.executemany(
-        "INSERT INTO edges VALUES (?, ?, ?)", edges,
+        "INSERT INTO edges VALUES (?, ?, ?)",
+        edges,
     )
     conn.commit()
     conn.close()
@@ -168,6 +165,7 @@ void live_code(void) {}
 # TestIsDeadCallSitePython
 # ---------------------------------------------------------------------------
 
+
 class TestIsDeadCallSitePython:
     """Python dead-code detection via tree-sitter ancestor walk."""
 
@@ -244,6 +242,7 @@ class TestIsDeadCallSitePython:
 # TestIsDeadCallSiteC
 # ---------------------------------------------------------------------------
 
+
 class TestIsDeadCallSiteC:
     """C dead-code detection via lexical #if 0 scan."""
 
@@ -261,7 +260,8 @@ class TestIsDeadCallSiteC:
         assert _is_dead_call_site(str(f), 7) is True
 
     def test_nested_if0_inner_body_is_false_negative(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Nested preprocessor inside #if 0 may produce false negatives.
 
@@ -291,6 +291,7 @@ class TestIsDeadCallSiteC:
 # ---------------------------------------------------------------------------
 # TestFailSafe
 # ---------------------------------------------------------------------------
+
 
 class TestFailSafe:
     """_is_dead_call_site returns False (live) on any error condition."""
@@ -327,9 +328,12 @@ class TestFailSafe:
         assert _is_dead_call_site(str(f), 1) is False
 
     def test_detector_exception_returns_false(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         """A detector that raises is caught; result is False (live)."""
+
         def _boom(fp: str, ln: int) -> bool:
             raise RuntimeError("boom")
 
@@ -342,6 +346,7 @@ class TestFailSafe:
 # ---------------------------------------------------------------------------
 # TestLiveCallers
 # ---------------------------------------------------------------------------
+
 
 class TestLiveCallers:
     """_live_callers returns only callers NOT inside dead code."""
@@ -363,10 +368,7 @@ class TestLiveCallers:
         # Caller 4: Python live code.
         py_live = tmp_path / "live.py"
         py_live.write_text(
-            "from target_mod import target_fn\n"
-            "\n"
-            "def caller():\n"
-            "    target_fn()\n",
+            "from target_mod import target_fn\n\ndef caller():\n    target_fn()\n",
         )
 
         # Build graph.db with 4 callers + edges.
@@ -375,45 +377,35 @@ class TestLiveCallers:
             db_path,
             nodes=[
                 # Target node
-                (1, "function", "target_fn",
-                 "target_mod::target_fn",
-                 str(tmp_path / "target.py"), 1, 5),
+                (1, "function", "target_fn", "target_mod::target_fn", str(tmp_path / "target.py"), 1, 5),
                 # Caller 1: TYPE_CHECKING import at line 5
-                (2, "function", "dead_tc_caller",
-                 "dead_tc::dead_tc_caller",
-                 str(py_dead_tc), 5, 5),
+                (2, "function", "dead_tc_caller", "dead_tc::dead_tc_caller", str(py_dead_tc), 5, 5),
                 # Caller 2: if False call at line 2
-                (3, "function", "dead_false_caller",
-                 "dead_false::dead_false_caller",
-                 str(py_dead_false), 2, 2),
+                (
+                    3,
+                    "function",
+                    "dead_false_caller",
+                    "dead_false::dead_false_caller",
+                    str(py_dead_false),
+                    2,
+                    2,
+                ),
                 # Caller 3: C #if 0 at line 9
-                (4, "function", "dead_c_caller",
-                 "dead_c::dead_c_caller",
-                 str(c_dead), 9, 9),
+                (4, "function", "dead_c_caller", "dead_c::dead_c_caller", str(c_dead), 9, 9),
                 # Caller 4: live Python at line 4
-                (5, "function", "live_caller",
-                 "live::live_caller",
-                 str(py_live), 4, 4),
+                (5, "function", "live_caller", "live::live_caller", str(py_live), 4, 4),
             ],
             edges=[
                 # CALLS edges: each caller calls target_fn
-                ("CALLS", "dead_tc::dead_tc_caller",
-                 "target_fn"),
-                ("CALLS", "dead_false::dead_false_caller",
-                 "target_fn"),
-                ("CALLS", "dead_c::dead_c_caller",
-                 "target_fn"),
-                ("CALLS", "live::live_caller",
-                 "target_fn"),
+                ("CALLS", "dead_tc::dead_tc_caller", "target_fn"),
+                ("CALLS", "dead_false::dead_false_caller", "target_fn"),
+                ("CALLS", "dead_c::dead_c_caller", "target_fn"),
+                ("CALLS", "live::live_caller", "target_fn"),
                 # IMPORTS_FROM edges for SQL disambiguation
-                ("IMPORTS_FROM", "dead_tc::SomeType",
-                 "target_mod::target_fn"),
-                ("IMPORTS_FROM", "dead_false::dead_import",
-                 "target_mod::target_fn"),
-                ("IMPORTS_FROM", "dead_c::dead_fn",
-                 "target_mod::target_fn"),
-                ("IMPORTS_FROM", "live::target_fn",
-                 "target_mod::target_fn"),
+                ("IMPORTS_FROM", "dead_tc::SomeType", "target_mod::target_fn"),
+                ("IMPORTS_FROM", "dead_false::dead_import", "target_mod::target_fn"),
+                ("IMPORTS_FROM", "dead_c::dead_fn", "target_mod::target_fn"),
+                ("IMPORTS_FROM", "live::target_fn", "target_mod::target_fn"),
             ],
         )
 
@@ -433,11 +425,14 @@ class TestLiveCallers:
 # TestBugInject (neutralize filter -> dead callers reappear)
 # ---------------------------------------------------------------------------
 
+
 class TestBugInject:
     """Neutralize filter -> dead callers reappear; restore -> they vanish."""
 
     def test_neutralize_and_restore(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         # Same fixture as TestLiveCallers.
         py_dead_tc = tmp_path / "dead_tc.py"
@@ -448,45 +443,36 @@ class TestBugInject:
         c_dead.write_text(_C_IF0)
         py_live = tmp_path / "live.py"
         py_live.write_text(
-            "from target_mod import target_fn\n"
-            "\n"
-            "def caller():\n"
-            "    target_fn()\n",
+            "from target_mod import target_fn\n\ndef caller():\n    target_fn()\n",
         )
 
         db_path = tmp_path / "graph.db"
         _make_db(
             db_path,
             nodes=[
-                (1, "function", "target_fn",
-                 "target_mod::target_fn",
-                 str(tmp_path / "target.py"), 1, 5),
-                (2, "function", "dead_tc_caller",
-                 "dead_tc::dead_tc_caller",
-                 str(py_dead_tc), 5, 5),
-                (3, "function", "dead_false_caller",
-                 "dead_false::dead_false_caller",
-                 str(py_dead_false), 2, 2),
-                (4, "function", "dead_c_caller",
-                 "dead_c::dead_c_caller",
-                 str(c_dead), 9, 9),
-                (5, "function", "live_caller",
-                 "live::live_caller",
-                 str(py_live), 4, 4),
+                (1, "function", "target_fn", "target_mod::target_fn", str(tmp_path / "target.py"), 1, 5),
+                (2, "function", "dead_tc_caller", "dead_tc::dead_tc_caller", str(py_dead_tc), 5, 5),
+                (
+                    3,
+                    "function",
+                    "dead_false_caller",
+                    "dead_false::dead_false_caller",
+                    str(py_dead_false),
+                    2,
+                    2,
+                ),
+                (4, "function", "dead_c_caller", "dead_c::dead_c_caller", str(c_dead), 9, 9),
+                (5, "function", "live_caller", "live::live_caller", str(py_live), 4, 4),
             ],
             edges=[
                 ("CALLS", "dead_tc::dead_tc_caller", "target_fn"),
                 ("CALLS", "dead_false::dead_false_caller", "target_fn"),
                 ("CALLS", "dead_c::dead_c_caller", "target_fn"),
                 ("CALLS", "live::live_caller", "target_fn"),
-                ("IMPORTS_FROM", "dead_tc::SomeType",
-                 "target_mod::target_fn"),
-                ("IMPORTS_FROM", "dead_false::dead_import",
-                 "target_mod::target_fn"),
-                ("IMPORTS_FROM", "dead_c::dead_fn",
-                 "target_mod::target_fn"),
-                ("IMPORTS_FROM", "live::target_fn",
-                 "target_mod::target_fn"),
+                ("IMPORTS_FROM", "dead_tc::SomeType", "target_mod::target_fn"),
+                ("IMPORTS_FROM", "dead_false::dead_import", "target_mod::target_fn"),
+                ("IMPORTS_FROM", "dead_c::dead_fn", "target_mod::target_fn"),
+                ("IMPORTS_FROM", "live::target_fn", "target_mod::target_fn"),
             ],
         )
 
@@ -495,7 +481,9 @@ class TestBugInject:
 
         # NEUTRALIZE: make _is_dead_call_site always return False (live).
         monkeypatch.setattr(
-            dead_code, "_is_dead_call_site", lambda fp, ln: False,
+            dead_code,
+            "_is_dead_call_site",
+            lambda fp, ln: False,
         )
         result_all = _live_callers(cursor, "target_fn", "target_mod")
         # All 4 callers reappear (dead ones no longer filtered).
@@ -515,11 +503,14 @@ class TestBugInject:
 # TestTreeSitterAbsent (parser-absent fail-safe)
 # ---------------------------------------------------------------------------
 
+
 class TestTreeSitterAbsent:
     """When tree-sitter is unavailable, .py files are treated as live."""
 
     def test_none_parser_returns_false(
-        self, tmp_path: Path, monkeypatch,
+        self,
+        tmp_path: Path,
+        monkeypatch,
     ) -> None:
         monkeypatch.setattr(dead_code, "_PYTHON_PARSER", None)
         f = tmp_path / "tc.py"
@@ -531,6 +522,7 @@ class TestTreeSitterAbsent:
 # ---------------------------------------------------------------------------
 # TestElseBranchLive
 # ---------------------------------------------------------------------------
+
 
 class TestElseBranchLive:
     """Lines in else branches are LIVE, not dead."""
@@ -564,6 +556,7 @@ class TestElseBranchLive:
 # TestHonestCeiling (docstring documents known limitations)
 # ---------------------------------------------------------------------------
 
+
 class TestHonestCeiling:
     """Module docstring documents honest limitations."""
 
@@ -583,6 +576,7 @@ class TestHonestCeiling:
 # ---------------------------------------------------------------------------
 # TestDetectorDispatch (extension-based dispatch)
 # ---------------------------------------------------------------------------
+
 
 class TestDetectorDispatch:
     """_DETECTORS dict contains expected entries; unknown ext returns False."""
@@ -652,7 +646,8 @@ class TestRealPathSmoke:
         dead-code FPs in forge's current graph.db).
         """
         conn = sqlite3.connect(
-            "file:%s?mode=ro" % str(_GRAPH_DB), uri=True,
+            "file:%s?mode=ro" % str(_GRAPH_DB),
+            uri=True,
         )
         cursor = conn.cursor()
 

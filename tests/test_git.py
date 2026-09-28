@@ -27,9 +27,7 @@ class TestValidateDiffSpec:
     def test_rejects_leading_dash_flag_injection(self):
         with pytest.raises(ValueError) as caught:
             validate_diff_spec("--evil-flag")
-        assert str(caught.value) == (
-            "Invalid diff_spec: '--evil-flag' looks like a flag"
-        )
+        assert str(caught.value) == ("Invalid diff_spec: '--evil-flag' looks like a flag")
 
     def test_rejects_single_dash(self):
         with pytest.raises(ValueError):
@@ -79,9 +77,7 @@ class TestValidateDiffSpec:
         """Curly-brace syntax not permitted."""
         with pytest.raises(ValueError) as caught:
             validate_diff_spec("HEAD@{u}")
-        assert str(caught.value) == (
-            "Invalid diff_spec: 'HEAD@{u}' contains disallowed characters"
-        )
+        assert str(caught.value) == ("Invalid diff_spec: 'HEAD@{u}' contains disallowed characters")
 
     def test_rejects_backtick(self):
         with pytest.raises(ValueError):
@@ -253,9 +249,9 @@ class TestRunGitDiffUndecodableBytes:
         target.write_bytes("\u4e2d\u6587\u6ce8\u91ca".encode("gbk"))
         sp.run(["git", "add", "."], cwd=tmp_path, check=True)
         sp.run(
-            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
-             "commit", "-q", "-m", "seed"],
-            cwd=tmp_path, check=True,
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "seed"],
+            cwd=tmp_path,
+            check=True,
         )
         target.write_bytes("\u66f4\u591a\u4e2d\u6587".encode("gbk"))
         monkeypatch.chdir(tmp_path)
@@ -402,15 +398,11 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_unknown_author_when_header_omits_it(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_unknown_author_when_header_omits_it(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\n"
-                "filename src/foo.py\n"
-                "\tprint('hello')\n"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\nfilename src/foo.py\n\tprint('hello')\n"
             ),
         )
         result = git_blame("src/foo.py", Path("/repo"))
@@ -427,9 +419,7 @@ class TestGitBlame:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\n"
-                "filename src/foo.py\n"
-                "\tprint('hello')\n"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\nfilename src/foo.py\n\tprint('hello')\n"
             ),
         )
         first = git_blame("src/foo.py", Path("/repo"))
@@ -464,9 +454,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_skipped_block_does_not_leak_into_the_next_one(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_skipped_block_does_not_leak_into_the_next_one(self, mock_which, mock_run):
         """A skipped block must not donate its line number or metadata.
 
         The next valid header resets skip_block and rebinds the line
@@ -495,9 +483,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_malformed_block_does_not_pollute_cache(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_malformed_block_does_not_pollute_cache(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -521,9 +507,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_parses_second_block_after_content(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_parses_second_block_after_content(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -562,9 +546,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_tab_before_header_uses_line_zero(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_tab_before_header_uses_line_zero(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="\tprint('orphan')\n",
@@ -609,9 +591,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_header_orig_line_need_not_be_hex(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_header_orig_line_need_not_be_hex(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -648,9 +628,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_skips_blank_lines_before_content(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_skips_blank_lines_before_content(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -667,9 +645,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_does_not_cache_until_filename(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_does_not_cache_until_filename(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -712,9 +688,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_filename_without_sha_stays_unknown(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_filename_without_sha_stays_unknown(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="filename src/foo.py\n\tprint('hello')\n",
@@ -729,16 +703,10 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_metadata_before_header_uses_empty_defaults(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_metadata_before_header_uses_empty_defaults(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout=(
-                "author Alice\n"
-                "filename src/foo.py\n"
-                "\tprint('hello')\n"
-            ),
+            stdout=("author Alice\nfilename src/foo.py\n\tprint('hello')\n"),
         )
         result = git_blame("src/foo.py", Path("/repo"))
         assert result[0] == {
@@ -750,15 +718,11 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_header_without_author_stays_unknown(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_header_without_author_stays_unknown(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\n"
-                "filename src/foo.py\n"
-                "\tprint('hello')\n"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\nfilename src/foo.py\n\tprint('hello')\n"
             ),
         )
         result = git_blame("src/foo.py", Path("/repo"))
@@ -771,9 +735,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_split_once_keeps_spaces_in_time(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_split_once_keeps_spaces_in_time(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -790,9 +752,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_rsplit_would_drop_prefix_spaces(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_rsplit_would_drop_prefix_spaces(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -843,9 +803,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_break_on_content_drops_later_lines(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_break_on_content_drops_later_lines(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=self.DEDUP_PORCELAIN,
@@ -866,9 +824,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_missing_cache_fields_use_defaults(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_missing_cache_fields_use_defaults(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -885,15 +841,10 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_content_before_cache_uses_unknown(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_content_before_cache_uses_unknown(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout=(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\n"
-                "\tprint('hello')\n"
-            ),
+            stdout=("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 1 1\n\tprint('hello')\n"),
         )
         result = git_blame("src/foo.py", Path("/repo"))
         assert result[1] == {
@@ -923,9 +874,7 @@ class TestGitBlame:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1\n"
-                "filename src/foo.py\n"
-                "\tprint('hello')\n"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1\nfilename src/foo.py\n\tprint('hello')\n"
             ),
         )
         result = git_blame("src/foo.py", Path("/repo"))
@@ -949,9 +898,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_summary_prefix_is_eight_chars(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_summary_prefix_is_eight_chars(self, mock_which, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -1005,9 +952,7 @@ class TestGitBlame:
 
     @patch("code_forge.git.subprocess.run")
     @patch("code_forge.git.shutil.which", return_value="/usr/bin/git")
-    def test_git_blame_returns_empty_for_missing_file(
-        self, mock_which, mock_run
-    ):
+    def test_git_blame_returns_empty_for_missing_file(self, mock_which, mock_run):
         """File path that does not exist -> returns {} (non-zero exit)."""
         mock_run.return_value = MagicMock(
             returncode=128,
@@ -1047,9 +992,7 @@ class TestReadDiffBlob:
         mock_run.assert_not_called()
 
     @patch("code_forge.git.subprocess.run")
-    def test_uppercase_hex_is_rejected_by_the_charset_not_the_length(
-        self, mock_run
-    ):
+    def test_uppercase_hex_is_rejected_by_the_charset_not_the_length(self, mock_run):
         """Abbreviated OIDs are allowed; uppercase ones are not.
 
         The selector is a lowercase-only charset, so raising the length

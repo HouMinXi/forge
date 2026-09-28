@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Invalid subprocess arguments must not abort a review."""
+
 import sys
 
 import pytest
@@ -7,13 +8,18 @@ import pytest
 from code_forge.exec_falsify import ExecFalsifier, ExecStatus
 
 
-@pytest.mark.parametrize("command", [
-    ["bad\x00command"],
-    [sys.executable, "-c", "print('not executed')", "bad\x00argument"],
-])
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["bad\x00command"],
+        [sys.executable, "-c", "print('not executed')", "bad\x00argument"],
+    ],
+)
 def test_nul_command_returns_unavailable(tmp_path, command):
     evidence = ExecFalsifier(
-        manifest={"tier": "declared"}, timeout_seconds=2, command=command,
+        manifest={"tier": "declared"},
+        timeout_seconds=2,
+        command=command,
     ).run(tmp_path)
 
     assert evidence.status == ExecStatus.UNAVAILABLE
@@ -26,7 +32,8 @@ def test_nul_command_returns_unavailable(tmp_path, command):
 
 def test_valid_command_still_executes(tmp_path):
     evidence = ExecFalsifier(
-        manifest={"tier": "declared"}, timeout_seconds=2,
+        manifest={"tier": "declared"},
+        timeout_seconds=2,
         command=[sys.executable, "-c", "print('executed')"],
     ).run(tmp_path)
 

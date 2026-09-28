@@ -9,6 +9,7 @@ Covers:
 - Provenance question present in pass3-adversarial.md
 - gate-yaml-rce corpus entry has TRUST axis tag (regression guard)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,8 +38,7 @@ def _make_resolved(
     )
 
 
-def _make_sm(tmp_path, *, advisory_runners=None, git_diff=None,
-             source_files=None, resolved=None):
+def _make_sm(tmp_path, *, advisory_runners=None, git_diff=None, source_files=None, resolved=None):
     """Build a minimal StateMachine for integration tests."""
     if resolved is None:
         kw = {}
@@ -80,23 +80,18 @@ class TestDangerScoreWiredToL0:
     def test_danger_score_finds_gate_yaml_field(self, tmp_path):
         sm = _make_sm(tmp_path, git_diff=_GATE_YAML_DIFF)
         findings = sm._run_l0_phase()
-        danger = [
-            f for f in findings
-            if f.fingerprint.startswith("danger-score:")
-        ]
+        danger = [f for f in findings if f.fingerprint.startswith("danger-score:")]
         assert len(danger) >= 1
         assert danger[0].source == "L0"
         from code_forge.disposition import Disposition
+
         assert danger[0].disposition == Disposition.CONFIRMED
 
     def test_danger_score_in_full_round(self, tmp_path):
         """danger-score findings appear in state after _execute_round."""
         sm = _make_sm(tmp_path, git_diff=_GATE_YAML_DIFF)
         sm._execute_round(0)
-        danger = [
-            f for f in sm._state.findings
-            if f.fingerprint.startswith("danger-score:")
-        ]
+        danger = [f for f in sm._state.findings if f.fingerprint.startswith("danger-score:")]
         assert len(danger) >= 1
 
 
@@ -107,10 +102,7 @@ class TestDangerScoreNonGit:
         resolved = _make_resolved(git_diff=None)
         sm = _make_sm(tmp_path, resolved=resolved)
         sm._run_l0_phase()
-        matching = [
-            e for e in sm._state.infra_errors
-            if "Danger-score requires a diff" in e
-        ]
+        matching = [e for e in sm._state.infra_errors if "Danger-score requires a diff" in e]
         assert len(matching) == 1
         assert "skipping in non-git mode" in matching[0]
 
@@ -128,10 +120,7 @@ class TestTaintRunnerWiredAsAdvisory:
         )
         with patch("shutil.which", return_value=None):
             sm._run_advisory_axes()
-        matching = [
-            e for e in sm._state.infra_errors
-            if "Taint gate requires semgrep" in e
-        ]
+        matching = [e for e in sm._state.infra_errors if "Taint gate requires semgrep" in e]
         assert len(matching) >= 1
 
 
@@ -171,13 +160,18 @@ class TestProvenanceQuestion:
         test_dir = str(Path(__file__).resolve().parent)
         toplevel = _sp.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             cwd=test_dir,
         ).stdout.strip()
         adversarial_path = (
             Path(toplevel)
-            / "src" / "code_forge" / "skills" / "code-forge"
-            / "passes" / "pass3-adversarial.md"
+            / "src"
+            / "code_forge"
+            / "skills"
+            / "code-forge"
+            / "passes"
+            / "pass3-adversarial.md"
         )
         content = adversarial_path.read_text()
         assert "### External input provenance" in content
@@ -193,10 +187,7 @@ class TestCorpusRegressionGuard:
     def test_gate_yaml_rce_has_trust_tag(self):
         import yaml
 
-        corpus_path = (
-            Path(__file__).resolve().parent
-            / "eval" / "corpus" / "corpus.yaml"
-        )
+        corpus_path = Path(__file__).resolve().parent / "eval" / "corpus" / "corpus.yaml"
         with open(corpus_path) as fh:
             data = yaml.safe_load(fh)
         entries = data.get("entries", [])

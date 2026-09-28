@@ -11,6 +11,7 @@ path names the cause in f.error and state.infra_errors.
 Clean-round behaviour is unchanged: the finding is still UNCERTAIN and
 clause d (machine.py:1248-1251) still resets. This task is attribution.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -25,19 +26,26 @@ from code_forge.state import StateFinding
 
 def _finding() -> StateFinding:
     return StateFinding(
-        id="f1", fingerprint="fp-1", source="L1",
+        id="f1",
+        fingerprint="fp-1",
+        source="L1",
         disposition=Disposition.CONFIRMED,
-        file="a.py", line_range=[1, 2], description="off by one",
+        file="a.py",
+        line_range=[1, 2],
+        description="off by one",
     )
 
 
-@pytest.mark.parametrize("content", [
-    "not json",
-    {"reasoning": "no verdict key"},
-    {"verdict": None, "reasoning": "x"},
-    {"verdict": "MAYBE", "reasoning": "x"},
-    {"verdict": " CONFIRMED ", "reasoning": "x"},
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not json",
+        {"reasoning": "no verdict key"},
+        {"verdict": None, "reasoning": "x"},
+        {"verdict": "MAYBE", "reasoning": "x"},
+        {"verdict": " CONFIRMED ", "reasoning": "x"},
+    ],
+)
 def test_malformed_response_raises_protocol_error(content):
     with patch("code_forge.falsify_real.llm_invoke") as inv:
         inv.return_value = LLMResult(content=content)
@@ -48,10 +56,8 @@ def test_malformed_response_raises_protocol_error(content):
 
 def test_valid_verdict_still_returns_disposition():
     with patch("code_forge.falsify_real.llm_invoke") as inv:
-        inv.return_value = LLMResult(
-            content={"verdict": "DISMISSED", "reasoning": "x"})
-        assert RealFalsifier(backend=MagicMock()).falsify(_finding()) \
-            == Disposition.DISMISSED
+        inv.return_value = LLMResult(content={"verdict": "DISMISSED", "reasoning": "x"})
+        assert RealFalsifier(backend=MagicMock()).falsify(_finding()) == Disposition.DISMISSED
 
 
 def test_fixed_is_a_protocol_error_not_a_crash(tmp_path):
@@ -60,20 +66,19 @@ def test_fixed_is_a_protocol_error_not_a_crash(tmp_path):
     re-raising except Exception and aborts the review. It is the same
     class of violation as an unknown verdict and gets the same arm."""
     with patch("code_forge.falsify_real.llm_invoke") as inv:
-        inv.return_value = LLMResult(
-            content={"verdict": "FIXED", "reasoning": "x"})
+        inv.return_value = LLMResult(content={"verdict": "FIXED", "reasoning": "x"})
         with pytest.raises(FalsifyProtocolError, match="only verify"):
             RealFalsifier(backend=MagicMock()).falsify(_finding())
 
     from tests.test_runtime_machine import _make_sm
+
     sm = _make_sm(tmp_path)
     sm.falsifier = RealFalsifier(backend=MagicMock())
     f = _finding()
     sm.l1_provider = lambda: ([f], [], Usage(), 0.0)
     with patch("code_forge.falsify_real.llm_invoke") as inv:
-        inv.return_value = LLMResult(
-            content={"verdict": "FIXED", "reasoning": "x"})
-        sm._run_l1_phase()          # must not raise
+        inv.return_value = LLMResult(content={"verdict": "FIXED", "reasoning": "x"})
+        sm._run_l1_phase()  # must not raise
     assert f.disposition == Disposition.UNCERTAIN
     assert f.error.startswith("falsify() protocol violation:")
 

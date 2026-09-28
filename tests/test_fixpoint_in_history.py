@@ -12,6 +12,7 @@ After this change every round_history entry carries `fixpoint`
 (CLEAN / RESET / CYCLE_RESTART) and `clean_rounds_after`, and the
 state file is persisted again once the fixpoint has been applied.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,9 +24,16 @@ from tests.test_runtime_machine import _make_sm
 
 
 def _F(fp: str, d: Disposition) -> StateFinding:
-    return StateFinding(id=fp, fingerprint=fp, source="L1", disposition=d,
-                        file="a.py", line_range=[1, 1], description=fp,
-                        excerpt="value = 1\n")
+    return StateFinding(
+        id=fp,
+        fingerprint=fp,
+        source="L1",
+        disposition=d,
+        file="a.py",
+        line_range=[1, 1],
+        description=fp,
+        excerpt="value = 1\n",
+    )
 
 
 class _Keep:
@@ -42,6 +50,7 @@ def _sm_with_sequence(tmp_path, seq, threshold=3, cap=8):
         k = i["n"]
         i["n"] += 1
         return (seq[k] if k < len(seq) else [], [], Usage(), 0.0)
+
     sm.l1_provider = l1
     sm.clean_round_threshold = threshold
     sm.max_total_rounds = cap
@@ -76,6 +85,7 @@ def test_state_file_carries_current_round_counter(tmp_path):
         seen.append((round_index, d["consecutive_clean_rounds"]))
         if orig_hook:
             orig_hook(round_index)
+
     sm.post_round_hook = hook
     sm.run()
     # post_round_hook fires from _execute_round, i.e. before the
@@ -103,6 +113,7 @@ def test_persist_happens_right_after_fixpoint(tmp_path):
         h = sm._state.round_history
         log.append((h[-1]["round"], "fixpoint" in h[-1]) if h else (None, False))
         orig()
+
     sm._persist_state = spy
     sm.run()
     with_fp = {r for r, has in log if has}

@@ -29,13 +29,13 @@ class TestParserDefaults:
     def test_review_subcommand_explicit(self):
         """Explicit 'forge review' sets subcommand='review'."""
         parser = _build_parser()
-        args = parser.parse_args(['review'])
-        assert args.subcommand == 'review'
+        args = parser.parse_args(["review"])
+        assert args.subcommand == "review"
 
     def test_review_subcommand_defaults(self):
         """Review subcommand defaults match old forge defaults."""
         parser = _build_parser()
-        args = parser.parse_args(['review'])
+        args = parser.parse_args(["review"])
         assert args.mode is None
         assert args.falsification_engine is None
         assert args.sandbox is False
@@ -54,19 +54,29 @@ class TestParserAllFlags:
     def test_all_flags_set(self):
         """All review flags populated."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "review",  # explicit subcommand
-            "--mode", "ci",
-            "--falsification-engine", "stub",
-            "--sandbox",
-            "--baseline", "abc123",
-            "--head", "WORKING",
-            "--registry", "custom.yaml",
-            "--max-total-rounds", "50",
-            "--max-fix-attempts", "10",
-            "--quiet",
-            "a.py", "b.py",
-        ])
+        args = parser.parse_args(
+            [
+                "review",  # explicit subcommand
+                "--mode",
+                "ci",
+                "--falsification-engine",
+                "stub",
+                "--sandbox",
+                "--baseline",
+                "abc123",
+                "--head",
+                "WORKING",
+                "--registry",
+                "custom.yaml",
+                "--max-total-rounds",
+                "50",
+                "--max-fix-attempts",
+                "10",
+                "--quiet",
+                "a.py",
+                "b.py",
+            ]
+        )
         assert args.subcommand == "review"
         assert args.mode == "ci"
         assert args.falsification_engine == "stub"
@@ -82,12 +92,10 @@ class TestParserAllFlags:
     def test_review_flags_preserved(self):
         """Review subcommand preserves all existing flags."""
         parser = _build_parser()
-        args = parser.parse_args([
-            'review', '--mode', 'local', '--baseline', 'HEAD'
-        ])
-        assert args.subcommand == 'review'
-        assert args.mode == 'local'
-        assert args.baseline == 'HEAD'
+        args = parser.parse_args(["review", "--mode", "local", "--baseline", "HEAD"])
+        assert args.subcommand == "review"
+        assert args.mode == "local"
+        assert args.baseline == "HEAD"
 
 
 class TestParserInvalidChoices:
@@ -104,9 +112,7 @@ class TestParserInvalidChoices:
         """--falsification-engine invalid -> exit 2."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
-            parser.parse_args([
-                "review", "--falsification-engine", "invalid"
-            ])
+            parser.parse_args(["review", "--falsification-engine", "invalid"])
         assert exc_info.value.code == 2
 
 
@@ -147,36 +153,36 @@ class TestSubcommands:
     def test_gate_check_subcommand(self):
         """gate-check subcommand parses correctly."""
         parser = _build_parser()
-        args = parser.parse_args(['gate-check'])
-        assert args.subcommand == 'gate-check'
+        args = parser.parse_args(["gate-check"])
+        assert args.subcommand == "gate-check"
         assert args.quiet is False
 
     def test_gate_check_quiet(self):
         """gate-check --quiet flag."""
         parser = _build_parser()
-        args = parser.parse_args(['gate-check', '--quiet'])
-        assert args.subcommand == 'gate-check'
+        args = parser.parse_args(["gate-check", "--quiet"])
+        assert args.subcommand == "gate-check"
         assert args.quiet is True
 
     def test_install_hooks_subcommand(self):
         """install-hooks subcommand parses correctly."""
         parser = _build_parser()
-        args = parser.parse_args(['install-hooks'])
-        assert args.subcommand == 'install-hooks'
+        args = parser.parse_args(["install-hooks"])
+        assert args.subcommand == "install-hooks"
         assert args.quiet is False
 
     def test_install_hooks_quiet(self):
         """install-hooks --quiet flag."""
         parser = _build_parser()
-        args = parser.parse_args(['install-hooks', '--quiet'])
-        assert args.subcommand == 'install-hooks'
+        args = parser.parse_args(["install-hooks", "--quiet"])
+        assert args.subcommand == "install-hooks"
         assert args.quiet is True
 
     def test_mutation_check_subcommand(self):
         """mutation-check subcommand parses correctly."""
         parser = _build_parser()
-        args = parser.parse_args(['mutation-check'])
-        assert args.subcommand == 'mutation-check'
+        args = parser.parse_args(["mutation-check"])
+        assert args.subcommand == "mutation-check"
         assert args.diff is None
         assert args.timeout == 600
         assert args.paths is None
@@ -184,8 +190,8 @@ class TestSubcommands:
     def test_e2e_check_subcommand(self):
         """e2e-check subcommand parses correctly."""
         parser = _build_parser()
-        args = parser.parse_args(['e2e-check'])
-        assert args.subcommand == 'e2e-check'
+        args = parser.parse_args(["e2e-check"])
+        assert args.subcommand == "e2e-check"
         assert args.diff is None
         assert args.repo_root is None
 
@@ -193,14 +199,11 @@ class TestSubcommands:
         """All 5 subcommands appear in top-level --help."""
         parser = _build_parser()
         with pytest.raises(SystemExit) as exc_info:
-            parser.parse_args(['--help'])
+            parser.parse_args(["--help"])
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        for cmd in ('review', 'gate-check', 'mutation-check',
-                    'e2e-check', 'install-hooks'):
-            assert cmd in captured.out, (
-                "Expected %r in --help output" % cmd
-            )
+        for cmd in ("review", "gate-check", "mutation-check", "e2e-check", "install-hooks"):
+            assert cmd in captured.out, "Expected %r in --help output" % cmd
 
 
 class TestOutletAndCommittedFlags:
@@ -209,50 +212,50 @@ class TestOutletAndCommittedFlags:
     def test_outlet_flag_default(self):
         """--outlet not specified -> None."""
         parser = _build_parser()
-        args = parser.parse_args(['review'])
+        args = parser.parse_args(["review"])
         assert args.outlet is None
 
     def test_outlet_flag_subprocess(self):
         """--outlet subprocess -> 'subprocess' (canonical value)."""
         parser = _build_parser()
-        args = parser.parse_args(['review', '--outlet', 'subprocess'])
-        assert args.outlet == 'subprocess'
+        args = parser.parse_args(["review", "--outlet", "subprocess"])
+        assert args.outlet == "subprocess"
 
     def test_outlet_flag_cli(self):
         """--outlet cli -> 'cli' (deprecated alias; argparse accepts it)."""
         parser = _build_parser()
-        args = parser.parse_args(['review', '--outlet', 'cli'])
-        assert args.outlet == 'cli'
+        args = parser.parse_args(["review", "--outlet", "cli"])
+        assert args.outlet == "cli"
 
     def test_outlet_flag_inline(self):
         """--outlet inline -> 'inline'."""
         parser = _build_parser()
-        args = parser.parse_args(['review', '--outlet', 'inline'])
-        assert args.outlet == 'inline'
+        args = parser.parse_args(["review", "--outlet", "inline"])
+        assert args.outlet == "inline"
 
     def test_outlet_flag_invalid_rejected(self):
         """--outlet invalid raises SystemExit (argparse validation)."""
         parser = _build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args(['review', '--outlet', 'invalid'])
+            parser.parse_args(["review", "--outlet", "invalid"])
 
     def test_committed_flag_default(self):
         """--committed not specified -> False."""
         parser = _build_parser()
-        args = parser.parse_args(['review'])
+        args = parser.parse_args(["review"])
         assert args.committed is False
 
     def test_committed_flag_set(self):
         """--committed specified -> True."""
         parser = _build_parser()
-        args = parser.parse_args(['review', '--committed'])
+        args = parser.parse_args(["review", "--committed"])
         assert args.committed is True
 
     def test_outlet_and_committed_together(self):
         """--outlet and --committed can be used together (parser allows)."""
         parser = _build_parser()
-        args = parser.parse_args(['review', '--outlet', 'cli', '--committed'])
-        assert args.outlet == 'cli'
+        args = parser.parse_args(["review", "--outlet", "cli", "--committed"])
+        assert args.outlet == "cli"
         assert args.committed is True
 
     def test_committed_rejects_baseline_at_runtime(self, tmp_path):
@@ -260,8 +263,11 @@ class TestOutletAndCommittedFlags:
         from code_forge.cli import _build_baseline_specs
         from code_forge.errors import CliError
         import argparse
+
         args = argparse.Namespace(
-            committed=True, baseline="HEAD~2", head=None,
+            committed=True,
+            baseline="HEAD~2",
+            head=None,
         )
         with pytest.raises(CliError, match="--committed cannot be combined with --baseline"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -271,8 +277,11 @@ class TestOutletAndCommittedFlags:
         from code_forge.cli import _build_baseline_specs
         from code_forge.errors import CliError
         import argparse
+
         args = argparse.Namespace(
-            committed=True, baseline=None, head="HEAD",
+            committed=True,
+            baseline=None,
+            head="HEAD",
         )
         with pytest.raises(CliError, match="--committed cannot be combined with --head"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -295,9 +304,13 @@ class TestWholeFileFlag:
         from code_forge.baseline import EmptyBaseline
         from code_forge.cli import _build_baseline_specs
         import argparse
+
         args = argparse.Namespace(
-            whole_file=["some/file.py"], baseline=None,
-            head=None, committed=False, paths=[],
+            whole_file=["some/file.py"],
+            baseline=None,
+            head=None,
+            committed=False,
+            paths=[],
         )
         baseline, head = _build_baseline_specs(args, cwd=tmp_path)
         assert isinstance(baseline, EmptyBaseline)
@@ -309,13 +322,18 @@ class TestWholeFileFlag:
         from code_forge.cli import _build_baseline_specs
         import argparse
         import subprocess
+
         subprocess.run(
             ["git", "init", str(tmp_path)],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         args = argparse.Namespace(
-            whole_file=["some/file.py"], baseline=None,
-            head=None, committed=False, paths=[],
+            whole_file=["some/file.py"],
+            baseline=None,
+            head=None,
+            committed=False,
+            paths=[],
         )
         baseline, head = _build_baseline_specs(args, cwd=tmp_path)
         assert isinstance(baseline, EmptyBaseline)
@@ -327,9 +345,13 @@ class TestWholeFileFlag:
         from code_forge.cli import _build_baseline_specs
         from code_forge.errors import CliError
         import argparse
+
         args = argparse.Namespace(
-            whole_file=["f.py"], baseline="HEAD",
-            head=None, committed=False, paths=[],
+            whole_file=["f.py"],
+            baseline="HEAD",
+            head=None,
+            committed=False,
+            paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --baseline"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -339,9 +361,13 @@ class TestWholeFileFlag:
         from code_forge.cli import _build_baseline_specs
         from code_forge.errors import CliError
         import argparse
+
         args = argparse.Namespace(
-            whole_file=["f.py"], baseline=None,
-            head=None, committed=True, paths=[],
+            whole_file=["f.py"],
+            baseline=None,
+            head=None,
+            committed=True,
+            paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --committed"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -351,9 +377,13 @@ class TestWholeFileFlag:
         from code_forge.cli import _build_baseline_specs
         from code_forge.errors import CliError
         import argparse
+
         args = argparse.Namespace(
-            whole_file=["f.py"], baseline=None,
-            head="HEAD", committed=False, paths=[],
+            whole_file=["f.py"],
+            baseline=None,
+            head="HEAD",
+            committed=False,
+            paths=[],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with --head"):
             _build_baseline_specs(args, cwd=tmp_path)
@@ -363,11 +393,13 @@ class TestWholeFileFlag:
         from code_forge.cli import _build_baseline_specs
         from code_forge.errors import CliError
         import argparse
+
         args = argparse.Namespace(
-            whole_file=["f.py"], baseline=None,
-            head=None, committed=False,            paths=["other.py"],
+            whole_file=["f.py"],
+            baseline=None,
+            head=None,
+            committed=False,
+            paths=["other.py"],
         )
         with pytest.raises(CliError, match="--whole-file cannot be combined with positional paths"):
             _build_baseline_specs(args, cwd=tmp_path)
-
-

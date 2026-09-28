@@ -8,6 +8,7 @@ Covers:
 - Advisory findings display after separator on stderr
 - advisory_runners injection point on StateMachine dataclass
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -75,14 +76,16 @@ class TestAdvisoryFixpointIsolation:
     def test_advisory_does_not_block_fixpoint(self, tmp_path):
         sm = _make_sm(tmp_path)
         # Manually add an advisory finding
-        sm._advisories.append(AdvisoryFinding(
-            id="adv-1",
-            axis="TEST",
-            file="test.py",
-            line_range=[1, 10],
-            description="test advisory",
-            attribution="test",
-        ))
+        sm._advisories.append(
+            AdvisoryFinding(
+                id="adv-1",
+                axis="TEST",
+                file="test.py",
+                line_range=[1, 10],
+                description="test advisory",
+                attribution="test",
+            )
+        )
         # _fixpoint_reached should still return True (no blocking findings)
         assert sm._fixpoint_reached() == _FixpointResult.CLEAN
 

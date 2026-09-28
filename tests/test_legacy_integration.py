@@ -8,6 +8,7 @@ Covers:
 - is_advisory property
 - Real default l0_runner e2e path (ruff + git blame on a temp repo)
 """
+
 from __future__ import annotations
 
 import shutil
@@ -101,14 +102,14 @@ class TestLegacyRunnerWired:
         sm.run()
 
         legacy_advisories = [
-            a for a in sm._advisories
+            a
+            for a in sm._advisories
             if a.axis == "legacy"
             and a.id.startswith("legacy:")
             and not a.id.startswith("legacy-skipped")
         ]
         assert len(legacy_advisories) >= 1, (
-            "Expected at least one legacy advisory finding, got %d"
-            % len(legacy_advisories)
+            "Expected at least one legacy advisory finding, got %d" % len(legacy_advisories)
         )
 
     def test_advisory_isolation(self, tmp_path):
@@ -116,15 +117,10 @@ class TestLegacyRunnerWired:
         sm = _make_sm(tmp_path)
         sm.run()
 
-        legacy_ids = {
-            a.id for a in sm._advisories
-            if a.axis == "legacy"
-        }
+        legacy_ids = {a.id for a in sm._advisories if a.axis == "legacy"}
         blocking_ids = {f.id for f in sm._state.findings}
         leaked = legacy_ids & blocking_ids
-        assert not leaked, (
-            "Legacy advisory IDs leaked into blocking findings: %s" % leaked
-        )
+        assert not leaked, "Legacy advisory IDs leaked into blocking findings: %s" % leaked
 
 
 class TestRegistryInjection:
@@ -136,8 +132,7 @@ class TestRegistryInjection:
         sm = _make_sm(tmp_path, legacy_runner=legacy_runner)
         sm._run_advisory_axes()
         assert legacy_runner.registry is not None, (
-            "registry was not injected into LegacyRunner by "
-            "_run_advisory_axes"
+            "registry was not injected into LegacyRunner by _run_advisory_axes"
         )
 
     def test_integration_stub_registry_prevents_real_tools(self, tmp_path):
@@ -178,39 +173,39 @@ class TestRealDefaultL0Runner:
         # Create a Python file with an unused import (ruff F401).
         py_file = repo / "example.py"
         py_file.write_text(
-            "import os\n"
-            "\n"
-            "def hello():\n"
-            "    return 'world'\n"
-            "\n"
-            "x = 1\n",
+            "import os\n\ndef hello():\n    return 'world'\n\nx = 1\n",
             encoding="utf-8",
         )
 
         # Initialize git repo and commit.
         subprocess.run(
             ["git", "init"],
-            cwd=str(repo), check=True,
+            cwd=str(repo),
+            check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=str(repo), check=True,
+            cwd=str(repo),
+            check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test User"],
-            cwd=str(repo), check=True,
+            cwd=str(repo),
+            check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "add", "example.py"],
-            cwd=str(repo), check=True,
+            cwd=str(repo),
+            check=True,
             capture_output=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "initial commit"],
-            cwd=str(repo), check=True,
+            cwd=str(repo),
+            check=True,
             capture_output=True,
         )
 
@@ -247,9 +242,7 @@ class TestRealDefaultL0Runner:
         advisories = runner.run(diff_text, repo)
 
         # (1) At least one AdvisoryFinding with axis=="legacy".
-        legacy_advisories = [
-            a for a in advisories if a.axis == "legacy"
-        ]
+        legacy_advisories = [a for a in advisories if a.axis == "legacy"]
         assert len(legacy_advisories) >= 1, (
             "Expected at least one legacy advisory, got %d. "
             "advisories=%r" % (len(legacy_advisories), advisories)
@@ -257,17 +250,13 @@ class TestRealDefaultL0Runner:
 
         # (2) At least one advisory has REAL blame attribution.
         has_real_blame = any(
-            a.attribution != "git-blame: unavailable"
-            and a.attribution.startswith("git-blame:")
+            a.attribution != "git-blame: unavailable" and a.attribution.startswith("git-blame:")
             for a in legacy_advisories
         )
         assert has_real_blame, (
             "Expected at least one advisory with real git-blame "
-            "attribution (not 'unavailable'). Got: %s"
-            % [a.attribution for a in legacy_advisories]
+            "attribution (not 'unavailable'). Got: %s" % [a.attribution for a in legacy_advisories]
         )
 
         # (3) No infra_errors.
-        assert runner.infra_errors == [], (
-            "infra_errors should be empty: %s" % runner.infra_errors
-        )
+        assert runner.infra_errors == [], "infra_errors should be empty: %s" % runner.infra_errors

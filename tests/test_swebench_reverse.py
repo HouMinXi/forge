@@ -23,29 +23,14 @@ class TestHeaderOrder:
     """
 
     def test_minus_header_precedes_plus_header(self):
-        fix = (
-            "diff --git a/f.py b/f.py\n"
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -1,3 +1,3 @@\n"
-            " ctx\n"
-            "-old\n"
-            "+new\n"
-        )
+        fix = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n"
         out = reverse_patch(fix).split("\n")
         minus = next(i for i, t in enumerate(out) if t.startswith("--- "))
         plus = next(i for i, t in enumerate(out) if t.startswith("+++ "))
         assert minus < plus
 
     def test_header_paths_swap_sides(self):
-        fix = (
-            "diff --git a/f.py b/f.py\n"
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -1,1 +1,1 @@\n"
-            "-old\n"
-            "+new\n"
-        )
+        fix = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,1 +1,1 @@\n-old\n+new\n"
         out = reverse_patch(fix)
         assert "--- a/f.py" in out
         assert "+++ b/f.py" in out
@@ -59,27 +44,13 @@ class TestPrefixCollision:
     """
 
     def test_headers_survive_the_prefix_swap(self):
-        fix = (
-            "diff --git a/f.py b/f.py\n"
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -1,1 +1,1 @@\n"
-            "-old\n"
-            "+new\n"
-        )
+        fix = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,1 +1,1 @@\n-old\n+new\n"
         out = reverse_patch(fix)
         assert "-++" not in out
         assert "+--" not in out
 
     def test_body_lines_do_swap(self):
-        fix = (
-            "diff --git a/f.py b/f.py\n"
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -1,1 +1,1 @@\n"
-            "-buggy\n"
-            "+fixed\n"
-        )
+        fix = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,1 +1,1 @@\n-buggy\n+fixed\n"
         out = reverse_patch(fix).split("\n")
         assert "+buggy" in out
         assert "-fixed" in out
@@ -93,14 +64,7 @@ class TestHunkArithmetic:
     """
 
     def test_hunk_sides_swap(self):
-        fix = (
-            "diff --git a/f.py b/f.py\n"
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -10,5 +20,7 @@\n"
-            "-old\n"
-            "+new\n"
-        )
+        fix = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -10,5 +20,7 @@\n-old\n+new\n"
         assert "@@ -20,7 +10,5 @@" in reverse_patch(fix)
 
     def test_function_context_preserved(self):
@@ -116,14 +80,7 @@ class TestHunkArithmetic:
 
     def test_single_line_hunk_without_count(self):
         # git omits ',1' for one-line ranges: '@@ -5 +5 @@'.
-        fix = (
-            "diff --git a/f.py b/f.py\n"
-            "--- a/f.py\n"
-            "+++ b/f.py\n"
-            "@@ -5 +7 @@\n"
-            "-old\n"
-            "+new\n"
-        )
+        fix = "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -5 +7 @@\n-old\n+new\n"
         assert "@@ -7 +5 @@" in reverse_patch(fix)
 
 
@@ -197,11 +154,7 @@ class TestRoundTrip:
     @pytest.mark.parametrize(
         "fix",
         [
-            (
-                "diff --git a/f.py b/f.py\n"
-                "--- a/f.py\n+++ b/f.py\n"
-                "@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n"
-            ),
+            ("diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n"),
             (
                 "diff --git a/new.py b/new.py\n"
                 "new file mode 100644\n"

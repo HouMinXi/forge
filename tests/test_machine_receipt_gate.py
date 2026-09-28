@@ -103,25 +103,25 @@ DIFF_INDENT = (
     "+    const value = 2;\n"
     "+    const end = 3;\n"
 )
-CONTENT_INDENT = (
-    "    const context = 1;\n"
-    "    const value = 2;\n"
-    "    const end = 3;\n"
-)
-CONTENT_INDENT_STRIPPED = (
-    "const context = 1;\n"
-    "const value = 2;\n"
-    "const end = 3;\n"
-)
+CONTENT_INDENT = "    const context = 1;\n    const value = 2;\n    const end = 3;\n"
+CONTENT_INDENT_STRIPPED = "const context = 1;\nconst value = 2;\nconst end = 3;\n"
 
 NO_PASS = object()
 
 
 def _payload(name: str) -> dict:
-    base = {"findings": [], "code_excerpts": [{
-        "file": "control.ts", "start_line": 1, "end_line": 3,
-        "content": CONTENT, "pass_name": "adversarial",
-    }]}
+    base = {
+        "findings": [],
+        "code_excerpts": [
+            {
+                "file": "control.ts",
+                "start_line": 1,
+                "end_line": 3,
+                "content": CONTENT,
+                "pass_name": "adversarial",
+            }
+        ],
+    }
     if name == "valid":
         return base
     if name == "nonblank_tail":
@@ -131,13 +131,14 @@ def _payload(name: str) -> dict:
     if name == "minus_two":
         v = copy.deepcopy(base)
         v["code_excerpts"][0].update(
-            content="\n".join(CONTENT_10.splitlines()[:8]), start_line=3, end_line=10,
+            content="\n".join(CONTENT_10.splitlines()[:8]),
+            start_line=3,
+            end_line=10,
         )
         return v
     if name == "wrong_literal":
         v = copy.deepcopy(base)
-        v["code_excerpts"][0]["content"] = CONTENT.replace(
-            "value = 2;", "value = 20;")
+        v["code_excerpts"][0]["content"] = CONTENT.replace("value = 2;", "value = 20;")
         return v
     if name == "short_content":
         v = copy.deepcopy(base)
@@ -146,10 +147,14 @@ def _payload(name: str) -> dict:
     if name == "finding_short_content":
         v = copy.deepcopy(base)
         v["code_excerpts"][0]["content"] = "const context = 1;\n"
-        v["findings"] = [{
-            "file": "control.ts", "line": 2, "severity": "P1",
-            "description": "DIAGNOSTIC_CANDIDATE_MUST_SURVIVE",
-        }]
+        v["findings"] = [
+            {
+                "file": "control.ts",
+                "line": 2,
+                "severity": "P1",
+                "description": "DIAGNOSTIC_CANDIDATE_MUST_SURVIVE",
+            }
+        ]
         return v
     if name == "sparse_coverage":
         # One-hunk 10-line diff, quote only line 1: coverage 1/10 < 60%.
@@ -158,10 +163,14 @@ def _payload(name: str) -> dict:
         v["code_excerpts"][0]["content"] = "const value1 = 1;\n"
         v["code_excerpts"][0]["start_line"] = 1
         v["code_excerpts"][0]["end_line"] = 1
-        v["findings"] = [{
-            "file": "control.ts", "line": 1, "severity": "P1",
-            "description": "COVERAGE_FLOOR_MUST_HOLD",
-        }]
+        v["findings"] = [
+            {
+                "file": "control.ts",
+                "line": 1,
+                "severity": "P1",
+                "description": "COVERAGE_FLOOR_MUST_HOLD",
+            }
+        ]
         return v
     if name == "missing_hunk_witness":
         # Two-hunk 6+4 diff, quote all of hunk 1 (coverage exactly 60%),
@@ -203,16 +212,16 @@ def _payload(name: str) -> dict:
         return v
     if name == "indent_plus_token":
         v = copy.deepcopy(base)
-        v["code_excerpts"][0]["content"] = CONTENT_INDENT_STRIPPED.replace(
-            "end = 3", "end = 30")
+        v["code_excerpts"][0]["content"] = CONTENT_INDENT_STRIPPED.replace("end = 3", "end = 30")
         v["code_excerpts"][0]["start_line"] = 1
         v["code_excerpts"][0]["end_line"] = 3
         return v
     raise KeyError(name)
 
 
-def _run(mode: Mode, payload_name: str, tmp_path: Path,
-         writer_oserror: bool = False, diff: str | None = None):
+def _run(
+    mode: Mode, payload_name: str, tmp_path: Path, writer_oserror: bool = False, diff: str | None = None
+):
     if diff is None:
         diff = DIFF_10B if payload_name == "missing_hunk_witness" else DIFF
     cwd = tmp_path
@@ -226,11 +235,10 @@ def _run(mode: Mode, payload_name: str, tmp_path: Path,
     state_dir = cwd / ".code-forge"
     state_dir.mkdir()
     (state_dir / "gate.yaml").write_text(
-        "test:\n  command: [\"true\"]\nverify:\n  required_cycles: %d\n"
-        % (3 if mode == Mode.LOCAL else 1))
+        'test:\n  command: ["true"]\nverify:\n  required_cycles: %d\n' % (3 if mode == Mode.LOCAL else 1)
+    )
     if writer_oserror:
-        (state_dir / "receipts").write_text(
-            "Deliberate fixture: not a directory.\n")
+        (state_dir / "receipts").write_text("Deliberate fixture: not a directory.\n")
     resolved = ResolvedReview([Path("control.ts")], None, diff, "git")
     sha = compute_source_hash(git_diff=diff)
     payload = _payload(payload_name)
@@ -242,27 +250,31 @@ def _run(mode: Mode, payload_name: str, tmp_path: Path,
 
     from unittest.mock import patch
 
-    with patch("code_forge.llm_invoke.llm_invoke",
-               side_effect=fake_transport):
-        provider = build_l1_provider(
-            "auto", resolved, backend=None, max_attempts=1)
+    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
+        provider = build_l1_provider("auto", resolved, backend=None, max_attempts=1)
     machine = StateMachine(
-        mode=mode, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
-        revert_fn=lambda f: None, resolved_review=resolved,
-        source_hash=sha, baseline_spec_repr="receipt gate test",
-        cwd=cwd, registry={}, l0_runner=lambda *a: ([], []),
-        l1_provider=provider, l2_runner=lambda *a, **kw: ([], []),
-        max_total_rounds=3, clean_round_threshold=3,
+        mode=mode,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda f: None,
+        resolved_review=resolved,
+        source_hash=sha,
+        baseline_spec_repr="receipt gate test",
+        cwd=cwd,
+        registry={},
+        l0_runner=lambda *a: ([], []),
+        l1_provider=provider,
+        l2_runner=lambda *a, **kw: ([], []),
+        max_total_rounds=3,
+        clean_round_threshold=3,
     )
-    with patch("code_forge.llm_invoke.llm_invoke",
-               side_effect=fake_transport):
+    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
         try:
             returned = machine.run().value
         except Exception:  # noqa: BLE001 -- current bug escapes; gate must not
             returned = NO_PASS
     state_path = state_dir / "state.json"
-    disk = (json.loads(state_path.read_text())
-            if state_path.exists() else None)
+    disk = json.loads(state_path.read_text()) if state_path.exists() else None
     return {
         "returned": returned,
         "memory_verdict": machine._state.verdict.value,
@@ -270,12 +282,12 @@ def _run(mode: Mode, payload_name: str, tmp_path: Path,
         "clean_rounds": machine._state.consecutive_clean_rounds,
         "disk_verdict": disk.get("verdict") if disk else None,
         "disk_infra_errors": disk.get("infra_errors") if disk else None,
-        "receipt_count": len(list((state_dir / "receipts").glob(
-            "receipt-*.json"))) if (state_dir / "receipts").is_dir() else 0,
+        "receipt_count": len(list((state_dir / "receipts").glob("receipt-*.json")))
+        if (state_dir / "receipts").is_dir()
+        else 0,
         "transport_calls": len(calls),
         "findings": [
-            {"source": f.source, "description": f.description,
-             "disposition": f.disposition.value}
+            {"source": f.source, "description": f.description, "disposition": f.disposition.value}
             for f in machine._state.findings
         ],
     }
@@ -293,8 +305,7 @@ def test_wrong_literal_never_passes(mode, tmp_path):
     res = _run(mode, "wrong_literal", tmp_path)
     _assert_non_pass(res)
     # The gate must flag invalid evidence, not just fail on a finding.
-    assert any("receipt" in d or "excerpt" in d
-               for d in res["disk_infra_errors"] or [])
+    assert any("receipt" in d or "excerpt" in d for d in res["disk_infra_errors"] or [])
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
@@ -329,10 +340,7 @@ def test_candidate_survives_invalid_excerpt_as_untrusted(mode, tmp_path):
     """A valid-shaped candidate must survive an invalid excerpt, untrusted."""
     res = _run(mode, "finding_short_content", tmp_path)
     _assert_non_pass(res)
-    hits = [
-        f for f in res["findings"]
-        if "DIAGNOSTIC_CANDIDATE_MUST_SURVIVE" in f["description"]
-    ]
+    hits = [f for f in res["findings"] if "DIAGNOSTIC_CANDIDATE_MUST_SURVIVE" in f["description"]]
     assert len(hits) >= 1, res["findings"]
     assert hits[0]["source"] == "UNTRUSTED"
     assert hits[0]["disposition"] == "UNCERTAIN"
@@ -352,15 +360,11 @@ def test_one_line_coordinate_slip_does_not_fail_the_gate(mode, tmp_path):
     assert res["disk_verdict"] == Verdict.PASS.value
     if mode == Mode.LOCAL:
         assert res["clean_rounds"] == 3
-    slips = [
-        f for f in res["findings"]
-        if "misnumbered" in f["description"]
-    ]
+    slips = [f for f in res["findings"] if "misnumbered" in f["description"]]
     assert slips, res["findings"]
     assert all(f["source"] == "UNTRUSTED" for f in slips), slips
     assert not any(
-        f["source"] == "INFRA" and "misnumbered" in f["description"]
-        for f in res["findings"]
+        f["source"] == "INFRA" and "misnumbered" in f["description"] for f in res["findings"]
     ), res["findings"]
 
 
@@ -389,8 +393,12 @@ def test_typed_audit_preserves_existing_product_finding(tmp_path, monkeypatch):
     machine.cwd = tmp_path
     machine._receipt_diff = lambda: DIFF
     product = StateFinding(
-        id="product", fingerprint="actual-product-defect", file="control.ts",
-        line_range=[2, 2], source="L1", disposition=Disposition.CONFIRMED,
+        id="product",
+        fingerprint="actual-product-defect",
+        file="control.ts",
+        line_range=[2, 2],
+        source="L1",
+        disposition=Disposition.CONFIRMED,
         description="Actual product finding must survive audit classification",
     )
     excerpts = _payload("nonblank_tail")["code_excerpts"]
@@ -416,15 +424,11 @@ def test_indent_stripped_quote_does_not_fail_the_gate(mode, tmp_path):
     assert res["disk_verdict"] == Verdict.PASS.value
     if mode == Mode.LOCAL:
         assert res["clean_rounds"] == 3
-    slips = [
-        f for f in res["findings"]
-        if "indent-stripped" in f["description"]
-    ]
+    slips = [f for f in res["findings"] if "indent-stripped" in f["description"]]
     assert slips, res["findings"]
     assert all(f["source"] == "UNTRUSTED" for f in slips), slips
     assert not any(
-        f["source"] == "INFRA" and "indent-stripped" in f["description"]
-        for f in res["findings"]
+        f["source"] == "INFRA" and "indent-stripped" in f["description"] for f in res["findings"]
     ), res["findings"]
 
 
@@ -433,10 +437,7 @@ def test_indent_stripped_plus_token_change_still_fails(mode, tmp_path):
     """A token change next to stripped indent is still a dead quote."""
     res = _run(mode, "indent_plus_token", tmp_path, diff=DIFF_INDENT)
     assert res["returned"] != Verdict.PASS.value, res
-    assert not any(
-        "indent-stripped" in f["description"]
-        for f in res["findings"]
-    ), res["findings"]
+    assert not any("indent-stripped" in f["description"] for f in res["findings"]), res["findings"]
 
 
 def test_wrong_literal_receipts_not_completed(tmp_path):
@@ -446,8 +447,7 @@ def test_wrong_literal_receipts_not_completed(tmp_path):
     receipts_dir = tmp_path / ".code-forge" / "receipts"
     statuses = {
         r.get("pass_status")
-        for r in (json.loads(p.read_text())
-                  for p in receipts_dir.glob("receipt-*.json"))
+        for r in (json.loads(p.read_text()) for p in receipts_dir.glob("receipt-*.json"))
     }
     assert statuses == {"schema_fail"}
 
@@ -472,8 +472,7 @@ def test_sparse_coverage_below_floor_fails(mode, tmp_path):
     res = _run(mode, "sparse_coverage", tmp_path, diff=DIFF_10)
     _assert_non_pass(res)
     if mode == Mode.CI:
-        assert any("coverage" in d or "receipt acceptance" in d
-                   for d in res["disk_infra_errors"] or [])
+        assert any("coverage" in d or "receipt acceptance" in d for d in res["disk_infra_errors"] or [])
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
@@ -481,8 +480,7 @@ def test_missing_hunk_witness_fails(mode, tmp_path):
     """An unwitnessed hunk must not PASS (per-hunk witness check)."""
     res = _run(mode, "missing_hunk_witness", tmp_path, diff=DIFF_10B)
     _assert_non_pass(res)
-    assert any("witness" in d or "receipt acceptance" in d
-               for d in res["disk_infra_errors"] or [])
+    assert any("witness" in d or "receipt acceptance" in d for d in res["disk_infra_errors"] or [])
 
 
 def test_stale_window_cannot_vouch_for_bad_current_run(tmp_path):
@@ -499,8 +497,7 @@ def test_stale_window_cannot_vouch_for_bad_current_run(tmp_path):
     (cwd / "control.ts").write_text(CONTENT)
     state_dir = cwd / ".code-forge"
     state_dir.mkdir()
-    (state_dir / "gate.yaml").write_text(
-        "test:\n  command: [\"true\"]\nverify:\n  required_cycles: 3\n")
+    (state_dir / "gate.yaml").write_text('test:\n  command: ["true"]\nverify:\n  required_cycles: 3\n')
     resolved = ResolvedReview([Path("control.ts")], None, DIFF, "git")
     sha = compute_source_hash(git_diff=DIFF)
     diff_files = {"control.ts": [2]}
@@ -515,10 +512,15 @@ def test_stale_window_cannot_vouch_for_bad_current_run(tmp_path):
             cwd=cwd,
             diff_files=diff_files,
             diff_text=DIFF,
-            reviewer_excerpts=[{
-                "file": "control.ts", "start_line": 1, "end_line": 3,
-                "content": CONTENT, "pass_name": "adversarial",
-            }],
+            reviewer_excerpts=[
+                {
+                    "file": "control.ts",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "content": CONTENT,
+                    "pass_name": "adversarial",
+                }
+            ],
             manifest=None,
             exec_evidence=None,
         )
@@ -532,20 +534,25 @@ def test_stale_window_cannot_vouch_for_bad_current_run(tmp_path):
 
     from unittest.mock import patch
 
-    with patch("code_forge.llm_invoke.llm_invoke",
-               side_effect=fake_transport):
-        provider = build_l1_provider(
-            "auto", resolved, backend=None, max_attempts=1)
+    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
+        provider = build_l1_provider("auto", resolved, backend=None, max_attempts=1)
     machine = StateMachine(
-        mode=Mode.CI, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
-        revert_fn=lambda f: None, resolved_review=resolved,
-        source_hash=sha, baseline_spec_repr="stale-window test",
-        cwd=cwd, registry={}, l0_runner=lambda *a: ([], []),
-        l1_provider=provider, l2_runner=lambda *a, **kw: ([], []),
-        max_total_rounds=3, clean_round_threshold=3,
+        mode=Mode.CI,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda f: None,
+        resolved_review=resolved,
+        source_hash=sha,
+        baseline_spec_repr="stale-window test",
+        cwd=cwd,
+        registry={},
+        l0_runner=lambda *a: ([], []),
+        l1_provider=provider,
+        l2_runner=lambda *a, **kw: ([], []),
+        max_total_rounds=3,
+        clean_round_threshold=3,
     )
-    with patch("code_forge.llm_invoke.llm_invoke",
-               side_effect=fake_transport):
+    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
         returned = machine.run().value
     disk = json.loads((state_dir / "state.json").read_text())
     assert returned == Verdict.FAIL.value
@@ -569,8 +576,7 @@ def test_valid_current_run_passes_with_stale_high_cycles(tmp_path):
     (cwd / "control.ts").write_text(CONTENT)
     state_dir = cwd / ".code-forge"
     state_dir.mkdir()
-    (state_dir / "gate.yaml").write_text(
-        "test:\n  command: [\"true\"]\nverify:\n  required_cycles: 1\n")
+    (state_dir / "gate.yaml").write_text('test:\n  command: ["true"]\nverify:\n  required_cycles: 1\n')
     resolved = ResolvedReview([Path("control.ts")], None, DIFF, "git")
     sha = compute_source_hash(git_diff=DIFF)
     diff_files = {"control.ts": [2]}
@@ -584,10 +590,15 @@ def test_valid_current_run_passes_with_stale_high_cycles(tmp_path):
             cwd=cwd,
             diff_files=diff_files,
             diff_text=DIFF,
-            reviewer_excerpts=[{
-                "file": "control.ts", "start_line": 1, "end_line": 3,
-                "content": CONTENT, "pass_name": "adversarial",
-            }],
+            reviewer_excerpts=[
+                {
+                    "file": "control.ts",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "content": CONTENT,
+                    "pass_name": "adversarial",
+                }
+            ],
             manifest=None,
             exec_evidence=None,
         )
@@ -600,20 +611,25 @@ def test_valid_current_run_passes_with_stale_high_cycles(tmp_path):
 
     from unittest.mock import patch
 
-    with patch("code_forge.llm_invoke.llm_invoke",
-               side_effect=fake_transport):
-        provider = build_l1_provider(
-            "auto", resolved, backend=None, max_attempts=1)
+    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
+        provider = build_l1_provider("auto", resolved, backend=None, max_attempts=1)
     machine = StateMachine(
-        mode=Mode.CI, falsifier=StubFalsifier(), autofixer=StubAutoFixer(),
-        revert_fn=lambda f: None, resolved_review=resolved,
-        source_hash=sha, baseline_spec_repr="stale-valid test",
-        cwd=cwd, registry={}, l0_runner=lambda *a: ([], []),
-        l1_provider=provider, l2_runner=lambda *a, **kw: ([], []),
-        max_total_rounds=3, clean_round_threshold=3,
+        mode=Mode.CI,
+        falsifier=StubFalsifier(),
+        autofixer=StubAutoFixer(),
+        revert_fn=lambda f: None,
+        resolved_review=resolved,
+        source_hash=sha,
+        baseline_spec_repr="stale-valid test",
+        cwd=cwd,
+        registry={},
+        l0_runner=lambda *a: ([], []),
+        l1_provider=provider,
+        l2_runner=lambda *a, **kw: ([], []),
+        max_total_rounds=3,
+        clean_round_threshold=3,
     )
-    with patch("code_forge.llm_invoke.llm_invoke",
-               side_effect=fake_transport):
+    with patch("code_forge.llm_invoke.llm_invoke", side_effect=fake_transport):
         returned = machine.run().value
     disk = json.loads((state_dir / "state.json").read_text())
     assert returned == Verdict.PASS.value

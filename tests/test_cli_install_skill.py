@@ -32,25 +32,19 @@ class TestTargetResolution:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.chdir(tmp_path)
         # Monkeypatch Path.home() via os.environ HOME
-        result = _run_install_skill(
-            _make_args(target="claude"), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(target="claude"), cwd=tmp_path)
         assert result == EXIT_PASS
         assert (tmp_path / ".claude" / "skills").is_dir()
 
     def test_target_vscode_uses_cwd_claude_skills(self, tmp_path, monkeypatch):
         """--target vscode resolves to <cwd>/.claude/skills/."""
-        result = _run_install_skill(
-            _make_args(target="vscode"), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(target="vscode"), cwd=tmp_path)
         assert result == EXIT_PASS
         assert (tmp_path / ".claude" / "skills").is_dir()
 
     def test_target_universal_uses_cwd_agents_skills(self, tmp_path, monkeypatch):
         """--target universal resolves to <cwd>/.agents/skills/."""
-        result = _run_install_skill(
-            _make_args(target="universal"), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(target="universal"), cwd=tmp_path)
         assert result == EXIT_PASS
         assert (tmp_path / ".agents" / "skills").is_dir()
 
@@ -61,18 +55,14 @@ class TestDestOverride:
     def test_dest_overrides_target(self, tmp_path):
         """--dest uses the explicit path regardless of --target."""
         custom = tmp_path / "custom" / "skills"
-        result = _run_install_skill(
-            _make_args(target="claude", dest=str(custom)), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(target="claude", dest=str(custom)), cwd=tmp_path)
         assert result == EXIT_PASS
         assert custom.is_dir()
 
     def test_dest_creates_parent_dirs(self, tmp_path):
         """--dest creates intermediate directories as needed."""
         deep = tmp_path / "a" / "b" / "c" / "skills"
-        result = _run_install_skill(
-            _make_args(dest=str(deep)), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(dest=str(deep)), cwd=tmp_path)
         assert result == EXIT_PASS
         assert deep.is_dir()
 
@@ -82,31 +72,23 @@ class TestSkillCopy:
 
     def test_default_installs_all_bundled_skills(self, tmp_path):
         """Default (no --skill) installs all bundled skills."""
-        result = _run_install_skill(
-            _make_args(dest=str(tmp_path)), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(dest=str(tmp_path)), cwd=tmp_path)
         assert result == EXIT_PASS
         # All skills directory must contain SKILL.md
         skill_dirs = [d for d in tmp_path.iterdir() if d.is_dir()]
         assert len(skill_dirs) >= 6  # 6 bundled skills
         for skill_dir in skill_dirs:
-            assert (skill_dir / "SKILL.md").exists(), (
-                "Missing SKILL.md in %s" % skill_dir
-            )
+            assert (skill_dir / "SKILL.md").exists(), "Missing SKILL.md in %s" % skill_dir
 
     def test_named_skill_creates_skill_md(self, tmp_path):
         """--skill code-forge creates <dest>/code-forge/SKILL.md."""
-        result = _run_install_skill(
-            _make_args(dest=str(tmp_path), skill="code-forge"), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(dest=str(tmp_path), skill="code-forge"), cwd=tmp_path)
         assert result == EXIT_PASS
         assert (tmp_path / "code-forge" / "SKILL.md").exists()
 
     def test_named_skill_only_installs_that_skill(self, tmp_path):
         """--skill installs exactly one skill directory."""
-        result = _run_install_skill(
-            _make_args(dest=str(tmp_path), skill="qodo-review"), cwd=tmp_path
-        )
+        result = _run_install_skill(_make_args(dest=str(tmp_path), skill="qodo-review"), cwd=tmp_path)
         assert result == EXIT_PASS
         installed = [d for d in tmp_path.iterdir() if d.is_dir()]
         assert len(installed) == 1
@@ -153,9 +135,7 @@ class TestForceFlag:
         """Two --force installs produce the same result."""
         for _ in range(2):
             result = _run_install_skill(
-                _make_args(
-                    dest=str(tmp_path), skill="code-forge", force=True
-                ),
+                _make_args(dest=str(tmp_path), skill="code-forge", force=True),
                 cwd=tmp_path,
             )
         assert result == EXIT_PASS
@@ -194,9 +174,7 @@ class TestBundledSkillsAccessible:
         from importlib.resources import files as _pkg_files
 
         src_root = _pkg_files("code_forge") / "skills"
-        skill_names = sorted(
-            entry.name for entry in src_root.iterdir() if entry.is_dir()
-        )
+        skill_names = sorted(entry.name for entry in src_root.iterdir() if entry.is_dir())
         expected = {
             "adversarial-qe",
             "code-forge",

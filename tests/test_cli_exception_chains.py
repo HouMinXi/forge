@@ -1,4 +1,5 @@
 """Preserve failure causes when translating errors for command-line callers."""
+
 import io
 import sys
 from types import SimpleNamespace
@@ -22,14 +23,24 @@ def pipeline(tmp_path, monkeypatch):
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent.resolve()))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "user-config"))
     monkeypatch.setenv("FORGE_PROJECT_DIR", str(tmp_path))
-    args = cli._build_parser().parse_args([
-        "review", "--allow-main", "--backend", "test", "--registry", "custom.yaml",
-        "--falsification-engine", "stub", "a.py",
-    ])
+    args = cli._build_parser().parse_args(
+        [
+            "review",
+            "--allow-main",
+            "--backend",
+            "test",
+            "--registry",
+            "custom.yaml",
+            "--falsification-engine",
+            "stub",
+            "a.py",
+        ]
+    )
     (tmp_path / "custom.yaml").write_text("tools: {}\n", encoding="utf-8")
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
-    backend = BackendConfig(name="test", type="api", format="openai",
-                            base_url="https://example.invalid", model="test")
+    backend = BackendConfig(
+        name="test", type="api", format="openai", base_url="https://example.invalid", model="test"
+    )
     monkeypatch.setattr("code_forge.outlet_resolver.resolve_outlet", lambda *a, **kw: "subprocess")
     monkeypatch.setattr("code_forge.backend.resolve_backend", lambda *a, **kw: backend)
     monkeypatch.setattr(cli, "_check_backend_credentials", lambda *a, **kw: None)
@@ -58,8 +69,9 @@ def test_baseline_preserves_resolution_error(pipeline, monkeypatch):
 def test_snapshot_preserves_resolution_error(pipeline, monkeypatch):
     root, args = pipeline
     error = BaselineResolutionError("broken snapshot")
-    resolved = ResolvedReview(source_files=[root / "a.py"], baseline_content=None,
-                              git_diff=None, mode_hint="non-git")
+    resolved = ResolvedReview(
+        source_files=[root / "a.py"], baseline_content=None, git_diff=None, mode_hint="non-git"
+    )
     monkeypatch.setattr(cli, "resolve_baseline", Mock(side_effect=[resolved, error]))
     monkeypatch.setattr("code_forge.snapshot.find_existing_snapshot", lambda *a: root / "snapshot")
     with pytest.raises(CliError, match="snapshot baseline resolution failed") as caught:

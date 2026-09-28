@@ -5,6 +5,7 @@
 These tests spawn actual processes and verify kernel signal delivery.
 Linux-only (PR_SET_PDEATHSIG). Marked as integration tests.
 """
+
 from __future__ import annotations
 
 import os
@@ -84,9 +85,16 @@ def _spawn_via_parent(server_script: str, timeout: float = 10.0):
     report_r, report_w = os.pipe()
 
     parent = subprocess.Popen(
-        [sys.executable, "-c", _PARENT_SCRIPT,
-         str(stdin_r), str(report_w),
-         sys.executable, "-c", server_script],
+        [
+            sys.executable,
+            "-c",
+            _PARENT_SCRIPT,
+            str(stdin_r),
+            str(report_w),
+            sys.executable,
+            "-c",
+            server_script,
+        ],
         pass_fds=(stdin_r, report_w),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -185,7 +193,9 @@ class TestPdeathsigChildInheritance:
         """)
         result = subprocess.run(
             [sys.executable, "-c", parent_script],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         child_pdeathsig = int(result.stdout.strip())
         assert child_pdeathsig == 0, (

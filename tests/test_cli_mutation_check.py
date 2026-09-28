@@ -49,12 +49,17 @@ class TestMutationCheckParser:
     def test_all_flags_together(self):
         """All flags set simultaneously."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "mutation-check",
-            "--diff", "/tmp/x.diff",
-            "--timeout", "120",
-            "--paths", "*.py",
-        ])
+        args = parser.parse_args(
+            [
+                "mutation-check",
+                "--diff",
+                "/tmp/x.diff",
+                "--timeout",
+                "120",
+                "--paths",
+                "*.py",
+            ]
+        )
         assert args.subcommand == "mutation-check"
         assert args.diff == "/tmp/x.diff"
         assert args.timeout == 120
@@ -110,7 +115,8 @@ class TestMutationCheckDispatch:
             return_value=([dismissed], []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
+                sys,
+                "argv",
                 ["code-forge", "mutation-check", "--diff", str(diff_file)],
             )
             result = main()
@@ -144,7 +150,8 @@ class TestMutationCheckDispatch:
             return_value=([survivor], []),
         ):
             monkeypatch.setattr(
-                sys, "argv",
+                sys,
+                "argv",
                 ["code-forge", "mutation-check", "--diff", str(diff_file)],
             )
             result = main()
@@ -157,9 +164,13 @@ class TestMutationCheckDispatch:
         diff_file = tmp_path / "test.diff"
         diff_file.write_text("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n")
         error = StateFinding(
-            id="MUTATION_ERROR", fingerprint="mutation-invocation-error",
-            source="MUTANT", disposition=Disposition.CONFIRMED,
-            file="", line_range=[], description="mutmut run failed (exit 1): stdout: cause",
+            id="MUTATION_ERROR",
+            fingerprint="mutation-invocation-error",
+            source="MUTANT",
+            disposition=Disposition.CONFIRMED,
+            file="",
+            line_range=[],
+            description="mutmut run failed (exit 1): stdout: cause",
         )
         with patch("code_forge.mutation.run_mutation", return_value=([error], [])):
             monkeypatch.setattr(sys, "argv", ["code-forge", "mutation-check", "--diff", str(diff_file)])
@@ -172,7 +183,8 @@ class TestMutationCheckDispatch:
     def test_dispatch_cli_error_missing_diff(self, tmp_path, monkeypatch):
         """mutation-check returns EXIT_CLI_ERROR when --diff file not found."""
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["code-forge", "mutation-check", "--diff", "/nonexistent/a.diff"],
         )
         result = main()

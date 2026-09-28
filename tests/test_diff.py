@@ -314,8 +314,8 @@ class TestTierThreshold:
     @pytest.mark.parametrize(
         "line_count, expected",
         [
-            (49, 2),   # just under boundary
-            (50, 3),   # at boundary
+            (49, 2),  # just under boundary
+            (50, 3),  # at boundary
             (199, 3),  # just under boundary
             (200, 4),  # at boundary
         ],
@@ -431,15 +431,7 @@ diff --git a/m.py b/m.py
 
     def test_hunk_header_has_no_trailing_space_without_context(self):
         """A hunk with no enclosing context keeps a bare @@ line."""
-        diff = (
-            "diff --git a/m.py b/m.py\n"
-            "--- a/m.py\n"
-            "+++ b/m.py\n"
-            "@@ -1,2 +1,3 @@\n"
-            " a\n"
-            "+X\n"
-            " b\n"
-        )
+        diff = "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1,2 +1,3 @@\n a\n+X\n b\n"
         result = annotate_diff_lines(diff)
         assert "@@ -1,2 +1,3 @@\n" in result, result
 
@@ -461,11 +453,7 @@ diff --git a/m.py b/m.py
 
     def test_a_mode_change_still_says_it_changed(self):
         """chmod-only diffs carry their whole meaning in two header lines."""
-        diff = (
-            "diff --git a/s.sh b/s.sh\n"
-            "old mode 100644\n"
-            "new mode 100755\n"
-        )
+        diff = "diff --git a/s.sh b/s.sh\nold mode 100644\nnew mode 100755\n"
         result = annotate_diff_lines(diff)
         assert "old mode 100644" in result, result
         assert "new mode 100755" in result, result
@@ -530,14 +518,7 @@ diff --git a/m.py b/m.py
 
     def test_single_line_hunk_range_is_left_as_written(self):
         """git writes '@@ -1 +1 @@'; rewriting it to '-1,1 +1,1' is noise."""
-        diff = (
-            "diff --git a/o.py b/o.py\n"
-            "--- a/o.py\n"
-            "+++ b/o.py\n"
-            "@@ -1 +1 @@\n"
-            "-a\n"
-            "+b\n"
-        )
+        diff = "diff --git a/o.py b/o.py\n--- a/o.py\n+++ b/o.py\n@@ -1 +1 @@\n-a\n+b\n"
         result = annotate_diff_lines(diff)
         assert "@@ -1 +1 @@" in result, result
         assert "[+   1] +b" in result, result
@@ -567,10 +548,7 @@ diff --git a/m.py b/m.py
         """No bracket column is produced, so no legend should promise one."""
         from code_forge.diff import annotated_diff_prompt_block
 
-        diff = (
-            "diff --git a/img.png b/img.png\n"
-            "Binary files a/img.png and b/img.png differ\n"
-        )
+        diff = "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n"
         block = annotated_diff_prompt_block(diff)
         assert "AFTER" not in block, block
         assert "Binary files" in block, block
@@ -587,8 +565,7 @@ diff --git a/m.py b/m.py
         for diff in (
             "diff --git a/s.sh b/s.sh\nold mode 100644\nnew mode 100755",
             "diff --git a/i.png b/i.png\nBinary files a/i.png and b/i.png differ",
-            "diff --git a/o.py b/n.py\nsimilarity index 100%\n"
-            "rename from o.py\nrename to n.py",
+            "diff --git a/o.py b/n.py\nsimilarity index 100%\nrename from o.py\nrename to n.py",
         ):
             block = annotated_diff_prompt_block(diff)
             assert "AFTER" not in block, block
@@ -617,12 +594,7 @@ diff --git a/m.py b/m.py
         """
         from code_forge.diff import annotated_diff_prompt_block
 
-        diff = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
-            "@@ -1,0 +1,0 @@\n"
-        )
+        diff = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,0 +1,0 @@\n"
         block = annotated_diff_prompt_block(diff)
         assert "AFTER" not in block, block
 
@@ -630,14 +602,7 @@ diff --git a/m.py b/m.py
         """The counterpart: brackets present, so the legend must appear."""
         from code_forge.diff import annotated_diff_prompt_block
 
-        diff = (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " a\n"
-            "+b"
-        )
+        diff = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,2 @@\n a\n+b"
         block = annotated_diff_prompt_block(diff)
         assert "AFTER" in block, block
         assert "[+   2] +b" in block, block
@@ -690,8 +655,7 @@ diff --git a/m.py b/m.py
         assert "AFTER" in block, block
         assert "start_line/end_line" in block, block
         # The legend has to arrive before the lines it describes.
-        assert block.index("[+  82] +added line") < block.index(
-            "[+  12] +    added1"), block
+        assert block.index("[+  82] +added line") < block.index("[+  12] +    added1"), block
 
     def test_prompt_block_omits_the_legend_when_nothing_was_annotated(self):
         """Unparseable input keeps its raw text and gets no bracket legend."""
@@ -720,10 +684,7 @@ diff --git a/m.py b/m.py
 
     def test_rename_headers_preserved(self):
         diff = (
-            "diff --git a/old.py b/new.py\n"
-            "similarity index 100%\n"
-            "rename from old.py\n"
-            "rename to new.py\n"
+            "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\nrename to new.py\n"
         )
         result = annotate_diff_lines(diff)
         assert "rename from old.py" in result
@@ -796,6 +757,7 @@ class TestSplitDiffForFiles:
 
     def test_single_member_returns_only_its_section(self):
         from code_forge.diff import split_diff_for_files
+
         out = split_diff_for_files(self.DIFF, ["src/b.py"])
         assert "src/b.py" in out
         assert "+new" in out
@@ -804,6 +766,7 @@ class TestSplitDiffForFiles:
 
     def test_multiple_members_preserve_diff_order(self):
         from code_forge.diff import split_diff_for_files
+
         out = split_diff_for_files(self.DIFF, ["README.md", "src/a.py"])
         # asked in reverse order, emitted in the diff's own order
         assert out.index("src/a.py") < out.index("README.md")
@@ -811,22 +774,26 @@ class TestSplitDiffForFiles:
 
     def test_all_members_round_trip(self):
         from code_forge.diff import split_diff_for_files
+
         members = ["src/a.py", "src/b.py", "README.md"]
         out = split_diff_for_files(self.DIFF, members)
         assert out == self.DIFF
 
     def test_absent_member_is_skipped(self):
         from code_forge.diff import split_diff_for_files
+
         out = split_diff_for_files(self.DIFF, ["src/a.py", "src/ghost.py"])
         assert "src/a.py" in out
         assert "ghost" not in out
 
     def test_empty_diff(self):
         from code_forge.diff import split_diff_for_files
+
         assert split_diff_for_files("", ["a.py"]) == ""
 
     def test_deleted_file_section_kept(self):
         from code_forge.diff import split_diff_for_files
+
         diff = (
             "diff --git a/src/old.py b/src/old.py\n"
             "deleted file mode 100644\n"
@@ -847,6 +814,7 @@ class TestSplitDiffForFiles:
 
     def test_new_file_section_kept(self):
         from code_forge.diff import split_diff_for_files
+
         diff = (
             "diff --git a/src/new.py b/src/new.py\n"
             "new file mode 100644\n"
@@ -863,17 +831,20 @@ class TestDescribeFabricatedLines:
 
     def test_returns_empty_when_every_line_is_present(self):
         from code_forge.diff import describe_fabricated_lines
+
         got = describe_fabricated_lines({1: "a", 2: "b", 3: "c"}, 1, 3)
         assert got == ""
 
     def test_names_a_line_past_the_end_of_the_post_image(self):
         from code_forge.diff import describe_fabricated_lines
+
         got = describe_fabricated_lines({1: "a", 2: "b"}, 1, 4)
         assert got == "3, 4"
 
     def test_names_a_line_in_the_gap_between_two_hunks(self):
         """Unchanged regions between hunks are absent, not empty strings."""
         from code_forge.diff import describe_fabricated_lines
+
         got = describe_fabricated_lines({1: "a", 2: "b", 9: "i"}, 1, 9)
         assert got == "3, 4, 5, 6, 7, 8"
 
@@ -884,15 +855,18 @@ class TestDescribeFabricatedLines:
         million-element list and a log line to match.
         """
         from code_forge.diff import describe_fabricated_lines
+
         got = describe_fabricated_lines({}, 1, 500, cap=3)
         assert got == "1, 2, 3, ..."
 
     def test_no_ellipsis_when_the_count_lands_exactly_on_the_cap(self):
         from code_forge.diff import describe_fabricated_lines
+
         got = describe_fabricated_lines({}, 1, 3, cap=3)
         assert got == "1, 2, 3"
 
     def test_a_single_line_range_is_handled(self):
         from code_forge.diff import describe_fabricated_lines
+
         assert describe_fabricated_lines({}, 7, 7) == "7"
         assert describe_fabricated_lines({7: "x"}, 7, 7) == ""

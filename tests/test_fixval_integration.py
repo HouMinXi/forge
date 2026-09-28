@@ -31,7 +31,8 @@ from code_forge.state import Mode, StateFinding, Verdict
 
 
 def _make_resolved(
-    source_files=None, git_diff="--- a/foo.py\n+++ b/foo.py\n",
+    source_files=None,
+    git_diff="--- a/foo.py\n+++ b/foo.py\n",
 ):
     """Create a ResolvedReview for tests."""
     return ResolvedReview(
@@ -45,6 +46,7 @@ def _make_resolved(
 def _make_machine(tmp_path, resolved=None, l0_runner=None):
     """Create a StateMachine that converges cleanly in 3 rounds."""
     if l0_runner is None:
+
         def l0_runner(registry, files):
             return ([], [])
 
@@ -112,10 +114,7 @@ class TestFixvalBlocksHollowTest:
         assert machine._state.converged is False
 
         # FIXVAL_HOLLOW finding present with DISMISSED disposition
-        fixval_findings = [
-            f for f in machine._state.findings
-            if f.source == "FIXVAL"
-        ]
+        fixval_findings = [f for f in machine._state.findings if f.source == "FIXVAL"]
         assert len(fixval_findings) >= 1
         hollow = [f for f in fixval_findings if f.id == "FIXVAL_HOLLOW"]
         assert len(hollow) == 1
@@ -159,10 +158,7 @@ class TestFixvalPassesNonhollowTest:
         assert machine._state.converged is True
 
         # No FIXVAL_HOLLOW finding
-        hollow = [
-            f for f in machine._state.findings
-            if f.id == "FIXVAL_HOLLOW"
-        ]
+        hollow = [f for f in machine._state.findings if f.id == "FIXVAL_HOLLOW"]
         assert len(hollow) == 0
 
 
@@ -180,10 +176,7 @@ class TestFixvalSkipsNoTestFile:
 
         assert verdict == Verdict.PASS
 
-        skip_findings = [
-            f for f in machine._state.findings
-            if f.id == "FIXVAL_SKIPPED"
-        ]
+        skip_findings = [f for f in machine._state.findings if f.id == "FIXVAL_SKIPPED"]
         assert len(skip_findings) == 1
         assert skip_findings[0].disposition == Disposition.DISMISSED
         assert "no test file" in skip_findings[0].description
@@ -237,19 +230,15 @@ class TestFixvalWaiverProducesAdvisory:
         assert verdict == Verdict.PASS
 
         # Advisory present
-        assert any(
-            a.id == "FIXVAL_WAIVER_RECORD"
-            for a in machine._advisories
-        )
+        assert any(a.id == "FIXVAL_WAIVER_RECORD" for a in machine._advisories)
 
         # Advisory serialized to file
         advisory_path = tmp_path / ".code-forge" / "advisory-findings.json"
         assert advisory_path.exists()
         import json
+
         data = json.loads(advisory_path.read_text(encoding="utf-8"))
-        waiver_entries = [
-            e for e in data if e.get("id") == "FIXVAL_WAIVER_RECORD"
-        ]
+        waiver_entries = [e for e in data if e.get("id") == "FIXVAL_WAIVER_RECORD"]
         assert len(waiver_entries) == 1
 
 
@@ -292,9 +281,7 @@ class TestFixvalOverfitAdvisoryEmitted:
             verdict = machine.run()
 
         assert verdict == Verdict.PASS
-        assert any(
-            a.id == "FIXVAL_OVERFIT" for a in machine._advisories
-        )
+        assert any(a.id == "FIXVAL_OVERFIT" for a in machine._advisories)
 
 
 class TestFixvalNotRunOnNonConverged:
@@ -307,6 +294,7 @@ class TestFixvalNotRunOnNonConverged:
         Uses a custom AutoFixer that always returns NO_CHANGE so the
         CONFIRMED finding persists across rounds until ESCALATED.
         """
+
         def persistent_finding_l0(registry, files):
             return (
                 [
@@ -325,17 +313,14 @@ class TestFixvalNotRunOnNonConverged:
 
         class NoChangeAutoFixer:
             """AutoFixer that never fixes anything."""
+
             def fix(self, finding, mode_hint=None):
                 return FixOutcome.NO_CHANGE
 
         machine = _make_machine(
             tmp_path,
             resolved=_make_resolved(
-                git_diff=(
-                    "--- a/foo.py\n+++ b/foo.py\n"
-                    "@@ -1,3 +1,4 @@\n"
-                    "+added\n old1\n old2\n old3\n"
-                ),
+                git_diff=("--- a/foo.py\n+++ b/foo.py\n@@ -1,3 +1,4 @@\n+added\n old1\n old2\n old3\n"),
             ),
             l0_runner=persistent_finding_l0,
         )
@@ -348,10 +333,7 @@ class TestFixvalNotRunOnNonConverged:
         # Machine did NOT converge (PENDING or ESCALATED, not PASS)
         assert verdict != Verdict.PASS
         # No FIXVAL findings at all -- _finalize_local_terminal never ran
-        fixval_findings = [
-            f for f in machine._state.findings
-            if f.source == "FIXVAL"
-        ]
+        fixval_findings = [f for f in machine._state.findings if f.source == "FIXVAL"]
         assert len(fixval_findings) == 0
 
 

@@ -12,6 +12,7 @@ The gate does not decide whether the claim is true -- it cannot. It
 decides whether anyone checked, and routes unchecked library claims to a
 human instead of letting them carry the pipeline's highest confidence.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -63,27 +64,34 @@ class TestClaimClassification:
 
     def test_naming_a_library_is_not_a_behavioural_claim(self):
         """Mentioning numpy is not the same as asserting how it behaves."""
-        assert asserts_library_behaviour(
-            "we call numpy.asarray here without checking the dtype first"
-        ) is None
+        assert (
+            asserts_library_behaviour("we call numpy.asarray here without checking the dtype first")
+            is None
+        )
 
-    @pytest.mark.parametrize("desc", [
-        "isinstance(x, numbers.Real) is True for numpy scalars",
-        "since python 3.11 asyncio.timeout replaces wait_for",
-        "pandas returns a copy rather than a view in this path",
-        "the requests API guarantees the connection is released",
-    ])
+    @pytest.mark.parametrize(
+        "desc",
+        [
+            "isinstance(x, numbers.Real) is True for numpy scalars",
+            "since python 3.11 asyncio.timeout replaces wait_for",
+            "pandas returns a copy rather than a view in this path",
+            "the requests API guarantees the connection is released",
+        ],
+    )
     def test_other_behavioural_shapes(self, desc):
         assert asserts_library_behaviour(desc) is not None
 
-    @pytest.mark.parametrize("desc", [
-        "aiohttp deprecates the sync client",
-        "httpx raises ReadTimeout rather than ConnectTimeout",
-        "boto3 deprecates the resource interface in v2",
-        "requests.Session returns a new connection pool each call",
-        "numpy.bool_ subclasses int rather than bool",
-        "pandas coerces the dtype to object here",
-    ])
+    @pytest.mark.parametrize(
+        "desc",
+        [
+            "aiohttp deprecates the sync client",
+            "httpx raises ReadTimeout rather than ConnectTimeout",
+            "boto3 deprecates the resource interface in v2",
+            "requests.Session returns a new connection pool each call",
+            "numpy.bool_ subclasses int rather than bool",
+            "pandas coerces the dtype to object here",
+        ],
+    )
     def test_libraries_outside_any_allowlist(self, desc):
         """Round 9 caught the first version relying on 17 hardcoded names.
 
@@ -92,13 +100,16 @@ class TestClaimClassification:
         """
         assert asserts_library_behaviour(desc) is not None
 
-    @pytest.mark.parametrize("desc", [
-        "the early return at line 812 leaves the lock held",
-        "this function returns None on the error path",
-        "_record raises TypeError when result is None",
-        "the loop returns early when the list is empty",
-        "_severity_tier returns P1 for unprefixed findings",
-    ])
+    @pytest.mark.parametrize(
+        "desc",
+        [
+            "the early return at line 812 leaves the lock held",
+            "this function returns None on the error path",
+            "_record raises TypeError when result is None",
+            "the loop returns early when the list is empty",
+            "_severity_tier returns P1 for unprefixed findings",
+        ],
+    )
     def test_claims_about_the_diff_stay_out(self, desc):
         """The widened pattern must not swallow ordinary logic claims.
 
@@ -124,20 +135,14 @@ class TestClaimClassification:
 
 class TestReceiptPresence:
     def test_both_halves_required(self):
-        assert has_execution_receipt(
-            {"receipt": {"command": "python -c '...'", "output": "False"}}
-        )
+        assert has_execution_receipt({"receipt": {"command": "python -c '...'", "output": "False"}})
 
     def test_command_without_output_is_not_a_receipt(self):
         """Knowing how to phrase a command is not evidence of running it."""
-        assert not has_execution_receipt(
-            {"receipt": {"command": "python -c '...'", "output": ""}}
-        )
+        assert not has_execution_receipt({"receipt": {"command": "python -c '...'", "output": ""}})
 
     def test_output_without_command_cannot_be_reproduced(self):
-        assert not has_execution_receipt(
-            {"receipt": {"command": "", "output": "False"}}
-        )
+        assert not has_execution_receipt({"receipt": {"command": "", "output": "False"}})
 
     def test_missing_and_malformed(self):
         assert not has_execution_receipt({})
@@ -151,14 +156,17 @@ class TestDowngrade:
         assert check.should_downgrade
 
     def test_library_claim_with_receipt_stands(self):
-        check = check_receipt(NUMPY_CLAIM, {
-            "verdict": "CONFIRMED",
-            "receipt": {
-                "command": "python -c 'import numpy,numbers; "
-                           "print(isinstance(numpy.bool_(True), numbers.Real))'",
-                "output": "False",
+        check = check_receipt(
+            NUMPY_CLAIM,
+            {
+                "verdict": "CONFIRMED",
+                "receipt": {
+                    "command": "python -c 'import numpy,numbers; "
+                    "print(isinstance(numpy.bool_(True), numbers.Real))'",
+                    "output": "False",
+                },
             },
-        })
+        )
         assert not check.should_downgrade
 
     def test_diff_claim_never_needs_one(self):
@@ -183,16 +191,18 @@ class TestFalsifierIntegration:
 
     def test_the_r21_case_no_longer_reaches_confirmed(self):
         """The measured failure: CONFIRMED on an unverified numpy claim."""
-        got = self._run({"verdict": "CONFIRMED", "reasoning": "checked"},
-                        NUMPY_CLAIM)
+        got = self._run({"verdict": "CONFIRMED", "reasoning": "checked"}, NUMPY_CLAIM)
         assert got == Disposition.UNCERTAIN
 
     def test_the_r21_case_with_a_receipt_is_allowed_through(self):
-        got = self._run({
-            "verdict": "CONFIRMED",
-            "reasoning": "verified",
-            "receipt": {"command": "python -c '...'", "output": "False"},
-        }, NUMPY_CLAIM)
+        got = self._run(
+            {
+                "verdict": "CONFIRMED",
+                "reasoning": "verified",
+                "receipt": {"command": "python -c '...'", "output": "False"},
+            },
+            NUMPY_CLAIM,
+        )
         assert got == Disposition.CONFIRMED
 
     def test_unverified_dismissal_is_downgraded_too(self):
@@ -201,16 +211,13 @@ class TestFalsifierIntegration:
         That is the worse direction to be wrong in, so the gate is not
         limited to CONFIRMED.
         """
-        got = self._run({"verdict": "DISMISSED", "reasoning": "not real"},
-                        NUMPY_CLAIM)
+        got = self._run({"verdict": "DISMISSED", "reasoning": "not real"}, NUMPY_CLAIM)
         assert got == Disposition.UNCERTAIN
 
     def test_ordinary_findings_are_untouched(self):
-        got = self._run({"verdict": "CONFIRMED", "reasoning": "real"},
-                        DIFF_CLAIM)
+        got = self._run({"verdict": "CONFIRMED", "reasoning": "real"}, DIFF_CLAIM)
         assert got == Disposition.CONFIRMED
 
     def test_uncertain_stays_uncertain(self):
-        got = self._run({"verdict": "UNCERTAIN", "reasoning": "unclear"},
-                        NUMPY_CLAIM)
+        got = self._run({"verdict": "UNCERTAIN", "reasoning": "unclear"}, NUMPY_CLAIM)
         assert got == Disposition.UNCERTAIN

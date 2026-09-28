@@ -7,6 +7,7 @@ the catch net and crashes the review instead of salvaging. These tests pin
 ValueError for every type-violation branch so the contract survives future
 "cleanup".
 """
+
 import json
 
 import pytest
@@ -63,20 +64,12 @@ class TestValueErrorContract:
             validate_reviewer_json(_payload(code_excerpts=[42]))
 
     def test_excerpt_file_wrong_type_raises_value_error(self):
-        bad = _payload(
-            code_excerpts=[
-                {"file": None, "start_line": 1, "end_line": 1, "content": "x"}
-            ]
-        )
+        bad = _payload(code_excerpts=[{"file": None, "start_line": 1, "end_line": 1, "content": "x"}])
         with pytest.raises(ValueError, match="file must be a non-empty string"):
             validate_reviewer_json(bad)
 
     def test_excerpt_content_wrong_type_raises_value_error(self):
-        bad = _payload(
-            code_excerpts=[
-                {"file": "a.py", "start_line": 1, "end_line": 1, "content": 3.5}
-            ]
-        )
+        bad = _payload(code_excerpts=[{"file": "a.py", "start_line": 1, "end_line": 1, "content": 3.5}])
         with pytest.raises(ValueError, match="content must be str"):
             validate_reviewer_json(bad)
 
@@ -95,13 +88,13 @@ class TestValueErrorContract:
             # excerpt entry not a dict
             json.dumps(_payload(code_excerpts=[None])),
             # excerpt file wrong type (all required keys present)
-            json.dumps(_payload(code_excerpts=[
-                {"file": 1, "start_line": 1, "end_line": 1, "content": "x"}
-            ])),
+            json.dumps(
+                _payload(code_excerpts=[{"file": 1, "start_line": 1, "end_line": 1, "content": "x"}])
+            ),
             # excerpt content wrong type
-            json.dumps(_payload(code_excerpts=[
-                {"file": "a.py", "start_line": 1, "end_line": 1, "content": 42}
-            ])),
+            json.dumps(
+                _payload(code_excerpts=[{"file": "a.py", "start_line": 1, "end_line": 1, "content": 42}])
+            ),
         ]
         for raw in bad_inputs:
             try:

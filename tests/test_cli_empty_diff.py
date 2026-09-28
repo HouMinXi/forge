@@ -14,22 +14,30 @@ import pytest
 def scratch_repo(tmp_path):
     """Git repo with init commit + empty commit + trusted gate.yaml."""
     subprocess.run(
-        ["git", "init"], cwd=tmp_path,
-        capture_output=True, check=True,
+        ["git", "init"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     for k, v in [("user.email", "t@t"), ("user.name", "t")]:
         subprocess.run(
-            ["git", "config", k, v], cwd=tmp_path,
-            capture_output=True, check=True,
+            ["git", "config", k, v],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
         )
     (tmp_path / "a.py").write_text("x = 1\n")
     subprocess.run(
-        ["git", "add", "a.py"], cwd=tmp_path,
-        capture_output=True, check=True,
+        ["git", "add", "a.py"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=tmp_path,
-        capture_output=True, check=True,
+        ["git", "commit", "-m", "init"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     # Set up a gate.yaml with a dummy backend so outlet=subprocess
     # resolves (the empty-diff guard fires before the backend is used)
@@ -47,19 +55,27 @@ def scratch_repo(tmp_path):
     # Plant before any code_forge.cli spawn. A mutated import walks cwd
     # for setup.cfg; trust dies with FileNotFoundError if this is late.
     from tests.conftest import plant_mutmut_cfg
+
     plant_mutmut_cfg(tmp_path)
     # Trust it (HOME must match the review env so trusted.json is found)
     src_dir = str(Path(__file__).resolve().parents[1] / "src")
     subprocess.run(
         [sys.executable, "-m", "code_forge.cli", "trust"],
-        cwd=tmp_path, capture_output=True, check=True,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-             "HOME": str(tmp_path), "PYTHONPATH": src_dir},
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
+        env={
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(tmp_path),
+            "PYTHONPATH": src_dir,
+        },
     )
     # Empty commit
     subprocess.run(
         ["git", "commit", "--allow-empty", "-m", "empty"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     return tmp_path
 
@@ -75,16 +91,26 @@ def _run_review(cwd, extra_args=None, extra_env=None):
     if extra_env:
         env.update(extra_env)
     cmd = [
-        sys.executable, "-m", "code_forge.cli",
-        "review", "--allow-main",
-        "--baseline", "HEAD~1", "--head", "HEAD",
+        sys.executable,
+        "-m",
+        "code_forge.cli",
+        "review",
+        "--allow-main",
+        "--baseline",
+        "HEAD~1",
+        "--head",
+        "HEAD",
         "--quiet",
     ]
     if extra_args:
         cmd.extend(extra_args)
     return subprocess.run(
-        cmd, cwd=cwd, env=env,
-        capture_output=True, text=True, timeout=10,
+        cmd,
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
 
 
@@ -104,12 +130,16 @@ class TestEmptyDiffGate:
         """Real changes must NOT hit the empty-diff guard."""
         (scratch_repo / "a.py").write_text("x = 2\n")
         subprocess.run(
-            ["git", "add", "a.py"], cwd=scratch_repo,
-            capture_output=True, check=True,
+            ["git", "add", "a.py"],
+            cwd=scratch_repo,
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
-            ["git", "commit", "-m", "change"], cwd=scratch_repo,
-            capture_output=True, check=True,
+            ["git", "commit", "-m", "change"],
+            cwd=scratch_repo,
+            capture_output=True,
+            check=True,
         )
         # Kill quickly -- we only need to prove the guard didn't fire,
         # not complete a full review against a dead backend.

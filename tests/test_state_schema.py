@@ -107,9 +107,7 @@ class TestRoundTrip:
         # Verify optional fields preserved
         assert loaded.findings[0].error == "falsify raised"
         assert loaded.findings[0].anchor == {"before": "old", "after": "new"}
-        assert loaded.findings[0].evidence_files == [
-            "src/bar.py", "src/baz.py"
-        ]
+        assert loaded.findings[0].evidence_files == ["src/bar.py", "src/baz.py"]
         assert loaded.findings[1].error is None
         assert loaded.findings[1].anchor is None
         assert loaded.findings[1].evidence_files is None

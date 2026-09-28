@@ -12,25 +12,49 @@ class TestEstimateL1PromptTokens:
     def test_counts_every_block(self):
         base = _estimate_l1_prompt_tokens("x" * 400, "", "", "", "", "", "")
         with_post = _estimate_l1_prompt_tokens(
-            "x" * 400, "y" * 400, "", "", "", "", "",
+            "x" * 400,
+            "y" * 400,
+            "",
+            "",
+            "",
+            "",
+            "",
         )
         assert with_post - base == 100
 
     def test_empty_everything_is_contract_only(self):
         from code_forge.reviewer_json import REVIEW_JSON_CONTRACT
-        assert _estimate_l1_prompt_tokens(
-            "", "", "", "", "", "", "",
-        ) == len(REVIEW_JSON_CONTRACT) // 4
+
+        assert (
+            _estimate_l1_prompt_tokens(
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            )
+            == len(REVIEW_JSON_CONTRACT) // 4
+        )
 
 
 class TestSplitContextForGroup:
     EDGES = [
-        {"from": "src/cli.py", "from_group": "integration",
-         "to": "src/rulepack.py", "to_group": "engine:rulepack.py",
-         "symbols": ["RulepackRunner"]},
-        {"from": "src/machine.py", "from_group": "covered:machine.py",
-         "to": "src/state.py", "to_group": "integration",
-         "symbols": ["State", "Verdict"]},
+        {
+            "from": "src/cli.py",
+            "from_group": "integration",
+            "to": "src/rulepack.py",
+            "to_group": "engine:rulepack.py",
+            "symbols": ["RulepackRunner"],
+        },
+        {
+            "from": "src/machine.py",
+            "from_group": "covered:machine.py",
+            "to": "src/state.py",
+            "to_group": "integration",
+            "symbols": ["State", "Verdict"],
+        },
     ]
 
     def test_group_sees_only_its_own_edges(self):

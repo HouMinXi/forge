@@ -3,6 +3,7 @@
 Whole files dominated the reviewer prompt and grew with file size rather
 than with the size of the change.
 """
+
 import re
 
 from code_forge.cli import _assemble_post_image, _window_file_text
@@ -51,18 +52,14 @@ class TestWindowFileText:
         seven lines are written twice and the reviewer sees a file that
         appears to repeat itself.
         """
-        out, _ = _window_file_text(
-            self._text(100), [_hunk(20, 20), _hunk(24, 24)], 5)
+        out, _ = _window_file_text(self._text(100), [_hunk(20, 20), _hunk(24, 24)], 5)
         body = [x for x in out.splitlines() if ": line" in x]
-        assert len(body) == len(set(body)), (
-            "a line was emitted more than once: %s" % out
-        )
+        assert len(body) == len(set(body)), "a line was emitted more than once: %s" % out
         assert "20: line20" in out and "24: line24" in out
 
     def test_touching_windows_leave_no_empty_gap(self):
         """Windows that meet exactly must not report a zero-line gap."""
-        out, _ = _window_file_text(
-            self._text(100), [_hunk(20, 20), _hunk(31, 31)], 5)
+        out, _ = _window_file_text(self._text(100), [_hunk(20, 20), _hunk(31, 31)], 5)
         assert "0 lines omitted" not in out, out
         assert "25: line25\n26: line26" in out, out
 
@@ -72,10 +69,8 @@ class TestWindowFileText:
         git emits hunks ascending, so this holds today by luck of the
         caller rather than by anything this function does.
         """
-        asc, _ = _window_file_text(
-            self._text(100), [_hunk(20, 20), _hunk(60, 60)], 5)
-        desc, _ = _window_file_text(
-            self._text(100), [_hunk(60, 60), _hunk(20, 20)], 5)
+        asc, _ = _window_file_text(self._text(100), [_hunk(20, 20), _hunk(60, 60)], 5)
+        desc, _ = _window_file_text(self._text(100), [_hunk(60, 60), _hunk(20, 20)], 5)
         assert asc == desc, "reordering the hunks changed the output"
 
     def test_separated_windows_stay_separate(self):
@@ -84,8 +79,7 @@ class TestWindowFileText:
         Without this the merge could swallow every gap and the test above
         would still pass.
         """
-        out, _ = _window_file_text(
-            self._text(100), [_hunk(20, 20), _hunk(60, 60)], 5)
+        out, _ = _window_file_text(self._text(100), [_hunk(20, 20), _hunk(60, 60)], 5)
         assert out.count("lines omitted") == 3, out
         # 15-25 and 55-65 kept, so 26-54 is the gap between them.
         assert "[29 lines omitted]" in out, out
@@ -93,8 +87,7 @@ class TestWindowFileText:
     def test_a_file_changed_throughout_comes_back_whole(self):
         """When the windows cover everything, do not renumber for nothing."""
         text = self._text(20)
-        out, windowed = _window_file_text(
-            text, [_hunk(1, 5), _hunk(10, 15)], 40)
+        out, windowed = _window_file_text(text, [_hunk(1, 5), _hunk(10, 15)], 40)
         assert out == text
         assert windowed is False
 
@@ -145,7 +138,9 @@ class TestWindowFileText:
 
     def test_out_of_range_hunk_does_not_corrupt_an_in_range_one(self):
         out, windowed = _window_file_text(
-            self._text(100), [_hunk(10, 12), _hunk(500, 510)], 5,
+            self._text(100),
+            [_hunk(10, 12), _hunk(500, 510)],
+            5,
         )
         assert windowed is True
         assert "10: line10" in out
@@ -178,8 +173,9 @@ class TestAssemblePostImage:
         self._repo(tmp_path)
         whole, _ = _assemble_post_image(tmp_path, self._diff(), context_lines=10**6)
         narrow, _ = _assemble_post_image(tmp_path, self._diff(), context_lines=20)
-        assert len(narrow) < len(whole) / 3, (
-            "windowing saved almost nothing: %d vs %d" % (len(narrow), len(whole))
+        assert len(narrow) < len(whole) / 3, "windowing saved almost nothing: %d vs %d" % (
+            len(narrow),
+            len(whole),
         )
 
     def test_the_changed_lines_survive(self, tmp_path):
@@ -252,13 +248,8 @@ class TestAssemblePostImage:
         out, _ = _assemble_post_image(tmp_path, diff)
         numbered = re.findall(r"^\d+: (.*)$", out, re.M)
         assert numbered, out[:200]
-        partial = [
-            ln for ln in numbered
-            if not (ln.endswith("x" * 93) or ln.endswith("y" * 93))
-        ]
-        assert not partial, (
-            "partial line(s) survived the 50KB cut: %r" % partial[:1]
-        )
+        partial = [ln for ln in numbered if not (ln.endswith("x" * 93) or ln.endswith("y" * 93))]
+        assert not partial, "partial line(s) survived the 50KB cut: %r" % partial[:1]
 
     def test_single_giant_line_reports_truncation_without_numbering(self, tmp_path):
         """A file whose first line exceeds the cap has no newline to cut
@@ -268,9 +259,7 @@ class TestAssemblePostImage:
         f = tmp_path / "g.py"
         f.write_text("H" * 60000 + "\nalpha\nbeta\n")
         diff = (
-            "diff --git a/g.py b/g.py\n"
-            "--- a/g.py\n+++ b/g.py\n"
-            "@@ -2,1 +2,1 @@\n-alpha\n+alpha_changed\n"
+            "diff --git a/g.py b/g.py\n--- a/g.py\n+++ b/g.py\n@@ -2,1 +2,1 @@\n-alpha\n+alpha_changed\n"
         )
         out, _ = _assemble_post_image(tmp_path, diff)
         assert "## File: g.py\n" in out
@@ -288,10 +277,7 @@ class TestAssemblePostImage:
         """
         (tmp_path / "new.py").write_text("kept line\n" * 50)
         diff = (
-            "diff --git a/old.py b/new.py\n"
-            "similarity index 100%\n"
-            "rename from old.py\n"
-            "rename to new.py\n"
+            "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\nrename to new.py\n"
         )
         for ctx in (5, 10**6):
             out, _ = _assemble_post_image(tmp_path, diff, context_lines=ctx)

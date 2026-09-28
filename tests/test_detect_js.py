@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for JS/TS language detection (ESLint)."""
+
 from pathlib import Path
 
 
@@ -33,7 +34,8 @@ class TestJSDetection:
         """package.json triggers JS detection."""
         (tmp_path / "package.json").write_text('{"name": "test"}\n')
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("eslint"),
+            tmp_path,
+            which_fn=_make_which_fn("eslint"),
         )
         assert "eslint" in result.detected
 
@@ -41,7 +43,8 @@ class TestJSDetection:
         """*.js files trigger JS detection."""
         (tmp_path / "index.js").write_text("console.log('hello');\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("eslint"),
+            tmp_path,
+            which_fn=_make_which_fn("eslint"),
         )
         assert "eslint" in result.detected
 
@@ -49,7 +52,8 @@ class TestJSDetection:
         """*.ts files trigger JS detection."""
         (tmp_path / "index.ts").write_text("console.log('hello');\n")
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("eslint"),
+            tmp_path,
+            which_fn=_make_which_fn("eslint"),
         )
         assert "eslint" in result.detected
 
@@ -57,7 +61,8 @@ class TestJSDetection:
         """eslint not on PATH -> missing list."""
         (tmp_path / "package.json").write_text('{"name": "test"}\n')
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn(),  # nothing on PATH
+            tmp_path,
+            which_fn=_make_which_fn(),  # nothing on PATH
         )
         assert "eslint" in result.missing
         assert result.language == "js"
@@ -66,7 +71,8 @@ class TestJSDetection:
         """eslint tools.yaml entry round-trips."""
         (tmp_path / "package.json").write_text('{"name": "test"}\n')
         result = detect_toolchain(
-            tmp_path, which_fn=_make_which_fn("eslint"),
+            tmp_path,
+            which_fn=_make_which_fn("eslint"),
         )
         assert "eslint" in result.detected
 

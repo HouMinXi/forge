@@ -21,6 +21,7 @@ Covers all DaemonStateRunner behaviors:
 - conflicts_file missing warning
 - Default keyword set verification
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -148,10 +149,14 @@ class TestDaemonStateNoBackend:
 
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
-        (gate_dir / "gate.yaml").write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {"enabled": False},
-        }))
+        (gate_dir / "gate.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {"enabled": False},
+                }
+            )
+        )
 
         runner = DaemonStateRunner(backend=None)
         diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter input drop"
@@ -172,21 +177,25 @@ class TestDaemonStateNoBackend:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-                "conflicts": [
-                    {
-                        "subsystem": "killswitch",
-                        "mutates": "nft mark",
-                        "interferes_with": "health check outbound probes",
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                        "conflicts": [
+                            {
+                                "subsystem": "killswitch",
+                                "mutates": "nft mark",
+                                "interferes_with": "health check outbound probes",
+                            },
+                        ],
                     },
-                ],
-            },
-        }))
+                }
+            )
+        )
 
         runner = DaemonStateRunner(backend=None)
         diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
@@ -194,20 +203,16 @@ class TestDaemonStateNoBackend:
             result = runner.run(diff, tmp_path)
 
         static_findings = [
-            f for f in result
-            if "killswitch" in f.description.lower()
-            or "nft mark" in f.description.lower()
+            f
+            for f in result
+            if "killswitch" in f.description.lower() or "nft mark" in f.description.lower()
         ]
         assert len(static_findings) >= 1
-        assert any(
-            "no backend configured" in f.description.lower()
-            for f in result
-        )
-        assert "DAEMON-STATE axis skipped: no backend configured" \
-            in runner.infra_errors
-        mock_invoke.assert_not_called(), (
-            "a None backend must skip the LLM call, not fall through "
-            "to an implicit default"
+        assert any("no backend configured" in f.description.lower() for f in result)
+        assert "DAEMON-STATE axis skipped: no backend configured" in runner.infra_errors
+        (
+            mock_invoke.assert_not_called(),
+            ("a None backend must skip the LLM call, not fall through to an implicit default"),
         )
 
     def test_no_backend_empty_diff_returns_empty_without_llm(self, tmp_path):
@@ -239,14 +244,18 @@ class TestDaemonStateTwoStepLLM:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-            },
-        }))
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                    },
+                }
+            )
+        )
 
         # Q1 response
         q1_response = MagicMock()
@@ -254,18 +263,23 @@ class TestDaemonStateTwoStepLLM:
 
         # Q2Q3 response
         q2q3_response = MagicMock()
-        q2q3_response.content = {"conflicts": [
-            {
-                "subsystem": "killswitch",
-                "mutates": "nft mark",
-                "interferes_with": "health check probes",
-                "scenario": "mark blocks outbound probes",
-            }
-        ]}
+        q2q3_response.content = {
+            "conflicts": [
+                {
+                    "subsystem": "killswitch",
+                    "mutates": "nft mark",
+                    "interferes_with": "health check probes",
+                    "scenario": "mark blocks outbound probes",
+                }
+            ]
+        }
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=[q1_response, q2q3_response]) as mock_llm, \
-             patch("code_forge.daemon_state._grep_repo", return_value=""):
+        with (
+            patch(
+                "code_forge.daemon_state.llm_invoke", side_effect=[q1_response, q2q3_response]
+            ) as mock_llm,
+            patch("code_forge.daemon_state._grep_repo", return_value=""),
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/rules.sh b/rules.sh\n+nft add rule inet filter"
             runner.run(diff, tmp_path)
@@ -296,21 +310,25 @@ class TestDaemonStateStaticRules:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-                "conflicts": [
-                    {
-                        "subsystem": "killswitch",
-                        "mutates": "nft mark",
-                        "interferes_with": "health check outbound probes",
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                        "conflicts": [
+                            {
+                                "subsystem": "killswitch",
+                                "mutates": "nft mark",
+                                "interferes_with": "health check outbound probes",
+                            },
+                        ],
                     },
-                ],
-            },
-        }))
+                }
+            )
+        )
 
         # Q1/Q2Q3 responses (static rules appear BEFORE LLM findings)
         q1_response = MagicMock()
@@ -318,16 +336,20 @@ class TestDaemonStateStaticRules:
         q2q3_response = MagicMock()
         q2q3_response.content = {"conflicts": []}
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=[q1_response, q2q3_response]), \
-             patch("code_forge.daemon_state._grep_repo", return_value=""):
+        with (
+            patch("code_forge.daemon_state.llm_invoke", side_effect=[q1_response, q2q3_response]),
+            patch("code_forge.daemon_state._grep_repo", return_value=""),
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
             result = runner.run(diff, tmp_path)
 
         # Static rule should produce at least one finding
-        static_findings = [f for f in result if "killswitch" in f.description.lower()
-                           or "nft mark" in f.description.lower()]
+        static_findings = [
+            f
+            for f in result
+            if "killswitch" in f.description.lower() or "nft mark" in f.description.lower()
+        ]
         assert len(static_findings) >= 1
         for f in static_findings:
             assert f.axis == "DAEMON-STATE"
@@ -339,30 +361,37 @@ class TestDaemonStateStaticRules:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-                "conflicts": [
-                    {
-                        "subsystem": "killswitch",
-                        "mutates": "nft mark",
-                        "interferes_with": "health check probes",
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                        "conflicts": [
+                            {
+                                "subsystem": "killswitch",
+                                "mutates": "nft mark",
+                                "interferes_with": "health check probes",
+                            },
+                        ],
                     },
-                ],
-            },
-        }))
+                }
+            )
+        )
 
         q1_response = MagicMock()
         q1_response.content = {"external_state": ["nft mark"]}
         q2q3_response = MagicMock()
         q2q3_response.content = {"conflicts": []}
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=[q1_response, q2q3_response]) as mock_llm, \
-             patch("code_forge.daemon_state._grep_repo", return_value=""):
+        with (
+            patch(
+                "code_forge.daemon_state.llm_invoke", side_effect=[q1_response, q2q3_response]
+            ) as mock_llm,
+            patch("code_forge.daemon_state._grep_repo", return_value=""),
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/ks.sh b/ks.sh\n+nft mark 0xff"
             runner.run(diff, tmp_path)
@@ -386,9 +415,7 @@ class TestDaemonStateGrepSanitization:
         from code_forge.daemon_state import _grep_repo
 
         with patch("code_forge.daemon_state.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout="", returncode=0
-            )
+            mock_run.return_value = MagicMock(stdout="", returncode=0)
             _grep_repo(["test_keyword"], tmp_path)
 
         # Every call to subprocess.run should use list args
@@ -396,8 +423,7 @@ class TestDaemonStateGrepSanitization:
             args = c[0][0] if c[0] else c.kwargs.get("args", [])
             assert isinstance(args, list), "subprocess.run must use list args"
             # shell=True must NOT be passed
-            assert c.kwargs.get("shell") is not True, \
-                "shell=True must NOT be used in grep calls"
+            assert c.kwargs.get("shell") is not True, "shell=True must NOT be used in grep calls"
 
     def test_grep_top_k(self, tmp_path):
         """_grep_repo with top_k=2 returns context from at most 2 files."""
@@ -440,24 +466,28 @@ class TestDaemonStateQ1Empty:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-            },
-        }))
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                    },
+                }
+            )
+        )
 
         q1_response = MagicMock()
         q1_response.content = {"external_state": []}
         q2q3_response = MagicMock()
         q2q3_response.content = {"conflicts": []}
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=[q1_response, q2q3_response]), \
-             patch("code_forge.daemon_state._grep_repo",
-                   return_value="") as mock_grep:
+        with (
+            patch("code_forge.daemon_state.llm_invoke", side_effect=[q1_response, q2q3_response]),
+            patch("code_forge.daemon_state._grep_repo", return_value="") as mock_grep,
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             runner.run(diff, tmp_path)
@@ -483,27 +513,29 @@ class TestDaemonStateQ1Malformed:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-            },
-        }))
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                    },
+                }
+            )
+        )
 
         # Q1 returns JSON without expected key
         q1_response = MagicMock()
         q1_response.content = {"other_key": ["something"]}
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   return_value=q1_response):
+        with patch("code_forge.daemon_state.llm_invoke", return_value=q1_response):
             runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             result = runner.run(diff, tmp_path)
 
-        skipped = [f for f in result if "skipped" in f.description.lower()
-                   or "SKIPPED" in f.description]
+        skipped = [f for f in result if "skipped" in f.description.lower() or "SKIPPED" in f.description]
         assert len(skipped) >= 1
         assert skipped[0].axis == "DAEMON-STATE"
 
@@ -524,17 +556,22 @@ class TestDaemonStateLLMFailure:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-            },
-        }))
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                    },
+                }
+            )
+        )
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=LLMInvokeError("connection timeout")):
+        with patch(
+            "code_forge.daemon_state.llm_invoke", side_effect=LLMInvokeError("connection timeout")
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             result = runner.run(diff, tmp_path)
@@ -560,14 +597,18 @@ class TestDaemonStateRuntimeSurfaces:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-            },
-        }))
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                    },
+                }
+            )
+        )
 
         # Mock runtime runner with surfaces
         mock_runtime = MagicMock()
@@ -578,9 +619,12 @@ class TestDaemonStateRuntimeSurfaces:
         q2q3_response = MagicMock()
         q2q3_response.content = {"conflicts": []}
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=[q1_response, q2q3_response]) as mock_llm, \
-             patch("code_forge.daemon_state._grep_repo", return_value=""):
+        with (
+            patch(
+                "code_forge.daemon_state.llm_invoke", side_effect=[q1_response, q2q3_response]
+            ) as mock_llm,
+            patch("code_forge.daemon_state._grep_repo", return_value=""),
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             runner._runtime_runner = mock_runtime
             diff = "diff --git a/f b/f\n+nft add rule"
@@ -597,23 +641,28 @@ class TestDaemonStateRuntimeSurfaces:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-            },
-        }))
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                    },
+                }
+            )
+        )
 
         q1_response = MagicMock()
         q1_response.content = {"external_state": []}
         q2q3_response = MagicMock()
         q2q3_response.content = {"conflicts": []}
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=[q1_response, q2q3_response]), \
-             patch("code_forge.daemon_state._grep_repo", return_value=""):
+        with (
+            patch("code_forge.daemon_state.llm_invoke", side_effect=[q1_response, q2q3_response]),
+            patch("code_forge.daemon_state._grep_repo", return_value=""),
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             # _runtime_runner is None by default
             diff = "diff --git a/f b/f\n+nft add rule"
@@ -665,32 +714,38 @@ class TestDaemonStateConflictsFileMissing:
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
         gate_yaml = gate_dir / "gate.yaml"
-        gate_yaml.write_text(yaml.safe_dump({
-            "test": {"command": ["python3", "-m", "pytest"]},
-            "daemon_state": {
-                "enabled": True,
-                "subsystems": ["nftables"],
-                "patterns": [],
-                "conflicts_file": "nonexistent_conflicts.yaml",
-            },
-        }))
+        gate_yaml.write_text(
+            yaml.safe_dump(
+                {
+                    "test": {"command": ["python3", "-m", "pytest"]},
+                    "daemon_state": {
+                        "enabled": True,
+                        "subsystems": ["nftables"],
+                        "patterns": [],
+                        "conflicts_file": "nonexistent_conflicts.yaml",
+                    },
+                }
+            )
+        )
 
         q1_response = MagicMock()
         q1_response.content = {"external_state": []}
         q2q3_response = MagicMock()
         q2q3_response.content = {"conflicts": []}
 
-        with patch("code_forge.daemon_state.llm_invoke",
-                   side_effect=[q1_response, q2q3_response]), \
-             patch("code_forge.daemon_state._grep_repo", return_value=""):
+        with (
+            patch("code_forge.daemon_state.llm_invoke", side_effect=[q1_response, q2q3_response]),
+            patch("code_forge.daemon_state._grep_repo", return_value=""),
+        ):
             runner = DaemonStateRunner(backend=MagicMock())
             diff = "diff --git a/f b/f\n+nft add rule"
             runner.run(diff, tmp_path)
 
         # Should log warning to infra_errors
         assert len(runner.infra_errors) > 0
-        assert any("conflicts_file" in e.lower() or "nonexistent" in e.lower()
-                    for e in runner.infra_errors)
+        assert any(
+            "conflicts_file" in e.lower() or "nonexistent" in e.lower() for e in runner.infra_errors
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -704,8 +759,7 @@ class TestDaemonStateDefaultKeywords:
     def test_default_keywords(self):
         from code_forge.daemon_state import DEFAULT_DAEMON_KEYWORDS
 
-        expected = frozenset({"nft", "iptables", "ip route",
-                              "systemctl", "firewall-cmd", "tc"})
+        expected = frozenset({"nft", "iptables", "ip route", "systemctl", "firewall-cmd", "tc"})
         assert DEFAULT_DAEMON_KEYWORDS == expected
 
 

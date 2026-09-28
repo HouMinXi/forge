@@ -162,8 +162,7 @@ def test_limits_are_applied_before_payload_and_read_back(tmp_path):
 @requires_isolation
 def test_no_network_route_inside(tmp_path):
     spec = _spec(
-        ["/bin/sh", "-c", "ip route > /workspace/route.txt 2>&1; "
-         "echo exit=$? >> /workspace/route.txt"],
+        ["/bin/sh", "-c", "ip route > /workspace/route.txt 2>&1; echo exit=$? >> /workspace/route.txt"],
         tmp_path,
     )
     assert _run_sandbox(spec) == 0
@@ -174,20 +173,23 @@ def test_no_network_route_inside(tmp_path):
 @requires_isolation
 def test_pids_limit_caps_forking(tmp_path):
     spec = _spec(
-        ["/usr/bin/python3", "-c",
-         "import os\n"
-         "ok = 0\n"
-         "for _ in range(64):\n"
-         "    try:\n"
-         "        pid = os.fork()\n"
-         "    except OSError:\n"
-         "        break\n"
-         "    if pid == 0:\n"
-         "        os._exit(0)\n"
-         "    ok += 1\n"
-         "for _ in range(ok):\n"
-         "    os.wait()\n"
-         "open('/workspace/forked.txt', 'w').write(str(ok))\n"],
+        [
+            "/usr/bin/python3",
+            "-c",
+            "import os\n"
+            "ok = 0\n"
+            "for _ in range(64):\n"
+            "    try:\n"
+            "        pid = os.fork()\n"
+            "    except OSError:\n"
+            "        break\n"
+            "    if pid == 0:\n"
+            "        os._exit(0)\n"
+            "    ok += 1\n"
+            "for _ in range(ok):\n"
+            "    os.wait()\n"
+            "open('/workspace/forked.txt', 'w').write(str(ok))\n",
+        ],
         tmp_path,
         pids=12,
     )
@@ -216,9 +218,10 @@ def test_watchdog_kills_payload_when_supervisor_dies(tmp_path):
     src = os.path.abspath("src")
     run_id = "run-" + uuid.uuid4().hex[:12]
     proc = subprocess.Popen(
-        [sys.executable, "-c",
-         helper % (src, run_id, str(tmp_path), DELEGATED_ROOT)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        [sys.executable, "-c", helper % (src, run_id, str(tmp_path), DELEGATED_ROOT)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     assert proc.stdout.readline().strip() == "started"
     time.sleep(1.0)
@@ -322,9 +325,11 @@ def test_sandbox_has_dev_null_and_proc(tmp_path):
     assertion can run.
     """
     spec = _spec(
-        ["/bin/sh", "-c",
-         "test -c /dev/null && test -r /proc/self/status "
-         "&& echo ok > /workspace/devproc.txt"],
+        [
+            "/bin/sh",
+            "-c",
+            "test -c /dev/null && test -r /proc/self/status && echo ok > /workspace/devproc.txt",
+        ],
         tmp_path,
     )
     assert _run_sandbox(spec) == 0

@@ -143,9 +143,7 @@ class TestAcquireAtomicLink:
         # single call that happened to accept everything).
         assert len(chunks_written) == 3
 
-    def test_write_all_raises_on_zero_progress_write(
-        self, tmp_path, monkeypatch
-    ):
+    def test_write_all_raises_on_zero_progress_write(self, tmp_path, monkeypatch):
         """A zero-byte os.write() return with data still pending must
         raise, not spin forever -- nothing changes between iterations
         for a subsequent retry to have any chance of progressing.
@@ -210,9 +208,7 @@ class TestAcquireAtomicLink:
         assert len(seen_names) == 2
         assert seen_names[0] != seen_names[1]
 
-    def test_link_source_gone_raises_clear_oserror(
-        self, tmp_path, monkeypatch
-    ):
+    def test_link_source_gone_raises_clear_oserror(self, tmp_path, monkeypatch):
         """If tmp_path itself vanishes before os.link() can run (e.g.
         something else with write access to the directory removed it),
         the resulting FileNotFoundError from os.link() must surface as
@@ -220,17 +216,13 @@ class TestAcquireAtomicLink:
         lock_path = tmp_path / "code-forge.lock"
 
         def _source_already_gone(src, dst):
-            raise FileNotFoundError(
-                "simulated: tmp file removed before linking"
-            )
+            raise FileNotFoundError("simulated: tmp file removed before linking")
 
         monkeypatch.setattr(os, "link", _source_already_gone)
         with pytest.raises(OSError, match="disappeared before"):
             acquire_lock(lock_path)
 
-    def test_path_removed_right_after_link_raises_clear_oserror(
-        self, tmp_path, monkeypatch
-    ):
+    def test_path_removed_right_after_link_raises_clear_oserror(self, tmp_path, monkeypatch):
         """If *path* is removed by something else in the instant
         between os.link() succeeding and our own inode-verification
         stat(), the resulting FileNotFoundError from os.stat() must
@@ -247,9 +239,7 @@ class TestAcquireAtomicLink:
         with pytest.raises(OSError, match="disappeared immediately"):
             acquire_lock(lock_path)
 
-    def test_write_failure_does_not_leak_tmp_file(
-        self, tmp_path, monkeypatch
-    ):
+    def test_write_failure_does_not_leak_tmp_file(self, tmp_path, monkeypatch):
         """os.write() raising must not leave the temp file behind."""
         lock_path = tmp_path / "code-forge.lock"
 
@@ -261,9 +251,7 @@ class TestAcquireAtomicLink:
             acquire_lock(lock_path)
         assert list(tmp_path.glob("*.tmp-*")) == []
 
-    def test_inode_mismatch_after_link_rejected_not_returned_success(
-        self, tmp_path, monkeypatch
-    ):
+    def test_inode_mismatch_after_link_rejected_not_returned_success(self, tmp_path, monkeypatch):
         """If the path linked into place does not share the temp
         file's inode -- e.g. because something replaced the temp file
         between it being written and being linked -- acquire_lock must
@@ -291,9 +279,7 @@ class TestAcquireAtomicLink:
         # was removed, not the file the attack pointed at.
         assert decoy.read_text() == "not a pid\n"
 
-    def test_symlink_swap_after_link_rejected_not_returned_success(
-        self, tmp_path, monkeypatch
-    ):
+    def test_symlink_swap_after_link_rejected_not_returned_success(self, tmp_path, monkeypatch):
         """A genuine hard link to our own temp file must not be
         confused with a symlink that resolves to the same content.
 
@@ -324,9 +310,7 @@ class TestAcquireAtomicLink:
         assert not lock_path.is_symlink()
         assert not lock_path.exists()
 
-    def test_inode_mismatch_unlink_race_does_not_mask_tampering_error(
-        self, tmp_path, monkeypatch
-    ):
+    def test_inode_mismatch_unlink_race_does_not_mask_tampering_error(self, tmp_path, monkeypatch):
         """If *path* is removed by something else between the
         inode-check stat() and our own cleanup unlink(), that race
         must not replace the informative tampering OSError with a
@@ -343,9 +327,7 @@ class TestAcquireAtomicLink:
 
         def _unlink_path_already_gone(target):
             if target == str(lock_path):
-                raise FileNotFoundError(
-                    "simulated: someone else already removed it"
-                )
+                raise FileNotFoundError("simulated: someone else already removed it")
             return real_unlink(target)
 
         monkeypatch.setattr(os, "link", _link_to_decoy_instead)
@@ -353,9 +335,7 @@ class TestAcquireAtomicLink:
         with pytest.raises(OSError, match="did not match"):
             acquire_lock(lock_path)
 
-    def test_no_hard_link_support_propagates_as_plain_oserror(
-        self, tmp_path, monkeypatch
-    ):
+    def test_no_hard_link_support_propagates_as_plain_oserror(self, tmp_path, monkeypatch):
         """A filesystem without hard-link support (e.g. FAT32) makes
         os.link() raise OSError -- documented as unsupported with no
         fallback, so that OSError must reach the caller as-is rather
@@ -363,18 +343,14 @@ class TestAcquireAtomicLink:
         lock_path = tmp_path / "code-forge.lock"
 
         def _no_hardlink_support(src, dst):
-            raise OSError(
-                "simulated: filesystem does not support hard links"
-            )
+            raise OSError("simulated: filesystem does not support hard links")
 
         monkeypatch.setattr(os, "link", _no_hardlink_support)
         with pytest.raises(OSError, match="does not support hard links"):
             acquire_lock(lock_path)
         assert list(tmp_path.glob("*.tmp-*")) == []
 
-    def test_directory_at_lock_path_raises_friendly_oserror(
-        self, tmp_path
-    ):
+    def test_directory_at_lock_path_raises_friendly_oserror(self, tmp_path):
         """A directory sitting at the lock path -> friendly OSError,
         no leftover temp file.
 
@@ -390,9 +366,7 @@ class TestAcquireAtomicLink:
             acquire_lock(lock_path)
         assert list(tmp_path.glob("*.tmp-*")) == []
 
-    def test_directory_at_lock_path_permission_error_variant(
-        self, tmp_path, monkeypatch
-    ):
+    def test_directory_at_lock_path_permission_error_variant(self, tmp_path, monkeypatch):
         """Same as above, but simulating a platform where os.link()
         raises PermissionError instead of FileExistsError for a
         directory destination (observed on some non-Linux Unixes).
@@ -412,9 +386,7 @@ class TestAcquireAtomicLink:
             acquire_lock(lock_path)
         assert list(tmp_path.glob("*.tmp-*")) == []
 
-    def test_genuine_permission_error_propagates_raw(
-        self, tmp_path, monkeypatch
-    ):
+    def test_genuine_permission_error_propagates_raw(self, tmp_path, monkeypatch):
         """A PermissionError unrelated to *path* being a directory must
         propagate as-is, not get misread as a busy or stale lock.
 
@@ -432,9 +404,7 @@ class TestAcquireAtomicLink:
             acquire_lock(lock_path)
         assert list(tmp_path.glob("*.tmp-*")) == []
 
-    def test_is_dir_probe_failure_does_not_mask_original_error(
-        self, tmp_path, monkeypatch
-    ):
+    def test_is_dir_probe_failure_does_not_mask_original_error(self, tmp_path, monkeypatch):
         """If path.is_dir() itself raises while deciding whether a
         PermissionError from os.link() was the directory-destination
         case, the ORIGINAL PermissionError must still propagate --
@@ -462,9 +432,7 @@ class TestAcquireAtomicLink:
 
         monkeypatch.setattr(os, "link", _boom_link)
         monkeypatch.setattr(Path, "is_dir", _boom_is_dir)
-        with pytest.raises(
-            PermissionError, match="simulated EACCES from os.link"
-        ):
+        with pytest.raises(PermissionError, match="simulated EACCES from os.link"):
             acquire_lock(lock_path)
         assert list(tmp_path.glob("*.tmp-*")) == []
 
@@ -509,19 +477,21 @@ class TestRace:
     def test_race_only_one_wins(self, tmp_path):
         lock_path = tmp_path / "code-forge.lock"
         src_dir = str(Path(__file__).resolve().parent.parent / "src")
-        script = "\n".join([
-            "import sys, time",
-            "from pathlib import Path",
-            "sys.path.insert(0, %r)" % src_dir,
-            "from code_forge.lock import acquire_lock, ForgeLockBusy",
-            "p = Path(%r)" % str(lock_path),
-            "try:",
-            "    acquire_lock(p)",
-            "    print('WON')",
-            "    time.sleep(2)",
-            "except ForgeLockBusy:",
-            "    print('LOST')",
-        ])
+        script = "\n".join(
+            [
+                "import sys, time",
+                "from pathlib import Path",
+                "sys.path.insert(0, %r)" % src_dir,
+                "from code_forge.lock import acquire_lock, ForgeLockBusy",
+                "p = Path(%r)" % str(lock_path),
+                "try:",
+                "    acquire_lock(p)",
+                "    print('WON')",
+                "    time.sleep(2)",
+                "except ForgeLockBusy:",
+                "    print('LOST')",
+            ]
+        )
         procs = [
             subprocess.Popen(
                 [sys.executable, "-c", script],
@@ -544,8 +514,8 @@ class TestEperm:
     @pytest.mark.skipif(
         os.name == "nt",
         reason="POSIX kill(0) EPERM path; the Windows "
-               "ACCESS_DENIED analogue is the ctypes branch "
-               "covered by TestPidAliveWindowsBranch",
+        "ACCESS_DENIED analogue is the ctypes branch "
+        "covered by TestPidAliveWindowsBranch",
     )
     def test_eperm_raises_busy(self, tmp_path):
         lock_path = tmp_path / "code-forge.lock"
@@ -608,6 +578,7 @@ class TestSignalChainCallable:
 async def test_forgelock_worker_thread():
     """TEST-1: ForgeLock in asyncio.to_thread does not crash."""
     import tempfile
+
     with tempfile.TemporaryDirectory() as d:
         lock_path = Path(d) / "test.lock"
 
@@ -682,9 +653,7 @@ class TestPidAlive:
         _handle_existing_lock(lock_path)
         assert not lock_path.exists()
 
-    def test_handle_existing_lock_empty_file_reclaimed_immediately(
-        self, tmp_path
-    ):
+    def test_handle_existing_lock_empty_file_reclaimed_immediately(self, tmp_path):
         """Empty/unparseable lock file -> reclaimed right away, no raise.
 
         Under the atomic write-then-link design, path is never linked
@@ -714,6 +683,7 @@ class _FakeCtypes:
 
     class _Func:
         """Callable that supports .restype/.argtypes attribute assignment."""
+
         def __init__(self, return_value):
             self._return_value = return_value
             self.restype = None
@@ -752,7 +722,8 @@ class _FakeCtypes:
 
     def WinDLL(self, name, use_last_error=False):
         self._dll = self._FakeDLL(
-            self._open_result, self._wait_result,
+            self._open_result,
+            self._wait_result,
         )
         return self._dll
 
@@ -792,7 +763,10 @@ class TestPidAliveWindowsBranch:
     def test_wait_failed_alive(self, monkeypatch):
         """handle ok, WAIT_FAILED (0xFFFFFFFF) -> alive (fail-safe)."""
         result, _ = self._run_with_stub(
-            monkeypatch, 1, 0xFFFFFFFF, 0,
+            monkeypatch,
+            1,
+            0xFFFFFFFF,
+            0,
         )
         assert result is True
 

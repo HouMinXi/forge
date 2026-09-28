@@ -2,7 +2,6 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """CLI backward compatibility tests for deprecated and preserved flags."""
 
-
 import pytest
 
 from code_forge.cli import _build_parser
@@ -30,7 +29,6 @@ class TestPreservedFlags:
         with pytest.raises(SystemExit) as exc_info:
             parser.parse_args(["--version"])
         assert exc_info.value.code == 0
-
 
     # TestStateDirDeprecation and TestStagedDeprecation removed:
     # --state-dir and --staged flags were deleted from the CLI.

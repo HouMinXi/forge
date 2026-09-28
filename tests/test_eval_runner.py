@@ -1,4 +1,5 @@
 """Tests for eval pipeline replay runner (runner.py)."""
+
 from __future__ import annotations
 
 import os
@@ -59,8 +60,11 @@ class TestReplayEntry:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_returns_eval_result(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """replay_entry returns EvalResult with correct caught_count."""
         # git init and git apply succeed; the review exits 1 (HOLD).
@@ -91,10 +95,14 @@ class TestReplayEntry:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_skipped_on_apply_failure(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Diff apply error = SKIPPED result with reason string."""
         call_count = [0]
+
         def side_effect(cmd, **kwargs):
             call_count[0] += 1
             m = MagicMock()
@@ -105,6 +113,7 @@ class TestReplayEntry:
                 m.returncode = 0
             m.stdout = b""
             return m
+
         mock_run.side_effect = side_effect
 
         diff_dir = tmp_path / "corpus"
@@ -122,8 +131,11 @@ class TestReplayEntry:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_skipped_on_timeout(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """subprocess.TimeoutExpired = SKIPPED result."""
         mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
@@ -149,11 +161,16 @@ class TestReplayEntry:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_llm_tags_get_runs_3(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """LLM axis tags (RUNTIME, LEGACY, INTENT) default to runs=3."""
         mock_run.return_value = MagicMock(
-            returncode=1, stderr=b"", stdout=b"",
+            returncode=1,
+            stderr=b"",
+            stdout=b"",
         )
 
         diff_dir = tmp_path / "corpus"
@@ -169,11 +186,16 @@ class TestReplayEntry:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_runs_override(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """--runs N overrides default run count."""
         mock_run.return_value = MagicMock(
-            returncode=0, stderr=b"", stdout=b"",
+            returncode=0,
+            stderr=b"",
+            stdout=b"",
         )
 
         diff_dir = tmp_path / "corpus"
@@ -212,8 +234,11 @@ class TestAxisHook:
         hook = AxisHook()
         entry = _entry()
         result = EvalResult(
-            entry=entry, actual_verdict="PASS",
-            runs=1, caught_count=0, skipped_reason="",
+            entry=entry,
+            actual_verdict="PASS",
+            runs=1,
+            caught_count=0,
+            skipped_reason="",
         )
         # Should not raise
         hook.pre_review(entry)
@@ -223,11 +248,15 @@ class TestAxisHook:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_hooks_called_during_replay(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """register_axis_hook: pre_review and post_review called during replay."""
         import code_forge.eval.runner as runner_mod
+
         original_hooks = runner_mod._AXIS_HOOKS.copy()
         try:
             runner_mod._AXIS_HOOKS.clear()
@@ -236,7 +265,9 @@ class TestAxisHook:
             register_axis_hook(mock_hook)
 
             mock_run.return_value = MagicMock(
-                returncode=0, stderr=b"", stdout=b"",
+                returncode=0,
+                stderr=b"",
+                stdout=b"",
             )
             mock_review.return_value = (0, "")
 
@@ -257,6 +288,7 @@ class TestAxisHook:
     def test_register_appends_to_list(self) -> None:
         """register_axis_hook appends, does NOT use entry_points or importlib."""
         import code_forge.eval.runner as runner_mod
+
         original_hooks = runner_mod._AXIS_HOOKS.copy()
         try:
             runner_mod._AXIS_HOOKS.clear()
@@ -274,6 +306,7 @@ class TestAxisHook:
         """No entry_points, importlib.import_module, or pkg_resources (carry-forward 3)."""
         import inspect
         import code_forge.eval.runner as runner_mod
+
         source = inspect.getsource(runner_mod)
         for banned in ["entry_points", "importlib.import_module", "pkg_resources"]:
             # Check import statements only, not docstring prose
@@ -312,8 +345,11 @@ class TestCloseoutBehaviors:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_forge_skip_worktree_check_in_subprocess_env(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """FORGE_SKIP_WORKTREE_CHECK=1 is in the env passed to the review."""
         captured_envs: list[dict] = []
@@ -338,8 +374,11 @@ class TestCloseoutBehaviors:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_diff_applied_before_record_trust(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """git apply is invoked before record_trust (prevents gate.yaml collision)."""
         call_order: list[str] = []
@@ -372,8 +411,12 @@ class TestCloseoutBehaviors:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_base_files_seeded_before_apply(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_copytree: MagicMock, mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_copytree: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """When base_files/<entry> exists, copytree runs before git apply."""
         call_order: list[str] = []
@@ -411,8 +454,12 @@ class TestCloseoutBehaviors:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_base_files_seed_oserror_returns_skipped(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_copytree: MagicMock, mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_copytree: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """OSError during seed copytree -> SKIPPED, not crash."""
         mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
@@ -437,39 +484,49 @@ class TestInfraFailureDetection:
 
     def test_connection_refused_is_infra(self) -> None:
         from code_forge.eval.runner import _is_infra_failure
+
         assert _is_infra_failure("ConnectionRefusedError: [Errno 111]")
 
     def test_connection_timed_out_is_infra(self) -> None:
         from code_forge.eval.runner import _is_infra_failure
+
         assert _is_infra_failure("Connection timed out")
 
     def test_read_timed_out_is_infra(self) -> None:
         from code_forge.eval.runner import _is_infra_failure
+
         assert _is_infra_failure("Read timed out")
 
     def test_api_connection_error_is_infra(self) -> None:
         from code_forge.eval.runner import _is_infra_failure
+
         assert _is_infra_failure("APIConnectionError: server unreachable")
 
     def test_normal_review_failure_is_not_infra(self) -> None:
         from code_forge.eval.runner import _is_infra_failure
+
         assert not _is_infra_failure("Review completed with findings")
 
     def test_empty_stderr_is_not_infra(self) -> None:
         from code_forge.eval.runner import _is_infra_failure
+
         assert not _is_infra_failure("")
 
     def test_generic_timeout_word_is_not_infra(self) -> None:
         """'Timeout' as a lone word must NOT trigger infra classification."""
         from code_forge.eval.runner import _is_infra_failure
+
         assert not _is_infra_failure("WARNING: timeout parameter was ignored")
 
     @patch("code_forge.eval.runner._run_review")
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_infra_failure_returns_skipped(
-        self, mock_trust: MagicMock, mock_run: MagicMock,
-        mock_review: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        mock_review: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Backend down during review -> SKIPPED, not HOLD."""
         mock_run.return_value = MagicMock(returncode=0, stderr=b"", stdout=b"")
@@ -489,7 +546,8 @@ class TestStderrCapture:
     """What _run_review brings back from a child that wrote a lot."""
 
     def test_infra_error_before_a_flood_of_output_still_comes_back(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """A backend error is not always the last thing a review writes.
 
@@ -512,7 +570,8 @@ class TestStderrCapture:
         assert _is_infra_failure(stderr)
 
     def test_a_cut_mid_character_does_not_leave_a_broken_one(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The cut is a byte offset; characters are not one byte wide.
 
@@ -547,28 +606,21 @@ class TestStderrCapture:
     def test_a_short_stderr_comes_back_whole(self, tmp_path: Path) -> None:
         """Below the budget there is no gap, so nothing claims one."""
         script = tmp_path / "quiet.py"
-        script.write_text(
-            "import sys\nsys.stderr.write('just this\\n')\nsys.exit(1)\n"
-        )
-        _, stderr = _run_review(
-            [sys.executable, str(script)], str(tmp_path), dict(os.environ), 60
-        )
+        script.write_text("import sys\nsys.stderr.write('just this\\n')\nsys.exit(1)\n")
+        _, stderr = _run_review([sys.executable, str(script)], str(tmp_path), dict(os.environ), 60)
         assert stderr == "just this\n"
 
     def test_what_comes_back_stays_bounded(self, tmp_path: Path) -> None:
         """The point of not reading it whole."""
         script = tmp_path / "loud.py"
-        script.write_text(
-            "import sys\nsys.stderr.write('y' * (4 * 1024 * 1024))\n"
-        )
-        _, stderr = _run_review(
-            [sys.executable, str(script)], str(tmp_path), dict(os.environ), 60
-        )
+        script.write_text("import sys\nsys.stderr.write('y' * (4 * 1024 * 1024))\n")
+        _, stderr = _run_review([sys.executable, str(script)], str(tmp_path), dict(os.environ), 60)
         assert len(stderr) <= _STDERR_TAIL_BYTES
 
 
 # ---- review R4 (2d6d58f): the write-side guard raised ValueError past
 # a finally that only caught OSError ----------------------------------------
+
 
 def test_keep_state_escape_does_not_mask_the_original_exception(tmp_path, monkeypatch):
     """The path-traversal guard in _keep_state raises ValueError. The
@@ -576,13 +628,14 @@ def test_keep_state_escape_does_not_mask_the_original_exception(tmp_path, monkey
     continue to rmtree -- not let it replace whatever exception brought
     us into the finally."""
     from code_forge.eval import runner as r
+
     calls = []
     monkeypatch.setattr(r.shutil, "rmtree", lambda *a, **k: calls.append("rmtree"))
-    monkeypatch.setattr(r, "_keep_state",
-                        lambda *a, **k: (_ for _ in ()).throw(ValueError("escapes")))
+    monkeypatch.setattr(r, "_keep_state", lambda *a, **k: (_ for _ in ()).throw(ValueError("escapes")))
     # exercise the same try/except shape the runner uses
     import io
     import sys
+
     err = io.StringIO()
     monkeypatch.setattr(sys, "stderr", err)
     try:

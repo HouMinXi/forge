@@ -16,9 +16,7 @@ class TestHoldReasonRoundTrip:
         state_path = tmp_path / "state.json"
         save_state(state, state_path)
         loaded = load_state(state_path)
-        assert loaded.hold_reason == (
-            "3 UNCERTAIN finding(s) awaiting human disposition"
-        )
+        assert loaded.hold_reason == ("3 UNCERTAIN finding(s) awaiting human disposition")
 
 
 class TestHoldReasonNoneDefault:

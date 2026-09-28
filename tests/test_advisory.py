@@ -4,6 +4,7 @@ Covers: AdvisoryFinding construction, field exclusion (no fingerprint,
 no disposition, no source), AxisRunner Protocol conformance, and the
 founding principle that advisory findings NEVER reset the cycle counter.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -172,9 +173,7 @@ def test_advisory_axis_runner_conformance():
         def is_advisory(self) -> bool:
             return True
 
-        def run(
-            self, diff_text: str, repo_root: Path
-        ) -> list[AdvisoryFinding]:
+        def run(self, diff_text: str, repo_root: Path) -> list[AdvisoryFinding]:
             return []
 
     # Satisfies AdvisoryAxisRunner
@@ -236,8 +235,7 @@ def test_advisory_does_not_reset_cycle_counter():
             axis="LEGACY",
             file="src/legacy.py",
             line_range=[50, 75],
-            description="HIGH: deprecated API usage -- "
-            "os.popen replaced by subprocess in Python 3.0",
+            description="HIGH: deprecated API usage -- os.popen replaced by subprocess in Python 3.0",
             attribution="legacy axis",
         ),
     ]
@@ -294,11 +292,19 @@ def test_line_range_rejects_str_and_bytes():
 
     with pytest.raises(TypeError):
         AdvisoryFinding(
-            id="x", axis="t", file="f", line_range="hello",
-            description="d", attribution="a",
+            id="x",
+            axis="t",
+            file="f",
+            line_range="hello",
+            description="d",
+            attribution="a",
         )
     with pytest.raises(TypeError):
         AdvisoryFinding(
-            id="x", axis="t", file="f", line_range=b"\x00\x01",
-            description="d", attribution="a",
+            id="x",
+            axis="t",
+            file="f",
+            line_range=b"\x00\x01",
+            description="d",
+            attribution="a",
         )

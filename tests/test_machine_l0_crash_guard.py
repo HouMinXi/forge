@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for L0 crash guard: nonzero exit + empty stdout = ToolError."""
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -30,9 +31,7 @@ class TestL0CrashGuard:
             [],
             [],
         )
-        findings, infra = _default_l0_runner(
-            _make_registry(), [Path("test.c")]
-        )
+        findings, infra = _default_l0_runner(_make_registry(), [Path("test.c")])
         assert len(findings) == 0
         assert len(infra) == 1
         assert "exited 2" in infra[0]
@@ -48,9 +47,7 @@ class TestL0CrashGuard:
             [],
             [],
         )
-        findings, infra = _default_l0_runner(
-            _make_registry(), [Path("test.c")]
-        )
+        findings, infra = _default_l0_runner(_make_registry(), [Path("test.c")])
         assert len(findings) == 0
         assert len(infra) == 0
 
@@ -59,9 +56,16 @@ class TestL0CrashGuard:
     def test_nonempty_stdout_no_guard(self, mock_parse, mock_run):
         """Nonzero exit + non-empty stdout -> parser handles it, not guard."""
         mock_parse.return_value = [
-            Finding(file="test.c", line=1, end_line=1, column=0,
-                    rule_id="test", level="error", message="test",
-                    tool_name="test-tool"),
+            Finding(
+                file="test.c",
+                line=1,
+                end_line=1,
+                column=0,
+                rule_id="test",
+                level="error",
+                message="test",
+                tool_name="test-tool",
+            ),
         ]
         mock_run.return_value = (
             {"test-tool": ("sarif output here", 1, "")},
@@ -69,9 +73,7 @@ class TestL0CrashGuard:
             [],
             [],
         )
-        findings, infra = _default_l0_runner(
-            _make_registry(), [Path("test.c")]
-        )
+        findings, infra = _default_l0_runner(_make_registry(), [Path("test.c")])
         assert len(findings) == 1
         assert len(infra) == 0
 
@@ -86,7 +88,5 @@ class TestL0CrashGuard:
             [],
         )
         # With guard active: infra has 1 error
-        findings, infra = _default_l0_runner(
-            _make_registry(), [Path("test.c")]
-        )
+        findings, infra = _default_l0_runner(_make_registry(), [Path("test.c")])
         assert len(infra) == 1, "guard must catch crash"

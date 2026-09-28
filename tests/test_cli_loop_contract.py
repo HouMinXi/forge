@@ -65,9 +65,7 @@ def test_window_file_text_empty_input() -> None:
     assert windowed_empty is False
 
     # Empty text with non-empty hunks
-    out_empty_hunks, windowed_empty_hunks = _window_file_text(
-        "", [_hunk(1, 2)], context_lines=3
-    )
+    out_empty_hunks, windowed_empty_hunks = _window_file_text("", [_hunk(1, 2)], context_lines=3)
     assert out_empty_hunks == ""
     assert windowed_empty_hunks is False
 
@@ -78,9 +76,7 @@ def test_window_file_text_empty_input() -> None:
     assert windowed_no_hunks is False
 
     # Out-of-bounds hunks where lo > hi (all hunks beyond text lines)
-    out_oob, windowed_oob = _window_file_text(
-        text, [_hunk(100, 105)], context_lines=0
-    )
+    out_oob, windowed_oob = _window_file_text(text, [_hunk(100, 105)], context_lines=0)
     assert out_oob == text
     assert windowed_oob is False
 
@@ -136,9 +132,7 @@ def test_window_file_text_real_temp_file_path(tmp_path: Path) -> None:
         "-def step_15(): pass\n"
         "+def step_15(): return True\n"
     )
-    post_image, digest = _assemble_post_image(
-        tmp_path, diff_text, context_lines=1
-    )
+    post_image, digest = _assemble_post_image(tmp_path, diff_text, context_lines=1)
     assert f"## File: {file_name} (around the changes)" in post_image
     assert "15: def step_15(): pass" in post_image
     assert isinstance(digest, str) and len(digest) > 0
@@ -172,10 +166,9 @@ def test_run_hold_loop_iteration_contract(tmp_path: Path) -> None:
     def mock_run(self_sm: object) -> Verdict:
         return next(results)
 
-    with patch(
-        "code_forge.cli.StateMachine.run", mock_run
-    ), patch(
-        "code_forge.cli.run_hold_ui", return_value=None
+    with (
+        patch("code_forge.cli.StateMachine.run", mock_run),
+        patch("code_forge.cli.run_hold_ui", return_value=None),
     ):
         verdict = _run_hold_loop(
             mode=Mode.LOCAL,

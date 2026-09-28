@@ -1,4 +1,5 @@
 """Cross-repository constructor contracts on distinct real git inputs."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -14,8 +15,12 @@ from tests.test_cross_repo import _make_repo
 def test_cross_repo_constructor_contracts(tmp_path, monkeypatch, engine, primary_changed):
     primary = _make_repo(tmp_path, monkeypatch, "primary", filename="primary.py")
     sibling = _make_repo(
-        tmp_path, monkeypatch, "sibling", filename="sibling.py",
-        content_v1="sibling = 10\n", content_v2="sibling = 20\n",
+        tmp_path,
+        monkeypatch,
+        "sibling",
+        filename="sibling.py",
+        content_v1="sibling = 10\n",
+        content_v2="sibling = 20\n",
     )
     primary_ref = "main..feature" if primary_changed else "main..main"
     expected = {
@@ -46,10 +51,17 @@ def test_cross_repo_constructor_contracts(tmp_path, monkeypatch, engine, primary
     monkeypatch.setattr(factories, "build_l1_provider", make_l1)
     monkeypatch.setattr(machine, "StateMachine", make_machine)
     verdict = cross_repo.run_cross_repo(
-        primary_path=primary, primary_label="primary", primary_ref=primary_ref,
+        primary_path=primary,
+        primary_label="primary",
+        primary_ref=primary_ref,
         siblings=[{"label": "sibling", "repo": str(sibling), "ref": "main..feature"}],
-        gate_config={"test": {"command": ["echo", "ok"]}}, mode="local", engine_choice=engine, backend=backend,
-        max_rounds=3, max_fix_attempts=1, clean_round_threshold=1,
+        gate_config={"test": {"command": ["echo", "ok"]}},
+        mode="local",
+        engine_choice=engine,
+        backend=backend,
+        max_rounds=3,
+        max_fix_attempts=1,
+        clean_round_threshold=1,
         output_fn=lambda _: None,
     )
     assert verdict is Verdict.PASS
@@ -70,9 +82,10 @@ def test_cross_repo_constructor_contracts(tmp_path, monkeypatch, engine, primary
         ), "coverage must be explicit for the primary joint review"
     assert len(l1_diffs) == 1
     from code_forge.receipt_scope import repository_scope
-    assert repository_scope({'sibling': expected['sibling.py']})[0] in l1_diffs[0]
+
+    assert repository_scope({"sibling": expected["sibling.py"]})[0] in l1_diffs[0]
     if primary_changed:
-        assert repository_scope({'primary': expected['primary.py']})[0] in l1_diffs[0]
+        assert repository_scope({"primary": expected["primary.py"]})[0] in l1_diffs[0]
         assert expected["primary.py"] != expected["sibling.py"]
 
 

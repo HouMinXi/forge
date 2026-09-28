@@ -12,6 +12,7 @@ These tests pin: with diff_text, the prompt carries the annotated hunks
 for the finding's file and nothing from other files; without diff_text the
 prompt is byte-identical to before (so the calibration A/B is clean).
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -41,8 +42,12 @@ diff --git a/other/file.py b/other/file.py
 
 def _finding(file="sphinx/domains/std.py", lr=(308, 308)):
     return StateFinding(
-        id="x", fingerprint="x", source="L1", disposition=Disposition.CONFIRMED,
-        file=file, line_range=list(lr),
+        id="x",
+        fingerprint="x",
+        source="L1",
+        disposition=Disposition.CONFIRMED,
+        file=file,
+        line_range=list(lr),
         description="Removal of '.lower()' makes term registration case-sensitive.",
     )
 
@@ -53,6 +58,7 @@ def _capture(falsifier, finding):
     def fake(prompt, **kw):
         caught["prompt"] = prompt
         return SimpleNamespace(content={"verdict": "DISMISSED", "reasoning": "r"})
+
     with patch("code_forge.falsify_real.llm_invoke", fake):
         falsifier.falsify(finding)
     return caught["prompt"]
@@ -95,8 +101,10 @@ def test_file_absent_from_diff_falls_back_to_no_diff_section():
 
 
 def test_diff_section_is_capped(monkeypatch):
-    big = DIFF.replace("+    std.note_object('term', termtext, node_id, location=term)",
-                       "+    std.note_object('term', termtext, node_id, location=term)  # " + "x" * 20000)
+    big = DIFF.replace(
+        "+    std.note_object('term', termtext, node_id, location=term)",
+        "+    std.note_object('term', termtext, node_id, location=term)  # " + "x" * 20000,
+    )
     p = _capture(RealFalsifier(backend=None, diff_text=big), _finding())
     assert len(p) < 12000
     assert "truncated" in p.lower()
@@ -134,6 +142,7 @@ def test_every_review_path_passes_diff_text_to_build_falsifier():
 
 def test_factory_threads_diff_text_to_real_falsifier():
     from code_forge.factories import build_falsifier
+
     f = build_falsifier("real", backend=None, diff_text=DIFF)
     assert f._diff_text == DIFF
     f = build_falsifier("auto", backend=None, diff_text=DIFF)
@@ -149,16 +158,22 @@ def test_cross_repo_falsifier_uses_the_threads_own_diff():
     src = (_SRC / "cross_repo.py").read_text()
     # The call must not depend on the primary-only local.
     import ast
-    calls = [node for node in ast.walk(ast.parse(src))
-             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-             and node.func.id == 'build_falsifier']
+
+    calls = [
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "build_falsifier"
+    ]
     assert len(calls) == 1
-    value = next(k.value for k in calls[0].keywords if k.arg == 'diff_text')
+    value = next(k.value for k in calls[0].keywords if k.arg == "diff_text")
     assert ast.unparse(value) == "e['diff']"
-    assert 'resolved_for_l1' not in ast.unparse(calls[0])
+    assert "resolved_for_l1" not in ast.unparse(calls[0])
 
 
 # ---- review R4: subagent outlet is a production falsifier path too ---------
+
 
 def test_run_outlet_c_forwards_context_rows_to_build_falsifier(monkeypatch):
     """cli.py's main line gathers RemovedSymbolReaders and hands the rows
@@ -167,6 +182,7 @@ def test_run_outlet_c_forwards_context_rows_to_build_falsifier(monkeypatch):
     A4 readers were silently absent."""
     import code_forge.factories as fac
     import code_forge.outlet_c as oc
+
     seen = {}
 
     def fake_build(engine, backend=None, diff_text=None, context_rows=None, **kw):
@@ -176,22 +192,35 @@ def test_run_outlet_c_forwards_context_rows_to_build_falsifier(monkeypatch):
         class _F:
             def falsify(self, f):
                 return f.disposition
+
         return _F()
+
     monkeypatch.setattr(fac, "build_falsifier", fake_build)
     # run_outlet_c imports build_falsifier lazily from .factories
     rows = [object(), object()]
     try:
         oc.run_outlet_c(
-            resolved_review=type("R", (), {"git_diff": "diff --git a/x b/x\n",
-                                          "source_files": [], "baseline_content": None,
-                                          "mode_hint": "git"})(),
-            source_hash="h", cwd=".", spawn_fn=lambda *a, **k: None,
-            clean_round_threshold=1, backend=None, engine="auto",
+            resolved_review=type(
+                "R",
+                (),
+                {
+                    "git_diff": "diff --git a/x b/x\n",
+                    "source_files": [],
+                    "baseline_content": None,
+                    "mode_hint": "git",
+                },
+            )(),
+            source_hash="h",
+            cwd=".",
+            spawn_fn=lambda *a, **k: None,
+            clean_round_threshold=1,
+            backend=None,
+            engine="auto",
             context_rows=rows,
         )
     except Exception:
         pass  # the machine may not run to completion on this stub; the
-              # assertion is about what reached build_falsifier
+        # assertion is about what reached build_falsifier
     assert seen.get("rows") is rows
     assert seen.get("diff") == "diff --git a/x b/x\n"
 
@@ -202,6 +231,8 @@ def test_dispatch_subagent_does_not_reference_an_undefined_args():
     so does calling the function with outlet='subagent'."""
     import subprocess
     import sys
-    r = subprocess.run([sys.executable, "-m", "pyflakes",
-                        "src/code_forge/cli.py"], capture_output=True, text=True)
+
+    r = subprocess.run(
+        [sys.executable, "-m", "pyflakes", "src/code_forge/cli.py"], capture_output=True, text=True
+    )
     assert "undefined name 'args'" not in r.stdout, r.stdout

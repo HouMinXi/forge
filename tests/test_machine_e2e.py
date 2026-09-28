@@ -48,8 +48,9 @@ def _make_resolved(diff_text=None):
     )
 
 
-def _make_machine(tmp_path, *, e2e_runner=None, l0_runner=None, diff_text=None,
-                  falsifier=None, autofixer=None):
+def _make_machine(
+    tmp_path, *, e2e_runner=None, l0_runner=None, diff_text=None, falsifier=None, autofixer=None
+):
     """Construct a minimal StateMachine for E2E integration tests."""
     return StateMachine(
         mode=Mode.LOCAL,
@@ -132,9 +133,7 @@ class TestMergeFindingsPriority:
         l0 = _make_finding(fp="fp-l0", source="L0", disp=Disposition.CONFIRMED)
         l1 = _make_finding(fp="fp-l1", source="L1", disp=Disposition.DISMISSED)
         l2 = _make_finding(fp="fp-l2", source="MUTANT", disp=Disposition.DISMISSED)
-        e2e = _make_finding(
-            fp="fp-e2e", source="E2E_CHECK", disp=Disposition.DISMISSED
-        )
+        e2e = _make_finding(fp="fp-e2e", source="E2E_CHECK", disp=Disposition.DISMISSED)
         merged = machine._merge_findings([l0], [l1], [l2], [e2e])
         fps = {f.fingerprint for f in merged}
         assert fps == {"fp-l0", "fp-l1", "fp-l2", "fp-e2e"}
@@ -169,16 +168,10 @@ class TestAutofixSkipsE2eCheck:
                 return super().fix(finding, mode_hint)
 
         machine = _make_machine(tmp_path, autofixer=TrackingAutoFixer())
-        e2e_finding = _make_finding(
-            fp="e2e-skip", source="E2E_CHECK", disp=Disposition.CONFIRMED
-        )
-        mutant_finding = _make_finding(
-            fp="mut-skip", source="MUTANT", disp=Disposition.CONFIRMED
-        )
+        e2e_finding = _make_finding(fp="e2e-skip", source="E2E_CHECK", disp=Disposition.CONFIRMED)
+        mutant_finding = _make_finding(fp="mut-skip", source="MUTANT", disp=Disposition.CONFIRMED)
         machine._apply_autofix_loop_to([e2e_finding, mutant_finding])
-        assert call_count["n"] == 0, (
-            "autofixer must not be called for E2E_CHECK or MUTANT sources"
-        )
+        assert call_count["n"] == 0, "autofixer must not be called for E2E_CHECK or MUTANT sources"
 
 
 class TestE2eCheckBypassesFalsifier:
@@ -195,9 +188,7 @@ class TestE2eCheckBypassesFalsifier:
         e2e_fp = "e2e-bypass"
 
         def e2e_runner(dt, rr):
-            f = _make_finding(
-                fp=e2e_fp, source="E2E_CHECK", disp=Disposition.UNCERTAIN
-            )
+            f = _make_finding(fp=e2e_fp, source="E2E_CHECK", disp=Disposition.UNCERTAIN)
             return ([f], [])
 
         machine = _make_machine(
@@ -206,9 +197,7 @@ class TestE2eCheckBypassesFalsifier:
             e2e_runner=e2e_runner,
         )
         machine._execute_round(round_index=0)
-        assert call_count["n"] == 0, (
-            "falsifier must not be invoked for E2E_CHECK findings"
-        )
+        assert call_count["n"] == 0, "falsifier must not be invoked for E2E_CHECK findings"
 
 
 class TestUncertainE2eLeadsToHoldVerdict:
@@ -260,9 +249,7 @@ class TestUncertainE2eLeadsToHoldVerdict:
 class TestRunE2ePhaseNonGitMode:
     """_run_e2e_phase with git_diff=None records the infra signal."""
 
-    def test_run_e2e_phase_non_git_mode_returns_empty_with_infra_signal(
-        self, tmp_path
-    ):
+    def test_run_e2e_phase_non_git_mode_returns_empty_with_infra_signal(self, tmp_path):
         """non-git mode (git_diff=None) records the infra signal and
         returns no findings without invoking the runner.
         """
@@ -299,9 +286,6 @@ class TestRunE2ePhaseNonGitMode:
 
         assert findings == [], "non-git mode must return no findings"
         assert any(
-            "e2e: no git diff available (non-git review)" in msg
-            for msg in machine._state.infra_errors
+            "e2e: no git diff available (non-git review)" in msg for msg in machine._state.infra_errors
         ), "infra signal must be recorded when git_diff is None"
-        assert runner_call_count["n"] == 0, (
-            "e2e_runner must not be called when git_diff is None"
-        )
+        assert runner_call_count["n"] == 0, "e2e_runner must not be called when git_diff is None"

@@ -38,8 +38,7 @@ def _make_resolved():
     )
 
 
-def _make_machine(tmp_path, l0_findings=None, l0_infra=None,
-                  source_hash="abc123"):
+def _make_machine(tmp_path, l0_findings=None, l0_infra=None, source_hash="abc123"):
     """Build a CI-mode StateMachine with injectable L0 results."""
     findings = l0_findings if l0_findings is not None else []
     infra = l0_infra if l0_infra is not None else []
@@ -103,19 +102,23 @@ class TestCIUncertainPass:
     """(c) UNCERTAIN only -> PASS (CI non-blocking) + converged=True."""
 
     def test_uncertain_is_pass(self, tmp_path):
-        findings = [_make_finding(
-            fp="fp-unc",
-            disp=Disposition.UNCERTAIN,
-        )]
+        findings = [
+            _make_finding(
+                fp="fp-unc",
+                disp=Disposition.UNCERTAIN,
+            )
+        ]
         machine = _make_machine(tmp_path, l0_findings=findings)
         verdict = machine.run()
         assert verdict == Verdict.PASS
 
     def test_converged_true_on_uncertain_pass(self, tmp_path):
-        findings = [_make_finding(
-            fp="fp-unc",
-            disp=Disposition.UNCERTAIN,
-        )]
+        findings = [
+            _make_finding(
+                fp="fp-unc",
+                disp=Disposition.UNCERTAIN,
+            )
+        ]
         machine = _make_machine(tmp_path, l0_findings=findings)
         machine.run()
         assert machine._state.converged is True
@@ -140,10 +143,8 @@ class TestCIContinuation:
     def test_same_hash_continues_after_highest_cycle(self, tmp_path):
         rd = tmp_path / ".code-forge" / "receipts"
         rd.mkdir(parents=True)
-        (rd / "receipt-c1p1.json").write_text(
-            json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
-        (rd / "receipt-c1p2.json").write_text(
-            json.dumps({"cycle": 1, "pass": 2, "diff_sha256": "sha"}))
+        (rd / "receipt-c1p1.json").write_text(json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
+        (rd / "receipt-c1p2.json").write_text(json.dumps({"cycle": 1, "pass": 2, "diff_sha256": "sha"}))
         m = self._machine_for(tmp_path)
         assert m._continuation_round_index() == 1
 
@@ -151,7 +152,8 @@ class TestCIContinuation:
         rd = tmp_path / ".code-forge" / "receipts"
         rd.mkdir(parents=True)
         (rd / "receipt-c1p1.json").write_text(
-            json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "other"}))
+            json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "other"})
+        )
         m = self._machine_for(tmp_path)
         # receipt filenames carry no diff identity, so a changed diff must
         # not restart at cycle 1: that would overwrite the other diff's
@@ -163,10 +165,10 @@ class TestCIContinuation:
         rd = tmp_path / ".code-forge" / "receipts"
         rd.mkdir(parents=True)
         # This diff wrote cycle 1, another diff later wrote cycle 2.
-        (rd / "receipt-c1p1.json").write_text(
-            json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
+        (rd / "receipt-c1p1.json").write_text(json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
         (rd / "receipt-c2p1.json").write_text(
-            json.dumps({"cycle": 2, "pass": 1, "diff_sha256": "other"}))
+            json.dumps({"cycle": 2, "pass": 1, "diff_sha256": "other"})
+        )
         m = self._machine_for(tmp_path)
         # Resuming this diff's own sequence (1) would write cycle 2 and
         # overwrite the foreign diff's receipt-c2p1.json. The next cycle
@@ -176,8 +178,7 @@ class TestCIContinuation:
     def test_corrupt_receipt_is_skipped(self, tmp_path):
         rd = tmp_path / ".code-forge" / "receipts"
         rd.mkdir(parents=True)
-        (rd / "receipt-c1p1.json").write_text(
-            json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
+        (rd / "receipt-c1p1.json").write_text(json.dumps({"cycle": 1, "pass": 1, "diff_sha256": "sha"}))
         (rd / "receipt-c1p2.json").write_text("{ not json")
         m = self._machine_for(tmp_path)
         assert m._continuation_round_index() == 1
@@ -189,7 +190,8 @@ class TestCIContinuation:
         rd = tmp_path / ".code-forge" / "receipts"
         rd.mkdir(parents=True)
         (rd / "receipt-c1p1.json").write_text(
-            json.dumps({"cycle": True, "pass": 1, "diff_sha256": "sha"}))
+            json.dumps({"cycle": True, "pass": 1, "diff_sha256": "sha"})
+        )
         m = self._machine_for(tmp_path)
         assert m._continuation_round_index() == 0
 
@@ -218,10 +220,12 @@ class TestCINeverHolds:
     """CI mode never enters HOLD."""
 
     def test_uncertain_does_not_hold(self, tmp_path):
-        findings = [_make_finding(
-            fp="fp-unc",
-            disp=Disposition.UNCERTAIN,
-        )]
+        findings = [
+            _make_finding(
+                fp="fp-unc",
+                disp=Disposition.UNCERTAIN,
+            )
+        ]
         machine = _make_machine(tmp_path, l0_findings=findings)
         verdict = machine.run()
         # CI returns PASS not PENDING

@@ -87,8 +87,7 @@ def _wait_for(path: Path, timeout: float = 30.0) -> dict:
 @pytest.mark.parametrize("terminal_status", ["done", "error", "skipped"])
 def test_wait_for_requires_complete_terminal_json(tmp_path, monkeypatch, terminal_status):
     path = tmp_path / "result.json"
-    states = iter(["{", '{"status": "running"}',
-                   json.dumps({"status": terminal_status})])
+    states = iter(["{", '{"status": "running"}', json.dumps({"status": terminal_status})])
     path.write_text(next(states), encoding="utf-8")
     pauses = []
 

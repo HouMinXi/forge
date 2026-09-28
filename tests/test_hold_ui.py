@@ -2,7 +2,6 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for HOLD UX (a-h)."""
 
-
 import pytest
 
 from code_forge.disposition import Disposition
@@ -18,9 +17,7 @@ def _make_state(*findings):
     return state
 
 
-def _make_finding(
-    fid="f1", fp="f1", disp=Disposition.UNCERTAIN, desc="test"
-):
+def _make_finding(fid="f1", fp="f1", disp=Disposition.UNCERTAIN, desc="test"):
     return StateFinding(
         id=fid,
         fingerprint=fp,
@@ -44,7 +41,8 @@ class TestConfirmInput:
         inputs = iter(["c"])
         output = []
         run_hold_ui(
-            state, state_path,
+            state,
+            state_path,
             input_fn=lambda prompt: next(inputs),
             output_fn=lambda msg: output.append(msg),
         )
@@ -65,7 +63,8 @@ class TestDismissInput:
         inputs = iter(["d"])
         output = []
         run_hold_ui(
-            state, state_path,
+            state,
+            state_path,
             input_fn=lambda prompt: next(inputs),
             output_fn=lambda msg: output.append(msg),
         )
@@ -84,7 +83,8 @@ class TestSkipInput:
         inputs = iter(["s"])
         output = []
         run_hold_ui(
-            state, state_path,
+            state,
+            state_path,
             input_fn=lambda prompt: next(inputs),
             output_fn=lambda msg: output.append(msg),
         )
@@ -103,7 +103,8 @@ class TestInvalidInput:
         inputs = iter(["x", "c"])
         output = []
         run_hold_ui(
-            state, state_path,
+            state,
+            state_path,
             input_fn=lambda prompt: next(inputs),
             output_fn=lambda msg: output.append(msg),
         )
@@ -138,7 +139,8 @@ class TestZeroUncertain:
 
         output = []
         run_hold_ui(
-            state, state_path,
+            state,
+            state_path,
             input_fn=lambda prompt: "should not be called",
             output_fn=lambda msg: output.append(msg),
         )
@@ -157,7 +159,8 @@ class TestHoldReasonCleared:
 
         inputs = iter(["c"])
         run_hold_ui(
-            state, state_path,
+            state,
+            state_path,
             input_fn=lambda prompt: next(inputs),
             output_fn=lambda msg: None,
         )
@@ -176,6 +179,7 @@ class TestQuitInput:
         inputs = iter(["q"])
         with pytest.raises(HoldAborted, match="HOLD UX aborted by user"):
             run_hold_ui(
-                state, state_path,
+                state,
+                state_path,
                 input_fn=lambda prompt: next(inputs),
             )

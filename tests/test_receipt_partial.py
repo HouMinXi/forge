@@ -8,6 +8,7 @@ Validates:
 - format_summary passes=N/M suffix
 - Partial round verdict is FAIL (fail-closed)
 """
+
 from __future__ import annotations
 
 import json
@@ -164,14 +165,10 @@ class TestPassStatusInReceipt:
                 cwd=Path(tmpdir),
             )
             # qodo receipt (p1) should have timeout.
-            r1 = json.loads(
-                (receipts_dir / "receipt-c1p1.json").read_text()
-            )
+            r1 = json.loads((receipts_dir / "receipt-c1p1.json").read_text())
             assert r1["pass_status"] == "timeout"
             # expert receipt (p2) should have completed.
-            r2 = json.loads(
-                (receipts_dir / "receipt-c1p2.json").read_text()
-            )
+            r2 = json.loads((receipts_dir / "receipt-c1p2.json").read_text())
             assert r2["pass_status"] == "completed"
 
 
@@ -210,9 +207,7 @@ class TestPartialVerdictFailClosed:
         findings = [_make_infra_finding("qodo", "spawn-fail")]
         outcomes = derive_pass_outcomes(findings)
         # Any non-COMPLETED outcome means the round is partial.
-        any_incomplete = any(
-            v != PassOutcome.COMPLETED for v in outcomes.values()
-        )
+        any_incomplete = any(v != PassOutcome.COMPLETED for v in outcomes.values())
         assert any_incomplete
 
 

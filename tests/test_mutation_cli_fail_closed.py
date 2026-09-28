@@ -18,17 +18,18 @@ from code_forge.state import StateFinding
 
 def _args(tmp_path, path="src/mod.py"):
     diff = tmp_path / "change.diff"
-    diff.write_text(
-        f"diff --git a/{path} b/{path}\n"
-        f"--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-a\n+b\n"
-    )
+    diff.write_text(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-a\n+b\n")
     return _build_parser().parse_args(["mutation-check", "--diff", str(diff)])
 
 
 def _skip(fingerprint):
     return StateFinding(
-        id="MUTATION_SKIPPED", fingerprint=fingerprint, source="MUTANT",
-        disposition=Disposition.DISMISSED, file="", line_range=[],
+        id="MUTATION_SKIPPED",
+        fingerprint=fingerprint,
+        source="MUTANT",
+        disposition=Disposition.DISMISSED,
+        file="",
+        line_range=[],
         description="mutation did not run",
     )
 
@@ -51,11 +52,19 @@ def test_infrastructure_failure_cannot_print_pass(tmp_path, capsys, with_finding
     assert "PASS" not in output.err + output.out
 
 
-@pytest.mark.parametrize("fingerprint", [
-    "mutation-timeout", "mutation-results-timeout", "mutation-probe-timeout",
-    "mutation-unavailable", "mutation-config-conflict", "mutation-future-error",
-    "mutation-baseline-failed", "mutation-baseline-timeout",
-])
+@pytest.mark.parametrize(
+    "fingerprint",
+    [
+        "mutation-timeout",
+        "mutation-results-timeout",
+        "mutation-probe-timeout",
+        "mutation-unavailable",
+        "mutation-config-conflict",
+        "mutation-future-error",
+        "mutation-baseline-failed",
+        "mutation-baseline-timeout",
+    ],
+)
 def test_unfinished_mutation_is_not_pass(tmp_path, capsys, fingerprint):
     with patch("code_forge.mutation.run_mutation", return_value=([_skip(fingerprint)], [])):
         assert _run_mutation_check(_args(tmp_path), tmp_path) == EXIT_CLI_ERROR
@@ -96,8 +105,12 @@ def test_no_python_information_without_skip_is_an_error(tmp_path, capsys):
 
 def test_survivor_with_valid_skip_still_fails(tmp_path, capsys):
     survivor = StateFinding(
-        id="mutant-one", fingerprint="mutant:one", source="MUTANT",
-        disposition=Disposition.CONFIRMED, file="src/mod.py", line_range=[1, 1],
+        id="mutant-one",
+        fingerprint="mutant:one",
+        source="MUTANT",
+        disposition=Disposition.CONFIRMED,
+        file="src/mod.py",
+        line_range=[1, 1],
         description="mutation survived",
     )
     with patch(
@@ -123,11 +136,16 @@ def test_completed_run_reports_pass_and_uses_defaults(tmp_path, capsys):
 
 def test_gate_settings_reach_mutation_runner(tmp_path):
     command = [sys.executable, "-m", "pytest", "tests/test_mod.py", "-q"]
-    _gate(tmp_path, {
-        "command": command, "timeout_seconds": 901,
-        "also_copy": ["scripts/"], "mutation_max_children": 2,
-        "mutation_memory_limit_mb": 512,
-    })
+    _gate(
+        tmp_path,
+        {
+            "command": command,
+            "timeout_seconds": 901,
+            "also_copy": ["scripts/"],
+            "mutation_max_children": 2,
+            "mutation_memory_limit_mb": 512,
+        },
+    )
     args = _args(tmp_path)
     args.timeout = 47
     with patch("code_forge.mutation.run_mutation", return_value=([], [])) as run:
@@ -168,8 +186,11 @@ def test_real_cli_inapplicable_diff_is_successful_skip(tmp_path, path):
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
         [sys.executable, "-m", "code_forge", "mutation-check", "--diff", args.diff],
-        cwd=tmp_path, env=dict(os.environ, PYTHONPATH=str(root / "src")),
-        capture_output=True, text=True, timeout=30,
+        cwd=tmp_path,
+        env=dict(os.environ, PYTHONPATH=str(root / "src")),
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == EXIT_PASS, result.stdout + result.stderr
     assert "SKIP" in result.stderr
@@ -181,15 +202,21 @@ def test_real_cli_baseline_failure_is_not_success(tmp_path):
     root = Path(__file__).resolve().parents[1]
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_failure.py").write_text("def test_failure():\n    assert False\n")
-    _gate(tmp_path, {
-        "command": [sys.executable, "-m", "pytest", "tests/", "-q"],
-        "timeout_seconds": 30,
-    })
+    _gate(
+        tmp_path,
+        {
+            "command": [sys.executable, "-m", "pytest", "tests/", "-q"],
+            "timeout_seconds": 30,
+        },
+    )
     args = _args(tmp_path)
     result = subprocess.run(
         [sys.executable, "-m", "code_forge", "mutation-check", "--diff", args.diff],
-        cwd=tmp_path, env=dict(os.environ, PYTHONPATH=str(root / "src")),
-        capture_output=True, text=True, timeout=60,
+        cwd=tmp_path,
+        env=dict(os.environ, PYTHONPATH=str(root / "src")),
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert result.returncode == EXIT_CLI_ERROR, result.stdout + result.stderr
     assert "baseline failed" in result.stderr

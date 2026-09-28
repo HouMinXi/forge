@@ -7,6 +7,7 @@ Covers:
   - _extract_python_public_names: async, top-level only, large file skip,
     venv/_SKIP_DIRS pruning, symlink prefix-collision rejection
 """
+
 import os
 from pathlib import Path
 
@@ -25,9 +26,7 @@ class TestGetSameRepoDigest:
     def test_extracts_public_names(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
-        (src / "example.py").write_text(
-            "def hello(): pass\nclass MyClass: pass\ndef _private(): pass\n"
-        )
+        (src / "example.py").write_text("def hello(): pass\nclass MyClass: pass\ndef _private(): pass\n")
         digest = get_same_repo_digest(tmp_path)
         assert "hello" in digest
         assert "MyClass" in digest
@@ -50,9 +49,7 @@ class TestGetDigest:
         """get_digest must build via parts list and match get_same_repo_digest."""
         src = tmp_path / "src"
         src.mkdir()
-        (src / "example.py").write_text(
-            "def hello(): pass\nclass MyClass: pass\n"
-        )
+        (src / "example.py").write_text("def hello(): pass\nclass MyClass: pass\n")
         assert get_digest(tmp_path) == get_same_repo_digest(tmp_path)
 
     def test_get_digest_returns_empty_for_nonexistent(self):
@@ -65,9 +62,7 @@ class TestExtractPythonPublicNames:
         """M-04: async def must be collected same as def."""
         src = tmp_path / "src"
         src.mkdir()
-        (src / "async_mod.py").write_text(
-            "async def fetch_data(): pass\ndef sync_fn(): pass\n"
-        )
+        (src / "async_mod.py").write_text("async def fetch_data(): pass\ndef sync_fn(): pass\n")
         funcs, classes = _extract_python_public_names(tmp_path)
         assert "fetch_data" in funcs
         assert "sync_fn" in funcs
@@ -76,9 +71,7 @@ class TestExtractPythonPublicNames:
         """M-05: tree.body iteration must NOT pick up nested functions."""
         src = tmp_path / "src"
         src.mkdir()
-        (src / "nested.py").write_text(
-            "def outer():\n    def inner(): pass\n"
-        )
+        (src / "nested.py").write_text("def outer():\n    def inner(): pass\n")
         funcs, _ = _extract_python_public_names(tmp_path)
         assert "outer" in funcs
         assert "inner" not in funcs

@@ -107,12 +107,10 @@ class TestSalvageIncompleteLeadingFields:
 class TestSalvageExtractorWhitelistAndFile:
     def test_extract_salvages_falsify_envelope_and_not_review_envelope(self):
         truncated_falsify = '{"verdict": "CONFIRMED", "reasoning": "cut'
-        truncated_review = (
-            '{"findings": [], "code_excerpts": {"a.py": "x"}, "note": "cut'
-        )
-        assert _extract_json_from_text(
-            truncated_falsify, expected_keys=_FALSIFY_KEYS
-        ) == {"verdict": "CONFIRMED"}
+        truncated_review = '{"findings": [], "code_excerpts": {"a.py": "x"}, "note": "cut'
+        assert _extract_json_from_text(truncated_falsify, expected_keys=_FALSIFY_KEYS) == {
+            "verdict": "CONFIRMED"
+        }
         assert _extract_json_from_text(truncated_review) is None
 
     def test_salvage_from_real_temporary_file(self, tmp_path: Path):

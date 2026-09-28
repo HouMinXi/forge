@@ -20,7 +20,9 @@ from code_forge.eval.scorer import finding_hit
 class TestExpectedFinding:
     def test_construction(self) -> None:
         f = ExpectedFinding(
-            file="src/a.py", line_range=(3, 5), description="bad thing",
+            file="src/a.py",
+            line_range=(3, 5),
+            description="bad thing",
         )
         assert f.file == "src/a.py"
         assert f.line_range == (3, 5)
@@ -34,18 +36,23 @@ class TestExpectedFinding:
 class TestCorpusEntryExpectedFindings:
     def test_default_empty(self) -> None:
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
         )
         assert entry.expected_findings == []
 
     def test_with_findings(self) -> None:
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
             expected_findings=[
                 ExpectedFinding(
-                    file="src/a.py", line_range=(3, 5),
+                    file="src/a.py",
+                    line_range=(3, 5),
                     description="bad thing",
                 ),
             ],
@@ -135,25 +142,32 @@ class TestFindingHit:
 
     def test_file_and_line_overlap(self) -> None:
         expected = ExpectedFinding(
-            file="src/a.py", line_range=(3, 5), description="bad thing",
+            file="src/a.py",
+            line_range=(3, 5),
+            description="bad thing",
         )
         assert finding_hit(self._actual("src/a.py", [4, 6]), expected)
 
     def test_file_mismatch(self) -> None:
         expected = ExpectedFinding(
-            file="src/a.py", line_range=(3, 5), description="bad thing",
+            file="src/a.py",
+            line_range=(3, 5),
+            description="bad thing",
         )
         assert not finding_hit(self._actual("src/b.py", [4, 6]), expected)
 
     def test_no_line_overlap(self) -> None:
         expected = ExpectedFinding(
-            file="src/a.py", line_range=(3, 5), description="bad thing",
+            file="src/a.py",
+            line_range=(3, 5),
+            description="bad thing",
         )
         assert not finding_hit(self._actual("src/a.py", [10, 12]), expected)
 
     def test_description_tokens_when_no_ranges(self) -> None:
         expected = ExpectedFinding(
-            file="src/a.py", description="cache trade date none branch",
+            file="src/a.py",
+            description="cache trade date none branch",
         )
         assert finding_hit(
             self._actual("src/a.py", None, "the cache trade date None branch"),
@@ -162,7 +176,8 @@ class TestFindingHit:
 
     def test_description_no_shared_tokens(self) -> None:
         expected = ExpectedFinding(
-            file="src/a.py", description="cache trade date none branch",
+            file="src/a.py",
+            description="cache trade date none branch",
         )
         assert not finding_hit(
             self._actual("src/a.py", None, "unrelated wording here"),
@@ -173,8 +188,10 @@ class TestFindingHit:
 class TestFindingsAggregation:
     def _entry(self, n_findings=2):
         return CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
             expected_findings=[
                 ExpectedFinding(file="src/a.py", description="bad thing %d" % i)
                 for i in range(n_findings)
@@ -183,14 +200,21 @@ class TestFindingsAggregation:
 
     def _result(self, entry, hits=0, misses=0, fps=0):
         from code_forge.eval.scorer import EvalResult
+
         return EvalResult(
-            entry=entry, actual_verdict="HOLD", runs=1, caught_count=1,
-            skipped_reason="", finding_hits=hits,
-            finding_misses=misses, finding_fps=fps,
+            entry=entry,
+            actual_verdict="HOLD",
+            runs=1,
+            caught_count=1,
+            skipped_reason="",
+            finding_hits=hits,
+            finding_misses=misses,
+            finding_fps=fps,
         )
 
     def test_summary_aggregates_findings(self):
         from code_forge.eval.scorer import compute_summary
+
         e1 = self._entry(2)
         e2 = self._entry(1)
         r1 = self._result(e1, hits=1, misses=1, fps=2)
@@ -203,9 +227,13 @@ class TestFindingsAggregation:
 
     def test_summary_charges_recall_for_skipped_entries(self):
         from code_forge.eval.scorer import EvalResult, compute_summary
+
         e = self._entry(2)
         r = EvalResult(
-            entry=e, actual_verdict="SKIPPED", runs=0, caught_count=0,
+            entry=e,
+            actual_verdict="SKIPPED",
+            runs=0,
+            caught_count=0,
             skipped_reason="nope",
         )
         s = compute_summary([r])
@@ -220,6 +248,7 @@ class TestFindingsAggregation:
 
     def test_table_has_findings_line(self):
         from code_forge.eval.scorer import compute_summary, format_table
+
         e = self._entry(1)
         s = compute_summary([self._result(e, hits=1, fps=1)])
         text = format_table(s)
@@ -233,11 +262,13 @@ class TestFindingsAggregation:
 
     def test_json_report_carries_findings(self, tmp_path):
         from code_forge.eval.scorer import compute_summary, write_json_report
+
         e = self._entry(1)
         s = compute_summary([self._result(e, hits=1, misses=0, fps=2)])
         out = tmp_path / "r.json"
         write_json_report(s, out)
         import json
+
         data = json.loads(out.read_text(encoding="utf-8"))
         assert data["findings_expected"] == 1
         assert data["findings_hit"] == 1
@@ -247,9 +278,11 @@ class TestFindingsAggregation:
 
 class TestRunnerFindingsHelpers:
     def test_read_confirmed_findings_filters_disposition(
-        self, tmp_path,
+        self,
+        tmp_path,
     ):
         from code_forge.eval.runner import _read_confirmed_findings
+
         forge_dir = tmp_path / ".code-forge"
         forge_dir.mkdir()
         (forge_dir / "state.json").write_text(
@@ -260,7 +293,7 @@ class TestRunnerFindingsHelpers:
             '  "description": "noise"},'
             ' {"disposition": "UNCERTAIN", "file": "src/c.py", '
             '  "description": "maybe"}'
-            ']}'
+            "]}"
         )
         out = _read_confirmed_findings(str(tmp_path))
         assert len(out) == 1
@@ -269,10 +302,12 @@ class TestRunnerFindingsHelpers:
 
     def test_read_confirmed_findings_missing_state(self, tmp_path):
         from code_forge.eval.runner import _read_confirmed_findings
+
         assert _read_confirmed_findings(str(tmp_path)) is None
 
     def test_read_confirmed_findings_malformed(self, tmp_path):
         from code_forge.eval.runner import _read_confirmed_findings
+
         forge_dir = tmp_path / ".code-forge"
         forge_dir.mkdir()
         (forge_dir / "state.json").write_text("{not json")
@@ -280,16 +315,21 @@ class TestRunnerFindingsHelpers:
 
     def test_score_findings_hits_misses_fps(self):
         from code_forge.eval.scorer import score_findings
+
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
             expected_findings=[
                 ExpectedFinding(
-                    file="src/a.py", line_range=(3, 5),
+                    file="src/a.py",
+                    line_range=(3, 5),
                     description="bad thing",
                 ),
                 ExpectedFinding(
-                    file="src/b.py", description="other defect",
+                    file="src/b.py",
+                    description="other defect",
                 ),
             ],
         )
@@ -304,9 +344,12 @@ class TestRunnerFindingsHelpers:
 
     def test_score_findings_empty_key(self):
         from code_forge.eval.scorer import score_findings
+
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
         )
         assert score_findings(entry, []) == (0, 0, 0)
 
@@ -314,15 +357,18 @@ class TestRunnerFindingsHelpers:
 class TestPickBestFindings:
     def test_empty(self):
         from code_forge.eval.scorer import pick_best_findings
+
         assert pick_best_findings([]) == (0, 0, 0)
 
     def test_most_hits_wins(self):
         from code_forge.eval.scorer import pick_best_findings
+
         per_run = [(1, 1, 2), (2, 0, 3), (0, 2, 0)]
         assert pick_best_findings(per_run) == (2, 0, 3)
 
     def test_tie_prefers_fewer_fps(self):
         from code_forge.eval.scorer import pick_best_findings
+
         per_run = [(2, 0, 3), (2, 0, 1)]
         assert pick_best_findings(per_run) == (2, 0, 1)
 
@@ -331,7 +377,8 @@ class TestReplayEntryWiring:
     """replay_entry must actually read state.json and score findings."""
 
     def test_replay_scores_findings_from_state(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         import json
         from unittest.mock import MagicMock, patch
@@ -341,22 +388,34 @@ class TestReplayEntryWiring:
         def fake_review(cmd, cwd, env, timeout_s):
             forge_dir = Path(cwd) / ".code-forge"
             forge_dir.mkdir(parents=True, exist_ok=True)
-            (forge_dir / "state.json").write_text(json.dumps({
-                "findings": [
-                    {"disposition": "CONFIRMED", "file": "src/a.py",
-                     "line_range": [4, 6], "description": "bad thing"},
-                ],
-            }))
+            (forge_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "disposition": "CONFIRMED",
+                                "file": "src/a.py",
+                                "line_range": [4, 6],
+                                "description": "bad thing",
+                            },
+                        ],
+                    }
+                )
+            )
             return (1, "")
 
-        with patch(
-            "code_forge.eval.runner._run_review",
-            side_effect=fake_review,
-        ), patch(
-            "code_forge.eval.runner.subprocess.run",
-            return_value=MagicMock(returncode=0, stderr=b"", stdout=b""),
-        ), patch(
-            "code_forge.eval.runner.record_trust",
+        with (
+            patch(
+                "code_forge.eval.runner._run_review",
+                side_effect=fake_review,
+            ),
+            patch(
+                "code_forge.eval.runner.subprocess.run",
+                return_value=MagicMock(returncode=0, stderr=b"", stdout=b""),
+            ),
+            patch(
+                "code_forge.eval.runner.record_trust",
+            ),
         ):
             corpus = tmp_path / "corpus"
             diffs = corpus / "diffs"
@@ -364,11 +423,14 @@ class TestReplayEntryWiring:
             (diffs / "test.diff").write_text("--- a/f\n+++ b/f\n")
 
             entry = CorpusEntry(
-                name="t", diff_file="diffs/test.diff",
-                expected_verdict="HOLD", axis_tags=["TRUST"],
+                name="t",
+                diff_file="diffs/test.diff",
+                expected_verdict="HOLD",
+                axis_tags=["TRUST"],
                 expected_findings=[
                     ExpectedFinding(
-                        file="src/a.py", line_range=(3, 5),
+                        file="src/a.py",
+                        line_range=(3, 5),
                         description="bad thing",
                     ),
                 ],
@@ -399,7 +461,8 @@ class TestMalformedInputHardening:
         assert entries[0].expected_findings == []
 
     def test_expected_findings_scalar_entries_rejected(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         manifest = self._write(
             tmp_path,
@@ -454,34 +517,39 @@ class TestConfirmedFindingsHardening:
 
     def test_null_state_returns_none(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         self._write_state(tmp_path, "null")
         assert _read_confirmed_findings(str(tmp_path)) is None
 
     def test_list_state_returns_none(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         self._write_state(tmp_path, "[]")
         assert _read_confirmed_findings(str(tmp_path)) is None
 
     def test_findings_null_returns_none(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         self._write_state(tmp_path, '{"findings": null}')
         assert _read_confirmed_findings(str(tmp_path)) is None
 
     def test_missing_state_returns_none(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         assert _read_confirmed_findings(str(tmp_path)) is None
 
     def test_empty_file_finding_skipped(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         self._write_state(
             tmp_path,
-            '{"findings": [{"disposition": "CONFIRMED", '
-            '"file": "", "description": "bad thing"}]}',
+            '{"findings": [{"disposition": "CONFIRMED", "file": "", "description": "bad thing"}]}',
         )
         assert _read_confirmed_findings(str(tmp_path)) == []
 
     def test_unicode_error_returns_none(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         forge_dir = tmp_path / ".code-forge"
         forge_dir.mkdir()
         (forge_dir / "state.json").write_bytes(b"\xff\xfe\x00")
@@ -489,11 +557,13 @@ class TestConfirmedFindingsHardening:
 
     def test_non_dict_entries_skipped(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         self._write_state(tmp_path, '{"findings": ["junk"]}')
         assert _read_confirmed_findings(str(tmp_path)) == []
 
     def test_malformed_range_becomes_none(self, tmp_path: Path) -> None:
         from code_forge.eval.runner import _read_confirmed_findings
+
         self._write_state(
             tmp_path,
             '{"findings": [{"disposition": "CONFIRMED", '
@@ -508,27 +578,32 @@ class TestConfirmedFindingsHardening:
 class TestFindingHitHardening:
     def test_string_range_falls_to_description(self) -> None:
         expected = ExpectedFinding(
-            file="a.py", description="cache trade date none branch",
+            file="a.py",
+            description="cache trade date none branch",
         )
         actual = {
-            "file": "a.py", "line_range": "12",
+            "file": "a.py",
+            "line_range": "12",
             "description": "the cache trade date none branch",
         }
         assert finding_hit(actual, expected)
 
     def test_short_range_list_falls_to_description(self) -> None:
         expected = ExpectedFinding(
-            file="a.py", description="cache trade date none branch",
+            file="a.py",
+            description="cache trade date none branch",
         )
         actual = {
-            "file": "a.py", "line_range": [4],
+            "file": "a.py",
+            "line_range": [4],
             "description": "the cache trade date none branch",
         }
         assert finding_hit(actual, expected)
 
     def test_non_string_description_no_crash(self) -> None:
         expected = ExpectedFinding(
-            file="a.py", description="cache trade date none branch",
+            file="a.py",
+            description="cache trade date none branch",
         )
         actual = {"file": "a.py", "line_range": None, "description": 42}
         assert not finding_hit(actual, expected)
@@ -538,20 +613,29 @@ class TestJsonReportExpectedFindings:
     def test_entry_carries_answer_key(self, tmp_path: Path) -> None:
         import json
         from code_forge.eval.scorer import (
-            EvalResult, compute_summary, write_json_report,
+            EvalResult,
+            compute_summary,
+            write_json_report,
         )
+
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
             expected_findings=[
                 ExpectedFinding(
-                    file="a.py", line_range=(3, 5),
+                    file="a.py",
+                    line_range=(3, 5),
                     description="bad thing",
                 ),
             ],
         )
         result = EvalResult(
-            entry=entry, actual_verdict="HOLD", runs=1, caught_count=1,
+            entry=entry,
+            actual_verdict="HOLD",
+            runs=1,
+            caught_count=1,
             skipped_reason="",
         )
         out = tmp_path / "r.json"
@@ -559,8 +643,7 @@ class TestJsonReportExpectedFindings:
         data = json.loads(out.read_text(encoding="utf-8"))
         ef = data["results"][0]["entry"]["expected_findings"]
         assert ef == [
-            {"file": "a.py", "description": "bad thing",
-             "line_range": [3, 5]},
+            {"file": "a.py", "description": "bad thing", "line_range": [3, 5]},
         ]
 
 
@@ -569,22 +652,26 @@ class TestFindingHitHardeningWithRanges:
         """expected carries a range; malformed actual must fall through
         to the description rule instead of crashing the scorer."""
         expected = ExpectedFinding(
-            file="a.py", line_range=(3, 5),
+            file="a.py",
+            line_range=(3, 5),
             description="cache trade date none branch",
         )
         actual = {
-            "file": "a.py", "line_range": "12",
+            "file": "a.py",
+            "line_range": "12",
             "description": "the cache trade date none branch",
         }
         assert finding_hit(actual, expected)
 
     def test_malformed_actual_range_no_desc_overlap(self) -> None:
         expected = ExpectedFinding(
-            file="a.py", line_range=(3, 5),
+            file="a.py",
+            line_range=(3, 5),
             description="cache trade date none branch",
         )
         actual = {
-            "file": "a.py", "line_range": [4],
+            "file": "a.py",
+            "line_range": [4],
             "description": "unrelated wording here",
         }
         assert not finding_hit(actual, expected)
@@ -597,25 +684,28 @@ class TestKuhnMatching:
         and leaves E2 unmatched (1 hit); maximum matching assigns
         E1->A2, E2->A1 (2 hits)."""
         from code_forge.eval.scorer import score_findings
+
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
             expected_findings=[
                 ExpectedFinding(
-                    file="a.py", line_range=(1, 9),
+                    file="a.py",
+                    line_range=(1, 9),
                     description="first broad defect",
                 ),
                 ExpectedFinding(
-                    file="a.py", line_range=(1, 3),
+                    file="a.py",
+                    line_range=(1, 3),
                     description="second narrow defect",
                 ),
             ],
         )
         confirmed = [
-            {"file": "a.py", "line_range": [1, 3],
-             "description": "narrow defect one"},
-            {"file": "a.py", "line_range": [7, 9],
-             "description": "broad defect two"},
+            {"file": "a.py", "line_range": [1, 3], "description": "narrow defect one"},
+            {"file": "a.py", "line_range": [7, 9], "description": "broad defect two"},
         ]
         hits, misses, fps = score_findings(entry, confirmed)
         assert hits == 2
@@ -627,23 +717,27 @@ class TestR2Fixes:
     def test_greedy_dedup_no_inflation(self) -> None:
         """One actual finding must not hit two expected entries."""
         from code_forge.eval.scorer import score_findings
+
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
             expected_findings=[
                 ExpectedFinding(
-                    file="a.py", line_range=(3, 5),
+                    file="a.py",
+                    line_range=(3, 5),
                     description="first defect thing",
                 ),
                 ExpectedFinding(
-                    file="a.py", line_range=(4, 6),
+                    file="a.py",
+                    line_range=(4, 6),
                     description="second defect thing",
                 ),
             ],
         )
         confirmed = [
-            {"file": "a.py", "line_range": [4, 5],
-             "description": "overlapping defect thing"},
+            {"file": "a.py", "line_range": [4, 5], "description": "overlapping defect thing"},
         ]
         hits, misses, fps = score_findings(entry, confirmed)
         assert hits == 1
@@ -652,22 +746,26 @@ class TestR2Fixes:
 
     def test_inverted_actual_range_treated_absent(self) -> None:
         expected = ExpectedFinding(
-            file="a.py", line_range=(3, 5),
+            file="a.py",
+            line_range=(3, 5),
             description="cache trade date none branch",
         )
         actual = {
-            "file": "a.py", "line_range": [5, 1],
+            "file": "a.py",
+            "line_range": [5, 1],
             "description": "the cache trade date none branch",
         }
         assert finding_hit(actual, expected)
 
     def test_zero_based_actual_range_treated_absent(self) -> None:
         expected = ExpectedFinding(
-            file="a.py", line_range=(3, 5),
+            file="a.py",
+            line_range=(3, 5),
             description="cache trade date none branch",
         )
         actual = {
-            "file": "a.py", "line_range": [0, 5],
+            "file": "a.py",
+            "line_range": [0, 5],
             "description": "the cache trade date none branch",
         }
         assert finding_hit(actual, expected)
@@ -702,6 +800,7 @@ class TestR2Fixes:
 
     def test_valid_line_range_semantics(self) -> None:
         from code_forge.eval.scorer import valid_line_range
+
         assert valid_line_range([3, 5])
         assert valid_line_range((3, 3))
         assert not valid_line_range([0, 5])
@@ -752,14 +851,18 @@ class TestReplayEntryMissingState:
 
         from code_forge.eval.runner import replay_entry
 
-        with patch(
-            "code_forge.eval.runner._run_review",
-            return_value=(1, ""),
-        ), patch(
-            "code_forge.eval.runner.subprocess.run",
-            return_value=MagicMock(returncode=0, stderr=b"", stdout=b""),
-        ), patch(
-            "code_forge.eval.runner.record_trust",
+        with (
+            patch(
+                "code_forge.eval.runner._run_review",
+                return_value=(1, ""),
+            ),
+            patch(
+                "code_forge.eval.runner.subprocess.run",
+                return_value=MagicMock(returncode=0, stderr=b"", stdout=b""),
+            ),
+            patch(
+                "code_forge.eval.runner.record_trust",
+            ),
         ):
             corpus = tmp_path / "corpus"
             diffs = corpus / "diffs"
@@ -767,11 +870,14 @@ class TestReplayEntryMissingState:
             (diffs / "test.diff").write_text("--- a/f\n+++ b/f\n")
 
             entry = CorpusEntry(
-                name="t", diff_file="diffs/test.diff",
-                expected_verdict="HOLD", axis_tags=["TRUST"],
+                name="t",
+                diff_file="diffs/test.diff",
+                expected_verdict="HOLD",
+                axis_tags=["TRUST"],
                 expected_findings=[
                     ExpectedFinding(
-                        file="src/a.py", line_range=(3, 5),
+                        file="src/a.py",
+                        line_range=(3, 5),
                         description="bad thing",
                     ),
                 ],
@@ -788,17 +894,18 @@ class TestR4Fixes:
         valid actual range present, the overlap branch must be
         skipped in favour of the description rule."""
         expected = ExpectedFinding(
-            file="a.py", line_range=(5, 1),
+            file="a.py",
+            line_range=(5, 1),
             description="cache trade date none branch",
         )
         assert finding_hit(
-            {"file": "a.py", "line_range": [3, 4],
-             "description": "the cache trade date none branch"},
+            {"file": "a.py", "line_range": [3, 4], "description": "the cache trade date none branch"},
             expected,
         )
 
     def test_punctuation_only_description_rejected(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         manifest = tmp_path / "corpus.yaml"
         manifest.write_text(
@@ -816,19 +923,27 @@ class TestR4Fixes:
 
     def test_evidenceless_entry_excluded_from_summary(self) -> None:
         from code_forge.eval.scorer import EvalResult, compute_summary
+
         entry = CorpusEntry(
-            name="x", diff_file="d/x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="d/x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
             expected_findings=[
                 ExpectedFinding(
-                    file="a.py", line_range=(3, 5),
+                    file="a.py",
+                    line_range=(3, 5),
                     description="bad thing",
                 ),
             ],
         )
         r = EvalResult(
-            entry=entry, actual_verdict="HOLD", runs=1, caught_count=1,
-            skipped_reason="", findings_evidence=False,
+            entry=entry,
+            actual_verdict="HOLD",
+            runs=1,
+            caught_count=1,
+            skipped_reason="",
+            findings_evidence=False,
         )
         s = compute_summary([r])
         # Phase 56-2: was 0/0. An entry that ran but produced no state

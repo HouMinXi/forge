@@ -8,6 +8,7 @@ per-mutant loop fanned out to 16 concurrent full-suite pytest processes
 RLIMIT_AS backstop, the integration-test exclusion, and the detached
 launcher's forwarding of both guards.
 """
+
 import json
 import os
 import pathlib
@@ -34,23 +35,19 @@ def _run_calls(mock_run):
     runs = [
         call[0][0]
         for call in mock_run.call_args_list
-        if isinstance(call[0][0], list)
-        and len(call[0][0]) >= 2
-        and call[0][0][1] == "run"
+        if isinstance(call[0][0], list) and len(call[0][0]) >= 2 and call[0][0][1] == "run"
     ]
     assert len(runs) == 1, f"expected exactly one mutmut run call, got {runs!r}"
     return runs[0]
 
 
 def _run_mutation_guarded(tmp_path, mock_run, **kwargs):
-    mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="", stderr=""
-    )
-    with patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"), \
-         patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]):
-        findings, errors = run_mutation(
-            ["src/pkg/mod.py"], ["pytest", "-q"], cwd=tmp_path, **kwargs
-        )
+    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with (
+        patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"),
+        patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
+    ):
+        findings, errors = run_mutation(["src/pkg/mod.py"], ["pytest", "-q"], cwd=tmp_path, **kwargs)
     assert errors == []
     assert findings == []
     return _run_calls(mock_run)
@@ -84,18 +81,21 @@ def test_run_mutation_sets_rlimit_as_backstop(tmp_path):
 
     limit = 256 * 1024**2
     with patch("code_forge.mutation.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-        with patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"), \
-             patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]):
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with (
+            patch("code_forge.mutation.shutil.which", return_value="/usr/bin/mutmut"),
+            patch("code_forge.mutation._resolve_mutmut_invocation", return_value=["mutmut"]),
+        ):
             run_mutation(
-                ["src/pkg/mod.py"], ["pytest", "-q"], cwd=tmp_path,
+                ["src/pkg/mod.py"],
+                ["pytest", "-q"],
+                cwd=tmp_path,
                 memory_limit_bytes=limit,
             )
 
     run_call = next(
-        call for call in mock_run.call_args_list
+        call
+        for call in mock_run.call_args_list
         if isinstance(call[0][0], list) and call[0][0][1:2] == ["run"]
     )
     preexec = run_call[1]["preexec_fn"]
@@ -139,9 +139,7 @@ def test_selection_appends_integration_exclusion():
 
 def test_selection_combines_existing_marker_expr():
     selection = _exclude_unmirrorable_tests(["-q", "-m", "slow"])
-    assert selection[selection.index("-m") + 1] == (
-        "(slow) and (not integration and not source_scan)"
-    )
+    assert selection[selection.index("-m") + 1] == ("(slow) and (not integration and not source_scan)")
 
 
 def test_selection_excludes_source_scanning_tests():
@@ -174,15 +172,27 @@ def test_detached_script_forwards_resource_guards(tmp_path, run_detached_payload
 
     result_path = tmp_path / "result.json"
     with patch("code_forge.mutation.subprocess.Popen", side_effect=spawn):
-        assert launch_detached_mutation(
-            ["source.py"], ["pytest"], tmp_path, result_path,
-            max_children=3, memory_limit_bytes=64 * 1024**2,
-        ) is True
+        assert (
+            launch_detached_mutation(
+                ["source.py"],
+                ["pytest"],
+                tmp_path,
+                result_path,
+                max_children=3,
+                memory_limit_bytes=64 * 1024**2,
+            )
+            is True
+        )
 
-    finding = type("F", (), {
-        "id": "mutant-x", "source": "MUTANT",
-        "disposition": Disposition.CONFIRMED,
-    })()
+    finding = type(
+        "F",
+        (),
+        {
+            "id": "mutant-x",
+            "source": "MUTANT",
+            "disposition": Disposition.CONFIRMED,
+        },
+    )()
     with patch("code_forge.mutation.run_mutation", return_value=([finding], [])) as run:
         run_detached_payload(captured["script"])
     _, kwargs = run.call_args
@@ -207,9 +217,7 @@ class TestRepoGateConfigIsTracked:
         return pathlib.Path(__file__).resolve().parent.parent / ".code-forge" / "gate.yaml"
 
     def test_gate_yaml_is_committed(self):
-        assert self._gate_path().is_file(), (
-            "the gate config is part of the repo, not a local artifact"
-        )
+        assert self._gate_path().is_file(), "the gate config is part of the repo, not a local artifact"
 
     def test_also_copy_carries_every_path_loading_directory(self):
         from code_forge.gate_check import load_gate_config
@@ -232,15 +240,13 @@ def test_review_forwards_skip_globs_from_gate_config():
     A gate.yaml skip list that silently does nothing is worse than none:
     the run reports PASS over mutants nobody meant to score.
     """
-    source = pathlib.Path(
-        __import__("code_forge.machine", fromlist=["x"]).__file__
-    ).read_text()
+    source = pathlib.Path(__import__("code_forge.machine", fromlist=["x"]).__file__).read_text()
     lookup_start = source.index("mutation_max_children = test_config.get")
     call_end = source.index(")", source.index("launch_detached_mutation(", lookup_start))
     region = source[lookup_start:call_end]
 
     for key in ("mutation_skip_globs", "mutation_include_globs"):
-        assert "test_config.get(\"%s\")" % key in region, (
+        assert 'test_config.get("%s")' % key in region, (
             "machine.py never reads %s out of gate.yaml, so the "
             "configured list dies before reaching the runner" % key
         )

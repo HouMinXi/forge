@@ -119,12 +119,8 @@ class TestReplayEntryUsesMean:
             expected_verdict="HOLD",
             axis_tags=["SEC"],
             expected_findings=[
-                ExpectedFinding(
-                    file="a.py", line_range=(1, 3), description="first defect here"
-                ),
-                ExpectedFinding(
-                    file="a.py", line_range=(20, 22), description="second defect here"
-                ),
+                ExpectedFinding(file="a.py", line_range=(1, 3), description="first defect here"),
+                ExpectedFinding(file="a.py", line_range=(20, 22), description="second defect here"),
             ],
         )
         diff = tmp_path / "d.diff"

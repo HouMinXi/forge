@@ -18,7 +18,5 @@ class TestPhase1Migration:
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 1, (
-            "Old API references found in src/code_forge/:\n%s" % result.stdout
-        )
+        assert result.returncode == 1, "Old API references found in src/code_forge/:\n%s" % result.stdout
         assert result.stdout == ""

@@ -16,6 +16,7 @@ import sys
 import pytest
 import yaml
 
+
 # Under mutmut the suite runs from mutants/. also_copy should place
 # scripts/ beside the tests, but a collection that happens before that
 # copy, or a mirror that dropped the directory, must still find the real
@@ -129,9 +130,9 @@ class TestBlockBoundaries:
         not see.
         """
         p = tmp_path / "g.yaml"
-        p.write_text("backends:\n  a:\n    model: m1\n"
-                     "# --- slower models below ---\n"
-                     "  b:\n    model: m2\n")
+        p.write_text(
+            "backends:\n  a:\n    model: m1\n# --- slower models below ---\n  b:\n    model: m2\n"
+        )
         text = fp.read_config(p)
         assert fp.list_backends(text) == ["a", "b"]
         assert fp.find_backend(text, "b") is not None
@@ -158,8 +159,7 @@ class TestYamlScalar:
 
 class TestWriteField:
     def test_writes_and_reports_the_old_value(self, gate):
-        changed, old = fp.write_field(gate, "alpha", "model", "new-model",
-                                      ".bak-t", dry_run=False)
+        changed, old = fp.write_field(gate, "alpha", "model", "new-model", ".bak-t", dry_run=False)
         assert (changed, old) == (True, "alpha-model")
         assert fp.read_field(fp.read_config(gate), "alpha", "model") == "new-model"
 
@@ -169,15 +169,13 @@ class TestWriteField:
         Without the coercion every `set --timeout-s` rewrote, re-backed-up
         and re-sealed all thirty configs while changing nothing.
         """
-        changed, _ = fp.write_field(gate, "alpha", "timeout_s", 2400,
-                                    ".bak-t", dry_run=False)
+        changed, _ = fp.write_field(gate, "alpha", "timeout_s", 2400, ".bak-t", dry_run=False)
         assert changed is False
 
     def test_value_containing_a_quote_is_still_matched(self, tmp_path):
         p = tmp_path / "g.yaml"
         p.write_text('backends:\n  b:\n    model: say "hi" now\n')
-        changed, old = fp.write_field(p, "b", "model", "plain", ".bak-t",
-                                      dry_run=False)
+        changed, old = fp.write_field(p, "b", "model", "plain", ".bak-t", dry_run=False)
         assert (changed, old) == (True, 'say "hi" now')
 
     def test_a_blank_line_after_the_field_survives(self, tmp_path):
@@ -218,19 +216,30 @@ class TestSetDefault:
 
 class TestInsertBackend:
     def test_adds_a_backend(self, gate):
-        spec = {"name": "gamma", "base_url": "https://g.example/v1",
-                "model": "gamma-model", "format": "openai",
-                "key_env": "GAMMA_KEY", "max_tokens": 65536,
-                "timeout_s": 2400}
+        spec = {
+            "name": "gamma",
+            "base_url": "https://g.example/v1",
+            "model": "gamma-model",
+            "format": "openai",
+            "key_env": "GAMMA_KEY",
+            "max_tokens": 65536,
+            "timeout_s": 2400,
+        }
         did, why = fp.insert_backend(gate, spec, ".bak-t", dry_run=False)
         assert (did, why) == (True, None)
         data = yaml.safe_load(fp.read_config(gate))["backends"]
         assert data["gamma"]["model"] == "gamma-model"
 
     def test_existing_name_is_skipped(self, gate):
-        spec = {"name": "alpha", "base_url": "https://x/v1", "model": "m",
-                "format": "openai", "key_env": "K", "max_tokens": 1,
-                "timeout_s": 1}
+        spec = {
+            "name": "alpha",
+            "base_url": "https://x/v1",
+            "model": "m",
+            "format": "openai",
+            "key_env": "K",
+            "max_tokens": 1,
+            "timeout_s": 1,
+        }
         did, why = fp.insert_backend(gate, spec, ".bak-t", dry_run=False)
         assert (did, why) == (False, "already declared")
 
@@ -243,9 +252,15 @@ class TestInsertBackend:
         """
         p = tmp_path / "g.yaml"
         p.write_text("backends:\n  base: &base\n    type: api\n  alias: *base\n")
-        spec = {"name": "base", "base_url": "https://x/v1", "model": "m",
-                "format": "openai", "key_env": "K", "max_tokens": 1,
-                "timeout_s": 1}
+        spec = {
+            "name": "base",
+            "base_url": "https://x/v1",
+            "model": "m",
+            "format": "openai",
+            "key_env": "K",
+            "max_tokens": 1,
+            "timeout_s": 1,
+        }
         did, why = fp.insert_backend(p, spec, ".bak-t", dry_run=False)
         assert (did, why) == (False, "already declared")
 
@@ -264,6 +279,7 @@ class TestBackup:
 
     def test_separate_runs_get_separate_stamps(self):
         import datetime as dt
+
         # Mirrors the production call in forge-provider.py, which stamps
         # backups in local time; %f keeps consecutive runs apart.
         a = dt.datetime.now().strftime(fp.BACKUP_FMT)  # noqa: DTZ005
@@ -286,8 +302,7 @@ class TestLineEndings:
         no backends at all -- `set` and `default` became silent no-ops on it.
         """
         p = tmp_path / "g.yaml"
-        p.write_bytes(b"backends:\r\n  b:\r\n    model: old\r\n"
-                      b"    default: true\r\n")
+        p.write_bytes(b"backends:\r\n  b:\r\n    model: old\r\n    default: true\r\n")
         text = fp.read_config(p)
         assert fp.list_backends(text) == ["b"]
         assert fp.find_backend(text, "b") is not None
@@ -318,8 +333,7 @@ class TestProbe:
             def log_message(self, format, *args):
                 pass
 
-        srv = socketserver.TCPServer(("127.0.0.1", 0), H,
-                                     bind_and_activate=False)
+        srv = socketserver.TCPServer(("127.0.0.1", 0), H, bind_and_activate=False)
         srv.allow_reuse_address = False
         srv.server_bind()
         srv.server_activate()
@@ -439,9 +453,18 @@ class TestAddAndSet:
 
     def _args(self, name, dry_run=False, **kw):
         import types
-        fields = {"name": name, "base_url": None, "model": None, "format": None,
-                      "key_env": None, "key_pass": None, "timeout_s": None,
-                      "max_tokens": None, "dry_run": dry_run}
+
+        fields = {
+            "name": name,
+            "base_url": None,
+            "model": None,
+            "format": None,
+            "key_env": None,
+            "key_pass": None,
+            "timeout_s": None,
+            "max_tokens": None,
+            "dry_run": dry_run,
+        }
         fields.update(kw)
         return types.SimpleNamespace(**fields)
 
@@ -460,9 +483,15 @@ class TestAddAndSet:
 
     def test_add_declares_a_working_backend(self, tmp_path, monkeypatch, capsys):
         p = self._gate(tmp_path, monkeypatch)
-        rc = fp.cmd_add(self._args(
-            "gamma", base_url="https://gamma.example/v1", model="gamma-model",
-            format="openai", key_env="GAMMA_KEY"))
+        rc = fp.cmd_add(
+            self._args(
+                "gamma",
+                base_url="https://gamma.example/v1",
+                model="gamma-model",
+                format="openai",
+                key_env="GAMMA_KEY",
+            )
+        )
         assert rc == 0
         entry = yaml.safe_load(fp.read_config(p))["backends"]["gamma"]
         assert entry["base_url"] == "https://gamma.example/v1"
@@ -473,8 +502,11 @@ class TestAddAndSet:
         """A block written at the wrong boundary silently eats its sibling."""
         p = self._gate(tmp_path, monkeypatch)
         before = yaml.safe_load(fp.read_config(p))["backends"]
-        fp.cmd_add(self._args("gamma", base_url="https://g.example/v1",
-                              model="m", format="openai", key_env="G_KEY"))
+        fp.cmd_add(
+            self._args(
+                "gamma", base_url="https://g.example/v1", model="m", format="openai", key_env="G_KEY"
+            )
+        )
         after = yaml.safe_load(fp.read_config(p))["backends"]
         assert after["alpha"] == before["alpha"]
         assert after["beta"] == before["beta"]
@@ -487,8 +519,9 @@ class TestAddAndSet:
         """
         p = self._gate(tmp_path, monkeypatch)
         before = fp.read_config(p)
-        rc = fp.cmd_add(self._args("alpha", base_url="https://x.example/v1",
-                                   model="m", format="openai", key_env="X"))
+        rc = fp.cmd_add(
+            self._args("alpha", base_url="https://x.example/v1", model="m", format="openai", key_env="X")
+        )
         assert rc == 0
         assert "1 skipped" in capsys.readouterr().out
         assert fp.read_config(p) == before
@@ -506,8 +539,7 @@ class TestAddAndSet:
         self._gate(tmp_path, monkeypatch)
         assert fp.cmd_set(self._args("nosuch", model="m")) == 1
 
-    def test_set_refuses_to_retarget_without_a_probe(self, tmp_path, monkeypatch,
-                                                     capsys):
+    def test_set_refuses_to_retarget_without_a_probe(self, tmp_path, monkeypatch, capsys):
         """Pointing a backend at a new endpoint requires a live answer first.
 
         This test deliberately does not stub resolve_key: with no key there is
@@ -526,8 +558,7 @@ class TestAddAndSet:
         assert rc == 3
         assert fp.read_config(p) == before
 
-    def test_set_allows_a_non_routing_field_without_a_probe(self, tmp_path,
-                                                            monkeypatch, capsys):
+    def test_set_allows_a_non_routing_field_without_a_probe(self, tmp_path, monkeypatch, capsys):
         """timeout_s cannot misroute a request, so it does not need a probe."""
         p = tmp_path / "code" / "repo" / ".code-forge" / "gate.yaml"
         p.parent.mkdir(parents=True)
@@ -543,8 +574,11 @@ class TestAddAndSet:
     def test_dry_run_writes_nothing(self, tmp_path, monkeypatch, capsys):
         p = self._gate(tmp_path, monkeypatch)
         before = fp.read_config(p)
-        fp.cmd_add(self._args("gamma", dry_run=True, base_url="https://g/v1",
-                              model="m", format="openai", key_env="G"))
+        fp.cmd_add(
+            self._args(
+                "gamma", dry_run=True, base_url="https://g/v1", model="m", format="openai", key_env="G"
+            )
+        )
         fp.cmd_set(self._args("alpha", dry_run=True, model="other"))
         assert fp.read_config(p) == before
 
@@ -561,6 +595,7 @@ class TestDefaultAndList:
     def test_default_moves_the_flag(self, tmp_path, monkeypatch, capsys):
         """Two backends both flagged default is an ambiguous config."""
         import types
+
         p = self._gate(tmp_path, monkeypatch)
         rc = fp.cmd_default(types.SimpleNamespace(name="beta", dry_run=False))
         assert rc == 0
@@ -570,6 +605,7 @@ class TestDefaultAndList:
 
     def test_list_names_every_backend(self, tmp_path, monkeypatch, capsys):
         import types
+
         self._gate(tmp_path, monkeypatch)
         assert fp.cmd_list(types.SimpleNamespace()) == 0
         out = capsys.readouterr().out
@@ -582,6 +618,7 @@ class TestRename:
 
     def _args(self, old, new, dry_run=False):
         import types
+
         return types.SimpleNamespace(old=old, new=new, dry_run=dry_run)
 
     def test_renames_only_the_key_line(self, tmp_path, monkeypatch, capsys):
@@ -597,8 +634,7 @@ class TestRename:
         assert "alpha" not in data
         assert data["renamed"]["default"] is True
 
-    def test_a_backslash_in_the_new_name_is_not_a_group_reference(
-            self, tmp_path, monkeypatch):
+    def test_a_backslash_in_the_new_name_is_not_a_group_reference(self, tmp_path, monkeypatch):
         """The replacement went through re.sub as a template string.
 
         A name containing a backslash was read as a group reference, so
@@ -647,10 +683,19 @@ class TestSync:
 
     def _args(self, name, **kw):
         import types
-        fields = {"name": name, "base_url": "https://new.example/anthropic",
-                      "model": "new-model", "format": "anthropic", "from_name": None,
-                      "key_env": "NEW_KEY", "key_pass": None, "timeout_s": 2400,
-                      "max_tokens": 65536, "dry_run": False}
+
+        fields = {
+            "name": name,
+            "base_url": "https://new.example/anthropic",
+            "model": "new-model",
+            "format": "anthropic",
+            "from_name": None,
+            "key_env": "NEW_KEY",
+            "key_pass": None,
+            "timeout_s": 2400,
+            "max_tokens": 65536,
+            "dry_run": False,
+        }
         fields.update(kw)
         return types.SimpleNamespace(**fields)
 
@@ -664,59 +709,63 @@ class TestSync:
         monkeypatch.setattr(fp, "resolve_key", lambda *a, **k: "test-key")
         monkeypatch.setattr(fp, "probe", lambda *a, **k: (True, "200 OK"))
 
-    def test_one_call_renames_adds_and_defaults(self, tmp_path, monkeypatch,
-                                                capsys):
+    def test_one_call_renames_adds_and_defaults(self, tmp_path, monkeypatch, capsys):
         """The three states a machine can be in, handled in one pass."""
-        self._tree(monkeypatch, tmp_path, {
-            # declares the old name
-            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
-            # declares nothing relevant
-            "code/two/.code-forge/gate.yaml": GATE,
-        })
+        self._tree(
+            monkeypatch,
+            tmp_path,
+            {
+                # declares the old name
+                "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+                # declares nothing relevant
+                "code/two/.code-forge/gate.yaml": GATE,
+            },
+        )
         rc = fp.cmd_sync(self._args("newname", from_name=["oldname"]))
         assert rc == 0
 
-        one = yaml.safe_load(
-            fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml"))
-        two = yaml.safe_load(
-            fp.read_config(tmp_path / "code/two/.code-forge/gate.yaml"))
+        one = yaml.safe_load(fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml"))
+        two = yaml.safe_load(fp.read_config(tmp_path / "code/two/.code-forge/gate.yaml"))
         # renamed in one, added in two, and the default moved in both
         assert "oldname" not in one["backends"]
         assert one["backends"]["newname"]["default"] is True
         assert two["backends"]["newname"]["default"] is True
         assert one["backends"]["alpha"].get("default") is not True
 
-    def test_a_renamed_backend_gets_the_requested_fields(
-            self, tmp_path, monkeypatch, capsys):
+    def test_a_renamed_backend_gets_the_requested_fields(self, tmp_path, monkeypatch, capsys):
         """Renaming alone leaves the old machine's URL and key env in place.
 
         Measured on a real setup: the config carried an openai base_url and
         a retired MIMO_API_KEY under the new name, so reviews resolved a key
         that no longer existed.
         """
-        self._tree(monkeypatch, tmp_path, {
-            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
-        })
+        self._tree(
+            monkeypatch,
+            tmp_path,
+            {
+                "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+            },
+        )
         fp.cmd_sync(self._args("newname", from_name=["oldname"]))
-        entry = yaml.safe_load(
-            fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml")
-        )["backends"]["newname"]
+        entry = yaml.safe_load(fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml"))["backends"][
+            "newname"
+        ]
         assert entry["base_url"] == "https://new.example/anthropic"
         assert entry["api_key_env"] == "NEW_KEY"
         assert entry["format"] == "anthropic"
 
-    def test_running_it_twice_changes_nothing(self, tmp_path, monkeypatch,
-                                              capsys):
+    def test_running_it_twice_changes_nothing(self, tmp_path, monkeypatch, capsys):
         """Non-idempotence here means a boundary or comparison is wrong."""
-        self._tree(monkeypatch, tmp_path, {
-            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
-            "code/two/.code-forge/gate.yaml": GATE,
-        })
+        self._tree(
+            monkeypatch,
+            tmp_path,
+            {
+                "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+                "code/two/.code-forge/gate.yaml": GATE,
+            },
+        )
         fp.cmd_sync(self._args("newname", from_name=["oldname"]))
-        after_first = {
-            p: fp.read_config(p)
-            for p in fp.find_configs()
-        }
+        after_first = {p: fp.read_config(p) for p in fp.find_configs()}
         capsys.readouterr()
         fp.cmd_sync(self._args("newname", from_name=["oldname"]))
         out = capsys.readouterr().out
@@ -724,22 +773,24 @@ class TestSync:
         for p, text in after_first.items():
             assert fp.read_config(p) == text
 
-    def test_a_dry_run_previews_without_writing(self, tmp_path, monkeypatch,
-                                                capsys):
+    def test_a_dry_run_previews_without_writing(self, tmp_path, monkeypatch, capsys):
         """A preview names each file and leaves every one of them untouched.
 
         Counts alone are not enough here: this command reaches every repo on
         the machine, and which repo it is about to convert is the thing you
         check before letting it run.
         """
-        self._tree(monkeypatch, tmp_path, {
-            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
-            "code/two/.code-forge/gate.yaml": GATE,
-        })
+        self._tree(
+            monkeypatch,
+            tmp_path,
+            {
+                "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+                "code/two/.code-forge/gate.yaml": GATE,
+            },
+        )
         before = {p: fp.read_config(p) for p in fp.find_configs()}
 
-        rc = fp.cmd_sync(self._args("newname", from_name=["oldname"],
-                                    dry_run=True))
+        rc = fp.cmd_sync(self._args("newname", from_name=["oldname"], dry_run=True))
         assert rc == 0
         out = capsys.readouterr().out
         assert str(tmp_path / "code/one/.code-forge/gate.yaml") in out
@@ -749,18 +800,20 @@ class TestSync:
         for p, text in before.items():
             assert fp.read_config(p) == text
 
-    def test_nothing_is_written_when_the_endpoint_is_down(
-            self, tmp_path, monkeypatch, capsys):
+    def test_nothing_is_written_when_the_endpoint_is_down(self, tmp_path, monkeypatch, capsys):
         """A probe failure must not leave the machine half-converted."""
-        self._tree(monkeypatch, tmp_path, {
-            "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
-        })
+        self._tree(
+            monkeypatch,
+            tmp_path,
+            {
+                "code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:"),
+            },
+        )
         monkeypatch.setattr(fp, "probe", lambda *a, **k: (False, "timeout"))
         before = fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml")
         rc = fp.cmd_sync(self._args("newname", from_name=["oldname"]))
         assert rc == 3
-        assert fp.read_config(
-            tmp_path / "code/one/.code-forge/gate.yaml") == before
+        assert fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml") == before
 
 
 class TestTrustCommand:
@@ -768,6 +821,7 @@ class TestTrustCommand:
 
     def _args(self, fix=False):
         import types
+
         return types.SimpleNamespace(fix=fix, dry_run=False)
 
     def test_reports_an_untrusted_file(self, tmp_path, monkeypatch, capsys):

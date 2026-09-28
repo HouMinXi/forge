@@ -22,26 +22,36 @@ from code_forge.snapshot import Snapshot, save_snapshot, snapshot_path_for
 def git_repo(tmp_path):
     """Create a temporary git repo with one initial commit."""
     subprocess.run(
-        ["git", "init"], cwd=tmp_path,
-        capture_output=True, check=True,
+        ["git", "init"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     tracked = tmp_path / "tracked.py"
     tracked.write_text("print('hello')\n")
     subprocess.run(
         ["git", "add", "tracked.py"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "commit", "-m", "initial"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     return tmp_path
 
@@ -160,9 +170,7 @@ class TestResolveBaseline:
 
     def test_snapshot_with_head_raises(self, tmp_path):
         """M1: SnapshotBaseline + head_spec -> BaselineResolutionError."""
-        with pytest.raises(
-            BaselineResolutionError, match="does not accept head_spec"
-        ):
+        with pytest.raises(BaselineResolutionError, match="does not accept head_spec"):
             resolve_baseline(
                 SnapshotBaseline(path=tmp_path / "s.json"),
                 GitRefBaseline(ref="HEAD"),
@@ -174,9 +182,7 @@ class TestResolveBaseline:
         """GitRefBaseline outside git repo -> error."""
         non_repo = tmp_path / "nongit"
         non_repo.mkdir()
-        with pytest.raises(
-            BaselineResolutionError, match="outside git repo"
-        ):
+        with pytest.raises(BaselineResolutionError, match="outside git repo"):
             resolve_baseline(
                 GitRefBaseline(ref="HEAD"),
                 None,
@@ -186,9 +192,7 @@ class TestResolveBaseline:
 
     def test_pseudo_ref_as_baseline_raises(self, git_repo):
         """Pseudo-ref as baseline -> BaselineResolutionError."""
-        with pytest.raises(
-            BaselineResolutionError, match="pseudo-ref"
-        ):
+        with pytest.raises(BaselineResolutionError, match="pseudo-ref"):
             resolve_baseline(
                 GitRefBaseline(ref="WORKING"),
                 None,
@@ -200,9 +204,7 @@ class TestResolveBaseline:
         """EmptyBaseline + head_spec outside git -> error."""
         non_repo = tmp_path / "nongit"
         non_repo.mkdir()
-        with pytest.raises(
-            BaselineResolutionError, match="only valid in a git repo"
-        ):
+        with pytest.raises(BaselineResolutionError, match="only valid in a git repo"):
             resolve_baseline(
                 EmptyBaseline(),
                 GitRefBaseline(ref="HEAD"),
@@ -215,15 +217,11 @@ class TestSerializeBaselineSpec:
     """OQ1: serialize_baseline_spec helper."""
 
     def test_git_ref(self):
-        assert serialize_baseline_spec(
-            GitRefBaseline(ref="HEAD")
-        ) == "git:HEAD"
+        assert serialize_baseline_spec(GitRefBaseline(ref="HEAD")) == "git:HEAD"
 
     def test_snapshot(self, tmp_path):
         p = tmp_path / "snap.json"
-        assert serialize_baseline_spec(
-            SnapshotBaseline(path=p)
-        ).startswith("snapshot:")
+        assert serialize_baseline_spec(SnapshotBaseline(path=p)).startswith("snapshot:")
 
     def test_empty(self):
         assert serialize_baseline_spec(EmptyBaseline()) == "empty"

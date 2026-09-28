@@ -9,8 +9,8 @@ and run_pool only returns once every entry is done. An arm killed at entry
 The tests below check the property that matters -- rows are on disk while
 the run is still going -- rather than that a particular function is called.
 """
-import json
 
+import json
 
 
 class _StopAfter(Exception):
@@ -43,9 +43,7 @@ def _result_for(entry, verdict="HOLD"):
 class TestLedgerLandsDuringTheRun:
     """Rows must be on disk before the last entry finishes."""
 
-    def test_rows_exist_while_entries_are_still_running(
-        self, tmp_path, monkeypatch
-    ):
+    def test_rows_exist_while_entries_are_still_running(self, tmp_path, monkeypatch):
         # The regression, stated as the operator sees it: kill the run after
         # two of five entries and the ledger has two rows. With rows written
         # from run_pool's return value the file did not exist at all.
@@ -67,16 +65,28 @@ class TestLedgerLandsDuringTheRun:
             # Mirrors the shape cli._progress uses to write rows.
             if pool_entry is not None and pool_entry.result is not None:
                 from code_forge.eval.ledger_jsonl import (
-                    ResumeKey, append_record, make_record,
+                    ResumeKey,
+                    append_record,
+                    make_record,
                 )
 
                 key = ResumeKey(
-                    entry_id=name, depth=1, engine="real", backend="b",
+                    entry_id=name,
+                    depth=1,
+                    engine="real",
+                    backend="b",
                 )
-                append_record(ledger, make_record(
-                    key, pool_entry.result.actual_verdict, runs=1,
-                    caught=1, wall_s=wall_s, skipped_reason="",
-                ))
+                append_record(
+                    ledger,
+                    make_record(
+                        key,
+                        pool_entry.result.actual_verdict,
+                        runs=1,
+                        caught=1,
+                        wall_s=wall_s,
+                        skipped_reason="",
+                    ),
+                )
                 recorded.append(name)
 
         monkeypatch.setattr(pool_mod, "replay_entry", _replay)
@@ -90,21 +100,14 @@ class TestLedgerLandsDuringTheRun:
             progress_cb=_progress,
         )
 
-        assert ledger.exists(), (
-            "no ledger file after five entries; a killed arm would resume "
-            "from zero"
-        )
-        rows = [
-            json.loads(line)
-            for line in ledger.read_text().splitlines() if line.strip()
-        ]
+        assert ledger.exists(), "no ledger file after five entries; a killed arm would resume from zero"
+        rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
         assert len(rows) == 2, (
             "expected the two entries that completed before the failure to "
             "be on disk, found %d" % len(rows)
         )
 
-    def test_progress_callback_receives_the_pool_entry(self, tmp_path,
-                                                       monkeypatch):
+    def test_progress_callback_receives_the_pool_entry(self, tmp_path, monkeypatch):
         # The mechanism the fix depends on: without the entry, the callback
         # has a name and a duration but no verdict to record.
         from code_forge.eval import pool as pool_mod
@@ -126,8 +129,7 @@ class TestLedgerLandsDuringTheRun:
         )
         assert got, "progress callback never fired"
         assert len(got[0]) == 5, (
-            "callback got %d arguments; the fifth is the PoolEntry the "
-            "ledger write needs" % len(got[0])
+            "callback got %d arguments; the fifth is the PoolEntry the ledger write needs" % len(got[0])
         )
         assert got[0][4].result is not None
 
@@ -143,8 +145,7 @@ class TestCliWiring:
         src = Path(cli_mod.__file__).read_text()
         head = src.split("pool_results = run_pool(")[0]
         assert "_record(pool_entry.entry, pool_entry.result, wall_s)" in head, (
-            "cli._progress must record each entry as it lands, not after "
-            "run_pool returns"
+            "cli._progress must record each entry as it lands, not after run_pool returns"
         )
 
     def test_summary_loop_does_not_double_record(self):
@@ -155,8 +156,7 @@ class TestCliWiring:
         src = Path(cli_mod.__file__).read_text()
         after = src.split("pool_results = run_pool(")[1].split("    else:")[0]
         assert "_record(" not in after, (
-            "the post-run loop still records; every entry would appear "
-            "twice in the ledger"
+            "the post-run loop still records; every entry would appear twice in the ledger"
         )
 
     def test_pool_passes_the_entry_on_both_paths(self):
@@ -167,6 +167,5 @@ class TestCliWiring:
         src = inspect.getsource(pool_mod.run_pool)
         assert src.count("progress_cb(") == 2
         assert src.count(", pe)") == 2, (
-            "both the serial and parallel progress calls must pass the "
-            "PoolEntry"
+            "both the serial and parallel progress calls must pass the PoolEntry"
         )

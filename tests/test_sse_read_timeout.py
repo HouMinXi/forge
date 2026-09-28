@@ -24,12 +24,10 @@ def _stream_server(*, drip=False, complete=False):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            self.wfile.write(
-                b'data: {"choices":[{"delta":{"content":"prefix"}}]}\n\n'
-            )
+            self.wfile.write(b'data: {"choices":[{"delta":{"content":"prefix"}}]}\n\n')
             self.wfile.flush()
             if complete:
-                self.wfile.write(b'data: [DONE]\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
             elif drip:
                 expires = time.monotonic() + 1.5
@@ -64,9 +62,7 @@ def test_silent_stream_uses_idle_bound(monkeypatch):
         with urllib.request.urlopen(url, timeout=0.8) as response:  # noqa: S310 - local server URL
             started = time.monotonic()
             with pytest.raises(invoke.LLMInvokeError) as caught:
-                invoke._read_sse(
-                    response, deadline=started + 2, backend_name="loopback"
-                )
+                invoke._read_sse(response, deadline=started + 2, backend_name="loopback")
             elapsed = time.monotonic() - started
     assert caught.value.is_timeout
     assert not caught.value.retryable
@@ -82,9 +78,7 @@ def test_partial_line_cannot_outlive_total_deadline(monkeypatch):
             # The server keeps sending bytes without a newline, so a socket
             # idle timeout alone cannot enforce the total read deadline.
             with pytest.raises(invoke.LLMInvokeError) as caught:
-                invoke._read_sse(
-                    response, deadline=started + 0.15, backend_name="loopback"
-                )
+                invoke._read_sse(response, deadline=started + 0.15, backend_name="loopback")
             elapsed = time.monotonic() - started
     assert caught.value.is_timeout
     assert not caught.value.retryable
@@ -125,9 +119,7 @@ def test_custom_iterator_cannot_bypass_total_deadline():
 def test_completed_http_stream_preserves_content():
     with _stream_server(complete=True) as url:
         with urllib.request.urlopen(url, timeout=0.8) as response:  # noqa: S310 - local server URL
-            result = invoke._read_sse(
-                response, deadline=time.monotonic() + 2, backend_name="loopback"
-            )
+            result = invoke._read_sse(response, deadline=time.monotonic() + 2, backend_name="loopback")
     assert result["choices"][0]["message"]["content"] == "prefix"
 
 
@@ -141,13 +133,22 @@ def test_api_silent_stream_does_not_enter_retry(monkeypatch):
     monkeypatch.setattr(invoke.time, "sleep", reject_retry)
     with _stream_server() as url:
         backend = invoke.BackendConfig(
-            name="loopback", type="api", model="test", format="openai",
-            base_url=url, api_key_env="FORGE_TEST_LOOPBACK_KEY", stream=True,
+            name="loopback",
+            type="api",
+            model="test",
+            format="openai",
+            base_url=url,
+            api_key_env="FORGE_TEST_LOOPBACK_KEY",
+            stream=True,
         )
         started = time.monotonic()
         with pytest.raises(invoke.LLMInvokeError) as caught:
             invoke.llm_invoke(
-                "test", backend, timeout_s=1, max_attempts=5, retry_timeout=True,
+                "test",
+                backend,
+                timeout_s=1,
+                max_attempts=5,
+                retry_timeout=True,
             )
         elapsed = time.monotonic() - started
     assert caught.value.is_timeout

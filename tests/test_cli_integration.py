@@ -27,20 +27,25 @@ from unittest.mock import patch as _patch
 from code_forge.errors import CliError
 
 
-
 def _git_init_repo(repo_path):
     """Create a minimal git repo."""
     subprocess.run(
-        ["git", "init"], cwd=str(repo_path),
-        capture_output=True, check=True,
+        ["git", "init"],
+        cwd=str(repo_path),
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "test"],
-        cwd=str(repo_path), capture_output=True, check=True,
+        cwd=str(repo_path),
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=str(repo_path), capture_output=True, check=True,
+        cwd=str(repo_path),
+        capture_output=True,
+        check=True,
     )
 
 
@@ -70,20 +75,23 @@ class TestGitRepoPassCI:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         # Modify file to create a diff.
         # Module docstring + UPPER_CASE constant keeps pylint happy.
-        (repo / "a.py").write_text(
-            '"""Clean module."""\nX = 1\n'
-        )
+        (repo / "a.py").write_text('"""Clean module."""\nX = 1\n')
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
@@ -109,7 +117,9 @@ class TestRegistryMissing:
         _git_init_repo(repo)
         # No tools.yaml written.
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -123,9 +133,7 @@ class TestRegistryMissing:
 class TestSandboxWarning:
     """--sandbox emits warning, no behavior change."""
 
-    def test_sandbox_warning_emitted(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_sandbox_warning_emitted(self, tmp_path, monkeypatch, capsys):
         repo = tmp_path / "repo"
         repo.mkdir()
         _git_init_repo(repo)
@@ -133,16 +141,21 @@ class TestSandboxWarning:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "--sandbox", "a.py"],
         )
         monkeypatch.setattr(
@@ -159,11 +172,11 @@ class TestSandboxWarning:
 class TestTopLevelExceptionCatch:
     """SC-46 R3-L2: unexpected exception -> exit FAIL + traceback."""
 
-    def test_unexpected_exception_returns_fail(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_unexpected_exception_returns_fail(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(
-            sys, "argv", ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
             "code_forge.outlet_resolver.resolve_outlet",
@@ -194,16 +207,21 @@ class TestMainReturnsInt:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
@@ -224,7 +242,10 @@ class TestReviewAutoDetect:
     """Review pipeline calls detect_and_init when tools.yaml missing."""
 
     def test_review_missing_default_tools_yaml_triggers_detect(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """Missing default tools.yaml triggers detect_and_init(quiet=True)."""
         repo = tmp_path / "repo"
@@ -233,11 +254,15 @@ class TestReviewAutoDetect:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
@@ -253,8 +278,11 @@ class TestReviewAutoDetect:
                 "    file_patterns: ['*.py']\n"
             )
             from code_forge.detect import DetectionResult
+
             return DetectionResult(
-                detected=["ruff"], missing=[], language="python",
+                detected=["ruff"],
+                missing=[],
+                language="python",
             )
 
         with patch(
@@ -262,7 +290,8 @@ class TestReviewAutoDetect:
             side_effect=fake_detect_and_init,
         ) as mock_dai:
             monkeypatch.setattr(
-                sys, "argv",
+                sys,
+                "argv",
                 ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
             monkeypatch.setattr(
@@ -278,7 +307,10 @@ class TestReviewAutoDetect:
         assert exit_code == EXIT_PASS
 
     def test_review_existing_nonempty_tools_yaml_skips_detect(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """Existing non-empty tools.yaml skips detect_and_init."""
         repo = tmp_path / "repo"
@@ -297,11 +329,15 @@ class TestReviewAutoDetect:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
@@ -309,7 +345,8 @@ class TestReviewAutoDetect:
             "code_forge.detect.detect_and_init",
         ) as mock_dai:
             monkeypatch.setattr(
-                sys, "argv",
+                sys,
+                "argv",
                 ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
             monkeypatch.setattr(
@@ -323,7 +360,10 @@ class TestReviewAutoDetect:
         assert exit_code == EXIT_PASS
 
     def test_review_custom_registry_path_no_detect(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """--registry=custom.yaml missing -> CliError, no detect."""
         repo = tmp_path / "repo"
@@ -332,20 +372,33 @@ class TestReviewAutoDetect:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
 
         with patch(
             "code_forge.detect.detect_and_init",
         ) as mock_dai:
             monkeypatch.setattr(
-                sys, "argv",
-                ["code-forge", "--falsification-engine", "stub", "--mode", "ci",
-                 "--registry", "custom.yaml", "a.py"],
+                sys,
+                "argv",
+                [
+                    "code-forge",
+                    "--falsification-engine",
+                    "stub",
+                    "--mode",
+                    "ci",
+                    "--registry",
+                    "custom.yaml",
+                    "a.py",
+                ],
             )
             monkeypatch.setattr(
                 "code_forge.outlet_resolver.resolve_outlet",
@@ -360,7 +413,10 @@ class TestReviewAutoDetect:
         assert "custom.yaml" in captured.err
 
     def test_review_empty_tools_yaml_detect_fails_exits_cli_error(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """tools.yaml with tools: [] -> detect called -> CliError -> exit 2."""
         repo = tmp_path / "repo"
@@ -373,11 +429,15 @@ class TestReviewAutoDetect:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
@@ -390,7 +450,8 @@ class TestReviewAutoDetect:
             ),
         ):
             monkeypatch.setattr(
-                sys, "argv",
+                sys,
+                "argv",
                 ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
             )
             monkeypatch.setattr(
@@ -405,7 +466,10 @@ class TestReviewAutoDetect:
         assert "No toolchain detected" in captured.err
 
     def test_review_corrupted_tools_yaml_exits_cli_error(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """Corrupted tools.yaml -> ValueError from load_registry -> exit 2."""
         repo = tmp_path / "repo"
@@ -424,16 +488,21 @@ class TestReviewAutoDetect:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# modified\n")
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.setattr(
@@ -463,6 +532,7 @@ class TestCostSummaryStderr:
     def test_cost_section_in_state_json(self, tmp_path, isolated_process_state):
         """After review, state.json contains cost section with required keys."""
         import json
+
         repo = tmp_path / "repo"
         repo.mkdir()
         _git_init_repo(repo)
@@ -470,20 +540,34 @@ class TestCostSummaryStderr:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# clean\nx = 1\n")
 
-        isolated_process_state.setattr(sys, "argv", [
-            "code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py",
-        ])
+        isolated_process_state.setattr(
+            sys,
+            "argv",
+            [
+                "code-forge",
+                "--falsification-engine",
+                "stub",
+                "--mode",
+                "ci",
+                "a.py",
+            ],
+        )
         isolated_process_state.chdir(repo)
 
         from code_forge.cli import main as _main
+
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
             return_value="subprocess",
@@ -502,7 +586,10 @@ class TestCostSummaryStderr:
         assert "per_pass" in cost
 
     def test_cost_summary_shows_na_for_stub_engine(
-        self, tmp_path, capsys, isolated_process_state,
+        self,
+        tmp_path,
+        capsys,
+        isolated_process_state,
     ):
         """Stub engine (no token data) prints 'N/A' cost line, not silence."""
         repo = tmp_path / "repo"
@@ -512,20 +599,34 @@ class TestCostSummaryStderr:
         _write_py_file(repo)
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         (repo / "a.py").write_text("# clean\nx = 1\n")
 
-        isolated_process_state.setattr(sys, "argv", [
-            "code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py",
-        ])
+        isolated_process_state.setattr(
+            sys,
+            "argv",
+            [
+                "code-forge",
+                "--falsification-engine",
+                "stub",
+                "--mode",
+                "ci",
+                "a.py",
+            ],
+        )
         isolated_process_state.chdir(repo)
 
         from code_forge.cli import main as _main
+
         with patch(
             "code_forge.outlet_resolver.resolve_outlet",
             return_value="subprocess",
@@ -553,11 +654,15 @@ def _setup_git_repo_with_diff(tmp_path):
     _write_py_file(repo)
     subprocess.run(
         ["git", "add", "-A"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo),
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "commit", "-m", "init"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo),
+        capture_output=True,
+        check=True,
     )
     (repo / "a.py").write_text("# modified\n")
     return repo
@@ -570,16 +675,25 @@ class TestInlineFlagsMutualExclusion:
         """--backend + --backend-url raises CliError (exit 2)."""
         repo = _setup_git_repo_with_diff(tmp_path)
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             [
-                "code-forge", "review",
-                "--falsification-engine", "stub",
-                "--mode", "ci",
-                "--backend", "mybackend",
-                "--backend-url", "https://api.example.com/v1",
-                "--backend-format", "openai",
-                "--backend-key-env", "MY_KEY",
-                "--backend-model", "gpt-4",
+                "code-forge",
+                "review",
+                "--falsification-engine",
+                "stub",
+                "--mode",
+                "ci",
+                "--backend",
+                "mybackend",
+                "--backend-url",
+                "https://api.example.com/v1",
+                "--backend-format",
+                "openai",
+                "--backend-key-env",
+                "MY_KEY",
+                "--backend-model",
+                "gpt-4",
                 "a.py",
             ],
         )
@@ -597,12 +711,17 @@ class TestInlineFlagsMutualExclusion:
         """Only --backend-url without the other 3 flags raises CliError (exit 2)."""
         repo = _setup_git_repo_with_diff(tmp_path)
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             [
-                "code-forge", "review",
-                "--falsification-engine", "stub",
-                "--mode", "ci",
-                "--backend-url", "https://api.example.com/v1",
+                "code-forge",
+                "review",
+                "--falsification-engine",
+                "stub",
+                "--mode",
+                "ci",
+                "--backend-url",
+                "https://api.example.com/v1",
                 "a.py",
             ],
         )
@@ -616,9 +735,7 @@ class TestInlineFlagsMutualExclusion:
         captured = capsys.readouterr()
         assert "inline backend requires all 4 flags" in captured.err
 
-    def test_inline_flags_all_four_constructs_config(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_inline_flags_all_four_constructs_config(self, tmp_path, monkeypatch, capsys):
         """All 4 inline flags produce a transient BackendConfig used for the call."""
         repo = _setup_git_repo_with_diff(tmp_path)
         captured_backend = {}
@@ -627,18 +744,27 @@ class TestInlineFlagsMutualExclusion:
         def fake_build_l1_provider(engine, resolved, backend=None, **kwargs):
             captured_backend["backend"] = backend
             from code_forge.factories import build_l1_provider as real_bld
+
             return real_bld(engine, resolved, backend=backend)
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             [
-                "code-forge", "review",
-                "--falsification-engine", "stub",
-                "--mode", "ci",
-                "--backend-url", "https://api.example.com/v1",
-                "--backend-format", "openai",
-                "--backend-key-env", "EXAMPLE_API_KEY",
-                "--backend-model", "gpt-4-turbo",
+                "code-forge",
+                "review",
+                "--falsification-engine",
+                "stub",
+                "--mode",
+                "ci",
+                "--backend-url",
+                "https://api.example.com/v1",
+                "--backend-format",
+                "openai",
+                "--backend-key-env",
+                "EXAMPLE_API_KEY",
+                "--backend-model",
+                "gpt-4-turbo",
                 "a.py",
             ],
         )
@@ -666,9 +792,7 @@ class TestInlineFlagsMutualExclusion:
 class TestLLMInvokeErrorWrapping:
     """/: LLMInvokeError re-raised as CliError with backend name."""
 
-    def test_llm_invoke_error_wrapped_as_cli_error(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_llm_invoke_error_wrapped_as_cli_error(self, tmp_path, monkeypatch, capsys):
         """LLMInvokeError from _run_hold_loop is wrapped as CliError with backend name.
 
         /: The except LLMInvokeError clause in _run re-raises as
@@ -679,15 +803,23 @@ class TestLLMInvokeErrorWrapping:
         repo = _setup_git_repo_with_diff(tmp_path)
         monkeypatch.setenv("EXAMPLE_API_KEY", "sk-test-fake")
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             [
-                "code-forge", "review",
-                "--falsification-engine", "stub",
-                "--mode", "ci",
-                "--backend-url", "https://api.example.com/v1",
-                "--backend-format", "openai",
-                "--backend-key-env", "EXAMPLE_API_KEY",
-                "--backend-model", "gpt-4-turbo",
+                "code-forge",
+                "review",
+                "--falsification-engine",
+                "stub",
+                "--mode",
+                "ci",
+                "--backend-url",
+                "https://api.example.com/v1",
+                "--backend-format",
+                "openai",
+                "--backend-key-env",
+                "EXAMPLE_API_KEY",
+                "--backend-model",
+                "gpt-4-turbo",
                 "a.py",
             ],
         )
@@ -747,10 +879,12 @@ class TestMaxTokensInApiCalls:
 
         class FakeResponse:
             def read(self):
-                return _json.dumps({
-                    "content": [{"text": '{"findings": []}'}],
-                    "usage": {"input_tokens": 10, "output_tokens": 5},
-                }).encode("utf-8")
+                return _json.dumps(
+                    {
+                        "content": [{"text": '{"findings": []}'}],
+                        "usage": {"input_tokens": 10, "output_tokens": 5},
+                    }
+                ).encode("utf-8")
 
             def __enter__(self):
                 return self
@@ -763,9 +897,7 @@ class TestMaxTokensInApiCalls:
             return FakeResponse()
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            _invoke_anthropic(
-                prompt="test", backend=cfg, api_key="sk-test", timeout_s=30
-            )
+            _invoke_anthropic(prompt="test", backend=cfg, api_key="sk-test", timeout_s=30)
 
         assert captured_body["body"]["max_tokens"] == 4096
 
@@ -788,10 +920,12 @@ class TestMaxTokensInApiCalls:
 
         class FakeResponse:
             def read(self):
-                return _json.dumps({
-                    "choices": [{"message": {"content": '{"findings": []}'}}],
-                    "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-                }).encode("utf-8")
+                return _json.dumps(
+                    {
+                        "choices": [{"message": {"content": '{"findings": []}'}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                    }
+                ).encode("utf-8")
 
             def __enter__(self):
                 return self
@@ -804,9 +938,7 @@ class TestMaxTokensInApiCalls:
             return FakeResponse()
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            _invoke_openai(
-                prompt="test", backend=cfg, api_key="sk-test", timeout_s=30
-            )
+            _invoke_openai(prompt="test", backend=cfg, api_key="sk-test", timeout_s=30)
 
         assert captured_body["body"]["max_tokens"] == 8192
 
@@ -835,9 +967,7 @@ class TestRealMimoApiSmoke:
         from code_forge.backend import BackendConfig
         from code_forge.llm_invoke import LLMInvokeError, llm_invoke
 
-        mimo_base_url = os.environ.get(
-            "MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/anthropic"
-        )
+        mimo_base_url = os.environ.get("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/anthropic")
         backend = BackendConfig(
             name="mimo",
             type="api",
@@ -1004,19 +1134,23 @@ class TestRealMimoApiSmoke:
 # ---------------------------------------------------------------------------
 
 
-
 def _make_valid_reviewer_json_p15():
     """Minimal valid reviewer JSON with one excerpt (Phase 15 tests)."""
     import json as _json
-    return _json.dumps({
-        "findings": [],
-        "code_excerpts": [{
-            "file": "test_foo.py",
-            "start_line": 1,
-            "end_line": 3,
-            "content": "def test_a():\n    assert True\n    pass\n",
-        }],
-    })
+
+    return _json.dumps(
+        {
+            "findings": [],
+            "code_excerpts": [
+                {
+                    "file": "test_foo.py",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "content": "def test_a():\n    assert True\n    pass\n",
+                }
+            ],
+        }
+    )
 
 
 # Concrete diff texts (L-R2-06)
@@ -1109,15 +1243,14 @@ class TestSubagentSpawnIntegration:
     def test_spawn_calls_llm_invoke(self):
         """_make_subagent_spawn must produce a spawn_fn that calls llm_invoke."""
         import json as _json
+
         with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
             mock_llm.return_value = _LLMResult(
                 content=_make_valid_reviewer_json_p15(),
                 usage=_Usage(),
                 duration_s=0.1,
             )
-            spawn = _make_subagent_spawn(
-                backend=None, conv_digest="", post_image=""
-            )
+            spawn = _make_subagent_spawn(backend=None, conv_digest="", post_image="")
             result = spawn("qodo", "diff --git a/test.py b/test.py\n+x=1\n")
         assert mock_llm.call_count == 1
         # M-R5-03: prompt via call_args[0][0]
@@ -1169,9 +1302,7 @@ class TestSubagentSpawnIntegration:
                 usage=_Usage(),
                 duration_s=0.1,
             )
-            spawn = _make_subagent_spawn(
-                backend=None, conv_digest="", post_image=""
-            )
+            spawn = _make_subagent_spawn(backend=None, conv_digest="", post_image="")
             spawn("qodo", "diff text here")
         prompt = mock_llm.call_args[0][0]
         for forbidden in ["Human:", "Assistant:", "previous message"]:
@@ -1183,6 +1314,7 @@ class TestBuildL1ProviderDigestAndPostImage:
 
     def _make_resolved(self):
         from code_forge.baseline import ResolvedReview
+
         _diff = (
             "diff --git a/foo.py b/foo.py\n"
             "--- a/foo.py\n"
@@ -1201,19 +1333,25 @@ class TestBuildL1ProviderDigestAndPostImage:
 
     def _make_excerpt_json(self):
         import json as _json
-        return _json.dumps({
-            "findings": [],
-            "code_excerpts": [{
-                "file": "foo.py",
-                "start_line": 1,
-                "end_line": 3,
-                "content": "def bar():\n    pass\n    return None\n",
-            }],
-        })
+
+        return _json.dumps(
+            {
+                "findings": [],
+                "code_excerpts": [
+                    {
+                        "file": "foo.py",
+                        "start_line": 1,
+                        "end_line": 3,
+                        "content": "def bar():\n    pass\n    return None\n",
+                    }
+                ],
+            }
+        )
 
     def test_build_l1_provider_includes_digest(self):
         """conventions_digest must appear in the L1 provider prompt (M-R2-03)."""
         from code_forge.factories import build_l1_provider
+
         resolved = self._make_resolved()
         with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
             mock_llm.return_value = _LLMResult(
@@ -1222,7 +1360,8 @@ class TestBuildL1ProviderDigestAndPostImage:
                 duration_s=0.1,
             )
             provider = build_l1_provider(
-                "auto", resolved,
+                "auto",
+                resolved,
                 conventions_digest="## test digest",
                 post_image="",
             )
@@ -1235,6 +1374,7 @@ class TestBuildL1ProviderDigestAndPostImage:
     def test_build_l1_provider_includes_post_image(self):
         """post_image must appear in the L1 provider prompt (M-R2-03)."""
         from code_forge.factories import build_l1_provider
+
         resolved = self._make_resolved()
         with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
             mock_llm.return_value = _LLMResult(
@@ -1243,7 +1383,8 @@ class TestBuildL1ProviderDigestAndPostImage:
                 duration_s=0.1,
             )
             provider = build_l1_provider(
-                "auto", resolved,
+                "auto",
+                resolved,
                 conventions_digest="",
                 post_image="## File: foo.py\n```\ndef bar(): pass\n```",
             )
@@ -1255,6 +1396,7 @@ class TestBuildL1ProviderDigestAndPostImage:
     def test_build_l1_provider_no_digest_no_post_image(self):
         """When both empty, prompt must NOT contain digest or post-image sections."""
         from code_forge.factories import build_l1_provider
+
         resolved = self._make_resolved()
         with _patch("code_forge.llm_invoke.llm_invoke") as mock_llm:
             mock_llm.return_value = _LLMResult(
@@ -1263,7 +1405,8 @@ class TestBuildL1ProviderDigestAndPostImage:
                 duration_s=0.1,
             )
             provider = build_l1_provider(
-                "auto", resolved,
+                "auto",
+                resolved,
                 conventions_digest="",
                 post_image="",
             )
@@ -1277,22 +1420,22 @@ class TestTimeoutBreakerExitCode:
     """main() returns EXIT_TIMEOUT when TimeoutBreaker propagates from _run."""
 
     def test_main_returns_exit_timeout_on_breaker_trip(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """Breaker trip in _run -> except TimeoutBreaker -> EXIT_TIMEOUT."""
         from code_forge.machine import TimeoutBreaker
 
         monkeypatch.setattr(
-            sys, "argv",
-            ["code-forge", "--falsification-engine", "stub",
-             "--mode", "ci", "a.py"],
+            sys,
+            "argv",
+            ["code-forge", "--falsification-engine", "stub", "--mode", "ci", "a.py"],
         )
         monkeypatch.chdir(str(tmp_path))
 
         def _raise_breaker(*a, **kw):
-            raise TimeoutBreaker(
-                "backend produced 5 consecutive timeouts (>=5)"
-            )
+            raise TimeoutBreaker("backend produced 5 consecutive timeouts (>=5)")
 
         monkeypatch.setattr("code_forge.cli._run", _raise_breaker)
         assert main() == EXIT_TIMEOUT

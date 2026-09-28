@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for MCP job lifecycle module."""
+
 from __future__ import annotations
 
 import asyncio
@@ -156,7 +157,10 @@ def _open_log_sink(path):
 def _write_temp_file(text="", suffix=".log"):
     """A closed temp file holding `text`; the caller owns the path."""
     fh = tempfile.NamedTemporaryFile(  # noqa: SIM115
-        mode="w", suffix=suffix, delete=False, encoding="utf-8",
+        mode="w",
+        suffix=suffix,
+        delete=False,
+        encoding="utf-8",
     )
     try:
         fh.write(text)
@@ -237,7 +241,8 @@ async def test_wait_for_job_exception_sets_failed():
 async def test_wait_for_job_exception_reaps_child():
     """A comm_task failure must not strand a live child process."""
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "300",
+        "sleep",
+        "300",
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -300,12 +305,14 @@ async def test_cleanup_all_cancels_wait_tasks_before_terminating():
     order: list[str] = []
 
     proc1 = await asyncio.create_subprocess_exec(
-        "sleep", "60",
+        "sleep",
+        "60",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     proc2 = await asyncio.create_subprocess_exec(
-        "sleep", "60",
+        "sleep",
+        "60",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -408,6 +415,7 @@ async def test_terminate_and_reap_terminates():
 
     proc.wait = AsyncMock(side_effect=_wait_sets_returncode)
     from code_forge.mcp_jobs import _terminate_and_reap
+
     await _terminate_and_reap(proc)
     proc.terminate.assert_called_once()
     proc.wait.assert_called_once()
@@ -429,6 +437,7 @@ async def test_terminate_and_reap_kills_on_timeout():
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
+
     await _terminate_and_reap(proc)
     proc.terminate.assert_called_once()
     proc.kill.assert_called_once()
@@ -441,6 +450,7 @@ async def test_terminate_and_reap_skips_already_dead():
     proc.pid = 12345  # valid int so os.getpgid() does not TypeError
     proc.wait = AsyncMock()
     from code_forge.mcp_jobs import _terminate_and_reap
+
     await _terminate_and_reap(proc)
     proc.terminate.assert_not_called()
     proc.kill.assert_not_called()
@@ -455,6 +465,7 @@ async def test_terminate_and_reap_catches_oserror_on_terminate():
     proc.terminate.side_effect = OSError("No such process")
     proc.wait = AsyncMock(return_value=None)
     from code_forge.mcp_jobs import _terminate_and_reap
+
     # Must not raise -- OSError is swallowed
     await _terminate_and_reap(proc)
 
@@ -471,8 +482,11 @@ async def test_terminate_and_reap_uses_killpg_for_session_leader():
 
     proc.wait = AsyncMock(side_effect=_wait_sets_returncode)
     from code_forge.mcp_jobs import _terminate_and_reap
-    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
-         patch("code_forge.mcp_jobs.os.killpg") as mock_killpg:
+
+    with (
+        patch("code_forge.mcp_jobs.os.getpgid", return_value=12345),
+        patch("code_forge.mcp_jobs.os.killpg") as mock_killpg,
+    ):
         await _terminate_and_reap(proc)
         mock_killpg.assert_called_once_with(12345, signal.SIGTERM)
         proc.terminate.assert_not_called()
@@ -490,8 +504,11 @@ async def test_terminate_and_reap_falls_back_to_terminate_when_killpg_fails():
 
     proc.wait = AsyncMock(side_effect=_wait_sets_returncode)
     from code_forge.mcp_jobs import _terminate_and_reap
-    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
-         patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("not leader")):
+
+    with (
+        patch("code_forge.mcp_jobs.os.getpgid", return_value=12345),
+        patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("not leader")),
+    ):
         await _terminate_and_reap(proc)
         proc.terminate.assert_called_once()
 
@@ -513,8 +530,11 @@ async def test_terminate_and_reap_sigkill_uses_killpg_for_session_leader():
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
-    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
-         patch("code_forge.mcp_jobs.os.killpg") as mock_killpg:
+
+    with (
+        patch("code_forge.mcp_jobs.os.getpgid", return_value=12345),
+        patch("code_forge.mcp_jobs.os.killpg") as mock_killpg,
+    ):
         await _terminate_and_reap(proc)
         # killpg called for both SIGTERM and SIGKILL; verify SIGKILL specifically
         assert mock_killpg.call_args_list[-1] == call(12345, signal.SIGKILL)
@@ -538,6 +558,7 @@ async def test_terminate_and_reap_sigkill_pgid_none_falls_back_to_kill():
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
+
     with patch("code_forge.mcp_jobs.os.getpgid", side_effect=OSError("no such process")):
         await _terminate_and_reap(proc)
         proc.kill.assert_called()
@@ -560,6 +581,7 @@ async def test_terminate_and_reap_sigkill_pgid_not_equal_pid_falls_back_to_kill(
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
+
     with patch("code_forge.mcp_jobs.os.getpgid", return_value=99999):
         await _terminate_and_reap(proc)
         proc.kill.assert_called()
@@ -582,8 +604,11 @@ async def test_terminate_and_reap_sigkill_killpg_oserror_falls_back_to_kill():
 
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     from code_forge.mcp_jobs import _terminate_and_reap
-    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
-         patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("permission denied")):
+
+    with (
+        patch("code_forge.mcp_jobs.os.getpgid", return_value=12345),
+        patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("permission denied")),
+    ):
         await _terminate_and_reap(proc)
         proc.kill.assert_called()
 
@@ -605,15 +630,17 @@ async def test_terminate_and_reap_sigkill_both_fail_no_raise():
     proc.wait = AsyncMock(side_effect=_wait_side_effect)
     proc.kill.side_effect = OSError("process not found")
     from code_forge.mcp_jobs import _terminate_and_reap
-    with patch("code_forge.mcp_jobs.os.getpgid", return_value=12345), \
-         patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("permission denied")):
+
+    with (
+        patch("code_forge.mcp_jobs.os.getpgid", return_value=12345),
+        patch("code_forge.mcp_jobs.os.killpg", side_effect=OSError("permission denied")),
+    ):
         # Must not raise
         await _terminate_and_reap(proc)
 
 
 @pytest.mark.asyncio
-async def test_terminate_and_reap_on_windows_names_no_absent_signal(
-        monkeypatch):
+async def test_terminate_and_reap_on_windows_names_no_absent_signal(monkeypatch):
     """SIGKILL is missing on Windows and a call site reads it eagerly.
 
     The helper declines to use a group signal when there is no group,
@@ -656,7 +683,8 @@ async def test_terminate_and_reap_on_windows_names_no_absent_signal(
 async def test_watchdog_kills_on_timeout():
     """Sleeping subprocess + tiny cap -> status failed, verdict TIMEOUT."""
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "60",
+        "sleep",
+        "60",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -675,7 +703,8 @@ async def test_watchdog_kills_on_timeout():
 async def test_watchdog_reaps_proc():
     """After timeout, proc.returncode is not None."""
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "60",
+        "sleep",
+        "60",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -698,7 +727,8 @@ async def test_watchdog_stderr_tail_preserved():
     # Closed as soon as the child is up: it holds its own duplicate.
     with _open_log_sink(log_path) as stderr_fp:
         proc = await asyncio.create_subprocess_exec(
-            "python3", "-c",
+            "python3",
+            "-c",
             "import sys, time; sys.stderr.write('MARKER_SENTINEL\\n'); "
             "sys.stderr.flush(); time.sleep(60)",
             stdout=asyncio.subprocess.PIPE,
@@ -706,7 +736,8 @@ async def test_watchdog_stderr_tail_preserved():
         )
     inner_task = asyncio.create_task(proc.communicate())
     job_id = start_job(
-        inner_task, proc,
+        inner_task,
+        proc,
         stderr_log_path=log_path,
         max_lifetime_s=0.5,
     )
@@ -731,7 +762,8 @@ async def test_watchdog_stderr_tail_from_log_file():
     # Closed as soon as the child is up: it holds its own duplicate.
     with _open_log_sink(log_path) as log_sink:
         proc = await asyncio.create_subprocess_exec(
-            "python3", "-c",
+            "python3",
+            "-c",
             "import sys; sys.stderr.write('LOGFILE_MARKER\\n'); "
             "sys.stderr.flush(); import time; time.sleep(60)",
             stdout=asyncio.subprocess.PIPE,
@@ -739,7 +771,8 @@ async def test_watchdog_stderr_tail_from_log_file():
         )
     inner_task = asyncio.create_task(proc.communicate())
     job_id = start_job(
-        inner_task, proc,
+        inner_task,
+        proc,
         stderr_log_path=log_path,
         max_lifetime_s=0.5,
     )
@@ -760,6 +793,7 @@ async def test_watchdog_stderr_tail_from_log_file():
 @pytest.mark.asyncio
 async def test_watchdog_normal_completion_unaffected():
     """Normal (non-timeout) path still works with max_lifetime_s set."""
+
     async def _comm():
         return (b"ok", b"")
 
@@ -778,7 +812,8 @@ async def test_watchdog_normal_completion_unaffected():
 async def test_watchdog_measures_real_elapsed():
     """duration_s is measured elapsed, not the cap constant."""
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "60",
+        "sleep",
+        "60",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -796,7 +831,8 @@ async def test_watchdog_measures_real_elapsed():
 async def test_watchdog_cancels_comm_task_on_timeout():
     """comm_task is cancelled after watchdog timeout, not left pending."""
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "60",
+        "sleep",
+        "60",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -839,9 +875,7 @@ async def test_watchdog_race_timeout_then_exit_is_not_false_timeout():
         # stdout is empty because comm_task was cancelled by wait_for
         assert entry["result"]["stdout"] == ""
         # stderr must include the stdout-lost marker
-        assert "stdout lost: process exited at timeout boundary" in (
-            entry["result"]["stderr"]
-        )
+        assert "stdout lost: process exited at timeout boundary" in (entry["result"]["stderr"])
         assert "duration_s" in entry["result"]
 
 
@@ -869,9 +903,7 @@ async def test_watchdog_race_timeout_nonzero_exit():
         assert entry["result"]["exit_code"] == 1
         assert entry["result"]["stdout"] == ""
         # stderr must include the stdout-lost marker
-        assert "stdout lost: process exited at timeout boundary" in (
-            entry["result"]["stderr"]
-        )
+        assert "stdout lost: process exited at timeout boundary" in (entry["result"]["stderr"])
         assert "duration_s" in entry["result"]
 
 
@@ -880,20 +912,21 @@ async def test_watchdog_race_timeout_nonzero_exit():
 
 def test_read_stderr_tail_no_log_path():
     from code_forge.mcp_jobs import _read_stderr_tail
+
     assert _read_stderr_tail({}) == ""
 
 
 def test_read_stderr_tail_missing_file():
     """_read_stderr_tail returns '' when the log file does not exist."""
     from code_forge.mcp_jobs import _read_stderr_tail
-    result = _read_stderr_tail(
-        {"stderr_log_path": "/tmp/nonexistent_mcp_test_999.log"}
-    )
+
+    result = _read_stderr_tail({"stderr_log_path": "/tmp/nonexistent_mcp_test_999.log"})
     assert result == ""
 
 
 def test_read_stderr_tail_reads_file():
     from code_forge.mcp_jobs import _read_stderr_tail
+
     log_path = _write_temp_file("hello world tail")
     result = _read_stderr_tail({"stderr_log_path": log_path})
     assert "hello world tail" in result
@@ -904,11 +937,10 @@ def test_read_stderr_tail_truncates():
     """Must read the TAIL, not the HEAD: head yields 'AAAA...';
     tail yields 'BBBB...'."""
     from code_forge.mcp_jobs import _read_stderr_tail
+
     log_path = _write_temp_file("A" * 4900 + "B" * 100)
     result = _read_stderr_tail({"stderr_log_path": log_path}, max_bytes=100)
-    assert result == "B" * 100, (
-        f"Expected tail (BBBB...), got HEAD or partial: {result[:20]}..."
-    )
+    assert result == "B" * 100, f"Expected tail (BBBB...), got HEAD or partial: {result[:20]}..."
     os.unlink(log_path)
 
 
@@ -916,6 +948,7 @@ def test_read_stderr_tail_multibyte_boundary():
     """Multi-byte UTF-8 sequence straddling the max_bytes boundary must
     decode without raising; decode(errors='replace') handles the seam."""
     from code_forge.mcp_jobs import _read_stderr_tail
+
     max_bytes = 100
     # '\u4e2d' is 3 bytes (E4 B8 AD).  4900 ASCII + 40 Chinese = 5020 bytes.
     # Tail of 100 bytes starts at byte 4920, which is 20 bytes into the
@@ -940,9 +973,7 @@ def test_read_stderr_tail_multibyte_boundary():
     #     more bytes because U+FFFD (3 bytes) replaces a 1-byte orphan.
     #     Verify the decoded content is sensible, not that re-encoding fits.
     assert len(result) >= 1, "result must not be empty"
-    assert result[0] == "\ufffd", (
-        f"First char should be replacement, got {result[0]!r}"
-    )
+    assert result[0] == "\ufffd", f"First char should be replacement, got {result[0]!r}"
     os.unlink(log_path)
 
 
@@ -994,7 +1025,8 @@ async def test_killpg_kills_entire_process_group():
     # Spawn a process that ignores TERM and forks a background sleeper.
     # Both live in the same process group (start_new_session=True).
     proc = await asyncio.create_subprocess_exec(
-        "sh", "-c",
+        "sh",
+        "-c",
         'trap "" TERM; sleep 60 & sleep 60',
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -1002,9 +1034,7 @@ async def test_killpg_kills_entire_process_group():
     )
     pgid = os.getpgid(proc.pid)
     # Sanity: new session means pgid == pid (process group leader)
-    assert pgid == proc.pid, (
-        "start_new_session must make proc the group leader"
-    )
+    assert pgid == proc.pid, "start_new_session must make proc the group leader"
 
     inner_task = asyncio.create_task(proc.communicate())
     start_job(inner_task, proc, max_lifetime_s=0.5)
@@ -1012,9 +1042,7 @@ async def test_killpg_kills_entire_process_group():
     await asyncio.sleep(8.0)
 
     # Verify the leader is dead
-    assert proc.returncode is not None, (
-        "leader process must have been reaped"
-    )
+    assert proc.returncode is not None, "leader process must have been reaped"
 
     # Verify no process in the group survives
     try:
@@ -1026,18 +1054,19 @@ async def test_killpg_kills_entire_process_group():
     # Check that the background sleeper is also dead
     # (killpg kills the whole group, not just the leader)
     import subprocess
+
     result = await asyncio.to_thread(
         subprocess.run,
         ["ps", "-o", "pid=", "--sid", str(pgid)],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
         # Exit 1 is the expected answer here: nothing left in the session.
         check=False,
     )
     # If any processes remain in the session, the output is non-empty
     remaining = result.stdout.strip()
-    assert not remaining, (
-        f"process group {pgid} still has alive members: {remaining}"
-    )
+    assert not remaining, f"process group {pgid} still has alive members: {remaining}"
 
 
 @pytest.mark.asyncio
@@ -1061,12 +1090,15 @@ async def test_run_cli_budgeted_sets_start_new_session():
     class _Proc:
         """Proxy that delegates pid/returncode/communicate to a
         real subprocess, forwarding start_new_session capture."""
+
         @property
         def pid(self):
             return real_proc.pid
+
         @property
         def returncode(self):
             return real_proc.returncode
+
         async def communicate(self):
             return (b"", b"")
 
@@ -1078,9 +1110,7 @@ async def test_run_cli_budgeted_sets_start_new_session():
         "code_forge.mcp_server.asyncio.create_subprocess_exec",
         side_effect=_capture_exec,
     ):
-        await _run_cli_budgeted(
-            "review", workspace=Path("/tmp"), budget=10.0
-        )
+        await _run_cli_budgeted("review", workspace=Path("/tmp"), budget=10.0)
 
     assert captured_kwargs.get("start_new_session") is True, (
         "_run_cli_budgeted must pass start_new_session=True"
@@ -1089,7 +1119,9 @@ async def test_run_cli_budgeted_sets_start_new_session():
     # Spawn a real process with the captured start_new_session to
     # verify the child becomes a group leader (pgid == pid).
     child = await asyncio.create_subprocess_exec(
-        "sh", "-c", "sleep 60",
+        "sh",
+        "-c",
+        "sleep 60",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=captured_kwargs["start_new_session"],

@@ -1,4 +1,5 @@
 """Tests for eval scorer (scorer.py)."""
+
 from __future__ import annotations
 
 import json
@@ -109,8 +110,11 @@ class TestComputeSummary:
         results = [
             _result(name="caught", expected="HOLD", actual="HOLD"),
             _result(
-                name="skip", expected="HOLD", actual="SKIPPED",
-                caught_count=0, skipped_reason="timeout",
+                name="skip",
+                expected="HOLD",
+                actual="SKIPPED",
+                caught_count=0,
+                skipped_reason="timeout",
             ),
         ]
         s = compute_summary(results)
@@ -131,17 +135,24 @@ class TestComputeSummary:
             _result(name="caught1", expected="HOLD", actual="HOLD"),
             _result(name="caught2", expected="HOLD", actual="HOLD"),
             _result(
-                name="missed", expected="HOLD", actual="PASS",
+                name="missed",
+                expected="HOLD",
+                actual="PASS",
                 caught_count=0,
             ),
             _result(name="ok", expected="PASS", actual="PASS", caught_count=0),
             _result(
-                name="overblock", expected="PASS", actual="HOLD",
+                name="overblock",
+                expected="PASS",
+                actual="HOLD",
                 caught_count=1,
             ),
             _result(
-                name="skip", expected="HOLD", actual="SKIPPED",
-                caught_count=0, skipped_reason="apply failed",
+                name="skip",
+                expected="HOLD",
+                actual="SKIPPED",
+                caught_count=0,
+                skipped_reason="apply failed",
             ),
         ]
         s = compute_summary(results)
@@ -158,12 +169,11 @@ class TestFormatTable:
 
     def test_raw_counts_not_percentages(self) -> None:
         """format_table uses raw counts 'Caught: 7/9' NOT percentages."""
-        results = [
-            _result(name=f"e{i}", expected="HOLD", actual="HOLD")
-            for i in range(7)
-        ] + [
+        results = [_result(name=f"e{i}", expected="HOLD", actual="HOLD") for i in range(7)] + [
             _result(
-                name=f"m{i}", expected="HOLD", actual="PASS",
+                name=f"m{i}",
+                expected="HOLD",
+                actual="PASS",
                 caught_count=0,
             )
             for i in range(2)
@@ -180,8 +190,11 @@ class TestFormatTable:
         results = [
             _result(name="caught", expected="HOLD", actual="HOLD"),
             _result(
-                name="skip", expected="HOLD", actual="SKIPPED",
-                caught_count=0, skipped_reason="timeout",
+                name="skip",
+                expected="HOLD",
+                actual="SKIPPED",
+                caught_count=0,
+                skipped_reason="timeout",
             ),
         ]
         s = compute_summary(results)

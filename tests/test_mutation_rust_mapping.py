@@ -68,8 +68,14 @@ def test_log_path_cannot_leave_the_output_dir(tmp_path):
     doc = {
         "outcomes": [
             {
-                "scenario": {"Mutant": {"name": "m", "file": "src/lib.rs", "genre": "FnValue",
-                                         "span": {"start": {"line": 1, "column": 1}}}},
+                "scenario": {
+                    "Mutant": {
+                        "name": "m",
+                        "file": "src/lib.rs",
+                        "genre": "FnValue",
+                        "span": {"start": {"line": 1, "column": 1}},
+                    }
+                },
                 "summary": "CaughtMutant",
                 "log_path": "../../secret.txt",
             }

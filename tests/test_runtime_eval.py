@@ -12,6 +12,7 @@ Covers:
 - Eval concat excludes runtime-smoke-summary findings
 - compute_summary uses advisory_caught_count for pure-RUNTIME entries
 """
+
 from __future__ import annotations
 
 import json
@@ -155,17 +156,14 @@ class TestAdvisoryCaught:
 
     def setup_method(self) -> None:
         from code_forge.eval.scorer import advisory_caught
+
         self.advisory_caught = advisory_caught
 
     def test_all_keywords_present_returns_true(self) -> None:
-        assert self.advisory_caught(
-            "nftables rules may be stale", ["nftables", "stale"]
-        )
+        assert self.advisory_caught("nftables rules may be stale", ["nftables", "stale"])
 
     def test_single_keyword_hit_returns_true(self) -> None:
-        assert self.advisory_caught(
-            "nftables rules may be stale", ["nftables"]
-        )
+        assert self.advisory_caught("nftables rules may be stale", ["nftables"])
 
     def test_no_keyword_match_returns_false(self) -> None:
         assert not self.advisory_caught("clean code review", ["nftables"])
@@ -205,6 +203,7 @@ class TestEvalResultAdvisoryCaughtCount:
 
     def test_default_advisory_caught_count_is_zero(self) -> None:
         from code_forge.eval.scorer import EvalResult
+
         entry = _entry()
         result = EvalResult(
             entry=entry,
@@ -217,6 +216,7 @@ class TestEvalResultAdvisoryCaughtCount:
 
     def test_advisory_caught_count_settable(self) -> None:
         from code_forge.eval.scorer import EvalResult
+
         entry = _entry()
         result = EvalResult(
             entry=entry,
@@ -231,6 +231,7 @@ class TestEvalResultAdvisoryCaughtCount:
     def test_caught_count_independent_of_advisory_caught_count(self) -> None:
         """caught_count and advisory_caught_count are fully independent fields."""
         from code_forge.eval.scorer import EvalResult
+
         entry = _entry()
         result = EvalResult(
             entry=entry,
@@ -257,6 +258,7 @@ class TestEvalSummaryAdvisoryFields:
         import dataclasses
 
         from code_forge.eval.scorer import EvalSummary
+
         fields = {f.name for f in dataclasses.fields(EvalSummary)}
         assert "advisory_caught" in fields
         assert "advisory_missed" in fields
@@ -274,17 +276,23 @@ class TestRuntimeAxisHook:
         """RuntimeAxisHook is registered in _AXIS_HOOKS."""
         import code_forge.eval.runner as runner_mod
         from code_forge.eval.runner import RuntimeAxisHook
+
         assert any(isinstance(h, RuntimeAxisHook) for h in runner_mod._AXIS_HOOKS)
 
     def test_post_review_is_noop(self) -> None:
         """RuntimeAxisHook.post_review does nothing (scoring is in runner loop)."""
         from code_forge.eval.runner import RuntimeAxisHook
         from code_forge.eval.scorer import EvalResult
+
         hook = RuntimeAxisHook()
         entry = _entry()
         result = EvalResult(
-            entry=entry, actual_verdict="PASS", runs=3,
-            caught_count=0, skipped_reason="", advisory_caught_count=0,
+            entry=entry,
+            actual_verdict="PASS",
+            runs=3,
+            caught_count=0,
+            skipped_reason="",
+            advisory_caught_count=0,
         )
         # Must not raise; must not call advisory_caught
         with patch("code_forge.eval.scorer.advisory_caught") as mock_ac:
@@ -294,6 +302,7 @@ class TestRuntimeAxisHook:
     def test_pre_review_is_noop(self) -> None:
         """RuntimeAxisHook.pre_review does nothing."""
         from code_forge.eval.runner import RuntimeAxisHook
+
         hook = RuntimeAxisHook()
         entry = _entry()
         hook.pre_review(entry)  # must not raise
@@ -301,6 +310,7 @@ class TestRuntimeAxisHook:
     def test_runtime_not_in_deterministic_tags(self) -> None:
         """RUNTIME is an LLM axis (3-run majority), not deterministic."""
         from code_forge.eval.runner import DETERMINISTIC_TAGS
+
         assert "RUNTIME" not in DETERMINISTIC_TAGS
 
 
@@ -312,9 +322,7 @@ class TestRuntimeAxisHook:
 class TestRunnerAdvisoryScoring:
     """replay_entry reads advisory-findings.json and increments advisory counter."""
 
-    def _make_advisory_findings(
-        self, tmp_dir: str, findings: list[dict]
-    ) -> None:
+    def _make_advisory_findings(self, tmp_dir: str, findings: list[dict]) -> None:
         """Write advisory-findings.json into the temp review dir."""
         path = Path(tmp_dir) / "advisory-findings.json"
         path.write_text(json.dumps(findings), encoding="utf-8")
@@ -322,7 +330,10 @@ class TestRunnerAdvisoryScoring:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_advisory_caught_count_incremented_on_keyword_match(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """advisory_caught_count >= 2 (majority) when advisory text matches keywords."""
         import code_forge.eval.runner as runner_mod
@@ -347,8 +358,9 @@ class TestRunnerAdvisoryScoring:
         # Patch _run_single to also write advisory-findings.json in temp dir
         written_dirs: list[str] = []
 
-        def patched_run_single(entry, diff_path, temp_dir, backend_name,
-                               backend_config=None, corpus_dir=None):
+        def patched_run_single(
+            entry, diff_path, temp_dir, backend_name, backend_config=None, corpus_dir=None
+        ):
             # Write advisory-findings.json before cleanup
             self._make_advisory_findings(temp_dir, advisory_findings)
             written_dirs.append(temp_dir)
@@ -373,7 +385,10 @@ class TestRunnerAdvisoryScoring:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_advisory_no_match_keeps_zero(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """advisory_caught_count stays 0 when text does not match keywords."""
         import code_forge.eval.runner as runner_mod
@@ -386,8 +401,9 @@ class TestRunnerAdvisoryScoring:
             },
         ]
 
-        def patched_run_single(entry, diff_path, temp_dir, backend_name,
-                               backend_config=None, corpus_dir=None):
+        def patched_run_single(
+            entry, diff_path, temp_dir, backend_name, backend_config=None, corpus_dir=None
+        ):
             self._make_advisory_findings(temp_dir, advisory_findings)
             return False, ""
 
@@ -409,7 +425,10 @@ class TestRunnerAdvisoryScoring:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_caught_count_not_contaminated_by_advisory(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """caught_count (verdict-match) is NOT affected by advisory keyword match."""
         import code_forge.eval.runner as runner_mod
@@ -422,8 +441,9 @@ class TestRunnerAdvisoryScoring:
             },
         ]
 
-        def patched_run_single(entry, diff_path, temp_dir, backend_name,
-                               backend_config=None, corpus_dir=None):
+        def patched_run_single(
+            entry, diff_path, temp_dir, backend_name, backend_config=None, corpus_dir=None
+        ):
             self._make_advisory_findings(temp_dir, advisory_findings)
             return False, ""  # forge returned PASS (not flagged)
 
@@ -448,7 +468,10 @@ class TestRunnerAdvisoryScoring:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_runtime_smoke_summary_excluded_from_concat(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """runtime-smoke-summary finding is excluded from advisory keyword concat."""
         import code_forge.eval.runner as runner_mod
@@ -463,8 +486,9 @@ class TestRunnerAdvisoryScoring:
             },
         ]
 
-        def patched_run_single(entry, diff_path, temp_dir, backend_name,
-                               backend_config=None, corpus_dir=None):
+        def patched_run_single(
+            entry, diff_path, temp_dir, backend_name, backend_config=None, corpus_dir=None
+        ):
             self._make_advisory_findings(temp_dir, advisory_findings)
             return False, ""
 
@@ -488,7 +512,10 @@ class TestRunnerAdvisoryScoring:
     @patch("code_forge.eval.runner.subprocess.run")
     @patch("code_forge.eval.runner.record_trust")
     def test_no_expected_advisory_skips_advisory_scoring(
-        self, mock_trust: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        mock_trust: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Entry with empty expected_advisory has advisory_caught_count=0 (no scoring)."""
         import code_forge.eval.runner as runner_mod
@@ -497,8 +524,9 @@ class TestRunnerAdvisoryScoring:
             {"id": "runtime-0", "axis": "RUNTIME", "description": "nftables stale"},
         ]
 
-        def patched_run_single(entry, diff_path, temp_dir, backend_name,
-                               backend_config=None, corpus_dir=None):
+        def patched_run_single(
+            entry, diff_path, temp_dir, backend_name, backend_config=None, corpus_dir=None
+        ):
             self._make_advisory_findings(temp_dir, advisory_findings)
             return False, ""
 
@@ -537,6 +565,7 @@ class TestComputeSummaryAdvisoryScoring:
         runs: int = 3,
     ):
         from code_forge.eval.scorer import EvalResult
+
         entry = _entry(
             expected_verdict=expected_verdict,
             tags=tags or ["RUNTIME"],
@@ -554,6 +583,7 @@ class TestComputeSummaryAdvisoryScoring:
     def test_pure_runtime_advisory_hit_counted(self) -> None:
         """RUNTIME entry: advisory_caught_count>=majority -> advisory_caught incremented."""
         from code_forge.eval.scorer import compute_summary
+
         result = self._make_result(
             expected_verdict="PASS",
             actual_verdict="PASS",
@@ -568,6 +598,7 @@ class TestComputeSummaryAdvisoryScoring:
     def test_pure_runtime_advisory_miss_counted(self) -> None:
         """RUNTIME entry: advisory_caught_count<majority -> advisory_missed incremented."""
         from code_forge.eval.scorer import compute_summary
+
         result = self._make_result(
             expected_verdict="PASS",
             actual_verdict="PASS",
@@ -582,6 +613,7 @@ class TestComputeSummaryAdvisoryScoring:
     def test_non_runtime_entry_unaffected(self) -> None:
         """TRUST entry (HOLD expected) uses verdict-match, not advisory scoring."""
         from code_forge.eval.scorer import EvalResult, compute_summary
+
         entry = CorpusEntry(
             name="gate-yaml-rce",
             diff_file="diffs/gate-yaml-rce.diff",
@@ -608,6 +640,7 @@ class TestComputeSummaryAdvisoryScoring:
     def test_dual_axis_entry_verdict_match_gates_caught(self) -> None:
         """ttl_class (RUNTIME+FIXVAL, HOLD): verdict-match determines caught, not advisory."""
         from code_forge.eval.scorer import EvalResult, compute_summary
+
         entry = CorpusEntry(
             name="ttl_class",
             diff_file="diffs/ttl_class.diff",
@@ -634,12 +667,7 @@ class TestComputeSummaryAdvisoryScoring:
 # ===========================================================================
 
 
-CORPUS_YAML = (
-    Path(__file__).parent
-    / "eval"
-    / "corpus"
-    / "corpus.yaml"
-)
+CORPUS_YAML = Path(__file__).parent / "eval" / "corpus" / "corpus.yaml"
 
 
 class TestCorpusYamlE1E6:
@@ -730,8 +758,14 @@ class TestCorpusYamlE1E6:
     def test_all_e1_e6_have_runtime_tag(self) -> None:
         """All E1-E6 entries have RUNTIME in axis_tags."""
         entries = {e.name: e for e in self._load()}
-        for name in ["E1-stale-nftables", "E2-pcap-suffix", "E3-transit-probe",
-                     "E4-curl-tproxy", "E5-fast-502", "E6-reprobe-blackout"]:
+        for name in [
+            "E1-stale-nftables",
+            "E2-pcap-suffix",
+            "E3-transit-probe",
+            "E4-curl-tproxy",
+            "E5-fast-502",
+            "E6-reprobe-blackout",
+        ]:
             assert "RUNTIME" in entries[name].axis_tags, f"{name} missing RUNTIME tag"
 
 
@@ -743,6 +777,7 @@ class TestMutantKillCoverage:
         import json
 
         from code_forge.eval.runner import _read_advisory_findings
+
         (tmp_path / "advisory-findings.json").write_text(json.dumps({"error": "timeout"}))
         result = _read_advisory_findings(str(tmp_path))
         assert result == [], "dict-format advisory-findings.json must return [] not [dict]"
@@ -751,6 +786,7 @@ class TestMutantKillCoverage:
         """PASS+empty expected_advisory is NOT pure-RUNTIME (M10 kill test)."""
         from code_forge.eval.corpus import CorpusEntry
         from code_forge.eval.scorer import EvalResult, _is_pure_runtime_advisory
+
         entry = CorpusEntry("t", "f.diff", "PASS", ["RUNTIME"], [])
         result = EvalResult(entry, "PASS", 1, 0, None, advisory_caught_count=0)
         assert not _is_pure_runtime_advisory(result), (
@@ -761,6 +797,7 @@ class TestMutantKillCoverage:
         """PASS+empty advisory entry does not inflate advisory_missed (M10 kill)."""
         from code_forge.eval.corpus import CorpusEntry
         from code_forge.eval.scorer import EvalResult, compute_summary
+
         entry = CorpusEntry("no-advisory", "f.diff", "PASS", ["RUNTIME"], [])
         result = EvalResult(entry, "PASS", 1, 0, None, advisory_caught_count=0)
         summary = compute_summary([result])

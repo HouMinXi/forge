@@ -13,6 +13,7 @@ Prerequisites:
   - MIMO_MODEL (optional, defaults to MoMo-72B-Preview)
   - MIMO_BASE_URL (optional, defaults to api.xiaomimimo.com/v1)
 """
+
 from __future__ import annotations
 
 import json
@@ -97,6 +98,7 @@ _SAMPLE_DIFF = textwrap.dedent("""\
 
 # -- Shared helpers ----------------------------------------------------------
 
+
 def _mimo_canary_provider(diff_text: str) -> list:
     """Generate canary mutations via mimo-pro LLM."""
     n_canaries = 5
@@ -107,12 +109,12 @@ def _mimo_canary_provider(diff_text: str) -> list:
         "leak, etc.) that requires non-local reasoning to detect. "
         "Do NOT include comments explaining the bug.\n"
         "Each snippet MUST be <= 5 lines. "
-        "\"line\" is the 1-based line number of the bug WITHIN "
+        '"line" is the 1-based line number of the bug WITHIN '
         "the 'code' snippet (not a file line number).\n"
-        "Return JSON: {\"mutations\": [{\"file\": \"...\", "
-        "\"line\": N, \"original\": \"<unmodified code snippet>\", "
-        "\"code\": \"<mutated code snippet>\", "
-        "\"description\": \"...\"}]}\n\n"
+        'Return JSON: {"mutations": [{"file": "...", '
+        '"line": N, "original": "<unmodified code snippet>", '
+        '"code": "<mutated code snippet>", '
+        '"description": "..."}]}\n\n'
         "Diff:\n" % n_canaries + diff_text
     )
     result = llm_invoke(
@@ -144,8 +146,7 @@ def _overloaded_review_provider(prompt: str) -> str:
         "module from a reliable senior teammate, very low risk. Read it "
         "once at normal speed; do NOT trace arithmetic, loop bounds, or "
         "boundary conditions. Approve unless something obviously wrong "
-        "jumps out.\n"
-        + "# unrelated change: " * 200 + "\n"
+        "jumps out.\n" + "# unrelated change: " * 200 + "\n"
         "Be extremely brief, one line per issue. If nothing jumps out, "
         "return an empty findings array.\n\n"
     )
@@ -159,9 +160,8 @@ def _source_lookup(file_path: str):
 
 # -- Tests -------------------------------------------------------------------
 
-@unittest.skipUnless(
-    os.environ.get("FORGE_SMOKE_MIMO") == "1", _GATE_MSG
-)
+
+@unittest.skipUnless(os.environ.get("FORGE_SMOKE_MIMO") == "1", _GATE_MSG)
 class TestCanaryDiscriminationMimo(unittest.TestCase):
     """Spike-protocol validation: canary set has discrimination power.
 
@@ -173,26 +173,25 @@ class TestCanaryDiscriminationMimo(unittest.TestCase):
     def test_canary_discrimination_mimo(self) -> None:
         timeout_s = int(os.environ.get("FORGE_LLM_TIMEOUT_S", "600"))
         self.assertGreaterEqual(
-            timeout_s, 600,
+            timeout_s,
+            600,
             "FORGE_LLM_TIMEOUT_S must be >= 600 for cross-Pacific mimo-pro",
         )
 
         # Step 1: Generate canaries from the sample diff.
-        canaries = generate_canaries(
-            _SAMPLE_DIFF, 5, provider=_mimo_canary_provider
-        )
+        canaries = generate_canaries(_SAMPLE_DIFF, 5, provider=_mimo_canary_provider)
         # If generation returned CanarySkip, the diff was insufficient.
         self.assertIsInstance(
-            canaries, list,
+            canaries,
+            list,
             "generate_canaries returned CanarySkip: %s" % canaries,
         )
         self.assertGreaterEqual(len(canaries), 2, "need >= 2 verified canaries")
 
         # Build a manifest from the generated canaries for evaluation.
         from code_forge.canary_gen import inject_canaries_into_diff
-        modified_diff, manifest = inject_canaries_into_diff(
-            _SAMPLE_DIFF, canaries
-        )
+
+        modified_diff, manifest = inject_canaries_into_diff(_SAMPLE_DIFF, canaries)
         threshold = max(1, len(manifest) * 3 // 5)  # 60%
 
         # Step 2: Run 3 repetitions each of genuine and overloaded reviews.
@@ -201,30 +200,25 @@ class TestCanaryDiscriminationMimo(unittest.TestCase):
         overloaded_passes = 0
 
         for run_idx in range(n_runs):
-            print(
-                "\n--- Discrimination run %d/%d ---" % (run_idx + 1, n_runs)
-            )
+            print("\n--- Discrimination run %d/%d ---" % (run_idx + 1, n_runs))
             # Genuine review: standard effort.
             try:
                 genuine_raw = _mimo_review_provider(
                     "You are a code reviewer. Review this diff for bugs, "
                     "security issues, and code quality problems.\n"
-                    "Return JSON: {\"findings\": [...]}\n"
+                    'Return JSON: {"findings": [...]}\n'
                     "Each finding needs: file, line, severity, description."
                     "\n\nDiff:\n" + modified_diff
                 )
                 genuine_data = json.loads(genuine_raw)
                 genuine_findings = validate_canary_findings(
-                    genuine_data.get("findings", [])
-                    if isinstance(genuine_data, dict) else []
+                    genuine_data.get("findings", []) if isinstance(genuine_data, dict) else []
                 )
             except (LLMInvokeError, json.JSONDecodeError, TypeError) as exc:
                 print("  genuine run %d failed: %s" % (run_idx + 1, exc))
                 genuine_findings = []
 
-            genuine_result = evaluate_canary_coverage(
-                genuine_findings, manifest, threshold=threshold
-            )
+            genuine_result = evaluate_canary_coverage(genuine_findings, manifest, threshold=threshold)
             if genuine_result.passed:
                 genuine_passes += 1
             print(
@@ -242,14 +236,13 @@ class TestCanaryDiscriminationMimo(unittest.TestCase):
                 overloaded_raw = _overloaded_review_provider(
                     "You are a code reviewer. Review this diff for bugs, "
                     "security issues, and code quality problems.\n"
-                    "Return JSON: {\"findings\": [...]}\n"
+                    'Return JSON: {"findings": [...]}\n'
                     "Each finding needs: file, line, severity, description."
                     "\n\nDiff:\n" + modified_diff
                 )
                 overloaded_data = json.loads(overloaded_raw)
                 overloaded_findings = validate_canary_findings(
-                    overloaded_data.get("findings", [])
-                    if isinstance(overloaded_data, dict) else []
+                    overloaded_data.get("findings", []) if isinstance(overloaded_data, dict) else []
                 )
             except (LLMInvokeError, json.JSONDecodeError, TypeError) as exc:
                 print("  overloaded run %d failed: %s" % (run_idx + 1, exc))
@@ -274,23 +267,23 @@ class TestCanaryDiscriminationMimo(unittest.TestCase):
         print(
             "\n--- Separation summary ---\n"
             "  genuine passes: %d/%d\n"
-            "  overloaded passes: %d/%d"
-            % (genuine_passes, n_runs, overloaded_passes, n_runs)
+            "  overloaded passes: %d/%d" % (genuine_passes, n_runs, overloaded_passes, n_runs)
         )
         majority = n_runs * 2 // 3  # >= 2 of 3
 
         # Genuine should catch enough in the majority of runs.
         self.assertGreaterEqual(
-            genuine_passes, majority,
+            genuine_passes,
+            majority,
             "Genuine review failed to catch canaries in majority of runs "
             "(%d/%d passed, need >= %d). The canary set may be too subtle "
-            "or the model too weak for this diff."
-            % (genuine_passes, n_runs, majority),
+            "or the model too weak for this diff." % (genuine_passes, n_runs, majority),
         )
 
         # Overloaded should fail to catch enough in the majority of runs.
         self.assertLess(
-            overloaded_passes, majority,
+            overloaded_passes,
+            majority,
             "Overloaded review caught canaries in majority of runs "
             "(%d/%d passed, expected < %d). The canary set has no "
             "discrimination power -- canaries are too easy/salient."
@@ -300,9 +293,7 @@ class TestCanaryDiscriminationMimo(unittest.TestCase):
         print("\nSEPARATION CONFIRMED: canary set discriminates.")
 
 
-@unittest.skipUnless(
-    os.environ.get("FORGE_SMOKE_MIMO") == "1", _GATE_MSG
-)
+@unittest.skipUnless(os.environ.get("FORGE_SMOKE_MIMO") == "1", _GATE_MSG)
 class TestRunInlineCanaryE2EMimo(unittest.TestCase):
     """End-to-end real-model smoke of the full canary pipeline.
 
@@ -317,7 +308,8 @@ class TestRunInlineCanaryE2EMimo(unittest.TestCase):
     def test_run_inline_canary_e2e_mimo(self) -> None:
         timeout_s = int(os.environ.get("FORGE_LLM_TIMEOUT_S", "600"))
         self.assertGreaterEqual(
-            timeout_s, 600,
+            timeout_s,
+            600,
             "FORGE_LLM_TIMEOUT_S must be >= 600 for cross-Pacific mimo-pro",
         )
 
@@ -334,15 +326,12 @@ class TestRunInlineCanaryE2EMimo(unittest.TestCase):
         except Exception as exc:
             # If run_inline_canary itself raises (should not happen -- it has
             # internal try/except), record and fail with diagnostics.
-            self.fail(
-                "run_inline_canary raised unexpectedly: %s" % exc
-            )
+            self.fail("run_inline_canary raised unexpectedly: %s" % exc)
 
         print(
             "\n--- E2E smoke result ---\n"
             "  verdict: %s\n"
-            "  real_findings: %d"
-            % (verdict.value, len(real_findings))
+            "  real_findings: %d" % (verdict.value, len(real_findings))
         )
 
         # Verdict must be DELEGATED or UNRELIABLE (inline never returns PASS).
@@ -355,19 +344,15 @@ class TestRunInlineCanaryE2EMimo(unittest.TestCase):
         # If real_findings is non-empty, verify no canary entries leaked.
         # Re-generate canaries to get the manifest for partition check.
         if real_findings:
-            canaries = generate_canaries(
-                _SAMPLE_DIFF, 3, provider=_mimo_canary_provider
-            )
+            canaries = generate_canaries(_SAMPLE_DIFF, 3, provider=_mimo_canary_provider)
             if isinstance(canaries, list) and canaries:
                 from code_forge.canary_gen import inject_canaries_into_diff
-                _, manifest = inject_canaries_into_diff(
-                    _SAMPLE_DIFF, canaries
-                )
-                partition = partition_canary_findings(
-                    real_findings, manifest
-                )
+
+                _, manifest = inject_canaries_into_diff(_SAMPLE_DIFF, canaries)
+                partition = partition_canary_findings(real_findings, manifest)
                 self.assertEqual(
-                    len(partition.canary), 0,
+                    len(partition.canary),
+                    0,
                     "Canary entries leaked into real_findings: %s"
                     % [f.get("description", "") for f in partition.canary],
                 )
@@ -381,12 +366,13 @@ class TestRunInlineCanaryE2EMimo(unittest.TestCase):
         )
         # Filter out the test file itself and spike fixtures (staged by us).
         stray = [
-            line for line in result.stdout.strip().splitlines()
-            if line.strip()
-            and "test_canary_smoke.py" not in line
+            line
+            for line in result.stdout.strip().splitlines()
+            if line.strip() and "test_canary_smoke.py" not in line
         ]
         self.assertEqual(
-            stray, [],
+            stray,
+            [],
             "Working tree has stray files after smoke: %s" % stray,
         )
 

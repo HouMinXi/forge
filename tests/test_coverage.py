@@ -28,28 +28,23 @@ def _tool(name, patterns):
 # compute_uncovered_files
 # ---------------------------------------------------------------------------
 
+
 def test_l1_active_covers_everything():
     # When L1 ran over the diff, every file is examined -> no gaps.
     registry = {}  # no L0 tools at all
-    uncovered = compute_uncovered_files(
-        ["a.sh", "b.py", "c.txt"], registry, l1_active=True
-    )
+    uncovered = compute_uncovered_files(["a.sh", "b.py", "c.txt"], registry, l1_active=True)
     assert uncovered == []
 
 
 def test_file_matched_by_l0_tool_is_covered():
     registry = {"ruff": _tool("ruff", ["*.py"])}
-    uncovered = compute_uncovered_files(
-        ["b.py"], registry, l1_active=False
-    )
+    uncovered = compute_uncovered_files(["b.py"], registry, l1_active=False)
     assert uncovered == []
 
 
 def test_file_without_matching_tool_is_uncovered():
     registry = {"ruff": _tool("ruff", ["*.py"])}
-    uncovered = compute_uncovered_files(
-        ["a.sh"], registry, l1_active=False
-    )
+    uncovered = compute_uncovered_files(["a.sh"], registry, l1_active=False)
     assert uncovered == ["a.sh"]
 
 
@@ -70,9 +65,7 @@ def test_shellcheck_tool_covers_shell_files():
         "ruff": _tool("ruff", ["*.py"]),
         "shellcheck": _tool("shellcheck", ["*.sh", "*.bash"]),
     }
-    uncovered = compute_uncovered_files(
-        ["proxy.py", "k.sh", "aicc"], registry, l1_active=False
-    )
+    uncovered = compute_uncovered_files(["proxy.py", "k.sh", "aicc"], registry, l1_active=False)
     assert uncovered == ["aicc"]
 
 
@@ -89,9 +82,7 @@ def test_exempt_pattern_suppresses_finding():
 
 def test_result_preserves_order_and_dedupes():
     registry = {}
-    uncovered = compute_uncovered_files(
-        ["z.sh", "a.sh", "z.sh"], registry, l1_active=False
-    )
+    uncovered = compute_uncovered_files(["z.sh", "a.sh", "z.sh"], registry, l1_active=False)
     assert uncovered == ["z.sh", "a.sh"]
 
 
@@ -102,6 +93,7 @@ def test_empty_scope_yields_no_gaps():
 # ---------------------------------------------------------------------------
 # build_coverage_findings
 # ---------------------------------------------------------------------------
+
 
 def test_build_findings_shape():
     findings = build_coverage_findings(["a.sh", "b.sh"])
@@ -127,6 +119,7 @@ def test_build_findings_empty():
 # load_coverage_exempt_patterns
 # ---------------------------------------------------------------------------
 
+
 def test_load_exempt_absent_returns_empty(tmp_path):
     assert load_coverage_exempt_patterns(tmp_path) == []
 
@@ -134,9 +127,7 @@ def test_load_exempt_absent_returns_empty(tmp_path):
 def test_load_exempt_valid(tmp_path):
     cfg = tmp_path / ".code-forge"
     cfg.mkdir()
-    (cfg / "coverage.yaml").write_text(
-        "version: 1\nexempt_patterns:\n  - '*.txt'\n  - 'docs/*'\n"
-    )
+    (cfg / "coverage.yaml").write_text("version: 1\nexempt_patterns:\n  - '*.txt'\n  - 'docs/*'\n")
     assert load_coverage_exempt_patterns(tmp_path) == ["*.txt", "docs/*"]
 
 

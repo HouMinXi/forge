@@ -27,8 +27,11 @@ from code_forge.state import Mode, StateFinding, Verdict
 
 def _git(cwd, *args):
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), check=True,
-        capture_output=True, text=True,
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -75,6 +78,7 @@ def test_real_review_run_writes_real_sha_ledger_row(tmp_path):
         return ([finding], [])
 
     from code_forge.git import resolve_git_ref, git_diff
+
     base_sha = resolve_git_ref(base, tmp_path)
     head_sha = resolve_git_ref(head, tmp_path)
     diff = git_diff(base, head, [tmp_path / "x"], tmp_path)

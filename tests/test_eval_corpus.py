@@ -1,4 +1,5 @@
 """Tests for eval corpus loader (corpus.py)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,8 +26,10 @@ class TestCorpusEntry:
 
     def test_frozen(self) -> None:
         entry = CorpusEntry(
-            name="x", diff_file="x.diff",
-            expected_verdict="HOLD", axis_tags=[],
+            name="x",
+            diff_file="x.diff",
+            expected_verdict="HOLD",
+            axis_tags=[],
         )
         with pytest.raises(AttributeError):
             entry.name = "changed"  # type: ignore[misc]
@@ -125,19 +128,22 @@ class TestCorpusEntriesApply:
 
     CORPUS_DIR = Path(__file__).parent / "eval" / "corpus"
 
-    @pytest.mark.parametrize("entry_name", [
-        "gate-yaml-rce",
-        "E1-stale-nftables",
-        "E2-pcap-suffix",
-        "E3-transit-probe",
-        "E4-curl-tproxy",
-        "E5-fast-502",
-        "E6-reprobe-blackout",
-        "BUG-P12-01",
-        "ttl_class",
-        "E8-blast-radius-llm-invoke",
-        "E9-killswitch-mark-conflict",
-    ])
+    @pytest.mark.parametrize(
+        "entry_name",
+        [
+            "gate-yaml-rce",
+            "E1-stale-nftables",
+            "E2-pcap-suffix",
+            "E3-transit-probe",
+            "E4-curl-tproxy",
+            "E5-fast-502",
+            "E6-reprobe-blackout",
+            "BUG-P12-01",
+            "ttl_class",
+            "E8-blast-radius-llm-invoke",
+            "E9-killswitch-mark-conflict",
+        ],
+    )
     def test_corpus_entry_applies(self, entry_name: str, tmp_path: Path) -> None:
         """Each corpus diff must git-apply against its base_files seed."""
         import shutil
@@ -150,7 +156,9 @@ class TestCorpusEntriesApply:
         repo.mkdir()
         subprocess.run(
             ["git", "init", "-b", "main"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
 
         base_dir = self.CORPUS_DIR / "base_files" / entry_name
@@ -159,19 +167,32 @@ class TestCorpusEntriesApply:
 
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=str(repo), capture_output=True, check=True,
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
-            ["git", "-c", "user.name=test", "-c", "user.email=t@t",
-             "commit", "--allow-empty", "-m", "init"],
-            cwd=str(repo), capture_output=True, check=True,
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=str(repo),
+            capture_output=True,
+            check=True,
         )
 
         result = subprocess.run(
             ["git", "apply", "--check", str(diff_path.resolve())],
-            cwd=str(repo), capture_output=True, check=False,
+            cwd=str(repo),
+            capture_output=True,
+            check=False,
         )
         stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
-        assert result.returncode == 0, (
-            f"{entry_name}: git apply --check failed: {stderr}"
-        )
+        assert result.returncode == 0, f"{entry_name}: git apply --check failed: {stderr}"

@@ -61,21 +61,21 @@ class TestStubFalsifierFixtures:
 
     def test_per_fingerprint_override(self, tmp_path):
         fixture = tmp_path / "mixed.json"
-        fixture.write_text(json.dumps({
-            "default": "CONFIRMED",
-            "dispositions": {
-                "fp-style": "DISMISSED",
-                "fp-vague": "UNCERTAIN",
-            },
-        }))
+        fixture.write_text(
+            json.dumps(
+                {
+                    "default": "CONFIRMED",
+                    "dispositions": {
+                        "fp-style": "DISMISSED",
+                        "fp-vague": "UNCERTAIN",
+                    },
+                }
+            )
+        )
         stub = StubFalsifier(fixture)
         assert stub.falsify(_make_finding("fp-style")) == Disposition.DISMISSED
-        assert stub.falsify(
-            _make_finding("fp-vague")
-        ) == Disposition.UNCERTAIN
-        assert stub.falsify(
-            _make_finding("fp-other")
-        ) == Disposition.CONFIRMED
+        assert stub.falsify(_make_finding("fp-vague")) == Disposition.UNCERTAIN
+        assert stub.falsify(_make_finding("fp-other")) == Disposition.CONFIRMED
 
 
 class TestStubFalsifierErrors:
@@ -83,10 +83,14 @@ class TestStubFalsifierErrors:
 
     def test_error_key_raises_runtime_error(self, tmp_path):
         fixture = tmp_path / "errors.json"
-        fixture.write_text(json.dumps({
-            "default": "CONFIRMED",
-            "errors": {"fp-timeout": "simulated timeout"},
-        }))
+        fixture.write_text(
+            json.dumps(
+                {
+                    "default": "CONFIRMED",
+                    "errors": {"fp-timeout": "simulated timeout"},
+                }
+            )
+        )
         stub = StubFalsifier(fixture)
         with pytest.raises(RuntimeError, match="simulated timeout"):
             stub.falsify(_make_finding("fp-timeout"))
@@ -94,27 +98,33 @@ class TestStubFalsifierErrors:
     def test_error_key_precedes_dispositions(self, tmp_path):
         """Errors take precedence over dispositions for same fingerprint."""
         fixture = tmp_path / "overlap.json"
-        fixture.write_text(json.dumps({
-            "default": "CONFIRMED",
-            "dispositions": {"fp-both": "DISMISSED"},
-            "errors": {"fp-both": "crash"},
-        }))
+        fixture.write_text(
+            json.dumps(
+                {
+                    "default": "CONFIRMED",
+                    "dispositions": {"fp-both": "DISMISSED"},
+                    "errors": {"fp-both": "crash"},
+                }
+            )
+        )
         stub = StubFalsifier(fixture)
         with pytest.raises(RuntimeError, match="crash"):
             stub.falsify(_make_finding("fp-both"))
 
     def test_non_error_fingerprint_unaffected(self, tmp_path):
         fixture = tmp_path / "errors.json"
-        fixture.write_text(json.dumps({
-            "default": "CONFIRMED",
-            "dispositions": {"fp-ok": "DISMISSED"},
-            "errors": {"fp-bad": "crash"},
-        }))
+        fixture.write_text(
+            json.dumps(
+                {
+                    "default": "CONFIRMED",
+                    "dispositions": {"fp-ok": "DISMISSED"},
+                    "errors": {"fp-bad": "crash"},
+                }
+            )
+        )
         stub = StubFalsifier(fixture)
         assert stub.falsify(_make_finding("fp-ok")) == Disposition.DISMISSED
-        assert stub.falsify(
-            _make_finding("fp-other")
-        ) == Disposition.CONFIRMED
+        assert stub.falsify(_make_finding("fp-other")) == Disposition.CONFIRMED
 
 
 class TestFixedRejection:
@@ -128,10 +138,14 @@ class TestFixedRejection:
 
     def test_fixed_per_entry_rejected_at_constructor(self, tmp_path):
         fixture = tmp_path / "bad.json"
-        fixture.write_text(json.dumps({
-            "default": "CONFIRMED",
-            "dispositions": {"fp-bad": "FIXED"},
-        }))
+        fixture.write_text(
+            json.dumps(
+                {
+                    "default": "CONFIRMED",
+                    "dispositions": {"fp-bad": "FIXED"},
+                }
+            )
+        )
         with pytest.raises(ValueError, match="FIXED.*fp-bad"):
             StubFalsifier(fixture)
 
@@ -163,27 +177,15 @@ class TestStubFalsifierFromRealFixtures:
 
     def test_mixed_fixture(self):
         stub = StubFalsifier(self._FIXTURE_DIR / "mixed.json")
-        assert stub.falsify(
-            _make_finding("fp-leak-001")
-        ) == Disposition.CONFIRMED
-        assert stub.falsify(
-            _make_finding("fp-style-002")
-        ) == Disposition.DISMISSED
-        assert stub.falsify(
-            _make_finding("fp-vague-003")
-        ) == Disposition.UNCERTAIN
-        assert stub.falsify(
-            _make_finding("fp-unknown")
-        ) == Disposition.CONFIRMED
+        assert stub.falsify(_make_finding("fp-leak-001")) == Disposition.CONFIRMED
+        assert stub.falsify(_make_finding("fp-style-002")) == Disposition.DISMISSED
+        assert stub.falsify(_make_finding("fp-vague-003")) == Disposition.UNCERTAIN
+        assert stub.falsify(_make_finding("fp-unknown")) == Disposition.CONFIRMED
 
     def test_with_errors_fixture(self):
         stub = StubFalsifier(self._FIXTURE_DIR / "with_errors.json")
-        assert stub.falsify(
-            _make_finding("fp-ok-001")
-        ) == Disposition.DISMISSED
+        assert stub.falsify(_make_finding("fp-ok-001")) == Disposition.DISMISSED
         with pytest.raises(RuntimeError, match="stub-simulated timeout"):
             stub.falsify(_make_finding("fp-timeout-001"))
-        with pytest.raises(
-            RuntimeError, match="stub-simulated stack overflow"
-        ):
+        with pytest.raises(RuntimeError, match="stub-simulated stack overflow"):
             stub.falsify(_make_finding("fp-crash-002"))

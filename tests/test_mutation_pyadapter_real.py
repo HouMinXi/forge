@@ -40,15 +40,15 @@ import mutmut  # noqa: E402
 
 MUTMUT_SITE = str(Path(mutmut.__file__).resolve().parent.parent)
 
-CALC = '''def add(a, b):
+CALC = """def add(a, b):
     return a + b
 
 
 def double(x):
     return x * 0
-'''
+"""
 
-TEST_CALC = '''from calc import add, double
+TEST_CALC = """from calc import add, double
 
 
 def test_add():
@@ -57,7 +57,7 @@ def test_add():
 
 def test_double():
     assert double(0) == 0
-'''
+"""
 
 
 def _sha256(data: bytes) -> str:
@@ -138,9 +138,7 @@ def _selection() -> TargetSelection:
     )
 
 
-@pytest.mark.skipif(
-    not os.path.isdir(CGROUP_ROOT), reason="delegated cgroup root unavailable"
-)
+@pytest.mark.skipif(not os.path.isdir(CGROUP_ROOT), reason="delegated cgroup root unavailable")
 def test_real_mutmut_run_killed_and_survived(tmp_path):
     source_root = tmp_path / "source"
     source_root.mkdir()
@@ -189,9 +187,7 @@ def test_build_outcomes_native_killed_without_event_is_unknown(tmp_path):
     events.mkdir()
     run_dir = tmp_path / "run"
     meta = {"exit_code_by_key": {"x_calc.add__mutmut_1": 1}}
-    outcomes, artifacts = _build_outcomes(
-        {Path("calc.py"): meta}, events, "run-x", run_dir, workspace
-    )
+    outcomes, artifacts = _build_outcomes({Path("calc.py"): meta}, events, "run-x", run_dir, workspace)
     assert len(outcomes) == 1
     assert outcomes[0].normalized_status is NormalizedStatus.UNKNOWN
     assert outcomes[0].native_status == "killed"
@@ -202,8 +198,7 @@ def test_collect_meta_missing_source_is_hold_signal(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "mutants").mkdir(parents=True)
     (workspace / "mutants" / "a.py.meta").write_text(
-        '{"exit_code_by_key": {}, "durations_by_key": {},'
-        ' "estimated_durations_by_key": {}}'
+        '{"exit_code_by_key": {}, "durations_by_key": {}, "estimated_durations_by_key": {}}'
     )
     found, missing = _collect_meta(workspace, [Path("a.py"), Path("b.py")])
     assert list(found) == [Path("a.py")]
@@ -214,8 +209,7 @@ def test_collect_meta_empty_map_still_completes(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "mutants").mkdir(parents=True)
     (workspace / "mutants" / "a.py.meta").write_text(
-        '{"exit_code_by_key": {}, "durations_by_key": {},'
-        ' "estimated_durations_by_key": {}}'
+        '{"exit_code_by_key": {}, "durations_by_key": {}, "estimated_durations_by_key": {}}'
     )
     found, missing = _collect_meta(workspace, [Path("a.py")])
     assert missing == []

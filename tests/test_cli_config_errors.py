@@ -15,7 +15,7 @@ def _advisory(**changes):
         "axis": "RUNTIME",
         "file": "sample.py",
         "line_range": [3, 7],
-        "description": "Keep quoted content: head=\"\" and \\n",
+        "description": 'Keep quoted content: head="" and \\n',
         "attribution": "local-test",
     }
     item.update(changes)
@@ -37,8 +37,16 @@ def _advisory(**changes):
         json.dumps([_advisory(line_range={"start": 3})]).encode(),
     ],
     ids=[
-        "syntax", "encoding", "null", "scalar", "null-entry", "schema",
-        "range-type", "range-value", "range-overflow", "range-mapping",
+        "syntax",
+        "encoding",
+        "null",
+        "scalar",
+        "null-entry",
+        "schema",
+        "range-type",
+        "range-value",
+        "range-overflow",
+        "range-mapping",
     ],
 )
 def test_malformed_advisory_file_keeps_empty_fallback(tmp_path, payload):
@@ -117,7 +125,10 @@ def project_configs():
     ids=["schema", "numeric", "env-mapping", "mixed-keys", "env-sequence", "enum"],
 )
 def test_malformed_user_backend_keeps_project_fallback(
-    monkeypatch, caplog, project_configs, entry,
+    monkeypatch,
+    caplog,
+    project_configs,
+    entry,
 ):
     monkeypatch.setattr(user_config, "load_user_backends", lambda: {"bad": entry})
     result = cli._merge_user_into(project_configs, {})
@@ -128,10 +139,15 @@ def test_malformed_user_backend_keeps_project_fallback(
 
 @pytest.mark.parametrize("error_type", [MemoryError, RuntimeError, ImportError])
 def test_user_backend_internal_failure_propagates(
-    monkeypatch, caplog, project_configs, error_type,
+    monkeypatch,
+    caplog,
+    project_configs,
+    error_type,
 ):
     monkeypatch.setattr(
-        user_config, "load_user_backends", lambda: {"user": {"type": "cli"}},
+        user_config,
+        "load_user_backends",
+        lambda: {"user": {"type": "cli"}},
     )
     error = error_type("backend implementation failure")
 

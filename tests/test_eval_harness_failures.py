@@ -36,9 +36,7 @@ class TestTrustDirectoryMatchesTheReader:
         xdg = pathlib.Path("/tmp/example-repo/.xdg-config")
         assert _trust_store_path(xdg) != _trust_store_path(xdg / "code-forge")
 
-    def test_the_runner_actually_grants_where_the_child_reads(
-        self, monkeypatch, tmp_path
-    ):
+    def test_the_runner_actually_grants_where_the_child_reads(self, monkeypatch, tmp_path):
         """The arithmetic above is not the bug; passing the wrong dir was.
 
         An injection reverting record_trust's config_dir to the bare
@@ -48,11 +46,13 @@ class TestTrustDirectoryMatchesTheReader:
         """
         seen = {}
         monkeypatch.setattr(
-            runner, "record_trust",
+            runner,
+            "record_trust",
             lambda path, data, config_dir=None: seen.update(dir=config_dir),
         )
         monkeypatch.setattr(
-            runner, "_run_review",
+            runner,
+            "_run_review",
             lambda cmd, temp_dir, env, timeout_s: (0, ""),
         )
 
@@ -61,8 +61,7 @@ class TestTrustDirectoryMatchesTheReader:
         (repo / "m.py").write_text("a = 1\n", encoding="utf-8")
         diff = tmp_path / "d.diff"
         diff.write_text(
-            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-            "@@ -1 +1 @@\n-a = 1\n+a = 2\n",
+            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n",
             encoding="utf-8",
         )
         runner._run_single(_stub_entry(), diff, str(repo), "harness")
@@ -78,7 +77,8 @@ class TestSetupFailureIsNotAVerdict:
 
     def _run(self, monkeypatch, tmp_path, stderr_text, returncode=2):
         monkeypatch.setattr(
-            runner, "_run_review",
+            runner,
+            "_run_review",
             lambda cmd, temp_dir, env, timeout_s: (returncode, stderr_text),
         )
         monkeypatch.setattr(runner, "_create_gate_yaml", lambda *a, **kw: _stub_gate(tmp_path))
@@ -89,8 +89,7 @@ class TestSetupFailureIsNotAVerdict:
         (repo / "m.py").write_text("a = 1\n", encoding="utf-8")
         diff = tmp_path / "d.diff"
         diff.write_text(
-            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-            "@@ -1 +1 @@\n-a = 1\n+a = 2\n",
+            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n",
             encoding="utf-8",
         )
         entry = _stub_entry()
@@ -98,7 +97,8 @@ class TestSetupFailureIsNotAVerdict:
 
     def test_an_untrusted_gate_is_infra_not_a_hold(self, monkeypatch, tmp_path):
         flagged, reason = self._run(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             "Untrusted repo backends ignored. Run 'code-forge trust' to enable.\n",
         )
         assert flagged is False
@@ -106,7 +106,8 @@ class TestSetupFailureIsNotAVerdict:
 
     def test_a_missing_backend_is_infra_not_a_hold(self, monkeypatch, tmp_path):
         flagged, reason = self._run(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             "code-forge: error: unknown backend 'harness' (configured: deepseek)\n",
         )
         assert flagged is False
@@ -115,6 +116,7 @@ class TestSetupFailureIsNotAVerdict:
 
 def _stub_entry():
     from code_forge.eval.corpus import CorpusEntry
+
     return CorpusEntry(
         name="e",
         diff_file="d.diff",
@@ -155,9 +157,7 @@ class TestL0DoesNotBlockTheReview:
         import yaml as _yaml
 
         runner._create_gate_yaml(tmp_path, "harness", {"type": "api", "model": "m"})
-        data = _yaml.safe_load(
-            (tmp_path / ".code-forge" / "tools.yaml").read_text(encoding="utf-8")
-        )
+        data = _yaml.safe_load((tmp_path / ".code-forge" / "tools.yaml").read_text(encoding="utf-8"))
         # Reconstructed base files are not valid Python; a real linter here
         # would report the corpus's own construction as false positives.
         for name, cfg in data["tools"].items():
@@ -199,8 +199,7 @@ class TestStateJsonIsTheSignal:
         (repo / "m.py").write_text("a = 1\n", encoding="utf-8")
         diff = tmp_path / "d.diff"
         diff.write_text(
-            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n"
-            "@@ -1 +1 @@\n-a = 1\n+a = 2\n",
+            "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n",
             encoding="utf-8",
         )
         return runner._run_single(_stub_entry(), diff, str(repo), "harness")
@@ -222,12 +221,11 @@ class TestStateJsonIsTheSignal:
         assert flagged is False
         assert "no state.json" in reason
 
-    def test_a_real_hold_survives_infra_wording_in_its_findings(
-        self, monkeypatch, tmp_path
-    ):
+    def test_a_real_hold_survives_infra_wording_in_its_findings(self, monkeypatch, tmp_path):
         """Reviewing networking code makes this collision likely, not exotic."""
         flagged, reason = self._run(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             "1 CONFIRMED: retry loop swallows Connection refused\n",
             write_state=True,
         )
@@ -236,7 +234,8 @@ class TestStateJsonIsTheSignal:
 
     def test_a_genuine_outage_keeps_its_specific_reason(self, monkeypatch, tmp_path):
         flagged, reason = self._run(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             "APIConnectionError: Connection refused\n",
             write_state=False,
         )
@@ -287,7 +286,10 @@ class TestUnknownBackendFailsBeforeTheCorpus:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(cli, "_load_user_backends_raw", lambda: {}, raising=False)
         args = argparse.Namespace(
-            corpus=corpus, backend=backend, runs=1, output=None,
+            corpus=corpus,
+            backend=backend,
+            runs=1,
+            output=None,
         )
         rc = cli._run_eval(args)
         return rc, capsys.readouterr()

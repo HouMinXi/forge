@@ -2,6 +2,7 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for canary infrastructure: Verdict.UNRELIABLE, EXIT_UNRELIABLE,
 gate.yaml canary: block validation, init template, and CLI wiring."""
+
 from __future__ import annotations
 
 import argparse
@@ -38,24 +39,24 @@ class TestVerdictUnreliable:
     def test_exit_code_uniqueness(self):
         """All EXIT_* constants must have distinct integer values."""
         import code_forge.exit_codes as ec
+
         exit_names = [
-            name for name in dir(ec)
-            if name.startswith("EXIT_") and isinstance(getattr(ec, name), int)
+            name for name in dir(ec) if name.startswith("EXIT_") and isinstance(getattr(ec, name), int)
         ]
         values = [getattr(ec, name) for name in exit_names]
-        assert len(values) == len(set(values)), (
-            "Duplicate exit code values: %s"
-            % {v: [n for n in exit_names if getattr(ec, n) == v]
-               for v in values if values.count(v) > 1}
-        )
+        assert len(values) == len(set(values)), "Duplicate exit code values: %s" % {
+            v: [n for n in exit_names if getattr(ec, n) == v] for v in values if values.count(v) > 1
+        }
         # Verify the expected set after adding UNRELIABLE
         assert set(values) == {0, 1, 2, 3, 4, 5, 6, 7}
 
 
 def _make_fs_open(yaml_text: str):
     """Return an fs_open callable that serves yaml_text for any path."""
+
     def fs_open(path, mode="r", encoding=None):
         return io.StringIO(yaml_text)
+
     return fs_open
 
 
@@ -67,12 +68,7 @@ class TestCanaryValidation:
     """validate_canary_config type-checks and range-checks all fields."""
 
     def test_gate_yaml_canary_valid(self):
-        yaml_text = _MINIMAL_GATE + (
-            "canary:\n"
-            "  enabled: true\n"
-            "  n: 5\n"
-            "  threshold_ratio: 0.6\n"
-        )
+        yaml_text = _MINIMAL_GATE + ("canary:\n  enabled: true\n  n: 5\n  threshold_ratio: 0.6\n")
         result = load_gate_config("gate.yaml", fs_open=_make_fs_open(yaml_text))
         assert "canary" in result
 
@@ -111,9 +107,7 @@ class TestCanaryValidation:
 
     def test_gate_yaml_no_canary(self):
         """Backward compat: no canary section still loads fine."""
-        result = load_gate_config(
-            "gate.yaml", fs_open=_make_fs_open(_MINIMAL_GATE)
-        )
+        result = load_gate_config("gate.yaml", fs_open=_make_fs_open(_MINIMAL_GATE))
         assert "canary" not in result
 
     def test_gate_yaml_canary_n_boundary_3(self):
@@ -272,6 +266,7 @@ class TestEpilogExitCodes:
     @pytest.fixture()
     def parsers(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         review_parser = None
         for action in parser._subparsers._actions:
@@ -325,6 +320,7 @@ class TestCanaryProviderPrompt:
         # Verify the prompt template string in the source code
         import inspect
         import code_forge.cli as cli_mod
+
         source = inspect.getsource(cli_mod)
         assert '"original"' in source
 
@@ -336,6 +332,7 @@ class TestCanaryProviderLogging:
         """Source contains the expected error logging string."""
         import inspect
         import code_forge.cli as cli_mod
+
         source = inspect.getsource(cli_mod)
         assert "canary generation failed" in source
 
@@ -347,6 +344,7 @@ class TestDiffCommand:
         """The canary block diff command is git diff HEAD."""
         import inspect
         import code_forge.cli as cli_mod
+
         source = inspect.getsource(cli_mod)
         # Count git diff HEAD occurrences (main review path + canary path)
         count = source.count('"git", "diff", "HEAD"')
@@ -356,6 +354,7 @@ class TestDiffCommand:
         """No args.mode conditional determines diff scope in canary block."""
         import inspect
         import code_forge.cli as cli_mod
+
         # Get the _canary_provider-containing function's source
         # The inline branch should not have args.mode deciding diff scope
         source = inspect.getsource(cli_mod)
@@ -365,9 +364,7 @@ class TestDiffCommand:
         idx_end = source.find("return verdict", idx_start)
         if idx_start >= 0 and idx_end >= 0:
             canary_block = source[idx_start:idx_end]
-            assert 'args.mode' not in canary_block, (
-                "canary diff block must not condition on args.mode"
-            )
+            assert "args.mode" not in canary_block, "canary diff block must not condition on args.mode"
 
 
 class TestSourceLookupPathTraversal:
@@ -381,9 +378,7 @@ class TestSourceLookupPathTraversal:
             filepath = "../../../etc/passwd"
             full = os.path.realpath(os.path.join(cwd_real, filepath))
             # The containment check should reject this
-            contained = (
-                full.startswith(cwd_real + os.sep) or full == cwd_real
-            )
+            contained = full.startswith(cwd_real + os.sep) or full == cwd_real
             assert not contained, "path traversal must be blocked"
 
     def test_valid_path_accepted(self):
@@ -395,9 +390,7 @@ class TestSourceLookupPathTraversal:
                 f.write("hello\n")
             filepath = "test.py"
             full = os.path.realpath(os.path.join(cwd_real, filepath))
-            contained = (
-                full.startswith(cwd_real + os.sep) or full == cwd_real
-            )
+            contained = full.startswith(cwd_real + os.sep) or full == cwd_real
             assert contained
 
 
@@ -408,6 +401,7 @@ class TestCanaryDispatchFallthrough:
         """Source contains the fallthrough error message."""
         import inspect
         import code_forge.cli as cli_mod
+
         source = inspect.getsource(cli_mod)
         assert "canary check failed" in source
         assert "falling back to DELEGATED" in source
@@ -418,12 +412,14 @@ class TestCanaryFlagInParser:
 
     def test_canary_flag_accepted(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         args = parser.parse_args(["review", "--canary"])
         assert args.canary is True
 
     def test_canary_default_false(self):
         from code_forge.cli import _build_parser
+
         parser = _build_parser()
         args = parser.parse_args(["review"])
         assert args.canary is False

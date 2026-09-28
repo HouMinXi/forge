@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Tests for setup-mcp subcommand."""
+
 from __future__ import annotations
 
 import os
@@ -129,9 +130,7 @@ class TestRunSetupMcp:
             data = yaml.safe_load((user_dir / "config.yaml").read_text())
             assert "glm" in data["backends"]
             assert "deepseek" not in data["backends"]  # --force replaces, not merges
-            gate = yaml.safe_load(
-                (project / ".code-forge" / "gate.yaml").read_text()
-            )
+            gate = yaml.safe_load((project / ".code-forge" / "gate.yaml").read_text())
             assert gate["outlet"] == "subprocess"  # gate.yaml also replaced
 
     def test_dry_run_writes_nothing(self, tmp_path):
@@ -160,6 +159,7 @@ class TestRunSetupMcp:
         gate_data = yaml.safe_load(gate_path.read_text())
 
         from code_forge.trust import is_trusted
+
         assert is_trusted(gate_path, gate_data)
 
     def test_no_auto_trust_on_existing_gate_yaml(self, tmp_path):
@@ -176,6 +176,7 @@ class TestRunSetupMcp:
 
         gate_data = yaml.safe_load(gate_path.read_text())
         from code_forge.trust import is_trusted
+
         # Existing file was not touched, so not auto-trusted
         assert not is_trusted(gate_path, gate_data)
 
@@ -196,18 +197,21 @@ class TestCheckBackendMergedView:
         # Trust the gate.yaml so _load_gate_backends returns gate_data
         gate_data = yaml.safe_load(gate_path.read_text())
         from code_forge.trust import record_trust
+
         record_trust(gate_path, gate_data)
 
-        user_raw = {"smoke-ds": {
-            "type": "api", "format": "openai",
-            "base_url": "http://localhost:9999",
-            "api_key_env": "TEST_KEY",
-            "model": "test",
-        }}
+        user_raw = {
+            "smoke-ds": {
+                "type": "api",
+                "format": "openai",
+                "base_url": "http://localhost:9999",
+                "api_key_env": "TEST_KEY",
+                "model": "test",
+            }
+        }
 
         with (
-            patch("code_forge.user_config.load_user_backends",
-                  return_value=user_raw),
+            patch("code_forge.user_config.load_user_backends", return_value=user_raw),
             patch.dict(os.environ, {"TEST_KEY": "fake-key"}),
         ):
             # Should NOT raise
@@ -225,10 +229,10 @@ class TestCheckBackendMergedView:
 
         gate_data = yaml.safe_load(gate_path.read_text())
         from code_forge.trust import record_trust
+
         record_trust(gate_path, gate_data)
 
-        with patch("code_forge.user_config.load_user_backends",
-                   return_value={}):
+        with patch("code_forge.user_config.load_user_backends", return_value={}):
             with pytest.raises(ToolError, match="No review backends"):
                 mod._check_backend(tmp_path)
 
@@ -251,20 +255,27 @@ class TestCheckBackendMergedView:
         )
         gate_data = yaml.safe_load(gate_path.read_text())
         from code_forge.trust import record_trust
+
         record_trust(gate_path, gate_data)
 
-        user_raw = {"user-mimo": {
-            "type": "api", "format": "anthropic",
-            "base_url": "http://localhost:9999",
-            "api_key_env": "TEST_USER_KEY",
-            "model": "test",
-        }}
+        user_raw = {
+            "user-mimo": {
+                "type": "api",
+                "format": "anthropic",
+                "base_url": "http://localhost:9999",
+                "api_key_env": "TEST_USER_KEY",
+                "model": "test",
+            }
+        }
 
         with (
-            patch("code_forge.user_config.load_user_backends",
-                  return_value=user_raw),
-            patch.dict(os.environ, {
-                "TEST_PROJ_KEY": "k1", "TEST_USER_KEY": "k2",
-            }),
+            patch("code_forge.user_config.load_user_backends", return_value=user_raw),
+            patch.dict(
+                os.environ,
+                {
+                    "TEST_PROJ_KEY": "k1",
+                    "TEST_USER_KEY": "k2",
+                },
+            ),
         ):
             mod._check_backend(tmp_path)

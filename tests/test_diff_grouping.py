@@ -33,12 +33,14 @@ class TestChurnProfile:
     """Role classification keys on total churn, not on added count."""
 
     def test_counts_every_direction(self):
-        prof = churn_profile([
-            _entity("a.py", "added"),
-            _entity("a.py", "deleted"),
-            _entity("a.py", "modified"),
-            _entity("a.py", "renamed"),
-        ])
+        prof = churn_profile(
+            [
+                _entity("a.py", "added"),
+                _entity("a.py", "deleted"),
+                _entity("a.py", "modified"),
+                _entity("a.py", "renamed"),
+            ]
+        )
         assert prof["total"] == 4
         assert prof["added"] == 1
         assert prof["deleted"] == 1
@@ -51,6 +53,7 @@ class TestChurnProfile:
         an unchanged file.
         """
         import pytest
+
         with pytest.raises(ValueError, match="unknown sem changeType"):
             churn_profile([_entity("a.py", "obliterated")])
 
@@ -265,10 +268,7 @@ class TestBuildGroups:
         }
         first = [(g.name, g.members, g.passes) for g in build_groups(by_file, {}, {})[0]]
         for _ in range(5):
-            again = [
-                (g.name, g.members, g.passes)
-                for g in build_groups(by_file, {}, {})[0]
-            ]
+            again = [(g.name, g.members, g.passes) for g in build_groups(by_file, {}, {})[0]]
             assert again == first
 
 
@@ -277,10 +277,8 @@ class TestCrossGroupEdges:
 
     def test_edge_crossing_a_boundary_is_reported(self):
         groups = [
-            Group(name="engine:a.py", role="engine",
-                  members=["src/a.py"], passes=3),
-            Group(name="integration", role="integration",
-                  members=["src/b.py"], passes=3),
+            Group(name="engine:a.py", role="engine", members=["src/a.py"], passes=3),
+            Group(name="integration", role="integration", members=["src/b.py"], passes=3),
         ]
         edges = {"src/b.py": {"src/a.py"}}
         file_defined = {"src/a.py": {"Runner"}, "src/b.py": set()}
@@ -293,8 +291,7 @@ class TestCrossGroupEdges:
 
     def test_edge_inside_one_group_is_not_reported(self):
         groups = [
-            Group(name="engine:a.py", role="engine",
-                  members=["src/a.py", "src/b.py"], passes=3),
+            Group(name="engine:a.py", role="engine", members=["src/a.py", "src/b.py"], passes=3),
         ]
         edges = {"src/b.py": {"src/a.py"}}
         file_defined = {"src/a.py": {"Runner"}, "src/b.py": set()}
@@ -349,10 +346,7 @@ class TestNonPythonSourceIsStillReviewed:
         }
         groups = build_groups(by_file, {}, {})[0]
         for g in groups:
-            assert g.passes == 0, (
-                "%s is deterministic-check territory, not LLM territory"
-                % g.name
-            )
+            assert g.passes == 0, "%s is deterministic-check territory, not LLM territory" % g.name
 
 
 class TestGateConfigThresholds:
@@ -360,18 +354,21 @@ class TestGateConfigThresholds:
 
     def test_absent_section_uses_defaults(self):
         from code_forge.diff_grouping import (
-            _ENGINE_CHURN, _INTEGRATION_CHURN, thresholds_from_gate_config,
+            _ENGINE_CHURN,
+            _INTEGRATION_CHURN,
+            thresholds_from_gate_config,
         )
+
         assert thresholds_from_gate_config({}) == (_ENGINE_CHURN, _INTEGRATION_CHURN)
         assert thresholds_from_gate_config({"test": {"command": ["pytest"]}}) == (
-            _ENGINE_CHURN, _INTEGRATION_CHURN,
+            _ENGINE_CHURN,
+            _INTEGRATION_CHURN,
         )
 
     def test_section_overrides(self):
         from code_forge.diff_grouping import thresholds_from_gate_config
-        assert thresholds_from_gate_config(
-            {"grouping": {"engine_churn": 20}}
-        ) == (20, 2)
+
+        assert thresholds_from_gate_config({"grouping": {"engine_churn": 20}}) == (20, 2)
         assert thresholds_from_gate_config(
             {"grouping": {"engine_churn": 20, "integration_churn": 5}}
         ) == (20, 5)
@@ -379,22 +376,20 @@ class TestGateConfigThresholds:
     def test_bad_section_is_a_loud_config_error(self):
         import pytest
         from code_forge.diff_grouping import thresholds_from_gate_config
+
         with pytest.raises(ValueError, match="grouping"):
             thresholds_from_gate_config({"grouping": {"engine_churn": "ten"}})
         with pytest.raises(ValueError):
-            thresholds_from_gate_config(
-                {"grouping": {"engine_churn": 5, "integration_churn": 9}}
-            )
+            thresholds_from_gate_config({"grouping": {"engine_churn": 5, "integration_churn": 9}})
         with pytest.raises(ValueError, match="grouping"):
             thresholds_from_gate_config({"grouping": "enabled"})
 
     def test_unknown_keys_rejected(self):
         import pytest
         from code_forge.diff_grouping import thresholds_from_gate_config
+
         with pytest.raises(ValueError, match="engin_churn"):
-            thresholds_from_gate_config(
-                {"grouping": {"engin_churn": 10}}
-            )
+            thresholds_from_gate_config({"grouping": {"engin_churn": 10}})
 
 
 class TestThresholdConfiguration:
@@ -435,6 +430,7 @@ class TestThresholdConfiguration:
 
     def test_invalid_threshold_raises(self):
         import pytest
+
         by_file = {"a.py": [_entity("a.py")]}
         with pytest.raises(ValueError, match="engine_churn"):
             classify_file("a.py", by_file, engine_churn=0)
@@ -449,29 +445,27 @@ class TestMaxPromptTokens:
 
     def test_default_is_32000(self):
         from code_forge.diff_grouping import max_prompt_tokens_from_gate_config
+
         assert max_prompt_tokens_from_gate_config({}) == 32000
 
     def test_override(self):
         from code_forge.diff_grouping import max_prompt_tokens_from_gate_config
-        assert max_prompt_tokens_from_gate_config(
-            {"grouping": {"max_prompt_tokens": 50000}}
-        ) == 50000
+
+        assert max_prompt_tokens_from_gate_config({"grouping": {"max_prompt_tokens": 50000}}) == 50000
 
     def test_invalid_raises(self):
         import pytest
         from code_forge.diff_grouping import max_prompt_tokens_from_gate_config
+
         with pytest.raises(ValueError, match="max_prompt_tokens"):
-            max_prompt_tokens_from_gate_config(
-                {"grouping": {"max_prompt_tokens": 1000}}
-            )
+            max_prompt_tokens_from_gate_config({"grouping": {"max_prompt_tokens": 1000}})
         with pytest.raises(ValueError, match="max_prompt_tokens"):
-            max_prompt_tokens_from_gate_config(
-                {"grouping": {"max_prompt_tokens": True}}
-            )
+            max_prompt_tokens_from_gate_config({"grouping": {"max_prompt_tokens": True}})
 
     def test_thresholds_helper_still_accepts_the_new_key(self):
         """thresholds_from_gate_config must not reject max_prompt_tokens."""
         from code_forge.diff_grouping import thresholds_from_gate_config
+
         engine, integration = thresholds_from_gate_config(
             {"grouping": {"engine_churn": 20, "max_prompt_tokens": 50000}}
         )

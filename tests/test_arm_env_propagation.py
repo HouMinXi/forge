@@ -14,6 +14,7 @@ output: there is no error, just three arms that agree.
 
 This measures the propagation rather than assuming it.
 """
+
 import os
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -111,13 +112,10 @@ class TestEnvReachesPoolChild:
         from code_forge.eval import pool as pool_mod
 
         with ProcessPoolExecutor(max_workers=1) as ex:
-            got = ex.submit(
-                _apply_and_read, {"FORGE_CLEAN_ROUND_THRESHOLD": depth}
-            ).result()
+            got = ex.submit(_apply_and_read, {"FORGE_CLEAN_ROUND_THRESHOLD": depth}).result()
         assert got == depth, (
             "arm depth %s did not reach the pool child (got %r). Every arm "
-            "would run at the same depth and the sweep would be void."
-            % (depth, got)
+            "would run at the same depth and the sweep would be void." % (depth, got)
         )
         assert "env_overrides" in pool_mod._worker.__code__.co_varnames
 
@@ -134,8 +132,7 @@ class TestEnvReachesPoolChild:
                     ).result()
                 )
         assert seen == ["1", "3"], (
-            "second arm saw %r; a stale value means arms are not "
-            "independent" % seen
+            "second arm saw %r; a stale value means arms are not independent" % seen
         )
 
     def test_forge_resolution_sees_the_arm_value_in_a_child(self):
@@ -143,12 +140,8 @@ class TestEnvReachesPoolChild:
         # loop reads it. tier_threshold(500, ...) defaults above 1, so an
         # override that fails to arrive resolves to the tier value.
         with ProcessPoolExecutor(max_workers=1) as ex:
-            got = ex.submit(
-                _apply_and_resolve, {"FORGE_CLEAN_ROUND_THRESHOLD": "3"}
-            ).result()
-        assert got == 3, (
-            "forge resolved %r in the child despite the arm setting 3" % (got,)
-        )
+            got = ex.submit(_apply_and_resolve, {"FORGE_CLEAN_ROUND_THRESHOLD": "3"}).result()
+        assert got == 3, "forge resolved %r in the child despite the arm setting 3" % (got,)
 
     def test_worker_without_overrides_changes_nothing(self):
         # The control. If a child reports a value with no overrides passed,
@@ -206,8 +199,7 @@ class TestResolutionPathStaysReal:
         assert out[0].result is not None, out[0].error
         assert out[0].result.skipped_reason == "3", (
             "the serial path ran the review with "
-            "FORGE_CLEAN_ROUND_THRESHOLD=%r instead of 3"
-            % out[0].result.skipped_reason
+            "FORGE_CLEAN_ROUND_THRESHOLD=%r instead of 3" % out[0].result.skipped_reason
         )
 
         submitted = []
@@ -247,8 +239,7 @@ class TestResolutionPathStaysReal:
         assert submitted, "run_pool never submitted anything on jobs=2"
         assert {"FORGE_CLEAN_ROUND_THRESHOLD": "3"} in submitted[0], (
             "the parallel path submitted %r without the arm overrides; "
-            "every worker would review at the inherited depth"
-            % (submitted[0],)
+            "every worker would review at the inherited depth" % (submitted[0],)
         )
 
     def test_cli_passes_the_arm_depth_as_an_override(self):

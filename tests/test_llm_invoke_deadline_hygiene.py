@@ -73,6 +73,7 @@ def _deadline(seconds=30):
 
 # --- worker capture is a transport: every worker error must re-raise -------
 
+
 def test_worker_memory_error_is_transported_and_reraised():
     """MemoryError in the worker thread must surface at the caller."""
     resp = _Resp(read_error=MemoryError("simulated exhaustion in read"))
@@ -88,6 +89,7 @@ def test_worker_ordinary_errors_still_transport(error_type):
 
 
 # --- socket capture: best-effort for missing sockets, honest about OOM -----
+
 
 @pytest.mark.parametrize("error_type", DEGRADED_ERRORS)
 def test_socket_capture_degrades_on_ordinary_errors(error_type):
@@ -110,6 +112,7 @@ def test_socket_capture_propagates_memory_error():
 
 # --- idle-timeout install: warning on failure, propagation on OOM ----------
 
+
 @pytest.mark.parametrize("error_type", [OSError, RuntimeError])
 def test_settimeout_degrades_on_ordinary_errors(error_type):
     sock = _Sock(settimeout_error=error_type("cannot set"))
@@ -125,6 +128,7 @@ def test_settimeout_propagates_memory_error():
 
 
 # --- happy path: idle timeout installed, body returned ----------------------
+
 
 def test_happy_path_installs_idle_timeout_and_reads():
     sock = _Sock()

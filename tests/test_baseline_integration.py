@@ -29,27 +29,37 @@ from code_forge.source import compute_source_hash
 def git_repo(tmp_path):
     """Create a temporary git repo with tracked + untracked files."""
     subprocess.run(
-        ["git", "init"], cwd=tmp_path,
-        capture_output=True, check=True,
+        ["git", "init"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     # Tracked file
     tracked = tmp_path / "main.py"
     tracked.write_text("def main():\n    pass\n")
     subprocess.run(
         ["git", "add", "main.py"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "commit", "-m", "initial"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     return tmp_path
 

@@ -12,6 +12,7 @@ Five invariants, each with one test whose failure names the seam:
   5. Empty rows render "" (no header-only table), so a repo with no graph
      produces the same prompt as before.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,8 +21,13 @@ import pytest
 
 from code_forge.advisory import AdvisoryFinding
 from code_forge.context_sources import (
-    FactRow, GatherResult, GraphTriageSource, _adapt_advisory, gather,
-    render_blast_radius, render_context_sources,
+    FactRow,
+    GatherResult,
+    GraphTriageSource,
+    _adapt_advisory,
+    gather,
+    render_blast_radius,
+    render_context_sources,
 )
 
 # The exact string cli.py built for two rows before this module existed.
@@ -35,8 +41,12 @@ EXPECTED_TWO_ROWS = (
 
 def _adv(desc: str, file: str, line=(1, 1)) -> AdvisoryFinding:
     return AdvisoryFinding(
-        id="a", axis="graph_triage", file=file, line_range=line,
-        description=desc, attribution="graph",
+        id="a",
+        axis="graph_triage",
+        file=file,
+        line_range=line,
+        description=desc,
+        attribution="graph",
     )
 
 
@@ -57,15 +67,17 @@ class _Src:
 
 
 def _row(entity="f", file="f.py", source="graph_triage", **kw) -> FactRow:
-    return FactRow(entity=entity, file=file, downstream="3",
-                   dependents="g, h", source=source, **kw)
+    return FactRow(entity=entity, file=file, downstream="3", dependents="g, h", source=source, **kw)
 
 
 # -- invariant 1 ------------------------------------------------------------
 
+
 def test_render_matches_cli_verbatim():
     rows = [
-        _adapt_advisory(_adv("f (impact: 3 downstream) -- top dependents: g, h", "f.py"), "graph_triage"),
+        _adapt_advisory(
+            _adv("f (impact: 3 downstream) -- top dependents: g, h", "f.py"), "graph_triage"
+        ),
         _adapt_advisory(_adv("g (impact: 1 downstream) -- top dependents: h", "g.py"), "graph_triage"),
     ]
     assert render_blast_radius(rows) == EXPECTED_TWO_ROWS
@@ -83,6 +95,7 @@ def test_adapt_handles_description_without_impact():
 
 # -- invariant 2 ------------------------------------------------------------
 
+
 def test_every_row_carries_source_and_origin():
     r = _adapt_advisory(_adv("f (impact: 3 downstream)", "f.py", line=(42, 50)), "graph_triage")
     assert r.source == "graph_triage"
@@ -95,6 +108,7 @@ def test_origin_line_none_when_range_is_zero():
 
 
 # -- invariant 3 ------------------------------------------------------------
+
 
 def test_stale_snapshot_is_skipped_and_recorded():
     src = _Src("g", snap="a" * 40, rows=[_row()])
@@ -130,12 +144,12 @@ def test_on_demand_source_ignores_gate():
 
 # -- invariant 4 ------------------------------------------------------------
 
+
 def test_raising_source_is_recorded_not_swallowed():
     seen = []
     bad = _Src("bad", raises=RuntimeError("boom"))
     good = _Src("good", rows=[_row(source="good")])
-    res = gather([bad, good], ["f.py"], "diff", head_sha=None,
-                 on_error=lambda n, m: seen.append((n, m)))
+    res = gather([bad, good], ["f.py"], "diff", head_sha=None, on_error=lambda n, m: seen.append((n, m)))
     assert res.errors == ["bad: RuntimeError: boom"]
     assert seen == [("bad", "bad: RuntimeError: boom")]
     assert [r.source for r in res.rows] == ["good"]
@@ -144,15 +158,19 @@ def test_raising_source_is_recorded_not_swallowed():
 def test_raising_snapshot_sha_is_also_recorded():
     class _S:
         name = "s"
+
         def snapshot_sha(self):
             raise OSError("db locked")
+
         def facts(self, changed_files, diff_text):
             return [_row()]
+
     res = gather([_S()], ["f.py"], "diff", head_sha=None)
     assert res.errors == ["s: OSError: db locked"] and res.rows == []
 
 
 # -- invariant 5 ------------------------------------------------------------
+
 
 def test_empty_rows_render_empty_string():
     assert render_blast_radius([]) == ""
@@ -173,14 +191,17 @@ def test_context_sources_text_lists_non_graph_rows():
 
 # -- GraphTriageSource adapter ---------------------------------------------
 
+
 def test_graph_source_reads_head_sha_from_graphdb(tmp_path, monkeypatch):
     import sqlite3
+
     db = tmp_path / ".code-review-graph" / "graph.db"
     db.parent.mkdir()
     con = sqlite3.connect(db)
     con.execute("create table metadata (key text, value text)")
     con.execute("insert into metadata values ('git_head_sha', ?)", ("c" * 40,))
-    con.commit(); con.close()
+    con.commit()
+    con.close()
     monkeypatch.setattr("shutil.which", lambda _: None)
     assert GraphTriageSource(tmp_path).snapshot_sha() == "c" * 40
 
@@ -197,9 +218,11 @@ def test_graph_source_surfaces_runner_infra_errors(tmp_path, monkeypatch):
     class _Runner:
         def __init__(self):
             self.infra_errors = []
+
         def run(self, diff, root):
             self.infra_errors.append("sem timed out")
             return []
+
     monkeypatch.setattr(gt, "GraphTriageRunner", _Runner)
     src = GraphTriageSource(tmp_path)
     with pytest.raises(RuntimeError, match="sem timed out"):
@@ -230,9 +253,11 @@ def test_findings_cache_is_replaced_not_accumulated(tmp_path, monkeypatch):
     class _Runner:
         def __init__(self):
             self.infra_errors = []
+
         def run(self, diff, root):
             calls["n"] += 1
             return [_adv("f%d (impact: 1 downstream)" % calls["n"], "f.py")]
+
     monkeypatch.setattr(gt, "GraphTriageRunner", _Runner)
     src = GraphTriageSource(tmp_path)
     src.facts(["f.py"], "d")

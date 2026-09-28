@@ -34,8 +34,10 @@ def test_programming_errors_are_not_hidden(isolated_cwd, monkeypatch, stage, err
     fault = error_type("injected implementation failure")
 
     def run(command, **kwargs):
-        point = "root" if command[:2] == ["git", "rev-parse"] else (
-            "diff" if command[:2] == ["git", "diff"] else "command"
+        point = (
+            "root"
+            if command[:2] == ["git", "rev-parse"]
+            else ("diff" if command[:2] == ["git", "diff"] else "command")
         )
         if point == stage:
             raise fault
@@ -115,14 +117,30 @@ def test_real_git_command_and_receipt(isolated_cwd, capsys, code):
     source.write_text("before\n")
     subprocess.run(["git", "add", "sample.txt"], cwd=isolated_cwd, check=True)
     subprocess.run(
-        ["git", "-c", "user.name=Smoke Test", "-c", "user.email=smoke@example.invalid",
-         "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
-         "commit", "-qm", "fixture"], cwd=isolated_cwd, check=True,
+        [
+            "git",
+            "-c",
+            "user.name=Smoke Test",
+            "-c",
+            "user.email=smoke@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=isolated_cwd,
+        check=True,
     )
     source.write_text("after\n")
     diff = subprocess.check_output(["git", "diff", "HEAD"], cwd=isolated_cwd)
     assert b"+after" in diff
-    child = "import sys;sys.stdout.buffer.write(b'out\\xff');sys.stderr.buffer.write(b'err\\xfe');sys.exit(%s)" % code
+    child = (
+        "import sys;sys.stdout.buffer.write(b'out\\xff');sys.stderr.buffer.write(b'err\\xfe');sys.exit(%s)"
+        % code
+    )
     assert cli._handle_smoke_run(_args(["--", sys.executable, "-c", child]), isolated_cwd) == code
     receipt_path = isolated_cwd / ".code-forge/smoke-receipts/smoke-receipt-check-name-one.json"
     receipt = json.loads(receipt_path.read_text())

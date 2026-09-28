@@ -78,10 +78,7 @@ class TestCIIgnoresState:
         machine = _make_machine(tmp_path, mode=Mode.CI)
         machine.run()
         # Prior DISMISSED finding should NOT be in state
-        assert all(
-            f.fingerprint != "fp-prior"
-            for f in machine._state.findings
-        )
+        assert all(f.fingerprint != "fp-prior" for f in machine._state.findings)
 
 
 class TestCIWarnsOnExistingState:
@@ -92,10 +89,7 @@ class TestCIWarnsOnExistingState:
         machine = _make_machine(tmp_path, mode=Mode.CI)
         with caplog.at_level(logging.WARNING, logger="code_forge"):
             machine.run()
-        assert any(
-            "ignoring prior state.json in CI mode" in r.message
-            for r in caplog.records
-        )
+        assert any("ignoring prior state.json in CI mode" in r.message for r in caplog.records)
 
 
 class TestLocalLoadsState:
@@ -144,10 +138,7 @@ class TestLocalLoadsState:
         # promoted_fingerprints preserved
         assert "fp-unc" in machine._state.promoted_fingerprints
         # UNCERTAIN stickiness: L0 re-detect -> still UNCERTAIN
-        unc = [
-            f for f in machine._state.findings
-            if f.fingerprint == "fp-unc"
-        ]
+        unc = [f for f in machine._state.findings if f.fingerprint == "fp-unc"]
         assert len(unc) == 1
         assert unc[0].disposition == Disposition.UNCERTAIN
 
@@ -160,6 +151,4 @@ class TestCIMissingStateNoOp:
         machine = _make_machine(tmp_path, mode=Mode.CI)
         with caplog.at_level(logging.WARNING, logger="code_forge"):
             machine.run()
-        assert not any(
-            "state.json" in r.message for r in caplog.records
-        )
+        assert not any("state.json" in r.message for r in caplog.records)

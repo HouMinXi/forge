@@ -9,6 +9,7 @@ Mirrors test_mode_resolver.py structure:
   - TestEdgeCases: whitespace, invalid, case-insensitive, inline-never-probes
   - TestLoadOutletFromGate: standalone gate.yaml reader tests
 """
+
 from __future__ import annotations
 
 import pytest
@@ -18,11 +19,16 @@ from code_forge.errors import CliError
 from code_forge.outlet_resolver import load_outlet_from_gate, resolve_outlet
 
 
-
 _DUMMY_CFG = BackendConfig(
-    name="test-stub", type="cli", model="",
-    format="", base_url="", api_key_env="",
-    command="", default=False, max_tokens=0,
+    name="test-stub",
+    type="cli",
+    model="",
+    format="",
+    base_url="",
+    api_key_env="",
+    command="",
+    default=False,
+    max_tokens=0,
 )
 
 # -- Helpers ---------------------------------------------------------------
@@ -497,6 +503,7 @@ class TestForgeBackendDefaultFn:
     def test_injected_fn_with_forge_backend_succeeds(self, tmp_path):
         """Injected fn with real gate.yaml resolves FORGE_BACKEND correctly."""
         from code_forge.backend import load_backend_configs
+
         # Create a gate.yaml with backends config
         gate_dir = tmp_path / ".code-forge"
         gate_dir.mkdir()
@@ -514,9 +521,11 @@ backends:
         # Mimic the CLI closure that loads gate.yaml
         def _reachability():
             from code_forge.backend import (
-                load_backend_configs, resolve_backend,
+                load_backend_configs,
+                resolve_backend,
             )
             import yaml as _y
+
             cfgs = []
             try:
                 with open(gate_yaml, "r", encoding="utf-8") as _f:
@@ -526,14 +535,13 @@ backends:
             except (FileNotFoundError, _y.YAMLError):
                 pass
             # This should now succeed because deepseek is in cfgs
-            _ = resolve_backend(
-                {"FORGE_BACKEND": "deepseek"}, configs=cfgs, cli_value=None
-            )
+            _ = resolve_backend({"FORGE_BACKEND": "deepseek"}, configs=cfgs, cli_value=None)
             # Stub the probe (we're testing resolution, not reachability)
             return ProbeResult(ok=True)
 
         # Load configs outside the closure so the zero-config guard is bypassed
         import yaml as _y
+
         with open(gate_yaml, "r", encoding="utf-8") as _f:
             _gd = _y.safe_load(_f)
         _cfgs = load_backend_configs(_gd) if isinstance(_gd, dict) else []
@@ -549,11 +557,15 @@ backends:
     def test_injected_fn_unknown_backend_still_errors(self):
         """Typo in FORGE_BACKEND must still fail with a clear error."""
         from code_forge.backend import resolve_backend
+
         def _reachability():
             resolve_backend(
-                {"FORGE_BACKEND": "typo-backend"}, configs=[], cli_value=None,
+                {"FORGE_BACKEND": "typo-backend"},
+                configs=[],
+                cli_value=None,
             )
             return ProbeResult(ok=True)
+
         with pytest.raises(CliError, match="unknown backend.*typo-backend"):
             resolve_outlet(
                 env={"FORGE_BACKEND": "typo-backend"},
@@ -636,6 +648,7 @@ class TestDeprecatedOutletAlias:
     def test_cli_alias_emits_warning(self, capsys):
         """_parse_outlet_string('cli', ...) emits DeprecationWarning to stderr."""
         from code_forge.outlet_resolver import _parse_outlet_string
+
         result = _parse_outlet_string("cli", "test")
         assert result == "subprocess"
         captured = capsys.readouterr()
@@ -645,6 +658,7 @@ class TestDeprecatedOutletAlias:
     def test_subprocess_value_no_warning(self, capsys):
         """'subprocess' is the canonical value -- no DeprecationWarning emitted."""
         from code_forge.outlet_resolver import _parse_outlet_string
+
         result = _parse_outlet_string("subprocess", "test")
         assert result == "subprocess"
         captured = capsys.readouterr()
@@ -677,11 +691,13 @@ class TestDeprecatedOutletAlias:
 class TestSamplingOutlet:
     def test_parse_outlet_string_sampling(self):
         from code_forge.outlet_resolver import _parse_outlet_string
+
         result = _parse_outlet_string("sampling", "test")
         assert result == "sampling"
 
     def test_sampling_in_valid_outlets(self):
         from code_forge.outlet_resolver import VALID_OUTLET_STRINGS
+
         assert "sampling" in VALID_OUTLET_STRINGS
 
 

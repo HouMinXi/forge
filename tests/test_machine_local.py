@@ -173,10 +173,7 @@ class TestLocalMaxRoundsExhausted:
         assert verdict == Verdict.ESCALATED
         assert machine._state.converged is False
         # STATE-05 diagnosis recorded in infra_errors
-        assert any(
-            "ESCALATED category=" in e
-            for e in machine._state.infra_errors
-        )
+        assert any("ESCALATED category=" in e for e in machine._state.infra_errors)
 
 
 class TestReplayStallBreaker:
@@ -190,10 +187,13 @@ class TestReplayStallBreaker:
 
     def _stuck_machine(self, tmp_path, max_rounds=8):
         def mock_l0(registry, files):
-            return ([
-                _make_finding(fp="fp-conf", disp=Disposition.CONFIRMED),
-                _make_finding(fp="fp-unc", disp=Disposition.UNCERTAIN),
-            ], [])
+            return (
+                [
+                    _make_finding(fp="fp-conf", disp=Disposition.CONFIRMED),
+                    _make_finding(fp="fp-unc", disp=Disposition.UNCERTAIN),
+                ],
+                [],
+            )
 
         class NoChangeAutoFixer(StubAutoFixer):
             def fix(self, finding, mode_hint):
@@ -219,8 +219,7 @@ class TestReplayStallBreaker:
         verdict = machine.run()
         assert verdict == Verdict.ESCALATED
         assert machine._state.round == 2
-        assert any("replay" in e.lower() or "stall" in e.lower()
-                   for e in machine._state.infra_errors)
+        assert any("replay" in e.lower() or "stall" in e.lower() for e in machine._state.infra_errors)
 
     def test_clean_rounds_are_not_a_stall(self, tmp_path):
         def mock_l0(registry, files):
@@ -242,11 +241,13 @@ class TestReplayStallBreaker:
         verdict = machine.run()
         assert verdict == Verdict.PASS
         assert machine._state.round == 2
-        assert not any("stall" in e.lower() or "replay" in e.lower()
-                       for e in machine._state.infra_errors)
+        assert not any(
+            "stall" in e.lower() or "replay" in e.lower() for e in machine._state.infra_errors
+        )
 
     def test_four_cycle_threshold_is_not_a_stall(self, tmp_path):
         """A higher clean threshold must still reach PASS, not ESCALATED."""
+
         def mock_l0(registry, files):
             return ([], [])
 
@@ -347,6 +348,7 @@ class TestPostRoundHook:
 
     def test_hook_none_is_noop(self, tmp_path):
         """Default None post_round_hook does not raise."""
+
         def mock_l0(registry, files):
             return ([], [])
 
@@ -380,8 +382,7 @@ class TestCostAccumulation:
             return ([], [])
 
         def mock_l1():
-            return ([], [], Usage(input_tokens=1000, output_tokens=500,
-                                  cached_input_tokens=250), 12.5)
+            return ([], [], Usage(input_tokens=1000, output_tokens=500, cached_input_tokens=250), 12.5)
 
         machine = StateMachine(
             mode=Mode.LOCAL,
@@ -410,6 +411,7 @@ class TestCostAccumulation:
 
     def test_cost_per_pass_structure(self, tmp_path):
         """cost_per_pass entries have pass (1-3), cycle, input, output, cached, duration_s."""
+
         def mock_l0(registry, files):
             return ([], [])
 
@@ -475,6 +477,7 @@ class TestInfraFindingSkipsFalsifier:
         blocks fixpoint every round (consecutive_clean_rounds stays 0).
         """
         import json as _json
+
         fixture = tmp_path / "falsify.json"
         fixture.write_text(_json.dumps({"default": "DISMISSED"}))
         dismisser = StubFalsifier(fixture_path=fixture)
@@ -516,10 +519,7 @@ class TestInfraFindingSkipsFalsifier:
         assert verdict == Verdict.ESCALATED
         assert machine._state.consecutive_clean_rounds == 0
         # INFRA finding disposition must remain CONFIRMED (not DISMISSED)
-        infra_in_state = [
-            f for f in machine._state.findings
-            if f.source == "INFRA"
-        ]
+        infra_in_state = [f for f in machine._state.findings if f.source == "INFRA"]
         assert len(infra_in_state) > 0
         for f in infra_in_state:
             assert f.disposition == Disposition.CONFIRMED
@@ -539,6 +539,7 @@ class TestUnconvergeableRunStopsEarly:
     @staticmethod
     def _machine(tmp_path, l1_provider, max_rounds):
         import json as _json
+
         fixture = tmp_path / "falsify.json"
         fixture.write_text(_json.dumps({"default": "DISMISSED"}))
         return StateMachine(
@@ -569,9 +570,7 @@ class TestUnconvergeableRunStopsEarly:
             description="L1 invoke failed: backend said no",
         )
 
-    def test_three_consecutive_rounds_with_a_failed_pass_stop_the_run(
-        self, tmp_path
-    ):
+    def test_three_consecutive_rounds_with_a_failed_pass_stop_the_run(self, tmp_path):
         """The breaker counts consecutive ROUNDS each containing a failed
         pass, not consecutive failed passes in a row. A single round with
         two healthy passes and one timed-out one is enough to increment;
@@ -675,9 +674,12 @@ def _make_sm_fp(tmp_path, git_diff=None):
 
 def _sf(fp, desc, source="L1"):
     return StateFinding(
-        id=fp, fingerprint=fp, source=source,
+        id=fp,
+        fingerprint=fp,
+        source=source,
         disposition=Disposition.CONFIRMED,
-        file="test.py", line_range=[1, 1],
+        file="test.py",
+        line_range=[1, 1],
         description=desc,
     )
 
@@ -711,10 +713,7 @@ class TestTieredReset:
     def test_tiered_reset_p3_below_threshold_is_clean(self, tmp_path):
         # 2 P3 findings, 100 changed lines -> density = 0.02 < 0.15 -> CLEAN
         added = "\n".join("+line %d" % i for i in range(100))
-        fake_diff = (
-            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
-            "@@ -0,0 +1,100 @@\n" + added
-        )
+        fake_diff = "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n@@ -0,0 +1,100 @@\n" + added
         sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
         sm._state.findings.append(_sf("fp-p3a", "P3: trailing whitespace"))
         sm._state.findings.append(_sf("fp-p3b", "P3: unused import"))
@@ -725,13 +724,16 @@ class TestTieredReset:
         # 6 P3 findings in ONE file, each a different rule type -> distinct_per_file=6 > 5
         # density kept low (6 findings / 1000 lines = 0.006), distinct_per_diff=6 <= 10
         added = "\n".join("+line %d" % i for i in range(1000))
-        fake_diff = (
-            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
-            "@@ -0,0 +1,1000 @@\n" + added
-        )
+        fake_diff = "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n@@ -0,0 +1,1000 @@\n" + added
         sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
-        rules = ["missing-docstring", "trailing-whitespace", "unused-import",
-                 "line-too-long", "bare-except", "bad-indentation"]
+        rules = [
+            "missing-docstring",
+            "trailing-whitespace",
+            "unused-import",
+            "line-too-long",
+            "bare-except",
+            "bad-indentation",
+        ]
         fps = ["fp-f-%d" % i for i in range(6)]
         for fp, rule in zip(fps, rules):
             sm._state.findings.append(_sf(fp, "P3: %s" % rule))
@@ -743,10 +745,7 @@ class TestTieredReset:
         # Each file gets 4 rule types -> distinct_per_file=4 <= 5 (only diff threshold fires)
         # density = 12/1000 = 0.012 <= 0.15
         added = "\n".join("+line %d" % i for i in range(1000))
-        fake_diff = (
-            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
-            "@@ -0,0 +1,1000 @@\n" + added
-        )
+        fake_diff = "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n@@ -0,0 +1,1000 @@\n" + added
         sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
         files = ["a.py", "b.py", "c.py"]
         fps = ["fp-d-%d" % i for i in range(12)]
@@ -754,9 +753,12 @@ class TestTieredReset:
         for i, (fp, rule) in enumerate(zip(fps, rules)):
             fname = files[i % 3]  # 4 findings per file, each a distinct rule type
             sf = StateFinding(
-                id=fp, fingerprint=fp, source="L1",
+                id=fp,
+                fingerprint=fp,
+                source="L1",
                 disposition=Disposition.CONFIRMED,
-                file=fname, line_range=[1, 1],
+                file=fname,
+                line_range=[1, 1],
                 description="P3: %s" % rule,
             )
             sm._state.findings.append(sf)
@@ -767,10 +769,7 @@ class TestTieredReset:
         # 3 P3 findings, same rule type, 10 changed lines -> density=0.3 > 0.15
         # distinct_per_file=1 <= 5, distinct_per_diff=1 <= 10 -- only density fires
         added = "\n".join("+line %d" % i for i in range(10))
-        fake_diff = (
-            "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n"
-            "@@ -0,0 +1,10 @@\n" + added
-        )
+        fake_diff = "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n@@ -0,0 +1,10 @@\n" + added
         sm = _make_sm_fp(tmp_path, git_diff=fake_diff)
         fps = ["fp-dens-%d" % i for i in range(3)]
         for fp in fps:
@@ -822,9 +821,7 @@ class TestPersistentP2NoPass:
             clean_round_threshold=3,
         )
         verdict = machine.run()
-        assert verdict != Verdict.PASS, (
-            "machine must not converge while a recurring P2 is present"
-        )
+        assert verdict != Verdict.PASS, "machine must not converge while a recurring P2 is present"
         assert machine._state.consecutive_clean_rounds == 0, (
             "CYCLE_RESTART must reset consecutive_clean_rounds to 0"
         )
@@ -834,6 +831,7 @@ class TestTimeoutCircuitBreaker:
     def test_breaker_trips_at_threshold(self):
         from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
         import pytest
+
         breaker = TimeoutCircuitBreaker(threshold=3)
         breaker.record_timeout()
         breaker.record_timeout()
@@ -842,6 +840,7 @@ class TestTimeoutCircuitBreaker:
 
     def test_breaker_resets_on_success(self):
         from code_forge.machine import TimeoutCircuitBreaker
+
         breaker = TimeoutCircuitBreaker(threshold=3)
         breaker.record_timeout()
         breaker.record_timeout()
@@ -853,6 +852,7 @@ class TestTimeoutCircuitBreaker:
     def test_other_error_does_not_increment_or_reset(self):
         from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
         import pytest
+
         breaker = TimeoutCircuitBreaker(threshold=3)
         breaker.record_timeout()
         breaker.record_timeout()
@@ -863,6 +863,7 @@ class TestTimeoutCircuitBreaker:
 
     def test_count_property(self):
         from code_forge.machine import TimeoutCircuitBreaker
+
         breaker = TimeoutCircuitBreaker(threshold=3)
         assert breaker.count == 0
         breaker.record_timeout()
@@ -871,9 +872,11 @@ class TestTimeoutCircuitBreaker:
 
 class TestTimeoutBreakerIntegration:
     import pytest
+
     @pytest.fixture
     def resolved(self):
         from code_forge.baseline import ResolvedReview
+
         return ResolvedReview(source_files=[], baseline_content=None, git_diff="diff", mode_hint="git")
 
     def test_breaker_trips_after_consecutive_timeouts(self, resolved, monkeypatch):
@@ -881,9 +884,10 @@ class TestTimeoutBreakerIntegration:
         from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
-        
+
         def mock_invoke(*args, **kwargs):
             raise LLMInvokeError("timed out", is_timeout=True)
+
         monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
 
         breaker = TimeoutCircuitBreaker(threshold=5)
@@ -897,19 +901,24 @@ class TestTimeoutBreakerIntegration:
         from code_forge.machine import TimeoutCircuitBreaker
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
-        
+
         call_count = 0
+
         def mock_invoke(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 5:
+
                 class MockResult:
                     content = '{"findings": [], "code_excerpts": [{"file": "f", "content": "c\\nd", "start_line": 1, "end_line": 2}]}'
+
                     class usage:
                         input_tokens = 0
                         output_tokens = 0
                         cached_input_tokens = 0
+
                     duration_s = 0.0
+
                 return MockResult()
             raise LLMInvokeError("timed out", is_timeout=True, retryable=False)
 
@@ -929,7 +938,7 @@ class TestTimeoutBreakerIntegration:
         from code_forge.machine import TimeoutCircuitBreaker
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
-        
+
         def mock_invoke(*args, **kwargs):
             raise LLMInvokeError("parse error", is_timeout=False)
 
@@ -937,12 +946,12 @@ class TestTimeoutBreakerIntegration:
 
         breaker = TimeoutCircuitBreaker(threshold=5)
         l1_provider = build_l1_provider("real", resolved, breaker=breaker)
-        
+
         l1_provider()
         l1_provider()
         l1_provider()
         l1_provider()
-        
+
         assert breaker.count == 0
 
     def test_breaker_message_contains_remediation(self, resolved, monkeypatch):
@@ -950,18 +959,18 @@ class TestTimeoutBreakerIntegration:
         from code_forge.machine import TimeoutCircuitBreaker, TimeoutBreaker
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import LLMInvokeError
-        
+
         def mock_invoke(*args, **kwargs):
             raise LLMInvokeError("timed out", is_timeout=True)
-            
+
         monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
 
         breaker = TimeoutCircuitBreaker(threshold=2)
         l1_provider = build_l1_provider("real", resolved, breaker=breaker)
-        
+
         with pytest.raises(TimeoutBreaker) as excinfo:
             l1_provider()
-            
+
         assert "FORGE_LLM_TIMEOUT_S" in str(excinfo.value)
         assert "consecutive timeouts" in str(excinfo.value)
 
@@ -988,9 +997,7 @@ class TestTimeoutBreakerIntegration:
         provider_without = build_l1_provider("real", resolved, breaker=None)
         for _ in range(10):
             findings, excerpts, usage, cost = provider_without()
-            assert any(
-                f.source == "INFRA" and f.is_timeout for f in findings
-            )
+            assert any(f.source == "INFRA" and f.is_timeout for f in findings)
 
 
 class TestL1ProviderCachedAggregation:
@@ -1008,21 +1015,19 @@ class TestL1ProviderCachedAggregation:
         from code_forge.llm_invoke import LLMResult, Usage
 
         resolved = ResolvedReview(
-            source_files=[], baseline_content=None,
-            git_diff="diff", mode_hint="git")
+            source_files=[], baseline_content=None, git_diff="diff", mode_hint="git"
+        )
 
         def mock_invoke(*args, **kwargs):
             return LLMResult(
                 content='{"findings": [], "code_excerpts": '
-                        '[{"file": "f", "content": "c", '
-                        '"start_line": 1, "end_line": 2}]}',
-                usage=Usage(input_tokens=31, output_tokens=16,
-                            cached_input_tokens=6720),
+                '[{"file": "f", "content": "c", '
+                '"start_line": 1, "end_line": 2}]}',
+                usage=Usage(input_tokens=31, output_tokens=16, cached_input_tokens=6720),
                 duration_s=0.1,
             )
 
-        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke",
-                            mock_invoke)
+        monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", mock_invoke)
         l1_provider = build_l1_provider("real", resolved)
         _, _, usage, _ = l1_provider()
         assert usage.cached_input_tokens == 3 * 6720

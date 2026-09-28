@@ -16,6 +16,7 @@ language, not this change.
 
 Helpers imported inside a function are patched at their source module.
 """
+
 import argparse
 
 import pytest
@@ -45,6 +46,7 @@ def _raiser(error_type):
 
 # --- assertion review: empty findings must not mask a crash ----------------
 
+
 @pytest.mark.parametrize("error_type", DEGRADED_ERRORS)
 def test_assertion_review_degrades_on_environment_failure(monkeypatch, error_type):
     """Network-class faults keep the documented fail-open behaviour."""
@@ -60,6 +62,7 @@ def test_assertion_review_propagates_internal_failure(monkeypatch):
 
 
 # --- contract summarisation: raw-content fallback --------------------------
+
 
 def _oversized_contract():
     return "invariant: " + ("x" * 5000)
@@ -84,17 +87,14 @@ def test_contract_summary_propagates_internal_failure(monkeypatch):
     """Memory exhaustion must not be reported as a summarisation failure."""
     monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", _raiser(MemoryError))
     with pytest.raises(MemoryError):
-        cli._merge_contract_spec(
-            "", _oversized_contract(), backend=object(), warn_fn=lambda _m: None
-        )
+        cli._merge_contract_spec("", _oversized_contract(), backend=object(), warn_fn=lambda _m: None)
 
 
 # --- bundled skill lookup: packaging faults --------------------------------
 
+
 def _install_args(dest):
-    return argparse.Namespace(
-        dest=str(dest), target="universal", skill=None, quiet=True
-    )
+    return argparse.Namespace(dest=str(dest), target="universal", skill=None, quiet=True)
 
 
 @pytest.mark.parametrize("error_type", DEGRADED_ERRORS)
@@ -113,6 +113,7 @@ def test_install_skill_propagates_internal_failure(monkeypatch, tmp_path):
 
 
 # --- bundled skill listing: directory scan faults --------------------------
+
 
 def _failing_scandir(error_type, real_root):
     """Fail only when listing the bundled skill root, so lookup still works."""
@@ -154,10 +155,9 @@ def test_skill_listing_propagates_internal_failure(monkeypatch, tmp_path):
 
 # --- advisory listing: shown when a named skill is missing -----------------
 
+
 def _missing_skill_args(dest):
-    return argparse.Namespace(
-        dest=str(dest), target="universal", skill="no-such-skill", quiet=True
-    )
+    return argparse.Namespace(dest=str(dest), target="universal", skill="no-such-skill", quiet=True)
 
 
 @pytest.mark.parametrize("error_type", DEGRADED_ERRORS)
@@ -183,6 +183,7 @@ def test_advisory_listing_propagates_internal_failure(monkeypatch, tmp_path):
 
 # --- inline canary: degrades to DELEGATED on failure -----------------------
 
+
 def _canary_args():
     return argparse.Namespace(canary=True, git_diff=None)
 
@@ -195,9 +196,7 @@ def _dispatch_canary(monkeypatch, error_type):
         raise error_type("injected failure")
 
     monkeypatch.setattr(backend_mod, "resolve_backend", boom)
-    return cli._dispatch_inline_canary(
-        "inline", _canary_args(), {}, {}, {}, "."
-    )
+    return cli._dispatch_inline_canary("inline", _canary_args(), {}, {}, {}, ".")
 
 
 @pytest.mark.parametrize("error_type", DEGRADED_ERRORS)
@@ -217,15 +216,14 @@ def test_inline_canary_propagates_internal_failure(monkeypatch):
 
 # --- canary generation: falls back to templates ----------------------------
 
+
 def _drive_canary_provider(monkeypatch, error_type):
     """Run the inline canary with a live backend and a failing model call."""
     import code_forge.backend as backend_mod
     import code_forge.canary_gen as canary_gen_mod
     import code_forge.llm_invoke as llm_mod
 
-    monkeypatch.setattr(
-        backend_mod, "resolve_backend", lambda *a, **k: object()
-    )
+    monkeypatch.setattr(backend_mod, "resolve_backend", lambda *a, **k: object())
 
     def boom(*a, **k):
         raise error_type("injected failure")
@@ -240,9 +238,7 @@ def _drive_canary_provider(monkeypatch, error_type):
         return _CANARY_VERDICT, []
 
     monkeypatch.setattr(canary_gen_mod, "run_inline_canary", fake_run)
-    verdict = cli._dispatch_inline_canary(
-        "inline", _canary_args(), {}, {}, {}, "."
-    )
+    verdict = cli._dispatch_inline_canary("inline", _canary_args(), {}, {}, {}, ".")
     return verdict, seen
 
 
@@ -265,20 +261,17 @@ def test_canary_generation_propagates_internal_failure(monkeypatch):
 
 # --- contract digest: defense-in-depth wrapper -----------------------------
 
+
 @pytest.mark.parametrize("error_type", DEGRADED_ERRORS)
 def test_contract_digest_degrades_on_loader_failure(monkeypatch, tmp_path, error_type):
     """A broken contract loader yields an empty digest, not an abort."""
-    monkeypatch.setattr(
-        "code_forge.contract_loader.load_contract_digest", _raiser(error_type)
-    )
+    monkeypatch.setattr("code_forge.contract_loader.load_contract_digest", _raiser(error_type))
     out = cli._safe_load_contract_digest(tmp_path / "contracts.yaml", tmp_path)
     assert out == ""
 
 
 def test_contract_digest_propagates_internal_failure(monkeypatch, tmp_path):
     """Memory exhaustion must not be reported as a missing contract digest."""
-    monkeypatch.setattr(
-        "code_forge.contract_loader.load_contract_digest", _raiser(MemoryError)
-    )
+    monkeypatch.setattr("code_forge.contract_loader.load_contract_digest", _raiser(MemoryError))
     with pytest.raises(MemoryError):
         cli._safe_load_contract_digest(tmp_path / "contracts.yaml", tmp_path)

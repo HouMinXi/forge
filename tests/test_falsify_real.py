@@ -8,9 +8,12 @@ from code_forge.state import StateFinding
 
 def _make_finding(fp="fp-1"):
     return StateFinding(
-        id=fp, fingerprint=fp, source="L1",
+        id=fp,
+        fingerprint=fp,
+        source="L1",
         disposition=Disposition.CONFIRMED,
-        file="src/foo.py", line_range=[42, 45],
+        file="src/foo.py",
+        line_range=[42, 45],
         description="potential null dereference",
     )
 
@@ -64,6 +67,7 @@ class TestRealFalsifier:
         resp = _make_llm_result({"verdict": "FIXED", "reasoning": "n/a"})
         with patch("code_forge.falsify_real.llm_invoke", return_value=resp):
             from code_forge.llm_invoke import FalsifyProtocolError
+
             with pytest.raises(FalsifyProtocolError, match="FIXED"):
                 RealFalsifier().falsify(_make_finding())
 
@@ -72,6 +76,7 @@ class TestRealFalsifier:
         # UNCERTAIN silently; it is now a FalsifyProtocolError so the
         # ledger can tell "model broke the schema" from "model unsure".
         from code_forge.llm_invoke import FalsifyProtocolError
+
         resp = _make_llm_result({"verdict": "BOGUS", "reasoning": "n/a"})
         with patch("code_forge.falsify_real.llm_invoke", return_value=resp):
             with pytest.raises(FalsifyProtocolError):
@@ -98,13 +103,15 @@ class TestVerdictSurvivesTruncatedReasoning:
     def test_extractor_recovers_verdict_from_truncated_reasoning(self):
         """Byte-exact replay of a truncation seen in the smoke log."""
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = (
             '{\n "verdict": "UNCERTAIN",\n "reasoning": "The finding '
-            'concerns a potential misconfiguration of the '
-            '`version_sensitive` flag for a RULEPACK in `src/code_for'
+            "concerns a potential misconfiguration of the "
+            "`version_sensitive` flag for a RULEPACK in `src/code_for"
         )
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got is not None, "truncated reasoning must not void the verdict"
         assert got["verdict"] == "UNCERTAIN"
@@ -112,14 +119,16 @@ class TestVerdictSurvivesTruncatedReasoning:
     def test_extractor_recovers_second_observed_truncation(self):
         """The other shape from the same log: cut at a nested quote."""
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = (
             '{\n "verdict": "CONFIRMED",\n "reasoning": "The code at line '
-            '1855 in src/code_forge/machine.py calls `runner.run('
+            "1855 in src/code_forge/machine.py calls `runner.run("
             'self.resolved_review.git_diff or "", self.cwd)` without a '
-            'surrounding try-except block. This path is reachable during'
+            "surrounding try-except block. This path is reachable during"
         )
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got is not None
         assert got["verdict"] == "CONFIRMED"
@@ -127,9 +136,11 @@ class TestVerdictSurvivesTruncatedReasoning:
     def test_complete_json_is_untouched_by_the_salvage_path(self):
         """Salvage must not alter a well-formed response."""
         from code_forge.llm_invoke import _extract_json_from_text
+
         good = '{"verdict": "DISMISSED", "reasoning": "caller validates"}'
         got = _extract_json_from_text(
-            good, expected_keys=frozenset({"verdict", "reasoning"}),
+            good,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got == {"verdict": "DISMISSED", "reasoning": "caller validates"}
 
@@ -139,18 +150,22 @@ class TestVerdictSurvivesTruncatedReasoning:
         Guards against a salvage so eager it invents a verdict.
         """
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = '{\n "verd'
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got is None
 
     def test_a_bogus_verdict_value_is_not_salvaged_into_validity(self):
         """Salvage recovers the field; it does not vouch for the value."""
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = '{\n "verdict": "MAYBE",\n "reasoning": "half a th'
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         # Recovery is allowed; RealFalsifier then rejects the bogus
         # verdict as a protocol error (Phase 59-A1).
@@ -159,6 +174,7 @@ class TestVerdictSurvivesTruncatedReasoning:
 
     def test_falsifier_rejects_a_salvaged_bogus_verdict(self):
         from code_forge.llm_invoke import FalsifyProtocolError
+
         resp = _make_llm_result({"verdict": "MAYBE", "reasoning": ""})
         with patch("code_forge.falsify_real.llm_invoke", return_value=resp):
             with pytest.raises(FalsifyProtocolError):
@@ -181,6 +197,7 @@ class TestSalvageDoesNotFakeACleanReview:
 
     def test_truncated_l1_envelope_is_not_salvaged(self):
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = (
             '{"findings": [], "code_excerpts": {"a.py": "def f(): pass"}, '
             '"note": "still thinking about the sec'
@@ -190,12 +207,14 @@ class TestSalvageDoesNotFakeACleanReview:
 
     def test_truncated_runtime_envelope_is_not_salvaged(self):
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = '{"surfaces": [], "findings": [], "trailing": "cut'
         got = _extract_json_from_text(truncated)
         assert got is None
 
     def test_complete_l1_envelope_still_parses(self):
         from code_forge.llm_invoke import _extract_json_from_text
+
         good = '{"findings": [], "code_excerpts": {}}'
         got = _extract_json_from_text(good)
         assert got == {"findings": [], "code_excerpts": {}}
@@ -203,9 +222,11 @@ class TestSalvageDoesNotFakeACleanReview:
     def test_falsify_envelope_is_still_salvaged(self):
         """The narrow case the fix exists for stays fixed."""
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = '{"verdict": "CONFIRMED", "reasoning": "long prose cut'
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got is not None and got["verdict"] == "CONFIRMED"
 
@@ -226,10 +247,12 @@ class TestSalvageInternals:
         failure into a partial answer.
         """
         from code_forge.llm_invoke import _extract_json_from_text
+
         # Closed object, but the second value is invalid JSON.
         malformed = '{"verdict": "CONFIRMED", "reasoning": undefined_token}'
         got = _extract_json_from_text(
-            malformed, expected_keys=frozenset({"verdict", "reasoning"}),
+            malformed,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got is None
 
@@ -241,13 +264,15 @@ class TestSalvageInternals:
         and hand back a truncated string as if it were complete.
         """
         from code_forge.llm_invoke import _extract_json_from_text
+
         truncated = (
             '{"verdict": "DISMISSED", '
             '"reasoning": "First, the caller validates. Second, the path '
-            'is guarded. Third, the sym'
+            "is guarded. Third, the sym"
         )
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got is not None
         assert got["verdict"] == "DISMISSED"
@@ -267,12 +292,11 @@ class TestSalvageInternals:
         earlier version of this test asserted None and was wrong.
         """
         from code_forge.llm_invoke import _extract_json_from_text
-        truncated = (
-            '{"verdict": "CONFIRMED", '
-            '"evidence": {"file": "a.py", "line": 42, "note": "cut'
-        )
+
+        truncated = '{"verdict": "CONFIRMED", "evidence": {"file": "a.py", "line": 42, "note": "cut'
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got == {"verdict": "CONFIRMED"}
 
@@ -286,23 +310,22 @@ class TestSalvageInternals:
         though it arrived intact.
         """
         from code_forge.llm_invoke import _extract_json_from_text
-        truncated = (
-            '{"verdict": "CONFIRMED", '
-            '"reasoning": "he said \\"hi, there\\" ok and then cut'
-        )
+
+        truncated = '{"verdict": "CONFIRMED", "reasoning": "he said \\"hi, there\\" ok and then cut'
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got == {"verdict": "CONFIRMED"}
 
     def test_escaped_quote_ahead_of_the_cut_keeps_the_prose_field(self):
         """The same guard where the salvaged field is the prose itself."""
         from code_forge.llm_invoke import _extract_json_from_text
-        truncated = (
-            '{"reasoning": "say \\" then, stop", "verdict": "DISMISSED"'
-        )
+
+        truncated = '{"reasoning": "say \\" then, stop", "verdict": "DISMISSED"'
         got = _extract_json_from_text(
-            truncated, expected_keys=frozenset({"verdict", "reasoning"}),
+            truncated,
+            expected_keys=frozenset({"verdict", "reasoning"}),
         )
         assert got == {"reasoning": 'say " then, stop'}
 
@@ -319,6 +342,7 @@ class TestSalvageInternals:
         rather than a budget overrun, which the retry path handles.
         """
         from code_forge.llm_invoke import _extract_json_from_text
+
         got = _extract_json_from_text(
             '{"verdict": "CONFIRMED"',
             expected_keys=frozenset({"verdict", "reasoning"}),

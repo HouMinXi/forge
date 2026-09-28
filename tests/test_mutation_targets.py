@@ -5,6 +5,7 @@
 Covers: declaration loading, duplicate rejection, oversized rejection,
 selection accounting on rename, delete, addition, and overlapping targets.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,6 +21,7 @@ from code_forge.mutation_engines.targets import (
 
 
 # -- Helpers ------------------------------------------------------------------
+
 
 def _valid_budget():
     return {
@@ -63,6 +65,7 @@ def _config(*targets):
 
 # -- load_targets -------------------------------------------------------------
 
+
 class TestLoadTargets:
     def test_load_single_target(self):
         cfg = _config(_valid_target())
@@ -73,13 +76,16 @@ class TestLoadTargets:
     def test_load_multiple_targets(self):
         cfg = _config(
             _valid_target("python-core"),
-            _valid_target("go-core", adapter="gremlins",
-                          sources=["pkg/**/*.go"],
-                          tests=["pkg/**/*_test.go"],
-                          inputs=["go.mod", "go.sum"],
-                          oracle="go-test",
-                          command=["go", "test", "./pkg/..."],
-                          environment="go-core-v1"),
+            _valid_target(
+                "go-core",
+                adapter="gremlins",
+                sources=["pkg/**/*.go"],
+                tests=["pkg/**/*_test.go"],
+                inputs=["go.mod", "go.sum"],
+                oracle="go-test",
+                command=["go", "test", "./pkg/..."],
+                environment="go-core-v1",
+            ),
         )
         targets = load_targets(cfg)
         assert len(targets) == 2
@@ -102,13 +108,15 @@ class TestLoadTargets:
 
     def test_reject_unknown_mutation_keys(self):
         with pytest.raises(DeclarationError, match="unknown keys"):
-            load_targets({
-                "mutation": {
-                    "schema_version": 1,
-                    "targets": [],
-                    "extra_key": True,
+            load_targets(
+                {
+                    "mutation": {
+                        "schema_version": 1,
+                        "targets": [],
+                        "extra_key": True,
+                    }
                 }
-            })
+            )
 
     def test_reject_no_targets_list(self):
         with pytest.raises(DeclarationError, match="no 'targets' list"):
@@ -116,9 +124,7 @@ class TestLoadTargets:
 
     def test_reject_non_list_targets(self):
         with pytest.raises(DeclarationError, match="must be a list"):
-            load_targets({
-                "mutation": {"schema_version": 1, "targets": "not-a-list"}
-            })
+            load_targets({"mutation": {"schema_version": 1, "targets": "not-a-list"}})
 
     def test_reject_duplicate_target_ids(self):
         cfg = _config(
@@ -130,9 +136,7 @@ class TestLoadTargets:
 
     def test_reject_oversized_targets(self):
         """Exceeding MAX_TARGETS raises DeclarationError."""
-        targets = [
-            _valid_target("t%04d" % i) for i in range(MAX_TARGETS + 1)
-        ]
+        targets = [_valid_target("t%04d" % i) for i in range(MAX_TARGETS + 1)]
         cfg = {
             "mutation": {
                 "schema_version": 1,
@@ -150,6 +154,7 @@ class TestLoadTargets:
 
 # -- select_targets -----------------------------------------------------------
 
+
 class TestSelectTargets:
     def _py_target(self):
         cfg = _config(_valid_target())
@@ -157,18 +162,19 @@ class TestSelectTargets:
 
     def _multi_targets(self):
         cfg = _config(
-            _valid_target("python-core",
-                          sources=["src/**/*.py"],
-                          tests=["tests/**"],
-                          inputs=["pyproject.toml"]),
-            _valid_target("go-core",
-                          adapter="gremlins",
-                          sources=["pkg/**/*.go"],
-                          tests=["pkg/**/*_test.go"],
-                          inputs=["go.mod"],
-                          oracle="go-test",
-                          command=["go", "test"],
-                          environment="go-core-v1"),
+            _valid_target(
+                "python-core", sources=["src/**/*.py"], tests=["tests/**"], inputs=["pyproject.toml"]
+            ),
+            _valid_target(
+                "go-core",
+                adapter="gremlins",
+                sources=["pkg/**/*.go"],
+                tests=["pkg/**/*_test.go"],
+                inputs=["go.mod"],
+                oracle="go-test",
+                command=["go", "test"],
+                environment="go-core-v1",
+            ),
         )
         return load_targets(cfg)
 
@@ -209,9 +215,7 @@ class TestSelectTargets:
     def test_rename_selects_via_old_path(self):
         """Rename: old_path selects from the after-map when no before-map is given."""
         targets = self._py_target()
-        changes = [
-            ChangedPath(old_path="src/old_name.py", new_path="src/new_name.py")
-        ]
+        changes = [ChangedPath(old_path="src/old_name.py", new_path="src/new_name.py")]
         result = select_targets(targets, changes)
         assert len(result.targets) == 1
 
@@ -223,18 +227,14 @@ class TestSelectTargets:
         targets_after = []  # type: ignore[var-annotated]
 
         changes = [ChangedPath(old_path="src/module.py", new_path=None)]
-        result = select_targets(
-            targets_after, changes, before_targets=before
-        )
+        result = select_targets(targets_after, changes, before_targets=before)
         assert len(result.targets) == 1
         assert result.targets[0].target_id == "python-core"
 
     def test_declaration_changed_selects_all(self):
         targets = self._multi_targets()
         changes = []  # type: ignore[var-annotated]
-        result = select_targets(
-            targets, changes, declaration_changed=True
-        )
+        result = select_targets(targets, changes, declaration_changed=True)
         ids = {t.target_id for t in result.targets}
         assert ids == {"python-core", "go-core"}
 
@@ -257,8 +257,7 @@ class TestSelectTargets:
         """Two targets that cover the same file -- both must be selected."""
         cfg = _config(
             _valid_target("target-a", sources=["shared/**/*.py"]),
-            _valid_target("target-b", sources=["shared/**/*.py"],
-                          environment="b-v1"),
+            _valid_target("target-b", sources=["shared/**/*.py"], environment="b-v1"),
         )
         targets = load_targets(cfg)
         changes = [ChangedPath(old_path=None, new_path="shared/module.py")]
@@ -303,21 +302,23 @@ class TestSelectTargets:
 
     def test_rename_both_maps_checked(self):
         """Rename: both old (before-map) and new (after-map) are checked."""
-        before_targets = load_targets(_config(
-            _valid_target("old-target", sources=["old_dir/**/*.py"]),
-        ))
-        after_targets = load_targets(_config(
-            _valid_target("new-target", sources=["new_dir/**/*.py"]),
-        ))
+        before_targets = load_targets(
+            _config(
+                _valid_target("old-target", sources=["old_dir/**/*.py"]),
+            )
+        )
+        after_targets = load_targets(
+            _config(
+                _valid_target("new-target", sources=["new_dir/**/*.py"]),
+            )
+        )
         changes = [
             ChangedPath(
                 old_path="old_dir/module.py",
                 new_path="new_dir/module.py",
             )
         ]
-        result = select_targets(
-            after_targets, changes, before_targets=before_targets
-        )
+        result = select_targets(after_targets, changes, before_targets=before_targets)
         ids = {t.target_id for t in result.targets}
         # Old file matched old-target in before-map
         # New file matched new-target in after-map
@@ -340,9 +341,7 @@ class TestSelectTargets:
 class TestDeclarationPolicyReasons:
     def test_both_flags_record_both_reasons(self):
         targets = load_targets(_config(_valid_target()))
-        result = select_targets(
-            targets, [], declaration_changed=True, policy_changed=True
-        )
+        result = select_targets(targets, [], declaration_changed=True, policy_changed=True)
         reasons = result.targets[0].reasons
         assert any("declaration changed" in r for r in reasons)
         assert any("policy changed" in r for r in reasons)
@@ -350,15 +349,17 @@ class TestDeclarationPolicyReasons:
 
 class TestRenameFileAttribution:
     def test_files_attributed_from_both_maps(self):
-        before = load_targets(_config(
-            _valid_target("core", sources=["old_src/**/*.py"]),
-        ))
-        after = load_targets(_config(
-            _valid_target("core", sources=["new_src/**/*.py"]),
-        ))
-        changes = [
-            ChangedPath(old_path="old_src/a.py", new_path="new_src/a.py")
-        ]
+        before = load_targets(
+            _config(
+                _valid_target("core", sources=["old_src/**/*.py"]),
+            )
+        )
+        after = load_targets(
+            _config(
+                _valid_target("core", sources=["new_src/**/*.py"]),
+            )
+        )
+        changes = [ChangedPath(old_path="old_src/a.py", new_path="new_src/a.py")]
         result = select_targets(after, changes, before_targets=before)
         sel = result.targets[0]
         assert sel.target_id == "core"

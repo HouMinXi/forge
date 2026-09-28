@@ -11,6 +11,7 @@ Covers:
 - read_smoke_receipts returns [] when directory absent or empty
 - transcript_sha256 is sha256 of transcript bytes
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -148,8 +149,13 @@ class TestWriteSmokeReceipt:
 
         data = json.loads((receipts_dir / "smoke-receipt-nftables.json").read_text())
         required_fields = [
-            "diff_sha256", "surface", "command", "exit_code",
-            "transcript_sha256", "timestamp", "status",
+            "diff_sha256",
+            "surface",
+            "command",
+            "exit_code",
+            "transcript_sha256",
+            "timestamp",
+            "status",
         ]
         for field in required_fields:
             assert field in data, "Missing field: %s" % field
@@ -384,9 +390,7 @@ class TestReadSmokeReceipts:
         receipts_dir.mkdir()
 
         # Write a non-matching file
-        (receipts_dir / "receipt-c1p1.json").write_text(
-            json.dumps({"cycle": 1, "pass": 1})
-        )
+        (receipts_dir / "receipt-c1p1.json").write_text(json.dumps({"cycle": 1, "pass": 1}))
         # Write a matching file
         receipt_data = {
             "diff_sha256": "abc",
@@ -397,9 +401,7 @@ class TestReadSmokeReceipts:
             "timestamp": "2026-06-12T10:00:00Z",
             "status": "VERIFIED",
         }
-        (receipts_dir / "smoke-receipt-nftables.json").write_text(
-            json.dumps(receipt_data)
-        )
+        (receipts_dir / "smoke-receipt-nftables.json").write_text(json.dumps(receipt_data))
 
         result = read_smoke_receipts(receipts_dir)
         assert len(result) == 1

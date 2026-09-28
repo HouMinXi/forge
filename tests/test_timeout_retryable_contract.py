@@ -22,18 +22,26 @@ class TestBodyCodeRetryableTerminalMessage:
     def test_exceed_without_requested_is_terminal(self):
         # Pins mutmut_19/20/21/22: dropping or corrupting the 'exceed' arm
         # must not make the message retryable.
-        assert _is_body_code_retryable(
-            "unknown-provider", "unknown_code",
-            "maximum context length exceeded for this model",
-        ) is False
+        assert (
+            _is_body_code_retryable(
+                "unknown-provider",
+                "unknown_code",
+                "maximum context length exceeded for this model",
+            )
+            is False
+        )
 
     def test_requested_without_exceed_is_terminal(self):
         # Pins mutmut_23/24/25: dropping or corrupting the 'requested' arm
         # must not make the message retryable.
-        assert _is_body_code_retryable(
-            "unknown-provider", "unknown_code",
-            "maximum context length requested: 4000 tokens",
-        ) is False
+        assert (
+            _is_body_code_retryable(
+                "unknown-provider",
+                "unknown_code",
+                "maximum context length requested: 4000 tokens",
+            )
+            is False
+        )
 
 
 class TestDefaultTimeoutS:
@@ -61,7 +69,11 @@ class TestEffectiveInvokeTimeoutSBoundaries:
     @staticmethod
     def _api_backend(timeout_s=0):
         return BackendConfig(
-            name="t", type="api", model="x", timeout_s=timeout_s, format=None,
+            name="t",
+            type="api",
+            model="x",
+            timeout_s=timeout_s,
+            format=None,
         )
 
     def test_caller_zero_falls_through_to_cap(self, monkeypatch):

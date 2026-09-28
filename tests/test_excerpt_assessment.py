@@ -20,8 +20,7 @@ from code_forge.verify import (
 def _diff(lines):
     return (
         "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
-        f"@@ -1 +1,{len(lines)} @@\n-placeholder\n"
-        + "".join(f"+{line}\n" for line in lines)
+        f"@@ -1 +1,{len(lines)} @@\n-placeholder\n" + "".join(f"+{line}\n" for line in lines)
     )
 
 
@@ -41,13 +40,21 @@ def _verify(tmp_path, diff, excerpts):
     receipts = tmp_path / ".code-forge" / "receipts"
     receipts.mkdir(parents=True)
     (receipts.parent / "gate.yaml").write_text("verify:\n  required_cycles: 1\n")
-    expanded = [dict(exc, pass_name=name) for name in ("qodo", "expert", "adversarial")
-                for exc in excerpts]
-    write_receipts(receipts, 0, [], digest, [Path("mod.py")], tmp_path,
-                   diff_files=parse_diff_files(diff), diff_text=diff,
-                   reviewer_excerpts=expanded)
-    result = run_verify(tmp_path, digest, parse_diff_files(diff), diff_text=diff,
-                        required_cycles=1)
+    expanded = [
+        dict(exc, pass_name=name) for name in ("qodo", "expert", "adversarial") for exc in excerpts
+    ]
+    write_receipts(
+        receipts,
+        0,
+        [],
+        digest,
+        [Path("mod.py")],
+        tmp_path,
+        diff_files=parse_diff_files(diff),
+        diff_text=diff,
+        reviewer_excerpts=expanded,
+    )
+    result = run_verify(tmp_path, digest, parse_diff_files(diff), diff_text=diff, required_cycles=1)
     return result, [json.loads(p.read_text()) for p in sorted(receipts.glob("receipt-*.json"))]
 
 
@@ -124,21 +131,21 @@ def test_shift_into_unchanged_context_cannot_witness_hunk(tmp_path):
     assert "unwitnessed hunk" in result.reason or "outside every hunk" in result.reason
 
 
-@pytest.mark.parametrize("exc", [
-    _exc(1, 4, "alpha\nbeta"),
-    _exc(1, 3, "alpha\nwrong"),
-    _exc(1, 3, "alpha\nbeta\nfabricated"),
-    _exc(1, 3, "gamma"),
-])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        _exc(1, 4, "alpha\nbeta"),
+        _exc(1, 3, "alpha\nwrong"),
+        _exc(1, 3, "alpha\nbeta\nfabricated"),
+        _exc(1, 3, "gamma"),
+    ],
+)
 def test_incomplete_or_changed_content_stays_invalid(exc):
     assert validate_excerpts_against_diff(_diff(["alpha", "beta", "gamma"]), [exc])
 
 
 def test_unknown_endpoints_cannot_ride_known_hunk_overlap():
-    diff = (
-        "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
-        "@@ -2 +2 @@\n-old\n+beta\n"
-    )
+    diff = "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -2 +2 @@\n-old\n+beta\n"
     exc = _exc(1, 3, "alpha\nbeta")
     result = _assess(diff, exc)
     assert result.status.value == "INVALID"
@@ -148,10 +155,7 @@ def test_unknown_endpoints_cannot_ride_known_hunk_overlap():
 
 @pytest.mark.parametrize("tail", ["fabricated", "beta"])
 def test_blank_head_cannot_vouch_for_unknown_tail(tail):
-    diff = (
-        "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
-        "@@ -1,2 +1,2 @@\n \n-old\n+alpha\n"
-    )
+    diff = "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -1,2 +1,2 @@\n \n-old\n+alpha\n"
     exc = _exc(1, 3, f"alpha\n{tail}")
     result = _assess(diff, exc)
     assert result.status.value == "INVALID"
@@ -161,15 +165,15 @@ def test_blank_head_cannot_vouch_for_unknown_tail(tail):
 
 @pytest.mark.parametrize("source", [None, "\nalpha\n", "\nalpha\nactual\n"])
 def test_complete_unknown_tail_fails_real_receipt_gate(tmp_path, source):
-    diff = (
-        "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n"
-        "@@ -1,2 +1,2 @@\n \n-old\n+alpha\n"
-    )
+    diff = "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -1,2 +1,2 @@\n \n-old\n+alpha\n"
     if source is not None:
         subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, timeout=10)
         oid = subprocess.check_output(
-            ["git", "hash-object", "-w", "--stdin"], input=source,
-            cwd=tmp_path, text=True, timeout=10,
+            ["git", "hash-object", "-w", "--stdin"],
+            input=source,
+            cwd=tmp_path,
+            text=True,
+            timeout=10,
         ).strip()
         diff = diff.replace("--- a/mod.py", f"index {'1' * 40}..{oid} 100644\n--- a/mod.py")
     # Even matching live text is not evidence for the frozen source.
@@ -277,18 +281,21 @@ def test_offset_requires_every_line_and_two_lines():
         assert _assess(diff, exc).status.value == "INVALID"
 
 
-@pytest.mark.parametrize("exc", [
-    None,
-    {"file": None, "start_line": 1, "end_line": 1, "content": "alpha"},
-    _exc(True, 1, "alpha"),
-    _exc(1, False, "alpha"),
-    _exc("1", 1, "alpha"),
-    _exc(0, 1, "alpha"),
-    _exc(2, 1, "alpha"),
-    _exc(1, 1, ["alpha", 2]),
-    _exc(1, 1, 42),
-    _exc(1, 1, "   "),
-])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        None,
+        {"file": None, "start_line": 1, "end_line": 1, "content": "alpha"},
+        _exc(True, 1, "alpha"),
+        _exc(1, False, "alpha"),
+        _exc("1", 1, "alpha"),
+        _exc(0, 1, "alpha"),
+        _exc(2, 1, "alpha"),
+        _exc(1, 1, ["alpha", 2]),
+        _exc(1, 1, 42),
+        _exc(1, 1, "   "),
+    ],
+)
 def test_model_controlled_shape_is_invalid_without_source_credit(exc):
     from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
@@ -339,7 +346,9 @@ def test_proven_coverage_unions_distinct_quotes_in_one_cycle():
     ]
     assert _excerpt_covered({}, {}) == set()
     assert _cycle_excerpt_covered(receipts, 1, assessments) == {
-        ("mod.py", 1), ("mod.py", 2), ("mod.py", 3),
+        ("mod.py", 1),
+        ("mod.py", 2),
+        ("mod.py", 3),
     }
     assert _cycle_excerpt_covered(receipts, 2, assessments) == {("mod.py", 3)}
     assert _cycle_excerpt_covered(receipts, 3, assessments) == set()
@@ -355,15 +364,18 @@ def test_noninteger_end_is_invalid_even_when_start_is_integer(end):
     assert result.proven_lines == frozenset()
 
 
-@pytest.mark.parametrize("exc,diagnostic", [
-    (None, "excerpt must be a dictionary"),
-    ({"file": "", "start_line": 1, "end_line": 1, "content": "alpha"},
-     "excerpt file must be a non-empty string"),
-    ({"file": "mod.py", "start_line": 1, "end_line": 1},
-     "excerpt mod.py:1 has empty content"),
-    ({"start_line": 1, "end_line": 1, "content": "alpha"},
-     "excerpt <unknown>:1 not in diff"),
-])
+@pytest.mark.parametrize(
+    "exc,diagnostic",
+    [
+        (None, "excerpt must be a dictionary"),
+        (
+            {"file": "", "start_line": 1, "end_line": 1, "content": "alpha"},
+            "excerpt file must be a non-empty string",
+        ),
+        ({"file": "mod.py", "start_line": 1, "end_line": 1}, "excerpt mod.py:1 has empty content"),
+        ({"start_line": 1, "end_line": 1, "content": "alpha"}, "excerpt <unknown>:1 not in diff"),
+    ],
+)
 def test_invalid_shape_has_actionable_diagnostic(exc, diagnostic):
     from code_forge.verify import ExcerptStatus
 
@@ -383,16 +395,20 @@ def test_list_and_string_quotes_prove_identical_lines(content):
     assert result.proven_lines == frozenset({1, 2})
 
 
-@pytest.mark.parametrize("start,end,status,diagnostic", [
-    (2, 2, "VALID", None),
-    (1, 2, "INVALID", "excerpt mod.py:1-2 declares 2 lines but carries 1"),
-    (3, 3, "INVALID", "excerpt mod.py:3-3 is outside every hunk"),
-])
+@pytest.mark.parametrize(
+    "start,end,status,diagnostic",
+    [
+        (2, 2, "VALID", None),
+        (1, 2, "INVALID", "excerpt mod.py:1-2 declares 2 lines but carries 1"),
+        (3, 3, "INVALID", "excerpt mod.py:3-3 is outside every hunk"),
+    ],
+)
 def test_hunk_only_validation_has_typed_result(start, end, status, diagnostic):
     from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
     result = assess_excerpt_evidence(
-        _exc(start, end, "alpha"), {"mod.py": [{"start": 2, "end": 2}]},
+        _exc(start, end, "alpha"),
+        {"mod.py": [{"start": 2, "end": 2}]},
     )
     assert result.status is ExcerptStatus(status)
     assert result.diagnostic == diagnostic
@@ -403,7 +419,8 @@ def test_exact_context_outside_hunk_remains_typed_invalid():
     from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
     result = assess_excerpt_evidence(
-        _exc(1, 2, "alpha\nbeta"), {"mod.py": [{"start": 3, "end": 3}]},
+        _exc(1, 2, "alpha\nbeta"),
+        {"mod.py": [{"start": 3, "end": 3}]},
         {"mod.py": {1: "alpha", 2: "beta", 3: "changed"}},
     )
     assert result.status is ExcerptStatus.INVALID
@@ -413,40 +430,52 @@ def test_exact_context_outside_hunk_remains_typed_invalid():
     assert result.proven_lines == frozenset()
 
 
-@pytest.mark.parametrize("post,diagnostic", [
-    ({}, "excerpt mod.py:1-1 claims line 1 outside the diff post-image; it cannot be verified"),
-    ({"mod.py": {2: "beta"}},
-     "excerpt mod.py:1-1 claims line 1 outside the diff post-image; it cannot be verified"),
-])
+@pytest.mark.parametrize(
+    "post,diagnostic",
+    [
+        ({}, "excerpt mod.py:1-1 claims line 1 outside the diff post-image; it cannot be verified"),
+        (
+            {"mod.py": {2: "beta"}},
+            "excerpt mod.py:1-1 claims line 1 outside the diff post-image; it cannot be verified",
+        ),
+    ],
+)
 def test_unknown_postimage_cannot_claim_valid_status(post, diagnostic):
     from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
     result = assess_excerpt_evidence(
-        _exc(1, 1, "alpha"), {"mod.py": [{"start": 1, "end": 1}]}, post,
+        _exc(1, 1, "alpha"),
+        {"mod.py": [{"start": 1, "end": 1}]},
+        post,
     )
     assert result.status is ExcerptStatus.INVALID
     assert result.diagnostic == diagnostic
     assert not result.proven_lines
 
 
-@pytest.mark.parametrize("lines,content,status", [
-    (["alpha", "beta", ""], "alpha\nbeta", "VALID"),
-    (["  alpha", "  beta", "tail"], "  alpha\n  beta", "UNTRUSTED"),
-    (["alpha  ", "beta  ", "tail"], "alpha\nbeta", "UNTRUSTED"),
-    (["alpha", "beta", "tail"], "alpha  \nbeta  ", "UNTRUSTED"),
-])
+@pytest.mark.parametrize(
+    "lines,content,status",
+    [
+        (["alpha", "beta", ""], "alpha\nbeta", "VALID"),
+        (["  alpha", "  beta", "tail"], "  alpha\n  beta", "UNTRUSTED"),
+        (["alpha  ", "beta  ", "tail"], "alpha\nbeta", "UNTRUSTED"),
+        (["alpha", "beta", "tail"], "alpha  \nbeta  ", "UNTRUSTED"),
+    ],
+)
 def test_tail_omission_preserves_whitespace_and_blank_classification(lines, content, status):
     from code_forge.verify import ExcerptStatus
 
     result = _assess(_diff(lines), _exc(1, 3, content))
     assert result.status is ExcerptStatus(status)
     assert result.proven_lines == frozenset({1, 2})
-    assert result.diagnostic == (None if status == "VALID"
-                                 else "excerpt mod.py:1-3 declares 3 lines but carries 2")
+    assert result.diagnostic == (
+        None if status == "VALID" else "excerpt mod.py:1-3 declares 3 lines but carries 2"
+    )
 
 
-@pytest.mark.parametrize("delta,status", [(-65, "INVALID"), (-64, "UNTRUSTED"),
-                                          (65, "UNTRUSTED"), (66, "INVALID")])
+@pytest.mark.parametrize(
+    "delta,status", [(-65, "INVALID"), (-64, "UNTRUSTED"), (65, "UNTRUSTED"), (66, "INVALID")]
+)
 def test_offset_search_respects_both_inclusive_limits(delta, status):
     from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
@@ -497,16 +526,21 @@ def test_empty_diff_has_no_context_to_validate():
     assert validate_excerpts_against_diff(_diff(["alpha"]), []) == []
 
 
-@pytest.mark.parametrize("exc,post,hunk", [
-    (_exc(1, 3, "alpha\nbeta"), {1: "alpha", 2: "beta", 3: "changed"}, 3),
-    (_exc(2, 3, "alpha\nbeta"), {1: "alpha", 2: "beta", 3: "changed"}, 3),
-    (_exc(1, 2, "alpha\nbeta"), {1: "  alpha", 2: "  beta", 3: "changed"}, 3),
-])
+@pytest.mark.parametrize(
+    "exc,post,hunk",
+    [
+        (_exc(1, 3, "alpha\nbeta"), {1: "alpha", 2: "beta", 3: "changed"}, 3),
+        (_exc(2, 3, "alpha\nbeta"), {1: "alpha", 2: "beta", 3: "changed"}, 3),
+        (_exc(1, 2, "alpha\nbeta"), {1: "  alpha", 2: "  beta", 3: "changed"}, 3),
+    ],
+)
 def test_recovered_quote_outside_hunk_reports_declared_location(exc, post, hunk):
     from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
     result = assess_excerpt_evidence(
-        exc, {"mod.py": [{"start": hunk, "end": hunk}]}, {"mod.py": post},
+        exc,
+        {"mod.py": [{"start": hunk, "end": hunk}]},
+        {"mod.py": post},
     )
     assert result.status is ExcerptStatus.INVALID
     assert result.proven_lines == frozenset()
@@ -520,7 +554,8 @@ def test_offset_diagnostic_skips_lines_that_match_at_declared_position():
     from code_forge.verify import ExcerptStatus, assess_excerpt_evidence
 
     result = assess_excerpt_evidence(
-        _exc(3, 4, "alpha\nbeta"), {"mod.py": [{"start": 1, "end": 4}]},
+        _exc(3, 4, "alpha\nbeta"),
+        {"mod.py": [{"start": 1, "end": 4}]},
         {"mod.py": {1: "alpha", 2: "beta", 3: "alpha", 4: "other"}},
     )
     assert result.status is ExcerptStatus.UNTRUSTED

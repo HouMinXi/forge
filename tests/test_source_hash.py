@@ -43,10 +43,8 @@ class TestComputeSourceHash:
         diff_lf = "--- a/f.py\n+++ b/f.py\n"
         diff_crlf = "--- a/f.py\r\n+++ b/f.py\r\n"
         diff_trailing = "--- a/f.py  \n+++ b/f.py  \n"
-        assert compute_source_hash(git_diff=diff_lf) == \
-            compute_source_hash(git_diff=diff_crlf)
-        assert compute_source_hash(git_diff=diff_lf) == \
-            compute_source_hash(git_diff=diff_trailing)
+        assert compute_source_hash(git_diff=diff_lf) == compute_source_hash(git_diff=diff_crlf)
+        assert compute_source_hash(git_diff=diff_lf) == compute_source_hash(git_diff=diff_trailing)
 
     def test_mode_isolation(self):
         """SC-9: git-mode and non-git mode produce different hashes."""

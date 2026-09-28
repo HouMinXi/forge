@@ -10,6 +10,7 @@ users from asking a different question than the CLI outlet uses.
 Lesson from 19.1 dual-copy divergence: two copies of the same text drift
 silently without an automated check.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,8 +32,7 @@ def test_runtime_lifecycle_question_in_skill_md() -> None:
     """
     skill_md = _skill_md_path()
     assert skill_md.exists(), (
-        "code-forge/SKILL.md not found at %s -- "
-        "cannot verify anti-drift invariant" % skill_md
+        "code-forge/SKILL.md not found at %s -- cannot verify anti-drift invariant" % skill_md
     )
 
     content = skill_md.read_text(encoding="utf-8")

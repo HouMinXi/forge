@@ -11,16 +11,22 @@ from code_forge.state import Mode, StateFinding, Verdict, load_state
 
 def _resolved():
     return ResolvedReview(
-        source_files=[Path("test.py")], baseline_content=None,
-        git_diff=None, mode_hint="git",
+        source_files=[Path("test.py")],
+        baseline_content=None,
+        git_diff=None,
+        mode_hint="git",
     )
 
 
 def _finding(fp="fp-1"):
     return StateFinding(
-        id=fp, fingerprint=fp, source="L1",
+        id=fp,
+        fingerprint=fp,
+        source="L1",
         disposition=Disposition.CONFIRMED,
-        file="test.py", line_range=[1, 1], description="test",
+        file="test.py",
+        line_range=[1, 1],
+        description="test",
         excerpt="value = 1\n",
     )
 
@@ -38,13 +44,18 @@ def _tool(name="ruff", patterns=None):
 class TestConsecutiveClean:
     def test_needs_3_clean_rounds_not_1(self, tmp_path):
         sm = StateMachine(
-            mode=Mode.LOCAL, falsifier=StubFalsifier(),
-            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-            resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path,
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_resolved(),
+            source_hash="a",
+            baseline_spec_repr="HEAD",
+            cwd=tmp_path,
             registry={"ruff": _tool("ruff", ["*.py"])},
             l0_runner=lambda _r, _f: ([], []),
-            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            l1_provider=lambda: ([], [], Usage(), 0.0),
+            max_total_rounds=10,
             coverage_l1_active=False,
         )
         assert sm.run() == Verdict.PASS
@@ -54,19 +65,27 @@ class TestConsecutiveClean:
 
     def test_resets_counter_on_confirmed_finding(self, tmp_path):
         calls = {"n": 0}
+
         def _prov():
             from code_forge.llm_invoke import Usage
+
             calls["n"] += 1
             if calls["n"] <= 2:
                 return ([_finding("fp-%d" % calls["n"])], [], Usage(), 0.0)
             return ([], [], Usage(), 0.0)
 
         sm = StateMachine(
-            mode=Mode.LOCAL, falsifier=StubFalsifier(),
-            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-            resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=_prov, max_total_rounds=20,
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_resolved(),
+            source_hash="a",
+            baseline_spec_repr="HEAD",
+            cwd=tmp_path,
+            registry={},
+            l1_provider=_prov,
+            max_total_rounds=20,
         )
         sm.run()
         state = load_state(tmp_path / ".code-forge" / "state.json")
@@ -75,13 +94,18 @@ class TestConsecutiveClean:
     def test_receipts_written_during_run(self, tmp_path):
         """Integration: StateMachine.run() writes receipt files."""
         sm = StateMachine(
-            mode=Mode.LOCAL, falsifier=StubFalsifier(),
-            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-            resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path,
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_resolved(),
+            source_hash="a",
+            baseline_spec_repr="HEAD",
+            cwd=tmp_path,
             registry={"ruff": _tool("ruff", ["*.py"])},
             l0_runner=lambda _r, _f: ([], []),
-            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            l1_provider=lambda: ([], [], Usage(), 0.0),
+            max_total_rounds=10,
             coverage_l1_active=False,
         )
         sm.run()
@@ -92,11 +116,17 @@ class TestConsecutiveClean:
 
     def test_threshold_1_recovers_single_fixpoint(self, tmp_path):
         sm = StateMachine(
-            mode=Mode.LOCAL, falsifier=StubFalsifier(),
-            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-            resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_resolved(),
+            source_hash="a",
+            baseline_spec_repr="HEAD",
+            cwd=tmp_path,
+            registry={},
+            l1_provider=lambda: ([], [], Usage(), 0.0),
+            max_total_rounds=10,
             clean_round_threshold=1,
         )
         assert sm.run() == Verdict.PASS
@@ -106,11 +136,17 @@ class TestConsecutiveClean:
     def test_threshold_param_2(self, tmp_path):
         """SM with clean_round_threshold=2 exits PASS after 2 clean rounds."""
         sm = StateMachine(
-            mode=Mode.LOCAL, falsifier=StubFalsifier(),
-            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-            resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_resolved(),
+            source_hash="a",
+            baseline_spec_repr="HEAD",
+            cwd=tmp_path,
+            registry={},
+            l1_provider=lambda: ([], [], Usage(), 0.0),
+            max_total_rounds=10,
             clean_round_threshold=2,
         )
         assert sm.run() == Verdict.PASS
@@ -121,11 +157,17 @@ class TestConsecutiveClean:
     def test_threshold_param_4(self, tmp_path):
         """SM with clean_round_threshold=4 requires 4 clean rounds."""
         sm = StateMachine(
-            mode=Mode.LOCAL, falsifier=StubFalsifier(),
-            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-            resolved_review=_resolved(), source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path, registry={},
-            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=_resolved(),
+            source_hash="a",
+            baseline_spec_repr="HEAD",
+            cwd=tmp_path,
+            registry={},
+            l1_provider=lambda: ([], [], Usage(), 0.0),
+            max_total_rounds=10,
             clean_round_threshold=4,
         )
         assert sm.run() == Verdict.PASS
@@ -160,23 +202,28 @@ class TestConsecutiveClean:
             "     return 1\n"
         )
         resolved = ResolvedReview(
-            source_files=[Path("test.py")], baseline_content=None,
-            git_diff=diff_text, mode_hint="git",
+            source_files=[Path("test.py")],
+            baseline_content=None,
+            git_diff=diff_text,
+            mode_hint="git",
         )
         sm = StateMachine(
-            mode=Mode.LOCAL, falsifier=StubFalsifier(),
-            autofixer=StubAutoFixer(), revert_fn=lambda f: None,
-            resolved_review=resolved, source_hash="a",
-            baseline_spec_repr="HEAD", cwd=tmp_path,
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=resolved,
+            source_hash="a",
+            baseline_spec_repr="HEAD",
+            cwd=tmp_path,
             registry={"ruff": _tool("ruff", ["*.py"])},
             l0_runner=lambda _r, _f: ([], []),
-            l1_provider=lambda: ([], [], Usage(), 0.0), max_total_rounds=10,
+            l1_provider=lambda: ([], [], Usage(), 0.0),
+            max_total_rounds=10,
             coverage_l1_active=False,
         )
 
-        base = datetime.datetime(
-            2026, 5, 28, 10, 0, 0, tzinfo=datetime.timezone.utc
-        )
+        base = datetime.datetime(2026, 5, 28, 10, 0, 0, tzinfo=datetime.timezone.utc)
         counter = {"n": 0}
 
         def _monotonic_now(*args, **kwargs):

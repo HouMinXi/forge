@@ -5,6 +5,7 @@ at the reviewer JSON parser: if _json_to_state_findings does not stamp
 the backend onto each finding, everything downstream writes "" and the
 sample is lost with no way to reconstruct it.
 """
+
 from __future__ import annotations
 
 from code_forge.reviewer_json import _json_to_state_findings
@@ -28,7 +29,9 @@ def _one_finding_payload():
 def test_backend_stamped_onto_parsed_findings():
     """A named backend reaches every finding it produced."""
     out = _json_to_state_findings(
-        _one_finding_payload(), "expert", backend="mimo-pro",
+        _one_finding_payload(),
+        "expert",
+        backend="mimo-pro",
     )
     assert len(out) == 1
     assert out[0].backend == "mimo-pro"
@@ -53,7 +56,9 @@ def test_sampling_attribution_is_not_a_model_guess():
     so the sampling outlet names itself instead.
     """
     out = _json_to_state_findings(
-        _one_finding_payload(), "qodo", backend="mcp-sampling",
+        _one_finding_payload(),
+        "qodo",
+        backend="mcp-sampling",
     )
     assert out[0].backend == "mcp-sampling"
 
@@ -128,6 +133,7 @@ def test_cli_passes_context_flags_into_the_machine():
     writes False for every review, which is the same as no attribution."""
     import inspect
     from code_forge import cli
+
     source = inspect.getsource(cli._run_hold_loop)
     assert "ctx_graph_triage=ctx_graph_triage" in source
     assert "ctx_contract=ctx_contract" in source
@@ -140,6 +146,7 @@ def test_run_computes_the_context_flags():
     keeps the defaults and every row records False."""
     import inspect
     from code_forge import cli
+
     source = inspect.getsource(cli._run)
     assert "ctx_graph_triage=bool(_graph_impact_context)" in source
     assert "ctx_contract=bool(_contract_spec_a)" in source
@@ -151,6 +158,7 @@ def test_invoke_failure_names_the_backend():
     """A failed pass that only names its role cannot be traced to a model."""
     import inspect
     from code_forge import factories
+
     source = inspect.getsource(factories.build_l1_provider)
     head = source.split("L1 invoke failed", 1)[1][:160]
     assert "backend.name" in head
@@ -170,7 +178,10 @@ def test_an_excerpt_count_miss_does_not_reject_the_round(monkeypatch):
 
     monkeypatch.setattr(llm, "llm_invoke", lambda *a, **k: _Result())
     resolved = ResolvedReview(
-        source_files=[], baseline_content=None, git_diff="diff --git a/a.py b/a.py\n", mode_hint="git",
+        source_files=[],
+        baseline_content=None,
+        git_diff="diff --git a/a.py b/a.py\n",
+        mode_hint="git",
     )
     provider = build_l1_provider("real", resolved)
     provider()

@@ -3,6 +3,7 @@
 Each test names the archived mutant boundary it pins. See
 .planning/quick/260922-parallel-debt/historical-replay-ledger.json.
 """
+
 import pytest
 
 from code_forge.llm_invoke import LLMInvokeError, _parse_response_body
@@ -20,7 +21,7 @@ class TestSseBodyDetection:
     def test_sse_comment_line_detects_sse(self):
         # Pins mutmut_18: ':' must stay in the startswith tuple.
         with pytest.raises(LLMInvokeError) as ei:
-            _parse_response_body(b': keep-alive\n\n', "testbe")
+            _parse_response_body(b": keep-alive\n\n", "testbe")
         assert ei.value.kind == "sse_body"
 
     def test_sse_body_is_retryable(self):
@@ -33,8 +34,7 @@ class TestSseBodyDetection:
         # Pins mutmut_26/27: message prefix and 'SSE' casing are contract.
         with pytest.raises(LLMInvokeError) as ei:
             _parse_response_body(b'data: {"a": 1}\n\n', "testbe")
-        assert str(ei.value).startswith(
-            "testbe backend returned an SSE stream body: ")
+        assert str(ei.value).startswith("testbe backend returned an SSE stream body: ")
 
     def test_sse_excerpt_capped_at_200(self):
         # Pins mutmut_29: excerpt is body_text[:200], not [:201].
@@ -59,8 +59,7 @@ class TestBadBodyDetection:
         # Pins mutmut_40/41: message prefix and 'JSON' casing are contract.
         with pytest.raises(LLMInvokeError) as ei:
             _parse_response_body(b"this is not json", "testbe")
-        assert str(ei.value).startswith(
-            "testbe backend returned non-JSON response body: ")
+        assert str(ei.value).startswith("testbe backend returned non-JSON response body: ")
 
     def test_bad_body_excerpt_capped_at_200(self):
         # Pins mutmut_43: excerpt is body_text[:200], not [:201].

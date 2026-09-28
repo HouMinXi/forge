@@ -34,8 +34,7 @@ def _make_resolved(mode_hint: str) -> ResolvedReview:
     return ResolvedReview(
         source_files=[Path("a.py")],
         baseline_content=None,
-        git_diff="diff --git a/a.py b/a.py" if mode_hint == "git"
-        else None,
+        git_diff="diff --git a/a.py b/a.py" if mode_hint == "git" else None,
         mode_hint=mode_hint,
     )
 
@@ -77,6 +76,7 @@ class TestBuildFalsifier:
     def test_auto_returns_real_falsifier(self):
         """SC-7(a): auto + Phase 4 importable -> RealFalsifier."""
         from code_forge.falsify_real import RealFalsifier
+
         f = build_falsifier("auto")
         assert isinstance(f, RealFalsifier)
 
@@ -88,6 +88,7 @@ class TestBuildFalsifier:
     def test_real_returns_real_falsifier(self):
         """SC-7(c): real + Phase 4 present -> RealFalsifier."""
         from code_forge.falsify_real import RealFalsifier
+
         f = build_falsifier("real")
         assert isinstance(f, RealFalsifier)
 
@@ -103,6 +104,7 @@ class TestBuildL1Provider:
     def test_stub_returns_empty(self):
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import Usage
+
         p = build_l1_provider("stub", None)
         findings, _excerpts, usage, duration = p()
         assert findings == []
@@ -111,12 +113,14 @@ class TestBuildL1Provider:
 
     def test_real_returns_callable(self):
         from code_forge.factories import build_l1_provider
+
         resolved = _make_resolved("git")
         p = build_l1_provider("real", resolved)
         assert callable(p)
 
     def test_auto_returns_callable(self):
         from code_forge.factories import build_l1_provider
+
         resolved = _make_resolved("git")
         p = build_l1_provider("auto", resolved)
         assert callable(p)
@@ -126,6 +130,7 @@ class TestBuildL1Provider:
 
         from code_forge.factories import build_l1_provider
         from code_forge.llm_invoke import Usage
+
         p = build_l1_provider("stub", None)
         with patch("code_forge.llm_invoke.llm_invoke") as mock:
             findings, _excerpts, usage, duration = p()
@@ -198,10 +203,10 @@ class TestNonGitSafeAutoFixer:
         wrapper_sig = inspect.signature(_NonGitSafeAutoFixer.fix)
         # Compare parameter names and count (annotation string
         # format differs due to __future__ annotations).
-        assert list(abc_sig.parameters.keys()) == \
-            list(wrapper_sig.parameters.keys())
+        assert list(abc_sig.parameters.keys()) == list(wrapper_sig.parameters.keys())
         # Verify return annotation resolves to same type.
         import typing
+
         abc_hints = typing.get_type_hints(AutoFixer.fix)
         wrapper_hints = typing.get_type_hints(_NonGitSafeAutoFixer.fix)
         assert abc_hints == wrapper_hints
@@ -322,9 +327,7 @@ class TestInfraSourceTagging:
 
         resolved = _make_resolved("git")
 
-        with _patch(
-            "code_forge.llm_invoke.llm_invoke"
-        ) as mock_invoke:
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
             mock_invoke.side_effect = LLMInvokeError("timeout")
             provider = build_l1_provider("real", resolved)
             findings, _excerpts, _usage, _duration = provider()
@@ -345,9 +348,7 @@ class TestInfraSourceTagging:
 
         resolved = _make_resolved("git")
 
-        with _patch(
-            "code_forge.llm_invoke.llm_invoke"
-        ) as mock_invoke:
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
             mock_invoke.return_value = LLMResult(
                 content="not json at all",
                 usage=LLMUsage(input_tokens=0, output_tokens=0),
@@ -361,7 +362,6 @@ class TestInfraSourceTagging:
         for f in infra:
             assert f.disposition == Disposition.CONFIRMED
             assert "schema-fail" in f.fingerprint
-
 
     def test_excerpt_evidence_failure_is_not_confirmed_infra(self):
         """A rejected excerpt must not be reported as a dead backend.
@@ -404,9 +404,7 @@ class TestInfraSourceTagging:
             ],
         }
 
-        with _patch(
-            "code_forge.llm_invoke.llm_invoke"
-        ) as mock_invoke:
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
             mock_invoke.return_value = LLMResult(
                 content=json.dumps(payload),
                 usage=LLMUsage(input_tokens=0, output_tokens=0),
@@ -416,8 +414,7 @@ class TestInfraSourceTagging:
             findings, _, _, _ = provider()
 
         confirmed_infra = [
-            f for f in findings
-            if f.source == "INFRA" and f.disposition == Disposition.CONFIRMED
+            f for f in findings if f.source == "INFRA" and f.disposition == Disposition.CONFIRMED
         ]
         assert not confirmed_infra, (
             "rejected evidence must not masquerade as an infrastructure "
@@ -427,9 +424,7 @@ class TestInfraSourceTagging:
         # that drops every finding would pass just as well as one that
         # downgrades them.
         untrusted = [f for f in findings if f.source == "UNTRUSTED"]
-        assert untrusted, (
-            "the candidate must survive as audit data, not disappear"
-        )
+        assert untrusted, "the candidate must survive as audit data, not disappear"
 
     def test_empty_clean_pass_envelope_is_not_confirmed_infra(self):
         """findings=[] + code_excerpts=[] parsed; it is a zero-cost envelope.
@@ -446,9 +441,7 @@ class TestInfraSourceTagging:
         resolved = _make_resolved("git")
         payload = {"findings": [], "code_excerpts": []}
 
-        with _patch(
-            "code_forge.llm_invoke.llm_invoke"
-        ) as mock_invoke:
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
             mock_invoke.return_value = LLMResult(
                 content=json.dumps(payload),
                 usage=LLMUsage(input_tokens=0, output_tokens=0),
@@ -458,8 +451,7 @@ class TestInfraSourceTagging:
             findings, _, _, _ = provider()
 
         confirmed_infra = [
-            f for f in findings
-            if f.source == "INFRA" and f.disposition == Disposition.CONFIRMED
+            f for f in findings if f.source == "INFRA" and f.disposition == Disposition.CONFIRMED
         ]
         assert not confirmed_infra, (
             "empty clean-pass envelope must not masquerade as infrastructure "
@@ -480,9 +472,7 @@ class TestInfraSourceTagging:
 
         resolved = _make_resolved("git")
 
-        with _patch(
-            "code_forge.llm_invoke.llm_invoke"
-        ) as mock_invoke:
+        with _patch("code_forge.llm_invoke.llm_invoke") as mock_invoke:
             mock_invoke.return_value = LLMResult(
                 content="not json at all",
                 usage=LLMUsage(input_tokens=0, output_tokens=0),
@@ -534,10 +524,13 @@ def _stub_llm_response(findings_json, excerpts_json):
 
     from code_forge.llm_invoke import LLMResult
     from code_forge.llm_invoke import Usage as LLMUsage
-    content = json.dumps({
-        "findings": findings_json,
-        "code_excerpts": excerpts_json,
-    })
+
+    content = json.dumps(
+        {
+            "findings": findings_json,
+            "code_excerpts": excerpts_json,
+        }
+    )
     return LLMResult(
         content=content,
         usage=LLMUsage(input_tokens=10, output_tokens=10),
@@ -555,7 +548,6 @@ def _make_resolved_with_diff(diff_text):
     )
 
 
-
 class TestCoverageGuard:
     """Coverage guard: detect truncated clean passes."""
 
@@ -567,8 +559,12 @@ class TestCoverageGuard:
         resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                {
+                    "file": "src/a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
             ],
         )
 
@@ -576,10 +572,7 @@ class TestCoverageGuard:
             provider = build_l1_provider("real", resolved)
             findings, _excerpts, _usage, _duration = provider()
 
-        infra = [
-            f for f in findings
-            if "incomplete-coverage" in f.id
-        ]
+        infra = [f for f in findings if "incomplete-coverage" in f.id]
         assert len(infra) >= 1
         assert infra[0].source == "INFRA"
         assert infra[0].disposition == Disposition.CONFIRMED
@@ -593,10 +586,18 @@ class TestCoverageGuard:
         resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-                {"file": "src/b.py", "start_line": 5,
-                 "end_line": 8, "content": "line5\nadded2\nline6\nline8"},
+                {
+                    "file": "src/a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
+                {
+                    "file": "src/b.py",
+                    "start_line": 5,
+                    "end_line": 8,
+                    "content": "line5\nadded2\nline6\nline8",
+                },
             ],
         )
 
@@ -604,10 +605,7 @@ class TestCoverageGuard:
             provider = build_l1_provider("real", resolved)
             findings, _excerpts, _usage, _duration = provider()
 
-        infra = [
-            f for f in findings
-            if "incomplete-coverage" in f.id
-        ]
+        infra = [f for f in findings if "incomplete-coverage" in f.id]
         assert len(infra) == 0
 
     def test_guard_skips_when_findings_present(self):
@@ -617,12 +615,15 @@ class TestCoverageGuard:
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         resp = _stub_llm_response(
             findings_json=[
-                {"file": "src/a.py", "line": 2,
-                 "severity": "P1", "description": "bug"},
+                {"file": "src/a.py", "line": 2, "severity": "P1", "description": "bug"},
             ],
             excerpts_json=[
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                {
+                    "file": "src/a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
             ],
         )
 
@@ -630,10 +631,7 @@ class TestCoverageGuard:
             provider = build_l1_provider("real", resolved)
             findings, _excerpts, _usage, _duration = provider()
 
-        infra = [
-            f for f in findings
-            if "incomplete-coverage" in f.id
-        ]
+        infra = [f for f in findings if "incomplete-coverage" in f.id]
         assert len(infra) == 0
 
     def test_excerpt_suffix_match_for_absolute_paths(self):
@@ -664,10 +662,18 @@ class TestCoverageGuard:
         resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "/home/user/repo/src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-                {"file": "/home/user/repo/lib/a.py", "start_line": 1,
-                 "end_line": 4, "content": "x\ny\nz\nw"},
+                {
+                    "file": "/home/user/repo/src/a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
+                {
+                    "file": "/home/user/repo/lib/a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "x\ny\nz\nw",
+                },
             ],
         )
 
@@ -675,10 +681,7 @@ class TestCoverageGuard:
             provider = build_l1_provider("real", resolved)
             findings, _excerpts, _usage, _duration = provider()
 
-        infra = [
-            f for f in findings
-            if "incomplete-coverage" in f.id
-        ]
+        infra = [f for f in findings if "incomplete-coverage" in f.id]
         assert len(infra) == 0
 
     def test_basename_fallback_for_bare_filenames(self):
@@ -702,8 +705,12 @@ class TestCoverageGuard:
         resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "b/foo.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                {
+                    "file": "b/foo.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
             ],
         )
 
@@ -711,10 +718,7 @@ class TestCoverageGuard:
             provider = build_l1_provider("real", resolved)
             findings, _excerpts, _usage, _duration = provider()
 
-        infra = [
-            f for f in findings
-            if "incomplete-coverage" in f.id
-        ]
+        infra = [f for f in findings if "incomplete-coverage" in f.id]
         assert len(infra) == 0
 
     def test_deleted_file_not_in_changed_set(self):
@@ -749,8 +753,12 @@ class TestCoverageGuard:
         resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                {
+                    "file": "src/a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
             ],
         )
 
@@ -758,27 +766,22 @@ class TestCoverageGuard:
         with patch("code_forge.llm_invoke.llm_invoke", return_value=resp):
             provider = build_l1_provider("real", resolved)
             findings, _, _, _ = provider()
-        infra = [
-            f for f in findings
-            if "incomplete-coverage" in f.id
-        ]
+        infra = [f for f in findings if "incomplete-coverage" in f.id]
         assert len(infra) >= 1, "guard must produce INFRA finding"
 
         # Guard bypassed: monkeypatch parse_diff_files to return empty
         # (no changed files -> guard has nothing to check -> no INFRA)
-        with patch("code_forge.llm_invoke.llm_invoke", return_value=resp), patch(
-            "code_forge.verify.parse_diff_files",
-            return_value={},
+        with (
+            patch("code_forge.llm_invoke.llm_invoke", return_value=resp),
+            patch(
+                "code_forge.verify.parse_diff_files",
+                return_value={},
+            ),
         ):
             provider2 = build_l1_provider("real", resolved)
             findings2, _, _, _ = provider2()
-        infra2 = [
-            f for f in findings2
-            if "incomplete-coverage" in f.id
-        ]
-        assert len(infra2) == 0, (
-            "with guard bypassed, no INFRA finding expected"
-        )
+        infra2 = [f for f in findings2 if "incomplete-coverage" in f.id]
+        assert len(infra2) == 0, "with guard bypassed, no INFRA finding expected"
 
 
 class TestInvokeFailureHandling:
@@ -792,6 +795,7 @@ class TestInvokeFailureHandling:
         resolved = _make_resolved("git")
 
         call_count = [0]
+
         def _side_effect(*a, **kw):
             call_count[0] += 1
             raise LLMInvokeError("auth failed", retryable=False)
@@ -812,15 +816,21 @@ class TestInvokeFailureHandling:
         good_resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
             ],
         )
 
         with patch("code_forge.llm_invoke.llm_invoke", return_value=good_resp) as mock:
             provider = build_l1_provider(
-                "real", resolved,
-                max_attempts=3, initial_delay_s=1.0,
+                "real",
+                resolved,
+                max_attempts=3,
+                initial_delay_s=1.0,
             )
             provider()
 
@@ -837,8 +847,12 @@ class TestInvokeFailureHandling:
         good_resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
             ],
         )
 
@@ -857,14 +871,20 @@ class TestInvokeFailureHandling:
         good_resp = _stub_llm_response(
             findings_json=[],
             excerpts_json=[
-                {"file": "a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+                {
+                    "file": "a.py",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "content": "line1\nadded\nline2\nline4",
+                },
             ],
         )
 
         with patch("code_forge.llm_invoke.llm_invoke", return_value=good_resp) as mock:
             provider = build_l1_provider(
-                "real", resolved, retry_timeout=True,
+                "real",
+                resolved,
+                retry_timeout=True,
             )
             provider()
 
@@ -888,9 +908,19 @@ class TestBuildSamplingL1Provider:
             content={
                 "findings": [],
                 "code_excerpts": [
-                    {"file": "src/a.py", "start_line": 1, "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-                    {"file": "src/b.py", "start_line": 5, "end_line": 8, "content": "line5\nadded2\nline6\nline8"},
-                ]
+                    {
+                        "file": "src/a.py",
+                        "start_line": 1,
+                        "end_line": 4,
+                        "content": "line1\nadded\nline2\nline4",
+                    },
+                    {
+                        "file": "src/b.py",
+                        "start_line": 5,
+                        "end_line": 8,
+                        "content": "line5\nadded2\nline6\nline8",
+                    },
+                ],
             },
             usage=Usage(0, 0),
             duration_s=0.1,
@@ -900,8 +930,10 @@ class TestBuildSamplingL1Provider:
         future = concurrent.futures.Future()
         future.set_result([good_resp, good_resp, good_resp])
 
-        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
             provider = build_sampling_l1_provider(session, loop, resolved)
             findings, excerpts, usage, _duration = provider()
 
@@ -929,16 +961,17 @@ class TestBuildSamplingL1Provider:
         # as UNTRUSTED audit data rather than dropped.
         bad_evidence = LLMResult(
             content={
-                "findings": [{
-                    "file": "src/a.py",
-                    "start_line": 2,
-                    "end_line": 2,
-                    "severity": "medium",
-                    "description": "something worth auditing",
-                }],
+                "findings": [
+                    {
+                        "file": "src/a.py",
+                        "start_line": 2,
+                        "end_line": 2,
+                        "severity": "medium",
+                        "description": "something worth auditing",
+                    }
+                ],
                 "code_excerpts": [
-                    {"file": "src/a.py", "start_line": 1, "end_line": 9,
-                     "content": "line1\nadded"},
+                    {"file": "src/a.py", "start_line": 1, "end_line": 9, "content": "line1\nadded"},
                 ],
             },
             usage=Usage(0, 0),
@@ -949,8 +982,10 @@ class TestBuildSamplingL1Provider:
         future = concurrent.futures.Future()
         future.set_result([bad_evidence, bad_evidence, bad_evidence])
 
-        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
             provider = build_sampling_l1_provider(session := MagicMock(), MagicMock(), resolved)
             assert session is not None
             findings, _excerpts, _usage, _duration = provider()
@@ -958,15 +993,14 @@ class TestBuildSamplingL1Provider:
         untrusted = [f for f in findings if f.source == "UNTRUSTED"]
         assert untrusted, "rejected evidence must survive as UNTRUSTED audit data"
         orphaned = [f for f in untrusted if f.backend != "mcp-sampling"]
-        assert not orphaned, (
-            "UNTRUSTED findings lost backend attribution: %r"
-            % [(f.id, f.backend) for f in orphaned]
-        )
+        assert not orphaned, "UNTRUSTED findings lost backend attribution: %r" % [
+            (f.id, f.backend) for f in orphaned
+        ]
 
     def test_build_sampling_l1_provider_empty_diff(self):
         from code_forge.factories import build_sampling_l1_provider
         from code_forge.llm_invoke import Usage
-        
+
         resolved = _make_resolved_with_diff("")
         provider = build_sampling_l1_provider(None, None, resolved)
         findings, excerpts, usage, duration = provider()
@@ -988,8 +1022,10 @@ class TestBuildSamplingL1Provider:
         future = MagicMock(spec=concurrent.futures.Future)
         future.result.side_effect = concurrent.futures.TimeoutError()
 
-        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(concurrent.futures.TimeoutError):
                 provider()
@@ -1011,12 +1047,12 @@ class TestBuildSamplingL1Provider:
         # invoke_sampling raises LLMInvokeError on truncation before
         # returning, so the future must propagate the exception.
         future = concurrent.futures.Future()
-        future.set_exception(LLMInvokeError(
-            "sampling response truncated (stopReason == maxTokens)"
-        ))
+        future.set_exception(LLMInvokeError("sampling response truncated (stopReason == maxTokens)"))
 
-        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(LLMInvokeError, match="truncated"):
                 provider()
@@ -1042,12 +1078,12 @@ class TestBuildSamplingL1Provider:
         loop = MagicMock()
 
         future = concurrent.futures.Future()
-        future.set_exception(LLMInvokeError(
-            "sampling response is empty (model=?, stopReason=?)"
-        ))
+        future.set_exception(LLMInvokeError("sampling response is empty (model=?, stopReason=?)"))
 
-        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(LLMInvokeError, match="empty"):
                 provider()
@@ -1065,14 +1101,18 @@ class TestBuildSamplingL1Provider:
         loop = MagicMock()
 
         future = concurrent.futures.Future()
-        future.set_result([
-            asyncio.CancelledError(),
-            asyncio.CancelledError(),
-            asyncio.CancelledError(),
-        ])
+        future.set_result(
+            [
+                asyncio.CancelledError(),
+                asyncio.CancelledError(),
+                asyncio.CancelledError(),
+            ]
+        )
 
-        with patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)):
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
             provider = build_sampling_l1_provider(session, loop, resolved)
             with pytest.raises(asyncio.CancelledError):
                 provider()
@@ -1082,18 +1122,17 @@ class TestParallelL1:
     """Parallel execution: determinism, no-lost-work, failure isolation."""
 
     _EXCERPTS: ClassVar[list[dict]] = [
-        {"file": "src/a.py", "start_line": 1, "end_line": 4,
-         "content": "line1\nadded\nline2\nline4"},
-        {"file": "src/b.py", "start_line": 5, "end_line": 8,
-         "content": "line5\nadded2\nline6\nline8"},
+        {"file": "src/a.py", "start_line": 1, "end_line": 4, "content": "line1\nadded\nline2\nline4"},
+        {"file": "src/b.py", "start_line": 5, "end_line": 8, "content": "line5\nadded2\nline6\nline8"},
     ]
 
     @staticmethod
     def _api_backend():
         from code_forge.backend import BackendConfig
+
         return BackendConfig(
-            name="test-api", type="api", model="test",
-            format="openai", base_url="http://test")
+            name="test-api", type="api", model="test", format="openai", base_url="http://test"
+        )
 
     def test_cli_backend_stays_serial(self):
         """CLI backend must not enter ThreadPoolExecutor path."""
@@ -1103,8 +1142,8 @@ class TestParallelL1:
         from code_forge.factories import build_l1_provider
 
         cli_backend = BackendConfig(
-            name="test-cli", type="cli", model="test",
-            format=None, base_url=None)
+            name="test-cli", type="cli", model="test", format=None, base_url=None
+        )
 
         def mock_invoke(prompt, **kw):
             if "structural code reviewer" in prompt:
@@ -1114,17 +1153,19 @@ class TestParallelL1:
             else:
                 line = 3
             return _stub_llm_response(
-                [{"file": "src/a.py", "line": line, "severity": "P2",
-                  "description": "cli-finding"}], self._EXCERPTS)
+                [{"file": "src/a.py", "line": line, "severity": "P2", "description": "cli-finding"}],
+                self._EXCERPTS,
+            )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   side_effect=mock_invoke), \
-             patch("concurrent.futures.ThreadPoolExecutor",
-                   side_effect=AssertionError(
-                       "ThreadPoolExecutor must not be used")):
-            provider = build_l1_provider(
-                "auto", resolved, backend=cli_backend)
+        with (
+            patch("code_forge.llm_invoke.llm_invoke", side_effect=mock_invoke),
+            patch(
+                "concurrent.futures.ThreadPoolExecutor",
+                side_effect=AssertionError("ThreadPoolExecutor must not be used"),
+            ),
+        ):
+            provider = build_l1_provider("auto", resolved, backend=cli_backend)
             findings, _, _, _ = provider()
 
         assert len(findings) == 3
@@ -1138,21 +1179,19 @@ class TestParallelL1:
 
         from code_forge.factories import build_l1_provider
 
-        shared = {"file": "src/a.py", "line": 1, "severity": "P2",
-                  "description": "shared issue"}
+        shared = {"file": "src/a.py", "line": 1, "severity": "P2", "description": "shared issue"}
 
         def mock_invoke(prompt, **kw):
             if "structural code reviewer" in prompt or "senior engineer" in prompt:
                 return _stub_llm_response([shared], self._EXCERPTS)
             return _stub_llm_response(
-                [{"file": "src/a.py", "line": 3, "severity": "P3",
-                  "description": "unique-adv"}], self._EXCERPTS)
+                [{"file": "src/a.py", "line": 3, "severity": "P3", "description": "unique-adv"}],
+                self._EXCERPTS,
+            )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   side_effect=mock_invoke):
-            provider = build_l1_provider(
-                "auto", resolved, backend=self._api_backend())
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=mock_invoke):
+            provider = build_l1_provider("auto", resolved, backend=self._api_backend())
             findings, _, _, _ = provider()
 
         # qodo@line1, expert@line1, adversarial@line3 = 3 distinct fps
@@ -1167,21 +1206,22 @@ class TestParallelL1:
         def mock_invoke(prompt, **kw):
             if "structural code reviewer" in prompt:
                 return _stub_llm_response(
-                    [{"file": "src/a.py", "line": 1, "severity": "P2",
-                      "description": "from-qodo"}], self._EXCERPTS)
+                    [{"file": "src/a.py", "line": 1, "severity": "P2", "description": "from-qodo"}],
+                    self._EXCERPTS,
+                )
             elif "senior engineer" in prompt:
                 return _stub_llm_response(
-                    [{"file": "src/a.py", "line": 2, "severity": "P1",
-                      "description": "from-expert"}], self._EXCERPTS)
+                    [{"file": "src/a.py", "line": 2, "severity": "P1", "description": "from-expert"}],
+                    self._EXCERPTS,
+                )
             return _stub_llm_response(
-                [{"file": "src/a.py", "line": 3, "severity": "P3",
-                  "description": "from-adversarial"}], self._EXCERPTS)
+                [{"file": "src/a.py", "line": 3, "severity": "P3", "description": "from-adversarial"}],
+                self._EXCERPTS,
+            )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   side_effect=mock_invoke):
-            provider = build_l1_provider(
-                "auto", resolved, backend=self._api_backend())
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=mock_invoke):
+            provider = build_l1_provider("auto", resolved, backend=self._api_backend())
             findings, _, usage, _ = provider()
 
         assert len(findings) == 3
@@ -1214,16 +1254,18 @@ class TestParallelL1:
             else:
                 line = 3
             return _stub_llm_response(
-                [{"file": "src/a.py", "line": line, "severity": "P2",
-                  "description": "staggered"}], self._EXCERPTS)
+                [{"file": "src/a.py", "line": line, "severity": "P2", "description": "staggered"}],
+                self._EXCERPTS,
+            )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   side_effect=mock_invoke), \
-             patch("code_forge.factories.time.sleep", side_effect=mock_sleep):
+        with (
+            patch("code_forge.llm_invoke.llm_invoke", side_effect=mock_invoke),
+            patch("code_forge.factories.time.sleep", side_effect=mock_sleep),
+        ):
             provider = build_l1_provider(
-                "auto", resolved, backend=self._api_backend(),
-                pass_stagger_s=10.0)
+                "auto", resolved, backend=self._api_backend(), pass_stagger_s=10.0
+            )
             findings, _, _, _ = provider()
 
         assert len(findings) == 3
@@ -1241,20 +1283,19 @@ class TestParallelL1:
                 raise LLMInvokeError("expert timeout", is_timeout=True)
             if "structural code reviewer" in prompt:
                 return _stub_llm_response(
-                    [{"file": "src/a.py", "line": 1, "severity": "P2",
-                      "description": "qodo-finding"}], self._EXCERPTS)
+                    [{"file": "src/a.py", "line": 1, "severity": "P2", "description": "qodo-finding"}],
+                    self._EXCERPTS,
+                )
             return _stub_llm_response(
-                [{"file": "src/a.py", "line": 3, "severity": "P2",
-                  "description": "adv-finding"}], self._EXCERPTS)
+                [{"file": "src/a.py", "line": 3, "severity": "P2", "description": "adv-finding"}],
+                self._EXCERPTS,
+            )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         breaker = MagicMock()
 
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   side_effect=mock_invoke):
-            provider = build_l1_provider(
-                "auto", resolved, backend=self._api_backend(),
-                breaker=breaker)
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=mock_invoke):
+            provider = build_l1_provider("auto", resolved, backend=self._api_backend(), breaker=breaker)
             findings, _, _, _ = provider()
 
         infra = [f for f in findings if f.source == "INFRA"]
@@ -1275,20 +1316,19 @@ class TestParallelL1:
                 raise RuntimeError("unexpected crash")
             if "structural code reviewer" in prompt:
                 return _stub_llm_response(
-                    [{"file": "src/a.py", "line": 1, "severity": "P2",
-                      "description": "qodo-finding"}], self._EXCERPTS)
+                    [{"file": "src/a.py", "line": 1, "severity": "P2", "description": "qodo-finding"}],
+                    self._EXCERPTS,
+                )
             return _stub_llm_response(
-                [{"file": "src/a.py", "line": 3, "severity": "P2",
-                  "description": "adv-finding"}], self._EXCERPTS)
+                [{"file": "src/a.py", "line": 3, "severity": "P2", "description": "adv-finding"}],
+                self._EXCERPTS,
+            )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         breaker = MagicMock()
 
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   side_effect=mock_invoke):
-            provider = build_l1_provider(
-                "auto", resolved, backend=self._api_backend(),
-                breaker=breaker)
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=mock_invoke):
+            provider = build_l1_provider("auto", resolved, backend=self._api_backend(), breaker=breaker)
             findings, _, _, _ = provider()
 
         infra = [f for f in findings if f.source == "INFRA"]
@@ -1307,8 +1347,8 @@ class TestParallelL1:
         from code_forge.factories import build_l1_provider
 
         cli_backend = BackendConfig(
-            name="test-cli", type="cli", model="test",
-            format=None, base_url=None)
+            name="test-cli", type="cli", model="test", format=None, base_url=None
+        )
 
         def mock_invoke(prompt, **kw):
             if "senior engineer" in prompt:
@@ -1318,17 +1358,15 @@ class TestParallelL1:
             else:
                 line = 3
             return _stub_llm_response(
-                [{"file": "src/a.py", "line": line, "severity": "P2",
-                  "description": "cli-finding"}], self._EXCERPTS)
+                [{"file": "src/a.py", "line": line, "severity": "P2", "description": "cli-finding"}],
+                self._EXCERPTS,
+            )
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
         breaker = MagicMock()
 
-        with patch("code_forge.llm_invoke.llm_invoke",
-                   side_effect=mock_invoke):
-            provider = build_l1_provider(
-                "auto", resolved, backend=cli_backend,
-                breaker=breaker)
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=mock_invoke):
+            provider = build_l1_provider("auto", resolved, backend=cli_backend, breaker=breaker)
             findings, _, _, _ = provider()
 
         infra = [f for f in findings if f.source == "INFRA"]
@@ -1348,26 +1386,25 @@ class TestParallelL1:
 
         def _good(desc):
             return LLMResult(
-                content={"findings": [
-                    {"file": "src/a.py", "line": 1, "severity": "P2",
-                     "description": desc}],
-                    "code_excerpts": self._EXCERPTS},
-                usage=Usage(0, 0), duration_s=0.1, is_truncated=False)
+                content={
+                    "findings": [{"file": "src/a.py", "line": 1, "severity": "P2", "description": desc}],
+                    "code_excerpts": self._EXCERPTS,
+                },
+                usage=Usage(0, 0),
+                duration_s=0.1,
+                is_truncated=False,
+            )
 
         # Simulate: pass 0 OK, pass 1 timed out via wait_for, pass 2 OK
         future = concurrent.futures.Future()
-        future.set_result([
-            _good("qodo-f"),
-            TimeoutError("per-coroutine timeout"),
-            _good("adv-f")])
+        future.set_result([_good("qodo-f"), TimeoutError("per-coroutine timeout"), _good("adv-f")])
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        with patch("code_forge.llm_invoke.invoke_sampling",
-                   new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe",
-                   side_effect=_close_unrun_coro(future)):
-            provider = build_sampling_l1_provider(
-                MagicMock(), MagicMock(), resolved)
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
+            provider = build_sampling_l1_provider(MagicMock(), MagicMock(), resolved)
             findings, _, _, _ = provider()
 
         infra = [f for f in findings if f.source == "INFRA"]
@@ -1386,23 +1423,24 @@ class TestParallelL1:
 
         def _good(desc):
             return LLMResult(
-                content={"findings": [
-                    {"file": "src/a.py", "line": 1, "severity": "P2",
-                     "description": desc}],
-                    "code_excerpts": self._EXCERPTS},
-                usage=Usage(0, 0), duration_s=0.1, is_truncated=False)
+                content={
+                    "findings": [{"file": "src/a.py", "line": 1, "severity": "P2", "description": desc}],
+                    "code_excerpts": self._EXCERPTS,
+                },
+                usage=Usage(0, 0),
+                duration_s=0.1,
+                is_truncated=False,
+            )
 
         future = concurrent.futures.Future()
-        future.set_result([
-            _good("qodo-f"), RuntimeError("boom"), _good("adv-f")])
+        future.set_result([_good("qodo-f"), RuntimeError("boom"), _good("adv-f")])
 
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
-        with patch("code_forge.llm_invoke.invoke_sampling",
-                   new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe",
-                   side_effect=_close_unrun_coro(future)):
-            provider = build_sampling_l1_provider(
-                MagicMock(), MagicMock(), resolved)
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+        ):
+            provider = build_sampling_l1_provider(MagicMock(), MagicMock(), resolved)
             findings, _, _, _ = provider()
 
         infra = [f for f in findings if f.source == "INFRA"]
@@ -1425,10 +1463,17 @@ class TestDurationWallClock:
         backend = SimpleNamespace(type="api", name="test")
 
         good_resp = LLMResult(
-            content=_stub_llm_response([], [
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-            ]).content,
+            content=_stub_llm_response(
+                [],
+                [
+                    {
+                        "file": "src/a.py",
+                        "start_line": 1,
+                        "end_line": 4,
+                        "content": "line1\nadded\nline2\nline4",
+                    },
+                ],
+            ).content,
             usage=LLMUsage(input_tokens=10, output_tokens=10),
             duration_s=0.1,
         )
@@ -1437,13 +1482,12 @@ class TestDurationWallClock:
         # (_t0 and _parallel_wall). Returns 100.0 then 100.05,
         # so _parallel_wall = 0.05.
         clock = iter([100.0, 100.05])
-        with patch("code_forge.llm_invoke.llm_invoke",
-                    return_value=good_resp), \
-             patch("code_forge.factories.time.monotonic",
-                    side_effect=clock), \
-             patch("code_forge.factories.progress.emit"):
-            provider = build_l1_provider("real", resolved,
-                                         backend=backend)
+        with (
+            patch("code_forge.llm_invoke.llm_invoke", return_value=good_resp),
+            patch("code_forge.factories.time.monotonic", side_effect=clock),
+            patch("code_forge.factories.progress.emit"),
+        ):
+            provider = build_l1_provider("real", resolved, backend=backend)
             _, _, _, duration = provider()
 
         # Wall-clock override: 0.05s, NOT 0.3s (sum of 3x0.1s).
@@ -1465,24 +1509,27 @@ class TestDurationWallClock:
         def _slow_invoke(*a, **kw):
             _time.sleep(0.1)
             return LLMResult(
-                content=_stub_llm_response([], [
-                    {"file": "src/a.py", "start_line": 1,
-                     "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-                ]).content,
+                content=_stub_llm_response(
+                    [],
+                    [
+                        {
+                            "file": "src/a.py",
+                            "start_line": 1,
+                            "end_line": 4,
+                            "content": "line1\nadded\nline2\nline4",
+                        },
+                    ],
+                ).content,
                 usage=LLMUsage(input_tokens=10, output_tokens=10),
                 duration_s=0.1,
             )
 
-        with patch("code_forge.llm_invoke.llm_invoke",
-                    side_effect=_slow_invoke):
-            provider = build_l1_provider("real", resolved,
-                                         backend=backend)
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_slow_invoke):
+            provider = build_l1_provider("real", resolved, backend=backend)
             _, _, _, duration = provider()
 
         # 3 passes * 0.1s = ~0.3s sum
-        assert duration > 0.28, (
-            f"serial duration should be sum; got {duration:.3f}"
-        )
+        assert duration > 0.28, f"serial duration should be sum; got {duration:.3f}"
 
     def test_sampling_parallel_duration_is_wall_clock(self):
         """Sampling asyncio.gather path: wall-clock, not sum."""
@@ -1496,10 +1543,17 @@ class TestDurationWallClock:
         resolved = _make_resolved_with_diff(_TWO_FILE_DIFF)
 
         good_resp = LLMResult(
-            content={"findings": [], "code_excerpts": [
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-            ]},
+            content={
+                "findings": [],
+                "code_excerpts": [
+                    {
+                        "file": "src/a.py",
+                        "start_line": 1,
+                        "end_line": 4,
+                        "content": "line1\nadded\nline2\nline4",
+                    },
+                ],
+            },
             usage=LLMUsage(0, 0),
             duration_s=0.1,
         )
@@ -1509,14 +1563,12 @@ class TestDurationWallClock:
 
         # Mock time.monotonic: two calls per sampling path.
         clock = iter([100.0, 100.05])
-        with patch("code_forge.llm_invoke.invoke_sampling",
-                   new_callable=MagicMock), \
-             patch("asyncio.run_coroutine_threadsafe",
-                   side_effect=_close_unrun_coro(future)), \
-             patch("code_forge.factories.time.monotonic",
-                   side_effect=clock):
-            provider = build_sampling_l1_provider(
-                MagicMock(), MagicMock(), resolved)
+        with (
+            patch("code_forge.llm_invoke.invoke_sampling", new_callable=MagicMock),
+            patch("asyncio.run_coroutine_threadsafe", side_effect=_close_unrun_coro(future)),
+            patch("code_forge.factories.time.monotonic", side_effect=clock),
+        ):
+            provider = build_sampling_l1_provider(MagicMock(), MagicMock(), resolved)
             _, _, _, duration = provider()
 
         # Wall-clock override: 0.05s, NOT 0.3s (sum of 3x0.1s).
@@ -1539,34 +1591,40 @@ class TestDurationWallClock:
         backend = SimpleNamespace(type="cli", name="cli")
 
         call_count = [0]
+
         def _first_fails(*a, **kw):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise LLMInvokeError(
-                    "timeout", is_timeout=True,
-                    retryable=False, duration_s=0.15,
+                    "timeout",
+                    is_timeout=True,
+                    retryable=False,
+                    duration_s=0.15,
                 )
             return LLMResult(
-                content=_stub_llm_response([], [
-                    {"file": "src/a.py", "start_line": 1,
-                     "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-                ]).content,
+                content=_stub_llm_response(
+                    [],
+                    [
+                        {
+                            "file": "src/a.py",
+                            "start_line": 1,
+                            "end_line": 4,
+                            "content": "line1\nadded\nline2\nline4",
+                        },
+                    ],
+                ).content,
                 usage=LLMUsage(input_tokens=10, output_tokens=10),
                 duration_s=0.1,
             )
 
-        with patch("code_forge.llm_invoke.llm_invoke",
-                    side_effect=_first_fails):
-            provider = build_l1_provider("real", resolved,
-                                         backend=backend)
+        with patch("code_forge.llm_invoke.llm_invoke", side_effect=_first_fails):
+            provider = build_l1_provider("real", resolved, backend=backend)
             _, _, _, duration = provider()
 
         # Failed pass contributes 0.15s, successful passes 0.1s each
         # (2 passes). Total = 0.15 + 0.1 + 0.1 = 0.35s.
         # Without the accumulation line, total = 0.2s (only successes).
-        assert duration >= 0.30, (
-            f"failed pass duration should be counted; got {duration:.3f}"
-        )
+        assert duration >= 0.30, f"failed pass duration should be counted; got {duration:.3f}"
 
 
 class TestPassTokenLine:
@@ -1580,15 +1638,15 @@ class TestPassTokenLine:
     def test_cached_present_when_positive(self):
         from code_forge.factories import _pass_token_line
         from code_forge.llm_invoke import Usage
-        line = _pass_token_line("mimo-pro", "qodo",
-                                Usage(31, 16, 6720))
+
+        line = _pass_token_line("mimo-pro", "qodo", Usage(31, 16, 6720))
         assert line == "[mimo-pro:qodo] 31 in / 16 out tokens (6720 cached)\n"
 
     def test_cached_absent_when_zero(self):
         from code_forge.factories import _pass_token_line
         from code_forge.llm_invoke import Usage
-        line = _pass_token_line("deepseek", "expert",
-                                Usage(16974, 8605, 0))
+
+        line = _pass_token_line("deepseek", "expert", Usage(16974, 8605, 0))
         assert line == "[deepseek:expert] 16974 in / 8605 out tokens\n"
 
 
@@ -1645,8 +1703,7 @@ class TestSharedPromptPrefix:
         # means something non-shared was emitted early.
         assert len(common) > shortest * 0.9, (
             "shared prefix is %d chars of a %d char prompt; the passes are "
-            "diverging early and no backend can cache across them"
-            % (len(common), shortest)
+            "diverging early and no backend can cache across them" % (len(common), shortest)
         )
 
     def test_role_sentence_is_not_at_the_start(self):
@@ -1659,13 +1716,9 @@ class TestSharedPromptPrefix:
         # prefix. ("You are a " itself is common to all three and may sit
         # inside the prefix -- only the role that follows it is per-pass.)
         for prompt, role in zip(prompts, ROLE_NAMES):
-            assert role not in common, (
-                f"role {role!r} appears in the shared prefix"
-            )
-            assert role in prompt[len(common):], (
-                f"role {role!r} is not in this pass's divergent tail"
-            )
-        tails = [p[len(common):] for p in prompts]
+            assert role not in common, f"role {role!r} appears in the shared prefix"
+            assert role in prompt[len(common) :], f"role {role!r} is not in this pass's divergent tail"
+        tails = [p[len(common) :] for p in prompts]
         assert all(t.strip() for t in tails), "a pass has an empty tail"
         assert len(set(tails)) == 3, "the three tails are not distinct"
 
@@ -1676,8 +1729,7 @@ class TestSharedPromptPrefix:
 
         common = os.path.commonprefix(prompts)
         assert "src/a.py" in common, (
-            "the diff body falls outside the shared prefix, so each pass "
-            "re-sends it uncached"
+            "the diff body falls outside the shared prefix, so each pass re-sends it uncached"
         )
 
 
@@ -1712,10 +1764,11 @@ class TestSamplingSharedPromptPrefix:
         t = threading.Thread(target=loop.run_forever, daemon=True)
         t.start()
         try:
-            with patch("code_forge.llm_invoke.invoke_sampling",
-                       side_effect=_fake_sampling):
+            with patch("code_forge.llm_invoke.invoke_sampling", side_effect=_fake_sampling):
                 provider = build_sampling_l1_provider(
-                    session=SimpleNamespace(), loop=loop, resolved=resolved,
+                    session=SimpleNamespace(),
+                    loop=loop,
+                    resolved=resolved,
                 )
                 provider()
         finally:
@@ -1732,12 +1785,9 @@ class TestSamplingSharedPromptPrefix:
         common = os.path.commonprefix(prompts)
         shortest = min(len(p) for p in prompts)
         assert len(common) > shortest * 0.9, (
-            "sampling: shared prefix is %d chars of a %d char prompt"
-            % (len(common), shortest)
+            "sampling: shared prefix is %d chars of a %d char prompt" % (len(common), shortest)
         )
-        assert "src/a.py" in common, (
-            "sampling: the diff body falls outside the shared prefix"
-        )
+        assert "src/a.py" in common, "sampling: the diff body falls outside the shared prefix"
 
 
 class TestSplitContextInPrompt:
@@ -1750,15 +1800,23 @@ class TestSplitContextInPrompt:
 
         def _capture(prompt, *a, **kw):
             seen.append(prompt)
-            return _stub_llm_response(findings_json=[], excerpts_json=[
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-            ])
+            return _stub_llm_response(
+                findings_json=[],
+                excerpts_json=[
+                    {
+                        "file": "src/a.py",
+                        "start_line": 1,
+                        "end_line": 4,
+                        "content": "line1\nadded\nline2\nline4",
+                    },
+                ],
+            )
 
         resolved = _make_resolved_with_diff(_ONE_FILE_DIFF)
         with patch("code_forge.llm_invoke.llm_invoke", side_effect=_capture):
             build_l1_provider(
-                "real", resolved,
+                "real",
+                resolved,
                 split_context="cli.py (integration) uses RulepackRunner",
             )()
         assert seen
@@ -1773,10 +1831,17 @@ class TestSplitContextInPrompt:
 
         def _capture(prompt, *a, **kw):
             seen.append(prompt)
-            return _stub_llm_response(findings_json=[], excerpts_json=[
-                {"file": "src/a.py", "start_line": 1,
-                 "end_line": 4, "content": "line1\nadded\nline2\nline4"},
-            ])
+            return _stub_llm_response(
+                findings_json=[],
+                excerpts_json=[
+                    {
+                        "file": "src/a.py",
+                        "start_line": 1,
+                        "end_line": 4,
+                        "content": "line1\nadded\nline2\nline4",
+                    },
+                ],
+            )
 
         resolved = _make_resolved_with_diff(_ONE_FILE_DIFF)
         with patch("code_forge.llm_invoke.llm_invoke", side_effect=_capture):
@@ -1819,20 +1884,22 @@ class TestGroupedL1Provider:
         return result, prompts
 
     _B_ONLY_DIFF = (
-        "diff --git a/src/b.py b/src/b.py\n"
-        "--- a/src/b.py\n"
-        "+++ b/src/b.py\n"
-        "@@ -1 +1,2 @@\n"
-        " keep\n"
-        "+new\n"
+        "diff --git a/src/b.py b/src/b.py\n--- a/src/b.py\n+++ b/src/b.py\n@@ -1 +1,2 @@\n keep\n+new\n"
     )
 
     def test_each_group_gets_three_passes_with_its_own_diff(self):
         def reply(i):
-            return _stub_llm_response(findings_json=[{
-                "file": "src/a.py", "line": 2,
-                "description": "finding-%d" % i, "severity": "P3",
-            }], excerpts_json=[])
+            return _stub_llm_response(
+                findings_json=[
+                    {
+                        "file": "src/a.py",
+                        "line": 2,
+                        "description": "finding-%d" % i,
+                        "severity": "P3",
+                    }
+                ],
+                excerpts_json=[],
+            )
 
         specs = [
             self._spec("engine:a.py", _ONE_FILE_DIFF, "ctx-A"),
@@ -1850,10 +1917,14 @@ class TestGroupedL1Provider:
         assert len(findings) == 3  # dedup across groups, one per pass
 
     def test_identical_finding_across_groups_dedupes(self):
-        same = [{
-            "file": "src/a.py", "line": 2,
-            "description": "same defect seen twice", "severity": "P2",
-        }]
+        same = [
+            {
+                "file": "src/a.py",
+                "line": 2,
+                "description": "same defect seen twice",
+                "severity": "P2",
+            }
+        ]
 
         def reply(i):
             return _stub_llm_response(findings_json=same, excerpts_json=[])
@@ -1871,13 +1942,19 @@ class TestGroupedL1Provider:
 
     def test_usage_sums_across_groups(self):
         def reply(i):
-            return _stub_llm_response(findings_json=[{
-                "file": "src/a.py", "line": 2,
-                "description": "f%d" % i, "severity": "P3",
-            }], excerpts_json=[])
+            return _stub_llm_response(
+                findings_json=[
+                    {
+                        "file": "src/a.py",
+                        "line": 2,
+                        "description": "f%d" % i,
+                        "severity": "P3",
+                    }
+                ],
+                excerpts_json=[],
+            )
 
-        specs = [self._spec("g1", _ONE_FILE_DIFF),
-                 self._spec("g2", _TWO_FILE_DIFF)]
+        specs = [self._spec("g1", _ONE_FILE_DIFF), self._spec("g2", _TWO_FILE_DIFF)]
         (_f, _e, usage, _d), _ = self._run(specs, reply)
         # _stub_llm_response returns Usage(10, 10) per call, 6 calls total
         assert usage.input_tokens == 60

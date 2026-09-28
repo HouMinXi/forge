@@ -1,4 +1,5 @@
 """Executable counterexamples for disputed review assumptions."""
+
 import os
 
 import pytest
@@ -31,7 +32,8 @@ def test_source_name_and_row_provenance_are_distinct():
 def test_guard_constructs_remain_distinct():
     rows = source(".")._text_rows("#if IS_ENABLED(CONFIG_X)", "x.c", "new", 1)
     assert {row.entity for row in rows} == {
-        "guard:new:1:if:CONFIG_X", "guard:new:1:IS_ENABLED:CONFIG_X",
+        "guard:new:1:if:CONFIG_X",
+        "guard:new:1:IS_ENABLED:CONFIG_X",
     }
 
 

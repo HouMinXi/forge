@@ -30,8 +30,7 @@ class TestReExportCompleteness:
     def test_every_exit_code_is_reachable_from_the_package_root(self):
         missing = _exit_constants(exit_codes) - _exit_constants(code_forge)
         assert not missing, (
-            f"defined in exit_codes but not importable from code_forge: "
-            f"{sorted(missing)}"
+            f"defined in exit_codes but not importable from code_forge: {sorted(missing)}"
         )
 
     def test_all_lists_every_re_exported_constant(self):

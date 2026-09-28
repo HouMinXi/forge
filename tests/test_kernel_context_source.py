@@ -1,4 +1,5 @@
 """Kernel observations never claim effective build configuration."""
+
 import hashlib
 import importlib
 import os
@@ -26,18 +27,44 @@ def source(tmp_path, **kw):
     )
 
 
-@pytest.mark.parametrize("section", [None, [], False, {"alien": 1}, {"enabled": 1},
-    {"enabled": "true"}, {"max_rows": True}, {"max_chars": False},
-    {"max_rows": 0}, {"max_rows": 201}, {"max_chars": 511}, {"max_chars": 32001},
-    {"defconfig": 1}, {"defconfig": "../outside"}, {"defconfig": "/etc/passwd"},
-    {"defconfig": "a/../b"}, {"defconfig": "a\x00b"}, {"enabled": True}])
+@pytest.mark.parametrize(
+    "section",
+    [
+        None,
+        [],
+        False,
+        {"alien": 1},
+        {"enabled": 1},
+        {"enabled": "true"},
+        {"max_rows": True},
+        {"max_chars": False},
+        {"max_rows": 0},
+        {"max_rows": 201},
+        {"max_chars": 511},
+        {"max_chars": 32001},
+        {"defconfig": 1},
+        {"defconfig": "../outside"},
+        {"defconfig": "/etc/passwd"},
+        {"defconfig": "a/../b"},
+        {"defconfig": "a\x00b"},
+        {"enabled": True},
+    ],
+)
 def test_invalid_config_even_when_disabled(section):
     with pytest.raises(ValueError, match="kernel_context"):
         module().validate_kernel_context(section)
 
 
-@pytest.mark.parametrize("section", [{}, {"enabled": False}, {"defconfig": "a//./b"},
-    {"max_rows": 1, "max_chars": 512}, {"max_rows": 200, "max_chars": 32000}])
+@pytest.mark.parametrize(
+    "section",
+    [
+        {},
+        {"enabled": False},
+        {"defconfig": "a//./b"},
+        {"max_rows": 1, "max_chars": 512},
+        {"max_rows": 200, "max_chars": 32000},
+    ],
+)
 def test_disabled_factory_does_not_read(tmp_path, section):
     with patch("os.open", side_effect=AssertionError("unexpected read")):
         assert module().KernelContextSource.from_gate(tmp_path, {"kernel_context": section}) is None
@@ -50,18 +77,22 @@ def test_config_normalized_and_frozen():
         cfg.enabled = False
 
 
-@pytest.mark.parametrize(("line", "symbols"), [
-    ('default "CONFIG_FOO"', set()),
-    ('default "CONFIG_FOO" if X86', {"CONFIG_X86"}),
-    ('default "CONFIG_FOO\\\"CONFIG_BAR" if X86', {"CONFIG_X86"}),
-    ('default "CONFIG_FOO', set()),
-    ('default 64', set()),
-    ('default 100 if X86', {"CONFIG_X86"}),
-    ('depends on 64BIT || A_SYM || B_SYM', {"CONFIG_64BIT", "CONFIG_A_SYM", "CONFIG_B_SYM"}),
-    ('depends on CONFIG_lower || CONFIG_UPPER', {"CONFIG_lower", "CONFIG_UPPER"}),
-    ('config lower', {"CONFIG_lower"}),
-    ('# CONFIG_FOO', set()), ('  help CONFIG_FOO', set()),
-])
+@pytest.mark.parametrize(
+    ("line", "symbols"),
+    [
+        ('default "CONFIG_FOO"', set()),
+        ('default "CONFIG_FOO" if X86', {"CONFIG_X86"}),
+        ('default "CONFIG_FOO\\"CONFIG_BAR" if X86', {"CONFIG_X86"}),
+        ('default "CONFIG_FOO', set()),
+        ("default 64", set()),
+        ("default 100 if X86", {"CONFIG_X86"}),
+        ("depends on 64BIT || A_SYM || B_SYM", {"CONFIG_64BIT", "CONFIG_A_SYM", "CONFIG_B_SYM"}),
+        ("depends on CONFIG_lower || CONFIG_UPPER", {"CONFIG_lower", "CONFIG_UPPER"}),
+        ("config lower", {"CONFIG_lower"}),
+        ("# CONFIG_FOO", set()),
+        ("  help CONFIG_FOO", set()),
+    ],
+)
 def test_kconfig_final_candidates_control_reads(tmp_path, line, symbols):
     (tmp_path / "defconfig").write_text("CONFIG_X86=y\n", encoding="utf-8")
     src = source(tmp_path)
@@ -93,32 +124,45 @@ def test_snapshot_uses_working_bytes_once(tmp_path):
     assert "SECRET" not in src.rendered_text
     (tmp_path / "defconfig").write_text("CONFIG_X=n\n", encoding="utf-8")
     assert src.facts([], diff(["CONFIG_X"])) == rows
-    assert source(tmp_path).facts([], diff(["CONFIG_X"]))[0].dependents == "declared=n; effective=unknown"
+    assert (
+        source(tmp_path).facts([], diff(["CONFIG_X"]))[0].dependents == "declared=n; effective=unknown"
+    )
 
 
-@pytest.mark.parametrize(("body", "expected"), [
-    ("CONFIG_X=y\n", "declared=y; effective=unknown"),
-    ("CONFIG_X=m  \n", "declared=m; effective=unknown"),
-    ("# CONFIG_X is not set\n", "declared=n; effective=unknown"),
-    ("CONFIG_X=123\n", "declared=123; effective=unknown"),
-    ("CONFIG_X=0xff\n", "declared=0xff; effective=unknown"),
-    ('CONFIG_X="abc"\n', 'declared="abc"; effective=unknown'),
-    ("CONFIG_X=y # comment\n", "unknown; reason=ambiguous-declaration"),
-    ("CONFIG_X=y\nCONFIG_X=n\n", "unknown; reason=ambiguous-declaration"),
-    ("", "unknown; reason=not-declared"),
-])
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("CONFIG_X=y\n", "declared=y; effective=unknown"),
+        ("CONFIG_X=m  \n", "declared=m; effective=unknown"),
+        ("# CONFIG_X is not set\n", "declared=n; effective=unknown"),
+        ("CONFIG_X=123\n", "declared=123; effective=unknown"),
+        ("CONFIG_X=0xff\n", "declared=0xff; effective=unknown"),
+        ('CONFIG_X="abc"\n', 'declared="abc"; effective=unknown'),
+        ("CONFIG_X=y # comment\n", "unknown; reason=ambiguous-declaration"),
+        ("CONFIG_X=y\nCONFIG_X=n\n", "unknown; reason=ambiguous-declaration"),
+        ("", "unknown; reason=not-declared"),
+    ],
+)
 def test_declared_literals_not_effective_values(tmp_path, body, expected):
     (tmp_path / "defconfig").write_text(body, encoding="utf-8")
     assert source(tmp_path).facts([], diff(["CONFIG_X"]))[0].dependents == expected
 
 
-@pytest.mark.parametrize("kind", ["symlink", "parent-symlink", "fifo", "directory", "large", "encoding", "missing"])
+@pytest.mark.parametrize(
+    "kind", ["symlink", "parent-symlink", "fifo", "directory", "large", "encoding", "missing"]
+)
 def test_safe_read_failures(tmp_path, kind, monkeypatch):
     cfg = tmp_path / "defconfig"
     name = "defconfig"
-    reasons = {"symlink": "symlink-rejected", "parent-symlink": "symlink-rejected",
-        "fifo": "not-regular-file", "directory": "not-regular-file", "large": "file-size-exceeded",
-        "encoding": "invalid-encoding", "missing": "read-failed"}
+    reasons = {
+        "symlink": "symlink-rejected",
+        "parent-symlink": "symlink-rejected",
+        "fifo": "not-regular-file",
+        "directory": "not-regular-file",
+        "large": "file-size-exceeded",
+        "encoding": "invalid-encoding",
+        "missing": "read-failed",
+    }
     if kind == "symlink":
         cfg.symlink_to("/etc/passwd")
     elif kind == "parent-symlink":
@@ -134,8 +178,10 @@ def test_safe_read_failures(tmp_path, kind, monkeypatch):
         cfg.write_bytes(b"\xff")
     src = source(tmp_path, defconfig=name)
     if kind == "large":
+
         def unexpected_read(*args):
             raise AssertionError("oversized file must be rejected before any content read")
+
         monkeypatch.setattr(os, "read", unexpected_read)
     rows = src.facts([], diff(["CONFIG_X"]))
     assert rows[0].dependents == f"unknown; reason={reasons[kind]}"

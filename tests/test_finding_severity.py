@@ -16,6 +16,7 @@ Two consequences, both measured below:
 The severity was never missing -- `parse_reviewer_json` validates it
 against {"P0","P1","P2","P3"} and then dropped it on the floor.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,9 +56,12 @@ def _finding(**kw) -> StateFinding:
 
 class TestSeveritySurvivesParsing:
     def test_parse_carries_severity_through(self):
-        findings = _parse(_envelope(
-            severity="P3", description="variable name could be clearer",
-        ))
+        findings = _parse(
+            _envelope(
+                severity="P3",
+                description="variable name could be clearer",
+            )
+        )
         assert findings[0].severity == "P3"
 
     @pytest.mark.parametrize("sev", ["P0", "P1", "P2", "P3"])
@@ -76,28 +80,20 @@ class TestSeverityReachesTheGate:
 
     def test_p0_and_p3_are_distinguishable(self):
         """They were not, which is the whole defect."""
-        assert _severity_tier(_finding(severity="P0")) != _severity_tier(
-            _finding(severity="P3")
-        )
+        assert _severity_tier(_finding(severity="P0")) != _severity_tier(_finding(severity="P3"))
 
 
 class TestFallbacksStillWork:
     """Findings forge raises itself carry no reviewer opinion."""
 
     def test_description_prefix_is_still_honoured(self):
-        assert _severity_tier(
-            _finding(severity=None, description="P3: naming", source="L0")
-        ) == "P3"
+        assert _severity_tier(_finding(severity=None, description="P3: naming", source="L0")) == "P3"
 
     def test_unprefixed_l0_defaults_to_p1(self):
-        assert _severity_tier(
-            _finding(severity=None, description="no prefix", source="L0")
-        ) == "P1"
+        assert _severity_tier(_finding(severity=None, description="no prefix", source="L0")) == "P1"
 
     def test_unprefixed_other_defaults_to_p2(self):
-        assert _severity_tier(
-            _finding(severity=None, description="no prefix", source="MUTANT")
-        ) == "P2"
+        assert _severity_tier(_finding(severity=None, description="no prefix", source="MUTANT")) == "P2"
 
     def test_a_bogus_severity_falls_through(self):
         """A value outside the enum must not be trusted as a tier.
@@ -105,9 +101,7 @@ class TestFallbacksStillWork:
         parse_reviewer_json validates, but state.json can be edited by
         hand and a finding can arrive from an older writer.
         """
-        assert _severity_tier(
-            _finding(severity="URGENT", description="no prefix", source="L0")
-        ) == "P1"
+        assert _severity_tier(_finding(severity="URGENT", description="no prefix", source="L0")) == "P1"
 
     @pytest.mark.parametrize("bogus", ["", "  ", "p1", "P1 ", "P4", "0"])
     def test_near_miss_severities_all_fall_through(self, bogus):
@@ -117,9 +111,7 @@ class TestFallbacksStillWork:
         human reading state.json, and an `in` check against the tuple
         rejects them, but a looser comparison would not.
         """
-        assert _severity_tier(
-            _finding(severity=bogus, description="no prefix", source="MUTANT")
-        ) == "P2"
+        assert _severity_tier(_finding(severity=bogus, description="no prefix", source="MUTANT")) == "P2"
 
 
 class TestParserRejectsBogusSeverity:
@@ -131,25 +123,46 @@ class TestParserRejectsBogusSeverity:
     """
 
     def test_direct_call_with_a_bogus_severity_stores_none(self):
-        data = {"findings": [{
-            "file": "a.py", "line": 1,
-            "severity": "URGENT", "description": "x",
-        }], "code_excerpts": []}
+        data = {
+            "findings": [
+                {
+                    "file": "a.py",
+                    "line": 1,
+                    "severity": "URGENT",
+                    "description": "x",
+                }
+            ],
+            "code_excerpts": [],
+        }
         findings = _json_to_state_findings(data, "qodo")
         assert findings[0].severity is None
 
     def test_direct_call_with_a_missing_severity_stores_none(self):
-        data = {"findings": [{
-            "file": "a.py", "line": 1, "description": "x",
-        }], "code_excerpts": []}
+        data = {
+            "findings": [
+                {
+                    "file": "a.py",
+                    "line": 1,
+                    "description": "x",
+                }
+            ],
+            "code_excerpts": [],
+        }
         findings = _json_to_state_findings(data, "qodo")
         assert findings[0].severity is None
 
     def test_a_valid_severity_still_survives_a_direct_call(self):
-        data = {"findings": [{
-            "file": "a.py", "line": 1,
-            "severity": "P0", "description": "x",
-        }], "code_excerpts": []}
+        data = {
+            "findings": [
+                {
+                    "file": "a.py",
+                    "line": 1,
+                    "severity": "P0",
+                    "description": "x",
+                }
+            ],
+            "code_excerpts": [],
+        }
         findings = _json_to_state_findings(data, "qodo")
         assert findings[0].severity == "P0"
 
@@ -161,11 +174,14 @@ class TestParserRejectsBogusSeverity:
         A string where a finding object belongs used to reach .get() and
         abort the whole review with an AttributeError.
         """
-        data = {"findings": [
-            "not a dict",
-            None,
-            {"file": "a.py", "line": 1, "severity": "P1", "description": "x"},
-        ], "code_excerpts": []}
+        data = {
+            "findings": [
+                "not a dict",
+                None,
+                {"file": "a.py", "line": 1, "severity": "P1", "description": "x"},
+            ],
+            "code_excerpts": [],
+        }
         findings = _json_to_state_findings(data, "qodo")
         assert len(findings) == 1, "the well-formed finding must survive"
         assert findings[0].severity == "P1"

@@ -12,11 +12,13 @@ An average across arms that were not one experiment. A ledger whose rows
 disagree about their own depth or engine is two runs stacked, and averaging
 it produces a number for a configuration that never ran.
 """
+
 import importlib.util
 import json
 import pathlib
 
 import pytest
+
 
 # Loaded by path, matching test_forge_provider.py. scripts/ is not a package
 # and analyse_arms.py is not importable as scripts.analyse_arms unless the
@@ -61,12 +63,16 @@ main = _aa.main
 summarise = _aa.summarise
 
 
-def _row(entry_id="e1", depth=1, engine="real", verdict="HOLD",
-         wall_s=100.0, findings=None):
+def _row(entry_id="e1", depth=1, engine="real", verdict="HOLD", wall_s=100.0, findings=None):
     r = {
-        "entry_id": entry_id, "depth": depth, "engine": engine,
-        "backend": "review-default", "verdict": verdict, "runs": 1,
-        "caught": 0, "wall_s": wall_s,
+        "entry_id": entry_id,
+        "depth": depth,
+        "engine": engine,
+        "backend": "review-default",
+        "verdict": verdict,
+        "runs": 1,
+        "caught": 0,
+        "wall_s": wall_s,
     }
     if findings is not None:
         r["finding_hits"], r["finding_misses"], r["finding_fps"] = findings
@@ -79,8 +85,7 @@ class TestUndefinedIsNotZero:
     def test_precision_is_none_when_nothing_was_reported(self):
         s = summarise([_row(findings=(0, 3, 0))], "x")
         assert s["precision"] is None, (
-            "0.0 would say every reported finding was wrong; none were "
-            "reported"
+            "0.0 would say every reported finding was wrong; none were reported"
         )
         assert s["recall"] == 0.0, "three misses and no hits is a real zero"
 
@@ -96,9 +101,7 @@ class TestUndefinedIsNotZero:
     def test_standard_error_is_none_at_n_of_one(self):
         mean, se = _mean_se([5.0])
         assert mean == 5.0
-        assert se is None, (
-            "0.0 would claim repeated runs agreed; nothing was repeated"
-        )
+        assert se is None, "0.0 would claim repeated runs agreed; nothing was repeated"
 
     def test_standard_error_exists_at_n_of_two(self):
         mean, se = _mean_se([4.0, 6.0])
@@ -118,8 +121,7 @@ class TestArithmetic:
         s = summarise([_row(findings=(6, 2, 3))], "x")
         assert s["precision"] == pytest.approx(6 / 9)
         assert s["recall"] == pytest.approx(6 / 8)
-        assert s["f1"] == pytest.approx(2 * (6 / 9) * (6 / 8)
-                                        / ((6 / 9) + (6 / 8)))
+        assert s["f1"] == pytest.approx(2 * (6 / 9) * (6 / 8) / ((6 / 9) + (6 / 8)))
 
     def test_counts_sum_across_entries(self):
         rows = [_row("a", findings=(1, 1, 0)), _row("b", findings=(2, 0, 1))]
@@ -143,9 +145,15 @@ class TestMixedCoordinatesAreRefused:
 
     def test_mixed_depth_is_reported_not_averaged(self, tmp_path, capsys):
         path = tmp_path / "mixed.jsonl"
-        path.write_text("\n".join(json.dumps(r) for r in [
-            _row("a", depth=1), _row("b", depth=3),
-        ]))
+        path.write_text(
+            "\n".join(
+                json.dumps(r)
+                for r in [
+                    _row("a", depth=1),
+                    _row("b", depth=3),
+                ]
+            )
+        )
         main([str(path)])
         out = capsys.readouterr().out
         assert "MIXED COORDINATES" in out
@@ -153,14 +161,19 @@ class TestMixedCoordinatesAreRefused:
 
     def test_mixed_engine_is_reported_not_averaged(self, tmp_path, capsys):
         path = tmp_path / "mixed.jsonl"
-        path.write_text("\n".join(json.dumps(r) for r in [
-            _row("a", engine="real"), _row("b", engine="stub"),
-        ]))
+        path.write_text(
+            "\n".join(
+                json.dumps(r)
+                for r in [
+                    _row("a", engine="real"),
+                    _row("b", engine="stub"),
+                ]
+            )
+        )
         main([str(path)])
         assert "MIXED COORDINATES" in capsys.readouterr().out
 
-    def test_missing_coordinates_do_not_crash_the_report(self, tmp_path,
-                                                         capsys):
+    def test_missing_coordinates_do_not_crash_the_report(self, tmp_path, capsys):
         # Older ledger rows can lack a field entirely. Sorting None against
         # a string raises; the report has to survive reading real history.
         path = tmp_path / "old.jsonl"
@@ -176,19 +189,21 @@ class TestNumbersAreTraceable:
 
     def test_verdict_lines_partition_the_file_exactly(self):
         rows = [
-            _row("a", verdict="HOLD"), _row("b", verdict="PASS"),
-            _row("c", verdict="HOLD"), _row("d", verdict="SKIPPED"),
+            _row("a", verdict="HOLD"),
+            _row("b", verdict="PASS"),
+            _row("c", verdict="HOLD"),
+            _row("d", verdict="SKIPPED"),
         ]
         s = summarise(rows, "x")
         claimed = [n for nums in s["verdict_lines"].values() for n in nums]
         assert sorted(claimed) == [1, 2, 3, 4], (
-            "line sets must cover every row exactly once, or a count and "
-            "its citation disagree"
+            "line sets must cover every row exactly once, or a count and its citation disagree"
         )
 
     def test_each_claimed_line_carries_the_verdict_attributed_to_it(self):
         rows = [
-            _row("a", verdict="HOLD"), _row("b", verdict="PASS"),
+            _row("a", verdict="HOLD"),
+            _row("b", verdict="PASS"),
             _row("c", verdict="HOLD"),
         ]
         s = summarise(rows, "x")
@@ -220,10 +235,7 @@ class TestNumbersAreTraceable:
         # actually being produced. Skipped when no run has happened here.
         import pathlib
 
-        led = pathlib.Path(
-            "/home/houminxi/code/forge/.planning/eval/"
-            "phase-58-3/arm-d1.jsonl"
-        )
+        led = pathlib.Path("/home/houminxi/code/forge/.planning/eval/phase-58-3/arm-d1.jsonl")
         if not led.exists():
             pytest.skip("no 58-3 ledger on this machine")
         rows = load(led)

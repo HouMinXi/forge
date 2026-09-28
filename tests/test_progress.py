@@ -6,6 +6,7 @@ line before a silence says what was running and how old the run was.
 The flush matters because Python block-buffers stderr into a file,
 which is exactly where a hung stage hides its own trace.
 """
+
 from unittest.mock import patch
 
 from code_forge import progress
@@ -34,8 +35,7 @@ class TestProgressEmit:
 
 class TestProgressResetAndFaultTolerance:
     def test_reset_restarts_the_clock(self, capsys):
-        with patch("code_forge.progress.time.monotonic",
-                   side_effect=[1000.0, 1000.5, 1050.0, 1052.0]):
+        with patch("code_forge.progress.time.monotonic", side_effect=[1000.0, 1000.5, 1050.0, 1052.0]):
             progress.reset()
             progress.emit("a")
             progress.reset()

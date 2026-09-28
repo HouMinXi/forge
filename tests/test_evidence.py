@@ -5,6 +5,7 @@ a file or line not actually in the reviewed tree. reverify_finding_cites
 re-checks each finding's (file, line) against the real source and splits
 findings into those whose cite holds up and those that do not.
 """
+
 from __future__ import annotations
 
 import os

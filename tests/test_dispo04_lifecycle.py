@@ -85,10 +85,7 @@ class TestFixedGoneNextRound:
         # round 1. In that case the FIXED finding stays. Both are
         # correct behaviors -- the key invariant is that FIXED findings
         # do not block PASS verdict.
-        confirmed = [
-            f for f in machine._state.findings
-            if f.disposition == Disposition.CONFIRMED
-        ]
+        confirmed = [f for f in machine._state.findings if f.disposition == Disposition.CONFIRMED]
         assert len(confirmed) == 0
 
 
@@ -113,6 +110,7 @@ class TestFixedPersistsReverts:
 
         class NoChangeAutoFixer(StubAutoFixer):
             """Always NO_CHANGE so finding stays CONFIRMED."""
+
             def fix(self, finding, mode_hint):
                 return FixOutcome.NO_CHANGE
 

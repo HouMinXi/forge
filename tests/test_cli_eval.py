@@ -4,6 +4,7 @@
 Verifies: parser registration, _run_eval dispatch, format_table stderr,
 JSON output via --output, --runs validation, exit code on bad corpus path.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,34 +51,61 @@ class TestEvalParser:
     def test_runs_argument_optional_int(self):
         """--runs is optional and parsed as int."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "eval", "--corpus", "c.yaml", "--backend", "b", "--runs", "5",
-        ])
+        args = parser.parse_args(
+            [
+                "eval",
+                "--corpus",
+                "c.yaml",
+                "--backend",
+                "b",
+                "--runs",
+                "5",
+            ]
+        )
         assert args.runs == 5
 
     def test_output_argument_optional_path(self):
         """--output is optional and parsed as Path."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "eval", "--corpus", "c.yaml", "--backend", "b",
-            "--output", "/tmp/out.json",
-        ])
+        args = parser.parse_args(
+            [
+                "eval",
+                "--corpus",
+                "c.yaml",
+                "--backend",
+                "b",
+                "--output",
+                "/tmp/out.json",
+            ]
+        )
         assert args.output == Path("/tmp/out.json")
 
     def test_runs_default_is_none(self):
         """--runs defaults to None (axis-dependent)."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "eval", "--corpus", "c.yaml", "--backend", "b",
-        ])
+        args = parser.parse_args(
+            [
+                "eval",
+                "--corpus",
+                "c.yaml",
+                "--backend",
+                "b",
+            ]
+        )
         assert args.runs is None
 
     def test_output_default_is_none(self):
         """--output defaults to None (no JSON output)."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "eval", "--corpus", "c.yaml", "--backend", "b",
-        ])
+        args = parser.parse_args(
+            [
+                "eval",
+                "--corpus",
+                "c.yaml",
+                "--backend",
+                "b",
+            ]
+        )
         assert args.output is None
 
 
@@ -119,19 +147,26 @@ class TestRunEval:
         mock_args.runs = None
         mock_args.output = None
 
-        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
-             patch("code_forge.eval.runner.replay_entry", return_value=result), \
-             patch(
-                 "code_forge.cli._load_gate_backends",
-                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
-             ), \
-             patch("code_forge.eval.scorer.compute_summary") as mock_summary, \
-             patch("code_forge.eval.scorer.format_table", return_value="table-output"):
-
+        with (
+            patch("code_forge.eval.corpus.load_corpus", return_value=[entry]),
+            patch("code_forge.eval.runner.replay_entry", return_value=result),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+            ),
+            patch("code_forge.eval.scorer.compute_summary") as mock_summary,
+            patch("code_forge.eval.scorer.format_table", return_value="table-output"),
+        ):
             summary = EvalSummary(
-                total=1, caught=1, missed=0, correct_pass=0,
-                false_positive=0, skipped=0, results=[result],
-                advisory_caught=0, advisory_missed=0,
+                total=1,
+                caught=1,
+                missed=0,
+                correct_pass=0,
+                false_positive=0,
+                skipped=0,
+                results=[result],
+                advisory_caught=0,
+                advisory_missed=0,
             )
             mock_summary.return_value = summary
 
@@ -156,21 +191,28 @@ class TestRunEval:
         mock_args.output = out_path
 
         summary = EvalSummary(
-            total=1, caught=1, missed=0, correct_pass=0,
-            false_positive=0, skipped=0, results=[result],
-            advisory_caught=0, advisory_missed=0,
+            total=1,
+            caught=1,
+            missed=0,
+            correct_pass=0,
+            false_positive=0,
+            skipped=0,
+            results=[result],
+            advisory_caught=0,
+            advisory_missed=0,
         )
 
-        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
-             patch("code_forge.eval.runner.replay_entry", return_value=result), \
-             patch(
-                 "code_forge.cli._load_gate_backends",
-                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
-             ), \
-             patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
-             patch("code_forge.eval.scorer.format_table", return_value="t"), \
-             patch("code_forge.eval.scorer.write_json_report") as mock_write:
-
+        with (
+            patch("code_forge.eval.corpus.load_corpus", return_value=[entry]),
+            patch("code_forge.eval.runner.replay_entry", return_value=result),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+            ),
+            patch("code_forge.eval.scorer.compute_summary", return_value=summary),
+            patch("code_forge.eval.scorer.format_table", return_value="t"),
+            patch("code_forge.eval.scorer.write_json_report") as mock_write,
+        ):
             rc = _run_eval(mock_args)
 
         assert rc == 0
@@ -190,20 +232,27 @@ class TestRunEval:
         mock_args.output = None
 
         summary = EvalSummary(
-            total=1, caught=1, missed=0, correct_pass=0,
-            false_positive=0, skipped=0, results=[result],
-            advisory_caught=0, advisory_missed=0,
+            total=1,
+            caught=1,
+            missed=0,
+            correct_pass=0,
+            false_positive=0,
+            skipped=0,
+            results=[result],
+            advisory_caught=0,
+            advisory_missed=0,
         )
 
-        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
-             patch("code_forge.eval.runner.replay_entry", return_value=result) as mock_replay, \
-             patch(
-                 "code_forge.cli._load_gate_backends",
-                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
-             ), \
-             patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
-             patch("code_forge.eval.scorer.format_table", return_value="t"):
-
+        with (
+            patch("code_forge.eval.corpus.load_corpus", return_value=[entry]),
+            patch("code_forge.eval.runner.replay_entry", return_value=result) as mock_replay,
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+            ),
+            patch("code_forge.eval.scorer.compute_summary", return_value=summary),
+            patch("code_forge.eval.scorer.format_table", return_value="t"),
+        ):
             rc = _run_eval(mock_args)
 
         assert rc == 0
@@ -283,21 +332,27 @@ class TestRunEval:
         mock_args.arm_engine = "real"
 
         summary = EvalSummary(
-            total=1, caught=0, missed=0, correct_pass=0,
-            false_positive=0, skipped=1, results=[],
-            advisory_caught=0, advisory_missed=0,
+            total=1,
+            caught=0,
+            missed=0,
+            correct_pass=0,
+            false_positive=0,
+            skipped=1,
+            results=[],
+            advisory_caught=0,
+            advisory_missed=0,
         )
 
-        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
-             patch("code_forge.eval.runner.replay_entry",
-                   side_effect=RuntimeError("backend down")), \
-             patch(
-                 "code_forge.cli._load_gate_backends",
-                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
-             ), \
-             patch("code_forge.eval.scorer.compute_summary", return_value=summary), \
-             patch("code_forge.eval.scorer.format_table", return_value="t"):
-
+        with (
+            patch("code_forge.eval.corpus.load_corpus", return_value=[entry]),
+            patch("code_forge.eval.runner.replay_entry", side_effect=RuntimeError("backend down")),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+            ),
+            patch("code_forge.eval.scorer.compute_summary", return_value=summary),
+            patch("code_forge.eval.scorer.format_table", return_value="t"),
+        ):
             rc = _run_eval(mock_args)
 
         assert rc == 0
@@ -335,9 +390,15 @@ class TestRunEval:
         def _capture(results):
             captured["results"] = list(results)
             return EvalSummary(
-                total=1, caught=0, missed=0, correct_pass=0,
-                false_positive=0, skipped=1, results=list(results),
-                advisory_caught=0, advisory_missed=0,
+                total=1,
+                caught=0,
+                missed=0,
+                correct_pass=0,
+                false_positive=0,
+                skipped=1,
+                results=list(results),
+                advisory_caught=0,
+                advisory_missed=0,
             )
 
         mock_args = MagicMock()
@@ -351,16 +412,16 @@ class TestRunEval:
         mock_args.arm_depth = 1
         mock_args.arm_engine = "real"
 
-        with patch("code_forge.eval.corpus.load_corpus", return_value=[entry]), \
-             patch("code_forge.eval.runner.replay_entry",
-                   side_effect=_Drifting()), \
-             patch(
-                 "code_forge.cli._load_gate_backends",
-                 return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
-             ), \
-             patch("code_forge.eval.scorer.compute_summary", side_effect=_capture), \
-             patch("code_forge.eval.scorer.format_table", return_value="t"):
-
+        with (
+            patch("code_forge.eval.corpus.load_corpus", return_value=[entry]),
+            patch("code_forge.eval.runner.replay_entry", side_effect=_Drifting()),
+            patch(
+                "code_forge.cli._load_gate_backends",
+                return_value=([], {"backends": {"test-backend": {"type": "api", "model": "m"}}}),
+            ),
+            patch("code_forge.eval.scorer.compute_summary", side_effect=_capture),
+            patch("code_forge.eval.scorer.format_table", return_value="t"),
+        ):
             rc = _run_eval(mock_args)
 
         assert rc == 0
@@ -437,6 +498,7 @@ class TestEvalKnownSubcommand:
     def test_eval_in_known_subcommands(self):
         """eval must be in known_subcommands to avoid review fallback."""
         import code_forge.cli as cli_mod
+
         src = Path(cli_mod.__file__).read_text(encoding="utf-8")
         assert "'eval'" in src or '"eval"' in src
 
@@ -484,9 +546,9 @@ class TestCorpusCompleteness:
         manifest = Path(__file__).parent / "eval" / "corpus" / "corpus.yaml"
         entries = load_corpus(manifest)
         names = {e.name for e in entries}
-        assert names == self.REQUIRED_NAMES, (
-            "Missing: %s, Extra: %s"
-            % (self.REQUIRED_NAMES - names, names - self.REQUIRED_NAMES)
+        assert names == self.REQUIRED_NAMES, "Missing: %s, Extra: %s" % (
+            self.REQUIRED_NAMES - names,
+            names - self.REQUIRED_NAMES,
         )
 
     def test_all_diff_files_exist_and_nonempty(self):
@@ -499,9 +561,7 @@ class TestCorpusCompleteness:
         for entry in entries:
             diff_path = corpus_dir / entry.diff_file
             assert diff_path.exists(), "diff file missing: %s" % entry.diff_file
-            assert diff_path.stat().st_size > 0, (
-                "diff file empty: %s" % entry.diff_file
-            )
+            assert diff_path.stat().st_size > 0, "diff file empty: %s" % entry.diff_file
 
     def test_every_buggy_entry_has_a_control(self):
         """X-series entries come in pairs, and the pair is the measurement.
@@ -521,9 +581,7 @@ class TestCorpusCompleteness:
         for name in buggy:
             prefix, rest = name.split("-", 1)
             control = "%sc-%s-control" % (prefix, rest)
-            assert control in names, (
-                "%s has no control; the pair is what makes it measurable" % name
-            )
+            assert control in names, "%s has no control; the pair is what makes it measurable" % name
 
     def test_base_files_exist_for_every_x_entry(self):
         """Each X entry needs a base_files dir named after the ENTRY.
@@ -596,8 +654,11 @@ class TestEvalReviewTimeout:
         from code_forge.eval import runner
 
         entry = CorpusEntry(
-            name="timeout-probe", diff_file="x.diff",
-            expected_verdict="flagged", axis_tags=[], expected_advisory=[],
+            name="timeout-probe",
+            diff_file="x.diff",
+            expected_verdict="flagged",
+            axis_tags=[],
+            expected_advisory=[],
         )
         seen = {}
 
@@ -619,17 +680,17 @@ class TestEvalReviewTimeout:
                 "@@ -0,0 +1 @@\n"
                 "+a\n"
             )
-            with patch.dict("os.environ",
-                            {"FORGE_EVAL_REVIEW_TIMEOUT_S": "77"}):
-                with patch.object(runner, "_run_review",
-                                  side_effect=fake_review):
+            with patch.dict("os.environ", {"FORGE_EVAL_REVIEW_TIMEOUT_S": "77"}):
+                with patch.object(runner, "_run_review", side_effect=fake_review):
                     flagged, reason = runner._run_single(
-                        entry, diff_path, td, "stub-backend",
+                        entry,
+                        diff_path,
+                        td,
+                        "stub-backend",
                     )
 
         assert seen.get("timeout_s") == 77, (
-            "_run_review got timeout_s=%r, not the resolved value"
-            % seen.get("timeout_s")
+            "_run_review got timeout_s=%r, not the resolved value" % seen.get("timeout_s")
         )
         assert flagged is False
         assert reason == "infra: code-forge review timeout after 77s", reason
@@ -656,16 +717,11 @@ class TestAbandonedReviewLeavesNothingBehind:
         from code_forge.eval.runner import _run_review
 
         spammer = tmp_path / "spammer.py"
-        spammer.write_text(
-            "import sys\n"
-            "while True:\n"
-            "    sys.stdout.write('x' * 4096)\n"
-        )
+        spammer.write_text("import sys\nwhile True:\n    sys.stdout.write('x' * 4096)\n")
 
         before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         with pytest.raises(sp.TimeoutExpired):
-            _run_review([sys.executable, str(spammer)],
-                        str(tmp_path), dict(os.environ), 2)
+            _run_review([sys.executable, str(spammer)], str(tmp_path), dict(os.environ), 2)
         after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
         grew_mb = (after - before) / 1024
@@ -710,8 +766,7 @@ class TestAbandonedReviewLeavesNothingBehind:
         env["FORGE_TEST_CHILD"] = str(grandchild)
 
         with pytest.raises(sp.TimeoutExpired):
-            _run_review([sys.executable, str(parent)],
-                        str(tmp_path), env, 2)
+            _run_review([sys.executable, str(parent)], str(tmp_path), env, 2)
 
         # exists() goes true the instant the child opens the file, which is
         # before anything is in it -- measured empty on 200 of 200 tight-loop
@@ -741,8 +796,7 @@ class TestAbandonedReviewLeavesNothingBehind:
             pass
         pytest.fail("grandchild %d outlived the timeout" % pid)
 
-    def test_a_grandchild_in_its_own_session_is_reached_through_the_review(
-            self, tmp_path):
+    def test_a_grandchild_in_its_own_session_is_reached_through_the_review(self, tmp_path):
         """A group signal stops at the edge of the group.
 
         The test above works because its grandchild stays in the group.
@@ -790,8 +844,7 @@ class TestAbandonedReviewLeavesNothingBehind:
         env["FORGE_TEST_CHILD"] = str(grandchild)
 
         with pytest.raises(sp.TimeoutExpired):
-            _run_review([sys.executable, str(parent)],
-                        str(tmp_path), env, 2)
+            _run_review([sys.executable, str(parent)], str(tmp_path), env, 2)
 
         for _ in range(50):
             if pidfile.exists() and pidfile.read_text().strip():
@@ -812,9 +865,7 @@ class TestAbandonedReviewLeavesNothingBehind:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        pytest.fail(
-            "grandchild %d in its own session outlived the timeout" % pid
-        )
+        pytest.fail("grandchild %d in its own session outlived the timeout" % pid)
 
     def test_a_child_dying_at_the_timeout_still_raises_timeout(self, tmp_path):
         """The caller needs TimeoutExpired, not whatever the cleanup hit.
@@ -845,14 +896,13 @@ class TestAbandonedReviewLeavesNothingBehind:
         sleeper = tmp_path / "sleeper.py"
         sleeper.write_text("import time\ntime.sleep(2)\n")
 
-        with patch("code_forge.eval.runner.os.getpgid",
-                   side_effect=ProcessLookupError(3, "No such process")):
+        with patch(
+            "code_forge.eval.runner.os.getpgid", side_effect=ProcessLookupError(3, "No such process")
+        ):
             with pytest.raises(sp.TimeoutExpired):
-                _run_review([sys.executable, str(sleeper)],
-                            str(tmp_path), dict(os.environ), 1)
+                _run_review([sys.executable, str(sleeper)], str(tmp_path), dict(os.environ), 1)
 
-    def test_cleanup_on_windows_does_not_reach_for_process_groups(
-            self, tmp_path):
+    def test_cleanup_on_windows_does_not_reach_for_process_groups(self, tmp_path):
         """Those names are missing on Windows, not merely unsupported.
 
         os.getpgid and os.killpg do not exist there, so touching them
@@ -878,18 +928,18 @@ class TestAbandonedReviewLeavesNothingBehind:
         # than merely renamed, so anything still reaching for them raises
         # exactly what Windows would raise.
         with patch("code_forge.eval.runner.os.name", "nt"):
-            with patch("code_forge.eval.runner.os.getpgid",
-                       side_effect=AttributeError(
-                           "module 'os' has no attribute 'getpgid'")):
-                with patch("code_forge.eval.runner.os.killpg",
-                           side_effect=AttributeError(
-                               "module 'os' has no attribute 'killpg'")):
+            with patch(
+                "code_forge.eval.runner.os.getpgid",
+                side_effect=AttributeError("module 'os' has no attribute 'getpgid'"),
+            ):
+                with patch(
+                    "code_forge.eval.runner.os.killpg",
+                    side_effect=AttributeError("module 'os' has no attribute 'killpg'"),
+                ):
                     with pytest.raises(sp.TimeoutExpired):
-                        _run_review([sys.executable, str(sleeper)],
-                                    str(tmp_path), dict(os.environ), 1)
+                        _run_review([sys.executable, str(sleeper)], str(tmp_path), dict(os.environ), 1)
 
-    def test_the_windows_teardown_never_names_the_signal_it_lacks(
-            self, monkeypatch):
+    def test_the_windows_teardown_never_names_the_signal_it_lacks(self, monkeypatch):
         """A signal named at a call site is resolved before the call.
 
         The teardown reaches SIGKILL through a helper that declines to
@@ -969,8 +1019,7 @@ class TestAbandonedReviewLeavesNothingBehind:
             "the reap after SIGKILL was not given a timeout"
         )
 
-    def test_a_permission_error_on_the_fallback_kill_does_not_crash(
-            self, tmp_path):
+    def test_a_permission_error_on_the_fallback_kill_does_not_crash(self, tmp_path):
         """The fallback has no fallback of its own, so it cannot raise.
 
         A refused group signal drops to killing the child directly; if
@@ -987,13 +1036,12 @@ class TestAbandonedReviewLeavesNothingBehind:
         sleeper = tmp_path / "sleeper.py"
         sleeper.write_text("import time\ntime.sleep(2)\n")
 
-        with patch("code_forge.eval.runner.os.killpg",
-                   side_effect=PermissionError(1, "Operation not permitted")):
-            with patch("subprocess.Popen.kill",
-                       side_effect=ProcessLookupError(3, "No such process")):
+        with patch(
+            "code_forge.eval.runner.os.killpg", side_effect=PermissionError(1, "Operation not permitted")
+        ):
+            with patch("subprocess.Popen.kill", side_effect=ProcessLookupError(3, "No such process")):
                 with pytest.raises(sp.TimeoutExpired):
-                    _run_review([sys.executable, str(sleeper)],
-                                str(tmp_path), dict(os.environ), 1)
+                    _run_review([sys.executable, str(sleeper)], str(tmp_path), dict(os.environ), 1)
 
     def test_stderr_comes_back_bounded(self, tmp_path):
         """Reading the whole file back would undo the bounded write.
@@ -1013,12 +1061,12 @@ class TestAbandonedReviewLeavesNothingBehind:
         )
 
         returncode, stderr_text = _run_review(
-            [sys.executable, str(noisy)], str(tmp_path), dict(os.environ), 30)
+            [sys.executable, str(noisy)], str(tmp_path), dict(os.environ), 30
+        )
 
         assert returncode == 0
         assert len(stderr_text) <= _STDERR_TAIL_BYTES, (
-            "stderr came back at %d bytes, past the %d cap"
-            % (len(stderr_text), _STDERR_TAIL_BYTES)
+            "stderr came back at %d bytes, past the %d cap" % (len(stderr_text), _STDERR_TAIL_BYTES)
         )
         assert stderr_text.endswith("THE-REAL-ERROR"), (
             "the tail is the half worth keeping; got %r" % stderr_text[-40:]
@@ -1043,18 +1091,15 @@ class TestAbandonedReviewLeavesNothingBehind:
 
         # A pgid that is not the child's own pid is what the leader check
         # is for; killpg on it would signal whatever group that is.
-        with patch("code_forge.eval.runner.os.getpgid",
-                   return_value=os.getpgid(0)):
+        with patch("code_forge.eval.runner.os.getpgid", return_value=os.getpgid(0)):
             with patch("code_forge.eval.runner.os.killpg") as killpg:
                 started = time.monotonic()
                 with pytest.raises(sp.TimeoutExpired):
-                    _run_review([sys.executable, str(sleeper)],
-                                str(tmp_path), dict(os.environ), 1)
+                    _run_review([sys.executable, str(sleeper)], str(tmp_path), dict(os.environ), 1)
                 elapsed = time.monotonic() - started
 
         assert not killpg.called, (
-            "killpg was aimed at pgid %r, which is this process's own "
-            "group" % os.getpgid(0)
+            "killpg was aimed at pgid %r, which is this process's own group" % os.getpgid(0)
         )
         assert elapsed < 10, (
             "cleanup took %.1fs, so the child was neither group-killed "
@@ -1078,11 +1123,11 @@ class TestAbandonedReviewLeavesNothingBehind:
         sleeper.write_text("import time\ntime.sleep(30)\n")
 
         started = time.monotonic()
-        with patch("code_forge.eval.runner.os.killpg",
-                   side_effect=PermissionError(1, "Operation not permitted")):
+        with patch(
+            "code_forge.eval.runner.os.killpg", side_effect=PermissionError(1, "Operation not permitted")
+        ):
             with pytest.raises(sp.TimeoutExpired):
-                _run_review([sys.executable, str(sleeper)],
-                            str(tmp_path), dict(os.environ), 1)
+                _run_review([sys.executable, str(sleeper)], str(tmp_path), dict(os.environ), 1)
         elapsed = time.monotonic() - started
 
         assert elapsed < 10, (

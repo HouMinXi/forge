@@ -12,6 +12,7 @@ at the gateway) was handled: HTTPError is caught. An HTTP response
 that stops mid-body is the same event as a connection reset, and must
 be classified the same way: LLMInvokeError, retryable, kind="conn".
 """
+
 from __future__ import annotations
 
 import http.client
@@ -27,8 +28,12 @@ from code_forge.llm_invoke import LLMInvokeError, llm_invoke
 
 def _backend(fmt: str) -> BackendConfig:
     return BackendConfig(
-        name="b", type="api", model="m", format=fmt,
-        base_url="https://x.invalid/v1", api_key_env="X_KEY",
+        name="b",
+        type="api",
+        model="m",
+        format=fmt,
+        base_url="https://x.invalid/v1",
+        api_key_env="X_KEY",
     )
 
 
@@ -43,11 +48,12 @@ def _response_that_dies_mid_body():
 
 @pytest.mark.parametrize("fmt", ["openai", "anthropic"])
 def test_incomplete_read_is_a_retryable_conn_error(fmt):
-    with patch.dict(os.environ, {"X_KEY": "k"}), \
-         patch("urllib.request.urlopen", return_value=_response_that_dies_mid_body()):
+    with (
+        patch.dict(os.environ, {"X_KEY": "k"}),
+        patch("urllib.request.urlopen", return_value=_response_that_dies_mid_body()),
+    ):
         with pytest.raises(LLMInvokeError) as ei:
-            llm_invoke("p", backend=_backend(fmt), max_attempts=1,
-                       initial_delay_s=0)
+            llm_invoke("p", backend=_backend(fmt), max_attempts=1, initial_delay_s=0)
     assert ei.value.retryable is True
     assert ei.value.kind == "conn"
     assert "IncompleteRead" in str(ei.value) or "178" in str(ei.value)
@@ -55,16 +61,18 @@ def test_incomplete_read_is_a_retryable_conn_error(fmt):
 
 def test_incomplete_read_is_retried_then_succeeds():
     good = Mock()
-    good.read.return_value = json.dumps({
-        "choices": [{"message": {"content": '{"result": "ok"}'}}],
-        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-    }).encode()
+    good.read.return_value = json.dumps(
+        {
+            "choices": [{"message": {"content": '{"result": "ok"}'}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+    ).encode()
     good.__enter__ = Mock(return_value=good)
     good.__exit__ = Mock(return_value=False)
     good.headers = {}
-    with patch.dict(os.environ, {"X_KEY": "k"}), \
-         patch("urllib.request.urlopen",
-               side_effect=[_response_that_dies_mid_body(), good]):
-        result = llm_invoke("p", backend=_backend("openai"), max_attempts=2,
-                            initial_delay_s=0)
+    with (
+        patch.dict(os.environ, {"X_KEY": "k"}),
+        patch("urllib.request.urlopen", side_effect=[_response_that_dies_mid_body(), good]),
+    ):
+        result = llm_invoke("p", backend=_backend("openai"), max_attempts=2, initial_delay_s=0)
     assert result.content == {"result": "ok"}

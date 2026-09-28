@@ -44,6 +44,7 @@ class TestPromotionOnBudgetExhausted:
 
     def test_promotion_after_max_attempts(self, tmp_path):
         """After MAX_FIX_ATTEMPTS PARSE_FAILs, CONFIRMED -> UNCERTAIN."""
+
         def mock_l0(registry, files):
             return ([_make_finding()], [])
 
@@ -111,10 +112,7 @@ class TestPostPromotionStickiness:
         assert verdict == Verdict.PENDING
 
         # The finding should be UNCERTAIN in final state, not re-CONFIRMED
-        stuck = [
-            f for f in machine._state.findings
-            if f.fingerprint == "fp-stuck"
-        ]
+        stuck = [f for f in machine._state.findings if f.fingerprint == "fp-stuck"]
         assert len(stuck) == 1
         assert stuck[0].disposition == Disposition.UNCERTAIN
 
