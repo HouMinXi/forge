@@ -67,6 +67,18 @@ def _strip_venv_from_env(env: dict[str, str]) -> dict[str, str]:
     return stripped
 
 
+
+def _failed_nodes(output: str) -> list[str]:
+    """Pull pytest FAILED node ids out of a baseline run's stdout."""
+    nodes = []
+    for line in (output or "").split("\n"):
+        if line.startswith("FAILED "):
+            parts = line.split()
+            if len(parts) > 1:
+                nodes.append(parts[1])
+    return nodes
+
+
 def _run_baseline_guard(
     baseline_cmd: list[str],
     run_env: dict[str, str],
@@ -166,9 +178,11 @@ def _run_baseline_guard(
                     line_range=[],
                     description=desc,
                 )
+                nodes = _failed_nodes(result.stdout)
+                node_text = (": " + ", ".join(nodes[:5])) if nodes else ""
                 infra = (
-                    "flaky guard: baseline failed on run %d%s"
-                    % (run_num, suffix)
+                    "flaky guard: baseline failed on run %d%s (returncode %d%s)"
+                    % (run_num, suffix, result.returncode, node_text)
                 )
                 return ("skip", [finding], [infra])
 

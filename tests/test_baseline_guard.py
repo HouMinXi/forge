@@ -44,3 +44,25 @@ def test_three_passing_runs_report_passed(monkeypatch):
     assert status == "passed"
     assert findings == [] and errors == []
     assert calls["n"] == 3
+
+
+def test_a_failed_run_keeps_the_return_code_and_node(monkeypatch):
+    """A non-zero baseline must say which node failed and with what code."""
+
+    def fake_run(*_a, **_k):
+        class R:
+            returncode = 1
+            stdout = "FAILED tests/test_sample.py::test_one - assert 0\n1 failed in 0.1s\n"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr("code_forge.baseline_guard.subprocess.run", fake_run)
+    from code_forge.baseline_guard import _run_baseline_guard
+    status, _findings, errors = _run_baseline_guard(
+        ["python3", "-m", "pytest"], {}, "/repo", allow_strip_retry=False,
+    )
+    assert status == "skip"
+    assert errors
+    text = errors[0]
+    assert "returncode 1" in text
+    assert "tests/test_sample.py::test_one" in text
