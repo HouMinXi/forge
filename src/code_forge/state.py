@@ -117,6 +117,15 @@ class StateFinding:
     excerpt: str | None = None
 
 
+def is_receipt_audit(finding: StateFinding) -> bool:
+    """Identify metadata-only diagnostics, not untrusted product candidates."""
+    return (
+        finding.id == "RECEIPT_UNTRUSTED"
+        and finding.source == "UNTRUSTED"
+        and finding.disposition == Disposition.UNCERTAIN
+    )
+
+
 def derive_pass_outcomes(
     l1_findings: list[StateFinding],
 ) -> dict[str, PassOutcome]:

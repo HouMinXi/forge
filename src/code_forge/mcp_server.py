@@ -893,6 +893,7 @@ def _make_inprocess_result(
     findings_count: int,
     elapsed: float,
     findings: list[dict] | None = None,
+    receipt_audit: list[dict] | None = None,
 ) -> CallToolResult:
     """Convert in-process Verdict to CallToolResult.
 
@@ -911,11 +912,14 @@ def _make_inprocess_result(
     }
     exit_code = exit_map.get(verdict, 1)
     summary = "forge: %s (%d findings, %.1fs)" % (verdict.value, findings_count, elapsed)
+    if receipt_audit:
+        summary += " receipt_audit=%d (metadata only; see state.json)" % len(receipt_audit)
     structured = ForgeResult(
         verdict=verdict.value,
         exit_code=exit_code,
         findings_count=findings_count,
         findings=findings,
+        receipt_audit=receipt_audit,
         duration_s=round(elapsed, 2),
         output=summary,
     )
@@ -1144,11 +1148,14 @@ async def _dispatch_sampling(
                 "description": "+%d more, see state.json" % (len(active) - _MAX_FINDINGS_IN_RESULT),
             }
         )
+    from .state import _finding_to_dict
+
     return _make_inprocess_result(
         verdict,
         findings_count=len(active),
         elapsed=elapsed,
         findings=compact if compact else None,
+        receipt_audit=[_finding_to_dict(f) for f in machine.receipt_audit] or None,
     )
 
 

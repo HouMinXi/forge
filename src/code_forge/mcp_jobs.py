@@ -61,6 +61,7 @@ class ForgeResult(BaseModel):
     exit_code: int
     findings_count: int | None = None  # None = not counted, never 0 as surrogate
     findings: list[dict] | None = None  # compact finding summaries for MCP
+    receipt_audit: list[dict] | None = None  # metadata diagnostics, not product findings
     duration_s: float
     output: str
 
