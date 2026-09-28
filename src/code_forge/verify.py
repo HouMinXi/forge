@@ -1255,7 +1255,7 @@ def run_verify(
             if isinstance(item, dict) and isinstance(item.get("file"), str)
             and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
         }
-        scoped = {f: lns for f, lns in diff_files.items() if f in open_files} or diff_files
+        scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
         all_diff = {(f, ln) for f, lns in scoped.items() for ln in lns}
         if all_diff:
             for c in last_n:
@@ -1348,7 +1348,7 @@ def run_verify(
             if isinstance(item, dict) and isinstance(item.get("file"), str)
             and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
         }
-        scoped = {f: lns for f, lns in diff_files.items() if f in open_files} or diff_files
+        scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
         all_diff = {(f, ln) for f, lns in scoped.items() for ln in lns}
         if all_diff:
             for c in last_n:
