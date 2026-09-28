@@ -157,7 +157,7 @@ def test_invoke_failure_names_the_backend():
 
 
 def test_an_excerpt_count_miss_does_not_reject_the_round(monkeypatch):
-    """A quote one line off is evidence, not a dead pass. It must not land
+    """A quote whose line count does not match is evidence, not a dead pass. It must not land
     in attempted_excerpts, which the machine reads as a rejected round."""
     from code_forge.factories import build_l1_provider
     from code_forge.baseline import ResolvedReview
