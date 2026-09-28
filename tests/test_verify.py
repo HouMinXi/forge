@@ -756,7 +756,7 @@ class TestHardenedVerify:
              "content": "r = 3"},
         ]
         _write_hardened(rd, sha, excerpts=sparse,
-                        findings=[{"file": "foo.py", "disposition": "CONFIRMED"}])
+                        findings=[{"file": "foo.py", "disposition": "CONFIRMED"}, {"file": "bar.py", "disposition": "CONFIRMED"}])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert not r.passed
         assert "< 60%" in r.reason
@@ -791,7 +791,7 @@ class TestHardenedVerify:
              "content": "p = 1"},
         ]
         _write_hardened(rd, sha, excerpts=inflated,
-                        findings=[{"file": "foo.py", "disposition": "CONFIRMED"}])
+                        findings=[{"file": "foo.py", "disposition": "CONFIRMED"}, {"file": "bar.py", "disposition": "CONFIRMED"}])
         r = run_verify(tmp_path, sha, diff_files, diff_text=_HARDEN_DIFF)
         assert not r.passed
         assert "< 60%" in r.reason
@@ -3836,5 +3836,30 @@ def test_a_line_between_hunks_in_a_long_quote_is_named_not_fatal():
            "content": "\n".join(lines)}
     result = assess_excerpt_evidence(exc, hunks, post)
     assert result.status is not ExcerptStatus.INVALID, result.diagnostic
+
+
+
+
+def test_coverage_counts_only_files_with_an_open_finding(tmp_path):
+    """A file with no finding does not inflate the floor."""
+    import json
+    from code_forge.verify import run_verify
+    rd = tmp_path / ".code-forge" / "receipts"
+    rd.mkdir(parents=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "f.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "src" / "g.py").write_text("def g():\n    return 2\n")
+    sha = _sha("diff")
+    for p in range(1, 4):
+        receipt = _receipt(1, p, sha, covered_start=1, covered_end=50)
+        receipt["findings"] = [{"file": "src/f.py", "disposition": "CONFIRMED"}]
+        receipt["findings_count"] = 1
+        (rd / ("receipt-c1p%d.json" % p)).write_text(json.dumps(receipt))
+    result = run_verify(
+        tmp_path, sha,
+        {"src/f.py": list(range(1, 51)), "src/g.py": list(range(1, 201))},
+        required_cycles=1, respect_floor=False,
+    )
+    assert result.passed, result.reason
 
 
