@@ -772,6 +772,57 @@ def validate_excerpt_evidence(
     return assess_excerpt_evidence(exc, hunk_map, post_image, exempt_files).diagnostic
 
 
+def _diff_records(text: str) -> list[str]:
+    """Split LF records, retaining content CR before Git's no-newline marker."""
+    records = text.removesuffix("\n").split("\n")
+    return [
+        record if i + 1 < len(records) and records[i + 1].startswith(
+            "\\ No newline at end of file"
+        ) else record.removesuffix("\r")
+        for i, record in enumerate(records)
+    ]
+
+
+def _reconstruct_post_image(base: str, section: str) -> list[str] | None:
+    """Apply a single text diff to an immutable base, checking every old line."""
+    import unidiff
+    from unidiff.errors import UnidiffParseError
+
+    try:
+        # Normalize diff line endings without changing carriage returns inside
+        # source content; a bare CR in a file line is not a diff separator.
+        patchset = unidiff.PatchSet([record + "\n" for record in _diff_records("diff --git " + section)])
+        if len(patchset) != 1:
+            return None
+        before = base.replace("\r\n", "\n").split("\n")
+        if before[-1] == "":
+            before.pop()
+        result: list[str] = []
+        cursor = 0
+        for hunk in patchset[0]:
+            start = hunk.source_start if hunk.source_length == 0 else hunk.source_start - 1
+            if start < cursor or start > len(before):
+                return None
+            result.extend(before[cursor:start])
+            cursor = start
+            for line in hunk:
+                if line.line_type == "\\":
+                    continue  # Git's no-final-newline marker is not file content.
+                value = line.value.removesuffix("\n")
+                if line.is_context or line.is_removed:
+                    if cursor >= len(before) or before[cursor] != value:
+                        return None
+                    cursor += 1
+                if line.is_context or line.is_added:
+                    result.append(value)
+                if not (line.is_context or line.is_added or line.is_removed):
+                    return None
+        result.extend(before[cursor:])
+        return result
+    except (ValueError, IndexError, TypeError, UnidiffParseError):
+        return None
+
+
 def _diff_validation_context(
     diff_text: str,
     *, cwd: Path | None = None,
@@ -810,7 +861,7 @@ def _diff_validation_context(
         "GIT binary patch",
         "\\ No newline at end of file",
     )
-    for raw in diff_text.splitlines():
+    for raw in _diff_records(diff_text):
         if raw.startswith("diff --git "):
             # A new file starts here. Until its +++ header names it, any
             # line belongs to no file, so stop attributing to the last one.
@@ -866,25 +917,38 @@ def _diff_validation_context(
                 plus = path_from_plus_header(raw)
                 if plus is not None:
                     break
-            index = re.search(r"(?m)^index [0-9a-f]+\.\.([0-9a-f]+)(?:[ \t\r]|$)", header)
+            index = re.search(r"(?m)^index ([0-9a-f]+)\.\.([0-9a-f]+)(?:[ \t\r]|$)", header)
             if plus is None or index is None:
                 continue
             file = plus
             frozen = post_image.get(file)
             if not frozen:
                 continue
-            text = read_diff_blob(index.group(1), cwd)
-            if text is None:
-                continue
-            lines = dict(enumerate(text.splitlines(), 1))
-            # A patch may have been edited independently of its index header.
-            # Only a blob agreeing with every frozen hunk can supply context.
-            if all(lines.get(n) == value for n, value in frozen.items()):
-                # Match the offset search radius without retaining whole files.
-                for hunk in hunk_map[file]:
-                    for n in range(max(1, hunk["start"] - 65),
-                                   min(len(lines), hunk["end"] + 65) + 1):
-                        post_image[file][n] = lines[n]
+            text = read_diff_blob(index.group(2), cwd)
+            if text is not None:
+                blob_lines = text.replace("\r\n", "\n").split("\n")
+                if blob_lines[-1] == "":
+                    blob_lines.pop()
+                lines = dict(enumerate(blob_lines, 1))
+                # A patch may have been edited independently of its index header.
+                # Only a blob agreeing with every frozen hunk can supply context.
+                if not all(lines.get(n) == value for n, value in frozen.items()):
+                    continue
+            else:
+                base = read_diff_blob(index.group(1), cwd)
+                if base is None:
+                    continue
+                rebuilt = _reconstruct_post_image(base, section)
+                if rebuilt is None:
+                    continue
+                lines = dict(enumerate(rebuilt, 1))
+                if not all(lines.get(n) == value for n, value in frozen.items()):
+                    continue
+            # Match the offset search radius without retaining whole files.
+            for hunk in hunk_map[file]:
+                for n in range(max(1, hunk["start"] - 65),
+                               min(len(lines), hunk["end"] + 65) + 1):
+                    post_image[file][n] = lines[n]
     return post_image, hunk_map, exempt_files
 
 
