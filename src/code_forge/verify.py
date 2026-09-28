@@ -725,6 +725,11 @@ def assess_excerpt_evidence(
         if mismatches:
             bad = next((n for n in mismatches
                         if not _only_leading_ws_differs(quoted[n], file_lines[n])), None)
+            if bad is not None and len(overlap) >= 10 and len(mismatches) * 10 < len(overlap):
+                return ExcerptAssessment(
+                    untrusted,
+                    f"excerpt {location} rewrote line {bad}; the rest matches",
+                )
             if bad is not None:
                 last = max(quoted)
                 cut = quoted.get(last, "")

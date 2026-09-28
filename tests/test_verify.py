@@ -3753,3 +3753,66 @@ def test_low_coverage_still_fails_while_a_finding_is_open(tmp_path):
     result = run_verify(tmp_path, sha, {"src/f.py": list(range(1, 201))})
     assert not result.passed
     assert "coverage" in result.reason
+
+
+def test_one_rewritten_line_in_a_long_quote_is_named_not_fatal():
+    """Most lines match. The one the model rewrote is reported, not fatal."""
+    from code_forge.diff import _extract_post_image_lines, parse_diff_hunks
+    from code_forge.verify import assess_excerpt_evidence, ExcerptStatus
+    body = """line1
+line2
+line3
+line4
+line5
+line6
+line7
+line8
+line9
+line10
+line11
+line12"""
+    changed = """line1
+line2
+line3
+line4
+line5rewritten
+line6
+line7
+line8
+line9
+line10
+line11
+line12"""
+    diff = (
+        "diff --git a/src/f.py b/src/f.py\n--- a/src/f.py\n+++ b/src/f.py\n"
+        "@@ -0,0 +1,12 @@\n" + "".join("+" + ln + "\n" for ln in body.splitlines())
+    )
+    post = _extract_post_image_lines(diff)
+    hunks, _ = parse_diff_hunks(diff)
+    exc = {"file": "src/f.py", "start_line": 1, "end_line": 12, "content": changed}
+    result = assess_excerpt_evidence(exc, hunks, post)
+    assert result.status is not ExcerptStatus.INVALID, result.diagnostic
+    assert "line 5" in (result.diagnostic or "")
+
+
+def test_a_mostly_rewritten_quote_stays_invalid():
+    """Half the lines rewritten is fabrication, not a slip."""
+    from code_forge.diff import _extract_post_image_lines, parse_diff_hunks
+    from code_forge.verify import assess_excerpt_evidence, ExcerptStatus
+    diff = (
+        "diff --git a/src/f.py b/src/f.py\n"
+        "--- a/src/f.py\n"
+        "+++ b/src/f.py\n"
+        "@@ -1,4 +1,4 @@\n"
+        " a\n"
+        "-old\n"
+        "+b\n"
+        " c\n"
+        " d\n"
+    )
+    post = _extract_post_image_lines(diff)
+    hunks, _ = parse_diff_hunks(diff)
+    exc = {"file": "src/f.py", "start_line": 1, "end_line": 4,
+           "content": "a\nX\nc\nY"}
+    result = assess_excerpt_evidence(exc, hunks, post)
+    assert result.status is ExcerptStatus.INVALID
