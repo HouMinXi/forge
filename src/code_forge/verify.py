@@ -717,6 +717,11 @@ def assess_excerpt_evidence(
             return ExcerptAssessment(
                 invalid, f"excerpt {location} is outside every hunk; it belongs in context_quotes",
             )
+        if unknown and len(quoted) >= 10 and len(unknown) * 10 < len(quoted):
+            return ExcerptAssessment(
+                untrusted,
+                f"excerpt {location} line {min(unknown)} sits outside the diff; the rest matches",
+            )
         if unknown:
             return ExcerptAssessment(
                 invalid,
