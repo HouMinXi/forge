@@ -60,12 +60,17 @@ def test_a_failed_run_keeps_the_return_code_and_node(monkeypatch):
             returncode = 1
             stdout = "FAILED tests/test_sample.py::test_one - assert 0\n1 failed in 0.1s\n"
             stderr = ""
+
         return R()
 
     monkeypatch.setattr("code_forge.baseline_guard.subprocess.run", fake_run)
     from code_forge.baseline_guard import _run_baseline_guard
+
     status, _findings, errors = _run_baseline_guard(
-        ["python3", "-m", "pytest"], {}, "/repo", allow_strip_retry=False,
+        ["python3", "-m", "pytest"],
+        {},
+        "/repo",
+        allow_strip_retry=False,
     )
     assert status == "skip"
     assert errors
