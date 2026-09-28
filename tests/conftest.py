@@ -6,6 +6,7 @@ import inspect
 import os
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -120,6 +121,47 @@ def _git_output(repo_root, *args):
     ).stdout
 
 
+def _foreign_branches(repo_root):
+    """Branches checked out where this suite never writes.
+
+    The repository is shared by parallel sessions, each in its own worktree;
+    their branches come and go while the suite runs. The suite only makes
+    worktrees under the temp directory, so a branch checked out in any other
+    worktree -- including ones nested inside this checkout -- was not made by
+    it. The branch of this checkout itself is covered by the HEAD check.
+    """
+    own_root = repo_root.resolve()
+    scratch = Path(tempfile.gettempdir()).resolve()
+    foreign = set()
+    path = None
+    listing = _git_output(repo_root, "worktree", "list", "--porcelain")
+    for line in listing.splitlines():
+        if line.startswith("worktree "):
+            path = Path(line[len("worktree ") :]).resolve()
+        elif line.startswith("branch ") and path is not None:
+            if path != own_root and scratch not in path.parents:
+                foreign.add(line[len("branch ") :])
+    return foreign
+
+
+def _branch_changes(before, after):
+    """Split refs/heads changes into this suite's and other sessions'."""
+
+    def heads(snap):
+        return dict(line.split(" ", 1) for line in snap["refs_heads"].splitlines())
+
+    old, new = heads(before), heads(after)
+    foreign = before["foreign_branches"] | after["foreign_branches"]
+    changed = {ref for ref in old.keys() | new.keys() if old.get(ref) != new.get(ref)}
+    return changed - foreign, changed & foreign
+
+
+def _without_branch_config(config, branches):
+    """Drop branch.<name>.* entries that belong to the given refs/heads refs."""
+    prefixes = tuple(f"branch.{ref[len('refs/heads/') :]}." for ref in branches)
+    return "".join(line for line in config.splitlines(keepends=True) if not line.startswith(prefixes))
+
+
 def _snapshot_git_state(repo_root):
     """Capture repository state using Git's worktree-aware paths."""
     snap: dict = {"config": _git_output(repo_root, "config", "--list", "--local")}
@@ -146,6 +188,7 @@ def _snapshot_git_state(repo_root):
         "refs/heads/",
         "--format=%(refname) %(objectname)",
     )
+    snap["foreign_branches"] = _foreign_branches(repo_root)
     try:
         snap["HEAD"] = _git_output(repo_root, "rev-parse", "--verify", "HEAD").strip()
     except subprocess.CalledProcessError:
@@ -188,11 +231,23 @@ def pytest_sessionfinish(session, exitstatus):
     after = _snapshot_git_state(repo_root)
     diffs = []
 
-    for field in ("config", "refs_heads", "HEAD"):
-        if before[field] != after[field]:
+    own, foreign = _branch_changes(before, after)
+    for ref in sorted(foreign):
+        sys.stderr.write(f"note: {ref} changed in another session's worktree\n")
+
+    compared = {
+        "config": (
+            _without_branch_config(before["config"], foreign),
+            _without_branch_config(after["config"], foreign),
+        ),
+        "refs_heads": (before["refs_heads"], after["refs_heads"] if own else before["refs_heads"]),
+        "HEAD": (before["HEAD"], after["HEAD"]),
+    }
+    for field, (old_text, new_text) in compared.items():
+        if old_text != new_text:
             diff = difflib.unified_diff(
-                before[field].splitlines(keepends=True),
-                after[field].splitlines(keepends=True),
+                old_text.splitlines(keepends=True),
+                new_text.splitlines(keepends=True),
                 fromfile=f".git {field} BEFORE",
                 tofile=f".git {field} AFTER",
             )
