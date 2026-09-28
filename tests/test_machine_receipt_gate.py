@@ -153,10 +153,15 @@ def _payload(name: str) -> dict:
         return v
     if name == "sparse_coverage":
         # One-hunk 10-line diff, quote only line 1: coverage 1/10 < 60%.
+        # An open finding keeps the floor active; zero findings skip it.
         v = copy.deepcopy(base)
         v["code_excerpts"][0]["content"] = "const value1 = 1;\n"
         v["code_excerpts"][0]["start_line"] = 1
         v["code_excerpts"][0]["end_line"] = 1
+        v["findings"] = [{
+            "file": "control.ts", "line": 1, "severity": "P1",
+            "description": "COVERAGE_FLOOR_MUST_HOLD",
+        }]
         return v
     if name == "missing_hunk_witness":
         # Two-hunk 6+4 diff, quote all of hunk 1 (coverage exactly 60%),
@@ -458,11 +463,17 @@ def test_short_content_persists_bounded_non_pass(mode, tmp_path):
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
 def test_sparse_coverage_below_floor_fails(mode, tmp_path):
-    """1/10 changed lines covered must not PASS (60% coverage floor)."""
+    """1/10 changed lines covered must not PASS (60% coverage floor).
+
+    An open finding keeps the floor active. CI attests its single cycle
+    and records the coverage failure. LOCAL holds on the finding before
+    the terminal gate, so the failure never reaches disk there.
+    """
     res = _run(mode, "sparse_coverage", tmp_path, diff=DIFF_10)
     _assert_non_pass(res)
-    assert any("coverage" in d or "receipt acceptance" in d
-               for d in res["disk_infra_errors"] or [])
+    if mode == Mode.CI:
+        assert any("coverage" in d or "receipt acceptance" in d
+                   for d in res["disk_infra_errors"] or [])
 
 
 @pytest.mark.parametrize("mode", [Mode.CI, Mode.LOCAL])
