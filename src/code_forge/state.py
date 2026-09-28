@@ -30,6 +30,7 @@ class PassOutcome(str, Enum):
       TIMEOUT > ERROR > SCHEMA_FAIL > INCOMPLETE > COMPLETED
     SKIPPED is reserved for future use (pass not attempted).
     """
+
     COMPLETED = "completed"
     TIMEOUT = "timeout"
     ERROR = "error"
@@ -49,12 +50,14 @@ _SEVERITY: dict[PassOutcome, int] = {
 
 class Mode(str, Enum):
     """Forge execution mode. Resolved by 02-05, consumed by 02-02."""
+
     LOCAL = "LOCAL"
     CI = "CI"
 
 
 class Verdict(str, Enum):
     """Process verdict (terminal). Set by state machine on exit."""
+
     PASS = "PASS"
     FAIL = "FAIL"
     ESCALATED = "ESCALATED"
@@ -72,11 +75,20 @@ class StateFinding:
     Conversion: state machine in 02-02 maps parsers.base.Finding ->
     StateFinding.
     """
+
     id: str
     fingerprint: str
     source: Literal[
-        "L0", "L1", "MUTANT", "E2E_CHECK", "COVERAGE", "INFRA", "FIXVAL",
-        "EXEC", "RULEPACK", "UNTRUSTED",
+        "L0",
+        "L1",
+        "MUTANT",
+        "E2E_CHECK",
+        "COVERAGE",
+        "INFRA",
+        "FIXVAL",
+        "EXEC",
+        "RULEPACK",
+        "UNTRUSTED",
     ]
     disposition: Disposition
     file: str
@@ -133,20 +145,14 @@ def derive_pass_outcomes(
             if f.id == f"l1-{pass_name}-spawn-fail":
                 candidate = PassOutcome.TIMEOUT
             elif f.id == f"l1-{pass_name}-invoke-fail":
-                candidate = (
-                    PassOutcome.TIMEOUT
-                    if getattr(f, "is_timeout", False)
-                    else PassOutcome.ERROR
-                )
+                candidate = PassOutcome.TIMEOUT if getattr(f, "is_timeout", False) else PassOutcome.ERROR
             elif f.id == f"l1-{pass_name}-schema-fail":
                 candidate = PassOutcome.SCHEMA_FAIL
             elif f.id == f"l1-{pass_name}-incomplete-coverage":
                 candidate = PassOutcome.INCOMPLETE
             if candidate is not None:
                 existing = outcomes.get(pass_name)
-                if existing is None or (
-                    _SEVERITY[candidate] < _SEVERITY[existing]
-                ):
+                if existing is None or (_SEVERITY[candidate] < _SEVERITY[existing]):
                     outcomes[pass_name] = candidate
     for pass_name in _PASS_NAMES:
         if pass_name not in outcomes:
@@ -172,6 +178,7 @@ class State:
         UNCERTAIN via DISPO-05. Used by ESCALATED-frozen predicate.
         Serialized as sorted list (JSON has no native set type).
     """
+
     schema_version: int = SCHEMA_VERSION
     disposition_protocol_version: int = DISPOSITION_PROTOCOL_VERSION
     round: int = 0
@@ -254,9 +261,7 @@ def load_state(path: Path) -> State | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        raise CorruptedStateError(
-            f"cannot parse {path}: {e}"
-        ) from e
+        raise CorruptedStateError(f"cannot parse {path}: {e}") from e
 
     sv = data.get("schema_version")
     if sv != SCHEMA_VERSION:
@@ -266,30 +271,19 @@ def load_state(path: Path) -> State | None:
         )
 
     try:
-        findings = [
-            _finding_from_dict(f) for f in data.get("findings", [])
-        ]
-        dispositions = {
-            k: Disposition(v)
-            for k, v in data.get("dispositions", {}).items()
-        }
+        findings = [_finding_from_dict(f) for f in data.get("findings", [])]
+        dispositions = {k: Disposition(v) for k, v in data.get("dispositions", {}).items()}
     except (KeyError, ValueError) as e:
-        raise CorruptedStateError(
-            f"invalid finding or disposition in {path}: {e}"
-        ) from e
+        raise CorruptedStateError(f"invalid finding or disposition in {path}: {e}") from e
 
     expected = {f.id: f.disposition for f in findings}
     if dispositions != expected:
-        raise CorruptedStateError(
-            f"dispositions cache out of sync with findings (path={path})"
-        )
+        raise CorruptedStateError(f"dispositions cache out of sync with findings (path={path})")
 
     try:
         state = State(
             schema_version=data["schema_version"],
-            disposition_protocol_version=data[
-                "disposition_protocol_version"
-            ],
+            disposition_protocol_version=data["disposition_protocol_version"],
             round=data["round"],
             mode=Mode(data["mode"]),
             source_hash=data.get("source_hash"),
@@ -300,9 +294,7 @@ def load_state(path: Path) -> State | None:
             converged=bool(data["converged"]),
         )
     except (KeyError, ValueError) as e:
-        raise CorruptedStateError(
-            f"missing or invalid field in {path}: {e}"
-        ) from e
+        raise CorruptedStateError(f"missing or invalid field in {path}: {e}") from e
 
     # 02-02 additions: backward-compat defaults for pre-02-02 state.json
     # (R1 B1 silent-loss guard). Pre-02-02 files lack these keys; the
@@ -313,23 +305,13 @@ def load_state(path: Path) -> State | None:
 
     # 02-04 additions: backward-compat defaults for pre-02-04 state.json.
     state.hold_reason = data.get("hold_reason")
-    state.promoted_fingerprints = set(
-        data.get("promoted_fingerprints", [])
-    )
+    state.promoted_fingerprints = set(data.get("promoted_fingerprints", []))
 
     # 02-02 additions: backward-compat defaults for pre-02-02 state.json.
-    state.consecutive_survivor_rounds = data.get(
-        "consecutive_survivor_rounds", 0
-    )
-    state.consecutive_clean_rounds = data.get(
-        "consecutive_clean_rounds", 0
-    )
-    state.rounds_with_failed_pass = data.get(
-        "rounds_with_failed_pass", 0
-    )
-    state.rounds_with_falsify_infra = data.get(
-        "rounds_with_falsify_infra", 0
-    )
+    state.consecutive_survivor_rounds = data.get("consecutive_survivor_rounds", 0)
+    state.consecutive_clean_rounds = data.get("consecutive_clean_rounds", 0)
+    state.rounds_with_failed_pass = data.get("rounds_with_failed_pass", 0)
+    state.rounds_with_falsify_infra = data.get("rounds_with_falsify_infra", 0)
 
     # 08-02 additions: backward-compat defaults for pre-08-02 state.json.
     cost_data = data.get("cost", {})
@@ -383,9 +365,7 @@ def save_state(state: State, path: Path) -> None:
         "mode": state.mode.value,
         "source_hash": state.source_hash,
         "findings": [_finding_to_dict(f) for f in state.findings],
-        "dispositions": {
-            k: v.value for k, v in state.dispositions.items()
-        },
+        "dispositions": {k: v.value for k, v in state.dispositions.items()},
         "fix_attempts": dict(state.fix_attempts),
         "verdict": state.verdict.value,
         "converged": state.converged,

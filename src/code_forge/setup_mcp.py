@@ -5,6 +5,7 @@
 Writes user-level backend config, project-level gate.yaml (outlet + test
 only, no backends), auto-trusts, and prints client registration command.
 """
+
 from __future__ import annotations
 
 import os
@@ -156,8 +157,7 @@ def run_setup_mcp(
         for name in backend_names:
             if name not in PRESETS:
                 print(
-                    "Unknown backend preset '%s'. Available: %s"
-                    % (name, ", ".join(sorted(PRESETS))),
+                    "Unknown backend preset '%s'. Available: %s" % (name, ", ".join(sorted(PRESETS))),
                     file=sys.stderr,
                 )
                 return 1
@@ -211,8 +211,7 @@ def run_setup_mcp(
     wrote_gate = False
     if gate_yaml_path.exists() and not force:
         print(
-            "Project gate.yaml exists: %s (use --force to overwrite)"
-            % gate_yaml_path,
+            "Project gate.yaml exists: %s (use --force to overwrite)" % gate_yaml_path,
             file=sys.stderr,
         )
     else:
@@ -242,9 +241,7 @@ def run_setup_mcp(
     # Print client registration command only when user config was written
     # (so env vars match the backends that will actually be loaded).
     if wrote_user:
-        key_envs = " ".join(
-            "-e %s=$%s" % (p.api_key_env, p.api_key_env) for p in presets
-        )
+        key_envs = " ".join("-e %s=$%s" % (p.api_key_env, p.api_key_env) for p in presets)
         print(
             "\nSetup complete. Register the MCP server in your client:\n\n"
             "  claude mcp add forge %s -- code-forge-mcp\n\n"
@@ -256,8 +253,7 @@ def run_setup_mcp(
     elif wrote_gate:
         print(
             "\nProject gate.yaml written. Existing user config kept at "
-            "%s. Ensure its API keys are forwarded to the MCP server.\n"
-            % user_cfg_path,
+            "%s. Ensure its API keys are forwarded to the MCP server.\n" % user_cfg_path,
             file=sys.stderr,
         )
     else:

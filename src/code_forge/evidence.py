@@ -14,6 +14,7 @@ fabricated or stale citations.
 
 Public types: CiteVerification, reverify_finding_cites
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -62,6 +63,4 @@ def reverify_finding_cites(
             verified.append(finding)
         else:
             unverified.append(finding)
-    return CiteVerification(
-        verified=tuple(verified), unverified=tuple(unverified)
-    )
+    return CiteVerification(verified=tuple(verified), unverified=tuple(unverified))

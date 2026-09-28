@@ -23,6 +23,7 @@ from code_forge.workspace import SAMPLING_REMEDIATION, resolve_workspace
 
 # -- Registry map ---------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class RegistryEntry:
     name: str
@@ -73,7 +74,8 @@ REGISTRY_MAP = [
 
 
 def _check_workspace(
-    cwd: Path, env: Mapping[str, str],
+    cwd: Path,
+    env: Mapping[str, str],
 ) -> tuple[bool, str, Optional[Path]]:
     try:
         ws = resolve_workspace(cwd, env)
@@ -105,7 +107,8 @@ def _check_gate_yaml(
 
 
 def _check_trust(
-    gate_yaml_path: Path, gate_data: dict,
+    gate_yaml_path: Path,
+    gate_data: dict,
 ) -> tuple[bool, str]:
     from code_forge.trust import trust_status
 
@@ -116,7 +119,9 @@ def _check_trust(
 
 
 def _check_backends(
-    workspace: Path, gate_data: dict, env: Mapping[str, str],
+    workspace: Path,
+    gate_data: dict,
+    env: Mapping[str, str],
     live: bool = False,
 ) -> tuple[list[tuple[bool, str]], list | None]:
     """Return diagnostic lines AND merged BackendConfig list.
@@ -150,19 +155,17 @@ def _check_backends(
         provenance = "(project)" if cfg.name in project_raw else "(user)"
         # Informational: note the shadow, then probe the project version
         if cfg.name in project_raw and cfg.name in user_raw:
-            diag.append(
-                (True, "%s (user) SHADOWED by project" % cfg.name))
+            diag.append((True, "%s (user) SHADOWED by project" % cfg.name))
         try:
             result = probe_backend(cfg, env=env)
             if result.ok:
                 diag.append((True, "%s %s" % (cfg.name, provenance)))
             else:
-                diag.append((False, "%s %s: %s" % (
-                    cfg.name, provenance,
-                    result.error or "probe failed")))
+                diag.append(
+                    (False, "%s %s: %s" % (cfg.name, provenance, result.error or "probe failed"))
+                )
         except Exception as exc:  # noqa: BLE001  a probe failure is a failed check, not a doctor crash
-            diag.append(
-                (False, "%s %s: %s" % (cfg.name, provenance, exc)))
+            diag.append((False, "%s %s: %s" % (cfg.name, provenance, exc)))
 
         if not live:
             continue
@@ -170,37 +173,46 @@ def _check_backends(
         # would suppress the network call the live probe exists to
         # make, and doctor would report a cached guess as liveness.
         if cfg.type != "api":
-            diag.append((
-                True,
-                "%s %s live: skipped (cli backends are trusted as "
-                "configured; no live probe applies)"
-                % (cfg.name, provenance),
-            ))
+            diag.append(
+                (
+                    True,
+                    "%s %s live: skipped (cli backends are trusted as "
+                    "configured; no live probe applies)" % (cfg.name, provenance),
+                )
+            )
             continue
         try:
             live_result = probe_backend_live(cfg)
             if live_result.ok:
-                diag.append((
-                    True, "%s %s live: ok" % (cfg.name, provenance)))
+                diag.append((True, "%s %s live: ok" % (cfg.name, provenance)))
             else:
-                diag.append((
-                    False,
-                    "%s %s live: %s -- %s; %s"
-                    % (cfg.name, provenance,
-                       live_result.error_class,
-                       live_result.detail,
-                       live_result.suggestion),
-                ))
+                diag.append(
+                    (
+                        False,
+                        "%s %s live: %s -- %s; %s"
+                        % (
+                            cfg.name,
+                            provenance,
+                            live_result.error_class,
+                            live_result.detail,
+                            live_result.suggestion,
+                        ),
+                    )
+                )
         except Exception as exc:  # noqa: BLE001  a live probe failure is a failed check, not a doctor crash
-            diag.append((
-                False,
-                "%s %s live: %s" % (cfg.name, provenance, exc),
-            ))
+            diag.append(
+                (
+                    False,
+                    "%s %s live: %s" % (cfg.name, provenance, exc),
+                )
+            )
     return (diag, configs)
 
 
 def _check_outlet(
-    workspace: Path, gate_data: dict, env: Mapping[str, str],
+    workspace: Path,
+    gate_data: dict,
+    env: Mapping[str, str],
     configs: list,
 ) -> tuple[bool, str]:
     from code_forge.outlet_resolver import resolve_outlet
@@ -208,8 +220,12 @@ def _check_outlet(
     gate_yaml_path = workspace / ".code-forge" / "gate.yaml"
     try:
         outlet = resolve_outlet(
-            env, gate_yaml_path, cli_value=None, configs=configs,
-            has_explicit_backend=False, reachability_fn=None,
+            env,
+            gate_yaml_path,
+            cli_value=None,
+            configs=configs,
+            has_explicit_backend=False,
+            reachability_fn=None,
         )
     except Exception as exc:  # noqa: BLE001  outlet resolution failure is reported as a failed check
         return (False, str(exc))
@@ -217,8 +233,7 @@ def _check_outlet(
         return (
             False,
             "sampling (cannot verify client capability from CLI; "
-            "the MCP-side forge_resolve_outlet can). "
-            + SAMPLING_REMEDIATION,
+            "the MCP-side forge_resolve_outlet can). " + SAMPLING_REMEDIATION,
         )
     return (True, outlet)
 
@@ -234,18 +249,15 @@ def _check_handshake() -> tuple[bool, str]:
         params = StdioServerParameters(command=cmd, args=args)
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
-                result = await asyncio.wait_for(
-                    session.initialize(), 15)
-                name = (result.serverInfo.name
-                        if result.serverInfo else "unknown")
+                result = await asyncio.wait_for(session.initialize(), 15)
+                name = result.serverInfo.name if result.serverInfo else "unknown"
                 return (True, name)
 
     coro = _async()
     try:
         return asyncio.run(coro)
     except ImportError:
-        return (False,
-                "mcp not installed -- pip install code-forge[mcp]")
+        return (False, "mcp not installed -- pip install code-forge[mcp]")
     except asyncio.TimeoutError:
         return (False, "handshake timed out after 15s")
     except Exception as exc:  # noqa: BLE001  handshake failures other than import and timeout are reported
@@ -290,8 +302,7 @@ def _check_registries(home: Path) -> list[tuple[str, str]]:
                             cmd = ""
                             if isinstance(cfg, dict):
                                 cmd = str(cfg.get("command", ""))
-                            if ("code-forge" in cmd
-                                    or "forge" in cmd):
+                            if "code-forge" in cmd or "forge" in cmd:
                                 found = True
                                 break
                 if found:
@@ -375,8 +386,7 @@ def _check_hook_drift(
             except Exception as exc:  # noqa: BLE001  hook input collection failure fails the drift check
                 # A forge hook is installed and we cannot tell whether it
                 # is current. Fail rather than imply it was checked.
-                return results + [
-                    (False, "cannot regenerate: %s" % _flat(exc))]
+                return results + [(False, "cannot regenerate: %s" % _flat(exc))]
 
         backup = hooks_dir / ("%s.code-forge-backup" % name)
         # Chaining alone is not drift: a re-install over a forge hook drops
@@ -384,7 +394,8 @@ def _check_hook_drift(
         if name == "pre-commit":
             expected = [
                 generate_hook_content(
-                    inputs.forge_invocation, chain,
+                    inputs.forge_invocation,
+                    chain,
                     presubmit_entries=inputs.presubmit_entries,
                     non_ascii_mode=inputs.non_ascii_mode,
                     planning_leak_guard=inputs.planning_leak_guard,
@@ -393,19 +404,19 @@ def _check_hook_drift(
             ]
         else:
             expected = [
-                generate_commit_msg_hook_content(
-                    chain, non_ascii_mode=inputs.non_ascii_mode)
+                generate_commit_msg_hook_content(chain, non_ascii_mode=inputs.non_ascii_mode)
                 for chain in (None, backup)
             ]
 
         if installed in expected:
             results.append((True, "%s: current" % name))
         else:
-            results.append((
-                False,
-                "%s: differs from generated"
-                " -- run code-forge install-hooks" % name,
-            ))
+            results.append(
+                (
+                    False,
+                    "%s: differs from generated -- run code-forge install-hooks" % name,
+                )
+            )
     return results
 
 
@@ -456,22 +467,16 @@ def _audit_python_deps(
                 found = md.version(req.name)
             except md.PackageNotFoundError:
                 if req.name in shelled_out and shutil.which(req.name) is not None:
-                    results.append(
-                        (None,
-                         f"{req.name}: on PATH, version unchecked"))
+                    results.append((None, f"{req.name}: on PATH, version unchecked"))
                 else:
                     want = req.specifier or "any"
-                    results.append(
-                        (False, f"{req.name}: not installed (want {want})"))
+                    results.append((False, f"{req.name}: not installed (want {want})"))
                 continue
             if req.specifier and found not in req.specifier:
-                results.append(
-                    (False,
-                     f"{req.name}: {found} installed, want {req.specifier}"))
+                results.append((False, f"{req.name}: {found} installed, want {req.specifier}"))
             else:
                 results.append((True, f"{req.name}: {found}"))
-        except (InvalidRequirement, InvalidMarker,
-                UndefinedEnvironmentName) as exc:
+        except (InvalidRequirement, InvalidMarker, UndefinedEnvironmentName) as exc:
             # Metadata comes from whatever is installed, so a malformed
             # requirement string is possible. A diagnostic that crashes
             # tells the user less than one naming the spec it cannot read.
@@ -513,20 +518,15 @@ def _audit_tools(
         for tc in registry.values():
             try:
                 if tc.working_dir == "cargo_root":
-                    results.append(
-                        (None, "%s: cargo_root" % tc.name))
+                    results.append((None, "%s: cargo_root" % tc.name))
                     continue
                 version = capture_tool_version(tc.command)
                 if version == "not_installed":
-                    results.append(
-                        (False, "%s: not_installed" % tc.name))
+                    results.append((False, "%s: not_installed" % tc.name))
                 else:
-                    results.append(
-                        (True, "%s: %s" % (tc.name, version)))
+                    results.append((True, "%s: %s" % (tc.name, version)))
             except Exception as exc:  # noqa: BLE001  a tool audit error is reported per tool
-                results.append(
-                    (False,
-                     "%s: audit error: %s" % (tc.name, exc)))
+                results.append((False, "%s: audit error: %s" % (tc.name, exc)))
     finally:
         try:
             os.chdir(original_cwd)
@@ -540,7 +540,9 @@ def _audit_tools(
 
 
 def run_doctor(
-    cwd: Path, env: Mapping[str, str], live: bool = False,
+    cwd: Path,
+    env: Mapping[str, str],
+    live: bool = False,
 ) -> int:
     """Run all checks and print diagnostic output. Returns 0 or 1."""
     has_fail = False
@@ -549,8 +551,7 @@ def run_doctor(
     _line("workspace", msg_ws, ok_ws)
     if not ok_ws:
         has_fail = True
-        for label in ("gate.yaml", "trust", "backend", "outlet",
-                       "tool-audit", "hooks"):
+        for label in ("gate.yaml", "trust", "backend", "outlet", "tool-audit", "hooks"):
             _line(label, "", None)
     else:
         ok_gy, msg_gy, gate_data = _check_gate_yaml(workspace)
@@ -566,8 +567,7 @@ def run_doctor(
             if not ok_t:
                 has_fail = True
 
-            diag_lines, configs = _check_backends(
-                workspace, gate_data, env, live=live)
+            diag_lines, configs = _check_backends(workspace, gate_data, env, live=live)
             for ok_b, msg_b in diag_lines:
                 _line("backend", msg_b, ok_b)
                 if not ok_b:
@@ -575,8 +575,7 @@ def run_doctor(
 
             has_explicit_outlet = "outlet" in gate_data
             if configs is not None and (configs or has_explicit_outlet):
-                ok_o, msg_o = _check_outlet(
-                    workspace, gate_data, env, configs)
+                ok_o, msg_o = _check_outlet(workspace, gate_data, env, configs)
                 _line("outlet", msg_o, ok_o)
                 if not ok_o:
                     has_fail = True
@@ -612,14 +611,14 @@ def run_doctor(
     # User-level config is host state, not workspace state: report it
     # every run, outside the workspace-gated block above.
     from code_forge.user_config import user_config_dir, user_config_path
+
     user_cfg = user_config_path()
     if user_cfg is not None:
         print("  user config: %s" % user_cfg)
     else:
         print(
             "  user config: none at %s -- shared backends can be set "
-            "there once; a project gate.yaml backend wins by name"
-            % (user_config_dir() / "config.yaml")
+            "there once; a project gate.yaml backend wins by name" % (user_config_dir() / "config.yaml")
         )
 
     reg_results = _check_registries(Path(os.path.expanduser("~")))
@@ -628,8 +627,7 @@ def run_doctor(
         print("    %-15s%s" % (name + ":", status))
 
     print("  ---")
-    print("  If a tool is still missing, "
-          "run /mcp list in your agent.")
+    print("  If a tool is still missing, run /mcp list in your agent.")
 
     return 1 if has_fail else 0
 

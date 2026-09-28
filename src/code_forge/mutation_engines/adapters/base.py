@@ -82,9 +82,7 @@ class InputSnapshot:
         if not os.path.isdir(self.root):
             raise ValueError("snapshot root is not a directory: %r" % self.root)
         if len(self.files) > MAX_SNAPSHOT_FILES:
-            raise ValueError(
-                "snapshot file count exceeds %d" % MAX_SNAPSHOT_FILES
-            )
+            raise ValueError("snapshot file count exceeds %d" % MAX_SNAPSHOT_FILES)
 
 
 @dataclass(frozen=True)
@@ -128,14 +126,10 @@ class ExecutionContext:
             )
         for path in self.extra_python_paths:
             if not path.startswith("/"):
-                raise ValueError(
-                    "extra python paths must be absolute, got %r" % (path,)
-                )
+                raise ValueError("extra python paths must be absolute, got %r" % (path,))
         for path in self.extra_node_paths:
             if not path.startswith("/"):
-                raise ValueError(
-                    "extra node paths must be absolute, got %r" % (path,)
-                )
+                raise ValueError("extra node paths must be absolute, got %r" % (path,))
 
 
 class MutationAdapter(Protocol):
@@ -143,9 +137,7 @@ class MutationAdapter(Protocol):
 
     id: str
 
-    def probe(
-        self, target: TargetDeclaration, context: ExecutionContext
-    ) -> CapabilityReport: ...
+    def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport: ...
 
     def run(
         self,

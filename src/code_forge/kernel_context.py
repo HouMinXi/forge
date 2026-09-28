@@ -1,4 +1,5 @@
 """Bounded observations of kernel patch text and an explicitly named file."""
+
 from __future__ import annotations
 
 import errno
@@ -30,7 +31,9 @@ _DECL = re.compile(r"^\s*(?:menuconfig|config)\s+([A-Za-z0-9_]+)")
 _EXPR = re.compile(r"^\s*(?:depends on|select|imply|default)\s+(.*)$")
 _STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 _VALUE = re.compile(r'(?:[ymn]|-?[0-9]+|0[xX][0-9a-fA-F]+|"(?:\\.|[^"\\])*")\s*\Z')
-_GUARD = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif)\b|\b(IS_ENABLED|IS_BUILTIN|IS_MODULE|IS_REACHABLE)\s*\(")
+_GUARD = re.compile(
+    r"^\s*#\s*(if|ifdef|ifndef|elif)\b|\b(IS_ENABLED|IS_BUILTIN|IS_MODULE|IS_REACHABLE)\s*\("
+)
 
 
 @dataclass(frozen=True)
@@ -49,7 +52,12 @@ def validate_kernel_context(section: object) -> KernelConfig:
     path = section.get("defconfig", "")
     if not isinstance(enabled, bool):
         raise ValueError("kernel_context.enabled: must be a bool")  # noqa: TRY004 - CLI validation contract
-    if not isinstance(path, str) or "\0" in path or PurePosixPath(path).is_absolute() or ".." in path.split("/"):
+    if (
+        not isinstance(path, str)
+        or "\0" in path
+        or PurePosixPath(path).is_absolute()
+        or ".." in path.split("/")
+    ):
         raise ValueError("kernel_context.defconfig: must be a repository-relative path")
     path = str(PurePosixPath(path)) if path else ""
     if path == ".":
@@ -66,8 +74,16 @@ def validate_kernel_context(section: object) -> KernelConfig:
 
 
 def _escape_units(text: str) -> list[str]:
-    mapping = {"\\": "\\\\", "\n": "\\n", "\r": "\\r", "\t": "\\t", "|": "\\|",
-               "`": "\\`", "<": "&lt;", ">": "&gt;"}
+    mapping = {
+        "\\": "\\\\",
+        "\n": "\\n",
+        "\r": "\\r",
+        "\t": "\\t",
+        "|": "\\|",
+        "`": "\\`",
+        "<": "&lt;",
+        ">": "&gt;",
+    }
     return [mapping.get(c, f"\\x{ord(c):02x}" if ord(c) < 32 or ord(c) == 127 else c) for c in text]
 
 
@@ -212,8 +228,12 @@ def _row(entity: str, path: str = "", line: int | None = None, note: str = "") -
 
 def _rank(row: FactRow):
     categories = {"context-status": 0, "config": 1, "guard": 2, "dt": 3, "binding": 4, "truncated": 5}
-    return (categories[row.entity.split(":", 1)[0]], row.file, row.entity,
-            -1 if row.origin_line is None else row.origin_line)
+    return (
+        categories[row.entity.split(":", 1)[0]],
+        row.file,
+        row.entity,
+        -1 if row.origin_line is None else row.origin_line,
+    )
 
 
 class KernelContextSource:
@@ -258,7 +278,7 @@ class KernelContextSource:
         if len(data) > MAX_DIFF_BYTES:
             limited = data[:MAX_DIFF_BYTES].decode("utf-8", errors="ignore")
             cut = limited.rfind("\ndiff --git ")
-            diff_text = limited[:cut + 1] if cut >= 0 else ""
+            diff_text = limited[: cut + 1] if cut >= 0 else ""
             limit = True
         patchset = unidiff.PatchSet(diff_text)
         keys = set()
@@ -299,7 +319,9 @@ class KernelContextSource:
             try:
                 declarations = _declarations(self._read_config())
             except ReadFailure as exc:
-                rows.append(_row(f"context-status:{exc}", self.config.defconfig, note=f"unknown; reason={exc}"))
+                rows.append(
+                    _row(f"context-status:{exc}", self.config.defconfig, note=f"unknown; reason={exc}")
+                )
                 self.warnings.append(f"kernel-context: reason={exc}")
             else:
                 for symbol, ambiguous in symbols.items():
@@ -313,16 +335,20 @@ class KernelContextSource:
                         note = "unknown; reason=not-declared"
                     rows.append(_row("config:" + symbol, self.config.defconfig, line, note))
         if limit:
-            rows.append(_row("context-status:input-limit", note="unknown; reason=input-limit; coverage=unknown"))
+            rows.append(
+                _row("context-status:input-limit", note="unknown; reason=input-limit; coverage=unknown")
+            )
             self.warnings.append("kernel-context: reason=input-limit")
         unique = {}
         for row in sorted(rows, key=_rank):
             key = (row.source, row.entity, row.file)
             previous = unique.get(key)
             if previous is not None and row.entity.startswith("binding:"):
+
                 def values(note):
                     compatible, required = note.split("; required=", 1)
                     return compatible.removeprefix("compatible="), required
+
                 old_compatible, old_required = values(previous.dependents)
                 compatible, required = values(row.dependents)
                 note = "compatible=" + ",".join(filter(None, (old_compatible, compatible)))
@@ -338,7 +364,9 @@ class KernelContextSource:
         for match in _GUARD.finditer(text):
             directive = match[1] or match[2]
             for symbol in sorted(set(_PREFIX.findall(text)) or {"unparsed"}):
-                rows.append(_row(f"guard:{side}:{line}:{directive}:{symbol}", path, line, "expr=" + text))
+                rows.append(
+                    _row(f"guard:{side}:{line}:{directive}:{symbol}", path, line, "expr=" + text)
+                )
         if PurePosixPath(path).suffix in {".dts", ".dtsi", ".dtso"}:
             node = re.fullmatch(r"\s*((?:[\w-]+\s*:\s*)?[\w,@/+-]+|&(?:[\w]+|\{/[^}]*\}))\s*\{\s*", text)
             ref = re.findall(r"&(?:[A-Za-z_][\w]*|\{/[^}]*\})", text)
@@ -346,25 +374,43 @@ class KernelContextSource:
             if "/*" in text or "//" in text or text.lstrip().startswith("#"):
                 kind, target = "unparsed", "unparsed"
             elif prop:
-                return [_row(f"dt:{side}:{line}:prop:compatible", path, line,
-                             "role=prop; value=" + prop[1].strip())]
+                return [
+                    _row(
+                        f"dt:{side}:{line}:prop:compatible",
+                        path,
+                        line,
+                        "role=prop; value=" + prop[1].strip(),
+                    )
+                ]
             elif node:
                 kind, target = "node", node[1]
             elif ref and '"' not in text:
                 for target in ref:
-                    rows.append(_row(f"dt:{side}:{line}:ref:{target}", path, line, "role=ref; value=" + text))
+                    rows.append(
+                        _row(f"dt:{side}:{line}:ref:{target}", path, line, "role=ref; value=" + text)
+                    )
                 return rows
             else:
                 kind, target = "unparsed", "unparsed"
             if text.strip():
-                rows.append(_row(f"dt:{side}:{line}:{kind}:{target}", path, line, f"role={kind}; value={text}"))
-        if (path.startswith("Documentation/devicetree/bindings/")
-                and PurePosixPath(path).suffix in {".yaml", ".yml"}
-                and re.search(r"\b(?:compatible|required)\b", text)):
+                rows.append(
+                    _row(f"dt:{side}:{line}:{kind}:{target}", path, line, f"role={kind}; value={text}")
+                )
+        if (
+            path.startswith("Documentation/devicetree/bindings/")
+            and PurePosixPath(path).suffix in {".yaml", ".yml"}
+            and re.search(r"\b(?:compatible|required)\b", text)
+        ):
             compatible = text.strip() if "compatible" in text else ""
             required = text.strip() if "required" in text else ""
-            rows.append(_row(f"binding:{side}:{path}", path, line,
-                             "compatible=" + compatible + "; required=" + required))
+            rows.append(
+                _row(
+                    f"binding:{side}:{path}",
+                    path,
+                    line,
+                    "compatible=" + compatible + "; required=" + required,
+                )
+            )
         return rows
 
     def _render(self, rows: list[FactRow]) -> list[FactRow]:
@@ -372,7 +418,9 @@ class KernelContextSource:
             self.rendered_text = ""
             return []
         prefix = KERNEL_CONTEXT_SCOPE_NOTICE + source_line(
-            self.repo_root, self.config.defconfig if self.snapshot_digest else "", self.snapshot_digest,
+            self.repo_root,
+            self.config.defconfig if self.snapshot_digest else "",
+            self.snapshot_digest,
         )
         visible = []
         for row in rows:
@@ -413,7 +461,11 @@ class KernelContextSource:
             kept = picked or kept
             self.rendered_text = text(kept) if kept else prefix + KERNEL_CONTEXT_SHORT_DIAGNOSTIC
         omitted_diag = len(diagnostics) - sum(r.entity.startswith("context-status:") for r in kept)
-        omitted_data = len(data) - sum(not r.entity.startswith("context-status:") and r.entity != "truncated" for r in kept)
+        omitted_data = len(data) - sum(
+            not r.entity.startswith("context-status:") and r.entity != "truncated" for r in kept
+        )
         if omitted_diag or omitted_data:
-            self.warnings.append(f"kernel-context: omitted diagnostics={omitted_diag} data={omitted_data}")
+            self.warnings.append(
+                f"kernel-context: omitted diagnostics={omitted_diag} data={omitted_data}"
+            )
         return kept

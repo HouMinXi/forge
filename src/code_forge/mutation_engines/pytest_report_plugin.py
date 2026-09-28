@@ -149,6 +149,7 @@ class _Hooks:
 
 _HOOKS = _Hooks()
 
+
 # pytest discovers hooks from module-level functions; delegate each one.
 def pytest_configure(config) -> None:  # noqa: F811
     _HOOKS.pytest_configure(config)

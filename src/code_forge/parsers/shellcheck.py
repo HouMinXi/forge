@@ -24,33 +24,39 @@ def parse_shellcheck(
     try:
         raw = json.loads(output)
     except (json.JSONDecodeError, ValueError):
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message=f"Failed to parse {tool_name} JSON output",
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message=f"Failed to parse {tool_name} JSON output",
+            )
+        ]
 
     findings = []
     try:
         for item in raw:
-            findings.append(Finding(
-                file=item["file"],
-                line=item["line"],
-                # Round 3 H-1: use `or` to handle JSON null values
-                end_line=(item.get("endLine") or item["line"]),
-                column=(item.get("column") or 0),
-                rule_id=f"SC{item['code']}",
-                level=item.get("level", "warning"),
-                message=item["message"],
-                tool_name=tool_name,
-                fix=None,
-            ))
+            findings.append(
+                Finding(
+                    file=item["file"],
+                    line=item["line"],
+                    # Round 3 H-1: use `or` to handle JSON null values
+                    end_line=(item.get("endLine") or item["line"]),
+                    column=(item.get("column") or 0),
+                    rule_id=f"SC{item['code']}",
+                    level=item.get("level", "warning"),
+                    message=item["message"],
+                    tool_name=tool_name,
+                    fix=None,
+                )
+            )
     except (KeyError, TypeError, AttributeError):
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message=f"Failed to parse {tool_name} output: missing fields",
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message=f"Failed to parse {tool_name} output: missing fields",
+            )
+        ]
     return findings

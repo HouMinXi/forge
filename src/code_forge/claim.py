@@ -47,7 +47,5 @@ def derive_claim_type(source: str) -> ClaimType:
     """
     ct = _SOURCE_TO_CLAIM.get(source)
     if ct is None:
-        raise ValueError(
-            f"unknown finding source {source!r}; add to _SOURCE_TO_CLAIM"
-        )
+        raise ValueError(f"unknown finding source {source!r}; add to _SOURCE_TO_CLAIM")
     return ct

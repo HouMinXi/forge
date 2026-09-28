@@ -117,9 +117,7 @@ def _language_extensions(languages: list[str]) -> tuple[str, ...]:
     return tuple(sorted(exts))
 
 
-def _files_for_languages(
-    files: list[Path], languages: list[str]
-) -> list[Path]:
+def _files_for_languages(files: list[Path], languages: list[str]) -> list[Path]:
     """Filter source files by pack languages.
 
     An empty language list or unknown language maps to "generic" and
@@ -243,9 +241,7 @@ def load_pack(pack_dir: Path) -> RulepackManifest:
         )
 
     if duplicate_meta_ids:
-        errors.append(
-            "duplicate rule IDs in meta.yaml: %s" % sorted(duplicate_meta_ids)
-        )
+        errors.append("duplicate rule IDs in meta.yaml: %s" % sorted(duplicate_meta_ids))
 
     # Read rules.yaml IDs for missing-rule detection.
     rules_ids, rules_error = _extract_rule_ids(rules_path)
@@ -289,9 +285,7 @@ def discover_packs(repo_root: Path) -> dict[str, Path]:
     return packs
 
 
-def resolve_active_packs(
-    gate_config: dict, repo_root: Path
-) -> list[RulepackManifest]:
+def resolve_active_packs(gate_config: dict, repo_root: Path) -> list[RulepackManifest]:
     """Resolve allowlisted packs from gate.yaml.
 
     Raises:
@@ -381,10 +375,7 @@ class RulepackRunner:
             self.infra_errors.append(msg)
             print(msg, file=sys.stderr)
             self.matrix = self._build_matrix(
-                {
-                    p.name: {r.id: "NOT_RUN" for r in p.rules}
-                    for p in self.packs
-                },
+                {p.name: {r.id: "NOT_RUN" for r in p.rules} for p in self.packs},
                 {p.name: {} for p in self.packs},
             )
             self.matrix.write(repo_root)
@@ -460,9 +451,7 @@ class RulepackRunner:
             return statuses, reasons, []
 
         # Determine files eligible for this pack's languages.
-        pack_languages = [
-            lang for rule in pack.rules for lang in rule.languages
-        ]
+        pack_languages = [lang for rule in pack.rules for lang in rule.languages]
         files = _files_for_languages(self.source_files or [], pack_languages)
         files = [f for f in files if (repo_root / f).exists()]
 
@@ -471,18 +460,23 @@ class RulepackRunner:
             return statuses, reasons, []
 
         cmd = [
-            "semgrep", "scan",
-            "--config", str(pack.rules_yaml_path),
+            "semgrep",
+            "scan",
+            "--config",
+            str(pack.rules_yaml_path),
             "--sarif",
-            "--timeout", str(timeout),
-            "--jobs", str(jobs),
+            "--timeout",
+            str(timeout),
+            "--jobs",
+            str(jobs),
         ] + [str(f) for f in files]
 
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True, encoding="utf-8",
+                text=True,
+                encoding="utf-8",
                 errors="replace",
                 timeout=timeout + 10,
                 cwd=str(repo_root),
@@ -505,9 +499,10 @@ class RulepackRunner:
             return statuses, reasons, []
 
         if result.returncode >= 2:
-            msg = (
-                "rulepack %s: semgrep error (exit %d): %s"
-                % (pack.name, result.returncode, result.stderr[:200])
+            msg = "rulepack %s: semgrep error (exit %d): %s" % (
+                pack.name,
+                result.returncode,
+                result.stderr[:200],
             )
             self.infra_errors.append(msg)
             for rule in pack.rules:
@@ -539,17 +534,13 @@ class RulepackRunner:
         advisories = self._findings_to_advisories(pack.name, findings)
         return statuses, reasons, advisories
 
-    def _findings_to_advisories(
-        self, pack_name: str, findings: list[Finding]
-    ) -> list[AdvisoryFinding]:
+    def _findings_to_advisories(self, pack_name: str, findings: list[Finding]) -> list[AdvisoryFinding]:
         """Convert parser Finding objects to AdvisoryFinding for a pack."""
         advisories: list[AdvisoryFinding] = []
         for f in findings:
             advisories.append(
                 AdvisoryFinding(
-                    id="rulepack:%s:%s:%s:%s" % (
-                        pack_name, f.file, f.line, f.rule_id
-                    ),
+                    id="rulepack:%s:%s:%s:%s" % (pack_name, f.file, f.line, f.rule_id),
                     axis="rulepack:%s" % pack_name,
                     file=f.file,
                     line_range=(f.line, f.end_line),
@@ -575,9 +566,7 @@ class RulepackRunner:
             }
             # Try to read version/source from meta.yaml for transparency.
             try:
-                meta = yaml.safe_load(
-                    pack.meta_yaml_path.read_text(encoding="utf-8")
-                )
+                meta = yaml.safe_load(pack.meta_yaml_path.read_text(encoding="utf-8"))
                 if isinstance(meta, dict):
                     pack_dict["version"] = meta.get("version", "")
                     pack_dict["source"] = meta.get("source", "")

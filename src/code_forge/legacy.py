@@ -8,6 +8,7 @@ commit signal) or "unintended". Advisory only -- never blocks convergence.
 
 Follows TaintRunner / RuntimeRunner structural model.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,17 +22,34 @@ from .state import StateFinding
 # ---------------------------------------------------------------------------
 # SATD keywords (in-code markers indicating known technical debt)
 # ---------------------------------------------------------------------------
-SATD_KEYWORDS = frozenset({
-    "todo", "fixme", "hack", "workaround", "xxx", "kludge",
-})
+SATD_KEYWORDS = frozenset(
+    {
+        "todo",
+        "fixme",
+        "hack",
+        "workaround",
+        "xxx",
+        "kludge",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Commit-message intent signals (substring match, ~55% precision)
 # ---------------------------------------------------------------------------
-INTENT_SIGNALS = frozenset({
-    "workaround", "hack", "temp", "fixme", "known-issue",
-    "known issue", "legacy", "grandfather", "suppress", "intentional",
-})
+INTENT_SIGNALS = frozenset(
+    {
+        "workaround",
+        "hack",
+        "temp",
+        "fixme",
+        "known-issue",
+        "known issue",
+        "legacy",
+        "grandfather",
+        "suppress",
+        "intentional",
+    }
+)
 
 
 def _build_legacy_skipped(reason: str) -> AdvisoryFinding:
@@ -135,9 +153,7 @@ class LegacyRunner:
             return [_build_legacy_skipped("registry not injected")]
 
         # Step 5: extract changed lines (with absolute-path expansion).
-        changed_lines = extract_changed_lines(
-            diff_text, repo_root=repo_root
-        )
+        changed_lines = extract_changed_lines(diff_text, repo_root=repo_root)
         if not changed_lines:
             return []
 
@@ -148,10 +164,9 @@ class LegacyRunner:
         try:
             if runner_fn is None:
                 from .machine import _default_l0_runner
+
                 runner_fn = _default_l0_runner
-            l0_findings, l0_infra = runner_fn(
-                self.registry, list(self.source_files)
-            )
+            l0_findings, l0_infra = runner_fn(self.registry, list(self.source_files))
         except Exception as exc:
             msg = "L0 re-run failed: %r" % exc
             self.infra_errors.append(msg)
@@ -178,7 +193,8 @@ class LegacyRunner:
                     delta_ids.add(sf.id)
 
         pre_existing = [
-            sf for sf in l0_findings
+            sf
+            for sf in l0_findings
             if isinstance(sf, StateFinding)
             and sf.line_range
             and sf.id not in delta_ids
@@ -214,9 +230,7 @@ class LegacyRunner:
                     source_lines_cache[blame_key] = {
                         i + 1: line
                         for i, line in enumerate(
-                            abs_path.read_text(
-                                encoding="utf-8", errors="replace"
-                            ).splitlines()
+                            abs_path.read_text(encoding="utf-8", errors="replace").splitlines()
                         )
                     }
                 except OSError:
@@ -237,16 +251,12 @@ class LegacyRunner:
                     blame_entry.get("date", ""),
                     blame_entry.get("subject", ""),
                 ]
-                attribution = "git-blame: " + " ".join(
-                    p for p in parts if p
-                )
+                attribution = "git-blame: " + " ".join(p for p in parts if p)
             else:
                 attribution = "git-blame: unavailable"
 
             # Classify intent.
-            intent = _classify_intent(
-                blame_entry.get("subject", ""), source_lines, line_no
-            )
+            intent = _classify_intent(blame_entry.get("subject", ""), source_lines, line_no)
 
             # Build finding ID.
             rule_hint = sf.description[:16].replace(" ", "_")

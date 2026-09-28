@@ -11,6 +11,7 @@ raising TypeError for type violations would escape that net and crash the
 review. The TRY004 suppressions below are deliberate and pinned by
 tests/test_reviewer_json_contract.py.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -105,14 +106,14 @@ def _strip_fence(raw: str) -> str:
         return text
     tail = text[:-3]
     last_nl = tail.rfind("\n")
-    if last_nl == -1 or tail[last_nl + 1:].strip():
+    if last_nl == -1 or tail[last_nl + 1 :].strip():
         # The closing fence must sit on its own line; only indentation
         # may precede it. A ``` that terminates a JSON string is
         # content, not a fence -- cutting it would amputate the string
         # and the parse fails anyway, but "the fence line" is only
         # ever a fence when it is one.
         return text
-    return text[first_nl + 1:-3].strip()
+    return text[first_nl + 1 : -3].strip()
 
 
 def excerpt_lines(text: str) -> list[str]:
@@ -247,19 +248,14 @@ def validate_reviewer_json(raw: str | dict) -> dict:
         e = exc["end_line"]
         if s <= 0 or e <= 0:
             raise ValueError(
-                "code_excerpt[%d] start_line and end_line must be positive, "
-                "got %r and %r" % (i, s, e)
+                "code_excerpt[%d] start_line and end_line must be positive, got %r and %r" % (i, s, e)
             )
         if s > e:
-            raise ValueError(
-                "code_excerpt[%d] start_line %d > end_line %d" % (i, s, e)
-            )
+            raise ValueError("code_excerpt[%d] start_line %d > end_line %d" % (i, s, e))
         content = exc.get("content")
         if isinstance(content, list):
             if not all(isinstance(ln, str) for ln in content):
-                raise ValueError(
-                    "code_excerpt[%d] content list must contain only strings" % i
-                )
+                raise ValueError("code_excerpt[%d] content list must contain only strings" % i)
             text = "\n".join(content)
         elif isinstance(content, str):
             text = content
@@ -292,9 +288,7 @@ _VALID_PASS_NAMES = frozenset({"qodo", "expert", "adversarial"})
 def _collect_excerpts(data: dict, *, pass_name: str) -> list[dict]:
     """Extract code_excerpts from validated reviewer JSON with trusted pass attribution."""
     if pass_name not in _VALID_PASS_NAMES:
-        raise ValueError(
-            f"invalid pass_name {pass_name!r}, expected one of {sorted(_VALID_PASS_NAMES)}"
-        )
+        raise ValueError(f"invalid pass_name {pass_name!r}, expected one of {sorted(_VALID_PASS_NAMES)}")
     out = []
     for exc in data.get("code_excerpts", []):
         if not isinstance(exc, dict):
@@ -316,7 +310,9 @@ genuinely distant lines distinct.
 
 
 def _location_fingerprint(
-    file_path: str, line: int, pass_name: str,
+    file_path: str,
+    line: int,
+    pass_name: str,
 ) -> str:
     """Compute a location-stable fingerprint for an L1 finding.
 
@@ -352,7 +348,8 @@ def _location_fingerprint(
 
 
 def _dedup_by_fingerprint(
-    findings: list, seen=None,
+    findings: list,
+    seen=None,
 ) -> list:
     """Fold findings to one per fingerprint, first-in-wins.
 
@@ -393,7 +390,9 @@ def _is_praise(description: str) -> bool:
 
 
 def _json_to_state_findings(
-    data: dict, pass_name: str, backend: str | None = None,
+    data: dict,
+    pass_name: str,
+    backend: str | None = None,
 ) -> list:
     """Convert validated reviewer JSON findings to StateFinding list.
 
@@ -424,33 +423,31 @@ def _json_to_state_findings(
         if _is_praise(desc):
             continue
         fp = _location_fingerprint(file_path, line, pass_name)
-        findings.append(StateFinding(
-            id=f"l1-{pass_name}-{fp}",
-            fingerprint=fp,
-            source="L1",
-            disposition=Disposition.UNCERTAIN,
-            file=file_path,
-            line_range=[line, line],
-            description=f"[{pass_name}] {desc}",
-            backend=backend,
-            # Validated against _VALID_SEVERITIES above; carried through
-            # rather than dropped, so the convergence gate can tell a P0
-            # from a P3 instead of defaulting every L1 finding to P1.
-            #
-            # Re-checked here rather than trusting validate_reviewer_json:
-            # this function is importable and gets called directly (the
-            # tests do it), so the validation upstream is a convention
-            # rather than a guarantee. An unrecognised value becomes None,
-            # which _severity_tier treats as "no reviewer opinion" and
-            # falls back for -- the same position it was in before this
-            # field existed.
-            severity=(
-                f_raw.get("severity")
-                if f_raw.get("severity") in _VALID_SEVERITIES
-                else None
-            ),
-            excerpt=_finding_excerpt(f_raw),
-        ))
+        findings.append(
+            StateFinding(
+                id=f"l1-{pass_name}-{fp}",
+                fingerprint=fp,
+                source="L1",
+                disposition=Disposition.UNCERTAIN,
+                file=file_path,
+                line_range=[line, line],
+                description=f"[{pass_name}] {desc}",
+                backend=backend,
+                # Validated against _VALID_SEVERITIES above; carried through
+                # rather than dropped, so the convergence gate can tell a P0
+                # from a P3 instead of defaulting every L1 finding to P1.
+                #
+                # Re-checked here rather than trusting validate_reviewer_json:
+                # this function is importable and gets called directly (the
+                # tests do it), so the validation upstream is a convention
+                # rather than a guarantee. An unrecognised value becomes None,
+                # which _severity_tier treats as "no reviewer opinion" and
+                # falls back for -- the same position it was in before this
+                # field existed.
+                severity=(f_raw.get("severity") if f_raw.get("severity") in _VALID_SEVERITIES else None),
+                excerpt=_finding_excerpt(f_raw),
+            )
+        )
     return findings
 
 

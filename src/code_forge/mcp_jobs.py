@@ -10,6 +10,7 @@ Migration seam: when the MCP Python SDK ships SEP-2663 Tasks support
 (tracked issue #2806, ~2026-07-28), replace _jobs with
 enable_tasks() InMemoryTaskStore.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -220,7 +221,8 @@ async def _wait_for_job(job_id: str) -> None:
     try:
         if cap is not None:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                entry["comm_task"], timeout=cap,
+                entry["comm_task"],
+                timeout=cap,
             )
         else:
             stdout_bytes, stderr_bytes = await entry["comm_task"]
@@ -232,9 +234,7 @@ async def _wait_for_job(job_id: str) -> None:
             log_path = entry.get("stderr_log_path")
             if log_path:
                 try:
-                    stderr_text = Path(log_path).read_text(
-                        encoding="utf-8", errors="replace"
-                    )
+                    stderr_text = Path(log_path).read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     stderr_text = ""
             else:
@@ -262,10 +262,7 @@ async def _wait_for_job(job_id: str) -> None:
             entry["status"] = "completed"
             entry["result"] = {
                 "stdout": "",
-                "stderr": (
-                    "stdout lost: process exited at timeout boundary\n"
-                    + stderr_tail
-                ),
+                "stderr": ("stdout lost: process exited at timeout boundary\n" + stderr_tail),
                 "exit_code": proc.returncode,
                 "verdict": exit_to_verdict(proc.returncode),
                 "duration_s": elapsed,
@@ -278,9 +275,7 @@ async def _wait_for_job(job_id: str) -> None:
         entry["status"] = "failed"
         entry["result"] = {
             "stdout": "",
-            "stderr": (
-                "job exceeded %ds cap\n%s" % (int(cap), stderr_tail)
-            ),
+            "stderr": ("job exceeded %ds cap\n%s" % (int(cap), stderr_tail)),
             "exit_code": proc.returncode if proc.returncode is not None else -1,
             "verdict": "TIMEOUT",
             "duration_s": elapsed,
@@ -296,7 +291,8 @@ async def _wait_for_job(job_id: str) -> None:
                 await _terminate_and_reap(proc)
             except Exception:
                 log.warning(
-                    "reap after job failure raised", exc_info=True,
+                    "reap after job failure raised",
+                    exc_info=True,
                 )
         entry["status"] = "failed"
         entry["result"] = {

@@ -174,7 +174,9 @@ def _build_run(
         },
         "results": [
             _finding_to_result(
-                f, convergence_rounds=rounds, manifest_tier=manifest_tier,
+                f,
+                convergence_rounds=rounds,
+                manifest_tier=manifest_tier,
                 exec_evidence=_exec_ev,
             )
             for f in state.findings

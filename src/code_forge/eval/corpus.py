@@ -7,6 +7,7 @@ through the complete forge pipeline.
 Missing diff files at load time do NOT raise -- the CorpusEntry is still
 created. SKIPPED handling happens at run time
 """
+
 from __future__ import annotations
 
 import re
@@ -23,10 +24,7 @@ def valid_line_range(raw_range) -> bool:
     return (
         isinstance(raw_range, (list, tuple))
         and len(raw_range) == 2
-        and all(
-            isinstance(v, int) and not isinstance(v, bool)
-            for v in raw_range
-        )
+        and all(isinstance(v, int) and not isinstance(v, bool) for v in raw_range)
         and raw_range[0] >= 1
         and raw_range[1] >= raw_range[0]
     )
@@ -105,9 +103,7 @@ def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ValueError(
-            f"Failed to parse corpus manifest {manifest_path}: {exc}"
-        ) from exc
+        raise ValueError(f"Failed to parse corpus manifest {manifest_path}: {exc}") from exc
 
     if data is None:
         return []
@@ -121,8 +117,7 @@ def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
         verdict = raw.get("expected_verdict")
         if verdict not in ("HOLD", "PASS"):
             raise ValueError(
-                "invalid expected_verdict %r in corpus entry %s"
-                % (verdict, raw.get("name", "?"))
+                "invalid expected_verdict %r in corpus entry %s" % (verdict, raw.get("name", "?"))
             )
         entries.append(
             CorpusEntry(
@@ -141,9 +136,7 @@ def load_corpus(manifest_path: Path) -> list[CorpusEntry]:
     return entries
 
 
-def _parse_expected_findings(
-    raw: list[dict], entry_name: str
-) -> list[ExpectedFinding]:
+def _parse_expected_findings(raw: list[dict], entry_name: str) -> list[ExpectedFinding]:
     """Validate and build ExpectedFinding list from manifest YAML.
 
     Strict on shape (a malformed answer key would silently poison the
@@ -156,31 +149,20 @@ def _parse_expected_findings(
         # same as the absent key.
         raw = []
     if not isinstance(raw, list):
-        raise ValueError(
-            "expected_findings in %r must be a list" % entry_name
-        )
+        raise ValueError("expected_findings in %r must be a list" % entry_name)
     for item in raw:
         if not isinstance(item, dict):
-            raise ValueError(
-                "expected_findings entry in %r is not a mapping"
-                % entry_name
-            )
+            raise ValueError("expected_findings entry in %r is not a mapping" % entry_name)
         file = item.get("file")
         description = item.get("description")
         if not isinstance(file, str) or not file.strip():
-            raise ValueError(
-                "expected_findings entry in %r missing file" % entry_name
-            )
+            raise ValueError("expected_findings entry in %r missing file" % entry_name)
         if not isinstance(description, str) or not description.strip():
-            raise ValueError(
-                "expected_findings entry in %r missing description"
-                % entry_name
-            )
+            raise ValueError("expected_findings entry in %r missing description" % entry_name)
         if not re.search(r"[a-zA-Z0-9_]", description):
             raise ValueError(
                 "expected_findings entry in %r has a description with "
-                "no alphanumeric token -- it could never match"
-                % entry_name
+                "no alphanumeric token -- it could never match" % entry_name
             )
         # Store the stripped values: validation and matching must
         # agree, or a whitespace-padded value validates and then can
@@ -193,8 +175,7 @@ def _parse_expected_findings(
         if raw_range is not None:
             if not valid_line_range(raw_range):
                 raise ValueError(
-                    "expected_findings entry in %r has invalid "
-                    "line_range %r" % (entry_name, raw_range)
+                    "expected_findings entry in %r has invalid line_range %r" % (entry_name, raw_range)
                 )
             line_range = (raw_range[0], raw_range[1])
         findings.append(

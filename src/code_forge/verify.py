@@ -12,6 +12,7 @@ The real anti-shirk guarantees are the R1 pre-commit test gate and
 the StateMachine consecutive-clean counter; verify is a tamper check
 on receipts, not a replacement for them.
 """
+
 from __future__ import annotations
 
 import json
@@ -75,6 +76,7 @@ def read_required_cycles(cwd: Path) -> int:
     """
     path = cwd / ".code-forge" / "gate.yaml"
     import yaml
+
     # Trust model: gate.yaml is local repo config the user controls,
     # not untrusted external input.  Unlike backend credentials (which
     # _load_gate_backends guards behind is_trusted), verify.required_cycles
@@ -90,9 +92,7 @@ def read_required_cycles(cwd: Path) -> int:
         # never having configured one, so it raises like any other
         # unreadable gate instead of masquerading as "no policy".
         if path.is_symlink():
-            raise UnreadableGateError(
-                f"{path} is a dangling symlink; cannot read the policy"
-            ) from None
+            raise UnreadableGateError(f"{path} is a dangling symlink; cannot read the policy") from None
         if path.parent.is_symlink() and not path.parent.exists():
             raise UnreadableGateError(
                 f"{path} is inside a dangling symlink; cannot read the policy"
@@ -103,9 +103,7 @@ def read_required_cycles(cwd: Path) -> int:
         # here is a policy we cannot read. The import sits outside the
         # try so a missing PyYAML surfaces as an environment error, not
         # as this gate blaming the file.
-        raise UnreadableGateError(
-            f"{path} exists but could not be parsed: {exc}"
-        ) from exc
+        raise UnreadableGateError(f"{path} exists but could not be parsed: {exc}") from exc
     if data is None or not isinstance(data, dict):
         # An empty file, or a parse that yielded no mapping: no policy
         # stated.
@@ -118,9 +116,7 @@ def read_required_cycles(cwd: Path) -> int:
             f"{path} verify section is present but null; a written-down policy must be a mapping or absent"
         )
     if not isinstance(section, dict):
-        raise UnreadableGateError(
-            f"{path} verify section is {section!r}; must be a mapping"
-        )
+        raise UnreadableGateError(f"{path} verify section is {section!r}; must be a mapping")
     unknown = set(section) - {"required_cycles"}
     if unknown:
         raise UnreadableGateError(
@@ -130,13 +126,9 @@ def read_required_cycles(cwd: Path) -> int:
         return DEFAULT_REQUIRED_CYCLES
     n = section["required_cycles"]
     if n is None:
-        raise UnreadableGateError(
-            f"{path} verify.required_cycles must be an integer; got null/blank"
-        )
+        raise UnreadableGateError(f"{path} verify.required_cycles must be an integer; got null/blank")
     if not isinstance(n, int) or isinstance(n, bool) or n < 1:
-        raise UnreadableGateError(
-            f"{path} verify.required_cycles is {n!r}; must be a positive int"
-        )
+        raise UnreadableGateError(f"{path} verify.required_cycles is {n!r}; must be a positive int")
     return n
 
 
@@ -151,6 +143,7 @@ class VerifyResult:
 def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
     """Parse git diff text into {file: [changed line numbers]}."""
     import re
+
     diff_files: dict[str, list[int]] = {}
     current_file = None
     in_hunk = False
@@ -172,9 +165,7 @@ def parse_diff_files(diff_text: str) -> dict[str, list[int]]:
                 count = int(m.group(2) or "1")
                 if current_file not in diff_files:
                     diff_files[current_file] = []
-                diff_files[current_file].extend(
-                    range(start, start + count)
-                )
+                diff_files[current_file].extend(range(start, start + count))
     return diff_files
 
 
@@ -230,24 +221,20 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
     """
     for field in _STR_FIELDS:
         if not _is_type(obj.get(field), str):
-            raise CorruptedReceiptError(
-                f"{name}: {field} must be {_TYPE_LABEL[str]}")
+            raise CorruptedReceiptError(f"{name}: {field} must be {_TYPE_LABEL[str]}")
     for field in _INT_FIELDS:
         if not _is_type(obj.get(field), int):
-            raise CorruptedReceiptError(
-                f"{name}: {field} must be {_TYPE_LABEL[int]}")
+            raise CorruptedReceiptError(f"{name}: {field} must be {_TYPE_LABEL[int]}")
     for field in _LIST_OF_DICT_FIELDS:
         v = obj.get(field)
         if not isinstance(v, list) or not all(isinstance(item, dict) for item in v):
-            raise CorruptedReceiptError(
-                f"{name}: {field} must be a list of objects")
+            raise CorruptedReceiptError(f"{name}: {field} must be a list of objects")
     for field in _OPTIONAL_LIST_OF_DICT_FIELDS:
         if field not in obj:
             continue
         v = obj[field]
         if not isinstance(v, list) or not all(isinstance(item, dict) for item in v):
-            raise CorruptedReceiptError(
-                f"{name}: {field} must be a list of objects")
+            raise CorruptedReceiptError(f"{name}: {field} must be a list of objects")
     # Safe only because the two loops above have proved every field named in
     # _NESTED_SCHEMAS is either absent or a list of dicts -- otherwise calling
     # .get() on a non-dict item here would raise the exact crash this function
@@ -259,7 +246,8 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
             for subfield, subtype in subschema.items():
                 if not _is_type(item.get(subfield), subtype):
                     raise CorruptedReceiptError(
-                        f"{name}: {list_field}.{subfield} must be {_TYPE_LABEL[subtype]}")
+                        f"{name}: {list_field}.{subfield} must be {_TYPE_LABEL[subtype]}"
+                    )
     # Excerpt line ranges must be ordered and positive. An inverted
     # range silently credits zero lines, which looks identical to an
     # honest excerpt that sits outside the diff -- two different
@@ -272,11 +260,11 @@ def _validate_receipt_schema(obj: dict, name: str) -> None:
         if not _is_type(s, int) or not _is_type(e, int):
             continue
         if s > e:
-            raise CorruptedReceiptError(
-                f"{name}: code_excerpts start_line {s} > end_line {e}")
+            raise CorruptedReceiptError(f"{name}: code_excerpts start_line {s} > end_line {e}")
         if s <= 0 or e <= 0:
             raise CorruptedReceiptError(
-                f"{name}: code_excerpts start_line and end_line must be positive, got {s!r} and {e!r}")
+                f"{name}: code_excerpts start_line and end_line must be positive, got {s!r} and {e!r}"
+            )
 
 
 def _load_receipts(rd: Path) -> list[dict]:
@@ -308,9 +296,7 @@ def _load_receipts(rd: Path) -> list[dict]:
             # Every check downstream calls .get() on these. A bare array or
             # number parses cleanly and then crashes the caller with an
             # AttributeError, so the annotation above is enforced here.
-            raise CorruptedReceiptError(
-                f"{f.name}: expected a JSON object, got {type(obj).__name__}"
-            )
+            raise CorruptedReceiptError(f"{f.name}: expected a JSON object, got {type(obj).__name__}")
         _validate_receipt_schema(obj, f.name)
         receipts.append(obj)
     # Order by the numbers inside the receipts, not by their filenames. The
@@ -354,7 +340,8 @@ def _cycle_covered(receipts: list[dict], cycle: int) -> set[tuple[str, int]]:
 
 
 def _excerpt_covered(
-    receipt: dict, assessments: dict[int, ExcerptAssessment],
+    receipt: dict,
+    assessments: dict[int, ExcerptAssessment],
 ) -> set[tuple[str, int]]:
     return {
         (exc["file"], line)
@@ -364,7 +351,9 @@ def _excerpt_covered(
 
 
 def _cycle_excerpt_covered(
-    receipts: list[dict], cycle: int, assessments: dict[int, ExcerptAssessment],
+    receipts: list[dict],
+    cycle: int,
+    assessments: dict[int, ExcerptAssessment],
 ) -> set[tuple[str, int]]:
     covered = set()
     for receipt in receipts:
@@ -374,7 +363,8 @@ def _cycle_excerpt_covered(
 
 
 def _coverage_failure_detail(
-    cov: set[tuple[str, int]], all_diff: set[tuple[str, int]],
+    cov: set[tuple[str, int]],
+    all_diff: set[tuple[str, int]],
 ) -> str:
     """Name the files a failed coverage check is missing, so the
     failure points at the gap rather than only at a percentage.
@@ -400,11 +390,13 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(u) if u else 1.0
 
 
-_CLOSED_DISPOSITIONS = frozenset({
-    Disposition.DISMISSED.value,
-    Disposition.FIXED.value,
-    Disposition.STYLE.value,
-})
+_CLOSED_DISPOSITIONS = frozenset(
+    {
+        Disposition.DISMISSED.value,
+        Disposition.FIXED.value,
+        Disposition.STYLE.value,
+    }
+)
 
 
 def _open_findings(items: list) -> list:
@@ -456,7 +448,8 @@ def _constant_offset(
         # Ties go to the negative side: a quote that sits one line above
         # and one line below equally well is far more often a reviewer
         # who counted the anchor line in than one who counted it out.
-        (d for d in range(lo, hi + 1) if d != 0), key=lambda d: (abs(d), d)
+        (d for d in range(lo, hi + 1) if d != 0),
+        key=lambda d: (abs(d), d),
     ):
         matches = 0
         compared = 0
@@ -615,8 +608,12 @@ def assess_excerpt_evidence(
     exc_end = exc.get("end_line")
     if not isinstance(exc_file, str) or not exc_file.strip():
         return ExcerptAssessment(invalid, "excerpt file must be a non-empty string")
-    if (not isinstance(exc_start, int) or isinstance(exc_start, bool)
-            or not isinstance(exc_end, int) or isinstance(exc_end, bool)):
+    if (
+        not isinstance(exc_start, int)
+        or isinstance(exc_start, bool)
+        or not isinstance(exc_end, int)
+        or isinstance(exc_end, bool)
+    ):
         return ExcerptAssessment(invalid, f"excerpt {exc_file} coordinates must be integers")
     location = f"{exc_file}:{exc_start}-{exc_end}"
     if exc_start <= 0 or exc_end <= 0 or exc_start > exc_end:
@@ -624,7 +621,9 @@ def assess_excerpt_evidence(
     content = exc.get("content", "")
     if isinstance(content, list):
         if not all(isinstance(line, str) for line in content):
-            return ExcerptAssessment(invalid, f"excerpt {location} content list must contain only strings")
+            return ExcerptAssessment(
+                invalid, f"excerpt {location} content list must contain only strings"
+            )
         text = "\n".join(content)
     elif isinstance(content, str):
         text = content
@@ -666,8 +665,7 @@ def assess_excerpt_evidence(
         head_blank = head is not None and not head.strip()
         prefix = {exc_start + i: line for i, line in enumerate(actual_lines)}
         exact_prefix = all(
-            n in file_lines and line.rstrip() == file_lines[n].rstrip()
-            for n, line in prefix.items()
+            n in file_lines and line.rstrip() == file_lines[n].rstrip() for n, line in prefix.items()
         )
         # Try the declared prefix first, including a carried leading blank.
         # Moving it before comparison would spend the blank twice.
@@ -675,7 +673,9 @@ def assess_excerpt_evidence(
             return _anchored_assessment(
                 valid if tail_blank else untrusted,
                 None if tail_blank else count_error,
-                prefix, hunks, location,
+                prefix,
+                hunks,
+                location,
             )
         if head_blank and not tail_blank:
             body_start += 1
@@ -686,9 +686,9 @@ def assess_excerpt_evidence(
                 return _anchored_assessment(
                     untrusted,
                     f"excerpt {location} is missing source line {missing}",
-                    (n for n in range(exc_start, exc_end + 1)
-                     if n != missing and n in file_lines),
-                    hunks, location,
+                    (n for n in range(exc_start, exc_end + 1) if n != missing and n in file_lines),
+                    hunks,
+                    location,
                 )
             return ExcerptAssessment(invalid, count_error)
 
@@ -700,22 +700,35 @@ def assess_excerpt_evidence(
         offset = _constant_offset(quoted, file_lines, -64, 65)
         if offset is not None:
             blank_slip = not blank_spent and _blank_boundary_slip(
-                exc_start, exc_end, offset, file_lines,
+                exc_start,
+                exc_end,
+                offset,
+                file_lines,
             )
             n = mismatches[0] if mismatches else min(quoted)
-            diagnostic = None if blank_slip else (
-                f"excerpt misnumbered by {offset:+d} at {location} "
-                f"(claims {exc_file}:{n}, actually {exc_file}:{n + offset})"
+            diagnostic = (
+                None
+                if blank_slip
+                else (
+                    f"excerpt misnumbered by {offset:+d} at {location} "
+                    f"(claims {exc_file}:{n}, actually {exc_file}:{n + offset})"
+                )
             )
             return _anchored_assessment(
-                valid if blank_slip else untrusted, diagnostic,
-                (n + offset for n in quoted), hunks, location,
+                valid if blank_slip else untrusted,
+                diagnostic,
+                (n + offset for n in quoted),
+                hunks,
+                location,
             )
-        if unknown and not mismatches and not any(
-            max(exc_start, h["start"]) <= min(exc_end, h["end"]) for h in hunks
+        if (
+            unknown
+            and not mismatches
+            and not any(max(exc_start, h["start"]) <= min(exc_end, h["end"]) for h in hunks)
         ):
             return ExcerptAssessment(
-                invalid, f"excerpt {location} is outside every hunk; it belongs in context_quotes",
+                invalid,
+                f"excerpt {location} is outside every hunk; it belongs in context_quotes",
             )
         if unknown and len(quoted) >= 10 and len(unknown) * 10 < len(quoted):
             return ExcerptAssessment(
@@ -728,8 +741,9 @@ def assess_excerpt_evidence(
                 f"excerpt {location} claims line {min(unknown)} outside the diff post-image; it cannot be verified",
             )
         if mismatches:
-            bad = next((n for n in mismatches
-                        if not _only_leading_ws_differs(quoted[n], file_lines[n])), None)
+            bad = next(
+                (n for n in mismatches if not _only_leading_ws_differs(quoted[n], file_lines[n])), None
+            )
             if bad is not None and len(overlap) >= 10 and len(mismatches) * 10 < len(overlap):
                 return ExcerptAssessment(
                     untrusted,
@@ -758,11 +772,20 @@ def assess_excerpt_evidence(
                             exc["content"] = "\n".join(lines)
                     quoted[last] = source
                     return _anchored_assessment(
-                        valid, None, overlap, hunks, location, repaired_tail=True,
+                        valid,
+                        None,
+                        overlap,
+                        hunks,
+                        location,
+                        repaired_tail=True,
                     )
                 return ExcerptAssessment(invalid, f"excerpt content mismatch at {location} (line {bad})")
             return _anchored_assessment(
-                untrusted, f"excerpt indent-stripped at {location}", overlap, hunks, location,
+                untrusted,
+                f"excerpt indent-stripped at {location}",
+                overlap,
+                hunks,
+                location,
             )
     return _anchored_assessment(valid, None, overlap, hunks, location)
 
@@ -781,9 +804,9 @@ def _diff_records(text: str) -> list[str]:
     """Split LF records, retaining content CR before Git's no-newline marker."""
     records = text.removesuffix("\n").split("\n")
     return [
-        record if i + 1 < len(records) and records[i + 1].startswith(
-            "\\ No newline at end of file"
-        ) else record.removesuffix("\r")
+        record
+        if i + 1 < len(records) and records[i + 1].startswith("\\ No newline at end of file")
+        else record.removesuffix("\r")
         for i, record in enumerate(records)
     ]
 
@@ -830,7 +853,8 @@ def _reconstruct_post_image(base: str, section: str) -> list[str] | None:
 
 def _diff_validation_context(
     diff_text: str,
-    *, cwd: Path | None = None,
+    *,
+    cwd: Path | None = None,
 ) -> tuple[dict[str, dict[int, str]], dict[str, list[dict]], list[str]]:
     """Parse frozen diff text into (post_image, hunk_map, exempt_files).
 
@@ -890,9 +914,7 @@ def _diff_validation_context(
             if m:
                 line_no = int(m.group(1))
                 count = int(m.group(2)) if m.group(2) else 1
-                hunk_map[current_file].append(
-                    {"start": line_no, "end": line_no + count - 1}
-                )
+                hunk_map[current_file].append({"start": line_no, "end": line_no + count - 1})
         elif current_file and raw.startswith("+") and not raw.startswith("+++"):
             post_image[current_file][line_no] = raw[1:]
             line_no += 1
@@ -909,9 +931,7 @@ def _diff_validation_context(
     # requiring an anchor, which a deletion-only file cannot satisfy.
     # They are exempt from literal checks because there is no post-image
     # to match against.
-    exempt_files = [
-        f for f, lines in post_image.items() if not lines
-    ]
+    exempt_files = [f for f, lines in post_image.items() if not lines]
     if cwd is not None:
         from .git import read_diff_blob
 
@@ -951,8 +971,7 @@ def _diff_validation_context(
                     continue
             # Match the offset search radius without retaining whole files.
             for hunk in hunk_map[file]:
-                for n in range(max(1, hunk["start"] - 65),
-                               min(len(lines), hunk["end"] + 65) + 1):
+                for n in range(max(1, hunk["start"] - 65), min(len(lines), hunk["end"] + 65) + 1):
                     post_image[file][n] = lines[n]
     return post_image, hunk_map, exempt_files
 
@@ -1014,7 +1033,8 @@ def validate_excerpts_against_diff(
 
 
 def run_verify(
-    cwd: Path, diff_sha256: str,
+    cwd: Path,
+    diff_sha256: str,
     diff_files: dict[str, list[int]],
     hardened: bool = True,
     diff_text: str | None = None,
@@ -1027,6 +1047,7 @@ def run_verify(
     repository_manifest = None
     if reviewed_repositories is not None:
         from .receipt_scope import repository_scope
+
         try:
             diff_text, repository_manifest = repository_scope(reviewed_repositories)
         except ValueError as exc:
@@ -1040,13 +1061,11 @@ def run_verify(
     # that reads as the most permissive one. bool is an int subclass, so
     # False arrives here as a zero that isinstance would wave through.
     if required_cycles is not None and (
-            not isinstance(required_cycles, int)
-            or isinstance(required_cycles, bool)
-            or required_cycles < 1):
+        not isinstance(required_cycles, int) or isinstance(required_cycles, bool) or required_cycles < 1
+    ):
         return VerifyResult(
-            False,
-            f"required_cycles must be an integer >= 1, got {required_cycles!r}",
-            1, cp)
+            False, f"required_cycles must be an integer >= 1, got {required_cycles!r}", 1, cp
+        )
     # cycles pins the attested window to specific cycle numbers instead of
     # "the last N on disk". The StateMachine uses it to attest exactly the
     # cycles IT wrote this run, so a later run's higher cycles -- or old
@@ -1057,16 +1076,12 @@ def run_verify(
         if (
             not isinstance(cycles, list)
             or len(cycles) < 1
-            or any(
-                not isinstance(c, int) or isinstance(c, bool) or c < 1
-                for c in cycles
-            )
+            or any(not isinstance(c, int) or isinstance(c, bool) or c < 1 for c in cycles)
             or len(set(cycles)) != len(cycles)
         ):
             return VerifyResult(
-                False,
-                f"cycles must be a list of distinct positive ints, got {cycles!r}",
-                1, cp)
+                False, f"cycles must be a list of distinct positive ints, got {cycles!r}", 1, cp
+            )
     # The argument raises the bar the repo set; it never lowers it. The
     # floor belongs here and not in the CLI branch that used to hold it,
     # because a caller who can pass required_cycles=1 to a repo whose
@@ -1085,9 +1100,7 @@ def run_verify(
             floor = read_required_cycles(cwd)
         except UnreadableGateError as exc:
             return VerifyResult(False, f"unreadable gate: {exc}", 1, cp)
-        required_cycles = (
-            floor if required_cycles is None else max(required_cycles, floor)
-        )
+        required_cycles = floor if required_cycles is None else max(required_cycles, floor)
     elif required_cycles is None:
         try:
             required_cycles = read_required_cycles(cwd)
@@ -1106,10 +1119,7 @@ def run_verify(
     if len(receipts) < required:
         msg = f"missing receipts: {len(receipts)}/{required}"
         if len(receipts) == 0:
-            msg += (
-                " -- no review receipts found. Run 'code-forge review' "
-                "on your staged changes first"
-            )
+            msg += " -- no review receipts found. Run 'code-forge review' on your staged changes first"
         return VerifyResult(False, msg, 1, cp)
     # Only the attested window may vouch. Compute last_n first,
     # then scope every structural check to those cycles.
@@ -1124,19 +1134,18 @@ def run_verify(
             return VerifyResult(
                 False,
                 f"attested window has {len(last_n)} cycle(s); repository verifier floor demands {required_cycles}: {last_n}",
-                1, cp)
+                1,
+                cp,
+            )
     else:
         if len(all_cycle_vals) < required_cycles:
             return VerifyResult(
-                False, f"fewer than {required_cycles} cycles: {len(all_cycle_vals)}",
-                1, cp)
+                False, f"fewer than {required_cycles} cycles: {len(all_cycle_vals)}", 1, cp
+            )
         last_n = all_cycle_vals[-required_cycles:]
     for i in range(len(last_n) - 1):
         if last_n[i + 1] - last_n[i] != 1:
-            return VerifyResult(
-                False,
-                f"last {required_cycles} cycles not consecutive: {last_n}",
-                1, cp)
+            return VerifyResult(False, f"last {required_cycles} cycles not consecutive: {last_n}", 1, cp)
     attested = [r for r in receipts if r["cycle"] in last_n]
     if any(r.get("reviewed_repositories") != repository_manifest for r in attested):
         return VerifyResult(False, "INFRA: reviewed repository/source identity mismatch", 1, cp)
@@ -1148,14 +1157,11 @@ def run_verify(
             return VerifyResult(False, f"duplicate receipt c{key[0]}p{key[1]}", 1, cp)
         seen_keys.add(key)
         if r["findings_count"] != len(r["findings"]):
-            return VerifyResult(
-                False, f"findings_count mismatch c{key[0]}p{key[1]}", 1, cp)
+            return VerifyResult(False, f"findings_count mismatch c{key[0]}p{key[1]}", 1, cp)
         if repository_manifest is not None and any(
-            not isinstance(f.get("file"), str) or f["file"] not in diff_files
-            for f in r["findings"]
+            not isinstance(f.get("file"), str) or f["file"] not in diff_files for f in r["findings"]
         ):
-            return VerifyResult(
-                False, "INFRA: finding repository/source identity mismatch", 1, cp)
+            return VerifyResult(False, "INFRA: finding repository/source identity mismatch", 1, cp)
     for c in last_n:
         passes = {p for (cyc, p) in seen_keys if cyc == c}
         # Exactly the three protocol passes, not merely at least them. Asking
@@ -1164,14 +1170,12 @@ def run_verify(
         # one is a receipt nobody wrote for a pass nobody ran.
         missing = {1, 2, 3} - passes
         if missing:
-            return VerifyResult(
-                False, f"missing cycle {c}/pass {min(missing)}", 1, cp)
+            return VerifyResult(False, f"missing cycle {c}/pass {min(missing)}", 1, cp)
         extra = passes - {1, 2, 3}
         if extra:
             return VerifyResult(
-                False,
-                f"cycle {c} has pass {min(extra)}, outside the three review passes",
-                1, cp)
+                False, f"cycle {c} has pass {min(extra)}, outside the three review passes", 1, cp
+            )
     cp += 1
 
     # 2. hash
@@ -1232,15 +1236,15 @@ def run_verify(
                     continue
                 witnessed = any(
                     exc["file"] == file
-                    and any(hunk["start"] <= n <= hunk["end"]
-                            for n in assessments[id(exc)].proven_lines)
+                    and any(hunk["start"] <= n <= hunk["end"] for n in assessments[id(exc)].proven_lines)
                     for exc in all_excerpts
                 )
                 if not witnessed:
                     return VerifyResult(
                         False,
                         f"unwitnessed hunk {file}:{hunk['start']}-{hunk['end']}",
-                        5, cp,
+                        5,
+                        cp,
                     )
         # 6. excerpt-derived coverage >= 60%
         # The floor deliberately counts test lines: tests do not test
@@ -1251,8 +1255,10 @@ def run_verify(
         # covered_line_ranges is self-reported, not measured -- audit-only. Ignored here.
         open_files = {
             item.get("file")
-            for r in receipts for item in r.get("findings", [])
-            if isinstance(item, dict) and isinstance(item.get("file"), str)
+            for r in receipts
+            for item in r.get("findings", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("file"), str)
             and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
         }
         scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
@@ -1269,7 +1275,9 @@ def run_verify(
                     return VerifyResult(
                         False,
                         f"coverage {100 * len(cov) / len(all_diff):.0f}% < 60% cycle {c}; largest uncovered: {_coverage_failure_detail(cov, all_diff)}",
-                        6, cp)
+                        6,
+                        cp,
+                    )
         cp += 1
 
         # 7. Jaccard overlap > 0.8 = rubber stamp.
@@ -1298,7 +1306,8 @@ def run_verify(
                 return VerifyResult(
                     False,
                     f"no excerpt coverage in cycles {a} and {b} (findings present but excerpts empty)",
-                    7, cp,
+                    7,
+                    cp,
                 )
             j = _jaccard(cov_a, cov_b)
             if j > 0.8:
@@ -1319,12 +1328,11 @@ def run_verify(
                 fp = cwd / exc["file"]
                 if not fp.exists():
                     return VerifyResult(
-                        False,
-                        f"excerpt file missing: {exc['file']} (c{r['cycle']}p{r['pass']})",
-                        5, cp)
+                        False, f"excerpt file missing: {exc['file']} (c{r['cycle']}p{r['pass']})", 5, cp
+                    )
                 try:
                     lines = fp.read_text(encoding="utf-8").splitlines()
-                    actual = "\n".join(lines[exc["start_line"] - 1:exc["end_line"]]) + "\n"
+                    actual = "\n".join(lines[exc["start_line"] - 1 : exc["end_line"]]) + "\n"
                     claimed = exc["content"]
                     if not claimed.endswith("\n"):
                         claimed += "\n"
@@ -1332,20 +1340,26 @@ def run_verify(
                         return VerifyResult(
                             False,
                             f"excerpt mismatch {exc['file']}:{exc['start_line']}-{exc['end_line']} c{r['cycle']}p{r['pass']}",
-                            5, cp)
+                            5,
+                            cp,
+                        )
                 except (IndexError, OSError) as e:
                     logging.warning("check 5 legacy: %s", e)
                     return VerifyResult(
                         False,
                         f"excerpt line range error {exc['file']}:{exc['start_line']}-{exc['end_line']}",
-                        5, cp)
+                        5,
+                        cp,
+                    )
         cp += 1
 
         # 6. legacy coverage >= 60% (self-reported covered_line_ranges)
         open_files = {
             item.get("file")
-            for r in receipts for item in r.get("findings", [])
-            if isinstance(item, dict) and isinstance(item.get("file"), str)
+            for r in receipts
+            for item in r.get("findings", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("file"), str)
             and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
         }
         scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
@@ -1361,7 +1375,9 @@ def run_verify(
                     return VerifyResult(
                         False,
                         f"coverage {100 * len(cov) / len(all_diff):.0f}% < 60% cycle {c}; largest uncovered: {_coverage_failure_detail(cov, all_diff)}",
-                        6, cp)
+                        6,
+                        cp,
+                    )
         cp += 1
 
         # 7. legacy Jaccard
@@ -1408,10 +1424,9 @@ def run_verify(
             return VerifyResult(
                 False,
                 f"pass did not complete: c{r['cycle']}p{r['pass']} status={status} -- that pass contributed no review, so the cycle cannot attest",
-                8, cp,
+                8,
+                cp,
             )
     cp += 1
 
     return VerifyResult(True, "all 8 checks passed", 8, 8)
-
-

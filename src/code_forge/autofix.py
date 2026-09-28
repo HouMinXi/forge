@@ -8,6 +8,7 @@ ships stub for DISPO-04/05/06 behavior tests.
 Design per R1 B2: AutoFixer is pure (returns FixOutcome only, no I/O,
 no revert). StateMachine.revert_fn handles the revert side-effect.
 """
+
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
@@ -27,6 +28,7 @@ class FixOutcome(str, Enum):
       NO_CHANGE  - autofixer refused; fix_attempts++ (no revert needed)
       EXCEPTION  - autofixer raised; infra_errors + fix_attempts++
     """
+
     SUCCESS = "SUCCESS"
     PARSE_FAIL = "PARSE_FAIL"
     NO_CHANGE = "NO_CHANGE"
@@ -68,10 +70,7 @@ class StubAutoFixer(AutoFixer):
         if fixture_path:
             data = json.loads(fixture_path.read_text(encoding="utf-8"))
             self._default = FixOutcome(data.get("default", "SUCCESS"))
-            self._outcomes = {
-                fp: FixOutcome(o)
-                for fp, o in data.get("outcomes", {}).items()
-            }
+            self._outcomes = {fp: FixOutcome(o) for fp, o in data.get("outcomes", {}).items()}
 
     def fix(self, finding: StateFinding, mode_hint: str) -> FixOutcome:
         """Return configured outcome for this finding's fingerprint."""

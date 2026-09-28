@@ -84,6 +84,7 @@ class TimeoutBreaker(Exception):
 
 class TimeoutCircuitBreaker:
     """Tracks consecutive timeout errors. Trips when threshold is reached."""
+
     def __init__(self, threshold: int = 5):
         self.threshold = threshold
         self._consecutive = 0
@@ -109,9 +110,7 @@ class TimeoutCircuitBreaker:
         return self._consecutive
 
 
-def _default_l0_runner(
-    registry: dict, files: list[Path]
-) -> tuple[list[StateFinding], list[str]]:
+def _default_l0_runner(registry: dict, files: list[Path]) -> tuple[list[StateFinding], list[str]]:
     """Phase 1 Finding -> 02-01 StateFinding adapter.
 
     R2-1 fix: returns tuple (state_findings, infra_errors).
@@ -134,16 +133,17 @@ def _default_l0_runner(
         # run. Every real tool that exits nonzero WITH findings produces
         # non-empty stdout, so this guard cannot eat real findings.
         if not items and returncode != 0 and not stdout.strip():
-            items = [ToolError(
-                tool_name=tool,
-                exit_code=returncode,
-                stderr=stderr or "",
-                message=(
-                    "Tool exited %d with no output -- "
-                    "likely a crash or configuration error"
-                    % returncode
-                ),
-            )]
+            items = [
+                ToolError(
+                    tool_name=tool,
+                    exit_code=returncode,
+                    stderr=stderr or "",
+                    message=(
+                        "Tool exited %d with no output -- "
+                        "likely a crash or configuration error" % returncode
+                    ),
+                )
+            ]
         for item in items:
             if isinstance(item, ToolError):
                 err_msg = f"L0 ToolError tool={tool} msg={item.message}"
@@ -155,9 +155,7 @@ def _default_l0_runner(
                 continue
             f: Finding = item
             fp_raw = f"{tool}:{f.file}:{f.line}:{f.rule_id}"
-            fp = hashlib.sha256(
-                fp_raw.encode("utf-8")
-            ).hexdigest()[:16]
+            fp = hashlib.sha256(fp_raw.encode("utf-8")).hexdigest()[:16]
             state_findings.append(
                 StateFinding(
                     id=fp,
@@ -175,7 +173,6 @@ def _default_l0_runner(
     return state_findings, infra_errors
 
 
-
 def _falsify_workers(total: int, falsifier=None) -> int:
     """Pool size for the falsify loop.
 
@@ -190,6 +187,7 @@ def _falsify_workers(total: int, falsifier=None) -> int:
     typo degrades to the old serial behaviour rather than crashing.
     """
     import os
+
     backend = getattr(falsifier, "_backend", None)
     if backend is None or getattr(backend, "type", "cli") == "cli":
         return 1
@@ -199,6 +197,7 @@ def _falsify_workers(total: int, falsifier=None) -> int:
     except ValueError:
         n = 1
     return max(1, min(n, max(total, 1)))
+
 
 class _FixpointResult(str, Enum):
     """Return type of _fixpoint_reached: signals CLEAN, full RESET, or CYCLE_RESTART."""
@@ -240,7 +239,6 @@ def _severity_tier(finding: StateFinding) -> str:
     return "P2"
 
 
-
 def mutation_result_verdict(result_data: dict) -> "Verdict | None":
     """What a finished mutation result means.
 
@@ -279,6 +277,7 @@ class StateMachine:
       max_total_rounds: STATE-04 LOCAL bound (default 20)
       max_fix_attempts: per-fingerprint budget (default from disposition)
     """
+
     mode: Mode
     falsifier: Falsifier
     autofixer: AutoFixer
@@ -294,9 +293,7 @@ class StateMachine:
     l2_runner: Callable = field(
         default=lambda diff_files, baseline_cmd, *, baseline_timeout=120: ([], [])
     )
-    e2e_runner: Callable = field(
-        default=lambda diff_text, repo_root: ([], [])
-    )
+    e2e_runner: Callable = field(default=lambda diff_text, repo_root: ([], []))
     coverage_l1_active: bool = True
     coverage_exempt_patterns: list = field(default_factory=list)
     post_round_hook: Callable[[int], None] | None = None
@@ -321,8 +318,7 @@ class StateMachine:
     @property
     def active_findings(self) -> list:
         """Non-dismissed findings (public accessor for MCP layer)."""
-        return [f for f in self._state.findings
-                if f.disposition != Disposition.DISMISSED]
+        return [f for f in self._state.findings if f.disposition != Disposition.DISMISSED]
 
     def __post_init__(self) -> None:
         """Initialize per-round cost accumulator (CLI-08 H3)."""
@@ -355,6 +351,7 @@ class StateMachine:
         self._state.baseline_spec_repr = self.baseline_spec_repr
         if self._state.env_manifest is None and self.cwd and self.cwd.exists():
             from .manifest import extract_manifest
+
             self._state.env_manifest = extract_manifest(self.cwd).to_dict()
         if self.mode == Mode.LOCAL:
             verdict = self._run_local()
@@ -364,7 +361,7 @@ class StateMachine:
             raise ValueError(f"unknown mode: {self.mode}")
 
         # Advisory axes run once after convergence, regardless of verdict
-        #. Covers PASS, HOLD/PENDING, ESCALATED.
+        # . Covers PASS, HOLD/PENDING, ESCALATED.
         self._run_advisory_axes()
         self._advisories.extend(self._preexisting_buf)
         self._preexisting_buf.clear()
@@ -372,9 +369,7 @@ class StateMachine:
         self._display_advisories()
         progress.emit(
             "run done: verdict=%s findings=%d confirmed=%d"
-            % (verdict.value,
-               len(self._state.findings),
-               self._count(Disposition.CONFIRMED))
+            % (verdict.value, len(self._state.findings), self._count(Disposition.CONFIRMED))
         )
         return verdict
 
@@ -410,8 +405,7 @@ class StateMachine:
                     # diff's evidence. A missing hash on either side
                     # cannot prove the file belongs here.
                     logging.getLogger("code_forge").warning(
-                        "discarding prior state.json: it was written for "
-                        "diff %s, this review is %s",
+                        "discarding prior state.json: it was written for diff %s, this review is %s",
                         loaded.source_hash[:12] if loaded.source_hash else "none",
                         self.source_hash[:12] if self.source_hash else "none",
                     )
@@ -468,14 +462,10 @@ class StateMachine:
                     result_data = json.load(f)
 
                 if not isinstance(result_data, dict):
-                    self._state.infra_errors.append(
-                        "CI: mutation-result.json is not a JSON object"
-                    )
+                    self._state.infra_errors.append("CI: mutation-result.json is not a JSON object")
                     self._unlink_mutation_result(result_path)
                 elif "status" not in result_data:
-                    self._state.infra_errors.append(
-                        "CI: mutation-result.json missing status field"
-                    )
+                    self._state.infra_errors.append("CI: mutation-result.json missing status field")
                     self._unlink_mutation_result(result_path)
                 else:
                     status = result_data["status"]
@@ -491,8 +481,7 @@ class StateMachine:
                             self._state.verdict = Verdict.FAIL
                             self._state.converged = False
                             self._state.infra_errors.append(
-                                "CI: mutation survivors found: %d survivors"
-                                % len(survivors)
+                                "CI: mutation survivors found: %d survivors" % len(survivors)
                             )
                             self._persist_state()
                             self._write_ci_ledger_rows()
@@ -507,14 +496,11 @@ class StateMachine:
                             # exactly what the DISMISSED-on-this-run
                             # skip path below exists to avoid.
                             self._state.infra_errors.append(
-                                "CI: mutation done without a proven "
-                                "baseline; re-measuring"
+                                "CI: mutation done without a proven baseline; re-measuring"
                             )
                     elif status == "running":
                         pid = result_data.get("pid")
-                        if pid is None or (
-                            isinstance(pid, int) and pid <= 0
-                        ):
+                        if pid is None or (isinstance(pid, int) and pid <= 0):
                             # Child has not yet written its PID.
                             # If the file is stale (>120s), the child
                             # likely crashed before writing -- unlink and
@@ -537,8 +523,7 @@ class StateMachine:
                             if _pid_alive(pid):
                                 # PID alive, skip new launch
                                 self._state.infra_errors.append(
-                                    "CI: mutation PID %d still running, "
-                                    "skipping new launch" % pid
+                                    "CI: mutation PID %d still running, skipping new launch" % pid
                                 )
                                 return Verdict.PENDING
                             else:
@@ -554,10 +539,7 @@ class StateMachine:
                                     disposition=Disp.DISMISSED,
                                     file="",
                                     line_range=[],
-                                    description=(
-                                        "CI: mutation process died (PID %d)"
-                                        % pid
-                                    ),
+                                    description=("CI: mutation process died (PID %d)" % pid),
                                 )
                                 self._state.findings.append(finding)
                                 self._unlink_mutation_result(result_path)
@@ -567,17 +549,11 @@ class StateMachine:
                         # file so the verdict stays with the findings,
                         # matching how a dead mutation PID and a LOCAL
                         # l2_runner failure already degrade.
-                        error_msg = result_data.get(
-                            "message", "unknown error"
-                        )
-                        self._state.infra_errors.append(
-                            f"CI: mutation error: {error_msg}"
-                        )
+                        error_msg = result_data.get("message", "unknown error")
+                        self._state.infra_errors.append(f"CI: mutation error: {error_msg}")
                         self._unlink_mutation_result(result_path)
             except (json.JSONDecodeError, KeyError, OSError) as e:
-                self._state.infra_errors.append(
-                    f"CI: failed to read mutation-result.json: {e}"
-                )
+                self._state.infra_errors.append(f"CI: failed to read mutation-result.json: {e}")
 
         # Launch new async mutation via run_mutation (single invocation point)
         import shutil
@@ -594,9 +570,7 @@ class StateMachine:
             try:
                 from .gate_check import load_gate_config
 
-                config = load_gate_config(
-                    self.cwd / ".code-forge" / "gate.yaml"
-                )
+                config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
                 baseline_cmd = config["test"]["command"]
                 test_config = config.get("test", {})
                 baseline_timeout = test_config.get("timeout_seconds", 120)
@@ -608,9 +582,7 @@ class StateMachine:
                 # None for either key keeps run_mutation's own defaults.
                 mutation_max_children = test_config.get("mutation_max_children")
                 mem_mb = test_config.get("mutation_memory_limit_mb")
-                mutation_memory_limit = (
-                    int(mem_mb) * 1024**2 if mem_mb is not None else None
-                )
+                mutation_memory_limit = int(mem_mb) * 1024**2 if mem_mb is not None else None
                 mutation_skip_globs = test_config.get("mutation_skip_globs")
                 mutation_include_globs = test_config.get("mutation_include_globs")
             except FileNotFoundError as exc:
@@ -621,9 +593,7 @@ class StateMachine:
                 mutation_memory_limit = None
                 mutation_skip_globs = None
                 mutation_include_globs = None
-                self._state.infra_errors.append(
-                    f"CI: mutation skipped -- gate.yaml not found: {exc}"
-                )
+                self._state.infra_errors.append(f"CI: mutation skipped -- gate.yaml not found: {exc}")
             except Exception as exc:  # noqa: BLE001
                 baseline_cmd = None
                 baseline_timeout = 120
@@ -646,8 +616,12 @@ class StateMachine:
             if baseline_cmd is not None:
                 try:
                     started = launch_detached_mutation(
-                        diff_files, baseline_cmd, self.cwd,
-                        result_path, baseline_timeout, also_copy,
+                        diff_files,
+                        baseline_cmd,
+                        self.cwd,
+                        result_path,
+                        baseline_timeout,
+                        also_copy,
                         max_children=mutation_max_children,
                         memory_limit_bytes=mutation_memory_limit,
                         mutation_skip_globs=mutation_skip_globs,
@@ -655,13 +629,9 @@ class StateMachine:
                     )
                 except Exception as exc:  # noqa: BLE001
                     started = False
-                    self._state.infra_errors.append(
-                        f"CI: mutation launch error: {exc}"
-                    )
+                    self._state.infra_errors.append(f"CI: mutation launch error: {exc}")
                 if not started:
-                    self._state.infra_errors.append(
-                        "CI: mutation subprocess failed to start"
-                    )
+                    self._state.infra_errors.append("CI: mutation subprocess failed to start")
         elif not py_files:
             # DISMISSED, not a file write: visible in this same run's
             # findings/summary instead of silently deferred to a file
@@ -674,10 +644,7 @@ class StateMachine:
                     disposition=Disposition.DISMISSED,
                     file="",
                     line_range=[],
-                    description=(
-                        "no Python files in diff "
-                        "(mutation is Python-only MVP)"
-                    ),
+                    description=("no Python files in diff (mutation is Python-only MVP)"),
                 )
             )
         else:
@@ -706,11 +673,7 @@ class StateMachine:
         # a silent PASS over an unreviewed file is a false green.
         confirmed = self._count(Disposition.CONFIRMED)
         coverage_gaps = self._count_coverage_gaps()
-        verdict = (
-            Verdict.FAIL
-            if confirmed > 0 or coverage_gaps > 0
-            else Verdict.PASS
-        )
+        verdict = Verdict.FAIL if confirmed > 0 or coverage_gaps > 0 else Verdict.PASS
         if coverage_gaps > 0 and confirmed == 0:
             self._state.infra_errors.append(
                 "coverage: %d in-scope file(s) had no review layer "
@@ -718,7 +681,7 @@ class StateMachine:
                 "findings" % coverage_gaps
             )
         self._state.verdict = verdict
-        self._state.converged = (verdict == Verdict.PASS)
+        self._state.converged = verdict == Verdict.PASS
         self._persist_state()
         self._write_ci_ledger_rows()
         return verdict
@@ -800,11 +763,11 @@ class StateMachine:
                 self._state.verdict = Verdict.ESCALATED
                 self._state.converged = False
                 frozen_fps = [
-                    f.fingerprint for f in self._state.findings
+                    f.fingerprint
+                    for f in self._state.findings
                     if (
                         f.disposition == Disposition.CONFIRMED
-                        and f.fingerprint
-                        in self._state.promoted_fingerprints
+                        and f.fingerprint in self._state.promoted_fingerprints
                     )
                 ]
                 preview = ",".join(frozen_fps[:3])
@@ -830,9 +793,9 @@ class StateMachine:
 
             # Check consecutive_survivor_rounds
             mutant_survivors = sum(
-                1 for f in self._state.findings
-                if f.source == "MUTANT"
-                and f.disposition == Disposition.CONFIRMED
+                1
+                for f in self._state.findings
+                if f.source == "MUTANT" and f.disposition == Disposition.CONFIRMED
             )
             if mutant_survivors > 0:
                 self._state.consecutive_survivor_rounds += 1
@@ -843,8 +806,7 @@ class StateMachine:
                 self._state.verdict = Verdict.FAIL
                 self._state.converged = False
                 self._state.infra_errors.append(
-                    "mutation: 3 consecutive rounds with survivors -- "
-                    "tests are demonstrably weak"
+                    "mutation: 3 consecutive rounds with survivors -- tests are demonstrably weak"
                 )
                 self._persist_state()
                 return Verdict.FAIL
@@ -858,9 +820,7 @@ class StateMachine:
                 # clean evidence, scoped to the last `threshold` clean
                 # rounds for terminal attestation.
                 self._clean_window_cycles.append(round_index + 1)
-                self._clean_window_cycles = (
-                    self._clean_window_cycles[-self.clean_round_threshold:]
-                )
+                self._clean_window_cycles = self._clean_window_cycles[-self.clean_round_threshold :]
             elif _fp == _FixpointResult.CYCLE_RESTART:
                 # P2 / P3-density restart. The counter is already 0 here: clause (a)
                 # zeroes it on any finding's first (NEW) appearance, and a finding cannot
@@ -870,8 +830,7 @@ class StateMachine:
                 # (a) ever changes. FALL THROUGH (no `continue`) so _should_enter_hold() runs.
                 self._state.consecutive_clean_rounds = 0
                 self._state.infra_errors.append(
-                    "tiered-reset: P2/P3-density -- restarting cycle %d"
-                    % round_index
+                    "tiered-reset: P2/P3-density -- restarting cycle %d" % round_index
                 )
             else:
                 self._state.consecutive_clean_rounds = 0
@@ -895,12 +854,10 @@ class StateMachine:
                 return self._state.verdict
             if self._should_enter_hold():
                 uncertain_count = sum(
-                    1 for f in self._state.findings
-                    if f.disposition == Disposition.UNCERTAIN
+                    1 for f in self._state.findings if f.disposition == Disposition.UNCERTAIN
                 )
                 self._state.hold_reason = (
-                    "%d UNCERTAIN finding(s) awaiting human disposition"
-                    % uncertain_count
+                    "%d UNCERTAIN finding(s) awaiting human disposition" % uncertain_count
                 )
                 self._state.verdict = Verdict.PENDING
                 self._write_ledger_rows()
@@ -910,10 +867,7 @@ class StateMachine:
             # CLEAN already counts toward the threshold above. Identical
             # empty maps are how a clean review looks; stalling those
             # would abort a 4-cycle threshold on round 2.
-            if (
-                _fp != _FixpointResult.CLEAN
-                and self._stalled_on_identical_round()
-            ):
+            if _fp != _FixpointResult.CLEAN and self._stalled_on_identical_round():
                 self._state.verdict = Verdict.ESCALATED
                 self._state.converged = False
                 self._state.infra_errors.append(
@@ -925,14 +879,10 @@ class StateMachine:
                 return Verdict.ESCALATED
 
         # MAX_TOTAL_ROUNDS exhausted -> STATE-05 diagnosis + ESCALATED
-        category = diagnose_non_convergence(
-            self._state.round_history, self._state.infra_errors
-        )
+        category = diagnose_non_convergence(self._state.round_history, self._state.infra_errors)
         self._state.verdict = Verdict.ESCALATED
         self._state.converged = False
-        self._state.infra_errors.append(
-            f"ESCALATED category={category}"
-        )
+        self._state.infra_errors.append(f"ESCALATED category={category}")
         self._persist_state()
         return Verdict.ESCALATED
 
@@ -942,14 +892,10 @@ class StateMachine:
         No file mutations here -- L0 detect only; autofix is separate.
         """
         try:
-            l0_findings, l0_infra = self.l0_runner(
-                self.registry, self._source_files()
-            )
+            l0_findings, l0_infra = self.l0_runner(self.registry, self._source_files())
             self._state.infra_errors.extend(l0_infra)
         except Exception as exc:  # noqa: BLE001
-            self._state.infra_errors.append(
-                f"L0 runner failed: {exc}"
-            )
+            self._state.infra_errors.append(f"L0 runner failed: {exc}")
             l0_findings = []
 
         # Delta filter: separate new (in-diff) from pre-existing L0 findings.
@@ -961,15 +907,11 @@ class StateMachine:
             from .delta import lines_intersect
             from .diff import extract_changed_lines
 
-            changed = extract_changed_lines(
-                self.resolved_review.git_diff, repo_root=self.cwd
-            )
+            changed = extract_changed_lines(self.resolved_review.git_diff, repo_root=self.cwd)
             delta: list = []
             for f in l0_findings:
                 file_lines = changed.get(f.file)
-                if file_lines is not None and lines_intersect(
-                    f.line_range, file_lines
-                ):
+                if file_lines is not None and lines_intersect(f.line_range, file_lines):
                     delta.append(f)
                 else:
                     self._preexisting_buf.append(
@@ -986,10 +928,7 @@ class StateMachine:
 
         # Danger-score: L0 CONFIRMED StateFinding, causes HOLD on dangerous config fields.
         if self.resolved_review.git_diff is None:
-            self._state.infra_errors.append(
-                "Danger-score requires a diff"
-                " -- skipping in non-git mode"
-            )
+            self._state.infra_errors.append("Danger-score requires a diff -- skipping in non-git mode")
         else:
             try:
                 from .taint import danger_score_from_diff
@@ -999,9 +938,7 @@ class StateMachine:
                 )
                 l0_findings.extend(danger_findings)
             except Exception as exc:  # noqa: BLE001
-                self._state.infra_errors.append(
-                    f"Danger-score failed: {exc}"
-                )
+                self._state.infra_errors.append(f"Danger-score failed: {exc}")
         return l0_findings
 
     def _run_l1_phase(self) -> tuple[list[StateFinding], list[dict]]:
@@ -1045,21 +982,19 @@ class StateMachine:
                 # response whose evidence failed validation; never sent
                 # through semantic falsification as a code defect.
                 return f
-            progress.emit(
-                "falsify %d/%d: %s:%s (%s)"
-                % (i, total, f.file, f.line_range, f.fingerprint)
-            )
+            progress.emit("falsify %d/%d: %s:%s (%s)" % (i, total, f.file, f.line_range, f.fingerprint))
             t_falsify = time.monotonic()
             try:
                 f.disposition = self.falsifier.falsify(f)
                 from .verify import bound_excerpt_disposition
+
                 f.disposition = bound_excerpt_disposition(
-                    f.disposition, getattr(f, "excerpt", None),
+                    f.disposition,
+                    getattr(f, "excerpt", None),
                 )
                 progress.emit(
                     "falsify %d/%d: done %s (%.1fs)"
-                    % (i, total, f.disposition,
-                       time.monotonic() - t_falsify)
+                    % (i, total, f.disposition, time.monotonic() - t_falsify)
                 )
             except FalsifyProtocolError as exc:
                 # The backend answered, but not in the contract (non-dict,
@@ -1100,21 +1035,13 @@ class StateMachine:
                 f.disposition = Disposition.UNCERTAIN
                 f.error = f"falsify() raised: {exc}"
                 with _lock:
-                    self._state.infra_errors.append(
-                        f"falsify exception on {f.fingerprint}: {exc}"
-                    )
-                progress.emit(
-                    "falsify %d/%d: failed (%.1fs)"
-                    % (i, total, time.monotonic() - t_falsify)
-                )
+                    self._state.infra_errors.append(f"falsify exception on {f.fingerprint}: {exc}")
+                progress.emit("falsify %d/%d: failed (%.1fs)" % (i, total, time.monotonic() - t_falsify))
             except Exception:
                 # Close the event pair before re-raising: whatever
                 # escapes falsify must not leave the stream looking
                 # like the falsify is still running.
-                progress.emit(
-                    "falsify %d/%d: failed (%.1fs)"
-                    % (i, total, time.monotonic() - t_falsify)
-                )
+                progress.emit("falsify %d/%d: failed (%.1fs)" % (i, total, time.monotonic() - t_falsify))
                 raise
             return f
 
@@ -1124,6 +1051,7 @@ class StateMachine:
             l1_findings.extend(_one(item) for item in items)
         else:
             from concurrent.futures import ThreadPoolExecutor
+
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 # map() re-raises the first exception in input order,
                 # which preserves the re-raise arm's semantics.
@@ -1131,9 +1059,7 @@ class StateMachine:
         self._check_falsify_can_still_converge(falsify_infra_failures)
         return (l1_findings, l1_excerpts)
 
-    def _check_falsify_can_still_converge(
-        self, infra_failures: list[str]
-    ) -> None:
+    def _check_falsify_can_still_converge(self, infra_failures: list[str]) -> None:
         """Stop a run whose falsifier backend keeps failing to answer.
 
         Sibling of _check_l1_can_still_converge, for the other half of
@@ -1159,8 +1085,7 @@ class StateMachine:
         self._state.rounds_with_falsify_infra += 1
         self._state.infra_errors.append(
             "round %d: falsify could not reach the backend for %d "
-            "finding(s): %s"
-            % (self._state.round, len(infra_failures), infra_failures)
+            "finding(s): %s" % (self._state.round, len(infra_failures), infra_failures)
         )
         if self._state.rounds_with_falsify_infra >= 3:
             # Persist bounded non-PASS before raising, for the same reason
@@ -1180,9 +1105,7 @@ class StateMachine:
                 % (self._state.rounds_with_falsify_infra, len(infra_failures))
             )
 
-    def _check_l1_can_still_converge(
-        self, l1_findings: list[StateFinding]
-    ) -> None:
+    def _check_l1_can_still_converge(self, l1_findings: list[StateFinding]) -> None:
         """Stop a run that provably cannot reach a clean round.
 
         A pass that fails leaves a CONFIRMED INFRA finding, which tiers P2 and
@@ -1204,17 +1127,14 @@ class StateMachine:
 
         outcomes = derive_pass_outcomes(l1_findings)
         failed = {
-            name: outcome.value
-            for name, outcome in outcomes.items()
-            if outcome != PassOutcome.COMPLETED
+            name: outcome.value for name, outcome in outcomes.items() if outcome != PassOutcome.COMPLETED
         }
         if not failed:
             self._state.rounds_with_failed_pass = 0
             return
         self._state.rounds_with_failed_pass += 1
         self._state.infra_errors.append(
-            "round %d: pass(es) did not complete: %s"
-            % (self._state.round, failed)
+            "round %d: pass(es) did not complete: %s" % (self._state.round, failed)
         )
         if self._state.rounds_with_failed_pass >= 3:
             # Persist bounded non-PASS before raising: a circuit breaker
@@ -1252,15 +1172,12 @@ class StateMachine:
             try:
                 from .gate_check import load_gate_config
 
-                config = load_gate_config(
-                    self.cwd / ".code-forge" / "gate.yaml"
-                )
+                config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
                 baseline_cmd = config["test"]["command"]
                 baseline_timeout = config["test"].get("timeout_seconds", 120)
             except Exception as exc:  # noqa: BLE001
                 self._state.infra_errors.append(
-                    "L2: gate.yaml missing or test.command not "
-                    f"configured: {exc}"
+                    f"L2: gate.yaml missing or test.command not configured: {exc}"
                 )
                 return []
         else:
@@ -1272,15 +1189,14 @@ class StateMachine:
             progress.emit("mutation: checking applicability")
         try:
             l2_findings, l2_infra = self.l2_runner(
-                diff_files, baseline_cmd,
+                diff_files,
+                baseline_cmd,
                 baseline_timeout=baseline_timeout,
             )
             self._state.infra_errors.extend(l2_infra)
             return l2_findings
         except Exception as exc:  # noqa: BLE001
-            self._state.infra_errors.append(
-                f"L2 runner failed: {exc}"
-            )
+            self._state.infra_errors.append(f"L2 runner failed: {exc}")
             return []
 
     def _run_e2e_phase(self) -> list[StateFinding]:
@@ -1297,9 +1213,7 @@ class StateMachine:
         """
         diff_text = self.resolved_review.git_diff
         if diff_text is None:
-            self._state.infra_errors.append(
-                "e2e: no git diff available (non-git review)"
-            )
+            self._state.infra_errors.append("e2e: no git diff available (non-git review)")
             return []
         try:
             e2e_findings, e2e_infra = self.e2e_runner(diff_text, self.cwd)
@@ -1323,6 +1237,7 @@ class StateMachine:
                 build_coverage_findings,
                 compute_uncovered_files,
             )
+
             uncovered = compute_uncovered_files(
                 [str(f) for f in self._source_files()],
                 self.registry,
@@ -1331,14 +1246,13 @@ class StateMachine:
             )
             return build_coverage_findings(uncovered)
         except Exception as exc:  # noqa: BLE001
-            self._state.infra_errors.append(
-                f"coverage runner failed: {exc}"
-            )
+            self._state.infra_errors.append(f"coverage runner failed: {exc}")
             return []
 
     def _receipt_diff(self) -> str | None:
         if self.reviewed_repositories is not None:
             from .receipt_scope import repository_scope
+
             return repository_scope(self.reviewed_repositories)[0]
         return self.resolved_review.git_diff
 
@@ -1401,7 +1315,8 @@ class StateMachine:
         if max_disk != max(window):
             errors.append(
                 "receipt window stale: disk holds cycle %d, this run "
-                "wrote up to %d" % (max_disk, max(window)))
+                "wrote up to %d" % (max_disk, max(window))
+            )
             return errors
         from .verify import parse_diff_files, run_verify
 
@@ -1420,7 +1335,9 @@ class StateMachine:
         # respect_floor=False: the machine computed its own run policy;
         # re-raising by the repo floor would break CI on a 3-cycle repo.
         vr = run_verify(
-            self.cwd, self.source_hash, parse_diff_files(diff_text),
+            self.cwd,
+            self.source_hash,
+            parse_diff_files(diff_text),
             diff_text=diff_text,
             required_cycles=1,
             cycles=window,
@@ -1430,7 +1347,6 @@ class StateMachine:
         if not vr.passed:
             errors.append(f"receipt acceptance: {vr.reason}")
         return errors
-
 
     def _downgrade_one_line_slips(
         self,
@@ -1459,18 +1375,20 @@ class StateMachine:
                 err = assessment.diagnostic or "untrusted excerpt metadata"
                 digest = hashlib.sha256(err.encode("utf-8")).hexdigest()[:12]
                 fp = f"receipt-{digest}"
-                extra.append(StateFinding(
-                    id="RECEIPT_UNTRUSTED",
-                    fingerprint=fp,
-                    source="UNTRUSTED",
-                    disposition=Disposition.UNCERTAIN,
-                    file=str(exc.get("file") or "<receipt-evidence>"),
-                    line_range=[
-                        int(exc["start_line"]) if isinstance(exc.get("start_line"), int) else 0,
-                        int(exc["end_line"]) if isinstance(exc.get("end_line"), int) else 0,
-                    ],
-                    description=err,
-                ))
+                extra.append(
+                    StateFinding(
+                        id="RECEIPT_UNTRUSTED",
+                        fingerprint=fp,
+                        source="UNTRUSTED",
+                        disposition=Disposition.UNCERTAIN,
+                        file=str(exc.get("file") or "<receipt-evidence>"),
+                        line_range=[
+                            int(exc["start_line"]) if isinstance(exc.get("start_line"), int) else 0,
+                            int(exc["end_line"]) if isinstance(exc.get("end_line"), int) else 0,
+                        ],
+                        description=err,
+                    )
+                )
         if extra:
             findings = list(findings) + extra
         return findings, excerpts
@@ -1485,22 +1403,21 @@ class StateMachine:
         """
         import hashlib
 
-        fp = "receipt-{}".format(hashlib.sha256(
-            error.encode("utf-8")).hexdigest()[:12])
+        fp = "receipt-{}".format(hashlib.sha256(error.encode("utf-8")).hexdigest()[:12])
         if any(f.fingerprint == fp for f in self._state.findings):
             return
-        self._state.findings.append(StateFinding(
-            id="RECEIPT_INVALID",
-            fingerprint=fp,
-            source="INFRA",
-            disposition=Disposition.CONFIRMED,
-            file="<receipt-evidence>",
-            line_range=[0, 0],
-            description=error,
-        ))
-        self._state.infra_errors.append(
-            f"receipt: {error}"
+        self._state.findings.append(
+            StateFinding(
+                id="RECEIPT_INVALID",
+                fingerprint=fp,
+                source="INFRA",
+                disposition=Disposition.CONFIRMED,
+                file="<receipt-evidence>",
+                line_range=[0, 0],
+                description=error,
+            )
         )
+        self._state.infra_errors.append(f"receipt: {error}")
 
     def _execute_round(self, round_index: int) -> None:
         """STATE-08: both modes run L0 + L1 + L2 + E2E each round.
@@ -1520,21 +1437,25 @@ class StateMachine:
         l1_findings, l1_excerpts = self._run_l1_phase()
         self._excerpts_last_round = l1_excerpts
         l1_findings, l1_excerpts = self._downgrade_one_line_slips(
-            l1_findings, l1_excerpts,
+            l1_findings,
+            l1_excerpts,
         )
         self._excerpts_last_round = l1_excerpts
         self._last_receipt_write_errors = []
         # Attempted (schema-failed) payloads the producer retained for
         # audit: written by the receipt writer as failure artifacts.
-        self._attempted_last_round = list(getattr(
-            self.l1_provider, "attempted_excerpts", None) or [])
+        self._attempted_last_round = list(getattr(self.l1_provider, "attempted_excerpts", None) or [])
         self._check_l1_can_still_converge(l1_findings)
         l2_findings = self._run_l2_phase()
         e2e_findings = self._run_e2e_phase()
         coverage_findings = self._run_coverage_phase()
         merged = self._merge_findings(
-            l0_findings, l1_findings, l2_findings, e2e_findings,
-            coverage_findings, rulepack_findings,
+            l0_findings,
+            l1_findings,
+            l2_findings,
+            e2e_findings,
+            coverage_findings,
+            rulepack_findings,
         )
         merged = self._apply_promotion_stickiness(merged)
         merged = self._apply_dismissed_stickiness(merged)
@@ -1542,7 +1463,11 @@ class StateMachine:
         if self.exec_falsify:
             self._run_exec_falsifier()
         self._append_round_snapshot(
-            round_index, l0_findings, l1_findings, l2_findings, e2e_findings,
+            round_index,
+            l0_findings,
+            l1_findings,
+            l2_findings,
+            e2e_findings,
             rulepack_findings,
         )
         # CLI-08 H3: accumulate cost AFTER full round (L0+L1+L2+E2E done).
@@ -1554,14 +1479,16 @@ class StateMachine:
         self._state.cost_total_duration += self._round_duration
         for i in range(3):
             self._pass_counter += 1
-            self._state.cost_per_pass.append({
-                "pass": i + 1,
-                "cycle": round_index,
-                "input": self._round_input_tokens // 3,
-                "output": self._round_output_tokens // 3,
-                "cached": self._round_cached_tokens // 3,
-                "duration_s": round(self._round_duration / 3.0, 3),
-            })
+            self._state.cost_per_pass.append(
+                {
+                    "pass": i + 1,
+                    "cycle": round_index,
+                    "input": self._round_input_tokens // 3,
+                    "output": self._round_output_tokens // 3,
+                    "cached": self._round_cached_tokens // 3,
+                    "duration_s": round(self._round_duration / 3.0, 3),
+                }
+            )
         self._state.cost_passes = self._pass_counter
         # Reset round accumulators for next round.
         self._round_input_tokens = 0
@@ -1570,6 +1497,7 @@ class StateMachine:
         self._round_duration = 0.0
         from .receipt import write_receipts
         from .verify import parse_diff_files
+
         diff_text = self._receipt_diff()
         diff_files = parse_diff_files(diff_text) if diff_text else None
         try:
@@ -1592,16 +1520,12 @@ class StateMachine:
         except OSError as exc:
             # A receipt-write failure must persist non-PASS state instead
             # of crashing and leaving a stale PASS (or no) state.json.
-            self._last_receipt_write_errors = [
-                f"receipt write failed: {exc}"
-            ]
+            self._last_receipt_write_errors = [f"receipt write failed: {exc}"]
         self._persist_state()
         if self.post_round_hook is not None:
             self.post_round_hook(round_index)
 
-    def _apply_autofix_loop_to(
-        self, findings: list[StateFinding]
-    ) -> None:
+    def _apply_autofix_loop_to(self, findings: list[StateFinding]) -> None:
         """LOCAL only: attempt auto-fix on the given finding list.
 
         STATE-08 parameterized: operates on the provided list (L0 only)
@@ -1635,9 +1559,7 @@ class StateMachine:
                 outcome = self.autofixer.fix(finding, mode_hint)
             except Exception as exc:  # noqa: BLE001
                 outcome = FixOutcome.EXCEPTION
-                self._state.infra_errors.append(
-                    f"autofixer exception on {fp}: {exc}"
-                )
+                self._state.infra_errors.append(f"autofixer exception on {fp}: {exc}")
 
             if outcome == FixOutcome.SUCCESS:
                 finding.disposition = Disposition.FIXED
@@ -1648,12 +1570,8 @@ class StateMachine:
                 self._state.fix_attempts[fp] = attempts + 1
             elif outcome == FixOutcome.EXCEPTION:
                 self._state.fix_attempts[fp] = attempts + 1
-                if "autofixer exception" not in str(
-                    self._state.infra_errors[-1:]
-                ):
-                    self._state.infra_errors.append(
-                        f"autofixer EXCEPTION on {fp}"
-                    )
+                if "autofixer exception" not in str(self._state.infra_errors[-1:]):
+                    self._state.infra_errors.append(f"autofixer EXCEPTION on {fp}")
 
     def _fixpoint_reached(self) -> _FixpointResult:
         """Severity-tiered fixpoint for LOCAL mode.
@@ -1682,10 +1600,7 @@ class StateMachine:
         )
 
         history = self._state.round_history
-        current_disps = {
-            f.fingerprint: f.disposition
-            for f in self._state.findings
-        }
+        current_disps = {f.fingerprint: f.disposition for f in self._state.findings}
 
         # Previous round's dispositions, for clause (b) only (a FIXED
         # that comes back CONFIRMED is a reversion against the round that
@@ -1716,16 +1631,10 @@ class StateMachine:
 
         # (b) zero FIXED->CONFIRMED reversions
         for fp, disp in current_disps.items():
-            if (
-                disp == Disposition.CONFIRMED
-                and prior_disps.get(fp) == "FIXED"
-            ):
+            if disp == Disposition.CONFIRMED and prior_disps.get(fp) == "FIXED":
                 return _FixpointResult.RESET
 
-        confirmed = [
-            f for f in self._state.findings
-            if f.disposition == Disposition.CONFIRMED
-        ]
+        confirmed = [f for f in self._state.findings if f.disposition == Disposition.CONFIRMED]
 
         # (d) zero UNCERTAIN remain (unchanged from binary version)
         for f in self._state.findings:
@@ -1759,6 +1668,7 @@ class StateMachine:
             return desc[:50].strip()
 
         from collections import defaultdict
+
         by_file: dict = defaultdict(set)
         all_rules: set = set()
         for f in p3_findings:
@@ -1779,6 +1689,7 @@ class StateMachine:
         # line count, so we skip rather than falling back to a misleading denominator.
         if self.resolved_review.git_diff:
             from .diff import count_diff_lines
+
             changed_lines = max(1, count_diff_lines(self.resolved_review.git_diff))
             if total_p3 / changed_lines > P3_DENSITY_THRESHOLD:
                 return _FixpointResult.CYCLE_RESTART
@@ -1793,14 +1704,10 @@ class StateMachine:
         if self.mode == Mode.CI:
             return False
         has_uncertain = any(
-            f.disposition == Disposition.UNCERTAIN
-            and f.source != "UNTRUSTED"
+            f.disposition == Disposition.UNCERTAIN and f.source != "UNTRUSTED"
             for f in self._state.findings
         )
-        has_unfixed_confirmed = any(
-            f.disposition == Disposition.CONFIRMED
-            for f in self._state.findings
-        )
+        has_unfixed_confirmed = any(f.disposition == Disposition.CONFIRMED for f in self._state.findings)
         return has_uncertain and not has_unfixed_confirmed
 
     def _stalled_on_identical_round(self) -> bool:
@@ -1894,14 +1801,11 @@ class StateMachine:
         try:
             from .gate_check import load_gate_config
 
-            config = load_gate_config(
-                self.cwd / ".code-forge" / "gate.yaml"
-            )
+            config = load_gate_config(self.cwd / ".code-forge" / "gate.yaml")
             test_cmd = config["test"]["command"]
         except Exception as exc:  # noqa: BLE001
             self._state.infra_errors.append(
-                "FIXVAL: gate.yaml missing or test.command not "
-                f"configured: {exc}"
+                f"FIXVAL: gate.yaml missing or test.command not configured: {exc}"
             )
             # Cannot run FIXVAL without test command -- proceed to PASS
             self._state.verdict = Verdict.PASS
@@ -1914,7 +1818,11 @@ class StateMachine:
         diff_text = self.resolved_review.git_diff
 
         result = run_fixval(
-            candidate, test_cmd, self.cwd, commit_message, diff_text,
+            candidate,
+            test_cmd,
+            self.cwd,
+            commit_message,
+            diff_text,
         )
 
         # Extend findings and advisories
@@ -1936,7 +1844,9 @@ class StateMachine:
         if result.status == FixvalStatus.PASS:
             # Non-hollow: run overfit guard (advisory only)
             overfit_advisories = run_overfit_guard(
-                candidate, test_cmd, self.cwd,
+                candidate,
+                test_cmd,
+                self.cwd,
             )
             self._advisories.extend(overfit_advisories)
 
@@ -2014,12 +1924,11 @@ class StateMachine:
         if base is None or head is None:
             return 0
         from .ledger import iter_rows
+
         ledger_root = resolve_ledger_root(self.cwd)
-        existing = {
-            (r.fingerprint, r.terminal_state)
-            for r in iter_rows(ledger_root)
-        }
+        existing = {(r.fingerprint, r.terminal_state) for r in iter_rows(ledger_root)}
         from datetime import datetime
+
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = 0
         for f in self._state.findings:
@@ -2032,9 +1941,7 @@ class StateMachine:
             if (f.fingerprint, state) in existing:
                 continue
             evidence = (
-                "fix_applied"
-                if state == TerminalState.FIXED
-                else (f.error or "falsifier_rejected")
+                "fix_applied" if state == TerminalState.FIXED else (f.error or "falsifier_rejected")
             )
             ct = derive_claim_type(f.source)
             row = self._build_ledger_row(
@@ -2120,15 +2027,13 @@ class StateMachine:
                 return 0
 
             ledger_root = resolve_ledger_root(self.cwd)
-            existing = {
-                (r.fingerprint, r.base_sha, r.head_sha)
-                for r in iter_rows(ledger_root)
-            }
+            existing = {(r.fingerprint, r.base_sha, r.head_sha) for r in iter_rows(ledger_root)}
             ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Collect findings in scope: CONFIRMED + style-downgraded findings (CP1 W-5)
             findings_to_write = [
-                f for f in self._state.findings
+                f
+                for f in self._state.findings
                 if f.disposition == Disposition.CONFIRMED or f.disposition == Disposition.STYLE
             ]
 
@@ -2318,7 +2223,9 @@ class StateMachine:
             result = _sp.run(
                 ["git", "rev-parse", "--git-path", "COMMIT_EDITMSG"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 cwd=str(self.cwd),
             )
@@ -2329,25 +2236,23 @@ class StateMachine:
                 if path.exists():
                     return path.read_text(encoding="utf-8").strip()
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "FIXVAL: COMMIT_EDITMSG read failed: %s", exc
-            )
+            logger.warning("FIXVAL: COMMIT_EDITMSG read failed: %s", exc)
 
         # Fallback: git log -1 for post-commit / CI
         try:
             result = _sp.run(
                 ["git", "log", "-1", "--format=%B"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 cwd=str(self.cwd),
             )
             if result.returncode == 0:
                 return result.stdout.strip()
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "FIXVAL: git log fallback failed: %s", exc
-            )
+            logger.warning("FIXVAL: git log fallback failed: %s", exc)
 
         return ""
 
@@ -2439,14 +2344,12 @@ class StateMachine:
             file = adv.file
             line = adv.line_range[0] if adv.line_range else 0
             desc = adv.description
-            fingerprint = (
-                "rulepack:{}:{}:{}:{}:{}".format(
-                    pack_name,
-                    rule_id,
-                    file,
-                    line,
-                    hashlib.sha256(desc.encode("utf-8")).hexdigest()[:12],
-                )
+            fingerprint = "rulepack:{}:{}:{}:{}:{}".format(
+                pack_name,
+                rule_id,
+                file,
+                line,
+                hashlib.sha256(desc.encode("utf-8")).hexdigest()[:12],
             )
             findings.append(
                 StateFinding(
@@ -2473,9 +2376,7 @@ class StateMachine:
         # Inject source_files for runners that support it (no git dependency).
         for runner in self.advisory_runners:
             if hasattr(runner, "source_files"):
-                runner.source_files = list(
-                    self.resolved_review.source_files
-                )
+                runner.source_files = list(self.resolved_review.source_files)
             if hasattr(runner, "registry"):
                 runner.registry = self.registry
             if hasattr(runner, "_runtime_runner"):
@@ -2510,9 +2411,7 @@ class StateMachine:
         out_path = out_dir / "advisory-findings.json"
         tmp_path = out_path.with_suffix(".tmp")
         data = [asdict(f) for f in self._advisories]
-        tmp_path.write_text(
-            json.dumps(data, indent=2), encoding="utf-8"
-        )
+        tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp_path.replace(out_path)
 
     def _display_smoke_status(self) -> None:
@@ -2532,9 +2431,7 @@ class StateMachine:
         from .runtime import RuntimeRunner as _RuntimeRunner
 
         # Only print when a RuntimeRunner is present in advisory_runners.
-        has_runtime = any(
-            isinstance(r, _RuntimeRunner) for r in self.advisory_runners
-        )
+        has_runtime = any(isinstance(r, _RuntimeRunner) for r in self.advisory_runners)
         if not has_runtime:
             return
 
@@ -2586,8 +2483,11 @@ class StateMachine:
         for f in self._advisories:
             if f.id in _RUNTIME_EXCLUSIVE_IDS:
                 continue
-            line_str = "%d-%d" % (f.line_range[0], f.line_range[1]) \
-                if len(f.line_range) == 2 else str(f.line_range)
+            line_str = (
+                "%d-%d" % (f.line_range[0], f.line_range[1])
+                if len(f.line_range) == 2
+                else str(f.line_range)
+            )
             print(
                 f"[{f.axis}] {f.file}:{line_str} - {f.description}",
                 file=sys.stderr,
@@ -2613,23 +2513,21 @@ class StateMachine:
         """
         merged: dict[str, StateFinding] = {}
         # coverage + e2e lowest priority: insert first so l2/l1/l0 win.
-        for f in (coverage_findings or []):
+        for f in coverage_findings or []:
             merged[f.fingerprint] = f
-        for f in (e2e_findings or []):
+        for f in e2e_findings or []:
             merged[f.fingerprint] = f
-        for f in (l2_findings or []):
+        for f in l2_findings or []:
             merged[f.fingerprint] = f
         for f in l1_findings:
             merged[f.fingerprint] = f
         for f in l0_findings:
             merged[f.fingerprint] = f
-        for f in (rulepack_findings or []):
+        for f in rulepack_findings or []:
             merged[f.fingerprint] = f
         return list(merged.values())
 
-    def _apply_promotion_stickiness(
-        self, findings: list[StateFinding]
-    ) -> list[StateFinding]:
+    def _apply_promotion_stickiness(self, findings: list[StateFinding]) -> list[StateFinding]:
         """DISPO-05: promoted UNCERTAIN sticks against L0 re-detect.
 
         If a finding was promoted to UNCERTAIN in a prior round
@@ -2643,9 +2541,7 @@ class StateMachine:
                 # Check prior round for promotion evidence
                 prior_was_uncertain = False
                 if self._state.round_history:
-                    last_disps = self._state.round_history[-1].get(
-                        "dispositions", {}
-                    )
+                    last_disps = self._state.round_history[-1].get("dispositions", {})
                     if last_disps.get(fp) == "UNCERTAIN":
                         prior_was_uncertain = True
                 if prior_was_uncertain:
@@ -2659,13 +2555,14 @@ class StateMachine:
     # values stored in round_history are Disposition(...).value, so a
     # rename of either member would silently stop matching if this set
     # carried its own copy of the strings.
-    _STICKY_TERMINAL_DISPOSITIONS: frozenset = frozenset({
-        Disposition.DISMISSED.value, Disposition.STYLE.value,
-    })
+    _STICKY_TERMINAL_DISPOSITIONS: frozenset = frozenset(
+        {
+            Disposition.DISMISSED.value,
+            Disposition.STYLE.value,
+        }
+    )
 
-    def _apply_dismissed_stickiness(
-        self, findings: list[StateFinding]
-    ) -> list[StateFinding]:
+    def _apply_dismissed_stickiness(self, findings: list[StateFinding]) -> list[StateFinding]:
         """Carry forward DISMISSED/STYLE dispositions from prior rounds.
 
         Mutates the findings in place and returns the same list, so a
@@ -2722,33 +2619,19 @@ class StateMachine:
             "round": round_index,
             "l0_fingerprints": [f.fingerprint for f in l0_findings],
             "l1_fingerprints": [f.fingerprint for f in l1_findings],
-            "l2_fingerprints": [
-                f.fingerprint for f in (l2_findings or [])
-            ],
-            "e2e_fingerprints": [
-                f.fingerprint for f in (e2e_findings or [])
-            ],
-            "rulepack_fingerprints": [
-                f.fingerprint for f in (rulepack_findings or [])
-            ],
-            "dispositions": {
-                f.fingerprint: f.disposition.value
-                for f in self._state.findings
-            },
+            "l2_fingerprints": [f.fingerprint for f in (l2_findings or [])],
+            "e2e_fingerprints": [f.fingerprint for f in (e2e_findings or [])],
+            "rulepack_fingerprints": [f.fingerprint for f in (rulepack_findings or [])],
+            "dispositions": {f.fingerprint: f.disposition.value for f in self._state.findings},
             "fixed_fingerprints": [
-                f.fingerprint
-                for f in self._state.findings
-                if f.disposition == Disposition.FIXED
+                f.fingerprint for f in self._state.findings if f.disposition == Disposition.FIXED
             ],
         }
         self._state.round_history.append(snapshot)
 
     def _count(self, disposition: Disposition) -> int:
         """Count findings with a given disposition."""
-        return sum(
-            1 for f in self._state.findings
-            if f.disposition == disposition
-        )
+        return sum(1 for f in self._state.findings if f.disposition == disposition)
 
     def _count_coverage_gaps(self) -> int:
         """Count active COVERAGE findings (per-file review gaps).
@@ -2757,9 +2640,9 @@ class StateMachine:
         examined. DISMISSED (human-waived) gaps do not count.
         """
         return sum(
-            1 for f in self._state.findings
-            if f.source == "COVERAGE"
-            and f.disposition != Disposition.DISMISSED
+            1
+            for f in self._state.findings
+            if f.source == "COVERAGE" and f.disposition != Disposition.DISMISSED
         )
 
     def _persist_state(self) -> None:
@@ -2777,9 +2660,7 @@ class StateMachine:
         try:
             result_path.unlink()
         except OSError as e:
-            self._state.infra_errors.append(
-                f"CI: failed to remove mutation-result.json: {e}"
-            )
+            self._state.infra_errors.append(f"CI: failed to remove mutation-result.json: {e}")
 
     def _source_files(self) -> list[Path]:
         """Return source files from resolved review."""

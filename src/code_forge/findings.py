@@ -7,6 +7,7 @@ so the parsing lives here rather than being duplicated.
 
 Public functions: finding_line
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping

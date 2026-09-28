@@ -4,6 +4,7 @@ Splits L1 findings by pass name (encoded in StateFinding.id as
 "l1-<pass_name>-<fingerprint>") and writes one receipt JSON per pass
 to .code-forge/receipts/receipt-cNpM.json.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -70,13 +71,15 @@ def _build_excerpts(
             # the same trap the scalar case above avoids.
             if all(isinstance(ln, str) for ln in content):
                 content = "\n".join(content)
-        out.append({
-            "file": exc.get("file", ""),
-            "start_line": exc.get("start_line", 0),
-            "end_line": exc.get("end_line", 0),
-            "content": content,
-            "rationale": "reviewer-provided",
-        })
+        out.append(
+            {
+                "file": exc.get("file", ""),
+                "start_line": exc.get("start_line", 0),
+                "end_line": exc.get("end_line", 0),
+                "content": content,
+                "rationale": "reviewer-provided",
+            }
+        )
     return out
 
 
@@ -102,6 +105,7 @@ def _warn_on_fabricated_excerpts(
     log = logging.getLogger(__name__)
     try:
         from .verify import _diff_validation_context
+
         post_image, _, exempt_files = _diff_validation_context(diff_text, cwd=cwd)
         _, non_text = parse_diff_hunks(diff_text)
         exempt_files.extend(non_text)
@@ -126,7 +130,10 @@ def _warn_on_fabricated_excerpts(
             log.warning(
                 "pre-flight: excerpt %s:%d-%d references file %s "
                 "not in the diff; verify will refuse this",
-                fname, start, end, fname,
+                fname,
+                start,
+                end,
+                fname,
             )
             continue
         fabricated = describe_fabricated_lines(file_lines, start, end)
@@ -134,7 +141,10 @@ def _warn_on_fabricated_excerpts(
             log.warning(
                 "pre-flight: excerpt %s:%d-%d references lines %s "
                 "not in diff post-image; verify will refuse this",
-                fname, start, end, fabricated,
+                fname,
+                start,
+                end,
+                fabricated,
             )
 
 
@@ -159,6 +169,7 @@ def write_receipts(
     if reviewed_repositories is not None:
         from .receipt_scope import repository_scope
         from .verify import parse_diff_files
+
         diff_text, repository_manifest = repository_scope(reviewed_repositories)
         diff_files = parse_diff_files(diff_text)
     receipts_dir.mkdir(parents=True, exist_ok=True)
@@ -191,10 +202,7 @@ def write_receipts(
     # UNTRUSTED findings are audit data carried in state, not attested
     # review findings: their evidence failed validation, so they must
     # not appear in receipts (derive_basis would also reject the source).
-    by_pass = {
-        p: [f for f in fs if f.source != "UNTRUSTED"]
-        for p, fs in by_pass.items()
-    }
+    by_pass = {p: [f for f in fs if f.source != "UNTRUSTED"] for p, fs in by_pass.items()}
     cycle = round_index + 1
     # One write time for the whole round. A per-pass offset is not ordered
     # against the next round, and rounds finish faster than it spans, so it
@@ -209,15 +217,10 @@ def write_receipts(
                 raise ValueError("reviewer_excerpt item is not a dict: %r" % (exc,))
             pname = exc.get("pass_name")
             if pname not in _PASS_NAMES:
-                raise ValueError(
-                    "excerpt missing or invalid trusted pass_name: %r" % (pname,)
-                )
+                raise ValueError("excerpt missing or invalid trusted pass_name: %r" % (pname,))
             excerpts_by_pass[pname].append(exc)
 
-    assembled_by_pass = {
-        pname: _build_excerpts(excerpts_by_pass[pname])
-        for pname in _PASS_NAMES
-    }
+    assembled_by_pass = {pname: _build_excerpts(excerpts_by_pass[pname]) for pname in _PASS_NAMES}
     all_assembled = [exc for p_excs in assembled_by_pass.values() for exc in p_excs]
     _warn_on_fabricated_excerpts(diff_text, all_assembled, cwd=cwd)
     pass_outcomes = derive_pass_outcomes(l1_findings)
@@ -241,9 +244,7 @@ def write_receipts(
         for pname in _PASS_NAMES:
             if pass_outcomes.get(pname) != PassOutcome.COMPLETED:
                 continue
-            errs = validate_excerpts_against_diff(
-                diff_text, assembled_by_pass[pname], cwd=cwd
-            )
+            errs = validate_excerpts_against_diff(diff_text, assembled_by_pass[pname], cwd=cwd)
             if errs:
                 pass_outcomes[pname] = PassOutcome.SCHEMA_FAIL
 
@@ -256,9 +257,7 @@ def write_receipts(
         exec_status = exec_evidence
         exec_evidence_dict = {"status": exec_evidence}
 
-    for pass_idx, (pass_name, skill_name) in enumerate(
-        zip(_PASS_NAMES, _SKILL_NAMES)
-    ):
+    for pass_idx, (pass_name, skill_name) in enumerate(zip(_PASS_NAMES, _SKILL_NAMES)):
         pass_num = pass_idx + 1
         pass_findings = by_pass.get(pass_name, [])
 
@@ -268,9 +267,7 @@ def write_receipts(
             "skill": skill_name,
             "diff_sha256": diff_sha256,
             "timestamp": now.isoformat(),
-            "pass_status": pass_outcomes.get(
-                pass_name, PassOutcome.COMPLETED
-            ).value,
+            "pass_status": pass_outcomes.get(pass_name, PassOutcome.COMPLETED).value,
             "findings_count": len(pass_findings),
             "findings": [
                 {
@@ -279,7 +276,9 @@ def write_receipts(
                     "description": f.description,
                     "disposition": f.disposition.value,
                     "basis": derive_basis(
-                        f, convergence_rounds=cycle, manifest_tier=effective_tier,
+                        f,
+                        convergence_rounds=cycle,
+                        manifest_tier=effective_tier,
                         exec_evidence=exec_status,
                     ).to_dict(),
                 }
@@ -312,15 +311,15 @@ def write_receipts(
                     "end": (f.line_range[-1] + 10) if f.line_range else 1,
                 }
                 for f in pass_findings
-            ] if pass_findings else (
+            ]
+            if pass_findings
+            else (
                 [
                     {"file": f, "start": min(lns), "end": max(lns)}
                     for f, lns in (diff_files or {}).items()
                     if lns
-                ] or [
-                    {"file": str(sf), "start": 1, "end": 1}
-                    for sf in source_files
                 ]
+                or [{"file": str(sf), "start": 1, "end": 1} for sf in source_files]
             ),
         }
 
@@ -350,11 +349,8 @@ def write_receipts(
                 "pass_name": pname,
                 "payload": attempted,
             }
-            pass_num = (
-                _PASS_NAMES.index(pname) + 1 if pname in _PASS_NAMES else 0
-            )
+            pass_num = _PASS_NAMES.index(pname) + 1 if pname in _PASS_NAMES else 0
             fname = "attempted-c%dp%d-%d.json" % (cycle, pass_num, idx)
-            (attempted_dir / fname).write_text(
-                json.dumps(art, indent=2), encoding="utf-8")
+            (attempted_dir / fname).write_text(json.dumps(art, indent=2), encoding="utf-8")
 
     return written

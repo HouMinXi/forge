@@ -148,9 +148,12 @@ def _event_identity_ok(event: dict, run_id: str, mutant: str | None) -> bool:
 
 
 def _harness_errors(event: dict) -> int:
-    return int(event.get("setup_errors", 0)) + int(event.get("teardown_errors", 0)) + int(
-        event.get("collection_errors", 0)
-    ) + int(event.get("internal_errors", 0))
+    return (
+        int(event.get("setup_errors", 0))
+        + int(event.get("teardown_errors", 0))
+        + int(event.get("collection_errors", 0))
+        + int(event.get("internal_errors", 0))
+    )
 
 
 def _event_proves_killed(event: dict | None, run_id: str, mutant: str) -> bool:
@@ -210,9 +213,7 @@ class MutmutAdapter:
 
     # -- probe -------------------------------------------------------------
 
-    def probe(
-        self, target: TargetDeclaration, context: ExecutionContext
-    ) -> CapabilityReport:
+    def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport:
         errors: list[InfrastructureError] = []
         evidence: list[str] = []
         python = shutil.which(context.approved_python) or (
@@ -239,7 +240,8 @@ class MutmutAdapter:
             out = subprocess.run(
                 [python, "-c", "import mutmut; print(mutmut.__version__)"],
                 capture_output=True,
-                text=True, encoding="utf-8",
+                text=True,
+                encoding="utf-8",
                 timeout=30,
                 env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
             )
@@ -379,9 +381,7 @@ class MutmutAdapter:
                         completion_evidence=baseline_event_ref,
                         extractor_version=ADAPTER_VERSION,
                     ),
-                    inventory=Inventory(
-                        generated=0, selected=0, excluded=0, completed=0, manifest=()
-                    ),
+                    inventory=Inventory(generated=0, selected=0, excluded=0, completed=0, manifest=()),
                     outcomes=(),
                     native_artifacts=tuple(artifacts),
                     command_receipts=tuple(receipts),
@@ -515,9 +515,7 @@ class MutmutAdapter:
             if any(pattern.match(entry.path) for pattern in patterns):
                 selected.append(Path(entry.path))
         if not selected:
-            raise AdapterError(
-                "no selected sources for target %r in snapshot" % target.id
-            )
+            raise AdapterError("no selected sources for target %r in snapshot" % target.id)
         return sorted(selected)
 
     def _write_mutmut_config(
@@ -529,8 +527,7 @@ class MutmutAdapter:
             "[mutmut]\n"
             "source_paths=%s\n"
             "pytest_add_cli_args=-p %s\n"
-            "pytest_add_cli_args_test_selection=%s\n"
-            % (source_args, _PLUGIN_MODULE, test_selection),
+            "pytest_add_cli_args_test_selection=%s\n" % (source_args, _PLUGIN_MODULE, test_selection),
             encoding="utf-8",
         )
 
@@ -541,7 +538,10 @@ class MutmutAdapter:
             "/opt/extra-%d" % i for i in range(len(context.extra_python_paths))
         ]
         env = [
-            ("PATH", "/opt/recorder:/opt/cargo:/opt/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:/opt/node-0:/usr/bin:/bin"),
+            (
+                "PATH",
+                "/opt/recorder:/opt/cargo:/opt/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:/opt/node-0:/usr/bin:/bin",
+            ),
             ("HOME", "/workspace"),
             ("FORGE_GO_JOURNAL", "/workspace/go-journal.jsonl"),
             ("FORGE_REAL_GO", "/opt/realgo/go"),
@@ -561,10 +561,7 @@ class MutmutAdapter:
 
     def _extra_binds(self, context: ExecutionContext) -> tuple[tuple[str, str], ...]:
         binds = [(_PLUGIN_SRC_ROOT, _FORGE_SRC_BIND)]
-        binds += [
-            (host, "/opt/extra-%d" % i)
-            for i, host in enumerate(context.extra_python_paths)
-        ]
+        binds += [(host, "/opt/extra-%d" % i) for i, host in enumerate(context.extra_python_paths)]
         for index, host in enumerate(context.extra_node_paths):
             binds.append((host, "/opt/node-%d" % index))
         return tuple(binds)
@@ -657,8 +654,12 @@ class MutmutAdapter:
             "no:cacheprovider",
         ) + tuple(target.tests)
         code, timed_out, receipt = self._run_sandboxed(
-            context, argv, target.budget.baseline_seconds, workspace,
-            "baseline-" + context.run_id, target.id,
+            context,
+            argv,
+            target.budget.baseline_seconds,
+            workspace,
+            "baseline-" + context.run_id,
+            target.id,
         )
         event = _load_event(events_dir, context.run_id, None)
         if timed_out:
@@ -691,15 +692,17 @@ class MutmutAdapter:
     ) -> CommandReceipt:
         argv = (context.approved_python, "-m", "mutmut", "run")
         _code, _timed_out, receipt = self._run_sandboxed(
-            context, argv, target.budget.total_seconds, workspace,
-            "mutmut-" + context.run_id, target.id,
+            context,
+            argv,
+            target.budget.total_seconds,
+            workspace,
+            "mutmut-" + context.run_id,
+            target.id,
         )
         return receipt
 
     @staticmethod
-    def _collect_meta(
-        workspace: Path, sources: list[Path]
-    ) -> tuple[dict[Path, dict], list[Path]]:
+    def _collect_meta(workspace: Path, sources: list[Path]) -> tuple[dict[Path, dict], list[Path]]:
         meta_by_source: dict[Path, dict] = {}
         missing: list[Path] = []
         for src in sources:
@@ -713,9 +716,7 @@ class MutmutAdapter:
             except (OSError, ValueError):
                 missing.append(src)
                 continue
-            if not isinstance(meta, dict) or not isinstance(
-                meta.get("exit_code_by_key"), dict
-            ):
+            if not isinstance(meta, dict) or not isinstance(meta.get("exit_code_by_key"), dict):
                 missing.append(src)
                 continue
             meta_by_source[src] = meta
@@ -762,6 +763,7 @@ class MutmutAdapter:
                     )
                 )
         return outcomes, artifacts
+
 
 def make_adapter() -> MutationAdapter:
     return MutmutAdapter()

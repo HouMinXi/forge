@@ -10,6 +10,7 @@ logic is never duplicated.
 User-level backends are trusted implicitly (same trust level as
 env vars) and do NOT pass through the project-level trust gate.
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,8 +57,9 @@ def user_config_path() -> Path | None:
     legacy = Path.home() / ".code-forge" / "gate.yaml"
     if legacy.is_file():
         log.warning(
-            "Reading user-level backends from legacy path %s -- "
-            "move to %s to silence this warning", legacy, xdg
+            "Reading user-level backends from legacy path %s -- move to %s to silence this warning",
+            legacy,
+            xdg,
         )
         return legacy
     return None

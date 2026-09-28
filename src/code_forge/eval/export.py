@@ -203,7 +203,9 @@ def _sha_is_resolvable(repo_root: Path, sha: str) -> bool:
             ["git", "cat-file", "-e", sha],
             cwd=str(repo_root),
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             check=False,
         )
@@ -219,9 +221,7 @@ def _sha_is_resolvable(repo_root: Path, sha: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _materialize_diff(
-    repo_root: Path, base_sha: str, head_sha: str
-) -> Optional[str]:
+def _materialize_diff(repo_root: Path, base_sha: str, head_sha: str) -> Optional[str]:
     """Run ``git diff base..head`` in ``repo_root`` (may be empty).
 
     None means the diff could not be produced (non-zero exit or git
@@ -232,7 +232,9 @@ def _materialize_diff(
             ["git", "diff", base_sha + ".." + head_sha],
             cwd=str(repo_root),
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             check=False,
         )
@@ -322,14 +324,10 @@ def _check_out_dir(out_dir: Path, force: bool) -> None:
     if not out_dir.exists():
         return
     if not out_dir.is_dir():
-        raise ExportError(
-            "output path exists and is not a directory: %s" % out_dir
-        )
+        raise ExportError("output path exists and is not a directory: %s" % out_dir)
     if not any(out_dir.iterdir()):
         return
-    if (out_dir / "manifest.yaml").exists() or (
-        out_dir / "manifest.yaml.prev"
-    ).exists():
+    if (out_dir / "manifest.yaml").exists() or (out_dir / "manifest.yaml.prev").exists():
         # A previous export landed here; .prev without .yaml means the
         # last run crashed mid-swap, which is still our managed dir.
         return
@@ -380,9 +378,7 @@ def export_eval(
     for r in rows:
         latest_by_fp[r.fingerprint] = r
     deduped = list(latest_by_fp.values())
-    summary = dataclasses.replace(
-        summary, dedup_collapsed=len(rows) - len(deduped)
-    )
+    summary = dataclasses.replace(summary, dedup_collapsed=len(rows) - len(deduped))
 
     entries: list[CorpusEntry] = []
     stale_sha_list: list[str] = []
@@ -396,11 +392,7 @@ def export_eval(
             )
             continue
 
-        repo_root = (
-            repo_root_override
-            if repo_root_override is not None
-            else Path(row.repo_root)
-        )
+        repo_root = repo_root_override if repo_root_override is not None else Path(row.repo_root)
 
         # Priority 2: stale SHAs (D-03).  Format is checked before any
         # git subprocess sees the value.
@@ -410,22 +402,15 @@ def export_eval(
             and _sha_is_resolvable(repo_root, row.base_sha)
             and _sha_is_resolvable(repo_root, row.head_sha)
         ):
-            summary = dataclasses.replace(
-                summary, stale_sha_skipped=summary.stale_sha_skipped + 1
-            )
-            stale_sha_list.append(
-                "%s (base=%s head=%s)"
-                % (row.fingerprint, row.base_sha, row.head_sha)
-            )
+            summary = dataclasses.replace(summary, stale_sha_skipped=summary.stale_sha_skipped + 1)
+            stale_sha_list.append("%s (base=%s head=%s)" % (row.fingerprint, row.base_sha, row.head_sha))
             continue
 
         # Priority 3: DUPLICATE -- excluded from export (deepseek H-1:
         # the bug WAS real, reported twice; emitting it as
         # expect-no-catch would penalize finding a real bug).
         if row.terminal_state == TerminalState.DUPLICATE:
-            summary = dataclasses.replace(
-                summary, duplicate_excluded=summary.duplicate_excluded + 1
-            )
+            summary = dataclasses.replace(summary, duplicate_excluded=summary.duplicate_excluded + 1)
             continue
 
         # Priority 4: empty diff (gemini B-2: base == head or a 0-byte
@@ -436,35 +421,26 @@ def export_eval(
         # (stripped to nothing by D-17), which must not emit a vacuous
         # HOLD entry.
         if row.base_sha == row.head_sha:
-            summary = dataclasses.replace(
-                summary, empty_diff_skipped=summary.empty_diff_skipped + 1
-            )
+            summary = dataclasses.replace(summary, empty_diff_skipped=summary.empty_diff_skipped + 1)
             continue
 
         diff_text = _materialize_diff(repo_root, row.base_sha, row.head_sha)
         if diff_text is None:
-            summary = dataclasses.replace(
-                summary, stale_sha_skipped=summary.stale_sha_skipped + 1
-            )
+            summary = dataclasses.replace(summary, stale_sha_skipped=summary.stale_sha_skipped + 1)
             stale_sha_list.append(
-                "%s (git diff failed for %s..%s)"
-                % (row.fingerprint, row.base_sha, row.head_sha)
+                "%s (git diff failed for %s..%s)" % (row.fingerprint, row.base_sha, row.head_sha)
             )
             continue
         # D-17: strip any foreign gate.yaml before the empty check and
         # before the diff hits disk.
         diff_text = _strip_gate_yaml(diff_text)
         if not diff_text.strip():
-            summary = dataclasses.replace(
-                summary, empty_diff_skipped=summary.empty_diff_skipped + 1
-            )
+            summary = dataclasses.replace(summary, empty_diff_skipped=summary.empty_diff_skipped + 1)
             continue
 
         name = _entry_name(row)
         expected_verdict = (
-            "HOLD"
-            if row.terminal_state in (TerminalState.FIXED, TerminalState.ESCAPED)
-            else "PASS"
+            "HOLD" if row.terminal_state in (TerminalState.FIXED, TerminalState.ESCAPED) else "PASS"
         )
 
         expected_findings: list[ExpectedFinding] = []
@@ -525,9 +501,7 @@ def export_eval(
             continue
         old_path = out_dir / old_rel
         try:
-            if old_path.is_file() and old_path.resolve().is_relative_to(
-                out_dir.resolve()
-            ):
+            if old_path.is_file() and old_path.resolve().is_relative_to(out_dir.resolve()):
                 old_path.unlink()
         except OSError:
             # Externally removed or made unreadable between the check
@@ -561,15 +535,15 @@ def _entry_name(row: LedgerRow) -> str:
     safe = re.sub(r"[^A-Za-z0-9_-]", "-", row.fingerprint).lower()
     if safe != row.fingerprint or len(safe) > 100:
         print(
-            "export: sanitized unsafe fingerprint %r for naming"
-            % row.fingerprint,
+            "export: sanitized unsafe fingerprint %r for naming" % row.fingerprint,
             file=sys.stderr,
         )
         # Distinct raw fingerprints can sanitize to the same name
         # ('a/b' vs 'a-b'); pin a short hash of the raw value so the
         # entry name stays unique and no diff silently overwrites.
         safe = "%s-%s" % (
-            safe[:100], hashlib.sha256(row.fingerprint.encode()).hexdigest()[:8],
+            safe[:100],
+            hashlib.sha256(row.fingerprint.encode()).hexdigest()[:8],
         )
     return "lgr-%s" % safe
 
@@ -595,11 +569,7 @@ def _entry_to_dict(entry: CorpusEntry) -> dict:
                 "file": ef.file,
                 "description": ef.description,
             }
-            | (
-                {"line_range": [ef.line_range[0], ef.line_range[1]]}
-                if ef.line_range is not None
-                else {}
-            )
+            | ({"line_range": [ef.line_range[0], ef.line_range[1]]} if ef.line_range is not None else {})
             for ef in entry.expected_findings
         ],
     }

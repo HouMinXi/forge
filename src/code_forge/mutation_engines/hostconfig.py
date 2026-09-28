@@ -73,10 +73,17 @@ class ProfileConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProfileConfig:
         required = {
-            "schema_version", "id", "backend", "allowed_environments",
-            "ceilings", "delegated_cgroup_root", "state_root",
-            "process_headroom_mb", "evidence_quota_mb",
-            "legacy_budget", "legacy_python_environment",
+            "schema_version",
+            "id",
+            "backend",
+            "allowed_environments",
+            "ceilings",
+            "delegated_cgroup_root",
+            "state_root",
+            "process_headroom_mb",
+            "evidence_quota_mb",
+            "legacy_budget",
+            "legacy_python_environment",
         }
         _check_keys(data, required, "profile")
         if data["schema_version"] != 1:
@@ -85,8 +92,7 @@ class ProfileConfig:
             raise ValueError("profile id must be a valid identifier")
         if data["backend"] not in _BACKENDS:
             raise ValueError(
-                "profile backend must be one of %s, got %r"
-                % (sorted(_BACKENDS), data["backend"])
+                "profile backend must be one of %s, got %r" % (sorted(_BACKENDS), data["backend"])
             )
         envs = data["allowed_environments"]
         if not isinstance(envs, list) or len(envs) > MAX_LIST:
@@ -94,8 +100,7 @@ class ProfileConfig:
         for name in envs:
             if not isinstance(name, str) or not valid_identifier(name):
                 raise ValueError(
-                    "profile allowed_environments entry must be an identifier, "
-                    "got %r" % (name,)
+                    "profile allowed_environments entry must be an identifier, got %r" % (name,)
                 )
         ceilings = _budget_from(data["ceilings"], "profile.ceilings")
         legacy_budget = data["legacy_budget"]
@@ -156,8 +161,14 @@ class EnvironmentConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EnvironmentConfig:
         required = {
-            "schema_version", "id", "content_digest", "manifest_path",
-            "runtime_root", "executables", "dependencies", "environment",
+            "schema_version",
+            "id",
+            "content_digest",
+            "manifest_path",
+            "runtime_root",
+            "executables",
+            "dependencies",
+            "environment",
             "image_archives",
         }
         _check_keys(data, required, "environment")
@@ -177,10 +188,7 @@ class EnvironmentConfig:
             if not isinstance(alias, str) or not alias or len(alias) > MAX_STRING:
                 raise ValueError("environment.executables alias must be bounded")
             if not isinstance(target, str) or not target.startswith("/"):
-                raise ValueError(
-                    "environment.executables[%r] must be an absolute sandbox path"
-                    % alias
-                )
+                raise ValueError("environment.executables[%r] must be an absolute sandbox path" % alias)
         dependencies = data["dependencies"]
         if not isinstance(dependencies, list) or len(dependencies) > MAX_LIST:
             raise ValueError("environment.dependencies must be a bounded list")
@@ -188,17 +196,12 @@ class EnvironmentConfig:
         for entry in dependencies:
             if not isinstance(entry, dict):
                 raise TypeError("environment.dependencies entry must be a mapping")
-            _check_keys(entry, {"source", "destination", "digest"},
-                        "environment.dependencies entry")
+            _check_keys(entry, {"source", "destination", "digest"}, "environment.dependencies entry")
             for field in ("source", "destination"):
                 if not isinstance(entry[field], str) or not entry[field].startswith("/"):
-                    raise ValueError(
-                        "environment.dependencies entry %s must be absolute" % field
-                    )
+                    raise ValueError("environment.dependencies entry %s must be absolute" % field)
             _digest_shape(entry["digest"], "environment.dependencies digest")
-            parsed_deps.append(
-                Dependency(entry["source"], entry["destination"], entry["digest"])
-            )
+            parsed_deps.append(Dependency(entry["source"], entry["destination"], entry["digest"]))
         env_map = data["environment"]
         if not isinstance(env_map, dict):
             raise TypeError("environment.environment must be a mapping")
@@ -214,17 +217,12 @@ class EnvironmentConfig:
         for entry in archives:
             if not isinstance(entry, dict):
                 raise TypeError("environment.image_archives entry must be a mapping")
-            _check_keys(entry, {"source", "digest", "image_digest"},
-                        "environment.image_archives entry")
+            _check_keys(entry, {"source", "digest", "image_digest"}, "environment.image_archives entry")
             if not isinstance(entry["source"], str) or not entry["source"].startswith("/"):
                 raise ValueError("environment.image_archives source must be absolute")
             _digest_shape(entry["digest"], "environment.image_archives digest")
-            _digest_shape(
-                entry["image_digest"], "environment.image_archives image_digest"
-            )
-            parsed_archives.append(
-                ImageArchive(entry["source"], entry["digest"], entry["image_digest"])
-            )
+            _digest_shape(entry["image_digest"], "environment.image_archives image_digest")
+            parsed_archives.append(ImageArchive(entry["source"], entry["digest"], entry["image_digest"]))
         return cls(
             schema_version=1,
             id=data["id"],
@@ -276,22 +274,16 @@ class ApprovalRecord:
             entry = data[section]
             if not isinstance(entry, dict):
                 raise TypeError("approval.%s must be a mapping" % section)
-            wanted = {"id", "digest"} if section != "environment" else {
-                "id", "content_digest"
-            }
+            wanted = {"id", "digest"} if section != "environment" else {"id", "content_digest"}
             _check_keys(entry, wanted, "approval.%s" % section)
             if not valid_identifier(entry["id"]):
                 raise ValueError("approval.%s id must be a valid identifier" % section)
             _digest_shape(
-                entry["digest"] if section != "environment"
-                else entry["content_digest"],
+                entry["digest"] if section != "environment" else entry["content_digest"],
                 "approval.%s digest" % section,
             )
             bound[id_key] = entry["id"]
-            bound[digest_key] = (
-                entry["digest"] if section != "environment"
-                else entry["content_digest"]
-            )
+            bound[digest_key] = entry["digest"] if section != "environment" else entry["content_digest"]
         return cls(
             schema_version=1,
             repository_id=data["repository_id"],
@@ -322,14 +314,10 @@ def _check_keys(data: dict[str, Any], required: set[str], what: str) -> None:
         raise TypeError("%s must be a mapping" % what)
     missing = required - data.keys()
     if missing:
-        raise ValueError(
-            "%s missing required keys: %s" % (what, ", ".join(sorted(missing)))
-        )
+        raise ValueError("%s missing required keys: %s" % (what, ", ".join(sorted(missing))))
     extra = set(data.keys()) - required
     if extra:
-        raise ValueError(
-            "%s has unknown keys: %s" % (what, ", ".join(sorted(extra)))
-        )
+        raise ValueError("%s has unknown keys: %s" % (what, ", ".join(sorted(extra))))
 
 
 def _positive_int(value: Any, what: str) -> None:
@@ -338,11 +326,7 @@ def _positive_int(value: Any, what: str) -> None:
 
 
 def _digest_shape(value: Any, what: str) -> None:
-    if (
-        not isinstance(value, str)
-        or len(value) != 64
-        or any(c not in "0123456789abcdef" for c in value)
-    ):
+    if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
         raise ValueError("%s must be 64 lowercase hex characters" % what)
 
 
@@ -351,10 +335,7 @@ def _budget_from(data: Any, what: str) -> Budget:
         raise TypeError("%s must be a complete budget mapping" % what)
     keys = set(data.keys())
     if keys != set(_BUDGET_KEYS):
-        raise ValueError(
-            "%s must contain exactly the budget keys %s"
-            % (what, sorted(_BUDGET_KEYS))
-        )
+        raise ValueError("%s must contain exactly the budget keys %s" % (what, sorted(_BUDGET_KEYS)))
     return Budget(**data)
 
 
@@ -430,9 +411,7 @@ def _read_record(config_dir: Path, kind: str, name: str) -> tuple[bytes, dict]:
         parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_no_duplicate_object)
     except (UnicodeDecodeError, ValueError) as exc:
         reason, _ = _reasons(kind, invalid=True)
-        raise _LoadError(
-            reason, "%s record %r is not valid JSON: %s" % (kind, name, exc)
-        ) from None
+        raise _LoadError(reason, "%s record %r is not valid JSON: %s" % (kind, name, exc)) from None
     if not isinstance(parsed, dict):
         reason, _ = _reasons(kind, invalid=True)
         raise _LoadError(reason, "%s record %r must be a JSON object" % (kind, name))
@@ -475,18 +454,14 @@ def load_host_config(
         profile_raw, profile_parsed = _read_record(root, "profiles", profile)
         profile_cfg = _parse("profiles", profile, profile_parsed, ProfileConfig.from_dict)
         _env_raw, env_parsed = _read_record(root, "environments", environment)
-        env_cfg = _parse(
-            "environments", environment, env_parsed, EnvironmentConfig.from_dict
-        )
+        env_cfg = _parse("environments", environment, env_parsed, EnvironmentConfig.from_dict)
         if not valid_identifier(repository_id):
             raise _LoadError(
                 REASON_NOT_AUTHORIZED,
                 "repository id %r is not a valid identifier" % repository_id,
             )
         _appr_raw, appr_parsed = _read_record(root, "approvals", repository_id)
-        approval = _parse(
-            "approvals", repository_id, appr_parsed, ApprovalRecord.from_dict
-        )
+        approval = _parse("approvals", repository_id, appr_parsed, ApprovalRecord.from_dict)
     except _LoadError as exc:
         return HostUnavailable(exc.reason, exc.detail)
 

@@ -61,11 +61,9 @@ def _strip_venv_from_env(env: dict[str, str]) -> dict[str, str]:
     if venv_path:
         path_val = stripped.get("PATH", "")
         stripped["PATH"] = os.pathsep.join(
-            p for p in path_val.split(os.pathsep)
-            if p and not p.startswith(venv_path)
+            p for p in path_val.split(os.pathsep) if p and not p.startswith(venv_path)
         )
     return stripped
-
 
 
 def _failed_nodes(output: str) -> list[str]:
@@ -112,7 +110,9 @@ def _run_baseline_guard(
                 baseline_cmd,
                 env=run_env,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 check=False,
                 cwd=repo_root,
@@ -135,7 +135,8 @@ def _run_baseline_guard(
                 description=desc,
             )
             infra = "flaky guard: runner not found on run %d%s" % (
-                run_num, suffix,
+                run_num,
+                suffix,
             )
             return ("skip", [finding], [infra])
         except subprocess.TimeoutExpired:
@@ -149,10 +150,7 @@ def _run_baseline_guard(
                 line_range=[],
                 description=desc,
             )
-            infra = (
-                "flaky guard: baseline timeout on run %d%s"
-                % (run_num, suffix)
-            )
+            infra = "flaky guard: baseline timeout on run %d%s" % (run_num, suffix)
             return ("skip", [finding], [infra])
         else:
             if result.returncode != 0:
@@ -162,12 +160,9 @@ def _run_baseline_guard(
                     and _is_runner_missing(baseline_cmd, result, None)
                 ):
                     return ("needs_strip_retry", [], [])
-                desc = (
-                    "run %d: tests flaky, mutation unreliable "
-                    "(3x baseline check%s)" % (
-                        run_num,
-                        ", after env retry" if suffix else "",
-                    )
+                desc = "run %d: tests flaky, mutation unreliable (3x baseline check%s)" % (
+                    run_num,
+                    ", after env retry" if suffix else "",
                 )
                 finding = StateFinding(
                     id="MUTATION_SKIPPED",
@@ -180,12 +175,12 @@ def _run_baseline_guard(
                 )
                 nodes = _failed_nodes(result.stdout)
                 node_text = (": " + ", ".join(nodes[:5])) if nodes else ""
-                infra = (
-                    "flaky guard: baseline failed on run %d%s (returncode %d%s)"
-                    % (run_num, suffix, result.returncode, node_text)
+                infra = "flaky guard: baseline failed on run %d%s (returncode %d%s)" % (
+                    run_num,
+                    suffix,
+                    result.returncode,
+                    node_text,
                 )
                 return ("skip", [finding], [infra])
 
     return ("passed", [], [])
-
-

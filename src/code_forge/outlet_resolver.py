@@ -26,6 +26,7 @@ Key invariants:
   - gate.yaml is read via a lightweight reader that does NOT
     require a "test:" section.
 """
+
 from __future__ import annotations
 
 import sys
@@ -144,21 +145,14 @@ def load_outlet_from_gate(
     except FileNotFoundError:
         return None
     except PermissionError as exc:
-        raise ValueError(
-            "gate.yaml read failed: permission denied"
-        ) from exc
+        raise ValueError("gate.yaml read failed: permission denied") from exc
     except yaml.YAMLError as exc:
-        raise ValueError(
-            "gate.yaml read failed: %s" % exc
-        ) from exc
+        raise ValueError("gate.yaml read failed: %s" % exc) from exc
 
     if isinstance(data, dict) and "outlet" in data:
         val = data["outlet"]
         if not isinstance(val, str):
-            raise ValueError(
-                "gate.yaml outlet must be a string, got %s"
-                % type(val).__name__
-            )
+            raise ValueError("gate.yaml outlet must be a string, got %s" % type(val).__name__)
         return val
 
     return None
@@ -223,13 +217,16 @@ def resolve_outlet(
     if cli_value is not None and cli_value != "":
         return _require_backend_for_subprocess(
             _parse_outlet_string(cli_value, "--outlet flag"),
-            configs, has_explicit_backend, "--outlet flag",
+            configs,
+            has_explicit_backend,
+            "--outlet flag",
         )
 
     # Default probes the session-default CLI backend only.
     # Production callers should inject a reachability_fn that
     # uses the loaded backend config.
     if reachability_fn is None:
+
         def reachability_fn() -> ProbeResult:
             backend = resolve_backend(env, configs=configs, cli_value=None)
             return probe_backend(backend, env=env)
@@ -239,7 +236,9 @@ def resolve_outlet(
     if env_value is not None and env_value != "":
         return _require_backend_for_subprocess(
             _parse_outlet_string(env_value, "FORGE_OUTLET env"),
-            configs, has_explicit_backend, "FORGE_OUTLET env",
+            configs,
+            has_explicit_backend,
+            "FORGE_OUTLET env",
         )
 
     # Step 2: gate.yaml outlet field
@@ -248,17 +247,16 @@ def resolve_outlet(
         if gate_value is not None:
             return _require_backend_for_subprocess(
                 _parse_outlet_string(str(gate_value), "gate.yaml outlet"),
-                configs, has_explicit_backend, "gate.yaml outlet",
+                configs,
+                has_explicit_backend,
+                "gate.yaml outlet",
             )
 
     # Step 3: zero-config guard -- refuse to probe the implicit subprocess
     # when no backend is explicitly configured. This prevents a 120s timeout
     # and billing the main session account.
     if not configs and not has_explicit_backend:
-        raise CliError(
-            "No review backend configured. Choose one:\n%s"
-            % _NO_BACKEND_GUIDANCE
-        )
+        raise CliError("No review backend configured. Choose one:\n%s" % _NO_BACKEND_GUIDANCE)
 
     # Step 4: backend reachability
     result = reachability_fn()
@@ -266,6 +264,5 @@ def resolve_outlet(
         return "subprocess"
 
     raise CliError(
-        "Configure a review backend or set FORGE_OUTLET=inline. "
-        "Reachability: %s" % result.error
+        "Configure a review backend or set FORGE_OUTLET=inline. Reachability: %s" % result.error
     )

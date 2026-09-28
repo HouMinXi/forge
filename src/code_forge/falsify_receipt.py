@@ -26,6 +26,7 @@ need receipts; claims about the diff's own logic are what the reviewer is
 for, and demanding receipts for those would downgrade nearly everything
 and make the gate useless.
 """
+
 from __future__ import annotations
 
 import re
@@ -94,7 +95,8 @@ _COMPILED = tuple(
     # "[A-Z]\w*" matches "early" and "the loop returns early" becomes a
     # library claim. Anything genuinely case-insensitive spells its
     # alternatives out.
-    re.compile(p) for p in _BEHAVIOURAL_CLAIM_PATTERNS
+    re.compile(p)
+    for p in _BEHAVIOURAL_CLAIM_PATTERNS
 )
 
 
@@ -143,8 +145,7 @@ def has_execution_receipt(response: object) -> bool:
     command = receipt.get("command")
     output = receipt.get("output")
     return bool(
-        isinstance(command, str) and command.strip()
-        and isinstance(output, str) and output.strip()
+        isinstance(command, str) and command.strip() and isinstance(output, str) and output.strip()
     )
 
 

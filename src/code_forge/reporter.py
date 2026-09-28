@@ -39,9 +39,7 @@ def format_report(
 
     # Separate ToolErrors from Findings in delta
     delta_errors = [f for f in delta_findings if isinstance(f, ToolError)]
-    delta_violations = [
-        f for f in delta_findings if isinstance(f, Finding)
-    ]
+    delta_violations = [f for f in delta_findings if isinstance(f, Finding)]
 
     has_errors = len(delta_errors) > 0
     has_violations = len(delta_violations) > 0
@@ -49,15 +47,9 @@ def format_report(
     if has_violations or has_errors:
         # FAIL output
         if has_violations and has_errors:
-            lines.append(
-                "forge: FAIL -- %d new violation(s) and tool error(s)"
-                % len(delta_violations)
-            )
+            lines.append("forge: FAIL -- %d new violation(s) and tool error(s)" % len(delta_violations))
         elif has_violations:
-            lines.append(
-                "forge: FAIL -- %d new violation(s)"
-                % len(delta_violations)
-            )
+            lines.append("forge: FAIL -- %d new violation(s)" % len(delta_violations))
         else:
             lines.append("forge: FAIL -- tool error(s)")
 
@@ -66,15 +58,12 @@ def format_report(
         # Show violations
         for f in delta_violations:
             lines.append(
-                "  %s:%d: [%s/%s] %s: %s"
-                % (f.file, f.line, f.tool_name, f.rule_id, f.level, f.message)
+                "  %s:%d: [%s/%s] %s: %s" % (f.file, f.line, f.tool_name, f.rule_id, f.level, f.message)
             )
 
         # Show tool errors
         for e in delta_errors:
-            lines.append(
-                "  [%s] ERROR: %s" % (e.tool_name, e.message)
-            )
+            lines.append("  [%s] ERROR: %s" % (e.tool_name, e.message))
 
         lines.append("")
 
@@ -84,44 +73,32 @@ def format_report(
                 % len(delta_violations)
             )
         elif has_violations:
-            lines.append(
-                "forge: fix %d violation(s) before commit"
-                % len(delta_violations)
-            )
+            lines.append("forge: fix %d violation(s) before commit" % len(delta_violations))
         else:
             lines.append("forge: resolve tool errors before commit")
     else:
         # PASS output
         # Count pre-existing violations (all minus delta, Findings only)
-        all_finding_count = sum(
-            1 for f in all_findings if isinstance(f, Finding)
-        )
-        delta_finding_count = sum(
-            1 for f in delta_findings if isinstance(f, Finding)
-        )
+        all_finding_count = sum(1 for f in all_findings if isinstance(f, Finding))
+        delta_finding_count = sum(1 for f in delta_findings if isinstance(f, Finding))
         pre_existing = all_finding_count - delta_finding_count
 
         lines.append("forge: PASS -- no new violations")
         if pre_existing > 0:
             lines.append(
-                "  (%d pre-existing violation(s) in unchanged code,"
-                " not blocking)"
-                % pre_existing
+                "  (%d pre-existing violation(s) in unchanged code, not blocking)" % pre_existing
             )
 
     # Tools failed warning (always shown, even on PASS -- Round 3 C-1)
     if tools_failed:
         lines.append(
             "  WARNING: %d optional tool(s) failed: %s"
-            " -- results may be incomplete"
-            % (len(tools_failed), ", ".join(tools_failed))
+            " -- results may be incomplete" % (len(tools_failed), ", ".join(tools_failed))
         )
 
     # Tools skipped
     if tools_skipped:
-        lines.append(
-            "  (tools skipped: %s)" % ", ".join(tools_skipped)
-        )
+        lines.append("  (tools skipped: %s)" % ", ".join(tools_skipped))
 
     # Tool versions for reproducibility
     if tool_versions:

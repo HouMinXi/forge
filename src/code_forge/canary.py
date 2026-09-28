@@ -21,6 +21,7 @@ selection.
 Public types: Canary, CanaryGateResult, CanaryPartition,
 evaluate_canary_coverage, partition_canary_findings
 """
+
 from __future__ import annotations
 
 import os
@@ -137,14 +138,10 @@ def evaluate_canary_coverage(
 
     total = len(manifest)
     if total == 0:
-        return CanaryGateResult(
-            total=0, threshold=threshold, caught=(), missed=()
-        )
+        return CanaryGateResult(total=0, threshold=threshold, caught=(), missed=())
 
     if threshold > total:
-        raise ValueError(
-            "threshold %d exceeds canary count %d" % (threshold, total)
-        )
+        raise ValueError("threshold %d exceeds canary count %d" % (threshold, total))
 
     caught: list[str] = []
     missed: list[str] = []

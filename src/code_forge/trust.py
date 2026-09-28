@@ -8,6 +8,7 @@ the realpath of gate.yaml. A repo cannot carry its own trust record.
 The hash covers ONLY the backends block, not the entire file.
 Changes to outlet/test/detect sections do not require re-trusting.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -20,15 +21,17 @@ from typing import Optional
 
 # -- Dangerous fields -----------------------------------------------
 
-DANGEROUS_FIELDS: frozenset[str] = frozenset({
-    "base_url",          # controls where credentials are sent (CWE-522)
-    "api_key_env",       # names the env var containing the credential
-    "api_key_file",      # names the file containing the credential
-    "shell",             # arbitrary shell execution (CWE-78)
-    "command",           # arbitrary command execution
-    "hook",              # lifecycle hook execution
-    "credentials_path",  # vertex: service account JSON path
-})
+DANGEROUS_FIELDS: frozenset[str] = frozenset(
+    {
+        "base_url",  # controls where credentials are sent (CWE-522)
+        "api_key_env",  # names the env var containing the credential
+        "api_key_file",  # names the file containing the credential
+        "shell",  # arbitrary shell execution (CWE-78)
+        "command",  # arbitrary command execution
+        "hook",  # lifecycle hook execution
+        "credentials_path",  # vertex: service account JSON path
+    }
+)
 
 
 # -- TrustStatus dataclass -------------------------------------------------
@@ -49,9 +52,7 @@ class TrustStatus:
 
 def _config_dir() -> Path:
     """Return XDG_CONFIG_HOME/code-forge, matching backend.py XDG pattern."""
-    base = os.environ.get(
-        "XDG_CONFIG_HOME", str(Path.home() / ".config")
-    )
+    base = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
     return Path(base) / "code-forge"
 
 
@@ -113,7 +114,8 @@ def hash_backends_block(gate_data: Optional[dict]) -> str:
             if not isinstance(bcfg, dict):
                 continue
             dangerous = {
-                k: v for k, v in sorted(bcfg.items())
+                k: v
+                for k, v in sorted(bcfg.items())
                 if k in DANGEROUS_FIELDS and v is not None and v != ""
             }
             if dangerous:
@@ -145,6 +147,7 @@ def is_trusted(gate_yaml_path: Path, gate_data: dict) -> bool:
         _save_trust_store(store)
         return True
     import sys
+
     print(
         "code-forge: trust invalidated: credential-related fields changed "
         "in gate.yaml. Run 'code-forge trust' to re-authorize.",
@@ -168,8 +171,7 @@ def record_trust(
     key = str(gate_yaml_path.resolve())
     current_hash = hash_backends_block(gate_data)
     focus_hash = hash_focus_text(gate_data)
-    store[key] = {**store.get(key, {}), "hash": current_hash,
-                  "focus_hash": focus_hash}
+    store[key] = {**store.get(key, {}), "hash": current_hash, "focus_hash": focus_hash}
     _save_trust_store(store, config_dir)
 
 
@@ -244,11 +246,15 @@ def find_dangerous_fields(
 
 def hash_kernel_context(workspace_root: Path, config) -> str:
     """Bind a normalized kernel configuration to its actual read root."""
-    canonical = json.dumps({
-        "defconfig": config.defconfig,
-        "enabled": config.enabled,
-        "workspace_root": workspace_root.resolve().as_posix(),
-    }, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        {
+            "defconfig": config.defconfig,
+            "enabled": config.enabled,
+            "workspace_root": workspace_root.resolve().as_posix(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -262,8 +268,10 @@ def record_kernel_context_trust(gate_yaml_path: Path, workspace_root: Path, conf
     """Only the interactive trust command may call this approval operation."""
     store = _load_trust_store()
     key = str(gate_yaml_path.resolve())
-    store[key] = {**store.get(key, {}),
-                  "kernel_context_hash": hash_kernel_context(workspace_root, config)}
+    store[key] = {
+        **store.get(key, {}),
+        "kernel_context_hash": hash_kernel_context(workspace_root, config),
+    }
     _save_trust_store(store)
 
 
@@ -290,10 +298,7 @@ def hash_contracts_content(
     Returns:
         sha256 hexdigest of the canonical JSON.
     """
-    pairs = sorted(
-        [path, hashlib.sha256(content).hexdigest()]
-        for path, content in resolved_contents
-    )
+    pairs = sorted([path, hashlib.sha256(content).hexdigest()] for path, content in resolved_contents)
     canonical = json.dumps(pairs, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

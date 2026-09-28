@@ -27,6 +27,7 @@ assembled, which is before the called function runs and therefore before
 any guard inside it can decline. The guard only protects the symbol when
 the two sit together, so the two sit together.
 """
+
 from __future__ import annotations
 
 import os
@@ -45,11 +46,9 @@ class Signalable(Protocol):
 
     pid: int
 
-    def kill(self) -> None:
-        ...
+    def kill(self) -> None: ...
 
-    def terminate(self) -> None:
-        ...
+    def terminate(self) -> None: ...
 
 
 def group_of(proc: Signalable) -> int | None:

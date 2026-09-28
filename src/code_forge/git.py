@@ -26,9 +26,7 @@ from types import MappingProxyType
 
 # Safe known flags that are allowed despite starting with --
 _SAFE_FLAGS = frozenset({"--staged", "--cached"})
-_UNKNOWN_BLAME = MappingProxyType(
-    {"author": "unknown", "subject": "", "date": ""}
-)
+_UNKNOWN_BLAME = MappingProxyType({"author": "unknown", "subject": "", "date": ""})
 _BLOB_TEXT_ENCODING = "utf-8"
 
 # Allowlist regex for diff-spec values.
@@ -43,9 +41,7 @@ _BLOB_TEXT_ENCODING = "utf-8"
 #
 # Curly braces ({}) are NOT permitted -- users should use explicit
 # ref names instead of @{u} / @{upstream} syntax.
-_DIFF_SPEC_RE = re.compile(
-    r"^[A-Za-z0-9_./~@\^\-]+(?:\.\.[A-Za-z0-9_./~@\^\-]+)?$"
-)
+_DIFF_SPEC_RE = re.compile(r"^[A-Za-z0-9_./~@\^\-]+(?:\.\.[A-Za-z0-9_./~@\^\-]+)?$")
 
 
 def validate_diff_spec(diff_spec: str) -> str:
@@ -66,15 +62,11 @@ def validate_diff_spec(diff_spec: str) -> str:
 
     # Reject other leading dashes (flag injection)
     if diff_spec.startswith("-"):
-        raise ValueError(
-            f"Invalid diff_spec: '{diff_spec}' looks like a flag"
-        )
+        raise ValueError(f"Invalid diff_spec: '{diff_spec}' looks like a flag")
 
     # Allowlist check -- reject everything not matching
     if not _DIFF_SPEC_RE.match(diff_spec):
-        raise ValueError(
-            f"Invalid diff_spec: '{diff_spec}' contains disallowed characters"
-        )
+        raise ValueError(f"Invalid diff_spec: '{diff_spec}' contains disallowed characters")
 
     return diff_spec
 
@@ -115,14 +107,14 @@ def run_git_diff(
     result = subprocess.run(
         cmd,
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
     if result.returncode not in (0, 1):
-        raise RuntimeError(
-            result.stderr or f"git diff failed (exit {result.returncode})"
-        )
+        raise RuntimeError(result.stderr or f"git diff failed (exit {result.returncode})")
 
     return result.stdout
 
@@ -149,7 +141,9 @@ def is_git_repo(cwd: Path) -> bool:
             ["git", "rev-parse", "--git-dir"],
             cwd=cwd,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         return result.returncode == 0
@@ -169,7 +163,9 @@ def resolve_git_ref(ref: str, cwd: Path) -> str:
         ["git", "rev-parse", "--verify", ref + "^{commit}"],
         cwd=cwd,
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -209,12 +205,15 @@ def git_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = (
-        ["git", "diff", baseline_ref, head_ref, "--"]
-        + [str(p) for p in paths]
-    )
+    cmd = ["git", "diff", baseline_ref, head_ref, "--"] + [str(p) for p in paths]
     result = subprocess.run(
-        cmd, cwd=repo_root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if result.returncode not in (0, 1):
         raise BaselineResolutionError(
@@ -232,14 +231,22 @@ def read_diff_blob(oid: object, cwd: Path) -> str | None:
     cmd = ["git", "--no-replace-objects", "cat-file"]
     try:
         size = subprocess.run(
-            [*cmd, "-s", oid], cwd=cwd, capture_output=True,
-            text=True, encoding="utf-8", check=False, timeout=5,
+            [*cmd, "-s", oid],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=5,
         )
         if size.returncode or not 0 <= int(size.stdout) <= 2_000_000:
             return None
         blob = subprocess.run(
-            [*cmd, "blob", oid], cwd=cwd, capture_output=True,
-            check=False, timeout=5,
+            [*cmd, "blob", oid],
+            cwd=cwd,
+            capture_output=True,
+            check=False,
+            timeout=5,
         )
         if blob.returncode or b"\x00" in blob.stdout:
             return None
@@ -259,12 +266,15 @@ def cached_diff(
     """
     from .errors import BaselineResolutionError
 
-    cmd = (
-        ["git", "diff", "--cached", baseline_ref, "--"]
-        + [str(p) for p in paths]
-    )
+    cmd = ["git", "diff", "--cached", baseline_ref, "--"] + [str(p) for p in paths]
     result = subprocess.run(
-        cmd, cwd=repo_root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if result.returncode not in (0, 1):
         raise BaselineResolutionError(
@@ -292,15 +302,14 @@ def working_tree_diff(
     from .errors import BaselineResolutionError
 
     # Tracked diff (R3-1: must NOT use check=True)
-    tracked_cmd = (
-        ["git", "diff", baseline_ref, "--"]
-        + [str(p) for p in paths]
-    )
+    tracked_cmd = ["git", "diff", baseline_ref, "--"] + [str(p) for p in paths]
     tracked_result = subprocess.run(
         tracked_cmd,
         cwd=repo_root,
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if tracked_result.returncode not in (0, 1):
@@ -310,17 +319,16 @@ def working_tree_diff(
     tracked = tracked_result.stdout
 
     # Untracked files (ls-files has no exit-1-normal semantics)
-    ls_cmd = (
-        ["git", "ls-files", "--others", "--exclude-standard", "--"]
-        + [str(p) for p in paths]
-    )
+    ls_cmd = ["git", "ls-files", "--others", "--exclude-standard", "--"] + [str(p) for p in paths]
     untracked_paths = [
         line
         for line in subprocess.run(
             ls_cmd,
             cwd=repo_root,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         ).stdout.splitlines()
         if line.strip()
@@ -342,7 +350,9 @@ def working_tree_diff(
             cmd,
             cwd=repo_root,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if result.returncode not in (0, 1):
@@ -384,7 +394,9 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
             ["git", "blame", "--porcelain", "--", file_path],
             cwd=repo_root,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=60,
         )
@@ -431,11 +443,7 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
 
         # 3. SHA header: 40 hex chars + orig-line + final-line [+ count]
         #    boundary/previous lines are non-hex, safely skipped
-        if (
-            len(parts) >= 3
-            and len(parts[0]) == 40
-            and all(c in _HEX_CHARS for c in parts[0].lower())
-        ):
+        if len(parts) >= 3 and len(parts[0]) == 40 and all(c in _HEX_CHARS for c in parts[0].lower()):
             try:
                 current_final_line = int(parts[2])
             except ValueError:
@@ -454,17 +462,12 @@ def git_blame(file_path: str, repo_root: Path) -> dict[int, dict]:
         # Per-commit metadata (only update on FIRST occurrence of SHA)
         if raw_line.startswith("author ") and current_sha not in sha_cache:
             current_block_author = raw_line[7:]
-        elif (
-            raw_line.startswith("summary ")
-            and current_sha not in sha_cache
-        ):
+        elif raw_line.startswith("summary ") and current_sha not in sha_cache:
             current_block_subject = raw_line[8:]
         elif raw_line.startswith("committer-time ") and current_sha not in sha_cache:
             try:
-                ts = int(raw_line[len("committer-time "):])
-                current_block_date = datetime.fromtimestamp(
-                    ts, tz=UTC
-                ).strftime("%Y-%m-%d")
+                ts = int(raw_line[len("committer-time ") :])
+                current_block_date = datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%d")
             except (ValueError, OSError, OverflowError):
                 pass
         elif (

@@ -249,7 +249,8 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "--version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8",
+                text=True,
+                encoding="utf-8",
                 errors="replace",
                 timeout=3.0,
             )
@@ -266,7 +267,8 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "--version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8",
+                text=True,
+                encoding="utf-8",
                 errors="replace",
                 timeout=3.0,
             )
@@ -283,7 +285,8 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8",
+                text=True,
+                encoding="utf-8",
                 errors="replace",
                 timeout=3.0,
             )
@@ -301,7 +304,8 @@ def _probe_toolchain() -> tuple[str, str, str, str, dict[str, str]]:
                 [cmd, "--version"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True, encoding="utf-8",
+                text=True,
+                encoding="utf-8",
                 errors="replace",
                 timeout=3.0,
             )

@@ -9,6 +9,7 @@ B2 fix: NO Disposition import. finding_dispositions: dict[str, str] stores
 disposition values as strings; state machine (02-02) converts to/from
 Disposition at the read/write boundary.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -93,8 +94,7 @@ def save_snapshot(snapshot: Snapshot, path: Path) -> None:
     if len(snapshots) > SNAPSHOT_COUNT_WARN_THRESHOLD:
         warnings.warn(
             "forge: %d snapshot files in %s; "
-            "consider manual cleanup (no auto-GC in v2.0)"
-            % (len(snapshots), path.parent),
+            "consider manual cleanup (no auto-GC in v2.0)" % (len(snapshots), path.parent),
             stacklevel=2,
         )
 
@@ -112,9 +112,7 @@ def load_snapshot(path: Path) -> Optional[Snapshot]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        raise CorruptedSnapshotError(
-            "cannot parse %s: %s" % (path, e)
-        ) from e
+        raise CorruptedSnapshotError("cannot parse %s: %s" % (path, e)) from e
 
     sv = data.get("schema_version")
     if sv != SNAPSHOT_SCHEMA_VERSION:
@@ -128,19 +126,13 @@ def load_snapshot(path: Path) -> Optional[Snapshot]:
             schema_version=data["schema_version"],
             source_hash=data["source_hash"],
             files=[SnapshotEntry(**e) for e in data.get("files", [])],
-            finding_dispositions=dict(
-                data.get("finding_dispositions", {})
-            ),
+            finding_dispositions=dict(data.get("finding_dispositions", {})),
         )
     except (KeyError, TypeError) as e:
-        raise CorruptedSnapshotError(
-            "invalid snapshot data in %s: %s" % (path, e)
-        ) from e
+        raise CorruptedSnapshotError("invalid snapshot data in %s: %s" % (path, e)) from e
 
 
-def validate_snapshot(
-    snapshot: Snapshot, current_files: list[Path], root: Path
-) -> InvalidationResult:
+def validate_snapshot(snapshot: Snapshot, current_files: list[Path], root: Path) -> InvalidationResult:
     """BASELINE-03: classify files as unchanged/changed/added/missing.
 
     H6 fix: files outside root raise BaselineResolutionError with
@@ -153,23 +145,14 @@ def validate_snapshot(
             rel = f.relative_to(root).as_posix()
         except ValueError as e:
             raise BaselineResolutionError(
-                "file %s is outside snapshot root %s "
-                "-- cannot classify against snapshot" % (f, root)
+                "file %s is outside snapshot root %s -- cannot classify against snapshot" % (f, root)
             ) from e
         current_map[rel] = _hash_file(f)
 
     missing = sorted(p for p in snapshot_map if p not in current_map)
     added = sorted(p for p in current_map if p not in snapshot_map)
-    changed = sorted(
-        p
-        for p in current_map
-        if p in snapshot_map and current_map[p] != snapshot_map[p]
-    )
-    unchanged = sorted(
-        p
-        for p in current_map
-        if p in snapshot_map and current_map[p] == snapshot_map[p]
-    )
+    changed = sorted(p for p in current_map if p in snapshot_map and current_map[p] != snapshot_map[p])
+    unchanged = sorted(p for p in current_map if p in snapshot_map and current_map[p] == snapshot_map[p])
 
     return InvalidationResult(
         missing=missing,
@@ -189,8 +172,6 @@ def _hash_file(path: Path) -> str:
 
     try:
         content = path.read_text(encoding="utf-8")
-        return hashlib.sha256(
-            normalize_text(content).encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(normalize_text(content).encode("utf-8")).hexdigest()
     except UnicodeDecodeError:
         return hashlib.sha256(path.read_bytes()).hexdigest()

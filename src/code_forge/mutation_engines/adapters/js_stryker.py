@@ -104,9 +104,7 @@ def mutants_by_file(report: dict) -> list[tuple[str, dict]]:
             continue
         listed = body.get("mutants")
         if isinstance(listed, list):
-            paired.extend(
-                (str(path), item) for item in listed if isinstance(item, dict)
-            )
+            paired.extend((str(path), item) for item in listed if isinstance(item, dict))
     return paired
 
 
@@ -156,9 +154,7 @@ def baseline_from_vitest(report: dict | None) -> tuple[BaselineState, int]:
     return BaselineState.PASSED, passed
 
 
-def reconcile(
-    plan_event: dict | None, report: dict | None, report_events: int
-) -> tuple[bool, str]:
+def reconcile(plan_event: dict | None, report: dict | None, report_events: int) -> tuple[bool, str]:
     """Plan count, report count and the report event must agree.
 
     The event recorder writes one onMutationTestReportReady file. Zero
@@ -178,9 +174,7 @@ class StrykerAdapter:
 
     id = ADAPTER_ID
 
-    def probe(
-        self, target: TargetDeclaration, context: ExecutionContext
-    ) -> CapabilityReport:
+    def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport:
         errors: list[InfrastructureError] = []
         node = context.approved_node
         if not node or not os.path.isfile(node):
@@ -292,8 +286,16 @@ class StrykerAdapter:
         )
         if baseline_state is not BaselineState.PASSED:
             return self._result(
-                identity, target, baseline, (), (), (baseline_receipt,), (),
-                "baseline-not-passed", RunState.COMPLETE, directory,
+                identity,
+                target,
+                baseline,
+                (),
+                (),
+                (baseline_receipt,),
+                (),
+                "baseline-not-passed",
+                RunState.COMPLETE,
+                directory,
             )
 
         stryker_argv = (
@@ -339,9 +341,16 @@ class StrykerAdapter:
                 evidence_refs=(report_ref, plan_ref),
             )
             return self._result(
-                identity, target, baseline, (), (report_ref, plan_ref),
-                (baseline_receipt, stryker_receipt), (error,),
-                "incomplete-evidence", RunState.INCOMPLETE, directory,
+                identity,
+                target,
+                baseline,
+                (),
+                (report_ref, plan_ref),
+                (baseline_receipt, stryker_receipt),
+                (error,),
+                "incomplete-evidence",
+                RunState.INCOMPLETE,
+                directory,
             )
 
         tested = {
@@ -394,9 +403,17 @@ class StrykerAdapter:
             manifest=tuple(manifest),
         )
         return self._result(
-            identity, target, baseline, tuple(outcomes), (report_ref, plan_ref),
-            (baseline_receipt, stryker_receipt), (), "complete", RunState.COMPLETE,
-            directory, inventory,
+            identity,
+            target,
+            baseline,
+            tuple(outcomes),
+            (report_ref, plan_ref),
+            (baseline_receipt, stryker_receipt),
+            (),
+            "complete",
+            RunState.COMPLETE,
+            directory,
+            inventory,
         )
 
     def _runtime_binds(self, context: ExecutionContext) -> tuple[tuple[str, str], ...]:

@@ -19,6 +19,7 @@ Categories:
 
 Tie-breaker priority: D > A > B > C
 """
+
 from typing import Literal
 
 
@@ -50,9 +51,7 @@ def diagnose_non_convergence(
         if _has_uncertain_growth(round_history):
             secondary.append("uncertain accumulation (C)")
         if secondary:
-            infra_errors.append(
-                "infrastructure errors also present: %s" % ", ".join(secondary)
-            )
+            infra_errors.append("infrastructure errors also present: %s" % ", ".join(secondary))
         return "D"
     if _has_fixed_to_confirmed_toggle(round_history):
         return "A"

@@ -36,11 +36,15 @@ def main(argv: list[str] | None = None) -> int:
         help="output directory (default: tests/eval/swebench)",
     )
     ap.add_argument(
-        "--cap", type=int, default=8,
+        "--cap",
+        type=int,
+        default=8,
         help="max entries per repository (default: 8)",
     )
     ap.add_argument(
-        "--seed", type=int, default=20260830,
+        "--seed",
+        type=int,
+        default=20260830,
         help="selection seed (default: 20260830)",
     )
     args = ap.parse_args(argv)
@@ -85,8 +89,11 @@ def main(argv: list[str] | None = None) -> int:
     selected = select_instances(eligible, cap=args.cap)
     args.out.mkdir(parents=True)
     build_corpus(
-        selected, args.out,
-        rejections=rejections, cap=args.cap, seed=args.seed,
+        selected,
+        args.out,
+        rejections=rejections,
+        cap=args.cap,
+        seed=args.seed,
     )
 
     print(

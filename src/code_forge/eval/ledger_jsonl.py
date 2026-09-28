@@ -28,6 +28,7 @@ The resume key is ``(entry_id, depth, engine, backend)`` rather than the
 entry id alone: arms differ only in depth and engine, and a shared key
 would let the depth-2 arm skip everything depth-1 already recorded.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -156,9 +157,7 @@ def read_records(path: Path) -> tuple[list[dict], bool]:
     return records, truncated
 
 
-def load_state(
-    path: Path, retry_cap: int = DEFAULT_RETRY_CAP
-) -> tuple[dict[ResumeKey, dict], bool]:
+def load_state(path: Path, retry_cap: int = DEFAULT_RETRY_CAP) -> tuple[dict[ResumeKey, dict], bool]:
     """Build the resume map: key -> the record that decides its fate.
 
     Later records for the same key supersede earlier ones, so a retry
@@ -242,9 +241,7 @@ def make_record(
             # A caller passing the wrong arity would otherwise write a
             # partial record or crash mid-append, leaving the ledger with a
             # line the resume reader cannot parse.
-            raise ValueError(
-                "findings must be (hits, misses, fps), got %r" % (findings,)
-            ) from exc
+            raise ValueError("findings must be (hits, misses, fps), got %r" % (findings,)) from exc
         rec["finding_hits"] = hits
         rec["finding_misses"] = misses
         rec["finding_fps"] = fps

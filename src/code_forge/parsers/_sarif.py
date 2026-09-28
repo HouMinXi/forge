@@ -31,12 +31,14 @@ def _parse_sarif(
         dec = json.JSONDecoder()
         sarif, _end = dec.raw_decode(output.lstrip())
     except (json.JSONDecodeError, ValueError):
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message=f"Failed to parse {tool_name} SARIF output",
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message=f"Failed to parse {tool_name} SARIF output",
+            )
+        ]
 
     findings: list[Finding | ToolError] = []
     bad_items = 0
@@ -51,39 +53,36 @@ def _parse_sarif(
                     # Strip file:// prefix, preserving absolute path.
                     # file:///tmp/foo -> /tmp/foo (not tmp/foo).
                     if uri.startswith("file:///"):
-                        uri = uri[len("file://"):]
+                        uri = uri[len("file://") :]
                     elif uri.startswith("file://"):
-                        uri = uri[len("file://"):]
+                        uri = uri[len("file://") :]
                     start_line = region.get("startLine", 0)
                     end_line_raw = region.get("endLine")
-                    findings.append(Finding(
-                        file=uri,
-                        line=start_line,
-                        end_line=(
-                            end_line_raw if end_line_raw is not None
-                            else start_line
-                        ),
-                        column=(region.get("startColumn") or 0),
-                        rule_id=result.get("ruleId", "unknown"),
-                        level=result.get("level", "warning"),
-                        message=(
-                            result.get("message", {}).get("text", "")
-                        ),
-                        tool_name=tool_name,
-                    ))
+                    findings.append(
+                        Finding(
+                            file=uri,
+                            line=start_line,
+                            end_line=(end_line_raw if end_line_raw is not None else start_line),
+                            column=(region.get("startColumn") or 0),
+                            rule_id=result.get("ruleId", "unknown"),
+                            level=result.get("level", "warning"),
+                            message=(result.get("message", {}).get("text", "")),
+                            tool_name=tool_name,
+                        )
+                    )
                 except (KeyError, TypeError, AttributeError) as exc:
                     bad_items += 1
-                    logging.warning(
-                        "%s SARIF: skipping malformed item: %s", tool_name, exc
-                    )
+                    logging.warning("%s SARIF: skipping malformed item: %s", tool_name, exc)
     if not findings and bad_items > 0:
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message=(
-                f"Failed to parse {tool_name} SARIF output: "
-                f"{bad_items} malformed item(s), no valid findings"
-            ),
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message=(
+                    f"Failed to parse {tool_name} SARIF output: "
+                    f"{bad_items} malformed item(s), no valid findings"
+                ),
+            )
+        ]
     return findings

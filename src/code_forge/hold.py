@@ -5,6 +5,7 @@
 run_hold_ui prompts human for UNCERTAIN dispositions. check_escalated_frozen
 implements DISPO-05(c) deferred from 02-02.
 """
+
 from __future__ import annotations
 
 import os
@@ -54,15 +55,12 @@ def run_hold_ui(
     over; UNCERTAIN dispositions stay UNCERTAIN. Unattended LOCAL reviews
     otherwise die on EOF.
     """
-    uncertain = [
-        f for f in state.findings if f.disposition == Disposition.UNCERTAIN
-    ]
+    uncertain = [f for f in state.findings if f.disposition == Disposition.UNCERTAIN]
     if os.environ.get("FORGE_HOLD_NONINTERACTIVE") == "1":
         if uncertain:
             output_fn(
                 "HOLD: %d UNCERTAIN finding(s) left recorded; "
-                "noninteractive, not prompting."
-                % len(uncertain)
+                "noninteractive, not prompting." % len(uncertain)
             )
         state.hold_reason = None
         state.dispositions = {f.id: f.disposition for f in state.findings}
@@ -73,10 +71,7 @@ def run_hold_ui(
         save_state(state, state_path)
         return
 
-    output_fn(
-        "HOLD: %d UNCERTAIN finding(s) need human disposition."
-        % len(uncertain)
-    )
+    output_fn("HOLD: %d UNCERTAIN finding(s) need human disposition." % len(uncertain))
     for finding in uncertain:
         _prompt_one(finding, input_fn, output_fn)
 
@@ -106,9 +101,7 @@ def _prompt_one(
     )
     while True:
         try:
-            choice = input_fn(
-                "    [c]onfirm / [d]ismiss / [s]kip / [q]uit: "
-            ).strip().lower()
+            choice = input_fn("    [c]onfirm / [d]ismiss / [s]kip / [q]uit: ").strip().lower()
         except EOFError:
             raise HoldAborted("HOLD UX aborted by user")
         if choice in QUIT_INPUTS:
@@ -139,8 +132,7 @@ def check_escalated_frozen(state: State) -> bool:
         if (
             finding.disposition == Disposition.CONFIRMED
             and finding.fingerprint in state.promoted_fingerprints
-            and state.fix_attempts.get(finding.fingerprint, 0)
-            >= MAX_FIX_ATTEMPTS_PER_FINGERPRINT
+            and state.fix_attempts.get(finding.fingerprint, 0) >= MAX_FIX_ATTEMPTS_PER_FINGERPRINT
         ):
             return True
     return False

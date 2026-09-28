@@ -37,12 +37,14 @@ def parse_eslint(
     try:
         data = json.loads(output)
     except json.JSONDecodeError:
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message="Failed to parse %s JSON output" % tool_name,
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message="Failed to parse %s JSON output" % tool_name,
+            )
+        ]
 
     findings: list[Finding | ToolError] = []
     for entry in data:
@@ -51,14 +53,16 @@ def parse_eslint(
             rule_id = msg.get("ruleId", "unknown")
             severity = msg.get("severity", 1)
             level = _SEVERITY_MAP.get(severity, "warning")
-            findings.append(Finding(
-                file=filepath,
-                line=msg.get("line", 0),
-                end_line=msg.get("endLine", msg.get("line", 0)),
-                column=msg.get("column", 0),
-                rule_id=rule_id,
-                level=level,
-                message=msg.get("message", ""),
-                tool_name=tool_name,
-            ))
+            findings.append(
+                Finding(
+                    file=filepath,
+                    line=msg.get("line", 0),
+                    end_line=msg.get("endLine", msg.get("line", 0)),
+                    column=msg.get("column", 0),
+                    rule_id=rule_id,
+                    level=level,
+                    message=msg.get("message", ""),
+                    tool_name=tool_name,
+                )
+            )
     return findings

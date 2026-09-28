@@ -27,10 +27,19 @@ from code_forge.mutation_engines.schemas import valid_identifier
 
 MAX_PUBLISH_BYTES = 64 * 1024 * 1024
 
-_OWNER_FIELDS = frozenset({
-    "schema_version", "state_root", "run_id", "pid", "boot_id",
-    "start_ticks", "cgroup_path", "supervisor_thread", "created_utc",
-})
+_OWNER_FIELDS = frozenset(
+    {
+        "schema_version",
+        "state_root",
+        "run_id",
+        "pid",
+        "boot_id",
+        "start_ticks",
+        "cgroup_path",
+        "supervisor_thread",
+        "created_utc",
+    }
+)
 
 
 class StateError(Exception):
@@ -74,9 +83,7 @@ class OwnerRecord:
             raise StateError("owner record must be a mapping")
         keys = set(data.keys())
         if keys != _OWNER_FIELDS:
-            raise StateError(
-                "owner record fields must be exactly %s" % sorted(_OWNER_FIELDS)
-            )
+            raise StateError("owner record fields must be exactly %s" % sorted(_OWNER_FIELDS))
         if data["schema_version"] != 1:
             raise StateError("owner record schema_version must be 1")
         for field in ("pid", "start_ticks"):
@@ -84,8 +91,12 @@ class OwnerRecord:
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise StateError("owner record %s must be a non-negative int" % field)
         for field in (
-            "state_root", "run_id", "boot_id", "cgroup_path",
-            "supervisor_thread", "created_utc",
+            "state_root",
+            "run_id",
+            "boot_id",
+            "cgroup_path",
+            "supervisor_thread",
+            "created_utc",
         ):
             if not isinstance(data[field], str) or not data[field]:
                 raise StateError("owner record %s must be a nonempty string" % field)
@@ -126,7 +137,7 @@ def _process_start_ticks(pid: int) -> int | None:
         return None
     # field 1 may contain spaces inside parentheses; split after ") "
     try:
-        rest = text[text.rindex(")") + 2:]
+        rest = text[text.rindex(")") + 2 :]
         return int(rest.split()[19])  # field 22 overall
     except (ValueError, IndexError):
         return None
@@ -194,9 +205,7 @@ def is_owner_alive(owner: OwnerRecord) -> bool:
     return ticks == owner.start_ticks
 
 
-def reserve_worker(
-    state_root: str | Path, worker_id: str, owner: OwnerRecord
-) -> Reservation:
+def reserve_worker(state_root: str | Path, worker_id: str, owner: OwnerRecord) -> Reservation:
     """Reserve *worker_id* atomically; reject a second live holder."""
     if not valid_identifier(worker_id):
         raise StateError("worker id must be an identifier, got %r" % (worker_id,))
@@ -207,9 +216,7 @@ def reserve_worker(
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
-        raise SecondHolderError(
-            "worker %r is already reserved" % worker_id
-        ) from None
+        raise SecondHolderError("worker %r is already reserved" % worker_id) from None
     with os.fdopen(fd, "wb") as handle:
         handle.write(payload)
         handle.flush()
@@ -222,9 +229,7 @@ def publish(directory: Path, name: str, payload: bytes) -> None:
     if not name or "/" in name or "\\" in name or name.startswith("."):
         raise StateError("publication name must be a plain file name, got %r" % name)
     if len(payload) > MAX_PUBLISH_BYTES:
-        raise StateError(
-            "publication %r exceeds %d bytes" % (name, MAX_PUBLISH_BYTES)
-        )
+        raise StateError("publication %r exceeds %d bytes" % (name, MAX_PUBLISH_BYTES))
     results = directory / "results"
     results.mkdir(parents=True, exist_ok=True)
     _atomic_write(results / name, payload)
@@ -238,9 +243,7 @@ def read_published(directory: Path, name: str) -> bytes:
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:
-    tmp = path.with_name(
-        ".tmp-%d-%s-%s" % (os.getpid(), os.urandom(6).hex(), path.name)
-    )
+    tmp = path.with_name(".tmp-%d-%s-%s" % (os.getpid(), os.urandom(6).hex(), path.name))
     try:
         with open(tmp, "wb") as handle:
             handle.write(payload)
@@ -264,8 +267,7 @@ def recover_run(state_root: str | Path, run_id: str) -> RecoveryOutcome:
     except StateError as exc:
         return RecoveryOutcome(
             "hold",
-            "owner record unverifiable (%s); reclaim manually after inspection"
-            % exc,
+            "owner record unverifiable (%s); reclaim manually after inspection" % exc,
         )
     if is_owner_alive(owner):
         return RecoveryOutcome(

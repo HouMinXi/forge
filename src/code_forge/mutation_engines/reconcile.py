@@ -17,13 +17,15 @@ from code_forge.mutation_engines.schemas import (
     TargetResult,
 )
 
-_HOLD_STATUSES = frozenset({
-    NormalizedStatus.UNKNOWN,
-    NormalizedStatus.TIMED_OUT,
-    NormalizedStatus.RUNTIME_ERROR,
-    NormalizedStatus.IGNORED,
-    NormalizedStatus.PENDING,
-})
+_HOLD_STATUSES = frozenset(
+    {
+        NormalizedStatus.UNKNOWN,
+        NormalizedStatus.TIMED_OUT,
+        NormalizedStatus.RUNTIME_ERROR,
+        NormalizedStatus.IGNORED,
+        NormalizedStatus.PENDING,
+    }
+)
 
 
 def decide(results: tuple[TargetResult, ...]) -> AggregateDecision:

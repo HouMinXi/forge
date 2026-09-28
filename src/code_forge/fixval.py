@@ -11,6 +11,7 @@ Overfit guard (STING) is ADVISORY only (never blocking).
 Pipeline position: post-convergence, co-located with R2/L2 mutation,
 before the verdict.
 """
+
 from __future__ import annotations
 
 import ast
@@ -35,6 +36,7 @@ _logger = logging.getLogger("code_forge")
 
 class FixvalStatus(str, Enum):
     """FIXVAL gate result status."""
+
     PASS = "PASS"
     BLOCK = "BLOCK"
     SKIPPED = "SKIPPED"
@@ -44,6 +46,7 @@ class FixvalStatus(str, Enum):
 @dataclass(frozen=True)
 class FixvalCandidate:
     """A diff that has both test and non-test files -- FIXVAL applicable."""
+
     test_files: list[str]
     non_test_files: list[str]
 
@@ -51,6 +54,7 @@ class FixvalCandidate:
 @dataclass(frozen=True)
 class FixvalSkip:
     """A diff that is not a FIXVAL candidate, with reason."""
+
     reason: str
 
 
@@ -64,6 +68,7 @@ class FixvalResult:
     advisories: AdvisoryFinding list (waiver record, overfit guard).
     block_message: non-empty only for BLOCK status.
     """
+
     status: FixvalStatus
     findings: list[StateFinding]
     advisories: list[AdvisoryFinding]
@@ -226,14 +231,10 @@ def run_fixval(
 
     # (a) Guard: no diff available
     if diff_text is None:
-        return _make_skipped_result(
-            "non-git review, no diff available"
-        )
+        return _make_skipped_result("non-git review, no diff available")
 
     # (b) Waiver check
-    waiver_reason = parse_fixval_waiver(
-        commit_message, env=os.environ
-    )
+    waiver_reason = parse_fixval_waiver(commit_message, env=os.environ)
     if waiver_reason is not None:
         if os.environ.get("FIXVAL_WAIVER", "").strip():
             channel = "FIXVAL_WAIVER env var"
@@ -258,10 +259,7 @@ def run_fixval(
                     axis="FIXVAL",
                     file="",
                     line_range=[],
-                    description=(
-                        "FIXVAL waived via %s: %s"
-                        % (channel, waiver_reason)
-                    ),
+                    description=("FIXVAL waived via %s: %s" % (channel, waiver_reason)),
                     attribution="fixval-waiver",
                 ),
             ],
@@ -275,13 +273,19 @@ def run_fixval(
     run_env["PYTHONPATH"] = pythonpath
 
     status, guard_findings, guard_infra = _run_baseline_guard(
-        scoped_cmd, run_env, repo_root, allow_strip_retry=True,
+        scoped_cmd,
+        run_env,
+        repo_root,
+        allow_strip_retry=True,
     )
     if status == "needs_strip_retry":
         run_env = _strip_venv_from_env(run_env)
         run_env["PYTHONPATH"] = pythonpath
         status, guard_findings, guard_infra = _run_baseline_guard(
-            scoped_cmd, run_env, repo_root, allow_strip_retry=False,
+            scoped_cmd,
+            run_env,
+            repo_root,
+            allow_strip_retry=False,
         )
     if status == "skip":
         return FixvalResult(
@@ -293,13 +297,12 @@ def run_fixval(
     # (d) Revert non-test hunks
     non_test_patch = _filter_non_test_patch(diff_text)
     if not non_test_patch.strip():
-        return _make_skipped_result(
-            "no non-test changes to revert"
-        )
+        return _make_skipped_result("no non-test changes to revert")
 
     # Write patch to temp file
     fd, patch_path = tempfile.mkstemp(
-        prefix=".fixval-revert-", suffix=".patch",
+        prefix=".fixval-revert-",
+        suffix=".patch",
     )
     restore_ok = False
     try:
@@ -310,14 +313,14 @@ def run_fixval(
         revert_result = subprocess.run(
             ["git", "apply", "-R", patch_path],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             cwd=repo_root,
         )
         if revert_result.returncode != 0:
-            return _make_skipped_result(
-                "revert patch failed: %s" % revert_result.stderr[:200]
-            )
+            return _make_skipped_result("revert patch failed: %s" % revert_result.stderr[:200])
 
         try:
             # (e) Run scoped tests on reverted code
@@ -326,16 +329,16 @@ def run_fixval(
                     scoped_cmd,
                     env=run_env,
                     capture_output=True,
-                    text=True, encoding="utf-8", errors="replace",
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=600,
                     check=False,
                     cwd=repo_root,
                 )
                 test_passed = test_result.returncode == 0
             except subprocess.TimeoutExpired:
-                return _make_skipped_result(
-                    "test timed out during FIXVAL revert check"
-                )
+                return _make_skipped_result("test timed out during FIXVAL revert check")
 
             if not test_passed:
                 # Test failed on revert -> PASS (not hollow)
@@ -346,17 +349,10 @@ def run_fixval(
                 )
 
             # Test passed on revert -> BLOCK (hollow test)
-            block_msg = (
-                "FIXVAL: Test(s) did not fail when the fix was reverted.\n"
-                "\n"
-                "  Reverted files:\n"
-            )
+            block_msg = "FIXVAL: Test(s) did not fail when the fix was reverted.\n\n  Reverted files:\n"
             for f in candidate.non_test_files:
                 block_msg += "    %s\n" % f
-            block_msg += (
-                "\n"
-                "  Tests that should have failed but passed:\n"
-            )
+            block_msg += "\n  Tests that should have failed but passed:\n"
             for f in candidate.test_files:
                 block_msg += "    %s\n" % f
             block_msg += (
@@ -381,14 +377,9 @@ def run_fixval(
                         fingerprint="fixval-hollow",
                         source="FIXVAL",
                         disposition=Disposition.DISMISSED,
-                        file=candidate.test_files[0]
-                        if candidate.test_files
-                        else "",
+                        file=candidate.test_files[0] if candidate.test_files else "",
                         line_range=[],
-                        description=(
-                            "hollow test: test passes on both fixed "
-                            "and reverted code"
-                        ),
+                        description=("hollow test: test passes on both fixed and reverted code"),
                     ),
                 ],
                 advisories=[],
@@ -400,7 +391,9 @@ def run_fixval(
             _restore = subprocess.run(
                 ["git", "apply", patch_path],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 cwd=repo_root,
             )
@@ -535,7 +528,9 @@ def run_overfit_guard(
                 scoped_cmd,
                 env=run_env,
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=600,
                 check=False,
                 cwd=str(cwd),

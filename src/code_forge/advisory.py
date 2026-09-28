@@ -15,6 +15,7 @@ TWO FOUNDING PRINCIPLES:
    sees the diff fresh, forming independent judgments. Do not widen this
    signature.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -60,9 +61,7 @@ class AdvisoryFinding:
         # explicitly: a str IS a Sequence, so it would slip past the annotation
         # and crash int('h') here; fail loudly instead of producing garbage.
         if isinstance(line_range, (str, bytes)):
-            raise TypeError(
-                "line_range must be a sequence of ints, not str/bytes"
-            )
+            raise TypeError("line_range must be a sequence of ints, not str/bytes")
         if not line_range:
             norm_range = (0, 0)
         elif len(line_range) == 1:

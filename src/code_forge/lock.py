@@ -7,6 +7,7 @@ path only ever comes into existence already containing its PID, never
 transiently empty. Stale-PID recovery via _pid_alive() liveness check
 (platform-portable: POSIX kill(2) or Windows WaitForSingleObject).
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -36,11 +37,14 @@ def _pid_alive(pid: int) -> bool:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.OpenProcess.restype = ctypes.c_void_p
         kernel32.OpenProcess.argtypes = [
-            ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_int,
+            ctypes.c_uint32,
         ]
         kernel32.WaitForSingleObject.restype = ctypes.c_uint32
         kernel32.WaitForSingleObject.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
         ]
         kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
         # PROCESS_QUERY_LIMITED_INFORMATION (0x1000) opens almost any
@@ -102,10 +106,7 @@ class ForgeLockBusy(Exception):
             probe = ""
         else:
             who = "another forge process is running (PID %d)" % pid
-            probe = (
-                "\n  Check what it is doing:\n"
-                "      ps -p %d -o etime=,cmd=" % pid
-            )
+            probe = "\n  Check what it is doing:\n      ps -p %d -o etime=,cmd=" % pid
         super().__init__(
             "%s, lock %s.%s\n"
             "  A review holds this lock for its whole convergence run, which can\n"
@@ -113,8 +114,7 @@ class ForgeLockBusy(Exception):
             "  when the holder exits, and removing it while the holder is alive\n"
             "  lets two forge runs share one workspace. A lock whose holder has\n"
             "  died is reclaimed automatically and never needs deleting. If the\n"
-            "  holder is genuinely hung, kill it and the lock clears."
-            % (who, path, probe)
+            "  holder is genuinely hung, kill it and the lock clears." % (who, path, probe)
         )
 
 
@@ -168,6 +168,7 @@ class ForgeLock:
         in __exit__, just without signal-interrupt protection.
         """
         import threading
+
         if threading.current_thread() is not threading.main_thread():
             return
 
@@ -183,18 +184,15 @@ class ForgeLock:
                 if prev == signal.SIG_IGN:
                     return
                 raise KeyboardInterrupt
+
             return _handler
 
         prev_sigint = signal.getsignal(signal.SIGINT)
         prev_sigterm = signal.getsignal(signal.SIGTERM)
         self._original_sigint = prev_sigint
         self._original_sigterm = prev_sigterm
-        signal.signal(
-            signal.SIGINT, _make_chained_handler(prev_sigint)
-        )
-        signal.signal(
-            signal.SIGTERM, _make_chained_handler(prev_sigterm)
-        )
+        signal.signal(signal.SIGINT, _make_chained_handler(prev_sigint))
+        signal.signal(signal.SIGTERM, _make_chained_handler(prev_sigterm))
 
     def _restore_signal_handlers(self) -> None:
         if self._original_sigint is not None:
@@ -221,10 +219,7 @@ def _write_all(fd: int, data: bytes) -> None:
     while view:
         written = os.write(fd, view)
         if written == 0:
-            raise OSError(
-                "os.write() returned 0 with %d byte(s) still pending"
-                % len(view)
-            )
+            raise OSError("os.write() returned 0 with %d byte(s) still pending" % len(view))
         view = view[written:]
 
 
@@ -313,9 +308,7 @@ def acquire_lock(path: Path) -> None:
     pid_bytes = ("%d\n" % os.getpid()).encode("ascii")
     try:
         for attempt in range(2):
-            fd, tmp_name = tempfile.mkstemp(
-                dir=str(path.parent), prefix=path.name + ".tmp-"
-            )
+            fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".tmp-")
             tmp_path = Path(tmp_name)
             try:
                 try:
@@ -421,10 +414,7 @@ def acquire_lock(path: Path) -> None:
                 except FileNotFoundError:
                     pass
     except IsADirectoryError:
-        raise OSError(
-            "lock path %s is a directory, not a file "
-            "(remove it manually)" % path
-        )
+        raise OSError("lock path %s is a directory, not a file (remove it manually)" % path)
 
 
 def _handle_existing_lock(path: Path) -> None:

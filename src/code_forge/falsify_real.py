@@ -3,6 +3,7 @@
 Invokes llm_invoke with a 10-step anti-hallucination protocol to
 verify each L1 candidate.  Maps the verdict to a Disposition value.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -29,7 +30,7 @@ _PROMPT_PREFIX = (
     "the behaviour and its actual output.  Without one, such a verdict "
     "will be downgraded to UNCERTAIN, because neither you nor the "
     "reviewer can check a library's behaviour by reasoning about it.\n\n"
-    'Respond JSON only:\n'
+    "Respond JSON only:\n"
     '{"verdict": "CONFIRMED" | "DISMISSED" | "UNCERTAIN", '
     '"reasoning": "...", '
     '"receipt": {"command": "...", "output": "..."}}\n\n'
@@ -84,8 +85,9 @@ def _readers_for_file(rows, path: str) -> str:
         enclosing = getattr(r, "enclosing", None) or {}
         for loc, text in snippets.items():
             head = enclosing.get(loc)
-            lines.append("    %s%s\n        %s" % (
-                loc, ("  [in %s]" % head) if head else "", text.strip()))
+            lines.append(
+                "    %s%s\n        %s" % (loc, ("  [in %s]" % head) if head else "", text.strip())
+            )
     return "\n".join(lines) + "\n" if lines else ""
 
 
@@ -94,6 +96,7 @@ def _diff_for_file(diff_text: Optional[str], path: str) -> str:
     if not diff_text or not path:
         return ""
     from .diff import annotate_diff_lines, split_diff_for_files
+
     section = split_diff_for_files(diff_text, [path])
     if not section:
         return ""
@@ -127,9 +130,15 @@ class RealFalsifier(Falsifier):
     def falsify(self, finding: StateFinding) -> Disposition:
         prompt = (
             _PROMPT_PREFIX
-            + "File: " + finding.file + "\n"
-            + "Lines: " + str(finding.line_range) + "\n"
-            + "Description: " + finding.description + "\n"
+            + "File: "
+            + finding.file
+            + "\n"
+            + "Lines: "
+            + str(finding.line_range)
+            + "\n"
+            + "Description: "
+            + finding.description
+            + "\n"
         )
         hunks = _diff_for_file(self._diff_text, finding.file)
         if hunks:
@@ -154,13 +163,13 @@ class RealFalsifier(Falsifier):
 
         if not isinstance(response, dict):
             raise FalsifyProtocolError(
-                "falsifier returned non-dict content for %s"
-                % finding.fingerprint, raw=response)
+                "falsifier returned non-dict content for %s" % finding.fingerprint, raw=response
+            )
 
         if "verdict" not in response:
             raise FalsifyProtocolError(
-                "falsifier response lacks 'verdict' for %s"
-                % finding.fingerprint, raw=response)
+                "falsifier response lacks 'verdict' for %s" % finding.fingerprint, raw=response
+            )
         verdict_str = response["verdict"]
         if verdict_str == "FIXED":
             # FIXED is a Disposition member but not a falsifier verdict
@@ -168,14 +177,16 @@ class RealFalsifier(Falsifier):
             # as an unknown string; a plain ValueError here would escape
             # machine.py's infra arms and abort the whole review.
             raise FalsifyProtocolError(
-                "falsifier returned FIXED for %s; only verify may set it"
-                % finding.fingerprint, raw=response)
+                "falsifier returned FIXED for %s; only verify may set it" % finding.fingerprint,
+                raw=response,
+            )
         try:
             disposition = Disposition(verdict_str)
         except (ValueError, TypeError):
             raise FalsifyProtocolError(
-                "falsifier verdict %r not in Disposition for %s"
-                % (verdict_str, finding.fingerprint), raw=response)
+                "falsifier verdict %r not in Disposition for %s" % (verdict_str, finding.fingerprint),
+                raw=response,
+            )
 
         # A verdict that turns on library behaviour needs an execution
         # receipt. Without one the model is reasoning about behaviour it

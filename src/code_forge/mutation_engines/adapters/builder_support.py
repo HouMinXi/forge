@@ -35,9 +35,7 @@ def identity_mapping_error(status_text: str | None = None, subuid_text: str | No
         subuid = Path("/etc/subuid")
         subuid_text = subuid.read_text(encoding="utf-8") if user and subuid.is_file() else ""
     if user:
-        owned = [
-            line for line in subuid_text.splitlines() if line.startswith(user + ":")
-        ]
+        owned = [line for line in subuid_text.splitlines() if line.startswith(user + ":")]
         if not owned:
             return "no subordinate uid range for %s" % user
     if caller_supplied:
@@ -45,13 +43,19 @@ def identity_mapping_error(status_text: str | None = None, subuid_text: str | No
     try:
         probe = subprocess.run(
             ["unshare", "--user", "--map-root-user", "true"],
-            capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return "user namespace probe failed: %s" % exc
     if probe.returncode != 0:
         detail = (probe.stderr or probe.stdout or "").strip().splitlines()
-        return "user namespace mapping failed: %s" % (detail[-1] if detail else "unshare exited %d" % probe.returncode)
+        return "user namespace mapping failed: %s" % (
+            detail[-1] if detail else "unshare exited %d" % probe.returncode
+        )
     return None
 
 

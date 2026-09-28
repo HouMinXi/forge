@@ -19,6 +19,7 @@ Default state is UNVERIFIED (fail-closed). No receipt = UNVERIFIED.
 Per-surface NOT VERIFIED = (LLM-enumerated) minus (receipt-declared),
       using case-insensitive substring containment (either direction).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -117,9 +118,7 @@ def write_smoke_receipt(
     target = receipts_dir / ("smoke-receipt-%s.json" % surface)
 
     # Atomic write: write to tmp in same directory, then replace target.
-    fd, tmp_path_str = tempfile.mkstemp(
-        dir=str(receipts_dir), suffix=".tmp", prefix="smoke-receipt-"
-    )
+    fd, tmp_path_str = tempfile.mkstemp(dir=str(receipts_dir), suffix=".tmp", prefix="smoke-receipt-")
     try:
         with open(fd, "w", encoding="utf-8") as f:
             json.dump(receipt, f, indent=2)
@@ -173,6 +172,7 @@ def _surface_matches(llm_surface: str, receipt_surface: str) -> bool:
     a receipt written with --surface "nftables-rules" matches the LLM surface
     "nftables rules" (smoke-run sanitizes spaces to hyphens in filenames).
     """
+
     def _norm(s: str) -> str:
         return s.lower().replace("-", " ").replace("_", " ")
 
@@ -208,18 +208,12 @@ def _parse_llm_response(
         parsed = content
     elif isinstance(content, str):
         parsed = json.loads(content)
-    elif (
-        isinstance(content, list)
-        and len(content) == 1
-        and isinstance(content[0], dict)
-    ):
+    elif isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):
         # Unwrap single-element list: some LLMs wrap the JSON object in an
         # array (e.g. mimo-pro returns [{...}] instead of {...}).
         parsed = content[0]
     else:
-        raise ValueError(
-            "unexpected LLM content type: %s" % type(content).__name__
-        )
+        raise ValueError("unexpected LLM content type: %s" % type(content).__name__)
     if "surfaces" not in parsed:
         raise KeyError("missing 'surfaces' key in LLM response")
     # Coerce to str: LLM may return integers or nulls in surfaces array.
@@ -261,12 +255,12 @@ def _build_smoke_summary(
     verified_count = len(verified_surfaces)
 
     if verified_count == total:
-        description = "smoke: all %d surfaces verified (%s)" % (
-            total, ", ".join(fingerprints)
-        )
+        description = "smoke: all %d surfaces verified (%s)" % (total, ", ".join(fingerprints))
     else:
         description = "smoke: %d/%d surfaces verified; NOT VERIFIED: [%s]" % (
-            verified_count, total, ", ".join(unverified_surfaces)
+            verified_count,
+            total,
+            ", ".join(unverified_surfaces),
         )
         if fingerprints:
             description += " (verified: %s)" % ", ".join(fingerprints)
@@ -324,9 +318,7 @@ class RuntimeRunner:
         if not diff_text or not diff_text.strip():
             return []
         if self._backend is None:
-            self.infra_errors.append(
-                "RUNTIME axis skipped: no backend configured"
-            )
+            self.infra_errors.append("RUNTIME axis skipped: no backend configured")
             return [_build_skipped_finding("no backend configured")]
 
         diff_hash = compute_source_hash(git_diff=diff_text)
@@ -341,7 +333,7 @@ class RuntimeRunner:
 
         prompt_diff = annotated_diff_prompt_block(diff_text)
         if prompt_diff.startswith("\nDiff:\n"):
-            prompt_diff = prompt_diff[len("\nDiff:\n"):]
+            prompt_diff = prompt_diff[len("\nDiff:\n") :]
         # str.replace NOT str.format: diffs can contain literal { or }.
         prompt = RUNTIME_LIFECYCLE_QUESTION.replace("{diff_text}", prompt_diff)
         try:
@@ -362,7 +354,8 @@ class RuntimeRunner:
 
         receipts_dir = repo_root / ".code-forge" / "smoke-receipts"
         valid_receipts = [
-            r for r in read_smoke_receipts(receipts_dir)
+            r
+            for r in read_smoke_receipts(receipts_dir)
             if r.get("diff_sha256") == diff_hash and r.get("status") == "VERIFIED"
         ]
 

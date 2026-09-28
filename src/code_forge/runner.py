@@ -88,7 +88,9 @@ def capture_tool_version(command: str) -> str:
         result = subprocess.run(
             [resolved, "--version"],
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -126,12 +128,8 @@ def run_tool(
 
     if resolved is None:
         if tool_config.required:
-            raise RuntimeError(
-                "Required tool not found: %s" % tool_config.command
-            )
-        logger.info(
-            "Optional tool '%s' not found, skipping", tool_config.name
-        )
+            raise RuntimeError("Required tool not found: %s" % tool_config.command)
+        logger.info("Optional tool '%s' not found, skipping", tool_config.name)
         return None
 
     # Build command: [resolved_cmd] + flags + args + files
@@ -147,7 +145,9 @@ def run_tool(
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True, encoding="utf-8", errors="replace",
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=tool_config.timeout,
             check=False,
         )
@@ -219,9 +219,7 @@ def run_tools(
         result = run_tool(tool_config, matching_files)
         if result is None:
             tools_skipped.append(tool_name)
-            infra_errors.append(
-                "tool %s: timed out or OS error (see log)" % tool_name
-            )
+            infra_errors.append("tool %s: timed out or OS error (see log)" % tool_name)
         else:
             tool_results[tool_name] = result
 

@@ -29,6 +29,7 @@ class Disposition(str, Enum):
       to non-blocking (never blocks the verdict), stays ledger-written/
       adjudicable/exportable.
     """
+
     CONFIRMED = "CONFIRMED"
     DISMISSED = "DISMISSED"
     UNCERTAIN = "UNCERTAIN"

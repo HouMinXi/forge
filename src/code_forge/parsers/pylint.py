@@ -51,22 +51,25 @@ def parse_pylint(
     try:
         data = json.loads(output)
     except (json.JSONDecodeError, ValueError):
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message="Failed to parse %s JSON output" % tool_name,
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message="Failed to parse %s JSON output" % tool_name,
+            )
+        ]
 
     # Unexpected top-level structure (not a list)
     if not isinstance(data, list):
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message="Failed to parse %s JSON output: "
-                    "unexpected structure" % tool_name,
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message="Failed to parse %s JSON output: unexpected structure" % tool_name,
+            )
+        ]
 
     findings = []
     for obj in data:
@@ -84,25 +87,24 @@ def parse_pylint(
         # Prefer message-id (e.g. "C0114") as rule_id: stable across
         # pylint versions, human-greppable. Fall back to symbol then
         # "unknown".
-        rule_id = (
-            obj.get("message-id")
-            or obj.get("symbol")
-            or "unknown"
-        )
+        rule_id = obj.get("message-id") or obj.get("symbol") or "unknown"
 
         level = _PYLINT_LEVEL_MAP.get(
-            obj.get("type", ""), "note",
+            obj.get("type", ""),
+            "note",
         )
 
-        findings.append(Finding(
-            file=obj.get("path", ""),
-            line=line_val,
-            end_line=end_line,
-            column=int(obj.get("column", 0) or 0),
-            rule_id=rule_id,
-            level=level,
-            message=obj.get("message", ""),
-            tool_name=tool_name,
-        ))
+        findings.append(
+            Finding(
+                file=obj.get("path", ""),
+                line=line_val,
+                end_line=end_line,
+                column=int(obj.get("column", 0) or 0),
+                rule_id=rule_id,
+                level=level,
+                message=obj.get("message", ""),
+                tool_name=tool_name,
+            )
+        )
 
     return findings

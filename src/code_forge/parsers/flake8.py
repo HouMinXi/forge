@@ -50,25 +50,29 @@ def parse_flake8(
             # flake8 emits no severity; map all to "warning"
             # (honest default within the "error"|"warning"|"note"
             # enum in base.Finding; flake8 lint findings are advisory)
-            findings.append(Finding(
-                file=m.group(1),
-                line=int(m.group(2)),
-                end_line=int(m.group(2)),
-                column=int(m.group(3)),
-                rule_id=m.group(4),
-                level="warning",
-                message=m.group(5).strip(),
-                tool_name=tool_name,
-            ))
+            findings.append(
+                Finding(
+                    file=m.group(1),
+                    line=int(m.group(2)),
+                    end_line=int(m.group(2)),
+                    column=int(m.group(3)),
+                    rule_id=m.group(4),
+                    level="warning",
+                    message=m.group(5).strip(),
+                    tool_name=tool_name,
+                )
+            )
 
     # Non-empty input, zero matches -> corrupt
     # (flake8 has no summary line, unlike checkpatch)
     if not findings:
-        return [ToolError(
-            tool_name=tool_name,
-            exit_code=exit_code,
-            stderr="",
-            message="Failed to parse %s output: no matches" % tool_name,
-        )]
+        return [
+            ToolError(
+                tool_name=tool_name,
+                exit_code=exit_code,
+                stderr="",
+                message="Failed to parse %s output: no matches" % tool_name,
+            )
+        ]
 
     return findings

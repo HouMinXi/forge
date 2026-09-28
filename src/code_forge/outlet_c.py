@@ -7,6 +7,7 @@ ensuring identical receipt writing and cycle-counting behavior.
 Reviewer-provided code_excerpts flow: reviewer JSON -> l1_provider
 4-tuple -> machine.py -> receipt.py -> verify.py.
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,9 +50,9 @@ def _read_chunk_threshold_kb() -> int:
         return val
     except ValueError:
         log.warning(
-            "non-numeric FORGE_DIFF_CHUNK_THRESHOLD_KB=%r, "
-            "falling back to default %d",
-            raw, _DEFAULT_CHUNK_THRESHOLD_KB,
+            "non-numeric FORGE_DIFF_CHUNK_THRESHOLD_KB=%r, falling back to default %d",
+            raw,
+            _DEFAULT_CHUNK_THRESHOLD_KB,
         )
         return _DEFAULT_CHUNK_THRESHOLD_KB
 
@@ -69,14 +70,17 @@ def _split_diff_by_file(diff: str) -> list[str]:
         return []
     # Primary: git-style diff headers.
     chunks = re.findall(
-        r'diff --git .+?(?=diff --git |\Z)', diff, re.DOTALL,
+        r"diff --git .+?(?=diff --git |\Z)",
+        diff,
+        re.DOTALL,
     )
     if chunks:
         return [c for c in chunks if "@@" in c]
     # Fallback: unified diff without git headers.
     chunks = re.findall(
-        r'(?:^|\n)--- .+?\n\+\+\+ .+?(?=(?:\n)--- |\Z)',
-        diff, re.DOTALL,
+        r"(?:^|\n)--- .+?\n\+\+\+ .+?(?=(?:\n)--- |\Z)",
+        diff,
+        re.DOTALL,
     )
     if chunks:
         return [c for c in chunks if "@@" in c]
@@ -107,15 +111,17 @@ def _run_chunk(
         try:
             raw = spawn_fn(pass_name, chunk_diff)
         except Exception as e:
-            findings.append(StateFinding(
-                id="l1-%s-spawn-fail" % pass_name,
-                fingerprint="spawn-fail-%s" % pass_name,
-                source="INFRA",
-                disposition=Disposition.CONFIRMED,
-                file="<spawn>",
-                line_range=[0, 0],
-                description="spawn failed: %s" % e,
-            ))
+            findings.append(
+                StateFinding(
+                    id="l1-%s-spawn-fail" % pass_name,
+                    fingerprint="spawn-fail-%s" % pass_name,
+                    source="INFRA",
+                    disposition=Disposition.CONFIRMED,
+                    file="<spawn>",
+                    line_range=[0, 0],
+                    description="spawn failed: %s" % e,
+                )
+            )
             continue
         try:
             validated = validate_reviewer_json(raw)
@@ -124,21 +130,25 @@ def _run_chunk(
                 # BackendConfig, so it names the outlet rather than
                 # inventing a model.
                 _json_to_state_findings(
-                    validated, pass_name, backend="subagent",
+                    validated,
+                    pass_name,
+                    backend="subagent",
                 ),
             )
             all_excerpts.extend(_collect_excerpts(validated, pass_name=pass_name))
         except ValueError as e:
             if not isinstance(e, ExcerptEvidenceError):
-                findings.append(StateFinding(
-                    id=f"l1-{pass_name}-schema-fail",
-                    fingerprint=f"schema-fail-{pass_name}",
-                    source="INFRA",
-                    disposition=Disposition.CONFIRMED,
-                    file="<schema-validation>",
-                    line_range=[0, 0],
-                    description=f"schema validation failed: {e}",
-                ))
+                findings.append(
+                    StateFinding(
+                        id=f"l1-{pass_name}-schema-fail",
+                        fingerprint=f"schema-fail-{pass_name}",
+                        source="INFRA",
+                        disposition=Disposition.CONFIRMED,
+                        file="<schema-validation>",
+                        line_range=[0, 0],
+                        description=f"schema validation failed: {e}",
+                    )
+                )
             from .factories import _raw_response_data
 
             raw_data = _raw_response_data(raw)
@@ -150,19 +160,19 @@ def _run_chunk(
                 # Same split as the other two legs: a candidate whose
                 # evidence was rejected still survives as audit data
                 # rather than vanishing with the excerpt.
-                if isinstance(raw_data, dict) and isinstance(
-                    raw_data.get("findings"), list
-                ):
+                if isinstance(raw_data, dict) and isinstance(raw_data.get("findings"), list):
                     for sf in _json_to_state_findings(
-                        raw_data, pass_name, backend="subagent",
+                        raw_data,
+                        pass_name,
+                        backend="subagent",
                     ):
                         sf.source = "UNTRUSTED"
                         sf.id = f"l1-{pass_name}-untrusted-{sf.fingerprint}"
                         findings.append(sf)
     return (findings, all_excerpts, Usage(), 0.0)
 
-ReviewerSpawnFn = Callable[[str, str], str]
 
+ReviewerSpawnFn = Callable[[str, str], str]
 
 
 def run_outlet_c(
@@ -191,8 +201,11 @@ def run_outlet_c(
         advisory_runners = []
     if falsifier is None:
         from .factories import build_falsifier
+
         falsifier = build_falsifier(
-            engine, backend=backend, diff_text=resolved_review.git_diff,
+            engine,
+            backend=backend,
+            diff_text=resolved_review.git_diff,
             context_rows=context_rows,
         )
 
@@ -207,7 +220,10 @@ def run_outlet_c(
         if threshold_kb > 0 and diff_kb <= threshold_kb:
             # Under threshold: single chunk (original behavior).
             result = _run_chunk(
-                diff, spawn_fn, _PASS_NAMES, attempted=attempted,
+                diff,
+                spawn_fn,
+                _PASS_NAMES,
+                attempted=attempted,
             )
             return result
 
@@ -217,11 +233,14 @@ def run_outlet_c(
             # Parse failure or binary-only diff: fall through to
             # un-chunked path to avoid silent zero-findings.
             log.warning(
-                "chunking parse produced 0 chunks from %.1fKB diff, "
-                "falling through to un-chunked path", diff_kb,
+                "chunking parse produced 0 chunks from %.1fKB diff, falling through to un-chunked path",
+                diff_kb,
             )
             result = _run_chunk(
-                diff, spawn_fn, _PASS_NAMES, attempted=attempted,
+                diff,
+                spawn_fn,
+                _PASS_NAMES,
+                attempted=attempted,
             )
             return result
 
@@ -231,17 +250,16 @@ def run_outlet_c(
         total_duration = 0.0
         for chunk in chunks:
             c_findings, c_excerpts, c_usage, c_dur = _run_chunk(
-                chunk, spawn_fn, _PASS_NAMES, attempted=attempted,
+                chunk,
+                spawn_fn,
+                _PASS_NAMES,
+                attempted=attempted,
             )
             all_findings.extend(c_findings)
             all_excerpts.extend(c_excerpts)
             total_usage = Usage(
-                input_tokens=(
-                    total_usage.input_tokens + c_usage.input_tokens
-                ),
-                output_tokens=(
-                    total_usage.output_tokens + c_usage.output_tokens
-                ),
+                input_tokens=(total_usage.input_tokens + c_usage.input_tokens),
+                output_tokens=(total_usage.output_tokens + c_usage.output_tokens),
             )
             total_duration += c_dur
 

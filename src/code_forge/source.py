@@ -6,6 +6,7 @@ Whitespace normalization: trailing-ws strip + LF line endings.
 H1/H3 fixes applied: binary files hashed as raw bytes (preserves invalidation
 correctness); path serialization uses as_posix() for cross-platform determinism.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -40,9 +41,7 @@ def compute_source_hash(
     hex SHA256.
     """
     if (git_diff is None) == (files is None):
-        raise ValueError(
-            "compute_source_hash: pass exactly one of git_diff or files"
-        )
+        raise ValueError("compute_source_hash: pass exactly one of git_diff or files")
 
     h = hashlib.sha256()
     if git_diff is not None:

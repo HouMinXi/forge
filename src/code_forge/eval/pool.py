@@ -10,6 +10,7 @@ with one future per entry.  The isolation guarantee lives in the worker
 function, not in the pool topology, so it survives a refactor of the
 executor.
 """
+
 from __future__ import annotations
 
 import os
@@ -59,9 +60,11 @@ def _release_tree(temp_dir: str) -> None:
 
 # -- Per-entry result container -------------------------------------------
 
+
 @dataclass
 class PoolEntry:
     """One entry's outcome from the pool."""
+
     entry: CorpusEntry
     result: Optional[EvalResult] = None
     error: Optional[str] = None
@@ -257,9 +260,7 @@ def run_pool(
     # per entry; the per-entry budget is enforced by giving each entry
     # its share and letting the runner's own review timeout
     # (FORGE_REVIEW_TIMEOUT_S) do the fine-grained killing.
-    deadline = time.monotonic() + entry_timeout_s * max(
-        1, (len(entries) + jobs - 1) // jobs
-    )
+    deadline = time.monotonic() + entry_timeout_s * max(1, (len(entries) + jobs - 1) // jobs)
 
     executor = ProcessPoolExecutor(max_workers=jobs)
     try:
@@ -283,9 +284,7 @@ def run_pool(
                 for future in pending:
                     pe = results[future_to_idx[future]]
                     pe.hung = True
-                    pe.error = (
-                        "pool deadline exceeded before this entry finished"
-                    )
+                    pe.error = "pool deadline exceeded before this entry finished"
                     future.cancel()
                 break
 

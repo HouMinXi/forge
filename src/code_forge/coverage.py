@@ -25,6 +25,7 @@ unreachable yields no L1 findings but is still treated as L1-covered
 (l1_active is diff-based, not reachability-based).  Detecting an
 unreachable backend as a coverage gap is deferred.
 """
+
 from __future__ import annotations
 
 from fnmatch import fnmatch
@@ -97,21 +98,23 @@ def build_coverage_findings(
     """
     findings: list[StateFinding] = []
     for filepath in uncovered_files:
-        findings.append(StateFinding(
-            id="coverage-" + filepath,
-            fingerprint="coverage:" + filepath,
-            source="COVERAGE",
-            disposition=Disposition.UNCERTAIN,
-            file=filepath,
-            line_range=[0, 0],
-            description=(
-                "no review layer examined this file: no linter in "
-                "tools.yaml matches it and L1 semantic review did not run "
-                "(non-git review or stub engine). forge cannot vouch for "
-                "it. Configure a matching linter, review it in git mode, "
-                "or exempt it in .code-forge/coverage.yaml."
-            ),
-        ))
+        findings.append(
+            StateFinding(
+                id="coverage-" + filepath,
+                fingerprint="coverage:" + filepath,
+                source="COVERAGE",
+                disposition=Disposition.UNCERTAIN,
+                file=filepath,
+                line_range=[0, 0],
+                description=(
+                    "no review layer examined this file: no linter in "
+                    "tools.yaml matches it and L1 semantic review did not run "
+                    "(non-git review or stub engine). forge cannot vouch for "
+                    "it. Configure a matching linter, review it in git mode, "
+                    "or exempt it in .code-forge/coverage.yaml."
+                ),
+            )
+        )
     return findings
 
 
@@ -144,26 +147,18 @@ def load_coverage_exempt_patterns(repo_root: Path) -> list[str]:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        raise CoverageConfigError(
-            "coverage.yaml: YAML parse error: %s" % e
-        ) from e
+        raise CoverageConfigError("coverage.yaml: YAML parse error: %s" % e) from e
 
     if not isinstance(data, dict):
-        raise CoverageConfigError(
-            "coverage.yaml: top-level value must be a mapping"
-        )
+        raise CoverageConfigError("coverage.yaml: top-level value must be a mapping")
 
     version = data.get("version")
     if version != 1:
-        raise CoverageConfigError(
-            "coverage.yaml: version: expected 1, got %r" % version
-        )
+        raise CoverageConfigError("coverage.yaml: version: expected 1, got %r" % version)
 
     patterns = data.get("exempt_patterns", [])
     if not isinstance(patterns, list):
-        raise CoverageConfigError(
-            "coverage.yaml: 'exempt_patterns' must be a list"
-        )
+        raise CoverageConfigError("coverage.yaml: 'exempt_patterns' must be a list")
     for pattern in patterns:
         if not isinstance(pattern, str):
             raise CoverageConfigError(

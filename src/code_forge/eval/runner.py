@@ -22,6 +22,7 @@ Advisory scoring:
   - advisory_caught_count is SEPARATE from caught_count; never affects
     actual_verdict computation.
 """
+
 from __future__ import annotations
 
 import json
@@ -200,7 +201,11 @@ def _run_review(cmd: list[str], cwd: str, env: dict, timeout_s: int):
     """
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(
-            cmd, cwd=cwd, stdout=out, stderr=err, env=env,
+            cmd,
+            cwd=cwd,
+            stdout=out,
+            stderr=err,
+            env=env,
             start_new_session=True,
         )
         try:
@@ -241,9 +246,11 @@ def _read_both_ends(fh) -> str:
     fh.seek(size - half)
     tail_bytes = _trim_to_char_boundary(fh.read(half), at_start=True)
     omitted = size - len(head_bytes) - len(tail_bytes)
-    return (head_bytes.decode("utf-8", errors="replace")
-            + "\n...[%d bytes omitted]...\n" % omitted
-            + tail_bytes.decode("utf-8", errors="replace"))
+    return (
+        head_bytes.decode("utf-8", errors="replace")
+        + "\n...[%d bytes omitted]...\n" % omitted
+        + tail_bytes.decode("utf-8", errors="replace")
+    )
 
 
 def _trim_to_char_boundary(chunk: bytes, at_start: bool) -> bytes:
@@ -273,8 +280,8 @@ def _trim_to_char_boundary(chunk: bytes, at_start: bool) -> bytes:
         if byte & 0xC0 == 0x80:
             continue
         if byte & 0x80 == 0:
-            return chunk[:len(chunk) - i]
-        return chunk[:len(chunk) - i - 1]
+            return chunk[: len(chunk) - i]
+        return chunk[: len(chunk) - i - 1]
     return chunk
 
 
@@ -395,7 +402,6 @@ class FixvalAxisHook(AxisHook):
 register_axis_hook(FixvalAxisHook())
 
 
-
 class RuntimeAxisHook(AxisHook):
     """RUNTIME eval axis hook: advisory content-match scoring.
 
@@ -480,15 +486,14 @@ def _read_confirmed_findings(temp_dir: str) -> list[dict] | None:
         raw_range = f.get("line_range")
         line_range = raw_range if valid_line_range(raw_range) else None
         description = f.get("description")
-        confirmed.append({
-            "file": file.strip(),
-            "line_range": line_range,
-            "description": description if isinstance(
-                description, str
-            ) else "",
-        })
+        confirmed.append(
+            {
+                "file": file.strip(),
+                "line_range": line_range,
+                "description": description if isinstance(description, str) else "",
+            }
+        )
     return confirmed
-
 
 
 def _concat_advisory_text(findings: list[dict]) -> str:
@@ -699,8 +704,7 @@ def _to_config_shape(backend_config: dict) -> dict:
     return out
 
 
-def _keep_state_guarded(temp_dir: str, keep_state_dir: str,
-                        entry_name: str) -> None:
+def _keep_state_guarded(temp_dir: str, keep_state_dir: str, entry_name: str) -> None:
     """_keep_state for use inside a finally: a failed copy (OSError) or
     a refused name (ValueError from the escape guard) is reported and
     swallowed, so it neither masks the exception that brought us here
@@ -708,8 +712,7 @@ def _keep_state_guarded(temp_dir: str, keep_state_dir: str,
     try:
         _keep_state(temp_dir, keep_state_dir, entry_name)
     except (OSError, ValueError) as exc:
-        print("keep_state_dir: could not keep %s: %s"
-              % (entry_name, exc), file=sys.stderr)
+        print("keep_state_dir: could not keep %s: %s" % (entry_name, exc), file=sys.stderr)
 
 
 def _keep_state(temp_dir: str, keep_state_dir: str, entry_name: str) -> None:
@@ -784,8 +787,12 @@ def replay_entry(
         temp_dir = tempfile.mkdtemp(prefix="forge-eval-")
         try:
             flagged, skip_reason = _run_single(
-                entry, diff_path, temp_dir, backend_name,
-                backend_config, corpus_dir,
+                entry,
+                diff_path,
+                temp_dir,
+                backend_name,
+                backend_config,
+                corpus_dir,
             )
             if skip_reason:
                 # SKIPPED -- return immediately
@@ -816,9 +823,7 @@ def replay_entry(
             if entry.expected_findings or entry.asserts_no_findings:
                 confirmed = _read_confirmed_findings(temp_dir)
                 if confirmed is not None:
-                    per_run_findings.append(
-                        score_findings(entry, confirmed)
-                    )
+                    per_run_findings.append(score_findings(entry, confirmed))
 
             if flagged:
                 caught_count += 1
@@ -904,12 +909,25 @@ def _run_single(
 
     subprocess.run(
         ["git", "init", "-b", "main"],
-        cwd=temp_dir, capture_output=True, check=False,
+        cwd=temp_dir,
+        capture_output=True,
+        check=False,
     )
     subprocess.run(
-        ["git", "-c", "user.name=eval", "-c", "user.email=eval@test",
-         "commit", "--allow-empty", "-m", "init"],
-        cwd=temp_dir, capture_output=True, check=False,
+        [
+            "git",
+            "-c",
+            "user.name=eval",
+            "-c",
+            "user.email=eval@test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        cwd=temp_dir,
+        capture_output=True,
+        check=False,
     )
 
     if corpus_dir is not None:
@@ -921,17 +939,31 @@ def _run_single(
                 return False, "infra: base_files seed error: %s" % exc
             subprocess.run(
                 ["git", "add", "-A"],
-                cwd=temp_dir, capture_output=True, check=False,
+                cwd=temp_dir,
+                capture_output=True,
+                check=False,
             )
             subprocess.run(
-                ["git", "-c", "user.name=eval", "-c", "user.email=eval@test",
-                 "commit", "-m", "seed base files"],
-                cwd=temp_dir, capture_output=True, check=False,
+                [
+                    "git",
+                    "-c",
+                    "user.name=eval",
+                    "-c",
+                    "user.email=eval@test",
+                    "commit",
+                    "-m",
+                    "seed base files",
+                ],
+                cwd=temp_dir,
+                capture_output=True,
+                check=False,
             )
 
     apply_result = subprocess.run(
         ["git", "apply", str(diff_path.resolve())],
-        cwd=temp_dir, capture_output=True, check=False,
+        cwd=temp_dir,
+        capture_output=True,
+        check=False,
     )
     if apply_result.returncode != 0:
         stderr_text = apply_result.stderr
@@ -970,14 +1002,13 @@ def _run_single(
         # run at forge's defaults: the arm looks like it ran, its numbers are
         # real, and they answer a different question than the one asked.
         # Nothing downstream can tell that apart from a genuine result.
-        return False, (
-            "infra: arm settings absent from the review environment: %s"
-            % ", ".join(missing)
-        )
+        return False, ("infra: arm settings absent from the review environment: %s" % ", ".join(missing))
     try:
         returncode, stderr_text = _run_review(
             ["code-forge", "review", "--backend", backend_name],
-            temp_dir, eval_env, timeout_s,
+            temp_dir,
+            eval_env,
+            timeout_s,
         )
     except subprocess.TimeoutExpired:
         return False, "infra: code-forge review timeout after %ds" % timeout_s

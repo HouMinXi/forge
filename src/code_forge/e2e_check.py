@@ -34,19 +34,13 @@ from .state import StateFinding
 # ---------------------------------------------------------------------------
 
 # Python: matches "def foo(" or "async def foo(" lines (added lines).
-_PY_DEF_RE = re.compile(
-    r"^\s*(async\s+)?def\s+[A-Za-z_]\w*\s*\("
-)
+_PY_DEF_RE = re.compile(r"^\s*(async\s+)?def\s+[A-Za-z_]\w*\s*\(")
 
 # Python: matches a return-type annotation "-> <type> :" at end of line.
-_PY_RETURN_RE = re.compile(
-    r"->\s*\S+.*:\s*$"
-)
+_PY_RETURN_RE = re.compile(r"->\s*\S+.*:\s*$")
 
 # Shell: matches a function definition line.
-_SH_FUNC_RE = re.compile(
-    r"^\s*(function\s+)?[A-Za-z_]\w*\s*\(\s*\)\s*\{?\s*$"
-)
+_SH_FUNC_RE = re.compile(r"^\s*(function\s+)?[A-Za-z_]\w*\s*\(\s*\)\s*\{?\s*$")
 
 # Arm 2: matches a def/function pattern inside a section_header string.
 # git emits section_header such as "def parse(self, ..." or "foo() {".
@@ -164,6 +158,7 @@ def group_source_files(
 # components.yaml loader and schema validation
 # ---------------------------------------------------------------------------
 
+
 def load_components_yaml(repo_root: Path) -> Optional[dict]:
     """Load and validate .code-forge/components.yaml.
 
@@ -187,37 +182,25 @@ def load_components_yaml(repo_root: Path) -> Optional[dict]:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        raise ComponentsConfigError(
-            "components.yaml: YAML parse error: %s" % e
-        ) from e
+        raise ComponentsConfigError("components.yaml: YAML parse error: %s" % e) from e
 
     if not isinstance(data, dict):
-        raise ComponentsConfigError(
-            "components.yaml: top-level value must be a mapping"
-        )
+        raise ComponentsConfigError("components.yaml: top-level value must be a mapping")
 
     # (a) version check
     version = data.get("version")
     if version != 1:
-        raise ComponentsConfigError(
-            "components.yaml: version: expected 1, got %r" % version
-        )
+        raise ComponentsConfigError("components.yaml: version: expected 1, got %r" % version)
 
     # (b) components must be a dict; each value has a paths list.
     raw_components = data.get("components")
     if not isinstance(raw_components, dict):
-        raise ComponentsConfigError(
-            "components.yaml: 'components' must be a mapping"
-        )
+        raise ComponentsConfigError("components.yaml: 'components' must be a mapping")
     for name, info in raw_components.items():
         if not isinstance(info, dict) or "paths" not in info:
-            raise ComponentsConfigError(
-                "components.yaml: component %r: missing 'paths' list" % name
-            )
+            raise ComponentsConfigError("components.yaml: component %r: missing 'paths' list" % name)
         if not isinstance(info["paths"], list):
-            raise ComponentsConfigError(
-                "components.yaml: component %r: 'paths' must be a list" % name
-            )
+            raise ComponentsConfigError("components.yaml: component %r: 'paths' must be a list" % name)
 
     component_names = set(raw_components.keys())
 
@@ -226,13 +209,11 @@ def load_components_yaml(repo_root: Path) -> Optional[dict]:
         for target in info.get("depends_on", []):
             if target == name:
                 raise ComponentsConfigError(
-                    "components.yaml: self-reference '%s' -> '%s'"
-                    % (name, name)
+                    "components.yaml: self-reference '%s' -> '%s'" % (name, name)
                 )
             if target not in component_names:
                 raise ComponentsConfigError(
-                    "components.yaml: depends_on '%s' (from '%s') is undefined"
-                    % (target, name)
+                    "components.yaml: depends_on '%s' (from '%s') is undefined" % (target, name)
                 )
 
     # (e) cycle detection via DFS.
@@ -241,28 +222,21 @@ def load_components_yaml(repo_root: Path) -> Optional[dict]:
     # (f) e2e_absent_ok entries: each .component must exist.
     absent_ok_raw = data.get("e2e_absent_ok", [])
     if not isinstance(absent_ok_raw, list):
-        raise ComponentsConfigError(
-            "components.yaml: 'e2e_absent_ok' must be a list"
-        )
+        raise ComponentsConfigError("components.yaml: 'e2e_absent_ok' must be a list")
     for entry in absent_ok_raw:
         if not isinstance(entry, dict):
-            raise ComponentsConfigError(
-                "components.yaml: each e2e_absent_ok entry must be a mapping"
-            )
+            raise ComponentsConfigError("components.yaml: each e2e_absent_ok entry must be a mapping")
         comp = entry.get("component", "")
         if comp not in component_names:
             raise ComponentsConfigError(
-                "components.yaml: e2e_absent_ok component %r is undefined"
-                % comp
+                "components.yaml: e2e_absent_ok component %r is undefined" % comp
             )
 
     # (g) data_paths: each entry is a list of exactly 2 elements; each name
     #     must exist.
     data_paths_raw = data.get("data_paths", [])
     if not isinstance(data_paths_raw, list):
-        raise ComponentsConfigError(
-            "components.yaml: 'data_paths' must be a list"
-        )
+        raise ComponentsConfigError("components.yaml: 'data_paths' must be a list")
     for entry in data_paths_raw:
         if not isinstance(entry, list) or len(entry) != 2:
             raise ComponentsConfigError(
@@ -272,8 +246,7 @@ def load_components_yaml(repo_root: Path) -> Optional[dict]:
         for comp in entry:
             if comp not in component_names:
                 raise ComponentsConfigError(
-                    "components.yaml: data_paths component %r is undefined"
-                    % comp
+                    "components.yaml: data_paths component %r is undefined" % comp
                 )
 
     # (h) default e2e_patterns when absent.
@@ -308,8 +281,7 @@ def _detect_cycles(raw_components: dict) -> None:
                 cycle_start = path.index(neighbor)
                 cycle_nodes = path[cycle_start:] + [neighbor]
                 raise ComponentsConfigError(
-                    "components.yaml: cycle detected: %s"
-                    % " -> ".join(cycle_nodes)
+                    "components.yaml: cycle detected: %s" % " -> ".join(cycle_nodes)
                 )
             if color[neighbor] == WHITE:
                 dfs(neighbor)
@@ -324,6 +296,7 @@ def _detect_cycles(raw_components: dict) -> None:
 # ---------------------------------------------------------------------------
 # Layer 2 co-occurrence detection and e2e artifact matching
 # ---------------------------------------------------------------------------
+
 
 def sorted_pair_hash(a: str, b: str) -> str:
     """Commutative 16-char sha256 hash of a pair of component names.
@@ -370,7 +343,8 @@ def find_e2e_artifacts(repo_root: Path, patterns: list[str]) -> set[str]:
     for pattern in patterns:
         try:
             for match in _glob.glob(
-                str(repo_root / pattern), recursive=True,
+                str(repo_root / pattern),
+                recursive=True,
             ):
                 if not os.path.isfile(match):
                     continue
@@ -432,23 +406,15 @@ def check_layer_2(
     # Extract name->paths mapping before passing to group_source_files.
     # The full YAML dict has structural keys ("version", "data_paths",
     # "e2e_patterns") that group_source_files would silently iterate over.
-    component_paths_map = {
-        name: info["paths"]
-        for name, info in components["components"].items()
-    }
+    component_paths_map = {name: info["paths"] for name, info in components["components"].items()}
 
     # Touched components: keys from group_source_files that are real component
     # names. Filter out first-segment fallback groups that are not components.
     groups = group_source_files(changed, component_paths_map)
-    touched_components: set[str] = {
-        key for key in groups if key in component_paths_map
-    }
+    touched_components: set[str] = {key for key in groups if key in component_paths_map}
 
     artifacts = find_e2e_artifacts(repo_root, components["e2e_patterns"])
-    absent_ok: set[str] = {
-        entry["component"]
-        for entry in components.get("e2e_absent_ok", [])
-    }
+    absent_ok: set[str] = {entry["component"] for entry in components.get("e2e_absent_ok", [])}
 
     # Compute hub set by reverse-scanning depends_on. A component is a hub
     # when other components list it in their depends_on.
@@ -530,8 +496,7 @@ def check_layer_2(
             continue
         desc = (
             "cross-component change: peer pair ('%s', '%s') both touched; "
-            "no e2e artifact under either component's paths matches e2e_patterns"
-            % (a, b)
+            "no e2e artifact under either component's paths matches e2e_patterns" % (a, b)
         )
         _emit_p2(a, b, desc)
 
@@ -577,8 +542,7 @@ def check_layer_1(
     description = (
         "cross-component change spans groups {%s}; "
         "signature changed in {%s}; "
-        "is there an e2e test for the joined path?"
-        % (", ".join(group_names), ", ".join(sig_names))
+        "is there an e2e test for the joined path?" % (", ".join(group_names), ", ".join(sig_names))
     )
 
     finding = StateFinding(
@@ -596,6 +560,7 @@ def check_layer_1(
 # ---------------------------------------------------------------------------
 # Orchestration: load config, run both layers, deduplicate findings
 # ---------------------------------------------------------------------------
+
 
 def run_e2e_check(
     diff_text: str,
@@ -648,8 +613,7 @@ def run_e2e_check(
             component_paths_map: Optional[dict] = None
         else:
             component_paths_map = {
-                name: info["paths"]
-                for name, info in components_dict["components"].items()
+                name: info["paths"] for name, info in components_dict["components"].items()
             }
 
         l1 = check_layer_1(diff_text, components=component_paths_map)

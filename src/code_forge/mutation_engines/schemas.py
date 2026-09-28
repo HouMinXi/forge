@@ -7,6 +7,7 @@ envelopes, target results and the nine-member normalized status
 enumeration.  Field sets are verbatim from the admitted specification
 (2026-09-22-mutation-interface-spec.md) and plan (revision four).
 """
+
 from __future__ import annotations
 
 import re
@@ -38,8 +39,10 @@ def valid_identifier(value: str) -> bool:
 
 # -- Normalized status -------------------------------------------------------
 
+
 class NormalizedStatus(str, Enum):
     """Nine-member enumeration (spec internal-contracts section)."""
+
     KILLED = "killed"
     SURVIVED = "survived"
     NO_COVERAGE = "no_coverage"
@@ -53,8 +56,10 @@ class NormalizedStatus(str, Enum):
 
 # -- Run state / aggregate decision / baseline state -------------------------
 
+
 class RunState(str, Enum):
     """Per-target run state (spec result-envelope section)."""
+
     COMPLETE = "complete"
     INCOMPLETE = "incomplete"
     UNAVAILABLE = "unavailable"
@@ -65,6 +70,7 @@ class RunState(str, Enum):
 
 class AggregateDecision(str, Enum):
     """Aggregate mutation decision (spec result-envelope section)."""
+
     PASS = "pass"
     FAIL = "fail"
     HOLD = "hold"
@@ -73,6 +79,7 @@ class AggregateDecision(str, Enum):
 
 class BaselineState(str, Enum):
     """Baseline state (spec result-envelope section)."""
+
     PASSED = "passed"
     FAILED = "failed"
     EMPTY = "empty"
@@ -82,6 +89,7 @@ class BaselineState(str, Enum):
 
 class CleanupState(str, Enum):
     """Cleanup state (spec result-envelope section)."""
+
     COMPLETE = "complete"
     INCOMPLETE = "incomplete"
     PENDING = "pending"
@@ -89,21 +97,24 @@ class CleanupState(str, Enum):
 
 # -- Budget ------------------------------------------------------------------
 
-_BUDGET_KEYS = frozenset({
-    "total_seconds",
-    "baseline_seconds",
-    "mutant_seconds",
-    "concurrency",
-    "memory_mb",
-    "processes",
-    "workspace_mb",
-    "evidence_mb",
-})
+_BUDGET_KEYS = frozenset(
+    {
+        "total_seconds",
+        "baseline_seconds",
+        "mutant_seconds",
+        "concurrency",
+        "memory_mb",
+        "processes",
+        "workspace_mb",
+        "evidence_mb",
+    }
+)
 
 
 @dataclass(frozen=True)
 class Budget:
     """Execution budget for a target.  Every member is a required positive integer."""
+
     total_seconds: int
     baseline_seconds: int
     mutant_seconds: int
@@ -117,9 +128,7 @@ class Budget:
         for name in _BUDGET_KEYS:
             val = getattr(self, name)
             if not isinstance(val, int) or isinstance(val, bool) or val <= 0:
-                raise ValueError(
-                    "budget.%s must be a positive integer, got %r" % (name, val)
-                )
+                raise ValueError("budget.%s must be a positive integer, got %r" % (name, val))
         if self.baseline_seconds > self.total_seconds:
             raise ValueError(
                 "budget.baseline_seconds (%d) exceeds total_seconds (%d)"
@@ -149,10 +158,21 @@ class Budget:
 
 # -- Target declaration ------------------------------------------------------
 
-_TARGET_REQUIRED_KEYS = frozenset({
-    "id", "adapter", "root", "sources", "tests", "inputs",
-    "oracle", "command", "execution_profile", "environment", "budget",
-})
+_TARGET_REQUIRED_KEYS = frozenset(
+    {
+        "id",
+        "adapter",
+        "root",
+        "sources",
+        "tests",
+        "inputs",
+        "oracle",
+        "command",
+        "execution_profile",
+        "environment",
+        "budget",
+    }
+)
 
 # Adapters that require a corpus field
 _CORPUS_ADAPTERS = frozenset({"patch-corpus"})
@@ -193,6 +213,7 @@ def _validate_relative_pattern(pattern: str, field_name: str) -> None:
 @dataclass(frozen=True)
 class TargetDeclaration:
     """A single mutation target declaration from the gate configuration."""
+
     id: str
     adapter: str
     root: str
@@ -209,22 +230,16 @@ class TargetDeclaration:
 
     def __post_init__(self) -> None:
         if not valid_identifier(self.id):
-            raise ValueError(
-                "target id must match [a-z][a-z0-9_-]{0,63}, got %r" % self.id
-            )
+            raise ValueError("target id must match [a-z][a-z0-9_-]{0,63}, got %r" % self.id)
         if not valid_identifier(self.adapter):
-            raise ValueError(
-                "target adapter must be a valid identifier, got %r" % self.adapter
-            )
+            raise ValueError("target adapter must be a valid identifier, got %r" % self.adapter)
         if not self.sources:
             raise ValueError("target %r: sources must be nonempty" % self.id)
         if not self.tests:
             raise ValueError("target %r: tests must be nonempty" % self.id)
         if not self.command:
             raise ValueError("target %r: command must be nonempty" % self.id)
-        if not isinstance(self.command, tuple) or not all(
-            isinstance(a, str) for a in self.command
-        ):
+        if not isinstance(self.command, tuple) or not all(isinstance(a, str) for a in self.command):
             raise ValueError("target %r: command must be a tuple of strings" % self.id)
 
         # Validate root
@@ -244,21 +259,17 @@ class TargetDeclaration:
         if self.adapter in _CORPUS_ADAPTERS:
             if self.corpus is None:
                 raise ValueError(
-                    "target %r: corpus is required for adapter %r"
-                    % (self.id, self.adapter)
+                    "target %r: corpus is required for adapter %r" % (self.id, self.adapter)
                 )
             _validate_relative_path(self.corpus, "target %r: corpus" % self.id)
         else:
             if self.corpus is not None:
                 raise ValueError(
-                    "target %r: corpus is forbidden for non-corpus adapter %r"
-                    % (self.id, self.adapter)
+                    "target %r: corpus is forbidden for non-corpus adapter %r" % (self.id, self.adapter)
                 )
 
         if self.engine_config is not None:
-            _validate_relative_path(
-                self.engine_config, "target %r: engine_config" % self.id
-            )
+            _validate_relative_path(self.engine_config, "target %r: engine_config" % self.id)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -283,25 +294,17 @@ class TargetDeclaration:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TargetDeclaration:
         if not isinstance(data, dict):
-            raise TypeError(
-                "target declaration must be a mapping, got %s" % type(data).__name__
-            )
+            raise TypeError("target declaration must be a mapping, got %s" % type(data).__name__)
 
         # Check required keys
         missing = _TARGET_REQUIRED_KEYS - data.keys()
         if missing:
-            raise ValueError(
-                "target declaration missing required keys: %s"
-                % ", ".join(sorted(missing))
-            )
+            raise ValueError("target declaration missing required keys: %s" % ", ".join(sorted(missing)))
 
         allowed = _TARGET_REQUIRED_KEYS | {"engine_config", "corpus"}
         extra = set(data.keys()) - allowed
         if extra:
-            raise ValueError(
-                "target declaration has unknown keys: %s"
-                % ", ".join(sorted(extra))
-            )
+            raise ValueError("target declaration has unknown keys: %s" % ", ".join(sorted(extra)))
 
         # Coerce list fields to tuples
         sources = data["sources"]
@@ -317,8 +320,12 @@ class TargetDeclaration:
         if not isinstance(command, list):
             raise TypeError("command must be a list, got %s" % type(command).__name__)
 
-        for lst_name, lst_val in [("sources", sources), ("tests", tests),
-                                  ("inputs", inputs), ("command", command)]:
+        for lst_name, lst_val in [
+            ("sources", sources),
+            ("tests", tests),
+            ("inputs", inputs),
+            ("command", command),
+        ]:
             if not all(isinstance(x, str) for x in lst_val):
                 raise TypeError("%s entries must be strings" % lst_name)
 
@@ -343,9 +350,11 @@ class TargetDeclaration:
 
 # -- Worker file -------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class WorkerConfig:
     """Operator worker configuration (spec host-files section)."""
+
     schema_version: int
     id: str
     concurrency: int
@@ -359,37 +368,24 @@ class WorkerConfig:
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
-            raise ValueError(
-                "worker schema_version must be 1, got %r" % self.schema_version
-            )
+            raise ValueError("worker schema_version must be 1, got %r" % self.schema_version)
         if not valid_identifier(self.id):
-            raise ValueError(
-                "worker id must be a valid identifier, got %r" % self.id
-            )
+            raise ValueError("worker id must be a valid identifier, got %r" % self.id)
         if self.concurrency != 1:
-            raise ValueError(
-                "worker concurrency must be 1, got %r" % self.concurrency
-            )
+            raise ValueError("worker concurrency must be 1, got %r" % self.concurrency)
         if self.swap_mb != 0:
-            raise ValueError(
-                "worker swap_mb must be 0, got %r" % self.swap_mb
-            )
+            raise ValueError("worker swap_mb must be 0, got %r" % self.swap_mb)
         for name in ("memory_mb", "pids", "supervisor_memory_mb", "supervisor_pids"):
             val = getattr(self, name)
             if not isinstance(val, int) or isinstance(val, bool) or val <= 0:
-                raise ValueError(
-                    "worker.%s must be a positive integer, got %r" % (name, val)
-                )
+                raise ValueError("worker.%s must be a positive integer, got %r" % (name, val))
         if not self.delegated_cgroup_root.startswith("/"):
             raise ValueError(
                 "worker.delegated_cgroup_root must be an absolute path, got %r"
                 % self.delegated_cgroup_root
             )
         if not self.state_root.startswith("/"):
-            raise ValueError(
-                "worker.state_root must be an absolute path, got %r"
-                % self.state_root
-            )
+            raise ValueError("worker.state_root must be an absolute path, got %r" % self.state_root)
 
     def check_admission(self, targets: list[TargetDeclaration]) -> None:
         """Raise ValueError when targets exceed the worker budget.
@@ -405,14 +401,12 @@ class WorkerConfig:
         if max_memory + self.supervisor_memory_mb > self.memory_mb:
             raise ValueError(
                 "admission: max target memory_mb (%d) + supervisor_memory_mb (%d) "
-                "> worker.memory_mb (%d)"
-                % (max_memory, self.supervisor_memory_mb, self.memory_mb)
+                "> worker.memory_mb (%d)" % (max_memory, self.supervisor_memory_mb, self.memory_mb)
             )
         if max_procs + self.supervisor_pids > self.pids:
             raise ValueError(
                 "admission: max target processes (%d) + supervisor_pids (%d) "
-                "> worker.pids (%d)"
-                % (max_procs, self.supervisor_pids, self.pids)
+                "> worker.pids (%d)" % (max_procs, self.supervisor_pids, self.pids)
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -432,33 +426,35 @@ class WorkerConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WorkerConfig:
         if not isinstance(data, dict):
-            raise TypeError(
-                "worker config must be a mapping, got %s" % type(data).__name__
-            )
+            raise TypeError("worker config must be a mapping, got %s" % type(data).__name__)
         required = {
-            "schema_version", "id", "concurrency", "swap_mb",
-            "memory_mb", "pids", "supervisor_memory_mb", "supervisor_pids",
-            "delegated_cgroup_root", "state_root",
+            "schema_version",
+            "id",
+            "concurrency",
+            "swap_mb",
+            "memory_mb",
+            "pids",
+            "supervisor_memory_mb",
+            "supervisor_pids",
+            "delegated_cgroup_root",
+            "state_root",
         }
         missing = required - data.keys()
         if missing:
-            raise ValueError(
-                "worker config missing required keys: %s"
-                % ", ".join(sorted(missing))
-            )
+            raise ValueError("worker config missing required keys: %s" % ", ".join(sorted(missing)))
         extra = set(data.keys()) - required
         if extra:
-            raise ValueError(
-                "worker config has unknown keys: %s" % ", ".join(sorted(extra))
-            )
+            raise ValueError("worker config has unknown keys: %s" % ", ".join(sorted(extra)))
         return cls(**data)
 
 
 # -- Infrastructure error / artifact reference --------------------------------
 
+
 @dataclass(frozen=True)
 class ArtifactReference:
     """A pointer to a run-owned evidence file."""
+
     relative_run_path: str
     digest: str
     bytes: int
@@ -478,6 +474,7 @@ class ArtifactReference:
 @dataclass(frozen=True)
 class InfrastructureError:
     """An infrastructure error record (spec result-envelope section)."""
+
     code: str
     phase: str
     target_id: str | None
@@ -485,10 +482,17 @@ class InfrastructureError:
     retryable: bool
     evidence_refs: tuple[ArtifactReference, ...]
 
-    _VALID_PHASES = frozenset({
-        "resolve", "snapshot", "probe", "baseline",
-        "mutation", "parse", "cleanup",
-    })
+    _VALID_PHASES = frozenset(
+        {
+            "resolve",
+            "snapshot",
+            "probe",
+            "baseline",
+            "mutation",
+            "parse",
+            "cleanup",
+        }
+    )
 
     def __post_init__(self) -> None:
         if not self.code:
@@ -499,9 +503,7 @@ class InfrastructureError:
                 % (sorted(self._VALID_PHASES), self.phase)
             )
         if len(self.message) > 4096:
-            raise ValueError(
-                "infrastructure error message exceeds 4096 chars"
-            )
+            raise ValueError("infrastructure error message exceeds 4096 chars")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -516,9 +518,11 @@ class InfrastructureError:
 
 # -- Run envelope / target result (structural only) --------------------------
 
+
 @dataclass(frozen=True)
 class RunIdentity:
     """Identity fields shared by a run envelope and each target result."""
+
     run_id: str
     reviewed_source_id: str
     input_manifest_digest: str
@@ -550,6 +554,7 @@ class RunIdentity:
 @dataclass(frozen=True)
 class CommandReceipt:
     """Record of a single supervised command execution."""
+
     id: str
     run_id: str
     target_id: str
@@ -585,6 +590,7 @@ class CommandReceipt:
 @dataclass(frozen=True)
 class Cleanup:
     """Cleanup record (spec result-envelope section)."""
+
     state: CleanupState
     owned_group_empty: bool
     owned_mounts_removed: bool
@@ -602,6 +608,7 @@ class Cleanup:
 @dataclass(frozen=True)
 class BaselineRecord:
     """Baseline evidence record (spec result-envelope section)."""
+
     state: BaselineState
     test_count: int
     command_receipt: CommandReceipt | None
@@ -611,9 +618,7 @@ class BaselineRecord:
         return {
             "state": self.state.value,
             "test_count": self.test_count,
-            "command_receipt": (
-                self.command_receipt.to_dict() if self.command_receipt else None
-            ),
+            "command_receipt": (self.command_receipt.to_dict() if self.command_receipt else None),
             "native_evidence": [r.to_dict() for r in self.native_evidence],
         }
 
@@ -621,6 +626,7 @@ class BaselineRecord:
 @dataclass(frozen=True)
 class Outcome:
     """A single mutant outcome (spec result-envelope section)."""
+
     mutant_id: str
     source_path: str
     source_digest: str
@@ -648,6 +654,7 @@ class Outcome:
 @dataclass(frozen=True)
 class InventoryManifestEntry:
     """One entry in the generation manifest."""
+
     mutant_id: str
     source_path: str
     source_digest: str
@@ -669,6 +676,7 @@ class InventoryManifestEntry:
 @dataclass(frozen=True)
 class Generation:
     """Generation evidence (spec result-envelope section)."""
+
     inventory_artifact: ArtifactReference
     completion_evidence: ArtifactReference
     extractor_version: str
@@ -684,6 +692,7 @@ class Generation:
 @dataclass(frozen=True)
 class Inventory:
     """Inventory counts and manifest (spec result-envelope section)."""
+
     generated: int
     selected: int
     excluded: int
@@ -703,6 +712,7 @@ class Inventory:
 @dataclass(frozen=True)
 class TargetResult:
     """Complete result for one selected target (spec result-envelope section)."""
+
     identity: RunIdentity
     target_id: str
     adapter_id: str
@@ -742,6 +752,7 @@ class TargetResult:
 @dataclass(frozen=True)
 class RunEnvelope:
     """Top-level run envelope (spec result-envelope section)."""
+
     schema_version: int
     run_id: str
     reviewed_source_id: str

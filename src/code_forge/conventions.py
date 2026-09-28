@@ -11,6 +11,7 @@ Exported symbols:
   get_same_repo_digest         -- same-repo naming conventions digest
   get_digest                   -- full conventions digest
 """
+
 from __future__ import annotations
 
 import ast
@@ -18,10 +19,19 @@ import os
 from pathlib import Path
 from typing import Optional
 
-_SKIP_DIRS = frozenset({
-    "__pycache__", ".git", "venv", ".venv", ".tox",
-    "build", "dist", "node_modules", ".eggs",
-})
+_SKIP_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".git",
+        "venv",
+        ".venv",
+        ".tox",
+        "build",
+        "dist",
+        "node_modules",
+        ".eggs",
+    }
+)
 
 
 def _extract_python_public_names(
@@ -149,6 +159,7 @@ def get_digest(cwd: Path, backend: Optional[object] = None) -> str:
     if same:
         parts.append(same)
     from .conventions_resolver import get_cross_repo_digest
+
     cross_repo = get_cross_repo_digest(cwd)
     if cross_repo:
         parts.append(cross_repo)

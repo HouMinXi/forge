@@ -16,6 +16,7 @@ Three capabilities:
 
 Full axis does NOT run without explicit opt-in (daemon_state in gate.yaml).
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -32,9 +33,16 @@ from .llm_invoke import LLMInvokeError, llm_invoke
 # Default keyword set (narrow + extensible via gate.yaml patterns)
 # ---------------------------------------------------------------------------
 
-DEFAULT_DAEMON_KEYWORDS: frozenset[str] = frozenset({
-    "nft", "iptables", "ip route", "systemctl", "firewall-cmd", "tc",
-})
+DEFAULT_DAEMON_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "nft",
+        "iptables",
+        "ip route",
+        "systemctl",
+        "firewall-cmd",
+        "tc",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -133,11 +141,21 @@ def _grep_repo(
             continue
         try:
             result = subprocess.run(
-                ["grep", "-rn",
-                 "--include=*.py", "--include=*.sh",
-                 "--include=*.yaml", "--include=*.yml",
-                 keyword.strip(), str(repo_root)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                [
+                    "grep",
+                    "-rn",
+                    "--include=*.py",
+                    "--include=*.sh",
+                    "--include=*.yaml",
+                    "--include=*.yml",
+                    keyword.strip(),
+                    str(repo_root),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
             )
             for line in result.stdout.splitlines():
                 parts = line.split(":", 2)
@@ -162,9 +180,12 @@ def _grep_repo(
                 return "\n".join(context_parts)
             try:
                 result = subprocess.run(
-                    ["grep", "-n", "-C", str(context_lines),
-                     keyword.strip(), fpath],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+                    ["grep", "-n", "-C", str(context_lines), keyword.strip(), fpath],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
                 )
                 if result.stdout.strip():
                     chunk = "--- %s ---\n%s" % (fpath, result.stdout)
@@ -198,18 +219,17 @@ def _match_static_rules(
 
         # Match if the mutated state appears in the diff
         if mutates.lower() in diff_lower:
-            description = (
-                "[%s] mutates %s; interferes with %s"
-                % (subsystem, mutates, interferes)
+            description = "[%s] mutates %s; interferes with %s" % (subsystem, mutates, interferes)
+            findings.append(
+                AdvisoryFinding(
+                    id="daemon-state-static-%d" % idx,
+                    axis="DAEMON-STATE",
+                    file="",
+                    line_range=(0, 0),
+                    description=description,
+                    attribution="daemon-state/static-rule",
+                )
             )
-            findings.append(AdvisoryFinding(
-                id="daemon-state-static-%d" % idx,
-                axis="DAEMON-STATE",
-                file="",
-                line_range=(0, 0),
-                description=description,
-                attribution="daemon-state/static-rule",
-            ))
 
     return findings
 
@@ -274,10 +294,7 @@ def _load_daemon_config(
                         existing = []
                     section["conflicts"] = existing + cf_data["conflicts"]
             except (yaml.YAMLError, OSError) as exc:
-                infra_errors.append(
-                    "Failed to load conflicts_file '%s': %s"
-                    % (conflicts_file, exc)
-                )
+                infra_errors.append("Failed to load conflicts_file '%s': %s" % (conflicts_file, exc))
 
     return section
 
@@ -331,25 +348,25 @@ class DaemonStateRunner:
         # Build effective keyword set: gate.yaml patterns + defaults
         extra_patterns = set()
         if config and isinstance(config.get("patterns"), list):
-            extra_patterns = set(
-                str(p) for p in config["patterns"] if p
-            )
+            extra_patterns = set(str(p) for p in config["patterns"] if p)
         effective_keywords = DEFAULT_DAEMON_KEYWORDS | frozenset(extra_patterns)
 
         # Unconfigured behavior
         if config is None:
             if _diff_contains_keywords(diff_text, effective_keywords):
-                return [AdvisoryFinding(
-                    id="daemon-state-heuristic",
-                    axis="DAEMON-STATE",
-                    file="",
-                    line_range=(0, 0),
-                    description=(
-                        "Detected stateful subsystem keywords; "
-                        "enable daemon_state in gate.yaml for deeper analysis"
-                    ),
-                    attribution="daemon-state/heuristic",
-                )]
+                return [
+                    AdvisoryFinding(
+                        id="daemon-state-heuristic",
+                        axis="DAEMON-STATE",
+                        file="",
+                        line_range=(0, 0),
+                        description=(
+                            "Detected stateful subsystem keywords; "
+                            "enable daemon_state in gate.yaml for deeper analysis"
+                        ),
+                        attribution="daemon-state/heuristic",
+                    )
+                ]
             return []
 
         # Configured but disabled
@@ -358,14 +375,15 @@ class DaemonStateRunner:
 
         # Get runtime surfaces
         runtime_surfaces: list[str] = []
-        if (self._runtime_runner is not None
-                and hasattr(self._runtime_runner, "last_surfaces")
-                and self._runtime_runner.last_surfaces):
+        if (
+            self._runtime_runner is not None
+            and hasattr(self._runtime_runner, "last_surfaces")
+            and self._runtime_runner.last_surfaces
+        ):
             runtime_surfaces = list(self._runtime_runner.last_surfaces)
         else:
             self.infra_errors.append(
-                "RuntimeRunner surfaces unavailable; "
-                "falling back to heuristic detection"
+                "RuntimeRunner surfaces unavailable; falling back to heuristic detection"
             )
 
         # Match static conflict rules first
@@ -377,8 +395,10 @@ class DaemonStateRunner:
         # Build static rules text for injection into Q2Q3 prompt
         static_rules_text = ""
         if static_findings:
-            lines = ["Known static conflict rules (do NOT re-report these, "
-                      "only report NEW conflicts not listed here):"]
+            lines = [
+                "Known static conflict rules (do NOT re-report these, "
+                "only report NEW conflicts not listed here):"
+            ]
             for sf in static_findings:
                 lines.append("- %s" % sf.description)
             static_rules_text = "\n".join(lines) + "\n\n"
@@ -386,11 +406,7 @@ class DaemonStateRunner:
         # LLM Step 1 -- Q1 enumerate state
         runtime_ctx = ""
         if runtime_surfaces:
-            runtime_ctx = (
-                "Prior runtime surface analysis:\n"
-                + "\n".join(runtime_surfaces)
-                + "\n\n"
-            )
+            runtime_ctx = "Prior runtime surface analysis:\n" + "\n".join(runtime_surfaces) + "\n\n"
 
         q1_prompt = DAEMON_STATE_Q1 % {
             "diff_text": diff_text,
@@ -398,12 +414,8 @@ class DaemonStateRunner:
         }
 
         if self._backend is None:
-            self.infra_errors.append(
-                "DAEMON-STATE axis skipped: no backend configured"
-            )
-            return static_findings + [_build_skipped_finding(
-                "no backend configured"
-            )]
+            self.infra_errors.append("DAEMON-STATE axis skipped: no backend configured")
+            return static_findings + [_build_skipped_finding("no backend configured")]
 
         try:
             q1_result = llm_invoke(
@@ -413,9 +425,7 @@ class DaemonStateRunner:
             )
         except LLMInvokeError as exc:
             reason = str(exc)
-            self.infra_errors.append(
-                "DAEMON-STATE Q1 LLM call failed: %s" % reason
-            )
+            self.infra_errors.append("DAEMON-STATE Q1 LLM call failed: %s" % reason)
             return static_findings + [_build_skipped_finding(reason)]
 
         # Parse Q1 response
@@ -454,9 +464,7 @@ class DaemonStateRunner:
             )
         except LLMInvokeError as exc:
             reason = str(exc)
-            self.infra_errors.append(
-                "DAEMON-STATE Q2Q3 LLM call failed: %s" % reason
-            )
+            self.infra_errors.append("DAEMON-STATE Q2Q3 LLM call failed: %s" % reason)
             return static_findings + [_build_skipped_finding(reason)]
 
         # Parse Q2Q3 response
@@ -478,20 +486,19 @@ class DaemonStateRunner:
             mutates = str(conflict.get("mutates", "unknown"))
             interferes = str(conflict.get("interferes_with", "unknown"))
             scenario = str(conflict.get("scenario", ""))
-            description = (
-                "[%s] mutates %s; interferes with %s"
-                % (subsystem, mutates, interferes)
-            )
+            description = "[%s] mutates %s; interferes with %s" % (subsystem, mutates, interferes)
             if scenario:
                 description += " -> %s" % scenario
-            llm_findings.append(AdvisoryFinding(
-                id="daemon-state-llm-%d" % idx,
-                axis="DAEMON-STATE",
-                file="",
-                line_range=(0, 0),
-                description=description,
-                attribution="daemon-state/llm",
-            ))
+            llm_findings.append(
+                AdvisoryFinding(
+                    id="daemon-state-llm-%d" % idx,
+                    axis="DAEMON-STATE",
+                    file="",
+                    line_range=(0, 0),
+                    description=description,
+                    attribution="daemon-state/llm",
+                )
+            )
 
         # static findings first, then LLM-discovered
         return static_findings + llm_findings

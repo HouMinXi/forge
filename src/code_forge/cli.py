@@ -6,6 +6,7 @@ Subcommands: review (default), gate-check, mutation-check, e2e-check,
 install-hooks, install-skill, verify, detect, resolve-outlet, init.
 Bare invocation (no subcommand) routes to review for backward compatibility.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -75,6 +76,7 @@ def _load_advisories(path: Path) -> list:
         return []
     try:
         from .advisory import AdvisoryFinding
+
         data = json.loads(path.read_text(encoding="utf-8"))
         return [AdvisoryFinding(**d) for d in data]
     except (OSError, ValueError, TypeError, KeyError, OverflowError, RecursionError):
@@ -105,22 +107,20 @@ def _emit_ci_output(
     final_state = _load_state(state_path)
     if final_state is None:
         return
-    tool_versions = {
-        name: capture_tool_version(tc.command)
-        for name, tc in registry.items()
-    }
+    tool_versions = {name: capture_tool_version(tc.command) for name, tc in registry.items()}
     advisories = _load_advisories(state_path.parent / "advisory-findings.json")
     log_dict = build_sarif_log(
-        final_state, tool_versions, forge_version=__version__,
-        backend_name=backend_name, backend_model=backend_model,
+        final_state,
+        tool_versions,
+        forge_version=__version__,
+        backend_name=backend_name,
+        backend_model=backend_model,
         advisories=advisories or None,
         manifest=manifest,
     )
     print(json.dumps(log_dict), file=sys.stdout)
     print(
-        format_summary(
-            final_state, advisory_count=len(advisories), manifest=manifest
-        ),
+        format_summary(final_state, advisory_count=len(advisories), manifest=manifest),
         file=sys.stderr,
     )
     if post_emit_hook is not None:
@@ -145,7 +145,6 @@ def _load_gate_backends(gate_yaml_path: Path) -> tuple[list, dict]:
     import yaml as _y
     from .backend import load_backend_configs
 
-
     try:
         with open(gate_yaml_path, "r", encoding="utf-8") as _f:
             gd = _y.safe_load(_f)
@@ -162,10 +161,10 @@ def _load_gate_backends(gate_yaml_path: Path) -> tuple[list, dict]:
 
     # Trust guard: check trust before loading backends.
     from .trust import is_trusted
+
     if not is_trusted(gate_yaml_path, gd):
         print(
-            "Untrusted repo backends ignored. "
-            "Run 'code-forge trust' to enable.",
+            "Untrusted repo backends ignored. Run 'code-forge trust' to enable.",
             file=sys.stderr,
         )
         return ([], {})
@@ -234,9 +233,9 @@ def probe_backend_with_fallback(
             r2 = probe_backend(cfg, env=env)
             if r2.ok:
                 log.warning(
-                    "User backend %r unreachable, "
-                    "falling back to project backend %r",
-                    backend.name, cfg.name,
+                    "User backend %r unreachable, falling back to project backend %r",
+                    backend.name,
+                    cfg.name,
                 )
                 return r2
     return result
@@ -265,9 +264,9 @@ def resolve_backend_with_fallback(
         if cfg.name in project_names:
             if probe_backend(cfg, env=env).ok:
                 log.warning(
-                    "User backend %r unreachable, "
-                    "falling back to project backend %r",
-                    backend.name, cfg.name,
+                    "User backend %r unreachable, falling back to project backend %r",
+                    backend.name,
+                    cfg.name,
                 )
                 return cfg
     return backend
@@ -345,22 +344,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     # --version on root parser so `forge --version` works
     parser.add_argument(
-        "--version", action="version",
+        "--version",
+        action="version",
         version="code-forge %s" % __version__,
     )
 
     # Subparsers: dest='subcommand' to capture which was invoked
     # required=False (Python 3.7+ default) for backward compat
     subparsers = parser.add_subparsers(
-        dest='subcommand',
-        help='subcommand to execute',
+        dest="subcommand",
+        help="subcommand to execute",
     )
 
     # --- REVIEW subcommand: existing pipeline ---
     review_parser = subparsers.add_parser(
-        'review',
-        help='run the full review pipeline (default)',
-        description='3-state quality gate for code review',
+        "review",
+        help="run the full review pipeline (default)",
+        description="3-state quality gate for code review",
         epilog=(
             "Exit codes:\n"
             "  0  PASS\n"
@@ -380,93 +380,110 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     review_parser.add_argument(
-        "--mode", choices=["local", "ci"], default=None,
+        "--mode",
+        choices=["local", "ci"],
+        default=None,
         help="execution mode (default: local if TTY, ci otherwise)",
     )
     review_parser.add_argument(
-        "--falsification-engine", choices=["auto", "stub", "real"],
+        "--falsification-engine",
+        choices=["auto", "stub", "real"],
         default=None,
         help="falsification engine (default: auto)",
     )
     review_parser.add_argument(
-        "--sandbox", action="store_true",
-        help="enable sandbox for autofixer "
-             "(not yet implemented; currently a no-op + warning)",
+        "--sandbox",
+        action="store_true",
+        help="enable sandbox for autofixer (not yet implemented; currently a no-op + warning)",
     )
     review_parser.add_argument(
-        "--baseline", default=None,
+        "--baseline",
+        default=None,
         help="baseline ref "
-             "(HEAD/INDEX/<sha>/empty/<snapshot-path>; "
-             "empty reviews whole file in any repo)",
+        "(HEAD/INDEX/<sha>/empty/<snapshot-path>; "
+        "empty reviews whole file in any repo)",
     )
     review_parser.add_argument(
-        "--head", default=None,
-        help="head ref (git only: WORKING/INDEX/<sha>; "
-             "ignored non-git)",
+        "--head",
+        default=None,
+        help="head ref (git only: WORKING/INDEX/<sha>; ignored non-git)",
     )
     review_parser.add_argument(
-        "--registry", default=".code-forge/tools.yaml",
+        "--registry",
+        default=".code-forge/tools.yaml",
         help="path to tools.yaml (default: .code-forge/tools.yaml)",
     )
     review_parser.add_argument(
-        "--max-total-rounds", type=int, default=None,
-        help="LOCAL mode round bound "
-             "(default 20 or FORGE_MAX_TOTAL_ROUNDS)",
+        "--max-total-rounds",
+        type=int,
+        default=None,
+        help="LOCAL mode round bound (default 20 or FORGE_MAX_TOTAL_ROUNDS)",
     )
     review_parser.add_argument(
-        "--max-fix-attempts", type=int, default=None,
-        help="per-fingerprint fix budget "
-             "(default 3 or "
-             "FORGE_MAX_FIX_ATTEMPTS_PER_FINGERPRINT)",
+        "--max-fix-attempts",
+        type=int,
+        default=None,
+        help="per-fingerprint fix budget (default 3 or FORGE_MAX_FIX_ATTEMPTS_PER_FINGERPRINT)",
     )
     review_parser.add_argument(
-        "--quiet", action="store_true",
-        help="suppress tool-skipped, version, and deprecation "
-             "messages",
+        "--quiet",
+        action="store_true",
+        help="suppress tool-skipped, version, and deprecation messages",
     )
     review_parser.add_argument(
-        "--outlet", choices=["subprocess", "cli", "inline", "subagent", "sampling"], default=None,
+        "--outlet",
+        choices=["subprocess", "cli", "inline", "subagent", "sampling"],
+        default=None,
         help="review outlet (default: auto-detect via backend reachability)",
     )
     review_parser.add_argument(
-        "--committed", action="store_true",
+        "--committed",
+        action="store_true",
         help="review the last commit (maps to --baseline HEAD~1 --head HEAD)",
     )
     review_parser.add_argument(
-        "--canary", action="store_true",
+        "--canary",
+        action="store_true",
         help="enable canary laziness check for inline outlet (opt-in)",
     )
     review_parser.add_argument(
-        "--exec-falsify", action="store_true",
+        "--exec-falsify",
+        action="store_true",
         help="run the declared test command during review "
-             "(Phase 53a EXEC-FALSIFY; tier-gated to DECLARED "
-             "manifests; budget from gate.yaml exec_falsify."
-             "timeout_seconds, default 120s)",
+        "(Phase 53a EXEC-FALSIFY; tier-gated to DECLARED "
+        "manifests; budget from gate.yaml exec_falsify."
+        "timeout_seconds, default 120s)",
     )
     review_parser.add_argument(
-        "--allow-unsnapshotted-context", action="store_true",
+        "--allow-unsnapshotted-context",
+        action="store_true",
         dest="allow_unsnapshotted_context",
         help="use context sources (graph triage, MCP facts) whose index "
-             "was built at a commit other than the review head. Off by "
-             "default: stale facts read as authoritative.",
+        "was built at a commit other than the review head. Off by "
+        "default: stale facts read as authoritative.",
     )
     review_parser.add_argument(
-        "--contract", default=None, metavar="FILE",
+        "--contract",
+        default=None,
+        metavar="FILE",
         help="path to per-change intent contract (use - for stdin); "
-             "state invariants-to-verify and residual risks, "
-             "NOT 'this code is correct'",
+        "state invariants-to-verify and residual risks, "
+        "NOT 'this code is correct'",
     )
     review_parser.add_argument(
-        "--focus", default=None, metavar="FILE",
-        help="path to review focus areas (use - for stdin); "
-             "areas to prioritize during review",
+        "--focus",
+        default=None,
+        metavar="FILE",
+        help="path to review focus areas (use - for stdin); areas to prioritize during review",
     )
 
     # Backend selection flags
     review_parser.add_argument(
-        "--backend", default=None, metavar="NAME",
+        "--backend",
+        default=None,
+        metavar="NAME",
         help="named backend from gate.yaml backends block "
-             "(mutually exclusive with inline backend flags)",
+        "(mutually exclusive with inline backend flags)",
     )
     backend_inline = review_parser.add_argument_group(
         "inline backend flags",
@@ -474,131 +491,158 @@ def _build_parser() -> argparse.ArgumentParser:
         "(all 4 required together; mutually exclusive with --backend)",
     )
     backend_inline.add_argument(
-        "--backend-url", default=None, metavar="URL",
+        "--backend-url",
+        default=None,
+        metavar="URL",
         help="base URL for inline backend (e.g. https://api.deepseek.com/v1)",
     )
     backend_inline.add_argument(
-        "--backend-format", default=None,
+        "--backend-format",
+        default=None,
         choices=["openai", "anthropic", "vertex"],
         help="API format for inline backend",
     )
     backend_inline.add_argument(
-        "--backend-key-env", default=None, metavar="VAR_NAME",
+        "--backend-key-env",
+        default=None,
+        metavar="VAR_NAME",
         help="env var name holding the API key for inline backend",
     )
     backend_inline.add_argument(
-        "--backend-model", default=None, metavar="MODEL_NAME",
+        "--backend-model",
+        default=None,
+        metavar="MODEL_NAME",
         help="model name for inline backend",
     )
 
     review_parser.add_argument(
-        "--whole-file", nargs="+", metavar="PATH",
+        "--whole-file",
+        nargs="+",
+        metavar="PATH",
         help="review specific file(s) in full without baseline comparison; "
-             "paths must be relative and resolve under the repo root",
+        "paths must be relative and resolve under the repo root",
     )
     review_parser.add_argument(
-        "--no-color", action="store_true", default=False,
+        "--no-color",
+        action="store_true",
+        default=False,
         help="suppress ANSI color codes in output",
     )
     review_parser.add_argument(
-        "--allow-main", action="store_true", default=False,
+        "--allow-main",
+        action="store_true",
+        default=False,
         help="allow review in main worktree (bypass worktree guard)",
     )
     review_parser.add_argument(
-        "paths", nargs="*",
-        help="files/dirs to review; git mode filters diff, "
-             "non-git lists files",
+        "paths",
+        nargs="*",
+        help="files/dirs to review; git mode filters diff, non-git lists files",
     )
 
     # --- GATE-CHECK subcommand: test-based commit gate ---
     gate_parser = subparsers.add_parser(
-        'gate-check',
-        help='run test gate for pre-commit hook',
-        description='Test-based commit gate (blocks on new failures)',
+        "gate-check",
+        help="run test gate for pre-commit hook",
+        description="Test-based commit gate (blocks on new failures)",
     )
     gate_parser.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="suppress warning messages",
     )
     gate_parser.add_argument(
-        "--no-color", action="store_true", default=False,
+        "--no-color",
+        action="store_true",
+        default=False,
         help="suppress ANSI color codes in output",
     )
     gate_parser.add_argument(
-        "--baseline", type=str, default=None,
+        "--baseline",
+        type=str,
+        default=None,
         help="baseline ref for delta comparison",
     )
     gate_parser.add_argument(
-        "--backend", default=None, metavar="NAME",
+        "--backend",
+        default=None,
+        metavar="NAME",
         help="named backend from gate.yaml backends block",
     )
 
     # --- MUTATION-CHECK subcommand: mutation testing gate ---
     mutation_parser = subparsers.add_parser(
-        'mutation-check',
-        help='run mutation testing gate',
+        "mutation-check",
+        help="run mutation testing gate",
         description=(
-            'Mutation testing gate: runs mutmut on diff-scoped files '
-            'and reports surviving mutants. '
-            'Exit codes: 0=PASS, 1=FAIL (survivors found), 2=CLI_ERROR.'
+            "Mutation testing gate: runs mutmut on diff-scoped files "
+            "and reports surviving mutants. "
+            "Exit codes: 0=PASS, 1=FAIL (survivors found), 2=CLI_ERROR."
         ),
     )
     mutation_parser.add_argument(
-        "--diff", default=None,
+        "--diff",
+        default=None,
         help="path to unified diff file (default: uncommitted changes)",
     )
     mutation_parser.add_argument(
-        "--timeout", type=int, default=600,
+        "--timeout",
+        type=int,
+        default=600,
         help="mutmut run timeout in seconds (default: 600)",
     )
     mutation_parser.add_argument(
-        "--paths", default=None,
+        "--paths",
+        default=None,
         help="glob pattern to restrict mutation to matching files",
     )
 
     # --- E2E-CHECK subcommand: cross-component coverage heuristic ---
     e2e_parser = subparsers.add_parser(
-        'e2e-check',
-        help='run cross-component e2e coverage heuristic',
+        "e2e-check",
+        help="run cross-component e2e coverage heuristic",
         description=(
-            'E2E coverage heuristic: detects cross-component signature '
-            'changes and checks for e2e artifacts. '
-            'Exit codes: 0=PASS (no findings or skip), 1=FAIL (P2 findings), '
-            '2=CLI_ERROR.'
+            "E2E coverage heuristic: detects cross-component signature "
+            "changes and checks for e2e artifacts. "
+            "Exit codes: 0=PASS (no findings or skip), 1=FAIL (P2 findings), "
+            "2=CLI_ERROR."
         ),
     )
     e2e_parser.add_argument(
-        "--diff", default=None,
+        "--diff",
+        default=None,
         help="path to unified diff file (default: uncommitted changes)",
     )
     e2e_parser.add_argument(
-        "--repo-root", default=None,
+        "--repo-root",
+        default=None,
         help="repository root path (default: current directory)",
     )
 
     # --- INSTALL-HOOKS subcommand: hook installer ---
     hooks_parser = subparsers.add_parser(
-        'install-hooks',
-        help='install code-forge pre-commit hook',
-        description='Write .git/hooks/pre-commit with forge gate-check',
+        "install-hooks",
+        help="install code-forge pre-commit hook",
+        description="Write .git/hooks/pre-commit with forge gate-check",
     )
     hooks_parser.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="suppress informational messages",
     )
 
     # --- INSTALL-SKILL subcommand: copy bundled skills into agent dir ---
     skill_parser = subparsers.add_parser(
-        'install-skill',
-        help='copy bundled review skills into an agent skill directory',
+        "install-skill",
+        help="copy bundled review skills into an agent skill directory",
         description=(
-            'Copy bundled skills into a target agent skill directory. '
-            'Target conventions (subject to change): '
-            'claude=~/.claude/skills/, '
-            'vscode=<cwd>/.claude/skills/, '
-            'universal=<cwd>/.agents/skills/. '
-            'Use --dest to override. '
-            'Exit codes: 0=success, 2=CLI_ERROR.'
+            "Copy bundled skills into a target agent skill directory. "
+            "Target conventions (subject to change): "
+            "claude=~/.claude/skills/, "
+            "vscode=<cwd>/.claude/skills/, "
+            "universal=<cwd>/.agents/skills/. "
+            "Use --dest to override. "
+            "Exit codes: 0=success, 2=CLI_ERROR."
         ),
     )
     skill_parser.add_argument(
@@ -637,22 +681,26 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # --- VERIFY subcommand: validate review receipts ---
     verify_parser = subparsers.add_parser(
-        'verify',
-        help='validate review receipts',
+        "verify",
+        help="validate review receipts",
         description=(
-            'Validates review receipts: completeness (3 receipts per cycle '
-            'over the required consecutive cycles, cycle/pass matrix), diff '
-            'hash, anchor reality, timestamp monotonicity, excerpt verbatim '
-            'match, coverage >=60%, Jaccard overlap <0.8. '
-            'Exit codes: 0=PASS, 1=FAIL, 2=CLI_ERROR.'
+            "Validates review receipts: completeness (3 receipts per cycle "
+            "over the required consecutive cycles, cycle/pass matrix), diff "
+            "hash, anchor reality, timestamp monotonicity, excerpt verbatim "
+            "match, coverage >=60%, Jaccard overlap <0.8. "
+            "Exit codes: 0=PASS, 1=FAIL, 2=CLI_ERROR."
         ),
     )
     verify_parser.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="exit code only, no output",
     )
     verify_parser.add_argument(
-        "--required-cycles", type=int, default=None, metavar="N",
+        "--required-cycles",
+        type=int,
+        default=None,
+        metavar="N",
         help=(
             "raise the number of consecutive clean cycles demanded. This "
             "can only tighten the repo's own policy: a value below "
@@ -663,172 +711,196 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # --- DETECT subcommand: toolchain auto-detection ---
     detect_parser = subparsers.add_parser(
-        'detect',
-        help='detect project toolchain and generate tools.yaml',
+        "detect",
+        help="detect project toolchain and generate tools.yaml",
         description=(
-            'Auto-detect project toolchain. '
-            'Generates .code-forge/tools.yaml from detected tools.'
+            "Auto-detect project toolchain. Generates .code-forge/tools.yaml from detected tools."
         ),
     )
     detect_parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="overwrite existing tools.yaml",
     )
 
     # --- RESOLVE-OUTLET subcommand: outlet selection ---
     subparsers.add_parser(
-        'resolve-outlet',
-        help='resolve outlet selection (subprocess, inline, or subagent)',
+        "resolve-outlet",
+        help="resolve outlet selection (subprocess, inline, or subagent)",
         description=(
-            'Resolve which review outlet to use. '
-            'Outputs subprocess, inline, or subagent to stdout. '
-            'Exits 1 with a diagnostic if the configured review '
-            'backend is unreachable and no explicit override is set.'
+            "Resolve which review outlet to use. "
+            "Outputs subprocess, inline, or subagent to stdout. "
+            "Exits 1 with a diagnostic if the configured review "
+            "backend is unreachable and no explicit override is set."
         ),
     )
     doctor_parser = subparsers.add_parser(
-        'doctor',
-        help='Run self-check on workspace, backends, trust, and MCP. '
-             'Exit 0 = all green, 1 = any FAIL or SKIP.',
+        "doctor",
+        help="Run self-check on workspace, backends, trust, and MCP. "
+        "Exit 0 = all green, 1 = any FAIL or SKIP.",
     )
     doctor_parser.add_argument(
-        "--live", action="store_true",
+        "--live",
+        action="store_true",
         help="also perform one real chat completion per api backend "
-             "(60s budget each, no retries); requires network",
+        "(60s budget each, no retries); requires network",
     )
 
     # --- INIT subcommand: generate gate.yaml template ---
     init_parser = subparsers.add_parser(
-        'init',
-        help='generate a gate.yaml template in .code-forge/',
+        "init",
+        help="generate a gate.yaml template in .code-forge/",
     )
     init_parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="overwrite existing gate.yaml and gate.schema.json",
     )
 
     # --- SETUP-MCP subcommand: one-command MCP onboarding ---
     setup_mcp_parser = subparsers.add_parser(
-        'setup-mcp',
-        help='configure forge for MCP review (writes config + trusts)',
+        "setup-mcp",
+        help="configure forge for MCP review (writes config + trusts)",
     )
     setup_mcp_parser.add_argument(
-        "--backend", action="append", dest="backends", default=[],
+        "--backend",
+        action="append",
+        dest="backends",
+        default=[],
         help="backend preset name (repeatable; auto-detects if omitted)",
     )
     setup_mcp_parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="overwrite existing config files",
     )
     setup_mcp_parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="print what would be written without writing",
     )
 
     # --- SMOKE-RUN subcommand: execute a command and write a smoke receipt ---
     smoke_run_parser = subparsers.add_parser(
-        'smoke-run',
-        help='run a smoke test and record a receipt',
+        "smoke-run",
+        help="run a smoke test and record a receipt",
         description=(
-            'Execute a command, capture transcript + exit code, and write '
-            'a smoke receipt keyed by diff content-hash. '
-            'When no receipt exists for the current diff, the RUNTIME axis '
-            'reports UNVERIFIED. Silence never reads as verified. '
-            'Exit codes: passthrough from the executed command.'
+            "Execute a command, capture transcript + exit code, and write "
+            "a smoke receipt keyed by diff content-hash. "
+            "When no receipt exists for the current diff, the RUNTIME axis "
+            "reports UNVERIFIED. Silence never reads as verified. "
+            "Exit codes: passthrough from the executed command."
         ),
     )
     smoke_run_parser.add_argument(
-        '--surface',
-        default='default',
-        help='runtime surface name (default: default)',
+        "--surface",
+        default="default",
+        help="runtime surface name (default: default)",
     )
     smoke_run_parser.add_argument(
-        '--target',
-        default='HEAD',
-        help='git diff target for diff-hash keying (default: HEAD)',
+        "--target",
+        default="HEAD",
+        help="git diff target for diff-hash keying (default: HEAD)",
     )
     smoke_run_parser.add_argument(
-        '--timeout',
+        "--timeout",
         type=int,
         default=300,
-        help='timeout in seconds (default: 300)',
+        help="timeout in seconds (default: 300)",
     )
     smoke_run_parser.add_argument(
-        'command',
+        "command",
         nargs=argparse.REMAINDER,
-        help='command to execute (may be preceded by -- separator)',
+        help="command to execute (may be preceded by -- separator)",
     )
 
     # --- TRUST subcommand: manage trust for repo-supplied backends ---
     trust_parser = subparsers.add_parser(
-        'trust',
-        help='manage trust for repo-supplied backends',
+        "trust",
+        help="manage trust for repo-supplied backends",
     )
     trust_group = trust_parser.add_mutually_exclusive_group()
     trust_group.add_argument(
-        "--status", action="store_true",
+        "--status",
+        action="store_true",
         help="show trust state for current repo",
     )
     trust_group.add_argument(
-        "--revoke", action="store_true",
+        "--revoke",
+        action="store_true",
         help="revoke trust for current repo",
     )
 
     # --- EVAL subcommand: false-green rate evaluation ---
     eval_parser = subparsers.add_parser(
-        'eval',
-        help='evaluate false-green rate on bug corpus',
+        "eval",
+        help="evaluate false-green rate on bug corpus",
     )
     eval_parser.add_argument(
-        "--corpus", required=True, type=Path,
+        "--corpus",
+        required=True,
+        type=Path,
         help="path to corpus.yaml manifest",
     )
     eval_parser.add_argument(
-        "--backend", required=True,
+        "--backend",
+        required=True,
         help="backend name to evaluate",
     )
     eval_parser.add_argument(
-        "--runs", type=int, default=None,
+        "--runs",
+        type=int,
+        default=None,
         help="override run count per entry (must be >= 1)",
     )
     eval_parser.add_argument(
-        "--output", type=Path, default=None,
+        "--output",
+        type=Path,
+        default=None,
         help="path for JSON results file",
     )
     eval_parser.add_argument(
-        "--jobs", type=int, default=1,
+        "--jobs",
+        type=int,
+        default=1,
         help="max concurrent entries (default 1 = serial)",
     )
     eval_parser.add_argument(
-        "--resume-log", type=Path, default=None,
+        "--resume-log",
+        type=Path,
+        default=None,
         help="JSONL ledger; entries already recorded there are skipped, "
-             "so a killed run restarts where it stopped",
+        "so a killed run restarts where it stopped",
     )
     eval_parser.add_argument(
-        "--fresh", action="store_true",
+        "--fresh",
+        action="store_true",
         help="ignore --resume-log contents and re-run every entry",
     )
     eval_parser.add_argument(
-        "--arm-depth", type=int, default=1,
+        "--arm-depth",
+        type=int,
+        default=1,
         help="depth coordinate recorded in the resume ledger",
     )
     eval_parser.add_argument(
-        "--arm-engine", default="real",
+        "--arm-engine",
+        default="real",
         help="falsification engine coordinate recorded in the ledger",
     )
 
     # --- LEDGER subcommand: view or rule on outcome ledger rows ---
     ledger_parser = subparsers.add_parser(
-        'ledger',
-        help='view or rule on outcome ledger rows',
+        "ledger",
+        help="view or rule on outcome ledger rows",
     )
-    ledger_subs = ledger_parser.add_subparsers(dest='ledger_command')
+    ledger_subs = ledger_parser.add_subparsers(dest="ledger_command")
 
     # ledger mark <fingerprint> <terminal_state> [--evidence "..."] [--new]
     #   [--file "..."] [--line N] [--axis-claim "..."]
     mark_parser = ledger_subs.add_parser(
-        'mark',
-        help='append a manual ruling for a fingerprint',
+        "mark",
+        help="append a manual ruling for a fingerprint",
     )
     mark_parser.add_argument(
         "fingerprint",
@@ -839,41 +911,49 @@ def _build_parser() -> argparse.ArgumentParser:
         help="terminal state to record (FIXED, DISPROVED, DUPLICATE, ESCAPED)",
     )
     mark_parser.add_argument(
-        "--evidence", default="manual",
+        "--evidence",
+        default="manual",
         help="evidence_class for the row (default: manual)",
     )
     mark_parser.add_argument(
-        "--new", dest="is_new", action="store_true",
+        "--new",
+        dest="is_new",
+        action="store_true",
         help="allow unknown fingerprint (for escapes from outside runs)",
     )
     mark_parser.add_argument(
-        "--base-sha", default=None,
+        "--base-sha",
+        default=None,
         help="base SHA for escape rows; defaults to current HEAD",
     )
     mark_parser.add_argument(
-        "--head-sha", default=None,
+        "--head-sha",
+        default=None,
         help="head SHA for escape rows; defaults to current HEAD (must be provided together with --base-sha for non-HEAD base)",
     )
     mark_parser.add_argument(
-        "--file", default=None,
+        "--file",
+        default=None,
         help="repo-relative path where it happened; required with --new "
-             "(a --new row has no prior run to inherit a location from)",
+        "(a --new row has no prior run to inherit a location from)",
     )
     mark_parser.add_argument(
-        "--line", type=int, default=None,
+        "--line",
+        type=int,
+        default=None,
         help="1-based line number where it happened; required with --new",
     )
     mark_parser.add_argument(
-        "--axis-claim", default=None,
-        help="what the missed bug actually was, in the human's own "
-             "words; required with --new",
+        "--axis-claim",
+        default=None,
+        help="what the missed bug actually was, in the human's own words; required with --new",
     )
 
     # ledger adjudicate <fingerprint> <terminal_state> [--evidence "..."]
     #   [--base-sha S --head-sha S]
     adjudicate_parser = ledger_subs.add_parser(
-        'adjudicate',
-        help='upgrade an UNADJUDICATED row to a terminal state with metadata inheritance',
+        "adjudicate",
+        help="upgrade an UNADJUDICATED row to a terminal state with metadata inheritance",
     )
     adjudicate_parser.add_argument(
         "fingerprint",
@@ -884,52 +964,65 @@ def _build_parser() -> argparse.ArgumentParser:
         help="terminal state to record (FIXED, DISPROVED, DUPLICATE, ESCAPED)",
     )
     adjudicate_parser.add_argument(
-        "--evidence", default="manual",
+        "--evidence",
+        default="manual",
         help="evidence_class for the row (default: manual)",
     )
     adjudicate_parser.add_argument(
-        "--base-sha", default=None,
+        "--base-sha",
+        default=None,
         help="optional override for base SHA (must pair with --head-sha)",
     )
     adjudicate_parser.add_argument(
-        "--head-sha", default=None,
+        "--head-sha",
+        default=None,
         help="optional override for head SHA (must pair with --base-sha)",
     )
 
     # ledger list [--json] [--fingerprint FP] [--unadjudicated]
     list_parser = ledger_subs.add_parser(
-        'list',
-        help='list outcome ledger rows',
+        "list",
+        help="list outcome ledger rows",
     )
     list_parser.add_argument(
-        "--json", dest="as_json", action="store_true",
+        "--json",
+        dest="as_json",
+        action="store_true",
         help="emit JSON instead of TSV",
     )
     list_parser.add_argument(
-        "--fingerprint", default=None,
+        "--fingerprint",
+        default=None,
         help="filter to one fingerprint",
     )
     list_parser.add_argument(
-        "--unadjudicated", dest="unadjudicated_only", action="store_true",
+        "--unadjudicated",
+        dest="unadjudicated_only",
+        action="store_true",
         help="filter to fingerprints whose latest state is UNADJUDICATED",
     )
 
     # ledger export-eval [--out DIR] [--repo-root DIR] [--force]
     export_parser = ledger_subs.add_parser(
-        'export-eval',
-        help='export adjudicated terminal-state rows as an eval corpus directory',
+        "export-eval",
+        help="export adjudicated terminal-state rows as an eval corpus directory",
     )
     export_parser.add_argument(
-        "--out", dest="out_dir", default=None,
-        help="output directory (default: .code-forge/eval-export under the "
-             "resolved ledger root)",
+        "--out",
+        dest="out_dir",
+        default=None,
+        help="output directory (default: .code-forge/eval-export under the resolved ledger root)",
     )
     export_parser.add_argument(
-        "--repo-root", dest="repo_root", default=None,
+        "--repo-root",
+        dest="repo_root",
+        default=None,
         help="override row.repo_root when resolving base/head SHAs",
     )
     export_parser.add_argument(
-        "--force", dest="force", action="store_true",
+        "--force",
+        dest="force",
+        action="store_true",
         help="allow writing into a non-empty dir not produced by export-eval",
     )
 
@@ -937,8 +1030,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _make_subagent_spawn(
-    backend, conv_digest: str, post_image: str, contract_spec: str = "",
-    focus_spec: str = "", manifest_spec: str = "",
+    backend,
+    conv_digest: str,
+    post_image: str,
+    contract_spec: str = "",
+    focus_spec: str = "",
+    manifest_spec: str = "",
 ):
     """Factory for subagent spawn_fn. Module-level for testability.
 
@@ -966,37 +1063,26 @@ def _make_subagent_spawn(
     def _spawn(pass_name: str, diff_text: str) -> str:
         from .llm_invoke import llm_invoke
         from .reviewer_json import REVIEW_JSON_CONTRACT
+
         role = _PASS_ROLES.get(pass_name, "code reviewer")
-        prompt = (
-            "You are a " + role + ". Review this diff.\n"
-            + REVIEW_JSON_CONTRACT
-        )
+        prompt = "You are a " + role + ". Review this diff.\n" + REVIEW_JSON_CONTRACT
         if manifest_spec:
-            prompt += (
-                "\n" + manifest_spec.strip() + "\n"
-            )
+            prompt += "\n" + manifest_spec.strip() + "\n"
         if post_image:
-            prompt += (
-                "\n## Post-Image (current file content)\n"
-                + post_image + "\n"
-            )
+            prompt += "\n## Post-Image (current file content)\n" + post_image + "\n"
         if conv_digest:
-            prompt += (
-                "\n## Conventions Digest\n"
-                + conv_digest + "\n"
-            )
+            prompt += "\n## Conventions Digest\n" + conv_digest + "\n"
         if contract_spec:
-            prompt += (
-                "\n## Design Intent\n"
-                + contract_spec + "\n"
-            )
+            prompt += "\n## Design Intent\n" + contract_spec + "\n"
         if focus_spec:
             prompt += (
-                "\n## Review Focus\n" + focus_spec
+                "\n## Review Focus\n"
+                + focus_spec
                 + "\nPrioritize findings in these areas; in your response, "
                 + "state whether each area was checked.\n"
             )
         from .diff import annotated_diff_prompt_block
+
         prompt += annotated_diff_prompt_block(diff_text)
         result = llm_invoke(prompt, backend=backend)
         content = result.content
@@ -1008,7 +1094,9 @@ def _make_subagent_spawn(
 
 
 def _window_file_text(
-    text: str, hunks: list[dict], context_lines: int,
+    text: str,
+    hunks: list[dict],
+    context_lines: int,
 ) -> tuple[str, bool]:
     """Keep the lines around each hunk, drop the rest.
 
@@ -1084,11 +1172,17 @@ def _estimate_l1_prompt_tokens(
     truncate", so it aims conservative, not exact.
     """
     from .reviewer_json import REVIEW_JSON_CONTRACT
+
     total = (
-        len(diff_text) + len(post_image) + len(conventions_digest)
-        + len(graph_impact_context) + len(contract_spec)
-        + len(manifest_spec) + len(focus_spec)
-        + len(REVIEW_JSON_CONTRACT) + len(context_sources_text)
+        len(diff_text)
+        + len(post_image)
+        + len(conventions_digest)
+        + len(graph_impact_context)
+        + len(contract_spec)
+        + len(manifest_spec)
+        + len(focus_spec)
+        + len(REVIEW_JSON_CONTRACT)
+        + len(context_sources_text)
     )
     return total // 4
 
@@ -1114,13 +1208,14 @@ def _split_context_for_group(group_name: str, cross_group_edges: list) -> str:
         return ""
     return (
         "This diff was split into review groups. Contracts crossing this "
-        "group's boundary -- the other half is reviewed separately:\n"
-        + "\n".join(lines)
+        "group's boundary -- the other half is reviewed separately:\n" + "\n".join(lines)
     )
 
 
 def _assemble_post_image(
-    cwd: Path, diff_text: str, context_lines: int = 40,
+    cwd: Path,
+    diff_text: str,
+    context_lines: int = 40,
 ) -> tuple[str, str]:
     """Build post-image content and conventions digest for reviewer context.
 
@@ -1176,7 +1271,9 @@ def _assemble_post_image(
                     continue
                 truncated = False
             text, windowed = _window_file_text(
-                text, hunk_map.get(cf, []), context_lines,
+                text,
+                hunk_map.get(cf, []),
+                context_lines,
             )
             # Appended after windowing, not before: a marker inside the
             # text would get a line number of its own and read as code.
@@ -1215,7 +1312,8 @@ def _run_test_assertion_review(
     # Matches /tests/ path component, tests/ prefix, test_ filename prefix,
     # or _test. filename suffix. Does NOT match "contest.py", "protest.py", etc.
     test_files = [
-        f for f in changed
+        f
+        for f in changed
         if "/tests/" in f
         or f.startswith("tests/")
         or "test_" in f.split("/")[-1]
@@ -1225,6 +1323,7 @@ def _run_test_assertion_review(
         return []
 
     from .diff import annotated_diff_prompt_block
+
     prompt = (
         "You are a test-assertion reviewer. Review this diff for test quality.\n"
         "Check: assertion completeness, edge case coverage, mock accuracy, "
@@ -1234,8 +1333,7 @@ def _run_test_assertion_review(
         '"description": "..."}], '
         '"code_excerpts": [{"file": "...", "start_line": N, '
         '"end_line": M, "content": "..."}]}\n'
-        "Each diff hunk MUST have at least one code_excerpt.\n"
-        + annotated_diff_prompt_block(diff_text)
+        "Each diff hunk MUST have at least one code_excerpt.\n" + annotated_diff_prompt_block(diff_text)
     )
     # H-R3-01: llm_invoke MUST be inside the try block so that
     # network/timeout/auth errors are caught and fail-open.
@@ -1243,7 +1341,8 @@ def _run_test_assertion_review(
         result = llm_invoke(prompt, backend=backend)
         validated = validate_reviewer_json(result.content)
         return _json_to_state_findings(
-            validated, "test-assertion",
+            validated,
+            "test-assertion",
             backend=backend.name if backend else None,
         )
     # Let memory exhaustion abort the review rather than degrade it; an empty
@@ -1278,7 +1377,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
 
     # Strip leading "--" separator if present (argparse REMAINDER convention)
     cmd_args = list(args.command or [])
-    if cmd_args and cmd_args[0] == '--':
+    if cmd_args and cmd_args[0] == "--":
         cmd_args = cmd_args[1:]
 
     if not cmd_args:
@@ -1291,13 +1390,18 @@ def _handle_smoke_run(args, cwd: Path) -> int:
 
     # Sanitize surface name: replace non-[a-zA-Z0-9_-] with dash (T-20-05/F5).
     raw_surface = args.surface or "default"
-    surface = re.sub(r'[^a-zA-Z0-9_\-]', '-', raw_surface)
+    surface = re.sub(r"[^a-zA-Z0-9_\-]", "-", raw_surface)
 
     # Compute repo root via git rev-parse
     try:
         _gr = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            check=False,
         )
         if _gr.returncode == 0:
             repo_root = Path(_gr.stdout.strip())
@@ -1307,11 +1411,16 @@ def _handle_smoke_run(args, cwd: Path) -> int:
         repo_root = cwd
 
     # Compute current diff for hash keying
-    target = getattr(args, 'target', 'HEAD') or 'HEAD'
+    target = getattr(args, "target", "HEAD") or "HEAD"
     try:
         _diff = subprocess.run(
             ["git", "diff", target],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=repo_root, check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=repo_root,
+            check=False,
         )
         diff_text = _diff.stdout if _diff.returncode == 0 else ""
     except OSError:
@@ -1331,8 +1440,7 @@ def _handle_smoke_run(args, cwd: Path) -> int:
         )
     except subprocess.TimeoutExpired:
         print(
-            "code-forge smoke-run: command timed out after %d seconds"
-            % smoke_timeout,
+            "code-forge smoke-run: command timed out after %d seconds" % smoke_timeout,
             file=sys.stderr,
         )
         return EXIT_TIMEOUT
@@ -1449,12 +1557,9 @@ def _run_eval(args) -> int:
     # bool, and a test double's auto-attribute is truthy but carries no
     # intent. Same identity-before-value shape as the guards above.
     _resume_log = getattr(args, "resume_log", None)
-    if not isinstance(_resume_log, Path) and (
-        getattr(args, "fresh", False) is True
-    ):
+    if not isinstance(_resume_log, Path) and (getattr(args, "fresh", False) is True):
         print(
-            "--fresh has no effect without --resume-log (there is no "
-            "ledger to discard)",
+            "--fresh has no effect without --resume-log (there is no ledger to discard)",
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
@@ -1488,6 +1593,7 @@ def _run_eval(args) -> int:
     # definition.
     _backend_config = None
     from .user_config import load_user_backends as _load_user_raw
+
     for _source in (_eval_gd.get("backends", {}), _load_user_raw() or {}):
         _entry = _source.get(args.backend) if isinstance(_source, dict) else None
         if isinstance(_entry, dict):
@@ -1501,8 +1607,7 @@ def _run_eval(args) -> int:
     # backend they named does not exist (R2-F2, R3-F5).
     if _backend_config is None:
         print(
-            "unknown backend: %s. Not present in %s or in the user config."
-            % (args.backend, _gate_path),
+            "unknown backend: %s. Not present in %s or in the user config." % (args.backend, _gate_path),
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
@@ -1512,7 +1617,8 @@ def _run_eval(args) -> int:
         entries = load_corpus(args.corpus)
     except FileNotFoundError:
         print(
-            "corpus not found: %s" % args.corpus, file=sys.stderr,
+            "corpus not found: %s" % args.corpus,
+            file=sys.stderr,
         )
         return EXIT_CLI_ERROR
     except ValueError as exc:
@@ -1536,7 +1642,10 @@ def _run_eval(args) -> int:
         arm_engine = "real"
 
     from .eval.ledger_jsonl import (
-        ResumeKey, append_record, load_state, make_record,
+        ResumeKey,
+        append_record,
+        load_state,
+        make_record,
     )
 
     def _ledger_key(entry):
@@ -1561,16 +1670,14 @@ def _run_eval(args) -> int:
                 return EXIT_CLI_ERROR
             if torn:
                 print(
-                    "Resume ledger had a torn trailing line; that entry "
-                    "will be re-run.",
+                    "Resume ledger had a torn trailing line; that entry will be re-run.",
                     file=sys.stderr,
                 )
             before = len(entries)
             entries = [e for e in entries if _ledger_key(e) not in done]
             if before != len(entries):
                 print(
-                    "Resuming: %d of %d entries already recorded."
-                    % (before - len(entries), before),
+                    "Resuming: %d of %d entries already recorded." % (before - len(entries), before),
                     file=sys.stderr,
                 )
 
@@ -1579,36 +1686,43 @@ def _run_eval(args) -> int:
         if resume_log is None:
             return
         if error is not None:
-            append_record(resume_log, make_record(
-                _ledger_key(entry), "SKIPPED", wall_s=wall_s,
-                skipped_reason=str(error)[:400],
-            ))
+            append_record(
+                resume_log,
+                make_record(
+                    _ledger_key(entry),
+                    "SKIPPED",
+                    wall_s=wall_s,
+                    skipped_reason=str(error)[:400],
+                ),
+            )
             return
         if result is None:
             # The success path needs a result. Current call sites pass
             # error= when result is None; this makes the invariant loud
             # instead of crashing on None.actual_verdict later.
             raise TypeError(
-                "_record needs a result when error is None "
-                "(entry %s)" % getattr(entry, "name", entry)
+                "_record needs a result when error is None (entry %s)" % getattr(entry, "name", entry)
             )
-        append_record(resume_log, make_record(
-            _ledger_key(entry),
-            result.actual_verdict,
-            runs=result.runs,
-            caught=result.caught_count,
-            wall_s=wall_s,
-            skipped_reason=result.skipped_reason or "",
-            # 58-4 compares arms on findings rather than verdicts: a capped
-            # arm exits ESCALATED where a gated one may exit PASS, so a
-            # verdict comparison would measure the cap. None when the entry
-            # carried no finding-level expectations to score against.
-            findings=(
-                (result.finding_hits, result.finding_misses,
-                 result.finding_fps)
-                if result.finding_runs else None
+        append_record(
+            resume_log,
+            make_record(
+                _ledger_key(entry),
+                result.actual_verdict,
+                runs=result.runs,
+                caught=result.caught_count,
+                wall_s=wall_s,
+                skipped_reason=result.skipped_reason or "",
+                # 58-4 compares arms on findings rather than verdicts: a capped
+                # arm exits ESCALATED where a gated one may exit PASS, so a
+                # verdict comparison would measure the cap. None when the entry
+                # carried no finding-level expectations to score against.
+                findings=(
+                    (result.finding_hits, result.finding_misses, result.finding_fps)
+                    if result.finding_runs
+                    else None
+                ),
             ),
-        ))
+        )
 
     if jobs > 1:
         from .eval.pool import run_pool
@@ -1634,8 +1748,7 @@ def _run_eval(args) -> int:
                 eta_s = (elapsed / done) * (total - done)
                 remaining = "  ~%.1fh left" % (eta_s / 3600.0)
             print(
-                "  [%s] [%d/%d] %s (%.1fs)%s"
-                % (_run_label, done, total, name, wall_s, remaining),
+                "  [%s] [%d/%d] %s (%.1fs)%s" % (_run_label, done, total, name, wall_s, remaining),
                 file=sys.stderr,
             )
             # Record here rather than after run_pool returns. run_pool only
@@ -1649,7 +1762,9 @@ def _run_eval(args) -> int:
                 return
             if pool_entry.hung:
                 _record(
-                    pool_entry.entry, None, wall_s,
+                    pool_entry.entry,
+                    None,
+                    wall_s,
                     error=pool_entry.error or "hung",
                 )
             elif pool_entry.error:
@@ -1677,21 +1792,25 @@ def _run_eval(args) -> int:
             if pe.hung:
                 # Hung entry: record as SKIPPED so it counts in the
                 # report but does not distort verdicts.
-                results.append(EvalResult(
-                    entry=pe.entry,
-                    actual_verdict="SKIPPED",
-                    runs=0,
-                    caught_count=0,
-                    skipped_reason=pe.error or "hung",
-                ))
+                results.append(
+                    EvalResult(
+                        entry=pe.entry,
+                        actual_verdict="SKIPPED",
+                        runs=0,
+                        caught_count=0,
+                        skipped_reason=pe.error or "hung",
+                    )
+                )
             elif pe.error:
-                results.append(EvalResult(
-                    entry=pe.entry,
-                    actual_verdict="SKIPPED",
-                    runs=0,
-                    caught_count=0,
-                    skipped_reason=pe.error,
-                ))
+                results.append(
+                    EvalResult(
+                        entry=pe.entry,
+                        actual_verdict="SKIPPED",
+                        runs=0,
+                        caught_count=0,
+                        skipped_reason=pe.error,
+                    )
+                )
             else:
                 results.append(pe.result)
     else:
@@ -1774,8 +1893,7 @@ def _run_trust(args, cwd: Path) -> int:
     if workspace != cwd_abs:
         off_root_warning = (
             "Warning: cwd %s is not the workspace root %s; "
-            "the gate.yaml there is the mutation target"
-            % (cwd_abs, workspace)
+            "the gate.yaml there is the mutation target" % (cwd_abs, workspace)
         )
     try:
         with open(gate_yaml_path, "r", encoding="utf-8") as _f:
@@ -1788,13 +1906,15 @@ def _run_trust(args, cwd: Path) -> int:
         return EXIT_CLI_ERROR
     except _y.YAMLError as exc:
         print(
-            "gate.yaml parse error: %s" % exc, file=sys.stderr,
+            "gate.yaml parse error: %s" % exc,
+            file=sys.stderr,
         )
         return EXIT_CLI_ERROR
 
     if gd is None or not isinstance(gd, dict):
         print(
-            "gate.yaml is empty or invalid", file=sys.stderr,
+            "gate.yaml is empty or invalid",
+            file=sys.stderr,
         )
         return EXIT_CLI_ERROR
 
@@ -1811,22 +1931,22 @@ def _run_trust(args, cwd: Path) -> int:
         print("Path: %s" % s.gate_yaml_path, file=sys.stderr)
         if contracts_yaml_path.is_file():
             from .contract_loader import resolve_contract_specs
+
             resolved_specs = resolve_contract_specs(
-                contracts_yaml_path, workspace,
+                contracts_yaml_path,
+                workspace,
             )
-            trust_contents = [
-                (abs_path, content)
-                for _, _, abs_path, content, _ in resolved_specs
-            ]
+            trust_contents = [(abs_path, content) for _, _, abs_path, content, _ in resolved_specs]
             cs = trust_status_contracts(
-                contracts_yaml_path, trust_contents,
+                contracts_yaml_path,
+                trust_contents,
             )
             print(
-                "Contracts trusted: %s" % cs.trusted, file=sys.stderr,
+                "Contracts trusted: %s" % cs.trusted,
+                file=sys.stderr,
             )
             print(
-                "Contracts hash: %s"
-                % (cs.stored_hash or "(none)"),
+                "Contracts hash: %s" % (cs.stored_hash or "(none)"),
                 file=sys.stderr,
             )
         return EXIT_PASS
@@ -1837,22 +1957,24 @@ def _run_trust(args, cwd: Path) -> int:
         # Announce the target before the store changes so a revoke
         # issued from a subdirectory is auditable.
         print(
-            "Revoking trust at %s" % gate_yaml_path, file=sys.stderr,
+            "Revoking trust at %s" % gate_yaml_path,
+            file=sys.stderr,
         )
         revoke_trust(gate_yaml_path)
         print(
-            "Trust revoked for %s" % gate_yaml_path, file=sys.stderr,
+            "Trust revoked for %s" % gate_yaml_path,
+            file=sys.stderr,
         )
         if contracts_yaml_path.is_file():
             revoke_trust_contracts(contracts_yaml_path)
             print(
-                "Contracts trust revoked for %s"
-                % contracts_yaml_path,
+                "Contracts trust revoked for %s" % contracts_yaml_path,
                 file=sys.stderr,
             )
         return EXIT_PASS
 
     from .kernel_context import validate_kernel_context
+
     try:
         kernel_cfg = validate_kernel_context(gd.get("kernel_context", {}))
     except ValueError as exc:
@@ -1862,14 +1984,12 @@ def _run_trust(args, cwd: Path) -> int:
     # Guard: trust must authorize at least one configured purpose.
     backends_raw = gd.get("backends")
     has_backends = backends_raw and not (
-        isinstance(backends_raw, dict)
-        and all(v is None for v in backends_raw.values())
+        isinstance(backends_raw, dict) and all(v is None for v in backends_raw.values())
     )
     has_focus = isinstance(gd.get("review_focus"), str) and gd["review_focus"].strip()
     if not has_backends and not has_focus and "kernel_context" not in gd:
         print(
-            "No backends or review_focus configured in this gate.yaml. "
-            "Configure at least one.",
+            "No backends or review_focus configured in this gate.yaml. Configure at least one.",
             file=sys.stderr,
         )
         return EXIT_CLI_ERROR
@@ -1891,21 +2011,22 @@ def _run_trust(args, cwd: Path) -> int:
     record_trust(gate_yaml_path, gd)
     if "kernel_context" in gd:
         from .trust import record_kernel_context_trust
+
         print(
             f"Kernel context: enabled={kernel_cfg.enabled} defconfig={kernel_cfg.defconfig} "
-            f"workspace={workspace.resolve()}", file=sys.stderr,
+            f"workspace={workspace.resolve()}",
+            file=sys.stderr,
         )
         record_kernel_context_trust(gate_yaml_path, workspace, kernel_cfg)
     print("Trusted: %s" % gate_yaml_path, file=sys.stderr)
     if contracts_yaml_path.is_file():
         from .contract_loader import resolve_contract_specs
+
         resolved_specs = resolve_contract_specs(
-            contracts_yaml_path, workspace,
+            contracts_yaml_path,
+            workspace,
         )
-        trust_contents = [
-            (abs_path, content)
-            for _, _, abs_path, content, _ in resolved_specs
-        ]
+        trust_contents = [(abs_path, content) for _, _, abs_path, content, _ in resolved_specs]
         record_trust_contracts(contracts_yaml_path, trust_contents)
         print(
             "Contracts trusted: %s" % contracts_yaml_path,
@@ -1945,8 +2066,7 @@ def _run_ledger(args, cwd: Path) -> int:
         except ValueError:
             valid = ", ".join(s.value for s in TerminalState if s != TerminalState.UNADJUDICATED)
             print(
-                "code-forge ledger mark: terminal_state must be one of: %s"
-                % valid,
+                "code-forge ledger mark: terminal_state must be one of: %s" % valid,
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
@@ -1986,8 +2106,7 @@ def _run_ledger(args, cwd: Path) -> int:
         # below).
         if (args.file is None) != (args.line is None):
             print(
-                "code-forge ledger mark: --file and --line must be "
-                "provided together (or both omitted)",
+                "code-forge ledger mark: --file and --line must be provided together (or both omitted)",
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
@@ -2014,7 +2133,8 @@ def _run_ledger(args, cwd: Path) -> int:
         # of its own to add there.
         if args.is_new:
             missing = [
-                flag for flag, val in (
+                flag
+                for flag, val in (
                     ("--file", args.file),
                     ("--line", args.line),
                     ("--axis-claim", args.axis_claim),
@@ -2032,8 +2152,7 @@ def _run_ledger(args, cwd: Path) -> int:
 
         if args.line is not None and args.line <= 0:
             print(
-                "code-forge ledger mark: --line must be a positive "
-                "integer, got: %d" % args.line,
+                "code-forge ledger mark: --line must be a positive integer, got: %d" % args.line,
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
@@ -2052,8 +2171,7 @@ def _run_ledger(args, cwd: Path) -> int:
             file_arg = Path(args.file)
             if file_arg.is_absolute():
                 print(
-                    "code-forge ledger mark: --file must be relative, "
-                    "got: %s" % args.file,
+                    "code-forge ledger mark: --file must be relative, got: %s" % args.file,
                     file=sys.stderr,
                 )
                 return EXIT_CLI_ERROR
@@ -2062,8 +2180,7 @@ def _run_ledger(args, cwd: Path) -> int:
                 rel = resolved.relative_to(cwd.resolve())
             except ValueError:
                 print(
-                    "code-forge ledger mark: --file escapes repo root: "
-                    "%s" % args.file,
+                    "code-forge ledger mark: --file escapes repo root: %s" % args.file,
                     file=sys.stderr,
                 )
                 return EXIT_CLI_ERROR
@@ -2106,26 +2223,28 @@ def _run_ledger(args, cwd: Path) -> int:
         for name, val in (("base-sha", base_sha), ("head-sha", head_sha)):
             if len(val) != 40 or not all(c in "0123456789abcdefABCDEF" for c in val):
                 print(
-                    "code-forge ledger mark: %s %r is not a valid 40-hex "
-                    "git SHA" % (name, val),
+                    "code-forge ledger mark: %s %r is not a valid 40-hex git SHA" % (name, val),
                     file=sys.stderr,
                 )
                 return EXIT_CLI_ERROR
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        append_row(ledger_root, LedgerRow(
-            fingerprint=args.fingerprint,
-            repo_root=str(ledger_root.resolve()),
-            base_sha=base_sha,
-            head_sha=head_sha,
-            file=file_value,
-            line=args.line if args.line is not None else 0,
-            axis_claim=args.axis_claim if args.axis_claim is not None else "manual",
-            pass_provenance="manual",
-            terminal_state=state,
-            evidence_class=args.evidence,
-            ts=ts,
-        ))
+        append_row(
+            ledger_root,
+            LedgerRow(
+                fingerprint=args.fingerprint,
+                repo_root=str(ledger_root.resolve()),
+                base_sha=base_sha,
+                head_sha=head_sha,
+                file=file_value,
+                line=args.line if args.line is not None else 0,
+                axis_claim=args.axis_claim if args.axis_claim is not None else "manual",
+                pass_provenance="manual",
+                terminal_state=state,
+                evidence_class=args.evidence,
+                ts=ts,
+            ),
+        )
         print(
             "ledger: marked %s as %s" % (args.fingerprint, state.value),
             file=sys.stderr,
@@ -2153,8 +2272,7 @@ def _run_ledger(args, cwd: Path) -> int:
         rows = [r for r in iter_rows(ledger_root) if r.fingerprint == args.fingerprint]
         if not rows:
             print(
-                "code-forge ledger adjudicate: fingerprint %r not in ledger"
-                % args.fingerprint,
+                "code-forge ledger adjudicate: fingerprint %r not in ledger" % args.fingerprint,
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
@@ -2199,25 +2317,28 @@ def _run_ledger(args, cwd: Path) -> int:
         evidence_value = args.evidence
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        append_row(ledger_root, LedgerRow(
-            fingerprint=args.fingerprint,
-            repo_root=repo_root_value,
-            base_sha=base_sha,
-            head_sha=head_sha,
-            file=file_value,
-            line=line_value,
-            axis_claim=axis_claim_value,
-            pass_provenance="adjudicated",
-            terminal_state=state,
-            evidence_class=evidence_value,
-            ts=ts,
-            version_sensitive=version_sensitive_value,
-            backend=latest_row.backend,
-            ctx_graph_triage=latest_row.ctx_graph_triage,
-            ctx_contract=latest_row.ctx_contract,
-            ctx_whole_file=latest_row.ctx_whole_file,
-            ctx_canary=latest_row.ctx_canary,
-        ))
+        append_row(
+            ledger_root,
+            LedgerRow(
+                fingerprint=args.fingerprint,
+                repo_root=repo_root_value,
+                base_sha=base_sha,
+                head_sha=head_sha,
+                file=file_value,
+                line=line_value,
+                axis_claim=axis_claim_value,
+                pass_provenance="adjudicated",
+                terminal_state=state,
+                evidence_class=evidence_value,
+                ts=ts,
+                version_sensitive=version_sensitive_value,
+                backend=latest_row.backend,
+                ctx_graph_triage=latest_row.ctx_graph_triage,
+                ctx_contract=latest_row.ctx_contract,
+                ctx_whole_file=latest_row.ctx_whole_file,
+                ctx_canary=latest_row.ctx_canary,
+            ),
+        )
         print(
             "ledger: adjudicated %s as %s (file=%s line=%d axis_claim=%s base_sha=%s head_sha=%s)"
             % (
@@ -2253,16 +2374,17 @@ def _run_ledger(args, cwd: Path) -> int:
             ]
             print(json.dumps(payload, indent=2))
         else:
-            print(
-                "ts\tfingerprint\tterminal_state\t"
-                "evidence_class\tfile:line\tpass_provenance"
-            )
+            print("ts\tfingerprint\tterminal_state\tevidence_class\tfile:line\tpass_provenance")
             for r in rows:
                 print(
                     "%s\t%s\t%s\t%s\t%s:%d\t%s"
                     % (
-                        r.ts, r.fingerprint, r.terminal_state.value,
-                        r.evidence_class, r.file, r.line,
+                        r.ts,
+                        r.fingerprint,
+                        r.terminal_state.value,
+                        r.evidence_class,
+                        r.file,
+                        r.line,
                         r.pass_provenance,
                     )
                 )
@@ -2276,16 +2398,16 @@ def _run_ledger(args, cwd: Path) -> int:
             if args.out_dir is not None
             else ledger_root / ".code-forge" / "eval-export"
         )
-        repo_root_override = (
-            Path(args.repo_root).resolve() if args.repo_root else None
-        )
+        repo_root_override = Path(args.repo_root).resolve() if args.repo_root else None
         if repo_root_override is not None:
             try:
                 probe = subprocess.run(
                     ["git", "rev-parse", "--git-dir"],
                     cwd=str(repo_root_override),
                     capture_output=True,
-                    text=True, encoding="utf-8", errors="replace",
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=30,
                     check=False,
                 )
@@ -2333,8 +2455,7 @@ def _run_ledger(args, cwd: Path) -> int:
         if summary.unadjudicated_skipped:
             print(
                 "export-eval: %d UNADJUDICATED rows were not exported; "
-                "run 'code-forge ledger adjudicate' to rule on them"
-                % summary.unadjudicated_skipped,
+                "run 'code-forge ledger adjudicate' to rule on them" % summary.unadjudicated_skipped,
                 file=sys.stderr,
             )
         return EXIT_PASS
@@ -2352,7 +2473,9 @@ def _git_head(cwd: Path) -> str:
         ["git", "rev-parse", "HEAD"],
         cwd=str(cwd),
         capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -2392,19 +2515,31 @@ def main() -> int:
     # Backward compat: detect if first arg is a known subcommand
     # If not, prepend 'review' to sys.argv for argparse
     known_subcommands = {
-        'review', 'gate-check', 'mutation-check', 'e2e-check',
-        'install-hooks', 'install-skill', 'verify',
-        'detect', 'resolve-outlet', 'init', 'trust', 'eval', 'smoke-run',
-        'setup-mcp', 'ledger', 'doctor',
+        "review",
+        "gate-check",
+        "mutation-check",
+        "e2e-check",
+        "install-hooks",
+        "install-skill",
+        "verify",
+        "detect",
+        "resolve-outlet",
+        "init",
+        "trust",
+        "eval",
+        "smoke-run",
+        "setup-mcp",
+        "ledger",
+        "doctor",
     }
     argv = sys.argv[1:]  # skip program name
 
     # Filter out --version and --help which are on root parser
-    non_flag_args = [a for a in argv if not a.startswith('-')]
+    non_flag_args = [a for a in argv if not a.startswith("-")]
 
     if non_flag_args and non_flag_args[0] not in known_subcommands:
         # First non-flag arg is not a subcommand, so prepend 'review'
-        argv = ['review'] + argv
+        argv = ["review"] + argv
 
     try:
         args = parser.parse_args(argv)
@@ -2413,10 +2548,10 @@ def main() -> int:
 
     # Backward compat: bare `forge` (no subcommand) defaults to review
     if args.subcommand is None:
-        args.subcommand = 'review'
+        args.subcommand = "review"
 
     # Route to subcommand handler
-    if args.subcommand == 'review':
+    if args.subcommand == "review":
         try:
             verdict = _run(args, env=os.environ, cwd=Path.cwd())
         except CliError as exc:
@@ -2432,9 +2567,8 @@ def main() -> int:
             return EXIT_TIMEOUT
         except Exception as exc:  # noqa: BLE001
             import traceback
-            print(
-                "code-forge: unexpected error: %s" % exc, file=sys.stderr
-            )
+
+            print("code-forge: unexpected error: %s" % exc, file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             return EXIT_FAIL
         except SystemExit as exc:
@@ -2444,10 +2578,10 @@ def main() -> int:
             # Convert it to a visible internal error with the traceback
             # showing the raise site.
             import traceback
+
             print(
                 "code-forge: internal error: SystemExit(%s) escaped "
-                "the review pipeline"
-                % (exc.code if exc.code is not None else 0,),
+                "the review pipeline" % (exc.code if exc.code is not None else 0,),
                 file=sys.stderr,
             )
             traceback.print_exc(file=sys.stderr)
@@ -2463,38 +2597,44 @@ def main() -> int:
             return EXIT_BUSY
         return verdict_to_exit(verdict)
 
-    elif args.subcommand == 'gate-check':
+    elif args.subcommand == "gate-check":
         from .gate_check import run_gate_check
+
         return run_gate_check(
-            args=args, env=os.environ, cwd=Path.cwd(),
-            stdout=sys.stdout, stderr=sys.stderr
+            args=args, env=os.environ, cwd=Path.cwd(), stdout=sys.stdout, stderr=sys.stderr
         )
 
-    elif args.subcommand == 'mutation-check':
+    elif args.subcommand == "mutation-check":
         return _run_mutation_check(args, cwd=Path.cwd())
 
-    elif args.subcommand == 'e2e-check':
+    elif args.subcommand == "e2e-check":
         return _run_e2e_check_cmd(args, cwd=Path.cwd())
 
-    elif args.subcommand == 'install-hooks':
+    elif args.subcommand == "install-hooks":
         from .install_hooks import run_install_hooks
+
         return run_install_hooks(
-            args=args, env=os.environ, cwd=Path.cwd(),
-            stdout=sys.stdout, stderr=sys.stderr
+            args=args, env=os.environ, cwd=Path.cwd(), stdout=sys.stdout, stderr=sys.stderr
         )
 
-    elif args.subcommand == 'install-skill':
+    elif args.subcommand == "install-skill":
         return _run_install_skill(args, cwd=Path.cwd())
 
-    elif args.subcommand == 'verify':
+    elif args.subcommand == "verify":
         from .source import compute_source_hash
         from .errors import UnreadableGateError
         from .verify import run_verify, parse_diff_files, read_required_cycles
         import subprocess
+
         cwd = Path.cwd()
         try:
             diff_result = subprocess.run(
-                ["git", "diff", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd
+                ["git", "diff", "HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=cwd,
             )
         except FileNotFoundError:
             print(
@@ -2533,42 +2673,41 @@ def main() -> int:
             if floor is not None and req < floor:
                 print(
                     "code-forge: verify: --required-cycles %d is below the "
-                    "required %d; using %d"
-                    % (req, floor, floor),
+                    "required %d; using %d" % (req, floor, floor),
                     file=sys.stderr,
                 )
-        vr = run_verify(cwd, diff_sha, diff_f, diff_text=diff_text,
-                        required_cycles=req)
+        vr = run_verify(cwd, diff_sha, diff_f, diff_text=diff_text, required_cycles=req)
         if not args.quiet:
             print("verify: %s -- %s" % ("PASS" if vr.passed else "FAIL", vr.reason))
         return EXIT_PASS if vr.passed else EXIT_FAIL
 
-    elif args.subcommand == 'detect':
+    elif args.subcommand == "detect":
         return _run_detect(args, cwd=Path.cwd())
 
-    elif args.subcommand == 'resolve-outlet':
+    elif args.subcommand == "resolve-outlet":
         return _run_resolve_outlet(env=os.environ, cwd=Path.cwd())
 
-    elif args.subcommand == 'doctor':
+    elif args.subcommand == "doctor":
         from .doctor import run_doctor
-        return run_doctor(cwd=Path.cwd(), env=os.environ,
-                          live=getattr(args, 'live', False))
 
-    elif args.subcommand == 'trust':
+        return run_doctor(cwd=Path.cwd(), env=os.environ, live=getattr(args, "live", False))
+
+    elif args.subcommand == "trust":
         return _run_trust(args, cwd=Path.cwd())
 
-    elif args.subcommand == 'eval':
+    elif args.subcommand == "eval":
         return _run_eval(args)
 
-    elif args.subcommand == 'ledger':
+    elif args.subcommand == "ledger":
         return _run_ledger(args, cwd=Path.cwd())
 
-    elif args.subcommand == 'smoke-run':
+    elif args.subcommand == "smoke-run":
         return _handle_smoke_run(args, cwd=Path.cwd())
 
-    elif args.subcommand == 'init':
+    elif args.subcommand == "init":
         from importlib.resources import files as _pkg_files
         from .init_template import GATE_YAML_TEMPLATE
+
         gate_dir = Path.cwd() / ".code-forge"
         try:
             gate_dir.mkdir(parents=True, exist_ok=True)
@@ -2589,12 +2728,15 @@ def main() -> int:
         print("Created %s" % gate_path, file=sys.stderr)
         schema_path = gate_dir / "gate.schema.json"
         if not schema_path.exists() or args.force:
-            schema_text = _pkg_files('code_forge').joinpath('gate.schema.json').read_text(encoding='utf-8')
+            schema_text = (
+                _pkg_files("code_forge").joinpath("gate.schema.json").read_text(encoding="utf-8")
+            )
             schema_path.write_text(schema_text, encoding="utf-8")
             print("Created %s" % schema_path, file=sys.stderr)
         template_path = gate_dir / "contract-template.md"
         if not template_path.exists() or args.force:
             from .init_template import CONTRACT_TEMPLATE_MD
+
             template_path.write_text(CONTRACT_TEMPLATE_MD, encoding="utf-8")
             print("Created %s" % template_path, file=sys.stderr)
         print(
@@ -2605,8 +2747,9 @@ def main() -> int:
         )
         return EXIT_PASS
 
-    elif args.subcommand == 'setup-mcp':
+    elif args.subcommand == "setup-mcp":
         from .setup_mcp import run_setup_mcp
+
         return run_setup_mcp(
             cwd=Path.cwd(),
             backend_names=args.backends,
@@ -2615,10 +2758,7 @@ def main() -> int:
         )
 
     else:
-        print(
-            "code-forge: unknown subcommand: %s" % args.subcommand,
-            file=sys.stderr
-        )
+        print("code-forge: unknown subcommand: %s" % args.subcommand, file=sys.stderr)
         return EXIT_CLI_ERROR
 
 
@@ -2647,23 +2787,29 @@ def _load_gate_siblings(gate_yaml_path: Path) -> tuple:
     if raw is None:
         return {}, None
     if not isinstance(raw, dict):
-        raise CliError(
-            "gate.yaml must be a mapping, got %s" % type(raw).__name__
-        )
+        raise CliError("gate.yaml must be a mapping, got %s" % type(raw).__name__)
     return raw, raw.get("siblings")
 
 
 def _cross_repo_verdict_or_none(
-    *, gate_yaml_path: Path, cwd: Path, baseline_spec, head_spec,
-    mode, engine_choice, backend, max_rounds: Optional[int],
-    max_fix: Optional[int], _clean_threshold: int, warn: Callable,
+    *,
+    gate_yaml_path: Path,
+    cwd: Path,
+    baseline_spec,
+    head_spec,
+    mode,
+    engine_choice,
+    backend,
+    max_rounds: Optional[int],
+    max_fix: Optional[int],
+    _clean_threshold: int,
+    warn: Callable,
     focus_spec: str = "",
 ) -> Optional[Verdict]:
     """Decide and execute cross-repo dispatch, or return None to fall through."""
     _gate_raw, _gate_siblings = _load_gate_siblings(gate_yaml_path)
     if _gate_siblings is not None and not _gate_siblings:
-        warn("gate.yaml has empty siblings: [] section; "
-             "falling through to single-repo review")
+        warn("gate.yaml has empty siblings: [] section; falling through to single-repo review")
     if _gate_siblings:
         from .baseline import GitRefBaseline
         from .cross_repo import run_cross_repo
@@ -2671,14 +2817,11 @@ def _cross_repo_verdict_or_none(
 
         if not isinstance(baseline_spec, GitRefBaseline):
             raise CliError(
-                "cross-repo review requires a git ref baseline, "
-                "got %s" % type(baseline_spec).__name__
+                "cross-repo review requires a git ref baseline, got %s" % type(baseline_spec).__name__
             )
-        if (isinstance(head_spec, GitRefBaseline)
-                and head_spec.ref in ("WORKING", "INDEX")):
+        if isinstance(head_spec, GitRefBaseline) and head_spec.ref in ("WORKING", "INDEX"):
             raise CliError(
-                "cross-repo review requires committed refs, "
-                "not %s" % head_spec.ref,
+                "cross-repo review requires committed refs, not %s" % head_spec.ref,
                 remediation="Commit your changes first, or use --committed to review the last commit.",
             )
         validate_siblings(
@@ -2753,20 +2896,14 @@ def _load_contract_file(path_str: str, warn_fn=None) -> str:
         except OSError as exc:
             raise CliError("contract file error: %s" % exc) from exc
         except ValueError as exc:
-            raise CliError(
-                "contract file is not valid UTF-8: %s" % path_str
-            ) from exc
+            raise CliError("contract file is not valid UTF-8: %s" % path_str) from exc
 
     if not content.strip():
         raise CliError("contract file is empty: %s" % path_str)
     if "\x00" in content:
-        raise CliError(
-            "contract file appears to be binary: %s" % path_str
-        )
+        raise CliError("contract file appears to be binary: %s" % path_str)
     if len(content.encode("utf-8")) > 65536:
-        raise CliError(
-            "contract file exceeds 64KB limit: %s" % path_str
-        )
+        raise CliError("contract file exceeds 64KB limit: %s" % path_str)
     return content
 
 
@@ -2807,8 +2944,7 @@ def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
         stripped = line.strip().lower()
         if stripped.startswith("#"):
             after_hashes = stripped.lstrip("#")
-            if (after_hashes and after_hashes[0] == " "
-                    and "do not flag" in stripped):
+            if after_hashes and after_hashes[0] == " " and "do not flag" in stripped:
                 if stripped != "## do not flag" and warn_fn:
                     warn_fn(
                         "contract: recognized '%s' as do-not-flag "
@@ -2816,9 +2952,7 @@ def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
                         "'## Do NOT Flag'" % line.strip()
                     )
                 start = i
-                matched_level = len(stripped) - len(
-                    stripped.lstrip("#")
-                )
+                matched_level = len(stripped) - len(stripped.lstrip("#"))
                 break
     if start is None:
         return content, ""
@@ -2837,14 +2971,16 @@ def _split_do_not_flag(content: str, warn_fn=None) -> tuple:
                 if end_level <= matched_level:
                     end = j
                     break
-    section_lines = lines[start + 1:end]
+    section_lines = lines[start + 1 : end]
     do_not_flag = "\n".join(section_lines).strip()
     remaining = lines[:start] + lines[end:]
     return "\n".join(remaining).strip(), do_not_flag
 
 
 def _safe_load_contract_digest(
-    contracts_yaml: Path, cwd: Path, backend=None,
+    contracts_yaml: Path,
+    cwd: Path,
+    backend=None,
 ) -> str:
     """Load contracts.yaml digest with defense-in-depth error handling.
 
@@ -2858,15 +2994,14 @@ def _safe_load_contract_digest(
         # contract_loader (syntax error, circular import on first load)
         # must degrade to an empty digest, not abort the review.
         from . import contract_loader
+
         return contract_loader.load_contract_digest(contracts_yaml, cwd, backend=backend)
     # Let memory exhaustion abort the review rather than degrade it; a
     # PASS reached without contract context is worse than a hard failure.
     except MemoryError:
         raise
     except Exception as exc:  # noqa: BLE001 - degradation path, named
-        sys.stderr.write(
-            "code-forge: contracts.yaml load failed: %s\n" % exc
-        )
+        sys.stderr.write("code-forge: contracts.yaml load failed: %s\n" % exc)
         return ""
 
 
@@ -2900,12 +3035,11 @@ def _merge_contract_spec(
     if yaml_digest:
         merged = yaml_digest
     if file_content:
-        effective_content, do_not_flag = _split_do_not_flag(
-            file_content, warn_fn=warn_fn
-        )
+        effective_content, do_not_flag = _split_do_not_flag(file_content, warn_fn=warn_fn)
         if len(effective_content.encode("utf-8")) > 4096 and backend is not None:
             try:
                 from .llm_invoke import llm_invoke
+
                 result = llm_invoke(
                     "Summarize the following contract to its key "
                     "invariants and residual risks:\n" + effective_content,
@@ -2914,20 +3048,14 @@ def _merge_contract_spec(
                 summary = str(result.content)
                 if not summary.strip():
                     if warn_fn:
-                        warn_fn(
-                            "contract: summarization returned empty, "
-                            "injecting raw content"
-                        )
+                        warn_fn("contract: summarization returned empty, injecting raw content")
                 else:
                     effective_content = summary
             except MemoryError:
                 raise
             except Exception:  # noqa: BLE001 - degradation path, raw content kept
                 if warn_fn:
-                    warn_fn(
-                        "contract: summarization failed, "
-                        "injecting raw content"
-                    )
+                    warn_fn("contract: summarization failed, injecting raw content")
         elif len(effective_content.encode("utf-8")) > 4096 and backend is None and warn_fn:
             warn_fn(
                 "contract: content exceeds 4KB but no backend available "
@@ -2971,6 +3099,7 @@ def _load_gate_yaml_raw(gate_yaml_path: Path) -> dict:
     on syntax errors.
     """
     import yaml as _y
+
     try:
         with open(gate_yaml_path, "r", encoding="utf-8") as _f:
             gd = _y.safe_load(_f)
@@ -2979,8 +3108,7 @@ def _load_gate_yaml_raw(gate_yaml_path: Path) -> dict:
     except _y.YAMLError as exc:
         raise CliError(
             "gate.yaml parse error: %s" % exc,
-            remediation="Check gate.yaml syntax. "
-            "Run 'code-forge init --force' to regenerate.",
+            remediation="Check gate.yaml syntax. Run 'code-forge init --force' to regenerate.",
         ) from exc
     return gd if isinstance(gd, dict) else {}
 
@@ -2993,6 +3121,7 @@ def _load_trusted_yaml_focus(gate_yaml_path: Path, warn_fn) -> str:
     independent of backend trust.
     """
     from .trust import is_trusted_focus
+
     focus_gd = _load_gate_yaml_raw(gate_yaml_path)
     raw = focus_gd.get("review_focus", "")
     if isinstance(raw, str):
@@ -3000,12 +3129,13 @@ def _load_trusted_yaml_focus(gate_yaml_path: Path, warn_fn) -> str:
             return ""
         if is_trusted_focus(gate_yaml_path, focus_gd):
             return raw
-        warn_fn("gate.yaml review_focus ignored: not trusted. "
-                "Run 'code-forge trust'.")
+        warn_fn("gate.yaml review_focus ignored: not trusted. Run 'code-forge trust'.")
         return ""
     if raw is not None:
-        warn_fn("gate.yaml review_focus ignored: not a string (got %s). "
-                "Use a YAML string value." % type(raw).__name__)
+        warn_fn(
+            "gate.yaml review_focus ignored: not a string (got %s). "
+            "Use a YAML string value." % type(raw).__name__
+        )
     return ""
 
 
@@ -3013,6 +3143,7 @@ def _load_focus_file(path_str: str, warn_fn=None) -> str:
     """Load focus content from file path or stdin ('-')."""
     if path_str == "-":
         import sys
+
         content = sys.stdin.read()
     else:
         p = Path(path_str)
@@ -3038,9 +3169,18 @@ def _load_focus_file(path_str: str, warn_fn=None) -> str:
 
 
 def _dispatch_cross_repo(
-    gate_yaml_path, cwd, baseline_spec, head_spec, mode,
-    engine_choice, backend, max_rounds, max_fix, _clean_threshold,
-    warn, focus_spec="",
+    gate_yaml_path,
+    cwd,
+    baseline_spec,
+    head_spec,
+    mode,
+    engine_choice,
+    backend,
+    max_rounds,
+    max_fix,
+    _clean_threshold,
+    warn,
+    focus_spec="",
 ) -> "Verdict | None":
     """Cross-repo dispatch. Returns Verdict if siblings exist, None otherwise."""
     _cv = _cross_repo_verdict_or_none(
@@ -3061,7 +3201,12 @@ def _dispatch_cross_repo(
 
 
 def _dispatch_inline_canary(
-    outlet, args, env, cfgs, gate_data, cwd,
+    outlet,
+    args,
+    env,
+    cfgs,
+    gate_data,
+    cwd,
 ) -> "Verdict | None":
     """Inline/sampling outlet dispatch.
 
@@ -3070,9 +3215,7 @@ def _dispatch_inline_canary(
     Returns None for other outlets (caller continues to subprocess path).
     """
     if outlet == "sampling":
-        raise CliError(
-            "outlet 'sampling' is only available within the MCP server context"
-        )
+        raise CliError("outlet 'sampling' is only available within the MCP server context")
     if outlet != "inline":
         return None
     canary_config = _load_canary_config(args, gate_data)
@@ -3083,15 +3226,21 @@ def _dispatch_inline_canary(
             from .llm_invoke import llm_invoke as _llm_invoke
 
             import subprocess as _sp
+
             _diff_result = _sp.run(
                 ["git", "diff", "HEAD"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=str(cwd),
             )
             diff_text = _diff_result.stdout if _diff_result.returncode == 0 else ""
 
             try:
                 backend = resolve_backend(
-                    env, configs=cfgs,
+                    env,
+                    configs=cfgs,
                     cli_value=getattr(args, "backend", None),
                 )
             except MemoryError:
@@ -3105,6 +3254,7 @@ def _dispatch_inline_canary(
                 if backend is None:
                     return []
                 import json as _json
+
                 prompt = (
                     "You are a code mutation expert. Given this Python diff, "
                     "generate %d subtle semantic mutations. Each mutation must "
@@ -3131,8 +3281,7 @@ def _dispatch_inline_canary(
                     raise
                 except Exception as exc:  # noqa: BLE001 - falls back to templates
                     sys.stderr.write(
-                        "code-forge: canary generation failed: %s, "
-                        "falling back to templates\n" % exc
+                        "code-forge: canary generation failed: %s, falling back to templates\n" % exc
                     )
                     return []
 
@@ -3140,6 +3289,7 @@ def _dispatch_inline_canary(
                 if backend is None:
                     raise RuntimeError("no backend available for canary review")
                 import json as _json
+
                 result = _llm_invoke(prompt, backend=backend)
                 return (
                     _json.dumps(result.content)
@@ -3149,6 +3299,7 @@ def _dispatch_inline_canary(
 
             def _source_lookup(filepath: str):
                 import os
+
                 cwd_real = os.path.realpath(str(cwd))
                 full = os.path.realpath(os.path.join(cwd_real, filepath))
                 if not full.startswith(cwd_real + os.sep) and full != cwd_real:
@@ -3169,32 +3320,39 @@ def _dispatch_inline_canary(
             if real_findings:
                 sys.stderr.write("code-forge: canary-verified findings:\n")
                 for f in real_findings:
-                    sys.stderr.write("  %s:%s [%s] %s\n" % (
-                        f.get("file", "?"), f.get("line", "?"),
-                        f.get("severity", "?"), f.get("description", "?"),
-                    ))
+                    sys.stderr.write(
+                        "  %s:%s [%s] %s\n"
+                        % (
+                            f.get("file", "?"),
+                            f.get("line", "?"),
+                            f.get("severity", "?"),
+                            f.get("description", "?"),
+                        )
+                    )
             return verdict
         except MemoryError:
             raise
         except Exception as exc:  # noqa: BLE001 - degradation path, falls back
-            sys.stderr.write(
-                "code-forge: canary check failed (%s), "
-                "falling back to DELEGATED\n" % exc
-            )
+            sys.stderr.write("code-forge: canary check failed (%s), falling back to DELEGATED\n" % exc)
     # Honesty floor: inline does not run the StateMachine gate.
     # Declare DELEGATED so callers can distinguish from a real PASS.
-    sys.stderr.write(
-        "code-forge: DELEGATED -- review delegated to session"
-        " + external R1; exit 5\n"
-    )
+    sys.stderr.write("code-forge: DELEGATED -- review delegated to session + external R1; exit 5\n")
     return Verdict.DELEGATED
 
 
 def _dispatch_subagent(
-    outlet, warn, _contract_file_content, backend,
-    resolved, source_hash, registry, engine_choice,
-    _clean_threshold, cwd,
-    yaml_focus="", _focus_file_content="",
+    outlet,
+    warn,
+    _contract_file_content,
+    backend,
+    resolved,
+    source_hash,
+    registry,
+    engine_choice,
+    _clean_threshold,
+    cwd,
+    yaml_focus="",
+    _focus_file_content="",
     allow_unsnapshotted_context: bool = False,
 ) -> "Verdict | None":
     """Subagent outlet dispatch. Returns Verdict if outlet=='subagent',
@@ -3209,25 +3367,30 @@ def _dispatch_subagent(
     from .daemon_state import DaemonStateRunner
     from .rulepack import RulepackRunner
 
-    _post_image, _conv_digest = _assemble_post_image(
-        cwd, resolved.git_diff or ""
-    )
+    _post_image, _conv_digest = _assemble_post_image(cwd, resolved.git_diff or "")
     _contracts_yaml_c = cwd / ".code-forge" / "contracts.yaml"
     _yaml_digest_c = ""
     if _contracts_yaml_c.is_file():
         _yaml_digest_c = _safe_load_contract_digest(
-            _contracts_yaml_c, cwd, backend=backend,
+            _contracts_yaml_c,
+            cwd,
+            backend=backend,
         )
     _contract_spec_c = _merge_contract_spec(
-        _yaml_digest_c, _contract_file_content,
-        backend=backend, warn_fn=warn,
+        _yaml_digest_c,
+        _contract_file_content,
+        backend=backend,
+        warn_fn=warn,
     )
     _focus_spec_c = _merge_focus_spec(yaml_focus, _focus_file_content, warn)
     from .manifest import extract_manifest
+
     _manifest_c = extract_manifest(cwd)
     _manifest_spec_c = _manifest_c.to_prompt_block()
     _subagent_spawn = _make_subagent_spawn(
-        backend, _conv_digest, _post_image,
+        backend,
+        _conv_digest,
+        _post_image,
         contract_spec=_contract_spec_c,
         focus_spec=_focus_spec_c,
         manifest_spec=_manifest_spec_c,
@@ -3248,20 +3411,18 @@ def _dispatch_subagent(
     try:
         from .context_sources import RemovedSymbolReaders, gather
         from .diff import get_changed_files
+
         _c_ctx = gather(
             [RemovedSymbolReaders(cwd)],
             get_changed_files(resolved.git_diff or ""),
             resolved.git_diff or "",
             head_sha=getattr(resolved, "head_sha", None),
             allow_unsnapshotted=allow_unsnapshotted_context,
-            on_error=lambda name, msg: warn(
-                "context source %s failed: %s" % (name, msg)
-            ),
+            on_error=lambda name, msg: warn("context source %s failed: %s" % (name, msg)),
         )
         _c_context_rows = list(_c_ctx.rows)
     except Exception as exc:  # noqa: BLE001 - advisory path, named
-        warn("context sources unavailable: %s: %s"
-             % (type(exc).__name__, exc))
+        warn("context sources unavailable: %s: %s" % (type(exc).__name__, exc))
     verdict = run_outlet_c(
         resolved_review=resolved,
         source_hash=source_hash,
@@ -3273,20 +3434,20 @@ def _dispatch_subagent(
         engine=engine_choice,
         context_rows=_c_context_rows,
         advisory_runners=[
-            _c_taint, _c_runtime, _c_graph, _c_daemon, _c_legacy,
+            _c_taint,
+            _c_runtime,
+            _c_graph,
+            _c_daemon,
+            _c_legacy,
             _c_rulepack,
         ],
     )
     # Test-assertion review gate: advisory findings to stderr.
     # D8 exception: not recorded in receipts (see _run_test_assertion_review).
     if resolved.git_diff:
-        _ta_findings = _run_test_assertion_review(
-            resolved.git_diff, backend
-        )
+        _ta_findings = _run_test_assertion_review(resolved.git_diff, backend)
         for _f in _ta_findings:
-            sys.stderr.write(
-                "[test-assertion] %s\n" % _f.description
-            )
+            sys.stderr.write("[test-assertion] %s\n" % _f.description)
     return verdict
 
 
@@ -3305,6 +3466,7 @@ def _check_backend_credentials(
     if backend.type == "cli":
         return
     from .backend import credential_error
+
     err = credential_error(backend, env)
     if err is not None:
         raise CliError(err)
@@ -3321,8 +3483,13 @@ def _repo_display_name(cwd: Path) -> str:
     try:
         top = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", cwd=cwd, check=False, timeout=5,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            check=False,
+            timeout=5,
         ).stdout.strip()
     except (subprocess.SubprocessError, OSError):
         # OSError covers a missing git binary (FileNotFoundError is an
@@ -3337,9 +3504,7 @@ def _repo_display_name(cwd: Path) -> str:
     return "".join(c for c in name if c.isprintable())
 
 
-def _banner_timeout_note(
-    backend, env_raw: str | None
-) -> str:
+def _banner_timeout_note(backend, env_raw: str | None) -> str:
     """Suffix for the banner timeout, explaining env involvement only.
 
     effective_invoke_timeout_s prefers backend.timeout_s over the env
@@ -3369,15 +3534,9 @@ def _banner_timeout_note(
     # and an env var can carry ANSI escapes that would corrupt the
     # terminal or forge log lines.
     clean_raw = "".join(c for c in env_raw if c.isprintable())
-    backend_wins = (
-        backend is not None
-        and (backend.timeout_s or 0) > 0
-    )
+    backend_wins = backend is not None and (backend.timeout_s or 0) > 0
     if backend_wins:
-        return (
-            " (FORGE_LLM_TIMEOUT_S=%s ignored: backend timeout wins)"
-            % clean_raw
-        )
+        return " (FORGE_LLM_TIMEOUT_S=%s ignored: backend timeout wins)" % clean_raw
     return " (from FORGE_LLM_TIMEOUT_S)"
 
 
@@ -3411,22 +3570,20 @@ def _startup_banner_line(
     if diff_count is None:
         diff_str = "n/a"
     else:
-        diff_str = "%d file%s" % (
-            diff_count, "" if diff_count == 1 else "s"
-        )
+        diff_str = "%d file%s" % (diff_count, "" if diff_count == 1 else "s")
     if timeout_s is not None:
         timeout_str = "%ds%s" % (timeout_s, timeout_note)
     else:
         timeout_str = "n/a"
     # Backend names come from config, not the CLI author: strip control
     # characters like the other embedded values.
-    backend_name = "".join(
-        c for c in backend_name if c.isprintable()
-    )
-    line = (
-        "code-forge: reviewing %s (diff: %s); mode: %s; backend: %s; "
-        "LLM timeout: %s"
-        % (target, diff_str, mode, backend_name, timeout_str)
+    backend_name = "".join(c for c in backend_name if c.isprintable())
+    line = "code-forge: reviewing %s (diff: %s); mode: %s; backend: %s; LLM timeout: %s" % (
+        target,
+        diff_str,
+        mode,
+        backend_name,
+        timeout_str,
     )
     if exec_falsify:
         line += "; exec-falsify: on (budget %ds)" % exec_falsify_timeout
@@ -3436,8 +3593,10 @@ def _startup_banner_line(
 def _run(args, env, cwd: Path) -> Verdict:
     """Main pipeline body. Returns Verdict."""
     _wall_t0 = time.monotonic()
-    warn = (lambda msg: None) if args.quiet else (
-        lambda msg: print("code-forge: %s" % msg, file=sys.stderr)
+    warn = (
+        (lambda msg: None)
+        if args.quiet
+        else (lambda msg: print("code-forge: %s" % msg, file=sys.stderr))
     )
 
     # Worktree validation (BOTH-03): only if in git repo
@@ -3451,15 +3610,30 @@ def _run(args, env, cwd: Path) -> Verdict:
             try:
                 result_work_tree = subprocess.run(
                     ["git", "rev-parse", "--is-inside-work-tree"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=cwd,
+                    check=False,
                 )
                 result_git_dir = subprocess.run(
                     ["git", "rev-parse", "--git-dir"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=cwd,
+                    check=False,
                 )
                 result_common_dir = subprocess.run(
                     ["git", "rev-parse", "--git-common-dir"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=cwd,
+                    check=False,
                 )
 
                 if result_work_tree.returncode == 0:
@@ -3476,34 +3650,26 @@ def _run(args, env, cwd: Path) -> Verdict:
                             "changes, use --allow-main / FORGE_ALLOW_MAIN=1."
                         )
             except subprocess.SubprocessError as exc:
-                raise CliError(
-                    "git worktree check failed: %s" % exc
-                ) from exc
-
+                raise CliError("git worktree check failed: %s" % exc) from exc
 
     # Validate mutual exclusion BEFORE outlet resolution
     # (prevents --backend from triggering reachability_fn probe)
     inline_flags = [
-        getattr(args, 'backend_url', None),
-        getattr(args, 'backend_format', None),
-        getattr(args, 'backend_key_env', None),
-        getattr(args, 'backend_model', None),
+        getattr(args, "backend_url", None),
+        getattr(args, "backend_format", None),
+        getattr(args, "backend_key_env", None),
+        getattr(args, "backend_model", None),
     ]
     has_inline = any(f is not None for f in inline_flags)
-    has_backend_name = getattr(args, 'backend', None) is not None
+    has_backend_name = getattr(args, "backend", None) is not None
     if has_backend_name and has_inline:
-        raise CliError(
-            "--backend and inline flags are mutually exclusive"
-        )
+        raise CliError("--backend and inline flags are mutually exclusive")
     if has_inline and not all(f is not None for f in inline_flags):
-        raise CliError(
-            "inline backend requires all 4 flags: "
-            "--backend-url/format/key-env/model"
-        )
-
+        raise CliError("inline backend requires all 4 flags: --backend-url/format/key-env/model")
 
     # Step 0: Outlet resolution (GA1 bridge)
     from .outlet_resolver import resolve_outlet
+
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
 
     # Load gate backends once through the trust guard; reuse cfgs for outlet
@@ -3518,12 +3684,14 @@ def _run(args, env, cwd: Path) -> Verdict:
     # so we validate here on the actual review path.
     from .gate_check import validate_retry_config
     from .user_config import load_user_retry, merge_retry
+
     retry_cfg = merge_retry(gate_data.get("retry", {}), load_user_retry())
     validate_retry_config(retry_cfg)
 
     from .kernel_context import KernelContextSource, validate_kernel_context
     from .trust import is_trusted_kernel_context
     from .workspace import resolve_workspace
+
     try:
         kernel_cfg = validate_kernel_context(gate_data.get("kernel_context", {}))
     except ValueError as exc:
@@ -3544,14 +3712,16 @@ def _run(args, env, cwd: Path) -> Verdict:
     _contract_file_content = ""
     if getattr(args, "contract", None) is not None:
         _contract_file_content = _load_contract_file(
-            args.contract, warn_fn=warn,
+            args.contract,
+            warn_fn=warn,
         )
 
     # Early focus file read: validate before backend resolution.
     _focus_file_content = ""
     if getattr(args, "focus", None) is not None:
         _focus_file_content = _load_focus_file(
-            args.focus, warn_fn=warn,
+            args.focus,
+            warn_fn=warn,
         )
 
     # Load trusted yaml focus (independent of backend trust).
@@ -3561,11 +3731,12 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     # has_explicit_backend is True when the user passed --backend <name>
     # or assembled an inline backend via --backend-url/format/key-env/model.
-    _backend_arg = getattr(args, 'backend', None)
+    _backend_arg = getattr(args, "backend", None)
     has_explicit_backend = has_inline or (_backend_arg is not None)
 
     def _reachability():
         from .backend import resolve_backend, probe_backend
+
         backend = resolve_backend(
             env,
             configs=cfgs,
@@ -3574,7 +3745,8 @@ def _run(args, env, cwd: Path) -> Verdict:
         if _backend_arg is not None or env.get("FORGE_BACKEND"):
             return probe_backend(backend, env=env)
         return probe_backend_with_fallback(
-            backend, cfgs,
+            backend,
+            cfgs,
             project_names=_project_backend_names(gate_data),
             env=env,
         )
@@ -3582,7 +3754,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     outlet = resolve_outlet(
         env,
         gate_yaml_path if gate_yaml_path.exists() else None,
-        cli_value=getattr(args, 'outlet', None),
+        cli_value=getattr(args, "outlet", None),
         configs=cfgs,
         has_explicit_backend=has_explicit_backend,
         reachability_fn=_reachability,
@@ -3624,15 +3796,15 @@ def _run(args, env, cwd: Path) -> Verdict:
             backend = resolve_backend(
                 env,
                 configs=cfgs,
-                cli_value=getattr(args, 'backend', None),
+                cli_value=getattr(args, "backend", None),
             )
             # An explicitly selected backend (--backend or
             # FORGE_BACKEND) is the user's deliberate choice; fallback
             # only rescues the default resolution.
-            if getattr(args, 'backend', None) is None \
-                    and not env.get("FORGE_BACKEND"):
+            if getattr(args, "backend", None) is None and not env.get("FORGE_BACKEND"):
                 backend = resolve_backend_with_fallback(
-                    backend, cfgs,
+                    backend,
+                    cfgs,
                     project_names=_project_backend_names(gate_data),
                     env=env,
                 )
@@ -3659,7 +3831,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     mode = resolve_mode(args.mode, env, sys.stdout.isatty())
 
     # Step 2: registry (with auto-detect fallback)
-    is_default_registry = (args.registry == ".code-forge/tools.yaml")
+    is_default_registry = args.registry == ".code-forge/tools.yaml"
 
     def _safe_load_registry(path):
         """Load registry, translating ValueError to CliError."""
@@ -3676,6 +3848,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     except FileNotFoundError as exc:
         if is_default_registry:
             from .detect import detect_and_init
+
             detect_and_init(cwd, quiet=True)
             registry = _safe_load_registry(args.registry)
         else:
@@ -3686,29 +3859,20 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     if registry == {} and is_default_registry:
         from .detect import detect_and_init
+
         detect_and_init(cwd, quiet=True)
         registry = _safe_load_registry(args.registry)
 
     # Step 3: env overrides
-    max_rounds = resolve_max_total_rounds(
-        args.max_total_rounds, env
-    )
-    max_fix = resolve_max_fix_attempts(
-        args.max_fix_attempts, env
-    )
-    engine_choice = resolve_falsification_engine(
-        args.falsification_engine, env
-    )
+    max_rounds = resolve_max_total_rounds(args.max_total_rounds, env)
+    max_fix = resolve_max_fix_attempts(args.max_fix_attempts, env)
+    engine_choice = resolve_falsification_engine(args.falsification_engine, env)
 
     # Step 4: baseline / head (H4: two-phase paths resolution)
-    baseline_spec, head_spec = _build_baseline_specs(
-        args, cwd, warn=warn
-    )
+    baseline_spec, head_spec = _build_baseline_specs(args, cwd, warn=warn)
     initial_paths = _paths(args, cwd, resolved=None)
     try:
-        resolved = resolve_baseline(
-            baseline_spec, head_spec, initial_paths, cwd
-        )
+        resolved = resolve_baseline(baseline_spec, head_spec, initial_paths, cwd)
     except BaselineResolutionError as exc:
         raise CliError(
             "baseline resolution failed: %s" % exc,
@@ -3718,9 +3882,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     if not initial_paths:
         effective_paths = _paths(args, cwd, resolved=resolved)
         if effective_paths:
-            resolved = resolve_baseline(
-                baseline_spec, head_spec, effective_paths, cwd
-            )
+            resolved = resolve_baseline(baseline_spec, head_spec, effective_paths, cwd)
 
     # Empty-diff guard: nothing to review, tell the user explicitly.
     if not resolved.git_diff and not resolved.source_files:
@@ -3729,17 +3891,14 @@ def _run(args, env, cwd: Path) -> Verdict:
 
     # Step 5: source identity (B3: keyword args on mode_hint)
     if resolved.mode_hint == "git":
-        source_hash = compute_source_hash(
-            git_diff=resolved.git_diff or ""
-        )
+        source_hash = compute_source_hash(git_diff=resolved.git_diff or "")
     else:
-        source_hash = compute_source_hash(
-            files=resolved.source_files
-        )
+        source_hash = compute_source_hash(files=resolved.source_files)
     baseline_repr = serialize_baseline_spec(baseline_spec)
 
     # Compute diff-size tier threshold
     from .diff import count_diff_lines, tier_threshold
+
     _line_count = count_diff_lines(resolved.git_diff or "")
     _whole_file = bool(getattr(args, "whole_file", None))
     _env_threshold = None
@@ -3749,68 +3908,71 @@ def _run(args, env, cwd: Path) -> Verdict:
             _env_threshold = int(_env_raw)
     except (ValueError, TypeError):
         pass
-    _clean_threshold = tier_threshold(
-        _line_count, _whole_file, _env_threshold
-    )
+    _clean_threshold = tier_threshold(_line_count, _whole_file, _env_threshold)
 
     # Outlet C (subagent): dispatch via run_outlet_c with llm_invoke-based
     # spawn_fn. Backend is resolved above. resolved/source_hash
     # are now in scope at this point in the flow.
     _subagent_v = _dispatch_subagent(
-        outlet, warn, _contract_file_content, backend,
-        resolved, source_hash, registry, engine_choice,
-        _clean_threshold, cwd,
-        yaml_focus=yaml_focus, _focus_file_content=_focus_file_content,
-        allow_unsnapshotted_context=bool(
-            getattr(args, "allow_unsnapshotted_context", False)
-        ),
+        outlet,
+        warn,
+        _contract_file_content,
+        backend,
+        resolved,
+        source_hash,
+        registry,
+        engine_choice,
+        _clean_threshold,
+        cwd,
+        yaml_focus=yaml_focus,
+        _focus_file_content=_focus_file_content,
+        allow_unsnapshotted_context=bool(getattr(args, "allow_unsnapshotted_context", False)),
     )
     if _subagent_v is not None:
         return _subagent_v
 
     # M6: non-git snapshot auto-detection.
-    if (resolved.mode_hint == "non-git"
-            and args.baseline is None
-            and isinstance(baseline_spec, EmptyBaseline)):
+    if (
+        resolved.mode_hint == "non-git"
+        and args.baseline is None
+        and isinstance(baseline_spec, EmptyBaseline)
+    ):
         from .snapshot import find_existing_snapshot
+
         snap_path = find_existing_snapshot(source_hash, cwd)
         if snap_path is not None:
             baseline_spec = SnapshotBaseline(path=snap_path)
             try:
                 resolved = resolve_baseline(
-                    baseline_spec, head_spec,
-                    resolved.source_files, cwd,
+                    baseline_spec,
+                    head_spec,
+                    resolved.source_files,
+                    cwd,
                 )
             except BaselineResolutionError as exc:
-                raise CliError(
-                    "snapshot baseline resolution failed: %s"
-                    % exc
-                ) from exc
-            baseline_repr = serialize_baseline_spec(
-                baseline_spec
-            )
+                raise CliError("snapshot baseline resolution failed: %s" % exc) from exc
+            baseline_repr = serialize_baseline_spec(baseline_spec)
 
     # Step 6 (backend) already resolved above for both outlet paths.
 
     if args.sandbox:
-        warn(
-            "warning: --sandbox is not yet implemented; "
-            "ignored in current version"
-        )
+        warn("warning: --sandbox is not yet implemented; ignored in current version")
 
-    _post_image_a, _conv_digest_a = _assemble_post_image(
-        cwd, resolved.git_diff or ""
-    )
+    _post_image_a, _conv_digest_a = _assemble_post_image(cwd, resolved.git_diff or "")
 
     _contracts_yaml_a = cwd / ".code-forge" / "contracts.yaml"
     _yaml_digest_a = ""
     if _contracts_yaml_a.is_file():
         _yaml_digest_a = _safe_load_contract_digest(
-            _contracts_yaml_a, cwd, backend=backend,
+            _contracts_yaml_a,
+            cwd,
+            backend=backend,
         )
     _contract_spec_a = _merge_contract_spec(
-        _yaml_digest_a, _contract_file_content,
-        backend=backend, warn_fn=warn,
+        _yaml_digest_a,
+        _contract_file_content,
+        backend=backend,
+        warn_fn=warn,
     )
 
     # Pre-loop context sources (Phase 59-B1/B2): blast radius from graph
@@ -3823,10 +3985,13 @@ def _run(args, env, cwd: Path) -> Verdict:
     # before so sem/graph.db is still queried once per review.
     from .context_sources import (
         GraphTriageSource,
-        RemovedSymbolReaders, gather, render_blast_radius,
+        RemovedSymbolReaders,
+        gather,
+        render_blast_radius,
         render_context_sources,
     )
     from .diff import get_changed_files
+
     _graph_impact_context = ""
     _context_sources_text = ""
     _pre_graph_findings: list = []
@@ -3858,24 +4023,23 @@ def _run(args, env, cwd: Path) -> Verdict:
             get_changed_files(resolved.git_diff or ""),
             resolved.git_diff or "",
             head_sha=getattr(resolved, "head_sha", None),
-            allow_unsnapshotted=bool(
-                getattr(args, "allow_unsnapshotted_context", False)
-            ),
+            allow_unsnapshotted=bool(getattr(args, "allow_unsnapshotted_context", False)),
             on_error=_context_error,
         )
         for _skipped in _ctx.skipped:
             warn("context source skipped (stale snapshot): %s" % _skipped)
-        _graph_impact_context = render_blast_radius(
-            [r for r in _ctx.rows if r.source == "graph_triage"]
-        )
+        _graph_impact_context = render_blast_radius([r for r in _ctx.rows if r.source == "graph_triage"])
         from .context_sources import GatherResult
         from .kernel_context import unavailable_text
+
         _non_kernel_text = render_context_sources(
             GatherResult(rows=[r for r in _ctx.rows if r.source != "kernel"])
         )
         _kernel_text = ""
         if _kernel_source is not None:
-            _kernel_text = unavailable_text(kernel_root) if _kernel_failed else _kernel_source.rendered_text
+            _kernel_text = (
+                unavailable_text(kernel_root) if _kernel_failed else _kernel_source.rendered_text
+            )
             for message in _kernel_source.warnings:
                 warn(message)
         _context_sources_text = "\n\n".join(s for s in (_non_kernel_text, _kernel_text) if s)
@@ -3887,6 +4051,7 @@ def _run(args, env, cwd: Path) -> Verdict:
         _context_sources_text = ""
         if kernel_cfg.enabled:
             from .kernel_context import unavailable_text
+
             warn("kernel-context: reason=unavailable")
             _context_sources_text = "\n\n".join(
                 s for s in (_non_kernel_text, unavailable_text(kernel_root)) if s
@@ -3895,18 +4060,23 @@ def _run(args, env, cwd: Path) -> Verdict:
         _context_rows = []
 
     falsifier = build_falsifier(
-        engine_choice, backend=backend, diff_text=resolved.git_diff,
+        engine_choice,
+        backend=backend,
+        diff_text=resolved.git_diff,
         context_rows=[r for r in _context_rows if r.source != "kernel"],
     )
     autofixer = build_autofixer(resolved)
     revert_fn = build_revert_fn(resolved, cwd)
 
     from .machine import TimeoutCircuitBreaker
+
     breaker = TimeoutCircuitBreaker(threshold=5)
     from .llm_invoke import TruncationBreaker
+
     truncation_breaker = TruncationBreaker(threshold=5)
 
     from .manifest import extract_manifest
+
     _manifest_a = extract_manifest(cwd)
     _manifest_spec_a = _manifest_a.to_prompt_block()
 
@@ -3915,15 +4085,23 @@ def _run(args, env, cwd: Path) -> Verdict:
         max_prompt_tokens_from_gate_config,
         thresholds_from_gate_config,
     )
+
     _group_budget = max_prompt_tokens_from_gate_config(gate_data)
     _l1_est_tokens = _estimate_l1_prompt_tokens(
-        resolved.git_diff or "", _post_image_a, _conv_digest_a,
-        _graph_impact_context, _contract_spec_a, _manifest_spec_a, "",
+        resolved.git_diff or "",
+        _post_image_a,
+        _conv_digest_a,
+        _graph_impact_context,
+        _contract_spec_a,
+        _manifest_spec_a,
+        "",
         _context_sources_text if kernel_cfg.enabled else "",
     )
     if _l1_est_tokens <= _group_budget:
         l1_provider = build_l1_provider(
-            engine_choice, resolved, backend=backend,
+            engine_choice,
+            resolved,
+            backend=backend,
             conventions_digest=_conv_digest_a,
             post_image=_post_image_a,
             graph_impact_context=_graph_impact_context,
@@ -3943,7 +4121,9 @@ def _run(args, env, cwd: Path) -> Verdict:
 
         _changes = _run_sem(resolved.git_diff or "", cwd)
         _grouping = group_diff(
-            _changes, cwd, *thresholds_from_gate_config(gate_data),
+            _changes,
+            cwd,
+            *thresholds_from_gate_config(gate_data),
         )
         _review_groups = [g for g in _grouping.groups if g.passes > 0]
         if not _review_groups:
@@ -3955,7 +4135,9 @@ def _run(args, env, cwd: Path) -> Verdict:
                 "(truncation risk stands)" % (_l1_est_tokens, _group_budget)
             )
             l1_provider = build_l1_provider(
-                engine_choice, resolved, backend=backend,
+                engine_choice,
+                resolved,
+                backend=backend,
                 conventions_digest=_conv_digest_a,
                 post_image=_post_image_a,
                 graph_impact_context=_graph_impact_context,
@@ -3971,34 +4153,47 @@ def _run(args, env, cwd: Path) -> Verdict:
             )
         else:
             import dataclasses as _dc
+
             _specs = []
             for _g in _review_groups:
                 _gdiff = split_diff_for_files(
-                    resolved.git_diff or "", _g.members,
+                    resolved.git_diff or "",
+                    _g.members,
                 )
                 _pi_g, _conv_g = _assemble_post_image(cwd, _gdiff)
-                _specs.append({
-                    "name": _g.name,
-                    "resolved": _dc.replace(
-                        resolved, git_diff=_gdiff,
-                        source_files=[Path(m) for m in _g.members],
-                    ),
-                    "post_image": _pi_g,
-                    "conventions_digest": _conv_g,
-                    "split_context": _split_context_for_group(
-                        _g.name, _grouping.cross_group_edges,
-                    ),
-                })
+                _specs.append(
+                    {
+                        "name": _g.name,
+                        "resolved": _dc.replace(
+                            resolved,
+                            git_diff=_gdiff,
+                            source_files=[Path(m) for m in _g.members],
+                        ),
+                        "post_image": _pi_g,
+                        "conventions_digest": _conv_g,
+                        "split_context": _split_context_for_group(
+                            _g.name,
+                            _grouping.cross_group_edges,
+                        ),
+                    }
+                )
             print(
                 "grouping: %d files -> %d review groups "
                 "(est %d tok > budget %d)"
-                % (len({m for g in _review_groups for m in g.members}),
-                   len(_review_groups), _l1_est_tokens, _group_budget),
+                % (
+                    len({m for g in _review_groups for m in g.members}),
+                    len(_review_groups),
+                    _l1_est_tokens,
+                    _group_budget,
+                ),
                 file=sys.stderr,
             )
             from .factories import build_grouped_l1_provider
+
             l1_provider = build_grouped_l1_provider(
-                engine_choice, _specs, backend=backend,
+                engine_choice,
+                _specs,
+                backend=backend,
                 graph_impact_context=_graph_impact_context,
                 context_sources_text=_context_sources_text,
                 contract_spec=_contract_spec_a,
@@ -4015,10 +4210,9 @@ def _run(args, env, cwd: Path) -> Verdict:
     # actually runs over a diff (engine != stub AND a non-empty git diff).
     # A non-git review or the stub engine leaves L1 inactive, so only L0
     # tool matches provide per-file coverage.
-    coverage_l1_active = (
-        engine_choice != "stub" and bool(resolved.git_diff)
-    )
+    coverage_l1_active = engine_choice != "stub" and bool(resolved.git_diff)
     from .coverage import load_coverage_exempt_patterns
+
     try:
         coverage_exempt = load_coverage_exempt_patterns(cwd)
     except CoverageConfigError as exc:
@@ -4030,9 +4224,20 @@ def _run(args, env, cwd: Path) -> Verdict:
             warn("gate.yaml has empty siblings: [] section; falling through to single-repo review")
     else:
         _cv = _dispatch_cross_repo(
-            gate_yaml_path, cwd, baseline_spec, head_spec, mode,
-            engine_choice, backend, max_rounds, max_fix, _clean_threshold,
-            warn, focus_spec=(yaml_focus + ("\n\n" if yaml_focus and _focus_file_content else "") + _focus_file_content),
+            gate_yaml_path,
+            cwd,
+            baseline_spec,
+            head_spec,
+            mode,
+            engine_choice,
+            backend,
+            max_rounds,
+            max_fix,
+            _clean_threshold,
+            warn,
+            focus_spec=(
+                yaml_focus + ("\n\n" if yaml_focus and _focus_file_content else "") + _focus_file_content
+            ),
         )
         if _cv is not None:
             return _cv
@@ -4046,6 +4251,7 @@ def _run(args, env, cwd: Path) -> Verdict:
     if backend is not None:
         try:
             from .llm_invoke import effective_invoke_timeout_s
+
             _banner_timeout = effective_invoke_timeout_s(backend, None)
         except Exception:  # noqa: BLE001, S110 - banner must never abort the run
             pass
@@ -4054,16 +4260,13 @@ def _run(args, env, cwd: Path) -> Verdict:
     # WORKING, or INDEX included -- instead of unconditionally HEAD.
     # No extra git call; the only probe is _repo_display_name's
     # toplevel lookup.
-    _banner_sha = (
-        str(resolved.head_sha)[:8] if resolved.head_sha else ""
-    )
+    _banner_sha = str(resolved.head_sha)[:8] if resolved.head_sha else ""
     _banner_diff_count = None
     if resolved.git_diff:
         try:
             from .verify import parse_diff_files
-            _banner_diff_count = len(
-                parse_diff_files(resolved.git_diff)
-            )
+
+            _banner_diff_count = len(parse_diff_files(resolved.git_diff))
         except Exception:  # noqa: BLE001, S110 - banner must never abort the run
             pass
     # Phase 53a EXEC-FALSIFY: resolve flag + gate.yaml budget.
@@ -4072,15 +4275,14 @@ def _run(args, env, cwd: Path) -> Verdict:
     _exec_falsify_command = None
     if _exec_falsify:
         from .gate_check import validate_exec_falsify_config
+
         _exec_section = gate_data.get("exec_falsify")
         if _exec_section is None:
             # CLI flag without a gate.yaml block: default budget.
             pass
         else:
             validate_exec_falsify_config(_exec_section)
-            _exec_falsify_timeout = int(
-                _exec_section.get("timeout_seconds", 120)
-            )
+            _exec_falsify_timeout = int(_exec_section.get("timeout_seconds", 120))
         _test_section = gate_data.get("test")
         if isinstance(_test_section, dict) and "command" in _test_section:
             _exec_falsify_command = _test_section.get("command")
@@ -4092,9 +4294,7 @@ def _run(args, env, cwd: Path) -> Verdict:
             mode=mode.value.lower(),
             backend_name=backend.name if backend is not None else "none",
             timeout_s=_banner_timeout,
-            timeout_note=_banner_timeout_note(
-                backend, env.get("FORGE_LLM_TIMEOUT_S")
-            ),
+            timeout_note=_banner_timeout_note(backend, env.get("FORGE_LLM_TIMEOUT_S")),
             exec_falsify=_exec_falsify,
             exec_falsify_timeout=_exec_falsify_timeout,
         ),
@@ -4135,43 +4335,47 @@ def _run(args, env, cwd: Path) -> Verdict:
             # SARIF emission in CI mode, inside lock scope.
             if mode == Mode.CI:
                 _emit_ci_output(
-                    state_path, registry,
-                    backend_name=(
-                        backend.name if backend.type == "api" else None
-                    ),
-                    backend_model=(
-                        backend.model if backend.type == "api" else None
-                    ),
+                    state_path,
+                    registry,
+                    backend_name=(backend.name if backend.type == "api" else None),
+                    backend_model=(backend.model if backend.type == "api" else None),
                     manifest=_manifest_a,
                 )
     except LLMInvokeError as exc:
         # re-wrap LLMInvokeError as CliError
-        raise CliError(
-            "backend %s: %s" % (backend.name, exc)
-        ) from exc
+        raise CliError("backend %s: %s" % (backend.name, exc)) from exc
 
     # Test-assertion review gate on subprocess path: runs BEFORE
     # return, advisory-only (D8 exception per _run_test_assertion_review).
     if resolved.git_diff:
-        _ta_findings_a = _run_test_assertion_review(
-            resolved.git_diff, backend
-        )
+        _ta_findings_a = _run_test_assertion_review(resolved.git_diff, backend)
         for _f_a in _ta_findings_a:
-            sys.stderr.write(
-                "[test-assertion] %s\n" % _f_a.description
-            )
+            sys.stderr.write("[test-assertion] %s\n" % _f_a.description)
     return verdict
 
 
 def _run_hold_loop(
-    *, mode, falsifier, autofixer, revert_fn, l1_provider, resolved,
-    source_hash, baseline_repr, cwd, registry,
-    max_rounds, max_fix_attempts, state_path,
-    coverage_l1_active=True, coverage_exempt_patterns=None,
+    *,
+    mode,
+    falsifier,
+    autofixer,
+    revert_fn,
+    l1_provider,
+    resolved,
+    source_hash,
+    baseline_repr,
+    cwd,
+    registry,
+    max_rounds,
+    max_fix_attempts,
+    state_path,
+    coverage_l1_active=True,
+    coverage_exempt_patterns=None,
     clean_round_threshold=3,
     backend=None,
     pre_graph_findings=None,
-    input_fn=input, output_fn=print,
+    input_fn=input,
+    output_fn=print,
     wall_t0=None,
     exec_falsify=False,
     exec_falsify_timeout=120,
@@ -4223,9 +4427,12 @@ def _run_hold_loop(
             l2_runner=build_l2_runner(),
             e2e_runner=build_e2e_checker(),
             advisory_runners=[
-                _taint_runner, _runtime_runner,
-                _graph_triage_runner, _daemon_state_runner,
-                _legacy_runner, _rulepack_runner,
+                _taint_runner,
+                _runtime_runner,
+                _graph_triage_runner,
+                _daemon_state_runner,
+                _legacy_runner,
+                _rulepack_runner,
             ],
             exec_falsify=exec_falsify,
             exec_falsify_timeout=exec_falsify_timeout,
@@ -4241,12 +4448,10 @@ def _run_hold_loop(
         # UNCERTAIN findings still spent tokens, and the cost line
         # is the only place they are reported.
         from .state import load_state as _load_cost_state
+
         final_state = _load_cost_state(state_path)
         if final_state is not None and final_state.cost_passes > 0:
-            total_tokens = (
-                final_state.cost_total_input
-                + final_state.cost_total_output
-            )
+            total_tokens = final_state.cost_total_input + final_state.cost_total_output
             if total_tokens > 0:
                 token_str = "%d tokens (%d in + %d out" % (
                     total_tokens,
@@ -4257,9 +4462,7 @@ def _run_hold_loop(
                 # so the cached count rides along when present -- without
                 # it a fully cached run prints a deceptively small total.
                 if final_state.cost_total_cached > 0:
-                    token_str += ", %d cached" % (
-                        final_state.cost_total_cached,
-                    )
+                    token_str += ", %d cached" % (final_state.cost_total_cached,)
                 token_str += ")"
             else:
                 token_str = "tokens: N/A (cli backend)"
@@ -4269,14 +4472,13 @@ def _run_hold_loop(
                 final_state.cost_total_duration,
             )
             if wall_t0 is not None:
-                cost_line += " (wall: %.1fs)" % (
-                    time.monotonic() - wall_t0
-                )
+                cost_line += " (wall: %.1fs)" % (time.monotonic() - wall_t0)
             print(cost_line, file=sys.stderr)
         if verdict != Verdict.PENDING:
             return verdict
         # M3: load state from disk (public API, not sm._state).
         from .state import load_state
+
         loaded = load_state(state_path)
         if loaded is None:
             return Verdict.ESCALATED
@@ -4288,19 +4490,21 @@ def _run_hold_loop(
             return Verdict.PENDING
         try:
             run_hold_ui(
-                loaded, state_path,
-                input_fn=input_fn, output_fn=output_fn,
+                loaded,
+                state_path,
+                input_fn=input_fn,
+                output_fn=output_fn,
             )
         except HoldAborted as exc:
             print(
-                "code-forge: %s; state preserved at %s"
-                % (exc, state_path),
+                "code-forge: %s; state preserved at %s" % (exc, state_path),
                 file=sys.stderr,
             )
             return Verdict.PENDING
 
     # MAX_HOLD_CYCLES exhausted.
     from .state import State, load_state, save_state
+
     final = load_state(state_path)
     if final is None:
         # fallback if state.json deleted mid-run.
@@ -4310,8 +4514,7 @@ def _run_hold_loop(
             baseline_spec_repr=baseline_repr,
         )
     final.infra_errors.append(
-        "MAX_HOLD_CYCLES=%d exhausted; human re-entered HOLD "
-        "too many times" % MAX_HOLD_CYCLES
+        "MAX_HOLD_CYCLES=%d exhausted; human re-entered HOLD too many times" % MAX_HOLD_CYCLES
     )
     final.verdict = Verdict.ESCALATED
     final.converged = False
@@ -4337,8 +4540,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
         diff_path = Path(args.diff)
         if not diff_path.exists():
             print(
-                "code-forge: mutation-check: diff file not found: %s"
-                % args.diff,
+                "code-forge: mutation-check: diff file not found: %s" % args.diff,
                 file=sys.stderr,
             )
             return EXIT_CLI_ERROR
@@ -4351,28 +4553,29 @@ def _run_mutation_check(args, cwd: Path) -> int:
             )
             return EXIT_CLI_ERROR
         from .diff import get_changed_files
+
         diff_files = get_changed_files(diff_text)
     else:
         # Uncommitted changes via git diff.
         import subprocess
+
         try:
             result = subprocess.run(
                 ["git", "diff", "--name-only", "HEAD"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 cwd=str(cwd),
             )
             if result.returncode != 0:
                 print(
-                    "code-forge: mutation-check: git diff failed: %s"
-                    % result.stderr.strip(),
+                    "code-forge: mutation-check: git diff failed: %s" % result.stderr.strip(),
                     file=sys.stderr,
                 )
                 return EXIT_CLI_ERROR
-            diff_files = [
-                f for f in result.stdout.splitlines() if f.strip()
-            ]
+            diff_files = [f for f in result.stdout.splitlines() if f.strip()]
         except FileNotFoundError:
             print(
                 "code-forge: mutation-check: git not found",
@@ -4383,6 +4586,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
     # Apply --paths glob filter if requested.
     if getattr(args, "paths", None):
         from fnmatch import fnmatch as _fnmatch
+
         glob_pat = args.paths
         diff_files = [f for f in diff_files if _fnmatch(f, glob_pat)]
 
@@ -4413,10 +4617,7 @@ def _run_mutation_check(args, cwd: Path) -> int:
     skipped = [f for f in findings if f.id == "MUTATION_SKIPPED"]
     no_python = any(f.fingerprint == "mutation-no-python" for f in skipped)
     # The runner also reports this inapplicable-diff notice as infrastructure text.
-    errors = [
-        err for err in infra_errors
-        if not (no_python and err == "no Python files in the diff")
-    ]
+    errors = [err for err in infra_errors if not (no_python and err == "no Python files in the diff")]
     for err in errors:
         print("code-forge: mutation-check: %s" % err, file=sys.stderr)
     if errors:
@@ -4437,16 +4638,19 @@ def _run_mutation_check(args, cwd: Path) -> int:
     # CONFIRMED findings with source=MUTANT and id starting "mutant-" are
     # survivors. Only skips with no applicable production code are allowed.
     from .disposition import Disposition
+
     survivors = [
-        f for f in findings
-        if (f.disposition == Disposition.CONFIRMED
+        f
+        for f in findings
+        if (
+            f.disposition == Disposition.CONFIRMED
             and f.source == "MUTANT"
-            and f.id.startswith("mutant-"))
+            and f.id.startswith("mutant-")
+        )
     ]
     if survivors:
         print(
-            "code-forge: mutation-check: %d survivor(s) found"
-            % len(survivors),
+            "code-forge: mutation-check: %d survivor(s) found" % len(survivors),
             file=sys.stderr,
         )
         for s in survivors:
@@ -4495,18 +4699,20 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
             return EXIT_CLI_ERROR
     else:
         import subprocess
+
         try:
             result = subprocess.run(
                 ["git", "diff", "HEAD"],
                 capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 cwd=str(cwd),
             )
             if result.returncode != 0:
                 print(
-                    "code-forge: e2e-check: git diff failed: %s"
-                    % result.stderr.strip(),
+                    "code-forge: e2e-check: git diff failed: %s" % result.stderr.strip(),
                     file=sys.stderr,
                 )
                 return EXIT_CLI_ERROR
@@ -4531,10 +4737,7 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
         print("code-forge: e2e-check: %s" % err, file=sys.stderr)
 
     # UNCERTAIN findings are the P2-equivalent gate failures.
-    uncertain = [
-        f for f in findings
-        if f.disposition == Disposition.UNCERTAIN
-    ]
+    uncertain = [f for f in findings if f.disposition == Disposition.UNCERTAIN]
     if uncertain:
         print(
             "code-forge: e2e-check: %d finding(s)" % len(uncertain),
@@ -4548,21 +4751,18 @@ def _run_e2e_check_cmd(args, cwd: Path) -> int:
     # so the user knows the heuristic fired.  Exit code stays 0 --
     # advisories never block.
     advisories = [
-        f for f in findings
-        if f.disposition == Disposition.DISMISSED and f.source == "E2E_CHECK"
+        f for f in findings if f.disposition == Disposition.DISMISSED and f.source == "E2E_CHECK"
     ]
     for f in advisories:
         print(
-            "code-forge: e2e-check: ADVISORY (non-blocking): %s"
-            % f.description,
+            "code-forge: e2e-check: ADVISORY (non-blocking): %s" % f.description,
             file=sys.stderr,
         )
 
     if advisories:
         print(
             "code-forge: e2e-check: PASS (%d %s)"
-            % (len(advisories),
-               "advisory" if len(advisories) == 1 else "advisories"),
+            % (len(advisories), "advisory" if len(advisories) == 1 else "advisories"),
             file=sys.stderr,
         )
     else:
@@ -4598,22 +4798,20 @@ def _resolve_whole_file_specs(args, cwd: Path):
     for p in whole_file:
         pp = Path(p)
         if pp.is_absolute():
-            raise CliError(
-                "--whole-file: path must be relative, got: %s" % p
-            )
+            raise CliError("--whole-file: path must be relative, got: %s" % p)
         resolved_p = (cwd / pp).resolve()
         try:
             resolved_p.relative_to(cwd_resolved)
         except ValueError as exc:
-            raise CliError(
-                "--whole-file: path escapes repo root: %s" % p
-            ) from exc
+            raise CliError("--whole-file: path escapes repo root: %s" % p) from exc
     head_spec = GitRefBaseline("WORKING") if in_git else None
     return EmptyBaseline(), head_spec, [Path(p) for p in whole_file]
 
 
 def _build_baseline_specs(
-    args, cwd: Path, warn=None,
+    args,
+    cwd: Path,
+    warn=None,
 ) -> tuple:
     """Parse --baseline + --head into BaselineSpec union members."""
     in_git = is_git_repo(cwd)
@@ -4627,13 +4825,9 @@ def _build_baseline_specs(
     # Check --committed conflicts first
     if args.committed:
         if args.baseline is not None:
-            raise CliError(
-                "--committed cannot be combined with --baseline"
-            )
+            raise CliError("--committed cannot be combined with --baseline")
         if args.head is not None:
-            raise CliError(
-                "--committed cannot be combined with --head"
-            )
+            raise CliError("--committed cannot be combined with --head")
     # Apply --committed mapping
     if args.committed:
         baseline = GitRefBaseline("HEAD~1")
@@ -4641,14 +4835,12 @@ def _build_baseline_specs(
         return baseline, head
 
     if args.baseline is None:
-        baseline = (
-            GitRefBaseline("HEAD") if in_git else EmptyBaseline()
-        )
+        baseline = GitRefBaseline("HEAD") if in_git else EmptyBaseline()
     elif args.baseline == "empty":
         baseline = EmptyBaseline()
-    elif (args.baseline.startswith(".code-forge/snapshots/")
-          or (args.baseline.endswith(".json")
-              and "snapshots" in args.baseline)):
+    elif args.baseline.startswith(".code-forge/snapshots/") or (
+        args.baseline.endswith(".json") and "snapshots" in args.baseline
+    ):
         baseline = SnapshotBaseline(path=Path(args.baseline))
     else:
         baseline = GitRefBaseline(args.baseline)
@@ -4672,13 +4864,11 @@ def _paths(args, cwd: Path, resolved=None) -> list:
         return []
     if resolved.mode_hint == "git" and resolved.git_diff:
         from .diff import get_changed_files
-        return [Path(p) for p in get_changed_files(
-            resolved.git_diff
-        )]
+
+        return [Path(p) for p in get_changed_files(resolved.git_diff)]
     if resolved.mode_hint == "non-git":
         raise CliError(
-            "non-git mode requires explicit paths argument(s); "
-            "no files would be reviewed otherwise"
+            "non-git mode requires explicit paths argument(s); no files would be reviewed otherwise"
         )
     return []
 
@@ -4761,10 +4951,7 @@ def _run_install_skill(args, cwd: Path) -> int:
         skill_names = [args.skill]
     else:
         try:
-            skill_names = sorted(
-                entry.name for entry in src_root.iterdir()
-                if entry.is_dir()
-            )
+            skill_names = sorted(entry.name for entry in src_root.iterdir() if entry.is_dir())
         except MemoryError:
             raise
         except Exception as exc:  # noqa: BLE001 - packaging fault, exits with error
@@ -4787,9 +4974,7 @@ def _run_install_skill(args, cwd: Path) -> int:
         skill_dest_dir = dest_root / name
 
         if skill_dest_dir.exists() and not args.force:
-            _warn(
-                "SKIP %s (exists; use --force to overwrite)" % name
-            )
+            _warn("SKIP %s (exists; use --force to overwrite)" % name)
             continue
 
         # If force and dest exists, remove it first
@@ -4797,9 +4982,7 @@ def _run_install_skill(args, cwd: Path) -> int:
             try:
                 shutil.rmtree(str(skill_dest_dir))
             except OSError as exc:
-                _warn(
-                    "cannot remove existing %s: %s" % (skill_dest_dir, exc)
-                )
+                _warn("cannot remove existing %s: %s" % (skill_dest_dir, exc))
                 return EXIT_CLI_ERROR
 
         # Copy from importlib.resources traversable to filesystem
@@ -4840,6 +5023,7 @@ def _run_detect(args, cwd: Path) -> int:
         EXIT_PASS on success, EXIT_CLI_ERROR on detection failure.
     """
     from .detect import detect_and_init
+
     try:
         detect_and_init(cwd, force=args.force)
     except CliError as exc:
@@ -4860,12 +5044,14 @@ def _run_resolve_outlet(env, cwd: Path) -> int:
         EXIT_CLI_ERROR on config/validation error (ValueError).
     """
     from .outlet_resolver import resolve_outlet
+
     gate_yaml_path = cwd / ".code-forge" / "gate.yaml"
     cfgs, _ro_gd = _load_gate_backends(gate_yaml_path)
     cfgs = _merge_user_into(cfgs, _ro_gd)
 
     def _reachability():
         from .backend import resolve_backend, probe_backend
+
         backend = resolve_backend(env, configs=cfgs, cli_value=None)
         return probe_backend(backend, env=env)
 

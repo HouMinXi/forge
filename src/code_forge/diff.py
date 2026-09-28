@@ -107,7 +107,7 @@ def path_from_git_header(line: str) -> str | None:
     raw = line.split("\t")[0].rstrip("\r\n")
     if not raw.startswith("diff --git "):
         return None
-    rest = raw[len("diff --git "):]
+    rest = raw[len("diff --git ") :]
     # Quoted pair: "a/<path>" "b/<path>"
     if rest.startswith('"'):
         parts = rest.split('" "')
@@ -126,7 +126,7 @@ def path_from_git_header(line: str) -> str | None:
             if found == -1:
                 break
             left = body[:found]
-            right = body[found + 3:]
+            right = body[found + 3 :]
             if left == right:
                 return left
             start = found + 1
@@ -400,9 +400,7 @@ def parse_diff_hunks(
 
         file_hunks = []
         for hunk in hunks:
-            added_lines = [
-                line.target_line_no for line in hunk if line.is_added
-            ]
+            added_lines = [line.target_line_no for line in hunk if line.is_added]
             start = hunk.target_start
             end = (
                 hunk.target_start + hunk.target_length - 1
@@ -573,8 +571,7 @@ def _annotation_walk(diff_text: str) -> tuple[str, bool] | None:
     wrote_bracket = False
     for line in diff_text.splitlines():
         m = _HUNK_HEADER.match(line)
-        if line_no is not None and src_left <= 0 and tgt_left <= 0 \
-                and not line.startswith("\\"):
+        if line_no is not None and src_left <= 0 and tgt_left <= 0 and not line.startswith("\\"):
             line_no = None
         if m:
             src_left = int(m.group(2)) if m.group(2) is not None else 1
@@ -648,6 +645,5 @@ def annotated_diff_prompt_block(diff_text: str) -> str:
         "line number and cannot be cited\n"
         "The bracket is not part of the source. Excerpt content must "
         "reproduce the code to the right of it, without the bracket and "
-        "without the leading +/- marker.\n\n"
-        + annotated
+        "without the leading +/- marker.\n\n" + annotated
     )
