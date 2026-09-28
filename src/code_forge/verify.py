@@ -1249,7 +1249,14 @@ def run_verify(
         # coverage, not test-execution coverage (charter item 6,
         # 43.1-DECISIONS-20260815.md).
         # covered_line_ranges is self-reported, not measured -- audit-only. Ignored here.
-        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
+        open_files = {
+            item.get("file")
+            for r in receipts for item in r.get("findings", [])
+            if isinstance(item, dict) and isinstance(item.get("file"), str)
+            and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
+        }
+        scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
+        all_diff = {(f, ln) for f, lns in scoped.items() for ln in lns}
         if all_diff:
             for c in last_n:
                 cov = _cycle_excerpt_covered(receipts, c, assessments) & all_diff
@@ -1335,7 +1342,14 @@ def run_verify(
         cp += 1
 
         # 6. legacy coverage >= 60% (self-reported covered_line_ranges)
-        all_diff = {(f, ln) for f, lns in diff_files.items() for ln in lns}
+        open_files = {
+            item.get("file")
+            for r in receipts for item in r.get("findings", [])
+            if isinstance(item, dict) and isinstance(item.get("file"), str)
+            and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
+        }
+        scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
+        all_diff = {(f, ln) for f, lns in scoped.items() for ln in lns}
         if all_diff:
             for c in last_n:
                 cov = _cycle_covered(receipts, c) & all_diff
