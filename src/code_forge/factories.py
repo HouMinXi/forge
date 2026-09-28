@@ -532,7 +532,10 @@ def build_l1_provider(
                 # evidence, never repaired. The writer stores it in a
                 # dedicated artifact so the raw excerpt text survives.
                 raw_data = _raw_response_data(response)
-                if raw_data is not None:
+                # An excerpt that fails to check out is audit data, kept
+                # below as UNTRUSTED. Only a response that is not even
+                # valid evidence rejects the round.
+                if raw_data is not None and not isinstance(exc, ExcerptEvidenceError):
                     attempted = dict(raw_data)
                     attempted["pass_name"] = pass_name
                     all_attempted.append(attempted)
@@ -894,7 +897,10 @@ def build_sampling_l1_provider(
                 # Preserve the exact attempted payload (see the A-leg
                 # provider); the writer stores it as an audit artifact.
                 raw_data = _raw_response_data(response)
-                if raw_data is not None:
+                # An excerpt that fails to check out is audit data, kept
+                # below as UNTRUSTED. Only a response that is not even
+                # valid evidence rejects the round.
+                if raw_data is not None and not isinstance(exc, ExcerptEvidenceError):
                     attempted = dict(raw_data)
                     attempted["pass_name"] = pass_name
                     all_attempted.append(attempted)
