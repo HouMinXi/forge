@@ -181,7 +181,7 @@ def test_hardened_failure_names_the_exact_check(tmp_path, case, reason, check, p
     excerpts = [] if case == "witness" else None
     if case == "coverage":
         excerpts = [dict(EXCERPT, end_line=1, content="a")]
-    rd = _setup(tmp_path, excerpts=excerpts)
+    rd = _setup(tmp_path, excerpts=excerpts, findings=[{"file": "mod.py", "disposition": "CONFIRMED"}] if case == "coverage" else None)
     if case == "hash":
         _change(rd, diff_sha256="stale")
     elif case == "anchor":
@@ -198,7 +198,8 @@ def test_hardened_failure_names_the_exact_check(tmp_path, case, reason, check, p
 @pytest.mark.parametrize("quoted_count,passed", [(2, False), (3, True)])
 def test_coverage_floor_is_inclusive(tmp_path, quoted_count, passed):
     _setup(tmp_path, excerpts=[dict(EXCERPT, end_line=quoted_count,
-                                   content="\n".join("abcde"[:quoted_count]))])
+                                   content="\n".join("abcde"[:quoted_count]))],
+           findings=[{"file": "mod.py", "disposition": "CONFIRMED"}])
     result = _verify(tmp_path)
     assert result.passed is passed
     if passed:
@@ -259,7 +260,7 @@ def test_legacy_read_failure_retains_failure_fields(tmp_path):
 
 @pytest.mark.parametrize("quoted_count,passed", [(2, False), (3, True)])
 def test_legacy_coverage_reports_failure_fields(tmp_path, quoted_count, passed):
-    rd = _setup(tmp_path)
+    rd = _setup(tmp_path, findings=[{"file": "mod.py", "disposition": "CONFIRMED"}])
     (tmp_path / "mod.py").write_text("a\nb\nc\nd\ne\n")
     for perspective in (1, 2, 3):
         _change(rd, perspective=perspective,
@@ -309,7 +310,8 @@ def test_coverage_percentage_does_not_round_up_below_floor(tmp_path, hardened):
     diff += "".join(f"+{line}\n" for line in lines)
     sha = hashlib.sha256(diff.encode()).hexdigest()
     excerpt = dict(EXCERPT, end_line=59, content="\n".join(lines[:59]))
-    rd = _setup(tmp_path, excerpts=[excerpt])
+    rd = _setup(tmp_path, excerpts=[excerpt],
+                findings=[{"file": "mod.py", "disposition": "CONFIRMED"}])
     (tmp_path / "mod.py").write_text("\n".join(lines) + "\n")
     for perspective in (1, 2, 3):
         _change(rd, perspective=perspective, diff_sha256=sha,
