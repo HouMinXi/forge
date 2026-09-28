@@ -13,11 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .basis import derive_basis
-from .diff import (
-    _extract_post_image_lines,
-    describe_fabricated_lines,
-    parse_diff_hunks,
-)
+from .diff import describe_fabricated_lines, parse_diff_hunks
 from .manifest import EnvManifest, ManifestTier
 from .state import (
     StateFinding,
@@ -87,6 +83,7 @@ def _build_excerpts(
 def _warn_on_fabricated_excerpts(
     diff_text: str | None,
     excerpts: list[dict] | None,
+    cwd: Path | None = None,
 ) -> None:
     """Warn about excerpts verify will refuse, while the round can react.
 
@@ -104,9 +101,11 @@ def _warn_on_fabricated_excerpts(
 
     log = logging.getLogger(__name__)
     try:
-        post_image = _extract_post_image_lines(diff_text)
-        _, exempt_files = parse_diff_hunks(diff_text)
-    except Exception as err:
+        from .verify import _diff_validation_context
+        post_image, _, exempt_files = _diff_validation_context(diff_text, cwd=cwd)
+        _, non_text = parse_diff_hunks(diff_text)
+        exempt_files.extend(non_text)
+    except Exception as err:  # noqa: BLE001 - pre-flight must not block receipt writing
         log.debug("pre-flight: post-image extraction failed: %s", err)
         return
 
@@ -220,7 +219,7 @@ def write_receipts(
         for pname in _PASS_NAMES
     }
     all_assembled = [exc for p_excs in assembled_by_pass.values() for exc in p_excs]
-    _warn_on_fabricated_excerpts(diff_text, all_assembled)
+    _warn_on_fabricated_excerpts(diff_text, all_assembled, cwd=cwd)
     pass_outcomes = derive_pass_outcomes(l1_findings)
     # A rejected payload may contain no findings. Other chunks' accepted
     # excerpts cannot attest that missing part of this pass's review.

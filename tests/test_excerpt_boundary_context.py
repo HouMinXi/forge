@@ -8,6 +8,7 @@ from code_forge.diff import parse_diff_hunks
 from code_forge.source import compute_source_hash
 from code_forge.verify import (
     _diff_validation_context,
+    _reconstruct_post_image,
     parse_diff_files,
     run_verify,
     validate_excerpts_against_diff,
@@ -37,6 +38,254 @@ def candidate(tmp_path):
     excerpt = {"file": "CHANGELOG.md", "start_line": 37, "end_line": 44,
                "content": "\n".join(lines[35:43]), "rationale": "context"}
     return tmp_path, diff, excerpt
+
+
+@pytest.fixture
+def unstaged_gap(tmp_path):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.invalid")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    before = [f"line {n}" for n in range(1, 31)]
+    path = tmp_path / "changed.py"
+    path.write_text("\n".join(before) + "\n")
+    git(tmp_path, "add", "changed.py")
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    after = before.copy()
+    after[4] = "changed five"
+    after[19] = "changed twenty"
+    path.write_text("\n".join(after) + "\n")
+    diff = git(tmp_path, "diff", "-U3", "HEAD", "--", "changed.py")
+    excerpt = {
+        "file": "changed.py", "start_line": 5, "end_line": 10,
+        "content": "\n".join(after[4:10]),
+    }
+    other = {
+        "file": "changed.py", "start_line": 20, "end_line": 20,
+        "content": after[19],
+    }
+    full = {
+        "file": "changed.py", "start_line": 1, "end_line": 26,
+        "content": "\n".join(after[:26]),
+    }
+    return tmp_path, diff, excerpt, other, full
+
+
+def test_unstaged_zero_context_insert_reconstructs_without_shifting_base():
+    base = "base 1\nbase 2\nbase 3\n"
+    first = (
+        "a/f b/f\nindex 0000000..1111111 100644\n--- a/f\n+++ b/f\n"
+        "@@ -0,0 +1,1 @@\n+new start\n"
+    )
+    middle = (
+        "a/f b/f\nindex 0000000..1111111 100644\n--- a/f\n+++ b/f\n"
+        "@@ -2,0 +3,1 @@\n+new middle\n"
+    )
+    assert _reconstruct_post_image(base, first) == [
+        "new start", "base 1", "base 2", "base 3",
+    ]
+    assert _reconstruct_post_image(base, middle) == [
+        "base 1", "base 2", "new middle", "base 3",
+    ]
+
+
+def test_unstaged_zero_context_git_diff_recovers_gap(unstaged_gap):
+    root, _, excerpt, _, _ = unstaged_gap
+    diff = git(root, "diff", "-U0", "HEAD", "--", "changed.py")
+    assert "@@ -5 +5 @@" in diff
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=root) == []
+
+
+def test_unstaged_crlf_diff_keeps_immutable_gap(unstaged_gap):
+    root, diff, excerpt, _, _ = unstaged_gap
+    crlf_diff = diff.replace("\n", "\r\n")
+    assert validate_excerpts_against_diff(crlf_diff, [excerpt], cwd=root) == []
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_unstaged_gap_with_crlf_file_keeps_context(tmp_path, staged):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.invalid")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    git(tmp_path, "config", "core.autocrlf", "false")
+    path = tmp_path / "changed.py"
+    before = [f"line {n}" for n in range(1, 31)]
+    path.write_bytes(("\r\n".join(before) + "\r\n").encode())
+    git(tmp_path, "add", "changed.py")
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    after = before.copy()
+    after[4] = "changed five"
+    after[20] = "changed twenty-one"
+    path.write_bytes(("\r\n".join(after) + "\r\n").encode())
+    git(tmp_path, "config", "core.autocrlf", "false")
+    if staged:
+        git(tmp_path, "add", "changed.py")
+    args = ["--cached"] if staged else []
+    diff = subprocess.check_output(["git", "diff", *args, "HEAD", "--", "changed.py"], cwd=tmp_path).decode()
+    assert " line 2\r\n" in diff
+    assert path.read_bytes().count(b"\r\n") == len(after)
+    excerpt = {"file": "changed.py", "start_line": 5, "end_line": 10,
+               "content": "\n".join(after[4:10])}
+    post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
+    assert post["changed.py"][10] == "line 10"
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
+
+
+@pytest.mark.parametrize("special_line", [6, 10])
+def test_unstaged_gap_preserves_embedded_carriage_return(tmp_path, special_line):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.invalid")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    path = tmp_path / "changed.py"
+    before = [f"line {n}" for n in range(1, 31)]
+    before[special_line - 1] = f"line {special_line}\rsegment"
+    git(tmp_path, "config", "core.autocrlf", "false")
+    path.write_bytes(("\n".join(before) + "\n").encode())
+    git(tmp_path, "add", "changed.py")
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    after = before.copy()
+    after[4] = "changed five"
+    after[20] = "changed twenty-one"
+    path.write_bytes(("\n".join(after) + "\n").encode())
+    diff = subprocess.check_output(["git", "diff", "HEAD", "--", "changed.py"], cwd=tmp_path).decode()
+    special = before[special_line - 1]
+    assert (special in diff) == (special_line == 6)
+    post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
+    assert post["changed.py"][special_line] == special
+    excerpt = {"file": "changed.py", "start_line": 5, "end_line": 10,
+               "content": "\n".join(after[4:10])}
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
+    git(tmp_path, "add", "changed.py")
+    staged = subprocess.check_output(
+        ["git", "diff", "--cached", "HEAD", "--", "changed.py"], cwd=tmp_path,
+    ).decode()
+    staged_post, _, _ = _diff_validation_context(staged, cwd=tmp_path)
+    assert staged_post["changed.py"][special_line] == special
+    assert validate_excerpts_against_diff(staged, [excerpt], cwd=tmp_path) == []
+    excerpt["content"] = excerpt["content"].replace("segment", "forged")
+    mismatch = [f"excerpt content mismatch at changed.py:5-10 (line {special_line})"]
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == mismatch
+    assert validate_excerpts_against_diff(staged, [excerpt], cwd=tmp_path) == mismatch
+
+
+@pytest.mark.parametrize("staged", [False, True])
+@pytest.mark.parametrize("eol", ["\n", "\r\n"])
+def test_final_bare_cr_is_preserved(tmp_path, staged, eol):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.invalid")
+    git(tmp_path, "config", "core.autocrlf", "false")
+    before = [f"line {n}" for n in range(1, 31)]
+    before[-1] += "\r"
+    path = tmp_path / "changed.py"
+    path.write_bytes(eol.join(before).encode())
+    git(tmp_path, "add", "changed.py")
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-qm", "base")
+    after = before.copy()
+    after[4] = "changed five"
+    after[27] = "changed twenty-eight"
+    path.write_bytes(eol.join(after).encode())
+    if staged:
+        git(tmp_path, "add", "changed.py")
+    args = ["--cached"] if staged else []
+    diff = subprocess.check_output(["git", "diff", *args, "HEAD"], cwd=tmp_path).decode()
+    post, _, _ = _diff_validation_context(diff, cwd=tmp_path)
+    assert post["changed.py"][30] == "line 30\r"
+    assert post["changed.py"][10] == "line 10"
+    section = diff.split("diff --git ", 1)[1]
+    assert _reconstruct_post_image(eol.join(before), section) == after
+    forged = section.replace(" line 30\r\n", " line 30\n")
+    assert forged != section
+    assert _reconstruct_post_image(eol.join(before), forged) is None
+
+
+def test_unstaged_no_final_newline_keeps_immutable_gap(tmp_path):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.invalid")
+    git(tmp_path, "config", "commit.gpgsign", "false")
+    path = tmp_path / "changed.py"
+    before = [f"line {n}" for n in range(1, 31)]
+    path.write_text("\n".join(before))
+    git(tmp_path, "add", "changed.py")
+    git(tmp_path, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base")
+    after = before.copy()
+    after[4] = "changed five"
+    after[-1] = "changed thirty"
+    path.write_text("\n".join(after))
+    diff = git(tmp_path, "diff", "-U3", "HEAD", "--", "changed.py")
+    assert "\\ No newline at end of file" in diff
+    excerpt = {
+        "file": "changed.py", "start_line": 5, "end_line": 10,
+        "content": "\n".join(after[4:10]),
+    }
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=tmp_path) == []
+
+
+def _verify_receipt_gap(root, diff, excerpts):
+    from code_forge.receipt import write_receipts
+
+    receipts_dir = root / ".code-forge" / "receipts"
+    files = write_receipts(
+        receipts_dir, 0, [], compute_source_hash(git_diff=diff),
+        [root / "changed.py"], root, diff_text=diff,
+        diff_files=parse_diff_files(diff),
+        reviewer_excerpts=[dict(exc, pass_name=name)
+                           for name in ("qodo", "expert", "adversarial")
+                           for exc in excerpts],
+    )
+    result = run_verify(root, compute_source_hash(git_diff=diff),
+                        parse_diff_files(diff), diff_text=diff,
+                        required_cycles=1, respect_floor=False)
+    return result, [json.loads(path.read_text()) for path in files]
+
+
+def test_unstaged_gap_matches_immutable_base(unstaged_gap):
+    root, diff, excerpt, other, full = unstaged_gap
+    assert len([line for line in diff.splitlines() if line.startswith("@@ ")]) == 2
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=root) == []
+    result, receipts = _verify_receipt_gap(root, diff, [excerpt, other, full])
+    assert result.passed, result.reason
+    assert all(receipt["pass_status"] == "completed" for receipt in receipts)
+    post, hunks, _ = _diff_validation_context(diff, cwd=root)
+    assert post["changed.py"][10] == "line 10"
+    assert hunks["changed.py"][0]["end"] < 10 < hunks["changed.py"][1]["start"]
+    (root / "changed.py").write_text("tampered working tree\n")
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=root) == []
+
+
+def test_unstaged_gap_refuses_fabricated_or_unproven_content(unstaged_gap):
+    root, diff, excerpt, _, _ = unstaged_gap
+    excerpt["content"] = excerpt["content"].replace("line 10", "forged line")
+    errors = validate_excerpts_against_diff(diff, [excerpt], cwd=root)
+    assert errors == ["excerpt content mismatch at changed.py:5-10 (line 10)"]
+    excerpt["content"] = excerpt["content"].replace("forged line", "line 10")
+    # An unresolvable base object is not evidence for an omitted line.
+    import re
+    broken = re.sub(r"(?<=index )[0-9a-f]+", "f" * 40, diff)
+    errors = validate_excerpts_against_diff(broken, [excerpt], cwd=root)
+    assert errors == ["excerpt changed.py:5-10 claims line 9 outside the diff post-image; it cannot be verified"]
+    # The base blob must also agree with every old-side hunk line.
+    forged = diff.replace("-line 5", "-invented")
+    errors = validate_excerpts_against_diff(forged, [excerpt], cwd=root)
+    assert errors == ["excerpt changed.py:5-10 claims line 9 outside the diff post-image; it cannot be verified"]
+
+
+def test_unstaged_gap_receipt_preflight_matches_gate(unstaged_gap, caplog):
+    from code_forge.receipt import _warn_on_fabricated_excerpts
+
+    root, diff, excerpt, _, _ = unstaged_gap
+    _warn_on_fabricated_excerpts(diff, [excerpt], cwd=root)
+    assert "pre-flight" not in caplog.text
+    # Missing immutable objects cannot be silently treated as verified gaps.
+    import re
+    broken = re.sub(r"(?<=index )[0-9a-f]+", "f" * 40, diff)
+    _warn_on_fabricated_excerpts(broken, [excerpt], cwd=root)
+    assert "references lines 9, 10 not in diff post-image" in caplog.text
+    excerpt["content"] = excerpt["content"].replace("line 10", "forged")
+    assert validate_excerpts_against_diff(diff, [excerpt], cwd=root)
 
 
 def test_frozen_blob_supplies_missing_boundary(candidate):
@@ -453,6 +702,7 @@ def test_unavailable_blob_does_not_invent_context(candidate):
     root, diff, excerpt = candidate
     import re
 
+    diff = re.sub(r"(?<=index )[0-9a-f]{40}", "e" * 40, diff)
     diff = re.sub(r"(?<=\.\.)[0-9a-f]{40}", "f" * 40, diff)
     assert validate_excerpts_against_diff(diff, [excerpt], cwd=root)
 
