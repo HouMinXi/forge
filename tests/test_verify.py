@@ -3900,3 +3900,30 @@ def test_coverage_counts_only_files_with_an_open_finding(tmp_path):
         respect_floor=False,
     )
     assert result.passed, result.reason
+
+
+def test_a_finding_without_a_line_does_not_inflate_coverage(tmp_path):
+    """A finding that names no line cannot drag the whole file into the floor."""
+    import json
+    from code_forge.verify import run_verify
+
+    rd = tmp_path / ".code-forge" / "receipts"
+    rd.mkdir(parents=True)
+    (tmp_path / "src").mkdir()
+    body = "def f():\n    return 1\n" + "".join("x%d\n" % i for i in range(3, 51))
+    (tmp_path / "src" / "f.py").write_text(body)
+    diff = (
+        "diff --git a/src/f.py b/src/f.py\n--- a/src/f.py\n+++ b/src/f.py\n@@ -0,0 +1,50 @@\n"
+        + "".join("+" + ln for ln in body.splitlines(True))
+    )
+    sha = _sha("lineless")
+    for p in range(1, 4):
+        receipt = _receipt(1, p, sha)
+        receipt["findings"] = [{"file": "src/f.py", "disposition": "UNCERTAIN"}]
+        receipt["findings_count"] = 1
+        (rd / ("receipt-c1p%d.json" % p)).write_text(json.dumps(receipt))
+    result = run_verify(
+        tmp_path, sha, {"src/f.py": list(range(1, 51))},
+        diff_text=diff, required_cycles=1, respect_floor=False,
+    )
+    assert result.passed, result.reason
