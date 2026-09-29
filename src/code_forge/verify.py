@@ -1260,6 +1260,10 @@ def run_verify(
             if isinstance(item, dict)
             and isinstance(item.get("file"), str)
             and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
+            and not (
+                item.get("disposition") == "UNCERTAIN"
+                and not (isinstance(item.get("line"), int) and item.get("line") > 0)
+            )
         }
         scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
         all_diff = {(f, ln) for f, lns in scoped.items() for ln in lns}
@@ -1361,6 +1365,10 @@ def run_verify(
             if isinstance(item, dict)
             and isinstance(item.get("file"), str)
             and item.get("disposition") not in ("DISMISSED", "FIXED", "STYLE")
+            and not (
+                item.get("disposition") == "UNCERTAIN"
+                and not (isinstance(item.get("line"), int) and item.get("line") > 0)
+            )
         }
         scoped = {f: lns for f, lns in diff_files.items() if f in open_files}
         all_diff = {(f, ln) for f, lns in scoped.items() for ln in lns}
