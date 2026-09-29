@@ -78,7 +78,12 @@ def _install_pdeathsig() -> None:
     import ctypes
     import ctypes.util
 
-    original_ppid = os.getppid()
+    import code_forge
+
+    if os.getpid() == code_forge.STARTUP_PID:
+        original_ppid = code_forge.STARTUP_PPID
+    else:
+        original_ppid = os.getppid()
 
     PR_SET_PDEATHSIG = 1
     # find_library returns None on musl (no ldconfig); fall back to

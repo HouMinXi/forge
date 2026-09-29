@@ -2,6 +2,8 @@
 # Copyright (c) 2026, Minxi Hou <houminxi@gmail.com>
 """Forge -- 3-state quality gate for code review."""
 
+import os
+
 __version__ = "2.9.0"
 
 # Exit code constants re-exported from exit_codes module (H5 + R3-L3).
@@ -15,6 +17,15 @@ from .exit_codes import (
     EXIT_TIMEOUT,
     EXIT_UNRELIABLE,
 )
+
+# Parent pid as seen before any heavy import. The MCP server's parent-death
+# check compares against this: sampling it later, after mcp/pydantic have
+# loaded, can happen after the parent already died and the process was
+# reparented, and then the check compares the new parent with itself.
+# The pid is kept alongside so a forked child does not inherit a parent pid
+# that was never its own.
+STARTUP_PID = os.getpid()
+STARTUP_PPID = os.getppid()
 
 # Declares the re-export as deliberate. Without it these read as unused
 # imports (ruff F401), which is noise every future lint run has to be told

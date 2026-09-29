@@ -73,6 +73,25 @@ _SERVER_SCRIPT_NO_PDEATHSIG = textwrap.dedent("""\
 """)
 
 
+# -- helper: parent dies while the server is still importing --
+#
+# The package is imported first, exactly as the console-script entry point
+# does, then the sleep stands in for the slow mcp/pydantic imports. The
+# throwaway parent exits one second in, i.e. before _install_pdeathsig()
+# runs, which is the window PR_SET_PDEATHSIG alone cannot cover.
+
+_SERVER_SCRIPT_SLOW_IMPORT = textwrap.dedent("""\
+    import time
+    import code_forge
+    time.sleep(2)
+    from code_forge.mcp_server import _install_pdeathsig
+    _install_pdeathsig()
+
+    while True:
+        time.sleep(60)
+""")
+
+
 def _spawn_via_parent(server_script: str, timeout: float = 10.0):
     """Start server as child of a throwaway parent.
 
@@ -157,6 +176,41 @@ class TestPdeathsigRealPath:
                 os.waitpid(server_pid, 0)
             except (ProcessLookupError, ChildProcessError):
                 pass
+
+    def test_server_exits_when_parent_dies_during_slow_import(self):
+        """Parent gone before the prctl call: the startup check must notice."""
+        server_pid, stdin_w = _spawn_via_parent(_SERVER_SCRIPT_SLOW_IMPORT)
+        try:
+            exited = _wait_for_exit(server_pid, max_seconds=6.0)
+            assert exited, (
+                "Server (pid %d) outlived a parent that died during import -- "
+                "the parent pid was sampled after reparenting" % server_pid
+            )
+        finally:
+            os.close(stdin_w)
+            try:
+                os.kill(server_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def test_forked_child_uses_its_own_parent_pid(self):
+        """A child forked after package import must not reuse the startup ppid.
+
+        The child's parent is this pytest process, while STARTUP_PPID is
+        pytest's own parent. A child that compared against STARTUP_PPID
+        would see its parent as changed and leave through os._exit(1).
+        """
+        pid = os.fork()
+        if pid == 0:
+            try:
+                from code_forge.mcp_server import _install_pdeathsig
+
+                _install_pdeathsig()
+            except BaseException:  # noqa: BLE001 - the forked child must never return into pytest
+                os._exit(2)
+            os._exit(0)
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0
 
 
 class TestPdeathsigChildInheritance:
