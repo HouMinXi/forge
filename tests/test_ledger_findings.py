@@ -90,13 +90,23 @@ class TestCliFillsThemIn:
     """The CLI has to pass what the runner measured."""
 
     def test_cli_passes_the_scored_triple(self):
+        import ast
         from pathlib import Path
 
         import code_forge.cli as cli_mod
 
-        src = Path(cli_mod.__file__).read_text()
-        assert "result.finding_hits, result.finding_misses," in src
-        assert "if result.finding_runs else None" in src
+        tree = ast.parse(Path(cli_mod.__file__).read_text(encoding="utf-8"))
+        passed = {
+            ast.unparse(kw.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            for kw in node.keywords
+            if kw.arg == "findings"
+        }
+        assert (
+            "(result.finding_hits, result.finding_misses, result.finding_fps) "
+            "if result.finding_runs else None"
+        ) in passed, passed
 
     def test_finding_runs_means_scored_runs(self):
         # The guard reads finding_runs as "how many runs were averaged".

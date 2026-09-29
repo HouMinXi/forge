@@ -425,22 +425,36 @@ class TestLLMInvoke:
         a hand-copied list stops tracking the code the moment a format
         gains a header, which is the exact event this is here to catch.
         """
+        import ast
         import inspect
-        import re
+
         from code_forge import llm_invoke as mod
         from code_forge.backend import is_protected_header
 
-        src = inspect.getsource(mod)
-        blocks = re.findall(r"_request_headers\(\{(.*?)\}", src, re.S)
+        tree = ast.parse(inspect.getsource(mod))
+        blocks = [
+            node.args[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_request_headers"
+            and node.args
+            and isinstance(node.args[0], ast.Dict)
+        ]
         assert len(blocks) >= 3, (
             "found %d _request_headers call sites, expected the three "
             "format dispatchers -- if a call site changed shape this "
             "test stopped reading it" % len(blocks)
         )
 
-        names = {n for b in blocks for n in re.findall(r'"([^"]+)":', b)}
+        names = {
+            key.value
+            for block in blocks
+            for key in block.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
         assert "Content-Type" in names, (
-            "the regex matched %r, which does not look like header "
+            "the call sites yielded %r, which does not look like header "
             "names -- it is reading the wrong thing" % sorted(names)
         )
 

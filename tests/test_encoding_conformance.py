@@ -10,6 +10,7 @@ will be caught here.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -41,17 +42,28 @@ class TestTextTrueEncoding:
     """Every subprocess call with text=True must have encoding=."""
 
     def test_no_text_true_without_encoding(self):
-        """text=True without encoding= is a D3 violation."""
+        """text=True without encoding= is a D3 violation.
+
+        Read from the syntax tree, not line by line: the formatter puts
+        each keyword argument of a long call on its own line, so a
+        per-line match reports every one of them.
+        """
         violations = []
+        calls = 0
         for fpath in _collect_py_files():
-            content = fpath.read_text(encoding="utf-8")
-            for i, line in enumerate(content.splitlines(), 1):
-                stripped = line.strip()
-                if stripped.startswith("#"):
+            tree = ast.parse(fpath.read_text(encoding="utf-8"), filename=str(fpath))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
                     continue
-                if "text=True" in line and "encoding=" not in line:
+                keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+                text = keywords.get("text")
+                if not (isinstance(text, ast.Constant) and text.value is True):
+                    continue
+                calls += 1
+                if "encoding" not in keywords:
                     rel = fpath.relative_to(SRC_DIR.parent.parent)
-                    violations.append(f"{rel}:{i}: {stripped[:80]}")
+                    violations.append(f"{rel}:{node.lineno}: {ast.unparse(node)[:80]}")
+        assert calls, "no text=True call found -- the scan is not reading the source"
         if violations:
             pytest.fail("text=True without encoding= found:\n" + "\n".join(violations))
 
