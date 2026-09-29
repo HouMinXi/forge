@@ -231,7 +231,7 @@ def test_watchdog_kills_payload_when_supervisor_dies(tmp_path):
     ).stdout.split()
     assert sleeps, "payload sleep not running"
     proc.kill()
-    proc.wait(timeout=10)
+    proc.communicate(timeout=10)
     deadline = time.time() + 10
     alive = True
     while time.time() < deadline:
@@ -364,3 +364,25 @@ def test_read_maps_decode_failure_to_isolation_unavailable(tmp_path):
 
     with pytest.raises(isolate.IsolationUnavailable):
         isolate._read(str(target))
+
+
+def test_killed_supervisor_pipes_are_closed():
+    """A killed child's stdout and stderr pipes must be closed, not just reaped.
+
+    The watchdog supervisor test ends its child with kill plus communicate;
+    this test pins the pipe-closing half of that pattern. kill() followed
+    by wait() reaps the process but leaves the PIPE handles open, which
+    Python reports as an unclosed-file warning at shutdown. The assertion
+    checks the pipe handles directly rather than trapping ResourceWarning,
+    whose emission time depends on garbage collection and is not deterministic.
+    """
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(5)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    proc.kill()
+    proc.communicate(timeout=10)
+    assert proc.stdout is not None and proc.stdout.closed
+    assert proc.stderr is not None and proc.stderr.closed

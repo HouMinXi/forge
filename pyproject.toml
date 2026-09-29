@@ -126,5 +126,6 @@ markers = [
     "source_scan: greps the source tree as data; excluded from the mutation gate",
 ]
 pythonpath = ["src"]
+asyncio_default_fixture_loop_scope = "function"
 # Mutation fixture projects run through their sandbox drivers, not host discovery.
 norecursedirs = ["tests/eval/corpus/base_files", "tests/fixtures/mutation_contract"]
