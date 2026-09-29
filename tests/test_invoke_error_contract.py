@@ -54,3 +54,17 @@ def test_default_breaker_trips_on_fifth_event_and_stays_tripped():
     assert breaker.tripped is True
     with pytest.raises(TruncationBreakerError):
         breaker.check_tripped()
+
+
+def test_breaker_error_tells_the_operator_what_to_change():
+    error = TruncationBreakerError(7, 5)
+
+    assert str(error) == (
+        "backend hit 7 truncations (>=5) this run; review output "
+        "keeps hitting the provider cap, which the backend may "
+        "already clamp below the configured ceiling. Raise "
+        "output_ceiling only if the configured cap is the limit; "
+        "otherwise switch backends."
+    )
+    assert error.kind == "truncated"
+    assert error.retryable is False
