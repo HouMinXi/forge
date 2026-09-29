@@ -106,7 +106,7 @@ def test_machine_cannot_borrow_other_pass_evidence(tmp_path, monkeypatch, mode, 
     def transport(*args, **kwargs):
         calls.append(args)
         current_pass = (len(calls) - 1) % 3 + 1
-        payload = {"findings": [], "code_excerpts": []} if current_pass == rejected_pass else valid
+        payload = {"code_excerpts": []} if current_pass == rejected_pass else valid
         return LLMResult(copy.deepcopy(payload), Usage(), 0.0)
 
     monkeypatch.setattr("code_forge.llm_invoke.llm_invoke", transport)
@@ -137,5 +137,5 @@ def test_machine_cannot_borrow_other_pass_evidence(tmp_path, monkeypatch, mode, 
         assert result != Verdict.PASS
         assert disk["verdict"] != "PASS"
         assert machine._state.consecutive_clean_rounds == 0
-        assert machine._state.rounds_with_failed_pass == 0
+        assert machine._state.rounds_with_failed_pass == 1
         assert list((directory / "receipts" / "attempted").glob("*.json"))
