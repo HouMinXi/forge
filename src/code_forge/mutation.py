@@ -518,9 +518,7 @@ def _install_mutmut_config(
             py_text = ""
         if _pyproject_has_tool_mutmut(py_text):
             pyproject_stash = py_bytes
-            _atomic_write_bytes(
-                pyproject_path, _hide_tool_mutmut(py_text).encode("utf-8")
-            )
+            _atomic_write_bytes(pyproject_path, _hide_tool_mutmut(py_text).encode("utf-8"))
 
     try:
         _atomic_write_bytes(setup_cfg_path, config_content.encode("utf-8"))
@@ -853,8 +851,8 @@ def run_mutation(
             include_globs=mutation_include_globs,
             cwd=cwd,
         )
-        setup_stash, setup_existed_as_user, pyproject_stash = (
-            _install_mutmut_config(repo_root, config_content)
+        setup_stash, setup_existed_as_user, pyproject_stash = _install_mutmut_config(
+            repo_root, config_content
         )
         installed = True
 
@@ -947,9 +945,7 @@ def run_mutation(
 
     finally:
         if installed:
-            _restore_mutmut_config(
-                repo_root, setup_stash, setup_existed_as_user, pyproject_stash
-            )
+            _restore_mutmut_config(repo_root, setup_stash, setup_existed_as_user, pyproject_stash)
         mutants_dir = os.path.join(repo_root, "mutants")
         shutil.rmtree(mutants_dir, ignore_errors=True)
 
