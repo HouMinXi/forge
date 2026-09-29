@@ -1864,6 +1864,7 @@ class TestShutdownInfrastructure:
             patch("code_forge.mcp_server.sys") as mock_sys,
             patch("ctypes.CDLL", return_value=mock_libc),
             patch("code_forge.mcp_server.os.getppid", return_value=12345),
+            patch("code_forge.STARTUP_PPID", 12345),
         ):
             mock_sys.platform = "linux"
             mod._install_pdeathsig()
@@ -1889,11 +1890,12 @@ class TestShutdownInfrastructure:
 
         mock_libc = MagicMock()
         mock_libc.prctl.return_value = 0
-        # First call returns 500 (original), second returns 1 (reparented)
+        # Parent was 500 at startup; it has since died and init (1) adopted us.
         with (
             patch("code_forge.mcp_server.sys") as mock_sys,
             patch("ctypes.CDLL", return_value=mock_libc),
-            patch("code_forge.mcp_server.os.getppid", side_effect=[500, 1, 1]),
+            patch("code_forge.STARTUP_PPID", 500),
+            patch("code_forge.mcp_server.os.getppid", return_value=1),
             patch("code_forge.mcp_server.os._exit") as mock_exit,
         ):
             mock_sys.platform = "linux"
@@ -1911,6 +1913,7 @@ class TestShutdownInfrastructure:
             patch("ctypes.CDLL", return_value=mock_libc),
             patch("ctypes.get_errno", return_value=22),
             patch("code_forge.mcp_server.os.getppid", return_value=12345),
+            patch("code_forge.STARTUP_PPID", 12345),
             caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
         ):
             mock_sys.platform = "linux"
@@ -1926,6 +1929,7 @@ class TestShutdownInfrastructure:
             patch("code_forge.mcp_server.sys") as mock_sys,
             patch("ctypes.CDLL", side_effect=OSError("libc not found")),
             patch("code_forge.mcp_server.os.getppid", return_value=12345),
+            patch("code_forge.STARTUP_PPID", 12345),
             caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
         ):
             mock_sys.platform = "linux"
@@ -1940,6 +1944,7 @@ class TestShutdownInfrastructure:
             patch("code_forge.mcp_server.sys") as mock_sys,
             patch("ctypes.CDLL", side_effect=RuntimeError("loader bug")),
             patch("code_forge.mcp_server.os.getppid", return_value=12345),
+            patch("code_forge.STARTUP_PPID", 12345),
             caplog.at_level(logging.WARNING, logger="code_forge.mcp_server"),
         ):
             mock_sys.platform = "linux"
