@@ -19,6 +19,7 @@ from typing import Callable
 from .autofix import StubAutoFixer
 from .baseline import ResolvedReview
 from .disposition import Disposition
+from .factories import _L1Call
 from .falsify import Falsifier
 from .llm_invoke import Usage
 from .machine import StateMachine
@@ -209,13 +210,13 @@ def run_outlet_c(
             context_rows=context_rows,
         )
 
-    def _l1_provider() -> tuple[list[StateFinding], list[dict], Usage, float]:
+    def _l1_body(call) -> tuple[list[StateFinding], list[dict], Usage, float]:
         diff = resolved_review.git_diff or ""
         threshold_kb = _read_chunk_threshold_kb()
         diff_kb = len(diff.encode("utf-8")) / 1024
 
         attempted: list[dict] = []
-        _l1_provider.attempted_excerpts = attempted
+        call.attempted_excerpts = attempted
 
         if threshold_kb > 0 and diff_kb <= threshold_kb:
             # Under threshold: single chunk (original behavior).
@@ -278,7 +279,7 @@ def run_outlet_c(
         baseline_spec_repr="outlet-c",
         cwd=cwd,
         registry=registry,
-        l1_provider=_l1_provider,
+        l1_provider=_L1Call(_l1_body),
         advisory_runners=advisory_runners,
         max_total_rounds=max_total_rounds,
         clean_round_threshold=clean_round_threshold,

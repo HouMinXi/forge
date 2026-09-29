@@ -186,3 +186,27 @@ def test_an_excerpt_count_miss_does_not_reject_the_round(monkeypatch):
     provider = build_l1_provider("real", resolved)
     provider()
     assert provider.attempted_excerpts == []
+
+
+def test_a_response_missing_findings_is_recorded(monkeypatch):
+    """A response that is not valid evidence rejects the pass, and the raw
+    payload has to stay readable on the provider afterwards."""
+    from code_forge.factories import build_l1_provider
+    from code_forge.baseline import ResolvedReview
+    from code_forge import llm_invoke as llm
+
+    class _Result:
+        content = '{"code_excerpts": []}'
+        usage = type("U", (), {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0})()
+        duration_s = 0.0
+
+    monkeypatch.setattr(llm, "llm_invoke", lambda *a, **k: _Result())
+    resolved = ResolvedReview(
+        source_files=[],
+        baseline_content=None,
+        git_diff="diff --git a/a.py b/a.py\n",
+        mode_hint="git",
+    )
+    provider = build_l1_provider("real", resolved, max_attempts=1)
+    provider()
+    assert [a["pass_name"] for a in provider.attempted_excerpts] == ["qodo", "expert", "adversarial"]
