@@ -177,3 +177,92 @@ def test_sessionfinish_rejects_shared_hook_drift(
         suite_guard.pytest_sessionfinish(session, 0)
     assert error.value.code == 1
     assert f"pre-commit ({change})" in capsys.readouterr().err
+
+
+def _suite_checkout(repository, tmp_path, monkeypatch, suite_guard):
+    """Run the guard from a linked worktree while other checkouts share refs."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(suite_guard.tempfile, "gettempdir", lambda: str(scratch))
+    root = tmp_path / "suite"
+    _git(repository, "worktree", "add", "--quiet", "--detach", str(root))
+    (root / "tests").mkdir()
+    monkeypatch.setattr(suite_guard, "__file__", str(root / "tests" / "conftest.py"))
+    session = SimpleNamespace(config=SimpleNamespace(stash={}, option=SimpleNamespace(basetemp=None)))
+    return scratch, session
+
+
+def _commit(root):
+    _git(
+        root,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "other session",
+    )
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["sibling", "nested"])
+@pytest.mark.parametrize("change", ["created", "moved", "deleted"])
+def test_sessionfinish_ignores_branch_of_another_checkout(
+    repository,
+    tmp_path,
+    monkeypatch,
+    capsys,
+    suite_guard,
+    change,
+    nested,
+):
+    _, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    parent = tmp_path / "suite" / ".worktrees" if nested else tmp_path / "sessions"
+    other = parent / "other"
+    base = "origin-main"
+    _git(repository, "branch", "--quiet", base)
+    _git(repository, "config", f"branch.{base}.remote", ".")
+    _git(repository, "config", f"branch.{base}.merge", f"refs/heads/{base}")
+    add = ("worktree", "add", "--quiet", "--track", "-b", "other-line", str(other), base)
+    if change != "created":
+        _git(repository, *add)
+    suite_guard.pytest_sessionstart(session)
+    if change == "created":
+        _git(repository, *add)
+    elif change == "moved":
+        _commit(other)
+    else:
+        _git(repository, "worktree", "remove", str(other))
+        _git(repository, "branch", "--quiet", "-D", "other-line")
+    assert ("branch.other-line.merge" in _git(repository, "config", "--list", "--local")) == (
+        change != "deleted"
+    )
+    suite_guard.pytest_sessionfinish(session, 0)
+    err = capsys.readouterr().err
+    assert "FATAL" not in err
+    assert "refs/heads/other-line" in err
+
+
+@pytest.mark.parametrize("change", ["branch", "scratch-worktree"])
+def test_sessionfinish_rejects_branch_the_suite_could_have_made(
+    repository,
+    tmp_path,
+    monkeypatch,
+    capsys,
+    suite_guard,
+    change,
+):
+    scratch, session = _suite_checkout(repository, tmp_path, monkeypatch, suite_guard)
+    suite_guard.pytest_sessionstart(session)
+    if change == "branch":
+        _git(repository, "branch", "stray")
+    else:
+        _git(repository, "worktree", "add", "--quiet", "-b", "stray", str(scratch / "wt"))
+    with pytest.raises(SystemExit) as error:
+        suite_guard.pytest_sessionfinish(session, 0)
+    assert error.value.code == 1
+    assert "+refs/heads/stray" in capsys.readouterr().err
