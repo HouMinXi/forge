@@ -115,6 +115,9 @@ class StateFinding:
     # The finding's own quote. Envelope-level code_excerpts do not count.
     # A CONFIRMED finding with this empty is demoted to UNCERTAIN.
     excerpt: str | None = None
+    # Why the falsifier reached its verdict. Empty when no falsifier ran.
+    # A dismissed finding without this cannot be audited later.
+    falsify_reasoning: str | None = None
 
 
 def is_receipt_audit(finding: StateFinding) -> bool:
@@ -254,6 +257,7 @@ def _finding_from_dict(d: dict) -> StateFinding:
         # same position they were in when they were written.
         severity=d.get("severity"),
         excerpt=d.get("excerpt"),
+        falsify_reasoning=d.get("falsify_reasoning"),
     )
 
 
@@ -356,6 +360,7 @@ def _finding_to_dict(f: StateFinding) -> dict:
         "is_timeout": f.is_timeout,
         "backend": f.backend,
         "excerpt": f.excerpt,
+        "falsify_reasoning": f.falsify_reasoning,
     }
     return d
 

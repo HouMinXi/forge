@@ -198,9 +198,16 @@ class RealFalsifier(Falsifier):
         # DISMISSED is downgraded too, not just CONFIRMED: an unverified
         # dismissal buries a real defect, which is the worse direction to
         # be wrong in.
+        #
+        # The reason is recorded after the downgrade, not before it. A
+        # verdict thrown out for lack of a receipt must not keep the
+        # model's own explanation, which is exactly what failed the check.
         if disposition in (Disposition.CONFIRMED, Disposition.DISMISSED):
             check = check_receipt(finding.description, response)
             if check.should_downgrade:
+                finding.falsify_reasoning = check.reason
                 return Disposition.UNCERTAIN
 
+        reason = response.get("reasoning")
+        finding.falsify_reasoning = reason if isinstance(reason, str) else None
         return disposition
