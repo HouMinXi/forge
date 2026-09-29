@@ -249,6 +249,24 @@ def build_e2e_checker() -> Callable:
     return run_e2e_check
 
 
+
+class _L1Call:
+    """A review pass that is called like a function and keeps its own audit.
+
+    The attempted excerpts live on the instance, so a type checker can see
+    them. A bare function with an attribute attached after the fact cannot
+    say so in its type.
+    """
+
+    def __init__(self, body):
+        self._body = body
+        self.attempted_excerpts: list[dict] = []
+        self.is_stub_l1 = False
+
+    def __call__(self) -> tuple:
+        return self._body(self)
+
+
 def build_l1_provider(
     engine: str,
     resolved: "ResolvedReview",
@@ -268,7 +286,7 @@ def build_l1_provider(
     reviewed_repositories: dict[str, str] | None = None,
     retry_timeout: bool = False,
     pass_stagger_s: float = 0.0,
-) -> "Callable":
+) -> "_L1Call":
     """Build l1_provider. Returns (findings, excerpts, Usage, duration_s) 4-tuple.
 
     Args:
@@ -285,7 +303,7 @@ def build_l1_provider(
 
     if engine == "stub":
 
-        def _stub_provider() -> tuple:
+        def _stub_body(call) -> tuple:
             return ([], [], Usage(), 0.0)
 
         # Trusted setup marker: the user explicitly asked for no L1
@@ -293,8 +311,9 @@ def build_l1_provider(
         # path BECAUSE the setup is trusted, never because receipts came
         # back empty -- an empty result from a REAL producer is evidence
         # loss and must not be exempted.
-        _stub_provider.is_stub_l1 = True
-        return _stub_provider
+        stub = _L1Call(_stub_body)
+        stub.is_stub_l1 = True
+        return stub
 
     from .llm_invoke import LLMInvokeError, llm_invoke
     from .reviewer_json import (
@@ -305,7 +324,7 @@ def build_l1_provider(
         validate_reviewer_json,
     )
 
-    def _provider() -> tuple:
+    def _provider(call) -> tuple:
         diff_text = resolved.git_diff or ""
         # Attempted evidence for THIS invocation: raw reviewer responses
         # whose excerpts failed validation, tagged with the loop-owned
@@ -313,7 +332,7 @@ def build_l1_provider(
         # unchanged while the machine can hand the attempts to the
         # receipt writer for a durable audit artifact.
         all_attempted: list[dict] = []
-        _provider.attempted_excerpts = all_attempted
+        call.attempted_excerpts = all_attempted
         if not diff_text:
             return ([], [], Usage(), 0.0)
 
@@ -641,7 +660,7 @@ def build_l1_provider(
             total_duration,
         )
 
-    return _provider
+    return _L1Call(_provider)
 
 
 def build_grouped_l1_provider(
@@ -720,7 +739,7 @@ def build_sampling_l1_provider(
     context_sources_text: str = "",
     max_attempts: int = 5,
     initial_delay_s: float = 2.0,
-) -> "Callable":
+) -> "_L1Call":
     """Build L1 provider that dispatches via MCP sampling.
 
     Like build_l1_provider but calls invoke_sampling instead of llm_invoke.
@@ -750,11 +769,11 @@ def build_sampling_l1_provider(
     )
     from .state import StateFinding
 
-    def _provider() -> tuple:
+    def _provider(call) -> tuple:
         diff_text = resolved.git_diff or ""
         # Attempted evidence for THIS invocation (see build_l1_provider).
         all_attempted: list[dict] = []
-        _provider.attempted_excerpts = all_attempted
+        call.attempted_excerpts = all_attempted
         if not diff_text:
             return ([], [], Usage(), 0.0)
 
@@ -981,4 +1000,4 @@ def build_sampling_l1_provider(
         total_duration = _parallel_wall
         return (all_candidates, all_excerpts, Usage(0, 0), total_duration)
 
-    return _provider
+    return _L1Call(_provider)
