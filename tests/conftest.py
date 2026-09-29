@@ -84,6 +84,25 @@ def _skip_worktree_check(monkeypatch):
     monkeypatch.setenv("FORGE_SKIP_WORKTREE_CHECK", "1")
 
 
+_real_config_home = pytest.StashKey[Path]()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_trust_store(tmp_path_factory, monkeypatch, request):
+    """Point the trust store at a per-test directory.
+
+    ``record_trust`` reads ``XDG_CONFIG_HOME`` when it is called, so a test
+    that records trust would otherwise append to the developer's real
+    ``~/.config/code-forge/trusted.json``. Tests that redirect the variable
+    themselves override this. The directory in force before this redirection
+    is stashed so a test can still name the real store.
+    """
+    real = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    request.node.stash[_real_config_home] = Path(real)
+    home = tmp_path_factory.mktemp("trust-store")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+
+
 @pytest.fixture(autouse=True)
 def _isolate_user_config(monkeypatch):
     """Prevent user-level backends from leaking into tests.
