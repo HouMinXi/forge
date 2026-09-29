@@ -103,7 +103,7 @@ class TestMutationCheckDispatch:
         )
         dismissed = StateFinding(
             id="MUTATION_SKIPPED",
-            fingerprint="mutation-no-python",
+            fingerprint="mutation-no-adapter",
             source="MUTANT",
             disposition=Disposition.DISMISSED,
             file="",

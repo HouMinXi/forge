@@ -90,16 +90,18 @@ def test_load_event_rejects_garbage(tmp_path):
     assert _load_event(tmp_path, "run-u", None) is None
 
 
-def test_registry_has_five_keys():
+def test_registry_lists_shipped_adapters():
     ids = registered_adapter_ids()
     assert ids == (
         "go-gremlins",
         "js-stryker",
         "patch-corpus",
+        "ps-mutant",
         "python-mutmut",
         "rust-cargo-mutants",
     )
     assert isinstance(get_adapter("python-mutmut"), MutmutAdapter)
+    assert get_adapter("ps-mutant").id == "ps-mutant"
 
 
 def test_registry_stub_probe_missing_dependency():

@@ -73,16 +73,26 @@ def test_unfinished_mutation_is_not_pass(tmp_path, capsys, fingerprint):
     assert "PASS" not in output.out + output.err
 
 
-@pytest.mark.parametrize("path", ["tests/test_mod.py", "README.md"])
-def test_real_inapplicable_diff_is_skip_not_pass(tmp_path, capsys, path):
-    # Real runner exits before any subprocess when the diff has no production Python.
+@pytest.mark.parametrize("path", ["README.md", "notes.c"])
+def test_real_unmapped_diff_is_skip_not_pass(tmp_path, capsys, path):
+    # Real runner exits before any subprocess when no adapter owns the diff.
     assert _run_mutation_check(_args(tmp_path, path), tmp_path) == EXIT_PASS
     output = capsys.readouterr()
     assert "SKIP" in output.err
+    assert "no registered mutation adapter" in output.err
     assert "PASS" not in output.err + output.out
 
 
-@pytest.mark.parametrize("fingerprint", ["mutation-tests-only", "mutation-no-python"])
+def test_javascript_diff_is_not_a_silent_skip(tmp_path, capsys):
+    # .js has a registered adapter. Naming it and exiting 0 would hide
+    # that mutmut never measured the change.
+    code = _run_mutation_check(_args(tmp_path, "src/app.js"), tmp_path)
+    output = capsys.readouterr()
+    assert code == EXIT_CLI_ERROR
+    assert "js-stryker" in output.err
+
+
+@pytest.mark.parametrize("fingerprint", ["mutation-tests-only", "mutation-no-adapter"])
 def test_valid_skip_cannot_mask_unrelated_infrastructure_error(tmp_path, capsys, fingerprint):
     with patch(
         "code_forge.mutation.run_mutation",

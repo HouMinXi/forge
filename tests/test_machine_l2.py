@@ -267,18 +267,15 @@ class TestL2RunnerException:
 
 
 class TestL2SkipsBeforeRequiringGateConfig:
-    """A non-Python repo must not be told to fix its gate.yaml.
+    """A language with no mutation adapter must not be told to fix gate.yaml.
 
-    Mutation testing is a Python-only MVP (mutation.py filters the diff to
-    .py files and returns a DISMISSED MUTATION_SKIPPED otherwise). But the
-    L2 phase used to load gate.yaml BEFORE looking at the diff, so a
-    TypeScript repo never reached that branch: it got
-    "gate.yaml missing or test.command not configured" instead, which
-    sends the reader off to add a test section that would change nothing.
-    Check the diff first, and say what is actually true.
+    Markdown, C, and other unmapped suffixes still skip before config is
+    read. TypeScript, Go, Rust, and PowerShell have adapters, so a diff
+    of those files does need test.command. The old Python-only check hid
+    that and reported a skip instead of a missing baseline.
     """
 
-    def test_non_python_diff_skips_without_gate_yaml(self, tmp_path):
+    def test_unmapped_diff_skips_without_gate_yaml(self, tmp_path):
         (tmp_path / ".code-forge").mkdir()  # no gate.yaml at all
 
         def mock_l0(registry, files):
@@ -289,6 +286,46 @@ class TestL2SkipsBeforeRequiringGateConfig:
         def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
             seen["called"] = True
             seen["baseline_cmd"] = baseline_cmd
+            return ([], [])
+
+        machine = StateMachine(
+            mode=Mode.LOCAL,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=ResolvedReview(
+                source_files=[Path("README.md")],
+                baseline_content=None,
+                git_diff=None,
+                mode_hint="git",
+            ),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+            l2_runner=mock_l2,
+        )
+        verdict = machine.run()
+
+        assert verdict == Verdict.PASS
+        errors = " ".join(machine._state.infra_errors)
+        assert "gate.yaml" not in errors, "an unmapped diff was told to fix gate.yaml: %s" % errors
+        # The runner decides the skip, and needs no baseline command to
+        # do it -- that is what lets it run without a gate.yaml at all.
+        assert seen.get("called"), "L2 runner never ran"
+        assert seen["baseline_cmd"] == []
+
+    def test_typescript_diff_without_gate_yaml_names_the_config(self, tmp_path):
+        (tmp_path / ".code-forge").mkdir()
+
+        def mock_l0(registry, files):
+            return ([], [])
+
+        seen = {}
+
+        def mock_l2(diff_files, baseline_cmd, *, baseline_timeout):
+            seen["called"] = True
             return ([], [])
 
         machine = StateMachine(
@@ -309,15 +346,10 @@ class TestL2SkipsBeforeRequiringGateConfig:
             l0_runner=mock_l0,
             l2_runner=mock_l2,
         )
-        verdict = machine.run()
-
-        assert verdict == Verdict.PASS
+        machine.run()
         errors = " ".join(machine._state.infra_errors)
-        assert "gate.yaml" not in errors, "a TypeScript repo was told to fix gate.yaml: %s" % errors
-        # The runner decides the skip, and needs no baseline command to
-        # do it -- that is what lets it run without a gate.yaml at all.
-        assert seen.get("called"), "L2 runner never ran"
-        assert seen["baseline_cmd"] == []
+        assert "gate.yaml" in errors
+        assert not seen.get("called")
 
 
 class TestCIModeReadsMutationResult:
@@ -612,8 +644,37 @@ class TestCISkipIsVisibleAsFinding:
         assert machine.run() == Verdict.PASS
         skipped = self._skipped(machine)
         assert len(skipped) == 1
-        assert skipped[0].fingerprint == "mutation-no-python"
+        assert skipped[0].fingerprint == "mutation-no-adapter"
         assert skipped[0].disposition == Disposition.DISMISSED
+
+    def test_powershell_diff_names_psmutant(self, tmp_path):
+        _setup_gate_yaml(tmp_path)
+
+        def mock_l0(registry, files):
+            return ([], [])
+
+        machine = StateMachine(
+            mode=Mode.CI,
+            falsifier=StubFalsifier(),
+            autofixer=StubAutoFixer(),
+            revert_fn=lambda f: None,
+            resolved_review=ResolvedReview(
+                source_files=[Path("scripts/build.ps1")],
+                baseline_content=None,
+                git_diff=None,
+                mode_hint="git",
+            ),
+            source_hash="abc",
+            baseline_spec_repr="empty",
+            cwd=tmp_path,
+            registry={},
+            l0_runner=mock_l0,
+        )
+        assert machine.run() == Verdict.PASS
+        skipped = self._skipped(machine)
+        assert skipped[0].fingerprint == "mutation-other-adapter"
+        assert "ps-mutant" in skipped[0].description
+        assert "Python-only" not in skipped[0].description
 
     def test_mutmut_absent_appends_dismissed_finding(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)

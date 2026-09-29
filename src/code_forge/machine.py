@@ -569,13 +569,12 @@ class StateMachine:
         import shutil
 
         diff_files = [str(f) for f in self._source_files()]
-        py_files = [f for f in diff_files if f.endswith(".py")]
+        from .mutation_dispatch import group_by_adapter, review_gate_summary
 
-        # No Python files or no mutmut means there is nothing to
-        # measure. That is an environment fact, not a mutation result,
-        # so it is recorded as a DISMISSED finding on this same run
-        # (below) rather than a mutation-result.json file a later run
-        # would read back and could get stuck on.
+        grouped = group_by_adapter(diff_files)
+        py_files = grouped.get("python-mutmut", [])
+        other_adapters = [key for key in grouped if key and key != "python-mutmut"]
+
         if py_files and shutil.which("mutmut") is not None:
             try:
                 from .gate_check import load_gate_config
@@ -642,19 +641,32 @@ class StateMachine:
                     self._state.infra_errors.append(f"CI: mutation launch error: {exc}")
                 if not started:
                     self._state.infra_errors.append("CI: mutation subprocess failed to start")
-        elif not py_files:
-            # DISMISSED, not a file write: visible in this same run's
-            # findings/summary instead of silently deferred to a file
-            # only a later run would read (and could get stuck on).
+        elif not py_files and not other_adapters:
             self._state.findings.append(
                 StateFinding(
                     id="MUTATION_SKIPPED",
-                    fingerprint="mutation-no-python",
+                    fingerprint="mutation-no-adapter",
                     source="MUTANT",
                     disposition=Disposition.DISMISSED,
                     file="",
                     line_range=[],
-                    description=("no Python files in diff (mutation is Python-only MVP)"),
+                    description="no registered mutation adapter for this diff",
+                )
+            )
+        elif not py_files:
+            self._state.findings.append(
+                StateFinding(
+                    id="MUTATION_SKIPPED",
+                    fingerprint="mutation-other-adapter",
+                    source="MUTANT",
+                    disposition=Disposition.DISMISSED,
+                    file="",
+                    line_range=[],
+                    description=(
+                        "mutation adapters: "
+                        + review_gate_summary(diff_files)
+                        + "; python mutmut not applicable"
+                    ),
                 )
             )
         else:
@@ -1170,12 +1182,11 @@ class StateMachine:
         """
         diff_files = [str(f) for f in self._source_files()]
 
-        # Mutation is a Python-only MVP, and the runner already reports
-        # that as a DISMISSED finding. Reach it without a gate.yaml: the
-        # config is only needed for the baseline command, which a
-        # non-Python diff never runs. Otherwise a TypeScript repo gets a
-        # config error instead of the real reason.
-        needs_baseline = any(f.endswith(".py") for f in diff_files)
+        # A language with a registered adapter needs the baseline command.
+        # Unmapped suffixes still skip without a gate.yaml.
+        from .mutation_dispatch import adapter_for_path
+
+        needs_baseline = any(adapter_for_path(f) for f in diff_files)
         baseline_cmd: list[str] = []
 
         if needs_baseline:

@@ -105,16 +105,27 @@ class TestRunMutation:
         assert findings == []
         assert infra == []
 
-    def test_non_python_files_only_returns_mutation_skipped(self):
-        """Test 10: non-.py files only returns MUTATION_SKIPPED"""
-        findings, infra = run_mutation(["foo.js", "bar.c"], ["pytest"])
+    def test_unmapped_files_only_returns_mutation_skipped(self):
+        """A diff with no registered adapter skips, and says that."""
+        findings, infra = run_mutation(["README.md", "bar.c"], ["pytest"])
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].source == "MUTANT"
         assert findings[0].disposition == Disposition.DISMISSED
-        assert "Python-only" in findings[0].description
-        assert len(infra) == 1
-        assert "no Python files" in infra[0]
+        assert "no registered mutation adapter" in findings[0].description
+        assert "Python-only" not in findings[0].description
+        assert infra == []
+
+    def test_typescript_diff_names_stryker_instead_of_python_mvp(self):
+        findings, infra = run_mutation(["src/app.ts"], ["pytest"])
+        assert findings[0].id == "MUTATION_SKIPPED"
+        assert "js-stryker" in findings[0].description
+        assert "Python-only" not in findings[0].description
+        assert "other adapters" in infra[0]
+
+    def test_powershell_diff_names_psmutant(self):
+        findings, _infra = run_mutation(["scripts/build.ps1"], ["pytest"])
+        assert "ps-mutant" in findings[0].description
 
     @patch("code_forge.mutation.subprocess.run")
     def test_flaky_guard_baseline_fails_on_run_2(self, mock_run):

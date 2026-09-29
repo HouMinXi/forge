@@ -18,12 +18,14 @@ from code_forge.mutation_engines.adapters.js_stryker import StrykerAdapter
 from code_forge.mutation_engines.adapters.go_gremlins import GremlinsAdapter
 from code_forge.mutation_engines.adapters.rust_cargo_mutants import CargoMutantsAdapter
 from code_forge.mutation_engines.adapters.python_mutmut import MutmutAdapter
+from code_forge.mutation_engines.adapters.ps_mutant import PSMutantAdapter
 from code_forge.mutation_engines.schemas import TargetDeclaration, TargetResult
 
 JS_STRYKER = "js-stryker"
 GO_GREMLINS = "go-gremlins"
 RUST_CARGO_MUTANTS = "rust-cargo-mutants"
 PATCH_CORPUS = "patch-corpus"
+PS_MUTANT = "ps-mutant"
 
 
 class UnavailableAdapter:
@@ -50,6 +52,7 @@ _REGISTRY: dict[str, MutationAdapter] = {
     GO_GREMLINS: GremlinsAdapter(),
     RUST_CARGO_MUTANTS: CargoMutantsAdapter(),
     PATCH_CORPUS: PatchCorpusAdapter(),
+    PS_MUTANT: PSMutantAdapter(),
 }
 
 
