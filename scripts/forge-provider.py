@@ -10,7 +10,8 @@ until some unrelated review fails.
     forge-provider.py add glm-flash \
         --base-url https://open.bigmodel.cn/api/paas/v4 \
         --model glm-4.7-flash --format openai \
-        --key-pass personal/api/glm --key-env GLM_API_KEY
+        --key-pass personal/api/glm --key-env GLM_API_KEY \
+ --header x-omniroute-no-memory:1
     forge-provider.py default glm-flash
     forge-provider.py set review-default --base-url https://new.host/anthropic
     forge-provider.py rename old-name new-name
@@ -147,6 +148,125 @@ def yaml_scalar(value: str, field: str) -> str:
             and not numeric):
         return value
     return '"' + value + '"'
+
+
+# RFC 7230 field-name / field-value, same narrowing as
+# src/code_forge/backend.py. Duplicated so this script still runs as a
+# file, without importing the package, on a host that only has the
+# script. Grammar here must stay a subset of what forge will load.
+_HEADER_NAME_RE = re.compile(r"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
+_HEADER_VALUE_RE = re.compile(r"(?:[\x21-\x7e]+(?:[ \t]+[\x21-\x7e]+)*)?")
+_PROTECTED_HEADER_KEYS = frozenset({
+    "authorization", "x-api-key", "content-type", "anthropic-version",
+    "accept-charset", "accept-encoding", "access-control-request-headers",
+    "access-control-request-method", "connection", "content-length",
+    "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
+    "origin", "referer", "set-cookie", "te", "trailer",
+    "transfer-encoding", "upgrade", "via",
+    "x-http-method", "x-http-method-override", "x-method-override",
+})
+_PROTECTED_HEADER_PREFIXES = ("proxy-", "sec-")
+
+
+def parse_headers(pairs):
+    """Turn --header NAME:VALUE repeats into a mapping. None if omitted.
+
+    Raises ValueError before any file is touched: a colon-less token, a
+    name forge refuses to send, two spellings of the same name, or a
+    value yaml_scalar will not write.
+    """
+    if not pairs:
+        return None
+    out = {}
+    seen = {}
+    for raw in pairs:
+        if ":" not in raw:
+            raise ValueError("header: missing colon (expected NAME:VALUE)")
+        name, value = raw.split(":", 1)
+        name, value = name.strip(), value.strip()
+        if not _HEADER_NAME_RE.fullmatch(name):
+            raise ValueError(f"header: {name!r} is not a valid HTTP field name")
+        if not _HEADER_VALUE_RE.fullmatch(value):
+            raise ValueError(
+                f"header: value for {name!r} is not a valid HTTP field value")
+        folded = name.lower()
+        if folded in _PROTECTED_HEADER_KEYS or folded.startswith(
+                _PROTECTED_HEADER_PREFIXES):
+            raise ValueError(
+                f"header: {name!r} is reserved (credential, framing, or method)")
+        if folded in seen:
+            raise ValueError(
+                f"header: {name!r} repeats {seen[folded]!r} (names are "
+                "case-insensitive)")
+        # Refuse here, not at write time, so a bad pair cannot leave the
+        # earlier files in a fleet half-applied.
+        yaml_scalar(name, "header-name")
+        yaml_scalar(value, "header-value")
+        seen[folded] = name
+        out[name] = value
+    return out
+
+
+def render_headers(headers, field_indent):
+    """YAML lines for a headers: mapping, including the key line."""
+    nested = field_indent + "  "
+    lines = [f"{field_indent}headers:\n"]
+    for name, value in headers.items():
+        lines.append(
+            f"{nested}{yaml_scalar(name, 'header-name')}: "
+            f"{yaml_scalar(value, 'header-value')}\n")
+    return lines
+
+
+def write_headers(path, name, headers, stamp, dry_run):
+    """Replace or insert the headers: mapping on one backend.
+
+    Returns (changed, old_mapping_or_None). A missing mapping and an
+    identical mapping are both reported as unchanged so a second sync
+    stays at 0 updated.
+    """
+    text = read_config(path)
+    span = find_backend(text, name)
+    if not span:
+        return False, None
+    body = text[span[0]:span[1]]
+    hit = re.search(r"^([ \t]*)headers:[ \t\r]*$", body, re.MULTILINE)
+    old = None
+    if hit:
+        hdr_indent = hit.group(1)
+        after = body[hit.end():]
+        end_rel = len(after)
+        for m in re.finditer(r"^([ \t]*)(\S.*?)[\r]*$", after, re.MULTILINE):
+            if m.group(2).startswith("#"):
+                continue
+            if len(m.group(1)) <= len(hdr_indent):
+                end_rel = m.start()
+                break
+        nested = hdr_indent + "  "
+        old = {}
+        for m in re.finditer(
+                rf"^{re.escape(nested)}([^:\r\n]+):[ \t]*(.+?)(?=[ \t]*\r?$)",
+                after[:end_rel], re.MULTILINE):
+            raw_name, raw_val = m.group(1).strip(), m.group(2).strip()
+            if len(raw_val) >= 2 and raw_val[0] == raw_val[-1] and raw_val[0] in "\"\'":
+                raw_val = raw_val[1:-1]
+            old[raw_name] = raw_val
+        if old == headers:
+            return False, old
+        field_indent = hdr_indent
+        new_block = "".join(render_headers(headers, field_indent))
+        rest = after[end_rel:]
+        new_body = body[:hit.start()] + new_block + rest
+    else:
+        fields = re.search(r"^([ \t]+)\S", body, re.MULTILINE)
+        field_indent = fields.group(1) if fields else "    "
+        new_block = "".join(render_headers(headers, field_indent))
+        new_body = body.rstrip("\n") + "\n" + new_block
+    if not dry_run:
+        backup(path, stamp)
+        write_config(path, text[:span[0]] + new_body + text[span[1]:])
+    return True, old
+
 
 
 def backends_block(text: str):
@@ -362,6 +482,9 @@ def insert_backend(path, spec, stamp, dry_run):
         f"{field}timeout_s: {spec['timeout_s']}\n",
         f"{field}stream: false\n",
     ]
+    headers = spec.get("headers")
+    if headers:
+        lines.extend(render_headers(headers, field))
     if not dry_run:
         backup(path, stamp)
         write_config(path, text[:span[1]].rstrip("\n") + "\n"
@@ -623,6 +746,13 @@ def cmd_add(args):
         "max_tokens": args.max_tokens,
         "timeout_s": args.timeout_s,
     }
+    try:
+        headers = parse_headers(getattr(args, "header", None))
+    except ValueError as exc:
+        print(f"refusing to write: {exc}", file=sys.stderr)
+        return 2
+    if headers:
+        spec["headers"] = headers
 
     # Reject unwritable values before the probe, not on the first file. An
     # add that dies partway leaves some configs carrying the backend and the
@@ -682,12 +812,17 @@ def cmd_set(args):
     fmt = args.format or read_field(text, args.name, "format") or "anthropic"
     url = args.base_url or read_field(text, args.name, "base_url")
 
+    try:
+        headers = parse_headers(getattr(args, "header", None))
+    except ValueError as exc:
+        print(f"refusing to write: {exc}", file=sys.stderr)
+        return 2
     edits = [(f, v) for f, v in (
         ("base_url", args.base_url), ("model", args.model),
         ("max_tokens", args.max_tokens), ("timeout_s", args.timeout_s),
         ("api_key_env", args.key_env), ("format", args.format),
     ) if v is not None]
-    if not edits:
+    if not edits and headers is None:
         print("nothing to change", file=sys.stderr)
         return 2
 
@@ -702,7 +837,8 @@ def cmd_set(args):
         print(f"note: '{args.name}' reads its key from {sorted(envs)} across "
               "these configs; the probe covers only the first",
               file=sys.stderr)
-    if key and url and model:
+    routing = any(f in ("base_url", "model", "format") for f, _ in edits)
+    if routing and key and url and model:
         print(f"probing {url} ({fmt}, {model}) ... ", end="", flush=True)
         ok, detail = probe(url, model, key, fmt)
         print(detail)
@@ -710,7 +846,7 @@ def cmd_set(args):
             print("\nendpoint did not answer; nothing written",
                   file=sys.stderr)
             return 3
-    elif any(f in ("base_url", "model", "format") for f, _ in edits):
+    elif routing:
         # Retargeting without a probe is how a backend ends up pointing at an
         # endpoint nobody checked. Fields like timeout_s cannot break routing,
         # so those still go through.
@@ -748,8 +884,19 @@ def cmd_set(args):
             for h in hits:
                 print(f"      {h}")
 
+    if headers is not None:
+        for path in configs:
+            did, old = write_headers(path, args.name, headers, stamp,
+                                     args.dry_run)
+            if did:
+                if path not in written:
+                    written.append(path)
+                    changed += 1
+                    print(f"  {path}")
+                print(f"      headers: {old} -> {headers}")
+
     verb = "would change" if args.dry_run else "changed"
-    print(f"\n{verb} {changed} of {len(configs)} file(s)")
+    print(f"\n{verb} {changed}/{len(configs)} file(s)")
     if changed:
         report_trust(reseal_trust(written, args.dry_run), args.dry_run)
     if changed and not args.dry_run:
@@ -789,6 +936,13 @@ def cmd_sync(args):
         "max_tokens": args.max_tokens,
         "timeout_s": args.timeout_s,
     }
+    try:
+        headers = parse_headers(getattr(args, "header", None))
+    except ValueError as exc:
+        print(f"refusing to write: {exc}", file=sys.stderr)
+        return 2
+    if headers:
+        spec["headers"] = headers
     for field in ("name", "base_url", "model", "format", "key_env"):
         try:
             yaml_scalar(str(spec[field]), field)
@@ -864,6 +1018,17 @@ def cmd_sync(args):
     for path, fields in updated:
         verb = "would update" if dry else "updated"
         print(f"  {verb} {path}: {', '.join(fields)}")
+
+    if headers:
+        for path in find_configs():
+            if path in added or not find_backend(read_config(path), args.name):
+                continue
+            did, _ = write_headers(path, args.name, headers, stamp, dry)
+            if did:
+                updated.append((path, ["headers"]))
+                touched.append(path)
+                verb = "would update" if dry else "updated"
+                print(f"  {verb} {path}: headers")
 
     defaulted = []
     for path in find_configs():
@@ -1040,6 +1205,8 @@ def main():
     p.add_argument("--key-env", help="env var name (default: NAME_API_KEY)")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.add_argument("--timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
+    p.add_argument("--header", action="append", metavar="NAME:VALUE",
+                   help="extra request header; repeatable")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_add)
 
@@ -1052,6 +1219,8 @@ def main():
     p.add_argument("--key-env")
     p.add_argument("--max-tokens", type=int)
     p.add_argument("--timeout-s", type=int)
+    p.add_argument("--header", action="append", metavar="NAME:VALUE",
+                   help="extra request header; repeatable")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_set)
 
@@ -1075,6 +1244,8 @@ def main():
     p.add_argument("--key-env", help="env var name (default: NAME_API_KEY)")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.add_argument("--timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
+    p.add_argument("--header", action="append", metavar="NAME:VALUE",
+                   help="extra request header; repeatable")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_sync)
 
