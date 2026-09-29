@@ -40,11 +40,7 @@ def test_sampling_audit_parity(tmp_path, monkeypatch):
         assert [f for f in findings if f.source == "INFRA"] == []
         assert {f.source for f in findings} == {"UNTRUSTED"}
         assert excerpts == []
-        assert len(provider.attempted_excerpts) == 3
-        for attempt in provider.attempted_excerpts:
-            assert attempt["findings"] == payload["findings"]
-            assert attempt["code_excerpts"] == payload["code_excerpts"]
-            assert attempt["pass_name"]
+        assert provider.attempted_excerpts == []
     assert [(f.id, f.description) for f in direct_result[0]] == [
         (f.id, f.description) for f in sampling_result[0]
     ]
@@ -65,14 +61,7 @@ def test_sampling_audit_parity(tmp_path, monkeypatch):
     for path in written:
         receipt = json.loads(path.read_text())
         assert receipt["code_excerpts"] == []
-        # A parsed response is not a complete review when its evidence
-        # was rejected. Keep the failed attempt separate and unchanged.
-        assert receipt["pass_status"] == "incomplete"
-        assert receipt["findings"] == []
-    attempts = list((receipts / "attempted").glob("*.json"))
-    assert len(attempts) == 3
-    for path in attempts:
-        audit = json.loads(path.read_text())
-        assert audit["attempted"] is True
-        assert audit["payload"]["findings"] == payload["findings"]
-        assert audit["payload"]["code_excerpts"] == payload["code_excerpts"]
+        # A line-count miss is audit data, not a rejected round, so the
+        # receipt stays complete and nothing lands in attempted/.
+        assert receipt["pass_status"] == "completed"
+    assert list((receipts / "attempted").glob("*.json")) == []
