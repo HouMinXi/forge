@@ -219,6 +219,19 @@ class CargoMutantsAdapter:
             errors=(),
         )
 
+    def invoke(self, root):
+        """Call cargo mutants. No Rust test module means no score."""
+        from pathlib import Path
+
+        from code_forge.mutation_dispatch import invoke_tool
+
+        root = Path(root)
+        tests = [p for p in root.rglob("*.rs") if p.name.endswith("_test.rs") or "mod tests" in p.read_text(errors="replace")]
+        return invoke_tool(
+            ["cargo", "mutants", "--list"],
+            "no cargo test" if not tests else "ran",
+        )
+
     def run(
         self,
         target: TargetDeclaration,

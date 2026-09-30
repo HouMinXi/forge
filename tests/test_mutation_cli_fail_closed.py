@@ -73,7 +73,7 @@ def test_unfinished_mutation_is_not_pass(tmp_path, capsys, fingerprint):
     assert "PASS" not in output.out + output.err
 
 
-@pytest.mark.parametrize("path", ["README.md", "notes.c"])
+@pytest.mark.parametrize("path", ["README.md", "notes.txt"])
 def test_real_unmapped_diff_is_skip_not_pass(tmp_path, capsys, path):
     # Real runner exits before any subprocess when no adapter owns the diff.
     assert _run_mutation_check(_args(tmp_path, path), tmp_path) == EXIT_PASS

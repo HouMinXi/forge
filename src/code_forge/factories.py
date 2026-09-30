@@ -203,13 +203,32 @@ def build_l2_runner() -> Callable:
     module when mutmut is available.
     """
     if shutil.which("mutmut") is None:
-        # mutmut not available, return no-op with MUTATION_SKIPPED
+        from .mutation_dispatch import group_by_adapter, other_adapter_note
+
         def _no_mutation(
             diff_files: list[str],
             baseline_cmd: list[str],
             *,
             baseline_timeout: int = 120,
         ) -> tuple[list[StateFinding], list[str]]:
+            grouped = group_by_adapter(diff_files)
+            py_files = grouped.get("python-mutmut", [])
+            other = [key for key in grouped if key and key != "python-mutmut"]
+            if not py_files and other:
+                return (
+                    [
+                        StateFinding(
+                            id="MUTATION_SKIPPED",
+                            fingerprint="mutation-other-adapter",
+                            source="MUTANT",
+                            disposition=Disposition.DISMISSED,
+                            file=diff_files[0] if diff_files else "",
+                            line_range=[],
+                            description=other_adapter_note(diff_files, root=Path.cwd()),
+                        )
+                    ],
+                    [],
+                )
             findings = [
                 StateFinding(
                     id="MUTATION_SKIPPED",

@@ -222,6 +222,16 @@ class StrykerAdapter:
             errors=(),
         )
 
+    def invoke(self, root):
+        """Call stryker. No vitest config means no score."""
+        from pathlib import Path
+
+        from code_forge.mutation_dispatch import invoke_tool
+
+        root = Path(root)
+        configs = list(root.rglob("vitest.config.*"))
+        return invoke_tool(["stryker", "--version"], "no vitest" if not configs else "ran")
+
     def run(
         self,
         target: TargetDeclaration,

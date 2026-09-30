@@ -107,7 +107,7 @@ class TestRunMutation:
 
     def test_unmapped_files_only_returns_mutation_skipped(self):
         """A diff with no registered adapter skips, and says that."""
-        findings, infra = run_mutation(["README.md", "bar.c"], ["pytest"])
+        findings, infra = run_mutation(["README.md", "notes.txt"], ["pytest"])
         assert len(findings) == 1
         assert findings[0].id == "MUTATION_SKIPPED"
         assert findings[0].source == "MUTANT"
@@ -126,6 +126,17 @@ class TestRunMutation:
     def test_powershell_diff_names_psmutant(self):
         findings, _infra = run_mutation(["scripts/build.ps1"], ["pytest"])
         assert "ps-mutant" in findings[0].description
+        assert "ps-mutant available" in findings[0].description
+        assert "mutation run:" in findings[0].description
+
+    @patch("code_forge.mutation.subprocess.run")
+    def test_mixed_diff_names_the_non_python_adapter(self, mock_run):
+        """Python runs. The TypeScript file beside it must still be named."""
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="FAIL")
+        findings, _infra = run_mutation(["src/app.py", "src/app.ts"], ["pytest"])
+        text = " ".join(f.description for f in findings)
+        assert "js-stryker" in text
+        assert any("flaky" in f.description for f in findings)
 
     @patch("code_forge.mutation.subprocess.run")
     def test_flaky_guard_baseline_fails_on_run_2(self, mock_run):

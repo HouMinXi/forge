@@ -297,6 +297,23 @@ class TestBuildL2Runner:
             assert len(infra) == 1
             assert "not found" in infra[0]
 
+    def test_typescript_without_mutmut_names_stryker(self):
+        """A TypeScript diff must not be reported as a missing mutmut.
+
+        mutmut does not apply. The skip names the adapter that does.
+        """
+        from unittest.mock import patch
+
+        with patch("code_forge.factories.shutil.which", return_value=None):
+            from code_forge.factories import build_l2_runner
+
+            findings, _infra = build_l2_runner()(["src/app.ts"], ["pytest"])
+        assert findings[0].id == "MUTATION_SKIPPED"
+        assert "js-stryker" in findings[0].description
+        assert "mutmut not installed" not in findings[0].description
+        assert "mutation run:" in findings[0].description
+        assert "scanned " in findings[0].description
+
 
 class TestBuildE2eChecker:
     """Factory test for build_e2e_checker."""
