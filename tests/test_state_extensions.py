@@ -205,3 +205,14 @@ class TestBackwardCompat:
         assert loaded.baseline_spec_repr == "git:HEAD"
         assert len(loaded.round_history) == 1
         assert loaded.infra_errors == ["test error"]
+
+
+def test_severity_survives_save_and_load(tmp_path):
+    """A severity set on a finding must come back the same after a save."""
+    finding = _make_finding()
+    finding.severity = "high"
+    state = State(findings=[finding])
+    path = tmp_path / "state.json"
+    save_state(state, path)
+    loaded = load_state(path)
+    assert loaded.findings[0].severity == "high"
