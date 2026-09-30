@@ -952,19 +952,18 @@ def run_mutation(
             )
             return (findings, [])
 
-        # Convert survivors to findings
-        for survivor in survivors:
-            findings.append(
-                StateFinding(
-                    id=f"mutant-{survivor.mutant_name}",
-                    fingerprint=f"mutant:{survivor.mutant_name}",
-                    source="MUTANT",
-                    disposition=Disposition.CONFIRMED,
-                    file=survivor.file,
-                    line_range=[0, 0],  # mutmut 3.x results omit line numbers
-                    description=(f"mutant survived: {survivor.mutant_name}"),
-                )
+        findings.extend(
+            StateFinding(
+                id=f"mutant-{survivor.mutant_name}",
+                fingerprint=f"mutant:{survivor.mutant_name}",
+                source="MUTANT",
+                disposition=Disposition.CONFIRMED,
+                file=survivor.file,
+                line_range=[0, 0],  # mutmut 3.x results omit line numbers
+                description=(f"mutant survived: {survivor.mutant_name}"),
             )
+            for survivor in survivors
+        )
 
     finally:
         if installed:

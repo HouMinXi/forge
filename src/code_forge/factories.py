@@ -101,7 +101,7 @@ def build_falsifier(
                 "--falsification-engine=real requires falsify_real.py "
                 "(import failed). Use "
                 "--falsification-engine=auto or =stub."
-            )
+            ) from None
     raise ValueError("unknown engine: %r (expected auto|stub|real)" % engine)
 
 
@@ -708,7 +708,7 @@ def build_grouped_l1_provider(
         total_output = 0
         total_cached = 0
         total_duration = 0.0
-        for name, provider in providers:
+        for _name, provider in providers:
             findings, excerpts, usage, duration = provider()
             all_findings.extend(_dedup_by_fingerprint(findings, seen))
             all_excerpts.extend(excerpts)
