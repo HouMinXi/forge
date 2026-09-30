@@ -21,10 +21,9 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +273,7 @@ def _run_pr_pipeline(
     remain on disk for manual retry).
     """
     try:
-        with _git_branch_state() as original_branch:
+        with _git_branch_state() as _original_branch:
             # Step 1: branch
             branch_name = 'forge/dim-%s' % dim_name
             result = subprocess.run(

@@ -82,7 +82,7 @@ def capture(graph_ctx: str) -> dict[str, str]:
     assert len(prompts) == 3, "expected three L1 passes, got %d" % len(prompts)
     return {
         name: hashlib.sha256(p.encode("utf-8")).hexdigest()
-        for name, p in zip(("qodo", "expert", "adversarial"), prompts)
+        for name, p in zip(("qodo", "expert", "adversarial"), prompts, strict=True)
     }
 
 

@@ -4,7 +4,6 @@
 """Config migration -- promoted_dimensions to dimension_states (D3 spec)."""
 
 import json
-import os
 import sys
 from datetime import datetime, timezone
 

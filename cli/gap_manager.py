@@ -10,8 +10,7 @@ import re
 import sys
 import time
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from datetime import datetime, timezone
 
 from file_utils import atomic_write
 
