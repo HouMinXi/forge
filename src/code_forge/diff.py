@@ -338,6 +338,33 @@ def split_diff_for_files(diff_text: str, members: list[str]) -> str:
     return "".join(text for path, text in sections if path in wanted)
 
 
+def changed_files_in_order(diff_text: str) -> list[str]:
+    """Paths a unified diff touches, in diff order, without duplicates.
+
+    Reads the path the same way ``split_diff_for_files`` does, so a diff
+    that parser accepts is a diff this lists. Pure additions and deletions
+    both count; a section with no recoverable path does not.
+    """
+    if not diff_text:
+        return []
+    seen: list[str] = []
+    current: list[str] = []
+    for line in diff_text.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            if current:
+                path, _text = _section_entry(current)
+                if path and path not in seen:
+                    seen.append(path)
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        path, _text = _section_entry(current)
+        if path and path not in seen:
+            seen.append(path)
+    return seen
+
+
 def _section_entry(lines: list[str]) -> tuple[str | None, str]:
     """(post-change path, verbatim section text) for one diff section."""
     old_path: str | None = None

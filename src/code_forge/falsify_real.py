@@ -91,6 +91,20 @@ def _readers_for_file(rows, path: str) -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
+def _other_changed_files(diff_text: Optional[str], anchored: str) -> list[str]:
+    """Files the same diff changes besides the one the finding names.
+
+    The judge only sees hunks for the anchored file. Without even the names
+    of the rest, a defect that depends on another file looks like a complete
+    change and gets dismissed. Names only: the hunks stay out of the prompt.
+    """
+    if not diff_text:
+        return []
+    from .diff import changed_files_in_order
+
+    return [path for path in changed_files_in_order(diff_text) if path != anchored]
+
+
 def _diff_for_file(diff_text: Optional[str], path: str) -> str:
     """Annotated hunks for one file, or "" when the file has none."""
     if not diff_text or not path:
@@ -143,6 +157,16 @@ class RealFalsifier(Falsifier):
         hunks = _diff_for_file(self._diff_text, finding.file)
         if hunks:
             prompt += _DIFF_SECTION + hunks
+        others = _other_changed_files(self._diff_text, finding.file)
+        if others:
+            listing = "\n".join(others)
+            prompt += (
+                "\n## Other files changed in the same diff\n"
+                "The finding is anchored to the file above, but the change "
+                "also touches the files listed here. A defect can depend on "
+                "one of them; their contents are not shown.\n"
+                "%s\n" % listing
+            )
         readers = _readers_for_file(self._context_rows, finding.file)
         if readers:
             prompt += _READERS_SECTION + readers
