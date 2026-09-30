@@ -360,6 +360,55 @@ class TestRunMutationVenvBaseline:
         assert posix == str(tmp_path / "src").replace("\\", "/")
         assert "mutants/" not in posix
 
+    @patch("code_forge.mutation.subprocess.run")
+    def test_runner_dir_leads_path(self, mock_run, tmp_path):
+        # mutmut runs pytest in its own process and inherits this env.
+        # A path-form baseline runner means the project toolchain lives
+        # next to it, so that directory has to lead PATH.
+        runner = tmp_path / "proj" / ".venv" / "bin" / "pytest"
+        runner.parent.mkdir(parents=True)
+
+        def side_effect(*args, **kwargs):
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = side_effect
+        run_mutation(
+            ["src/pkg/mod.py"],
+            [str(runner), "tests/", "-q"],
+            cwd=tmp_path,
+        )
+
+        mutmut_calls = [
+            c
+            for c in mock_run.call_args_list
+            if isinstance(c[0][0], list) and c[0][0][1:4] == ["-m", "mutmut", "run"]
+        ]
+        assert len(mutmut_calls) == 1
+        path = mutmut_calls[0][1]["env"]["PATH"]
+        assert path.split(os.pathsep)[0] == str(runner.parent)
+
+    @patch("code_forge.mutation.subprocess.run")
+    def test_missing_runner_dir_leaves_path_alone(self, mock_run, tmp_path, monkeypatch):
+        # A runner whose directory does not exist gives nothing to prepend.
+        monkeypatch.setenv("PATH", "/usr/bin")
+
+        def side_effect(*args, **kwargs):
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = side_effect
+        run_mutation(
+            ["src/pkg/mod.py"],
+            ["/no/such/dir/pytest", "tests/", "-q"],
+            cwd=tmp_path,
+        )
+
+        mutmut_calls = [
+            c
+            for c in mock_run.call_args_list
+            if isinstance(c[0][0], list) and c[0][0][1:4] == ["-m", "mutmut", "run"]
+        ]
+        assert mutmut_calls[0][1]["env"]["PATH"] == "/usr/bin"
+
     def test_tests_only_diff_skips(self):
         findings, infra = run_mutation(["tests/test_cli.py"], ["pytest", "tests/test_cli.py"])
         assert len(findings) == 1

@@ -793,6 +793,15 @@ def run_mutation(
     run_env = os.environ.copy()
     pythonpath = os.path.join(repo_root, "src")
     run_env["PYTHONPATH"] = pythonpath
+    # mutmut runs pytest in its own process and inherits this env. The
+    # review service's PATH leads with the forge venv, so project tools
+    # (kextractlinux and the like) are invisible. When the baseline runner
+    # is a path into a virtualenv, lead PATH with that env's bin.
+    runner = baseline_cmd[0] if baseline_cmd else ""
+    if "/" in runner or "\\" in runner:
+        project_bin = os.path.dirname(os.path.abspath(runner))
+        if os.path.isdir(project_bin):
+            run_env["PATH"] = project_bin + os.pathsep + run_env.get("PATH", "")
 
     status, guard_findings, guard_infra = _run_baseline_guard(
         baseline_cmd, run_env, repo_root, allow_strip_retry=True, timeout=baseline_timeout
