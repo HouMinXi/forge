@@ -297,6 +297,14 @@ def process_learn(adapter_findings, model=None):
 
     now = datetime.now(timezone.utc).isoformat()
 
+    # Index existing findings by the three fields the cross-source
+    # check compares. process_learn appends as it goes, so the index
+    # is updated below instead of rescanning the whole list.
+    by_key = {}
+    for prior in ext_data['findings']:
+        key = (prior.get('file'), prior.get('line'), prior.get('text_hash'))
+        by_key.setdefault(key, []).append(prior)
+
     # Counters for summary
     n_total = 0
     n_outcome_1 = 0
@@ -340,14 +348,17 @@ def process_learn(adapter_findings, model=None):
 
         # Store finding in external_findings
         ext_data['findings'].append(finding)
+        key = (extracted.file, extracted.line, text_hash)
+        by_key.setdefault(key, []).append(finding)
 
-        # Cross-source dedup
+        # Cross-source dedup. Only findings sharing the three match
+        # fields can win, so the scan stays on that bucket.
         dup_id = find_cross_source_dup(
             extracted.file,
             extracted.line,
             text_hash,
             canonical.timestamp,
-            ext_data['findings'],
+            by_key[key],
         )
         if dup_id and dup_id != finding['id']:
             finding['dedup_of'] = dup_id
