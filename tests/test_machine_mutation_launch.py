@@ -426,6 +426,26 @@ def test_launch_leaves_no_child_to_reap(tmp_path):
     )
 
 
+def _parent_of(pid: int) -> int | None:
+    """Parent pid from /proc, or None once that pid is already gone.
+
+    mutmut's stats pass runs pytest with -x. A run that wrote its pid and
+    exited before we opened /proc used to raise FileNotFoundError and abort
+    the whole collection. A missing proc entry means the process is not our
+    child anymore.
+    """
+    stat = Path(f"/proc/{pid}/stat")
+    try:
+        text = stat.read_text()
+    except FileNotFoundError:
+        return None
+    return int(text.rsplit(")", 1)[1].split()[1])
+
+
+def test_a_finished_run_is_not_our_child():
+    assert _parent_of(1 << 30) is None
+
+
 def test_the_run_is_reparented_away_from_us(tmp_path):
     # The run writes its own pid; if it were still our child, that pid
     # would report us as its parent and we would owe it a wait().
@@ -452,7 +472,9 @@ def test_the_run_is_reparented_away_from_us(tmp_path):
     if not Path("/proc").is_dir():  # pragma: no cover - non-Linux
         return
 
-    ppid = int(Path(f"/proc/{run_pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+    ppid = _parent_of(run_pid)
+    if ppid is None:
+        return
     assert ppid != os.getpid(), (
         "the run is still our direct child, so nothing reaps it once the caller drops the handle"
     )
