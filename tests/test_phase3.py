@@ -10,14 +10,32 @@ import sys
 import unittest
 
 
+def _repo_root() -> str:
+    """Directory that holds cli/gap_detector.py.
+
+    mutmut runs the tests from a mutants/ mirror that contains only the
+    source tree, so a path built from __file__ lands inside that mirror
+    and the import fails. Walk up until the repo root, which works for
+    both tests/ and mutants/tests/.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = here
+    while not os.path.isfile(os.path.join(root, "cli", "gap_detector.py")):
+        parent = os.path.dirname(root)
+        if parent == root:
+            break
+        root = parent
+    return root
+
+
 def setUpModule():
     """Add project paths to sys.path for module imports."""
-    cli_path = os.path.join(os.path.dirname(__file__), "..", "cli")
-    root_path = os.path.join(os.path.dirname(__file__), "..")
+    root = _repo_root()
+    cli_path = os.path.join(root, "cli")
     if cli_path not in sys.path:
         sys.path.insert(0, cli_path)
-    if root_path not in sys.path:
-        sys.path.insert(0, root_path)
+    if root not in sys.path:
+        sys.path.insert(0, root)
 
 
 # Ensure paths are available at import time for module-level imports.
@@ -33,11 +51,9 @@ from llm_parser import compute_text_hash  # noqa: E402
 from escalation import check_triggers  # noqa: E402
 from cli.adapters.github_pr import _detect_source_tool  # noqa: E402
 
-# Import path for seed test parse functions
-_seed_path = os.path.join(
-    os.path.dirname(__file__),
-    "seed_tests",
-)
+# Import path for seed test parse functions. The mutants/ mirror does
+# not carry tests/seed_tests, so this uses the repo root, not __file__.
+_seed_path = os.path.join(_repo_root(), "tests", "seed_tests")
 if _seed_path not in sys.path:
     sys.path.insert(0, _seed_path)
 from run_seed_tests import _parse_before_state, _parse_after_state  # noqa: E402 -- follows the sys.path insert above
