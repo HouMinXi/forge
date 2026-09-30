@@ -815,6 +815,25 @@ class TestSync:
         assert rc == 3
         assert fp.read_config(tmp_path / "code/one/.code-forge/gate.yaml") == before
 
+    def test_sync_walks_the_config_tree_once(self, tmp_path, monkeypatch, capsys):
+        """Five edit passes share one directory listing."""
+        self._tree(
+            monkeypatch,
+            tmp_path,
+            {"code/one/.code-forge/gate.yaml": GATE.replace("beta:", "oldname:")},
+        )
+        calls = {"n": 0}
+        real = fp.find_configs
+
+        def counting():
+            calls["n"] += 1
+            return real()
+
+        monkeypatch.setattr(fp, "find_configs", counting)
+        rc = fp.cmd_sync(self._args("newname", from_name=["oldname"]))
+        assert rc == 0
+        assert calls["n"] == 1
+
 
 class TestTrustCommand:
     """`trust` reports the configs forge is currently refusing."""
