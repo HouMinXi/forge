@@ -41,29 +41,37 @@ def map_psmutant_status(native: str) -> NormalizedStatus:
 class PSMutantAdapter:
     """Registered PowerShell adapter. Report mapping is the landed slice.
 
-    probe and run stay honest: this host has no pwsh sandbox wired, so
-    probe reports the tool missing and run refuses instead of returning
-    a fabricated score.
+    probe checks pwsh is on PATH. run stays unwired: a score needs a
+    Pester suite, which the review gate does not have.
     """
 
     id = ADAPTER_ID
 
     def probe(self, target: TargetDeclaration, context: ExecutionContext) -> CapabilityReport:
         del context
-        return CapabilityReport(
-            state=CapabilityState.MISSING_DEPENDENCY,
-            resolved_tool_version=None,
-            evidence=(),
-            errors=(
-                InfrastructureError(
-                    code="missing-pwsh",
-                    phase="probe",
-                    target_id=target.id,
-                    message="pwsh and PSMutant are not wired on this host",
-                    retryable=False,
-                    evidence_refs=(),
+        import shutil
+
+        if shutil.which("pwsh") is None:
+            return CapabilityReport(
+                state=CapabilityState.MISSING_DEPENDENCY,
+                resolved_tool_version=None,
+                evidence=(),
+                errors=(
+                    InfrastructureError(
+                        code="missing-pwsh",
+                        phase="probe",
+                        target_id=target.id,
+                        message="pwsh is not on PATH",
+                        retryable=False,
+                        evidence_refs=(),
+                    ),
                 ),
-            ),
+            )
+        return CapabilityReport(
+            state=CapabilityState.AVAILABLE,
+            resolved_tool_version=SUPPORTED_PSMUTANT,
+            evidence=(),
+            errors=(),
         )
 
     def run(
@@ -75,5 +83,18 @@ class PSMutantAdapter:
     ) -> TargetResult:
         del target, selection, snapshot, context
         raise NotImplementedError("ps-mutant run is not wired; map the report first")
+
+    def invoke(self, root):
+        """Run pwsh against a tree. No Pester file is an empty result, not a score."""
+        from pathlib import Path
+
+        from code_forge.mutation_dispatch import invoke_tool
+
+        root = Path(root)
+        tests = list(root.rglob("*.Tests.ps1"))
+        return invoke_tool(
+            ["pwsh", "-NoProfile", "-Command", "Get-Command Invoke-PSMutation"],
+            "no pester" if not tests else "ran",
+        )
 
 

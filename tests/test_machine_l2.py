@@ -674,7 +674,10 @@ class TestCISkipIsVisibleAsFinding:
         skipped = self._skipped(machine)
         assert skipped[0].fingerprint == "mutation-other-adapter"
         assert "ps-mutant" in skipped[0].description
+        assert "pwsh" in skipped[0].description
         assert "Python-only" not in skipped[0].description
+        assert "mutation run:" in skipped[0].description
+        assert "scanned %s" % tmp_path in skipped[0].description
 
     def test_mutmut_absent_appends_dismissed_finding(self, tmp_path, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda cmd: None)

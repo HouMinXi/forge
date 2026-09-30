@@ -101,7 +101,7 @@ def build_falsifier(
                 "--falsification-engine=real requires falsify_real.py "
                 "(import failed). Use "
                 "--falsification-engine=auto or =stub."
-            )
+            ) from None
     raise ValueError("unknown engine: %r (expected auto|stub|real)" % engine)
 
 
@@ -203,13 +203,32 @@ def build_l2_runner() -> Callable:
     module when mutmut is available.
     """
     if shutil.which("mutmut") is None:
-        # mutmut not available, return no-op with MUTATION_SKIPPED
+        from .mutation_dispatch import group_by_adapter, other_adapter_note
+
         def _no_mutation(
             diff_files: list[str],
             baseline_cmd: list[str],
             *,
             baseline_timeout: int = 120,
         ) -> tuple[list[StateFinding], list[str]]:
+            grouped = group_by_adapter(diff_files)
+            py_files = grouped.get("python-mutmut", [])
+            other = [key for key in grouped if key and key != "python-mutmut"]
+            if not py_files and other:
+                return (
+                    [
+                        StateFinding(
+                            id="MUTATION_SKIPPED",
+                            fingerprint="mutation-other-adapter",
+                            source="MUTANT",
+                            disposition=Disposition.DISMISSED,
+                            file=diff_files[0] if diff_files else "",
+                            line_range=[],
+                            description=other_adapter_note(diff_files, root=Path.cwd()),
+                        )
+                    ],
+                    [],
+                )
             findings = [
                 StateFinding(
                     id="MUTATION_SKIPPED",
@@ -708,7 +727,7 @@ def build_grouped_l1_provider(
         total_output = 0
         total_cached = 0
         total_duration = 0.0
-        for name, provider in providers:
+        for _name, provider in providers:
             findings, excerpts, usage, duration = provider()
             all_findings.extend(_dedup_by_fingerprint(findings, seen))
             all_excerpts.extend(excerpts)

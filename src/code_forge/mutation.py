@@ -731,16 +731,14 @@ def run_mutation(
     if not diff_files:
         return ([], [])
 
-    from .mutation_dispatch import group_by_adapter, review_gate_summary
+    from .mutation_dispatch import group_by_adapter, other_adapter_note
 
     grouped = group_by_adapter(diff_files)
     py_files = grouped.get("python-mutmut", [])
     other = [key for key in grouped if key and key != "python-mutmut"]
     if not py_files:
         if other:
-            description = (
-                "mutation adapters: " + review_gate_summary(diff_files) + "; python mutmut not applicable"
-            )
+            description = other_adapter_note(diff_files, root=cwd)
             fingerprint = "mutation-other-adapter"
             infra = "diff has no Python files; other adapters are registered but not invoked here"
         else:
@@ -762,6 +760,22 @@ def run_mutation(
             infra_errors.append(infra)
         return (findings, infra_errors)
 
+    def _with_other(out_findings: list[StateFinding], out_infra: list[str]):
+        if not other:
+            return (out_findings, out_infra)
+        out_findings.append(
+            StateFinding(
+                id="MUTATION_SKIPPED",
+                fingerprint="mutation-other-adapter",
+                source="MUTANT",
+                disposition=Disposition.DISMISSED,
+                file="",
+                line_range=[],
+                description=other_adapter_note(diff_files),
+            )
+        )
+        return (out_findings, out_infra)
+
     roots = _source_roots(
         py_files,
         skip_globs=mutation_skip_globs,
@@ -780,7 +794,7 @@ def run_mutation(
                 description="diff is tests-only; nothing to mutate",
             )
         )
-        return (findings, [])
+        return _with_other(findings, [])
 
     # Flaky guard: run the baseline 3x at the repo root.
     #
@@ -813,7 +827,7 @@ def run_mutation(
             baseline_cmd, run_env, repo_root, allow_strip_retry=False, timeout=baseline_timeout
         )
     if status == "skip":
-        return (guard_findings, guard_infra)
+        return _with_other(guard_findings, guard_infra)
 
     # Resolve the mutmut invocation from the baseline environment. mutmut
     # must share the interpreter with the project test deps (it drives
@@ -835,7 +849,7 @@ def run_mutation(
                 ),
             )
         )
-        return (findings, [])
+        return _with_other(findings, [])
     if invocation is None:
         runner = baseline_cmd[0] if baseline_cmd else ""
         if os.sep in runner:
@@ -853,7 +867,7 @@ def run_mutation(
                 description=desc,
             )
         )
-        return (findings, [])
+        return _with_other(findings, [])
 
     # mutmut 3.x has no --config flag. Snapshot user files, install a
     # scoped setup.cfg, hide [tool.mutmut], restore in finally.
@@ -918,7 +932,7 @@ def run_mutation(
                     description="mutmut timed out after %ds" % timeout,
                 )
             )
-            return (findings, [])
+            return _with_other(findings, [])
 
         # Parse results from repo_root
         try:
@@ -950,21 +964,20 @@ def run_mutation(
                     description="mutmut results timed out",
                 )
             )
-            return (findings, [])
+            return _with_other(findings, [])
 
-        # Convert survivors to findings
-        for survivor in survivors:
-            findings.append(
-                StateFinding(
-                    id=f"mutant-{survivor.mutant_name}",
-                    fingerprint=f"mutant:{survivor.mutant_name}",
-                    source="MUTANT",
-                    disposition=Disposition.CONFIRMED,
-                    file=survivor.file,
-                    line_range=[0, 0],  # mutmut 3.x results omit line numbers
-                    description=(f"mutant survived: {survivor.mutant_name}"),
-                )
+        findings.extend(
+            StateFinding(
+                id=f"mutant-{survivor.mutant_name}",
+                fingerprint=f"mutant:{survivor.mutant_name}",
+                source="MUTANT",
+                disposition=Disposition.CONFIRMED,
+                file=survivor.file,
+                line_range=[0, 0],  # mutmut 3.x results omit line numbers
+                description=(f"mutant survived: {survivor.mutant_name}"),
             )
+            for survivor in survivors
+        )
 
     finally:
         if installed:
@@ -972,7 +985,7 @@ def run_mutation(
         mutants_dir = os.path.join(repo_root, "mutants")
         shutil.rmtree(mutants_dir, ignore_errors=True)
 
-    return (findings, infra_errors)
+    return _with_other(findings, infra_errors)
 
 
 def launch_detached_mutation(

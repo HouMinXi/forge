@@ -93,6 +93,7 @@ def test_load_event_rejects_garbage(tmp_path):
 def test_registry_lists_shipped_adapters():
     ids = registered_adapter_ids()
     assert ids == (
+        "c-mull",
         "go-gremlins",
         "js-stryker",
         "patch-corpus",

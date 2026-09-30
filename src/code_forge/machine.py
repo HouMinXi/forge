@@ -569,7 +569,7 @@ class StateMachine:
         import shutil
 
         diff_files = [str(f) for f in self._source_files()]
-        from .mutation_dispatch import group_by_adapter, review_gate_summary
+        from .mutation_dispatch import group_by_adapter, other_adapter_note
 
         grouped = group_by_adapter(diff_files)
         py_files = grouped.get("python-mutmut", [])
@@ -662,11 +662,7 @@ class StateMachine:
                     disposition=Disposition.DISMISSED,
                     file="",
                     line_range=[],
-                    description=(
-                        "mutation adapters: "
-                        + review_gate_summary(diff_files)
-                        + "; python mutmut not applicable"
-                    ),
+                    description=other_adapter_note(diff_files, root=self.cwd),
                 )
             )
         else:

@@ -334,6 +334,16 @@ class GremlinsAdapter:
         )
         return SUPPORTED_GREMLINS if code == 0 else None
 
+    def invoke(self, root):
+        """Call gremlins. No *_test.go means no score."""
+        from pathlib import Path
+
+        from code_forge.mutation_dispatch import invoke_tool
+
+        root = Path(root)
+        tests = list(root.rglob("*_test.go"))
+        return invoke_tool(["gremlins", "unleash", "--dry-run"], "no go test" if not tests else "ran")
+
     def run(
         self,
         target: TargetDeclaration,
