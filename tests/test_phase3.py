@@ -575,5 +575,92 @@ class TestStorageResilience(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestCrossSourceIndex(unittest.TestCase):
+    """process_learn only hands the matching bucket to the scan."""
+
+    def test_scan_sees_the_matching_bucket_only(self):
+        import gap_detector
+        from adapters.base import CanonicalFinding, ExtractedFinding
+
+        text_hash = compute_text_hash("same text")
+        stamp = "2026-05-10T10:00:00+00:00"
+        existing = [
+            {
+                "id": "ext-%04d" % i,
+                "file": "src/other-%d.py" % i,
+                "line": i,
+                "text_hash": "h%d" % i,
+                "timestamp": stamp,
+                "source": "github_pr",
+                "source_id": "old-%d" % i,
+            }
+            for i in range(500)
+        ]
+        existing.append({
+            "id": "ext-match",
+            "file": "src/a.py",
+            "line": 1,
+            "text_hash": text_hash,
+            "timestamp": stamp,
+            "source": "github_pr",
+            "source_id": "old-match",
+        })
+
+        seen = []
+
+        def recording(file_val, line_val, text_hash, timestamp_str, existing_findings):
+            seen.append(len(existing_findings))
+            return "ext-match"
+
+        canonical = CanonicalFinding(
+            source="git_log",
+            source_tool="git",
+            source_id="new-1",
+            timestamp="2026-05-12T10:00:00+00:00",
+            raw_source="same text",
+            context={},
+        )
+        extracted = ExtractedFinding(
+            dimension_raw="timing",
+            confidence=0.5,
+            suggested_keywords=["race"],
+            text="same text",
+            file="src/a.py",
+            line=1,
+        )
+
+        originals = {
+            name: getattr(gap_detector, name)
+            for name in (
+                "find_cross_source_dup",
+                "load_external_findings",
+                "load_gap_candidates",
+                "load_keyword_expansion_queue",
+                "atomic_write",
+                "classify_finding",
+            )
+        }
+        gap_detector.find_cross_source_dup = recording
+        gap_detector.load_external_findings = lambda: {
+            "version": 1, "findings": list(existing),
+        }
+        gap_detector.load_gap_candidates = lambda: {"candidates": []}
+        gap_detector.load_keyword_expansion_queue = lambda: {"queue": []}
+        gap_detector.atomic_write = lambda *a, **k: None
+        # classify_finding would read keyword dicts off the real config.
+        # The duplicate branch returns before that, so it must not run.
+        def boom(*a, **k):
+            raise AssertionError("classification ran on a duplicate")
+        gap_detector.classify_finding = boom
+        try:
+            gap_detector.process_learn([(canonical, extracted)])
+        finally:
+            for name, value in originals.items():
+                setattr(gap_detector, name, value)
+
+        # The stored match plus the finding just appended. Not all 501.
+        self.assertEqual(seen, [2])
+
+
 if __name__ == "__main__":
     unittest.main()
